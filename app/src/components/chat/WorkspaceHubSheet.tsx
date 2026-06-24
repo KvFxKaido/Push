@@ -13,13 +13,17 @@ import {
   Check,
   ChevronDown,
   Download,
+  GitBranch,
   Loader2,
   Plus,
   RefreshCw,
   RotateCcw,
   Save,
+  Search,
+  ShieldCheck,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
@@ -91,6 +95,7 @@ import {
   SandboxCubeIcon,
   SettingsCellsIcon,
 } from '@/components/icons/push-custom-icons';
+import { MultiStepLoader, type MultiStepLoaderStep } from '@/components/ui/multi-step-loader';
 import { PublishToGitHubSheet } from '@/components/repo/PublishToGitHubSheet';
 import { HubNotesTab, HubConsoleTab, HubFilesTab, HubDiffTab } from './hub-tabs';
 const HubReviewTab = lazy(() =>
@@ -285,6 +290,27 @@ const PHASE_LABELS: Record<CommitPhase, string> = {
   error: 'Failed',
 };
 
+// Canonical ordered steps for the commit/push multi-step loader. `branching`
+// and `auditing` are conditional (new-branch / auto-branch flows and the
+// Auditor gate) — when skipped, the phase jumps past them and they render as
+// done, the universal progress-bar convention. Keep this list and
+// COMMIT_PHASE_STEP_INDEX in sync with the updateCommitPhase calls in handleCommit.
+const COMMIT_STEPS: readonly MultiStepLoaderStep[] = [
+  { key: 'fetching-diff', label: 'Checking changes', doneLabel: 'Changes checked', icon: Search },
+  { key: 'branching', label: 'Creating branch', doneLabel: 'Branch ready', icon: GitBranch },
+  { key: 'auditing', label: 'Auditing', doneLabel: 'Audited', icon: ShieldCheck },
+  { key: 'committing', label: 'Committing', doneLabel: 'Committed', icon: CommitPulseIcon },
+  { key: 'pushing', label: 'Pushing', doneLabel: 'Pushed', icon: Upload },
+];
+
+const COMMIT_PHASE_STEP_INDEX: Partial<Record<CommitPhase, number>> = {
+  'fetching-diff': 0,
+  branching: 1,
+  auditing: 2,
+  committing: 3,
+  pushing: 4,
+};
+
 const COMMIT_MESSAGE_SUGGEST_TIMEOUT_MS = 30_000;
 const BRANCH_NAME_SUGGEST_TIMEOUT_MS = 30_000;
 
@@ -451,6 +477,22 @@ export function WorkspaceHubSheet({
   const [suggestingBranchName, setSuggestingBranchName] = useState(false);
   const [commitError, setCommitError] = useState<string | null>(null);
   const branchSuggestionAttemptedRef = useRef(false);
+  // The terminal 'error' phase doesn't carry which step failed, so we record the
+  // last running step's index as phases advance and read it back to attribute
+  // the error in the multi-step loader. Tracked in the event handler (via
+  // updateCommitPhase) rather than an effect to avoid cascading renders; idle
+  // resets it. Running phases set it, terminal phases (success/error) leave it
+  // pointing at the last running step.
+  const [lastCommitStep, setLastCommitStep] = useState(0);
+  const updateCommitPhase = useCallback((phase: CommitPhase) => {
+    setCommitPhase(phase);
+    if (phase === 'idle') {
+      setLastCommitStep(0);
+      return;
+    }
+    const idx = COMMIT_PHASE_STEP_INDEX[phase];
+    if (idx !== undefined) setLastCommitStep(idx);
+  }, []);
 
   // Branch dropdown
   const [branchDropdownOpen, setBranchDropdownOpen] = useState(false);
@@ -671,7 +713,7 @@ export function WorkspaceHubSheet({
       }
 
       if (getActiveProvider() === 'demo') {
-        setCommitPhase('error');
+        updateCommitPhase('error');
         setCommitError(
           'No AI provider configured. Add an API key in Settings to enable the Auditor.',
         );
@@ -683,10 +725,10 @@ export function WorkspaceHubSheet({
         // Fetch the working-tree diff up front: it's invariant across the fork
         // (forkBranchFromUI carries the working tree), and the auto-branch
         // namer needs it. Empty diff → nothing to commit.
-        setCommitPhase('fetching-diff');
+        updateCommitPhase('fetching-diff');
         const diffResult = await getSandboxDiff(sandboxId);
         if (!diffResult.diff) {
-          setCommitPhase('error');
+          updateCommitPhase('error');
           setCommitError('Nothing to commit — no changes detected.');
           return;
         }
@@ -695,9 +737,9 @@ export function WorkspaceHubSheet({
         let isNewBranch = target.mode === 'new';
 
         if (target.mode === 'new' && target.branchName) {
-          setCommitPhase('branching');
+          updateCommitPhase('branching');
           if (!forkBranchFromUI) {
-            setCommitPhase('error');
+            updateCommitPhase('error');
             setCommitError('New-branch flow is not available in this surface.');
             return;
           }
@@ -717,7 +759,7 @@ export function WorkspaceHubSheet({
             `cd /workspace && if git show-ref --verify --quiet refs/heads/${escapedBranchName}; then echo "__PUSH_BRANCH_EXISTS_LOCAL__"; exit 10; fi && if git ${authPrefix}ls-remote --exit-code --heads origin ${escapedBranchName} >/dev/null 2>&1; then echo "__PUSH_BRANCH_EXISTS_REMOTE__"; exit 11; fi`,
           );
           if (preflight.exitCode === 10 || preflight.exitCode === 11) {
-            setCommitPhase('error');
+            updateCommitPhase('error');
             setCommitError(`Branch "${target.branchName}" already exists.`);
             return;
           }
@@ -730,7 +772,7 @@ export function WorkspaceHubSheet({
           // filter routing them to a different chat.
           const forkResult = await forkBranchFromUI(target.branchName);
           if (!forkResult.ok) {
-            setCommitPhase('error');
+            updateCommitPhase('error');
             setCommitError(forkResult.errorMessage ?? 'Branch switch failed.');
             return;
           }
@@ -743,7 +785,7 @@ export function WorkspaceHubSheet({
           // blocks the mode==='current' path above; this covers the
           // Protect-Main-off case where committing to main would otherwise be
           // allowed.)
-          setCommitPhase('branching');
+          updateCommitPhase('branching');
           const auto = await ensureCommitTargetBranch({
             sandboxId,
             currentBranch: branchProps.currentBranch,
@@ -765,7 +807,7 @@ export function WorkspaceHubSheet({
         // Phase: Auditing — opt-out, default on (see useAuditorGate). When the
         // gate is disabled for this repo, skip the review and commit directly.
         if (getIsAuditorGateEnabled(repoFullName)) {
-          setCommitPhase('auditing');
+          updateCommitPhase('auditing');
           let fileContexts: AuditorFileContext[] = [];
           try {
             const filePaths = parseDiffStats(diffResult.diff).fileNames;
@@ -798,7 +840,7 @@ export function WorkspaceHubSheet({
             fileContexts,
           );
           if (auditResult.verdict === 'unsafe') {
-            setCommitPhase('error');
+            updateCommitPhase('error');
             setCommitError(`Commit blocked by Auditor: ${auditResult.card.summary}`);
             return;
           }
@@ -810,19 +852,19 @@ export function WorkspaceHubSheet({
         // every other commit surface runs (auto-branch → auto-push →
         // secret-scan only holds if every push is gated). The commit is local
         // (doctrinally fine); the push is the boundary the scan defends.
-        setCommitPhase('committing');
+        updateCommitPhase('committing');
         const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
         const commit = await pushGit.commit({ message });
         if (!commit.ok) {
           notifyWorkspaceMutation(sandboxId);
           const detail =
             commit.result?.stderr || commit.result?.stdout || commit.reason || 'Unknown git error';
-          setCommitPhase('error');
+          updateCommitPhase('error');
           setCommitError(`Commit failed: ${detail}`);
           return;
         }
 
-        setCommitPhase('pushing');
+        updateCommitPhase('pushing');
         const pushResult = await pushGit.push(
           isNewBranch
             ? { setUpstream: true, ref: `HEAD:refs/heads/${effectiveBranchName}` }
@@ -832,13 +874,13 @@ export function WorkspaceHubSheet({
           // A secret-scan block is a policy refusal, not a transport failure —
           // surface the reason verbatim.
           const detail = pushResult.stderr || pushResult.stdout || 'Unknown git error';
-          setCommitPhase('error');
+          updateCommitPhase('error');
           setCommitError(pushResult.blocked ? detail : `Push failed: ${detail}`);
           return;
         }
 
         // Success
-        setCommitPhase('success');
+        updateCommitPhase('success');
         toast.success(`Committed & pushed to ${effectiveBranchName}.`);
         if (isNewBranch) {
           branchProps.onRefreshBranches();
@@ -863,7 +905,7 @@ export function WorkspaceHubSheet({
           // Best effort
         }
       } catch (err) {
-        setCommitPhase('error');
+        updateCommitPhase('error');
         setCommitError(err instanceof Error ? err.message : 'Commit failed');
       }
     },
@@ -879,6 +921,7 @@ export function WorkspaceHubSheet({
       forkBranchFromUI,
       projectInstructions,
       repoFullName,
+      updateCommitPhase,
     ],
   );
 
@@ -1191,7 +1234,7 @@ export function WorkspaceHubSheet({
   useEffect(() => {
     if (!open) {
       const id = setTimeout(() => {
-        setCommitPhase('idle');
+        updateCommitPhase('idle');
         setCommitError(null);
         setCommitTargetSheetOpen(false);
         setCommitTargetError(null);
@@ -1201,15 +1244,15 @@ export function WorkspaceHubSheet({
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [open]);
+  }, [open, updateCommitPhase]);
 
   useEffect(() => {
     const id = setTimeout(() => {
-      setCommitPhase('idle');
+      updateCommitPhase('idle');
       setCommitError(null);
     }, 0);
     return () => clearTimeout(id);
-  }, [activeTab]);
+  }, [activeTab, updateCommitPhase]);
 
   useEffect(() => {
     const id = setTimeout(() => {
@@ -1640,7 +1683,7 @@ export function WorkspaceHubSheet({
                 <button
                   onClick={() => {
                     if (commitPhase === 'success' || commitPhase === 'error') {
-                      setCommitPhase('idle');
+                      updateCommitPhase('idle');
                       setCommitError(null);
                       return;
                     }
@@ -1683,8 +1726,29 @@ export function WorkspaceHubSheet({
                   Protect Main is enabled for {branchProps.defaultBranch}.
                 </p>
               )}
-              {commitPhase === 'error' && commitError && (
-                <p className="mt-1 text-push-2xs text-red-300">{commitError}</p>
+              {commitPhase !== 'idle' && (
+                <div
+                  className={`mt-2 rounded-[14px] border ${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT} px-3 py-2.5`}
+                >
+                  <MultiStepLoader
+                    steps={COMMIT_STEPS}
+                    currentStep={
+                      commitPhase === 'success'
+                        ? COMMIT_STEPS.length
+                        : commitPhase === 'error'
+                          ? lastCommitStep
+                          : (COMMIT_PHASE_STEP_INDEX[commitPhase] ?? 0)
+                    }
+                    state={
+                      commitPhase === 'success'
+                        ? 'success'
+                        : commitPhase === 'error'
+                          ? 'error'
+                          : 'running'
+                    }
+                    errorMessage={commitError}
+                  />
+                </div>
               )}
             </div>
           )}
