@@ -22,6 +22,7 @@ import {
 import type { ChatMessage, CardAction, AttachmentData, UrlCitation } from '@/types';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
+import { resolveStreamCaret } from '@/lib/stream-caret';
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
 import { isStreamdownEnabled } from '@/lib/feature-flags';
 import { lazyWithRecovery } from '@/lib/lazy-import';
@@ -328,6 +329,16 @@ function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.Re
   if (textLength > MAX_SHIMMER_CHARS) return nodes;
   const counter = { i: 0 };
   return nodes.map((node) => wrapStreamWordsNode(node, counter));
+}
+
+// The trailing streaming indicator. Style is a runtime-switchable comparison
+// (`?caret=` / localStorage) while we settle on a favorite; `hexagon` echoes
+// the streaming avatar's mark.
+function StreamCaret() {
+  if (resolveStreamCaret() === 'hexagon') {
+    return <PushMarkIcon className="stream-caret-hex text-push-accent" aria-hidden="true" />;
+  }
+  return <span className="stream-caret bg-push-accent" aria-hidden="true" />;
 }
 
 function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
@@ -780,9 +791,7 @@ export const MessageBubble = memo(function MessageBubble({
               content
             )}
             {/* Streamdown renders its own inline caret; only the legacy path needs this one. */}
-            {isStreaming && !useStreamdown && (
-              <span className="stream-caret bg-push-accent" aria-hidden="true" />
-            )}
+            {isStreaming && !useStreamdown && <StreamCaret />}
           </div>
         )}
         {message.citations && message.citations.length > 0 && (
