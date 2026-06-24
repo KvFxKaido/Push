@@ -68,6 +68,20 @@ describe('MessageBubble', () => {
     expect(html).toContain('hex-thinking');
   });
 
+  it('keeps the thinking block live while streamed answer content is visible', () => {
+    const message = assistantMessage({
+      content: 'answer has started',
+      thinking: 'still reasoning through the next step',
+      status: 'streaming',
+    });
+
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toContain('Reasoning');
+    expect(html).not.toContain('Thought process');
+    expect(html).toContain('still reasoning through the next step');
+    expect(html).toContain('answer');
+  });
+
   it('settles the hexagon avatar to a static stroke once done', () => {
     const message = assistantMessage({ content: 'hello', status: 'done' });
     const html = renderToStaticMarkup(<MessageBubble message={message} />);
