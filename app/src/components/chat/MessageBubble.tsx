@@ -753,7 +753,10 @@ export const MessageBubble = memo(function MessageBubble({
   return (
     <div className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in">
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-push-edge bg-push-grad-icon">
-        <PushMarkIcon className="h-[10px] w-[10px] text-push-accent" />
+        <PushMarkIcon
+          className="h-[10px] w-[10px] text-push-accent"
+          pathClassName={isStreaming ? 'hex-thinking' : undefined}
+        />
       </div>
       <div className="min-w-0 max-w-[85%]">
         {hasThinking && (
