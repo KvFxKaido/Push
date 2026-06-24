@@ -923,10 +923,13 @@ describe('handleCloudflareChat', () => {
 });
 
 describe('handleCloudflareModels', () => {
-  it('returns only text-generation model names (the env.AI.run-compatible id) from the AI binding', async () => {
+  it('returns text-generation models as { id, functionCalling } from the AI binding', async () => {
     // The CF catalog uses `id` as an internal UUID and `name` as the
     // `@cf/...` string env.AI.run() expects. We must surface `name`, not
-    // `id`, otherwise clients end up with UUIDs in the model picker.
+    // `id`, otherwise clients end up with UUIDs in the model picker — and we
+    // project the `function_calling` property into a capability flag so the
+    // client gate doesn't have to name-match Kimi/GLM. Non-text-generation
+    // models (Whisper) are filtered out.
     const models = vi.fn(async () => [
       {
         id: 'cc80437b-9a8d-4f1a-9c77-9aaf0d226922',
@@ -935,7 +938,16 @@ describe('handleCloudflareModels', () => {
         source: 1,
         task: { id: 'text-generation', name: 'Text Generation', description: '' },
         tags: [],
-        properties: [],
+        properties: [{ property_id: 'function_calling', value: 'true' }],
+      },
+      {
+        id: 'e1d2c3b4-0000-4000-8000-000000000000',
+        name: '@cf/meta/llama-3.1-8b-instruct',
+        description: '',
+        source: 1,
+        task: { id: 'text-generation', name: 'Text Generation', description: '' },
+        tags: [],
+        properties: [{ property_id: 'context_window', value: '8192' }],
       },
       {
         id: 'ad01ab83-baf8-4e7b-8fed-a0a219d4eb45',
@@ -961,7 +973,10 @@ describe('handleCloudflareModels', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual(['@cf/qwen/qwen3-30b-a3b-fp8']);
+    expect(await response.json()).toEqual([
+      { id: '@cf/meta/llama-3.1-8b-instruct', functionCalling: false },
+      { id: '@cf/qwen/qwen3-30b-a3b-fp8', functionCalling: true },
+    ]);
   });
 
   it('returns 401 when the Worker has no AI binding configured', async () => {

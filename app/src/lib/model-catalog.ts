@@ -42,6 +42,14 @@ const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
 const MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY = 'push:models-dev:all-provider-models';
 const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
+// Cloudflare Workers AI catalog cache. Unlike the other providers, Cloudflare
+// has no models.dev metadata — the binding's own catalog (surfaced by
+// `/api/cloudflare/models`) is the single source for both the model list and
+// its capability flags, so we cache the whole enriched payload here. The list
+// changes infrequently (Cloudflare adds/removes models), so a 12h TTL matches
+// the models.dev cadence; the picker's manual refresh forces a revalidation.
+const CLOUDFLARE_CATALOG_CACHE_KEY = 'push:cloudflare:catalog';
+const CLOUDFLARE_CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
@@ -174,6 +182,100 @@ interface MetadataMemCacheEntry {
 // Module-level cache: keyed by storage key, value is the parsed payload or null.
 // Populated on first read; invalidated/updated on every write.
 const metadataMemCache = new Map<string, MetadataMemCacheEntry | null>();
+
+// ---------------------------------------------------------------------------
+// Cloudflare Workers AI catalog cache (list + capability flags)
+// ---------------------------------------------------------------------------
+
+/** Capability flags resolved from the cached Cloudflare binding catalog. */
+export interface CloudflareModelCapabilities {
+  functionCalling: boolean;
+}
+
+/** One catalog entry as persisted in the cache / returned by the Worker. */
+export interface CloudflareCatalogModel {
+  id: string;
+  functionCalling: boolean;
+}
+
+interface CloudflareCatalogCachePayload {
+  fetchedAt: number;
+  models: CloudflareCatalogModel[];
+}
+
+// Single-entry mem-cache (the catalog is one global list, not keyed by id)
+// fronting localStorage so the synchronous capability gates don't re-parse on
+// every call. Null until first read; refreshed on every write.
+let cloudflareCatalogMemCache: CloudflareCatalogCachePayload | null = null;
+
+function readCloudflareCatalogCache(): CloudflareCatalogModel[] | null {
+  if (cloudflareCatalogMemCache) {
+    if (Date.now() - cloudflareCatalogMemCache.fetchedAt <= CLOUDFLARE_CATALOG_CACHE_TTL_MS) {
+      return cloudflareCatalogMemCache.models;
+    }
+    cloudflareCatalogMemCache = null;
+  }
+
+  const raw = safeStorageGet(CLOUDFLARE_CATALOG_CACHE_KEY);
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<CloudflareCatalogCachePayload> | null;
+    if (!parsed || typeof parsed.fetchedAt !== 'number' || !Array.isArray(parsed.models)) {
+      return null;
+    }
+    if (Date.now() - parsed.fetchedAt > CLOUDFLARE_CATALOG_CACHE_TTL_MS) return null;
+    cloudflareCatalogMemCache = { fetchedAt: parsed.fetchedAt, models: parsed.models };
+    return parsed.models;
+  } catch {
+    return null;
+  }
+}
+
+function writeCloudflareCatalogCache(models: CloudflareCatalogModel[]): void {
+  const fetchedAt = Date.now();
+  cloudflareCatalogMemCache = { fetchedAt, models };
+  safeStorageSet(CLOUDFLARE_CATALOG_CACHE_KEY, JSON.stringify({ fetchedAt, models }));
+}
+
+/**
+ * Normalize the `/api/cloudflare/models` payload into catalog entries. Accepts
+ * the enriched object form (`{ id, functionCalling }[]`) and tolerates a bare
+ * `string[]` (a stale cache blob or an older Worker) by defaulting capabilities
+ * off — the conservative side, since `parseStructured` / text-dispatch backstop
+ * a model we under-claim, whereas over-claiming would attach a constraint the
+ * model silently drops.
+ */
+function parseCloudflareCatalogPayload(payload: unknown): CloudflareCatalogModel[] {
+  if (!Array.isArray(payload)) return [];
+  const out: CloudflareCatalogModel[] = [];
+  for (const entry of payload) {
+    if (typeof entry === 'string') {
+      const id = entry.trim();
+      if (id) out.push({ id, functionCalling: false });
+      continue;
+    }
+    const rec = asRecord(entry);
+    const id = typeof rec?.id === 'string' ? rec.id.trim() : '';
+    if (!id) continue;
+    out.push({ id, functionCalling: rec?.functionCalling === true });
+  }
+  return out;
+}
+
+/**
+ * Capability flags for a Cloudflare Workers AI model, resolved from the cached
+ * binding catalog. Returns null when the catalog hasn't been fetched yet (cold
+ * cache) or the model isn't in it, so callers fall back to name-based gating.
+ */
+export function getCloudflareModelCapabilities(
+  modelId: string,
+): CloudflareModelCapabilities | null {
+  const catalog = readCloudflareCatalogCache();
+  if (!catalog) return null;
+  const entry = catalog.find((model) => model.id === modelId);
+  return entry ? { functionCalling: entry.functionCalling } : null;
+}
 
 // ---------------------------------------------------------------------------
 // Reasoning effort preference (per-provider, localStorage)
@@ -337,30 +439,41 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Name-based structured-output gate for Cloudflare Workers AI. The provider
- * returns bare `@cf/...` ids with no models.dev metadata, so the generic
- * catalog probe can't see capability — mirrors the name-pattern fallback used
- * for context windows (`guessWindowFromName`). Cloudflare's model cards
- * advertise JSON-schema structured outputs for the Kimi K2.x and GLM families
- * specifically; gate on those by name and leave every other Workers AI model
- * prompt-only (it falls back to `parseStructured`).
- *
- * Substring `.includes()` (not anchored) is intentional and matches
- * `guessWindowFromName`: the family token can appear anywhere in the id —
- * notably behind the `@cf/<org>/` prefix (`@cf/moonshotai/kimi-k2.7-code`,
- * `@cf/zai-org/glm-5.2`). A hypothetical `foobar-kimi` matching is the
- * desired behavior — it is a Kimi model — and the downside is only a
- * conservative attempt at a constraint `parseStructured` already backstops.
+ * Structured-output gate for Cloudflare Workers AI. Resolves from the binding
+ * catalog's `function_calling` flag (Workers AI ships function calling and JSON
+ * mode together, so the same flag governs both) and falls back to the Kimi/GLM
+ * name heuristic on a cold cache — see {@link cloudflareFunctionCallingGate}.
+ * Models we under-claim simply fall back to `parseStructured`.
  */
 function cloudflareModelSupportsStructuredOutput(modelId: string): boolean {
+  return cloudflareFunctionCallingGate(modelId);
+}
+
+/**
+ * Resolve Workers AI capability for `modelId`, preferring the binding catalog's
+ * `function_calling` flag (cached from `/api/cloudflare/models`) and falling
+ * back to the name-based Kimi/GLM heuristic only when the catalog hasn't been
+ * fetched yet or doesn't list the model. Both the native-tool and
+ * structured-output gates route through here: Workers AI ships function calling
+ * and JSON mode together, so a single catalog flag drives both, and the
+ * name-based fallback preserves the prior behavior on a cold cache.
+ */
+function cloudflareFunctionCallingGate(modelId: string): boolean {
+  const caps = getCloudflareModelCapabilities(modelId);
+  if (caps) return caps.functionCalling;
   return isCloudflareKimiOrGlm(modelId);
 }
 
 /**
- * The Workers AI families whose model cards advertise native JSON capabilities
- * (both `response_format` structured outputs and function calling): Kimi K2.x
- * and GLM. Substring match for the `@cf/<org>/` prefix — see the note on
- * `cloudflareModelSupportsStructuredOutput`.
+ * Cold-cache fallback for the Workers AI capability gates: the families whose
+ * model cards advertise native JSON capabilities (both `response_format`
+ * structured outputs and function calling), Kimi K2.x and GLM. Used only until
+ * the binding catalog loads its `function_calling` flags (see
+ * {@link cloudflareFunctionCallingGate}); once it does, the catalog is
+ * authoritative and this name match no longer runs. Substring `.includes()`
+ * (not anchored) is intentional: the family token can appear anywhere in the id,
+ * notably behind the `@cf/<org>/` prefix (`@cf/moonshotai/kimi-k2.7-code`,
+ * `@cf/zai-org/glm-5.2`).
  */
 function isCloudflareKimiOrGlm(modelId: string): boolean {
   const m = modelId.toLowerCase();
@@ -451,8 +564,9 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
 /**
  * Whether to attach native function-calling `tools` for the given
  * provider/model. Provider paths today:
- *   - **Cloudflare Workers AI** (Kimi/GLM) — name-based, the catalog-less
- *     provider this was introduced for.
+ *   - **Cloudflare Workers AI** — catalog-based: the binding catalog's
+ *     `function_calling` flag (cached from `/api/cloudflare/models`), falling
+ *     back to the Kimi/GLM name heuristic only on a cold cache.
  *   - **OpenRouter** — capability-based: the model's models.dev metadata must
  *     advertise tool support (`toolCall`). Mirrors the structured-output gate
  *     (`providerModelSupportsStructuredOutput`) so the two can't drift, and
@@ -494,7 +608,7 @@ export function providerModelSupportsNativeToolCalling(
   modelId: string | undefined,
 ): boolean {
   if (!modelId) return false;
-  if (provider === 'cloudflare') return isCloudflareKimiOrGlm(modelId);
+  if (provider === 'cloudflare') return cloudflareFunctionCallingGate(modelId);
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
@@ -1319,7 +1433,24 @@ export async function fetchOpenRouterModels(
   }
 }
 
-export async function fetchCloudflareModels(): Promise<string[]> {
+/** Sort catalog ids into the picker's canonical Cloudflare ordering. */
+function sortCloudflareCatalogIds(models: CloudflareCatalogModel[]): string[] {
+  return models
+    .map((model) => model.id)
+    .sort((left, right) => compareProviderModelIds('cloudflare', left, right));
+}
+
+export async function fetchCloudflareModels(opts: { force?: boolean } = {}): Promise<string[]> {
+  // Cache-first: the binding catalog (list + capability flags) is cached in
+  // localStorage with a 12h TTL, so the auto-fetch on every fresh page load
+  // returns from cache instead of hitting `env.AI.models()` through the Worker.
+  // The picker's manual refresh passes `force` to revalidate. The capability
+  // gates read this same cache synchronously (see getCloudflareModelCapabilities).
+  if (!opts.force) {
+    const cached = readCloudflareCatalogCache();
+    if (cached && cached.length > 0) return sortCloudflareCatalogIds(cached);
+  }
+
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
@@ -1338,14 +1469,14 @@ export async function fetchCloudflareModels(): Promise<string[]> {
     }
 
     const payload = (await response.json()) as unknown;
-    // `/api/cloudflare/models` returns a bare `string[]` of `@cf/...` ids.
-    // We avoid `normalizeModelList` because the CF binding's own catalog
-    // pairs a UUID `id` with the `@cf/...` `name`, and the shared normalizer
-    // would wrongly treat both as selectable ids.
-    const liveModels = (Array.isArray(payload) ? payload : [])
-      .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
-      .map((entry) => entry.trim())
-      .sort((left, right) => compareProviderModelIds('cloudflare', left, right));
+    // `/api/cloudflare/models` returns the enriched catalog (`{ id,
+    // functionCalling }[]`); `parseCloudflareCatalogPayload` also tolerates a
+    // bare `string[]`. We avoid `normalizeModelList` because the CF binding's
+    // own catalog pairs a UUID `id` with the `@cf/...` `name`, and the shared
+    // normalizer would wrongly treat both as selectable ids.
+    const catalog = parseCloudflareCatalogPayload(payload);
+    if (catalog.length > 0) writeCloudflareCatalogCache(catalog);
+    const liveModels = sortCloudflareCatalogIds(catalog);
     return liveModels.length > 0 ? liveModels : [...CLOUDFLARE_MODELS];
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') {

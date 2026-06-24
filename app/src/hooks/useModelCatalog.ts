@@ -781,36 +781,42 @@ export function useModelCatalog(): ModelCatalog {
     [openRouterCfg.hasKey, openRouterLoading, refreshModels],
   );
 
-  const refreshCloudflareModels = useCallback(async () => {
-    if (cloudflareLoading) return;
-    setCloudflareLoading(true);
-    setCloudflareError(null);
-    try {
-      const models = await fetchCloudflareModels();
-      setCloudflareModelList(models);
-      setCloudflareUpdatedAt(Date.now());
-      setCloudflareConfiguredStateAndPersist(true);
-      setCloudflareStatusError(null);
-      if (models.length === 0) {
-        setCloudflareError('No models returned by Cloudflare Workers AI.');
+  // Manual refresh defaults `force` to true so the picker revalidates the
+  // cached binding catalog; the auto-fetch effect below passes `false` to serve
+  // first-load from cache. Mirrors the metadata-backed providers above.
+  const refreshCloudflareModels = useCallback(
+    async (force = true) => {
+      if (cloudflareLoading) return;
+      setCloudflareLoading(true);
+      setCloudflareError(null);
+      try {
+        const models = await fetchCloudflareModels({ force });
+        setCloudflareModelList(models);
+        setCloudflareUpdatedAt(Date.now());
+        setCloudflareConfiguredStateAndPersist(true);
+        setCloudflareStatusError(null);
+        if (models.length === 0) {
+          setCloudflareError('No models returned by Cloudflare Workers AI.');
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load Cloudflare Workers AI models.';
+        setCloudflareError(message);
+        // Only flip `configured` to false on errors that explicitly indicate a
+        // missing binding. A looser match (e.g. "workers ai") would catch every
+        // timeout and 5xx message, since all CF errors mention the provider,
+        // and would wrongly hide the provider on transient failures.
+        if (/not configured|worker binding/i.test(message)) {
+          setCloudflareConfiguredStateAndPersist(false);
+          setCloudflareModelList([]);
+          setCloudflareUpdatedAt(null);
+        }
+      } finally {
+        setCloudflareLoading(false);
       }
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to load Cloudflare Workers AI models.';
-      setCloudflareError(message);
-      // Only flip `configured` to false on errors that explicitly indicate a
-      // missing binding. A looser match (e.g. "workers ai") would catch every
-      // timeout and 5xx message, since all CF errors mention the provider,
-      // and would wrongly hide the provider on transient failures.
-      if (/not configured|worker binding/i.test(message)) {
-        setCloudflareConfiguredStateAndPersist(false);
-        setCloudflareModelList([]);
-        setCloudflareUpdatedAt(null);
-      }
-    } finally {
-      setCloudflareLoading(false);
-    }
-  }, [cloudflareLoading, setCloudflareConfiguredStateAndPersist]);
+    },
+    [cloudflareLoading, setCloudflareConfiguredStateAndPersist],
+  );
 
   const refreshZenStandardModels = useCallback(
     async (force = true) => {
@@ -1014,7 +1020,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'cloudflare',
         () => {
-          void refreshCloudflareModels();
+          void refreshCloudflareModels(false);
         },
       ),
     [
