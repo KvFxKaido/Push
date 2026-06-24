@@ -654,7 +654,10 @@ describe('buildCuratedBlackboxModelList', () => {
     expect(curated).not.toContain('blackboxai/nomic/nomic-embed-text');
   });
 
-  it('prefers routed provider aliases over duplicate legacy Blackbox aliases', () => {
+  it('prefers chat-accepted bare Anthropic ids over the rejected routed aliases', () => {
+    // Blackbox rejects the routed `blackboxai/anthropic/...` alias at the chat
+    // endpoint and only accepts the bare dated id, so the dedup must surface the
+    // bare form for the Anthropic tier (see BLACKBOX_DEFAULT_MODEL).
     const curated = buildCuratedBlackboxModelList(
       [
         'claude-3-5-haiku-20241022',
@@ -667,12 +670,19 @@ describe('buildCuratedBlackboxModelList', () => {
     );
 
     expect(curated).toEqual([
-      'blackboxai/anthropic/claude-3.5-haiku',
-      'blackboxai/anthropic/claude-haiku-4.5',
+      'claude-3-5-haiku-20241022',
+      'claude-haiku-4-5-20251001',
       'blackbox-pro',
     ]);
-    expect(curated).not.toContain('claude-3-5-haiku-20241022');
-    expect(curated).not.toContain('claude-haiku-4-5-20251001');
+    expect(curated).not.toContain('blackboxai/anthropic/claude-3.5-haiku');
+    expect(curated).not.toContain('blackboxai/anthropic/claude-haiku-4.5');
+  });
+
+  it('still prefers routed aliases over bare ids for non-Anthropic vendors', () => {
+    const curated = buildCuratedBlackboxModelList(['grok-4.3', 'blackboxai/x-ai/grok-4.3'], {});
+
+    expect(curated).toEqual(['blackboxai/x-ai/grok-4.3']);
+    expect(curated).not.toContain('grok-4.3');
   });
 
   it('excludes explicitly tiny Blackbox models even without metadata', () => {
@@ -1097,7 +1107,9 @@ describe('fetchBlackboxModels', () => {
     );
 
     await expect(fetchBlackboxModels()).resolves.toEqual([
-      'blackboxai/anthropic/claude-3.5-haiku',
+      // The bare dated id wins the Anthropic dedup (chat-accepted form), and now
+      // groups under the Anthropic bucket alongside the routed sonnet id.
+      'claude-3-5-haiku-20241022',
       'blackboxai/anthropic/claude-sonnet-4.6',
       'blackbox-pro',
       'blackboxai/qwen/qwen3-coder-32b-instruct',

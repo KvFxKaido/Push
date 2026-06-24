@@ -16,7 +16,9 @@ import {
   compareProviderModelIds,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
+  inferBlackboxAliasProvider,
   KILOCODE_MODELS,
+  normalizeBlackboxAliasLeaf,
   NVIDIA_MODELS,
   OPENADAPTER_MODELS,
   OPENROUTER_MODELS,
@@ -1045,37 +1047,6 @@ function blackboxBaseId(id: string): string {
 const BLACKBOX_NON_CHAT_FAMILY_REGEX =
   /animatediff|(?:^|[-_/:.])svd(?:$|[-_/:.])|mochi(?:$|[-_/:.])|hunyuan(?:$|[-_/:.])|(?:^|[-_/:.])lora(?:$|[-_/:.])|gemini-flash-edit/i;
 
-const BLACKBOX_ALIAS_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
-  [/^claude\b/i, 'anthropic'],
-  [/^(?:gpt|o1\b|o3\b|o4\b|codex\b)/i, 'openai'],
-  [/^gemini\b/i, 'google'],
-  [/^(?:llama|meta\b)/i, 'meta'],
-  [/^qwen\b/i, 'qwen'],
-  [/^(?:kimi|moonshot)\b/i, 'moonshotai'],
-  [/^glm\b/i, 'z-ai'],
-  [/^deepseek\b/i, 'deepseek'],
-  [/^(?:mistral|codestral|devstral)\b/i, 'mistralai'],
-  [/^sonar\b/i, 'perplexity'],
-  [/^grok\b/i, 'x-ai'],
-];
-
-function inferBlackboxAliasProvider(normalizedLeaf: string): string | null {
-  for (const [pattern, provider] of BLACKBOX_ALIAS_PROVIDER_PREFIXES) {
-    if (pattern.test(normalizedLeaf)) return provider;
-  }
-  return null;
-}
-
-function normalizeBlackboxAliasLeaf(id: string): string {
-  return id
-    .trim()
-    .toLowerCase()
-    .replace(/^blackboxai\//i, '')
-    .replace(/_/g, '-')
-    .replace(/[-_.]?20\d{6}$/, '')
-    .replace(/(\d)-(\d)/g, '$1.$2');
-}
-
 function getBlackboxDedupKey(id: string): string {
   const baseId = blackboxBaseId(id);
   const slash = baseId.indexOf('/');
@@ -1096,7 +1067,17 @@ function prefersBlackboxModelId(nextId: string, currentId: string): boolean {
   const currentBase = blackboxBaseId(currentId);
   const nextIsRouted = nextBase.includes('/');
   const currentIsRouted = currentBase.includes('/');
-  if (nextIsRouted !== currentIsRouted) return nextIsRouted;
+  if (nextIsRouted !== currentIsRouted) {
+    // The routed `blackboxai/<vendor>/...` form is normally the canonical,
+    // chat-accepted id, so prefer it. Anthropic is the documented exception:
+    // Blackbox rejects the routed `blackboxai/anthropic/...` alias and only
+    // accepts the bare dated id (see BLACKBOX_DEFAULT_MODEL in
+    // lib/provider-models.ts), so surface the bare form there instead — picking
+    // the routed alias would 400 the next send. Both ids share this dedup key,
+    // so either resolves the same vendor.
+    const prefersRouted = getBlackboxDedupKey(nextBase).split('/', 1)[0] !== 'anthropic';
+    return prefersRouted ? nextIsRouted : !nextIsRouted;
+  }
 
   const nextLabel = normalizeBlackboxAliasLeaf(nextBase);
   const currentLabel = normalizeBlackboxAliasLeaf(currentBase);
