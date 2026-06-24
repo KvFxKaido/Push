@@ -32,6 +32,17 @@ export function resolveNavMode(): NavMode {
   return NAV_MODE_DEFAULT;
 }
 
+function prefersReducedMotion(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+  try {
+    return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return false;
+  }
+}
+
 // ── push (legacy parallax) ──────────────────────────────
 const PUSH_DRAWER_OFFSET = 'min(86vw, 24rem)';
 const PUSH_HUB_OFFSET = '94vw';
@@ -90,7 +101,10 @@ export function getChatShellNav(
     style: {
       opacity: open ? 0 : 1,
       filter: open ? `blur(${PAGE_BLUR})` : 'blur(0px)',
-      transition: PAGE_TRANSITION,
+      // Reduced motion: jump to the end state with no fade/blur/slide animation.
+      // (The global index.css wildcard also clamps transition-duration, but this
+      // makes the intent explicit and skips the work entirely.)
+      transition: prefersReducedMotion() ? 'none' : PAGE_TRANSITION,
       // The faded-out chat must not intercept taps meant for the menu/overlay.
       pointerEvents: open ? 'none' : undefined,
     },
