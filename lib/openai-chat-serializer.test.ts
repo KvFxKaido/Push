@@ -330,6 +330,34 @@ describe('toOpenAIChat', () => {
       ),
     ).toThrow(/unsupported or malformed content block/);
   });
+
+  it('drops thinking / redacted_thinking blocks (OpenAI-compat rejects the signed-reasoning sidecar)', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'thinking', text: 'pondering', signature: 'sig' },
+            { type: 'text', text: 'the answer' },
+            { type: 'redacted_thinking', data: 'opaque' },
+          ],
+        }),
+      ]),
+    );
+    // Only the visible text survives; the two thinking blocks are dropped, not
+    // serialized and not thrown on.
+    expect(body.messages?.[0].content).toEqual([{ type: 'text', text: 'the answer' }]);
+  });
+
+  it('falls back to an empty text part when a turn carries only thinking blocks', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [{ type: 'thinking', text: 'just thinking', signature: 'sig' }],
+        }),
+      ]),
+    );
+    expect(body.messages?.[0].content).toEqual([{ type: 'text', text: '' }]);
+  });
 });
 
 describe('toOpenAIResponseFormat', () => {

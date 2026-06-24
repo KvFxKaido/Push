@@ -35,18 +35,22 @@ export type LlmImageSource =
 /**
  * A single content block in the Anthropic-conceptual neutral message model —
  * the migration target that will eventually replace the flat
- * `content` / `contentParts` representation (slice 1 of the decision doc:
+ * `content` / `contentParts` representation (see the decision doc:
  * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
  *
- * Phase 1 carries only `text` and `image`; later slices extend the union with
- * `thinking`, `tool_use`, and `tool_result` so the rich provider concepts the
- * Anthropic bridge currently reconstructs become first-class here and every
- * serializer downcasts from them. Additive and optional: see
+ * Carries `text`, `image`, and the signed `thinking` / `redacted_thinking`
+ * blocks (the {@link ReasoningBlock} variants, reused verbatim so the thinking
+ * representation is unified — slice 2 begins folding the sidecar
+ * {@link LlmMessage.reasoningBlocks} into this block stream). Later slices add
+ * `tool_use` and `tool_result` so the rich provider concepts the Anthropic
+ * bridge currently reconstructs become first-class here and every serializer
+ * downcasts from them. Additive and optional: see
  * {@link LlmMessage.contentBlocks}.
  */
 export type LlmContentBlock =
   | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image'; source: LlmImageSource; cache_control?: { type: 'ephemeral' } };
+  | { type: 'image'; source: LlmImageSource; cache_control?: { type: 'ephemeral' } }
+  | ReasoningBlock;
 
 /**
  * Minimum portable message shape understood by all lib/-side agent roles.
