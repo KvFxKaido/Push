@@ -555,15 +555,30 @@ export const MessageBubble = memo(function MessageBubble({
 
   // The action row (Copy / Regenerate / Pin · Copy / Edit) reveals on hover on
   // pointer devices; on touch there is no hover, so a long-press reveals it (the
-  // app-wide touch idiom — `useLongPress`, same as the branch-picker Delete). A
-  // tap outside the bubble dismisses it — the touch equivalent of hovering out.
+  // app-wide touch idiom — `useLongPress`, same as the branch-picker Delete). The
+  // hold arms on the message bubble itself (the `pointerHandlers` spread below),
+  // not this whole row — a press on the empty gutter or the avatar must not fire
+  // it. `rowRef` still wraps the full row so a tap anywhere outside it dismisses
+  // the revealed actions (the touch equivalent of hovering out), while taps on the
+  // revealed buttons — which sit inside the row — are left alone.
+  // `swallowLongPressClick` eats the click that trails a hold so the same gesture
+  // doesn't also fire an inner link or attachment thumbnail.
   const [actionsRevealed, setActionsRevealed] = useState(false);
   const longPress = useLongPress(() => setActionsRevealed(true));
-  const bubbleRef = useRef<HTMLDivElement>(null);
+  const swallowLongPressClick = useCallback(
+    (e: React.MouseEvent) => {
+      if (longPress.consumeClick()) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    },
+    [longPress],
+  );
+  const rowRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!actionsRevealed) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (!bubbleRef.current?.contains(e.target as Node)) setActionsRevealed(false);
+      if (!rowRef.current?.contains(e.target as Node)) setActionsRevealed(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -737,19 +752,7 @@ export const MessageBubble = memo(function MessageBubble({
     const hasAttachments = message.attachments && message.attachments.length > 0;
 
     return (
-      <div
-        ref={bubbleRef}
-        {...longPress.pointerHandlers}
-        onClickCapture={(e) => {
-          // Swallow the click that trails a long-press release so it doesn't also
-          // fire an inner element (a markdown link, the thinking-block toggle).
-          if (longPress.consumeClick()) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-        }}
-        className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up"
-      >
+      <div ref={rowRef} className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
         {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row. */}
         <div
           className={`opacity-0 pointer-events-none group-hover/user:opacity-100 group-hover/user:pointer-events-auto ${
@@ -767,7 +770,11 @@ export const MessageBubble = memo(function MessageBubble({
             </button>
           )}
         </div>
-        <div className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md">
+        <div
+          {...longPress.pointerHandlers}
+          onClickCapture={swallowLongPressClick}
+          className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md"
+        >
           {hasAttachments && (
             <div className="flex flex-wrap gap-2 mb-2">
               {message.attachments!.map((att) => (
@@ -787,16 +794,7 @@ export const MessageBubble = memo(function MessageBubble({
 
   return (
     <div
-      ref={bubbleRef}
-      {...longPress.pointerHandlers}
-      onClickCapture={(e) => {
-        // Swallow the click that trails a long-press release so it doesn't also
-        // fire an inner element (a markdown link, the thinking-block toggle).
-        if (longPress.consumeClick()) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }}
+      ref={rowRef}
       className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in"
     >
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-push-edge bg-push-grad-icon">
@@ -809,6 +807,8 @@ export const MessageBubble = memo(function MessageBubble({
         {hasThinking && <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming} />}
         {hasContent && (
           <div
+            {...longPress.pointerHandlers}
+            onClickCapture={swallowLongPressClick}
             className={`text-push-lg leading-relaxed break-words ${
               isError ? 'text-red-400' : 'text-push-fg-soft'
             }`}
