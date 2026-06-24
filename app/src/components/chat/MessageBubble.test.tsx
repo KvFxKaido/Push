@@ -74,6 +74,14 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('hex-thinking');
   });
 
+  it('renders the pill stream caret by default while streaming', () => {
+    const message = assistantMessage({ content: 'hello', status: 'streaming' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    // Default caret style is the pill; the hexagon caret is opt-in via ?caret=.
+    expect(html).toContain('stream-caret');
+    expect(html).not.toContain('stream-caret-hex');
+  });
+
   it('hides malformed tool JSON before any renderer (sanitation is upstream)', () => {
     // Fixture case 7: malformed tool JSON. Hiding happens in displayContentText /
     // hasContent, ahead of the markdown renderer, so it is renderer-agnostic —
