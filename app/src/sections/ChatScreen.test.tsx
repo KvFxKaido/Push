@@ -239,9 +239,10 @@ describe('ChatScreen', () => {
       />,
     );
 
-    // The dotted treatment swaps the drifting blobs for an accent-fed canvas.
+    // The dotted treatment renders the accent-fed canvas, and keeps the
+    // gradient blobs as a top-bar wash so the app-bar chrome stays legible.
     expect(html).toContain('canvas');
-    expect(html).not.toContain('push-glow-blob');
+    expect(html).toContain('push-glow-blob');
   });
 
   it('pauses the background glow when the repo opts out via glowEnabled false', () => {
