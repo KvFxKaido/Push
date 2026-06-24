@@ -44,6 +44,7 @@ import {
   HUB_GLASS_PANEL_CLASS,
 } from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
+import { DrawerBranchListItem } from '@/components/chat/DrawerBranchListItem';
 import type { RepoAppearance } from '@/lib/repo-appearance';
 import type { SwitchBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
@@ -141,7 +142,6 @@ export function RepoChatDrawer({
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [pendingDeleteBranch, setPendingDeleteBranch] = useState<string | null>(null);
   const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
   const [pendingSwitchBranch, setPendingSwitchBranch] = useState<string | null>(null);
   const [switchError, setSwitchError] = useState<string | null>(null);
@@ -154,7 +154,6 @@ export function RepoChatDrawer({
       setEditingChatId(null);
       setEditingTitle('');
       setBranchMenuOpen(false);
-      setPendingDeleteBranch(null);
       setDeletingBranch(null);
       setAppearanceRepoState(null);
     }, 0);
@@ -301,16 +300,14 @@ export function RepoChatDrawer({
     cancelRename();
   };
 
-  const requestDeleteBranch = async (branchName: string) => {
+  // Single-tap delete — the reveal (hover / focus / long-press in
+  // DrawerBranchListItem) is the deliberate guard, so there's no separate
+  // confirm step, matching the workspace BranchListItem.
+  const deleteBranch = async (branchName: string) => {
     if (!onDeleteBranch || deletingBranch) return;
-    if (pendingDeleteBranch !== branchName) {
-      setPendingDeleteBranch(branchName);
-      return;
-    }
     setDeletingBranch(branchName);
     try {
-      const deleted = await onDeleteBranch(branchName);
-      setPendingDeleteBranch(deleted ? null : branchName);
+      await onDeleteBranch(branchName);
     } finally {
       setDeletingBranch((prev) => (prev === branchName ? null : prev));
     }
@@ -566,7 +563,6 @@ export function RepoChatDrawer({
                                 onOpenChange={(open) => {
                                   setBranchMenuOpen(open);
                                   if (!open) {
-                                    setPendingDeleteBranch(null);
                                     setDeletingBranch(null);
                                   }
                                   if (
@@ -660,74 +656,20 @@ export function RepoChatDrawer({
                                         !isActiveBranch &&
                                         !branch.isDefault &&
                                         !branch.isProtected;
-                                      const isDeletePending = pendingDeleteBranch === branch.name;
-                                      const isDeletingThisBranch = deletingBranch === branch.name;
                                       return (
-                                        <div key={branch.name}>
-                                          <DropdownMenuItem
-                                            onSelect={(e) => {
-                                              if (isActiveBranch) {
-                                                e.preventDefault();
-                                                return;
-                                              }
-                                              setPendingDeleteBranch(null);
-                                              e.preventDefault();
-                                              void switchActiveRepoBranch(branch.name);
-                                            }}
-                                            className={`mx-1 flex items-center gap-2 rounded-lg px-3 py-2 ${
-                                              isActiveBranch
-                                                ? 'bg-push-surface-active'
-                                                : 'hover:bg-push-surface-hover'
-                                            }`}
-                                          >
-                                            <span
-                                              className={`min-w-0 flex-1 truncate text-xs ${isActiveBranch ? 'text-push-fg' : 'text-push-fg-secondary'}`}
-                                            >
-                                              {branch.name}
-                                            </span>
-                                            {branch.isDefault && (
-                                              <span className="rounded-full bg-push-surface-active px-1.5 py-0.5 text-push-2xs text-push-link">
-                                                default
-                                              </span>
-                                            )}
-                                            {branch.isProtected && (
-                                              <span className="rounded-full bg-push-surface-active px-1.5 py-0.5 text-push-2xs text-push-status-error-soft">
-                                                protected
-                                              </span>
-                                            )}
-                                            {isActiveBranch && (
-                                              <Check className="h-3.5 w-3.5 text-push-link" />
-                                            )}
-                                            {pendingSwitchBranch === branch.name && (
-                                              <Loader2 className="h-3.5 w-3.5 animate-spin text-push-link" />
-                                            )}
-                                          </DropdownMenuItem>
-                                          {canDeleteBranch && (
-                                            <DropdownMenuItem
-                                              onSelect={(e) => {
-                                                e.preventDefault();
-                                                if (isDeletingThisBranch || deletingBranch) return;
-                                                void requestDeleteBranch(branch.name);
-                                              }}
-                                              className={`mx-1 mb-1 flex items-center gap-2 rounded-lg px-3 py-1.5 text-push-xs ${
-                                                isDeletePending
-                                                  ? 'bg-red-950/30 text-red-300 hover:bg-red-950/40'
-                                                  : 'text-push-fg-dim hover:bg-push-surface-hover hover:text-red-300'
-                                              }`}
-                                            >
-                                              {isDeletingThisBranch ? (
-                                                <Loader2 className="h-3 w-3 animate-spin" />
-                                              ) : (
-                                                <Trash2 className="h-3 w-3" />
-                                              )}
-                                              {isDeletingThisBranch
-                                                ? `Deleting ${branch.name}...`
-                                                : isDeletePending
-                                                  ? `Confirm delete ${branch.name}`
-                                                  : `Delete ${branch.name}`}
-                                            </DropdownMenuItem>
-                                          )}
-                                        </div>
+                                        <DrawerBranchListItem
+                                          key={branch.name}
+                                          name={branch.name}
+                                          isDefault={branch.isDefault}
+                                          isProtected={branch.isProtected}
+                                          isActive={isActiveBranch}
+                                          canDelete={canDeleteBranch}
+                                          isDeleting={deletingBranch === branch.name}
+                                          anyDeleting={Boolean(deletingBranch)}
+                                          isSwitching={pendingSwitchBranch === branch.name}
+                                          onSwitch={() => void switchActiveRepoBranch(branch.name)}
+                                          onDelete={() => void deleteBranch(branch.name)}
+                                        />
                                       );
                                     })}
                                 </DropdownMenuContent>
