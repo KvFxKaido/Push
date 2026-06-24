@@ -1,14 +1,38 @@
 # Checkpoint Recovery on Sandbox Loss (Increment 2)
 
 Date: 2026-06-24
-Status: **Draft** — design approved (premise + forks decided with Shawn
-2026-06-24). PR1 (the cloud-snapshot gate + cold-start-on-loss spine) is
-implemented; promotion to **Current** waits on device validation and the
-consistency/ordering follow-ups below.
+Status: **Current** — PR1 (the cloud-snapshot gate + cold-start-on-loss spine)
+is implemented (#1136) and **device-validated on the Moto G** (2026-06-24). The
+core decision — native shell recovers from the on-device checkpoint, never the
+cloud — is shipped and proven. The consistency/ordering items below are tracked
+as follow-up hardening (PR2+), not blockers for this decision.
+
+## Device validation (2026-06-24, Moto G)
+
+The container was killed server-side mid-session (cleanup endpoint, in the app's
+own auth context) to force a real definitive loss. Captured live in logcat:
+
+- **Loss detected** as definitive — `Refresh: container gone … NOT_FOUND` (the
+  health-check probe classified it correctly, not transient).
+- **Retire fired, not cloud restore** — `{"event":"sandbox_retired_dead_id_native"}`
+  with **zero** `Attempting restore from snapshot` lines; the saved session had
+  `snapshotId: null` (nothing ever shipped to Modal).
+- **Unstranded → cold-start** — dropped to idle, and the next message cold-started
+  a fresh sandbox; the agent turn then ran clean on it (`inline_turn_completed
+  outcome:ok`) — "Cloudflare sees it and continues as normal" for the fresh-clone
+  path.
+- **Checkpoint survived the loss** — `CheckpointHistory` still listed the latest
+  on-device commit (keyed by repo+branch, not sandbox).
+- **UI confirmed** — the on-device restore banner appeared on the fresh sandbox,
+  and the hub's Hibernate strip was hidden on the native shell.
+
+The one path *not* exercised here is restoring the checkpoint *onto* a fresh
+sandbox and the derived-cache coherence that follows — see the cache-invalidation
+follow-up below (PR2).
 
 ## Implementation status
 
-**PR1 — landed (cloud snapshots off on native, local is the only recovery):**
+**PR1 — landed + validated (cloud snapshots off on native, local is the only recovery):**
 the `nativeCheckpointsActive()` predicate (native shell + flag, the same switch
 `selectCheckpointStore` uses) gates every cloud-snapshot path in `useSandbox`:
 idle keep-warm hibernation (activity bookkeeping preserved, only the snapshot
@@ -221,7 +245,8 @@ confusion in use.
 
 ## Status flip plan
 
-Promote to **Current** when the native shell ships local-only recovery
-(cloud-snapshot gated off + cold-start→native-restore on loss) and it's
-device-validated on the Moto G. Flip the parent doc's "increment 2 is separate"
-pointer to reference this doc.
+✅ **Done (2026-06-24).** The native shell ships local-only recovery
+(cloud-snapshot gated off + cold-start-on-loss, #1136) and it's device-validated
+on the Moto G (see Device validation above) — Status flipped to **Current**. The
+parent doc (`Native Checkpoint Store.md`) carries no separate "increment 2"
+pointer to update; it's scoped to capture/restore + diff transport.
