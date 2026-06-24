@@ -2,7 +2,32 @@
 
 Date: 2026-06-24
 Status: **Draft** — design approved (premise + forks decided with Shawn
-2026-06-24), not yet implemented.
+2026-06-24). PR1 (the cloud-snapshot gate + cold-start-on-loss spine) is
+implemented; promotion to **Current** waits on device validation and the
+consistency/ordering follow-ups below.
+
+## Implementation status
+
+**PR1 — landed (cloud snapshots off on native, local is the only recovery):**
+the `nativeCheckpointsActive()` predicate (native shell + flag, the same switch
+`selectCheckpointStore` uses) gates every cloud-snapshot path in `useSandbox`:
+idle keep-warm hibernation (activity bookkeeping preserved, only the snapshot
+skipped), manual `hibernate()`, and `attemptSnapshotRestore` on reconnect. The
+liveness probe stays. Loss no longer strands on a dead id: `refresh`'s
+definitively-gone branch and the tool-path `markUnreachable` (via a silent probe)
+retire the id → idle so the next `ensureSandbox` cold-starts and the on-device
+checkpoint offer fires against the fresh sandbox (which it reaches by construction
+— `restoredFromSnapshotSandboxId` stays null on native). The hub's
+hibernate/restore/forget affordances are hidden on native.
+
+**Deferred to follow-up PRs (device-validate PR1 first):** native-restore-before
+workspace-patch-replay ordering; resume "re-apply" suppression in
+`useChatCheckpoint`; the post-restore derived-cache invalidation audit (the
+load-bearing "continues as normal" item — note this gap is *shared* with the
+increment-1 manual restore, not introduced here); detection↔capture race
+ordering; auto-restore-vs-banner UX; and eager auto-cold-start-without-user-action
+on mid-session loss (PR1 unstrands, so recovery fires on the next
+sandbox-requiring action).
 
 Increment 2 of the native checkpoint arc. Increment 1 (the manual
 capture↔restore loop + diff transport) is shipped and device-validated — see

@@ -4,6 +4,7 @@ import type { ApprovalMode } from '@/lib/approval-mode';
 import { Toaster } from '@/components/ui/sonner';
 import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
+import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
@@ -62,6 +63,10 @@ const RepoLauncherSheet = lazy(() =>
 );
 
 export function WorkspaceChatRoute(props: ChatRouteProps) {
+  // Native shell recovers from the on-device checkpoint, not a cloud snapshot —
+  // so the hub's hibernate/restore/forget affordances are hidden there (the
+  // useSandbox cloud-snapshot paths are gated off by the same predicate).
+  const cloudSnapshotsHidden = nativeCheckpointsActive();
   const {
     activeRepo,
     workspaceSession,
@@ -781,9 +786,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
               void sandbox.refresh();
             }}
             onNewSandbox={restartCurrentSandbox}
-            onHibernateSandbox={sandbox.hibernate}
-            onForgetSandboxSnapshot={sandbox.forgetSnapshot}
-            snapshotInfo={sandbox.snapshotInfo}
+            onHibernateSandbox={cloudSnapshotsHidden ? undefined : sandbox.hibernate}
+            onForgetSandboxSnapshot={cloudSnapshotsHidden ? undefined : sandbox.forgetSnapshot}
+            snapshotInfo={cloudSnapshotsHidden ? null : sandbox.snapshotInfo}
             reviewProviders={catalog.availableProviders}
             reviewActiveProvider={catalog.activeProviderLabel}
             reviewModelOptions={reviewModelOptions}

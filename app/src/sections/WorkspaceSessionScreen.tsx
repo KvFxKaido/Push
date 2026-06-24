@@ -111,6 +111,12 @@ export function WorkspaceSessionScreen({
     sandboxId: sandbox.sandboxId,
     branch: repoBranch,
     repoFullName: workspaceRepo?.full_name ?? null,
+    // The `restoredFromSnapshotSandboxId` clause suppresses the offer when a
+    // cloud snapshot already restored the tree (web). On the native shell cloud
+    // restore is gated off (Increment 2), so this id stays null and never
+    // matches — the native checkpoint offer reaches a cold-started sandbox by
+    // construction. Left explicit so a future change can't silently re-suppress
+    // it on native.
     enabled:
       workspaceRepo != null &&
       sandbox.status === 'ready' &&

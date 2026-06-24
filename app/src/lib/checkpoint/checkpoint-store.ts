@@ -136,6 +136,20 @@ function readNativeCheckpointsFlag(): string | boolean | undefined {
   return meta?.VITE_NATIVE_CHECKPOINTS;
 }
 
+/**
+ * The one switch for "this surface recovers from the on-device checkpoint, not
+ * the cloud snapshot." True iff we're on the native shell AND native checkpoints
+ * are enabled — the *same* condition `selectCheckpointStore` uses to pick the
+ * native store. "If you're on native checkpoints, you're not on cloud snapshots"
+ * (Increment 2 design): the cloud snapshot paths in `useSandbox` gate off this,
+ * and the hub hides its hibernate/restore affordances on it. Kept here, beside
+ * the store selector, so the predicate and the selection can never drift — a
+ * dedicated kill-switch flag is trivial to add later if an override is wanted.
+ */
+export function nativeCheckpointsActive(): boolean {
+  return isNativePlatform() && isNativeCheckpointsEnabled();
+}
+
 export interface ResolveCheckpointStoreDeps {
   /** Platform probe (defaults to the real Capacitor check); injectable for tests. */
   isNative?: () => boolean;
