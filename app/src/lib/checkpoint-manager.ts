@@ -299,7 +299,7 @@ export async function detectInterruptedRun(
 export function buildCheckpointReconciliationMessage(
   checkpoint: RunCheckpoint,
   status: SandboxStatusResult,
-  options?: { sandboxLost?: boolean },
+  options?: { sandboxLost?: boolean; localCheckpointRecovery?: boolean },
 ): string {
   // Cold resume: prior sandbox expired (planned) or was lost mid-run (OOM,
   // container death). Either way the sandbox we resume on is a fresh clone,
@@ -307,6 +307,42 @@ export function buildCheckpointReconciliationMessage(
   // diff instead.
   if (checkpoint.reason === 'expiry' || options?.sandboxLost) {
     const expired = checkpoint.reason === 'expiry';
+
+    // On the native shell the on-device checkpoint is the authoritative WIP
+    // store: lost work is recovered by *restoring* that checkpoint into the fresh
+    // sandbox (a user-accepted on-device restore offer), NOT by the model
+    // re-applying a saved diff — doing both would double-apply (Increment 2). But
+    // the restore is async/user-driven, so at this moment the tree may or may not
+    // already contain the work; and a run `savedDiff` may exist even when the
+    // on-device checkpoint doesn't. So we do NOT blindly drop the diff (that would
+    // discard the only WIP copy when no checkpoint exists) and we do NOT claim the
+    // tree is already restored. Instead: keep the diff as a labeled *reference*
+    // and make re-apply conditional on the actual tree state, which the model must
+    // inspect first. Correct whether or not the restore has happened and whether
+    // or not a checkpoint exists. (Fully sequencing the message after the restore
+    // resolves is deferred coordination work — see the decision doc.)
+    if (options?.localCheckpointRecovery) {
+      let msg =
+        '[SESSION_RESUMED]\n' +
+        `Prior sandbox ${expired ? 'expired' : 'was lost mid-run'}. Resuming on a new sandbox (fresh clone).\n` +
+        '\nOn this device, uncommitted work is recovered by restoring an on-device checkpoint into ' +
+        'the sandbox (via the on-device restore offer) — not by re-applying a diff. Before doing ' +
+        'anything, run `git status` and read the relevant files to see the ACTUAL tree state:\n' +
+        '- If the uncommitted changes are already present, the checkpoint was restored — do NOT ' +
+        're-apply them; continue from the current tree.\n' +
+        '- If the tree is a clean clone, the work is preserved in the on-device checkpoint (not ' +
+        'lost) — prefer accepting that restore over reconstructing it.\n';
+      if (checkpoint.savedDiff) {
+        msg +=
+          `\nFor reference only — the uncommitted changes at ${expired ? 'expiry' : 'the last checkpoint'}:\n---\n${checkpoint.savedDiff}\n---\n` +
+          '\nUse this reference to reconstruct work ONLY if the working tree is a clean clone and ' +
+          'the on-device checkpoint cannot be restored; never re-apply changes already in the tree. ' +
+          'Verify each file before editing.\n';
+      }
+      msg += '\nDo not repeat work already committed to the branch.';
+      return msg;
+    }
+
     let msg = expired
       ? '[SESSION_RESUMED]\nPrior sandbox expired. Resuming on a new sandbox (fresh clone).\n'
       : '[SESSION_RESUMED]\nPrior sandbox was lost mid-run. Resuming on a new sandbox (fresh clone).\n';

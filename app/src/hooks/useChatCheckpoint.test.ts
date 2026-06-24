@@ -244,10 +244,14 @@ describe('useChatCheckpoint', () => {
     // A recreated sandbox is a fresh clone — its live status must not feed
     // the reconciliation message.
     expect(checkpointMocks.sandboxStatus).not.toHaveBeenCalled();
+    // Off the native shell, localCheckpointRecovery is false → the normal
+    // saved-diff reconciliation path; on native it would be true (the on-device
+    // checkpoint owns WIP, so no re-apply). The message behavior for both is
+    // unit-tested in checkpoint-manager.test.ts.
     expect(checkpointMocks.buildCheckpointReconciliationMessage).toHaveBeenCalledWith(
       checkpoint,
       expect.anything(),
-      { sandboxLost: true },
+      { sandboxLost: true, localCheckpointRecovery: false },
     );
     expect(sendMessage).toHaveBeenCalledWith('cold resume content');
   });
