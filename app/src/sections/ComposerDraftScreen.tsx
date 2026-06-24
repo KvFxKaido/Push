@@ -323,6 +323,10 @@ export function ComposerDraftScreen({
   const ModeIcon = MODE_OPTIONS.find((m) => m.mode === state.mode)?.icon ?? FolderGit2;
 
   const glow = useMemo(() => {
+    // Chat and scratch are fixed-chrome lanes: they paint a constant brand
+    // glow color (not a per-repo accent) and have no RepoAppearance to read,
+    // so the gradient style is intentional here. Only repo mode honors the
+    // user's glowStyle pick.
     if (state.mode === 'chat')
       return { active: true, color: COMPOSER_CHAT_GLOW, variant: 'gradient' as const };
     if (state.mode === 'scratch')
