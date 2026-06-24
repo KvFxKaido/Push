@@ -325,13 +325,14 @@ export function buildCheckpointReconciliationMessage(
       let msg =
         '[SESSION_RESUMED]\n' +
         `Prior sandbox ${expired ? 'expired' : 'was lost mid-run'}. Resuming on a new sandbox (fresh clone).\n` +
-        '\nOn this device, uncommitted work is recovered by restoring an on-device checkpoint into ' +
-        'the sandbox (via the on-device restore offer) — not by re-applying a diff. Before doing ' +
-        'anything, run `git status` and read the relevant files to see the ACTUAL tree state:\n' +
-        '- If the uncommitted changes are already present, the checkpoint was restored — do NOT ' +
+        '\nOn this device, any uncommitted work is recovered by restoring an on-device checkpoint ' +
+        'into the sandbox (via the on-device restore offer) — not by re-applying a diff. Before ' +
+        'doing anything, run `git status` and read the relevant files to see the ACTUAL tree state:\n' +
+        '- If the uncommitted changes are already present, a checkpoint was restored — do NOT ' +
         're-apply them; continue from the current tree.\n' +
-        '- If the tree is a clean clone, the work is preserved in the on-device checkpoint (not ' +
-        'lost) — prefer accepting that restore over reconstructing it.\n';
+        '- If the tree is a clean clone: a checkpoint may not exist (none was captured, or there ' +
+        'was no uncommitted work). Accept the on-device restore offer if one is shown; otherwise ' +
+        'continue from the conversation above — do NOT reconstruct work blindly.\n';
       if (checkpoint.savedDiff) {
         msg +=
           `\nFor reference only — the uncommitted changes at ${expired ? 'expiry' : 'the last checkpoint'}:\n---\n${checkpoint.savedDiff}\n---\n` +
