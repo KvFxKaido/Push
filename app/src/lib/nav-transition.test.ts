@@ -68,15 +68,15 @@ describe('getChatShellNav', () => {
   it('pager mode fades + blurs + slides the chat toward the open menu', () => {
     // history is the page to the left → chat slides right as it exits.
     const drawer = getChatShellNav('pager', { drawerOpen: true, hubOpen: false });
-    expect(drawer.transform).toBe('translateX(8px)');
+    expect(drawer.transform).toBe('translateX(var(--distance-base))');
     expect(drawer.style.opacity).toBe(0);
-    expect(drawer.style.filter).toBe('blur(3px)');
+    expect(drawer.style.filter).toBe('blur(var(--blur-medium))');
     expect(drawer.style.pointerEvents).toBe('none');
     expect(drawer.shadowClass).toBe('');
 
-    // hub is the page to the right → chat slides left.
+    // hub is the page to the right → chat slides left (negated via calc).
     const hub = getChatShellNav('pager', { drawerOpen: false, hubOpen: true });
-    expect(hub.transform).toBe('translateX(-8px)');
+    expect(hub.transform).toBe('translateX(calc(-1 * var(--distance-base)))');
     expect(hub.style.opacity).toBe(0);
 
     const closed = getChatShellNav('pager', { drawerOpen: false, hubOpen: false });

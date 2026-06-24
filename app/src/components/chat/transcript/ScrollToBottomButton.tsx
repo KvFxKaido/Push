@@ -17,12 +17,12 @@ export function ScrollToBottomButton({
   // in on the same motion as the sheets. Horizontal centering uses `left-1/2`
   // + `-ml-5` (half of `w-10`) rather than `-translate-x-1/2`, because
   // panel-reveal owns the `transform` (translateY) and the two can't share it.
-  // `--panel-translate-y` keeps the original ~12px throw.
+  // `--panel-translate-y` overrides the throw to `--distance-medium` (12px).
   return (
     <button
       onClick={onClick}
       data-open={visible}
-      style={{ '--panel-translate-y': '0.75rem' } as CSSProperties}
+      style={{ '--panel-translate-y': 'var(--distance-medium)' } as CSSProperties}
       className={`
         panel-reveal
         absolute left-1/2 -ml-5 bottom-8

@@ -48,8 +48,10 @@ const PUSH_DRAWER_OFFSET = 'min(86vw, 24rem)';
 const PUSH_HUB_OFFSET = '94vw';
 
 // ── pager (page swap) — tune these to taste ─────────────
-const PAGE_SLIDE = '8px';
-const PAGE_BLUR = '3px';
+// Distance/blur ride the shared motion tokens; duration/ease stay literal here
+// (this is the deliberate per-nav tuning surface, and the ease is exact).
+const PAGE_SLIDE = 'var(--distance-base)';
+const PAGE_BLUR = 'var(--blur-medium)';
 const PAGE_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
 const PAGE_DUR = '250ms';
 const PAGE_TRANSITION = `opacity ${PAGE_DUR} ${PAGE_EASE}, transform ${PAGE_DUR} ${PAGE_EASE}, filter ${PAGE_DUR} ${PAGE_EASE}`;
@@ -96,7 +98,8 @@ export function getChatShellNav(
     transform: drawerOpen
       ? `translateX(${PAGE_SLIDE})`
       : hubOpen
-        ? `translateX(-${PAGE_SLIDE})`
+        ? // can't write `-var(...)`; negate via calc.
+          `translateX(calc(-1 * ${PAGE_SLIDE}))`
         : 'translateX(0px)',
     style: {
       opacity: open ? 0 : 1,

@@ -190,6 +190,20 @@ Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-
 | `--ease-press`   | `cubic-bezier(0.34, 1.56, 0.64, 1)` |
 | `--ease-default` | `cubic-bezier(0.4, 0, 0.2, 1)`  |
 
+### Distance & blur
+
+Travel offsets and motion-blur for enter/exit motion. Keep distances small — motion should read as "settling into place", not flying across the screen. Promote a hardcoded `px` value to one of these the moment a second motion needs it (scale mirrors transitions.dev).
+
+| Distance | Value | | Blur | Value |
+| --- | --- | --- | --- | --- |
+| `--distance-micro` | 4px | | `--blur-small` | 2px |
+| `--distance-small` | 6px | | `--blur-medium` | 3px |
+| `--distance-base` | 8px | | `--blur-large` | 8px |
+| `--distance-medium` | 12px | | | |
+| `--distance-large` | 30px | | | |
+
+Consumed by `.panel-reveal` (`--distance-base` default throw, `--panel-blur` → `--blur-small`), `ScrollToBottomButton` (`--distance-medium`), and the pager nav (`nav-transition.ts`: `--distance-base` slide + `--blur-medium`). Negating a token in an inline transform needs `calc(-1 * var(--…))` — you can't write `-var(…)`.
+
 ### Panel reveal
 
 One open/close vocabulary for every panel — the shadcn Sheets and any custom floating reveal share it, so they read as one motion instead of three hand-tuned ones. Built on the duration/easing tokens above via a small `--panel-*` set:
