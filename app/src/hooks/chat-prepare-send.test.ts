@@ -9,9 +9,6 @@ import {
 } from './chat-prepare-send';
 import type { SendMessageOptions } from './useChat';
 
-vi.mock('@/lib/sandbox-start-mode', () => ({
-  getSandboxStartMode: vi.fn(() => 'off'),
-}));
 vi.mock('@/lib/orchestrator', () => ({
   getActiveProvider: vi.fn(() => 'cloudflare'),
   isProviderAvailable: vi.fn(() => true),
@@ -32,13 +29,10 @@ vi.mock('./chat-persistence', async (importOriginal) => {
     ...actual,
     createId: vi.fn(() => 'fixed-id'),
     generateTitle: vi.fn((messages: ChatMessage[]) => `Title from ${messages.length} msgs`),
-    shouldPrewarmSandbox: vi.fn(() => false),
   };
 });
 
-import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { setLastUsedProvider } from '@/lib/providers';
-import { shouldPrewarmSandbox } from './chat-persistence';
 
 function makeRefs(initial: Partial<PrepareSendRefs> = {}): PrepareSendRefs {
   return {
@@ -100,8 +94,6 @@ function makeConversation(overrides: Partial<Conversation> = {}): Conversation {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.mocked(getSandboxStartMode).mockReturnValue('off');
-  vi.mocked(shouldPrewarmSandbox).mockReturnValue(false);
 });
 
 describe('buildRuntimeUserMessage', () => {
@@ -348,8 +340,7 @@ describe('prepareSendContext — sandbox prewarm', () => {
     });
   }
 
-  it('prewarms when start mode is "always"', async () => {
-    vi.mocked(getSandboxStartMode).mockReturnValue('always');
+  it('always prewarms when a sandbox can be ensured (start-mode setting removed)', async () => {
     const ensure = vi.fn(async () => 'sbx-1');
     const refs = refsWithEnsure(ensure);
     const callbacks = makeCallbacks();
@@ -362,41 +353,49 @@ describe('prepareSendContext — sandbox prewarm', () => {
 
     expect(ensure).toHaveBeenCalledOnce();
     expect(refs.sandboxIdRef.current).toBe('sbx-1');
-    expect(callbacks.capturedAgentStatusCalls[0]).toEqual({
-      status: { active: true, phase: 'Starting sandbox...' },
-      opts: { chatId: 'chat-1' },
-    });
+    // The prewarm is silent — no "Starting sandbox..." agent event (it would
+    // pollute chat-mode history, where ensureSandbox resolves to null).
+    expect(
+      callbacks.capturedAgentStatusCalls.some((c) => c.status.phase === 'Starting sandbox...'),
+    ).toBe(false);
   });
 
-  it('prewarms in "smart" mode only when shouldPrewarmSandbox returns true', async () => {
-    vi.mocked(getSandboxStartMode).mockReturnValue('smart');
-    vi.mocked(shouldPrewarmSandbox).mockReturnValue(true);
-    const ensure = vi.fn(async () => 'sbx-2');
+  it('prewarms silently even when ensureSandbox resolves null (chat mode — no phantom status)', async () => {
+    const ensure = vi.fn(async () => null);
     const refs = refsWithEnsure(ensure);
+    const callbacks = makeCallbacks();
 
     await prepareSendContext(
       { trimmedText: 'x', attachments: undefined, options: undefined, chatId: 'chat-1' },
       refs,
-      makeCallbacks(),
+      callbacks,
     );
 
     expect(ensure).toHaveBeenCalledOnce();
+    expect(refs.sandboxIdRef.current).toBeNull();
+    expect(
+      callbacks.capturedAgentStatusCalls.some((c) => c.status.phase === 'Starting sandbox...'),
+    ).toBe(false);
+  });
 
-    vi.mocked(shouldPrewarmSandbox).mockReturnValue(false);
-    const ensure2 = vi.fn(async () => 'sbx-3');
-    const refs2 = refsWithEnsure(ensure2);
+  it('does not prewarm when no ensureSandbox is wired (e.g. pure chat)', async () => {
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation() } },
+      sandboxIdRef: { current: null },
+      ensureSandboxRef: { current: null },
+    });
+    const callbacks = makeCallbacks();
 
     await prepareSendContext(
       { trimmedText: 'x', attachments: undefined, options: undefined, chatId: 'chat-1' },
-      refs2,
-      makeCallbacks(),
+      refs,
+      callbacks,
     );
 
-    expect(ensure2).not.toHaveBeenCalled();
+    expect(refs.sandboxIdRef.current).toBeNull();
   });
 
   it('skips prewarm when sandbox already exists', async () => {
-    vi.mocked(getSandboxStartMode).mockReturnValue('always');
     const ensure = vi.fn(async () => 'sbx-new');
     const refs = refsWithEnsure(ensure);
     refs.sandboxIdRef.current = 'sbx-existing';
@@ -412,7 +411,6 @@ describe('prepareSendContext — sandbox prewarm', () => {
   });
 
   it('tolerates a prewarm failure and continues', async () => {
-    vi.mocked(getSandboxStartMode).mockReturnValue('always');
     const ensure = vi.fn(async () => {
       throw new Error('prewarm boom');
     });

@@ -72,7 +72,6 @@ const chatPersistence = vi.hoisted(() => ({
   })),
   normalizeConversationModel: vi.fn((m) => m),
   saveActiveChatId: vi.fn(),
-  shouldPrewarmSandbox: vi.fn(() => false),
   createId: vi.fn(() => 'id-1'),
 }));
 const agentDelegation = vi.hoisted(() => ({

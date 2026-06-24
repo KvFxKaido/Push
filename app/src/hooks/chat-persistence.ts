@@ -1,4 +1,4 @@
-import type { AIProviderType, AttachmentData, ChatMessage, Conversation } from '@/types';
+import type { AIProviderType, ChatMessage, Conversation } from '@/types';
 import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
@@ -151,20 +151,4 @@ export function loadActiveChatId(conversations: Record<string, Conversation>): s
   const ids = Object.keys(conversations);
   if (ids.length === 0) return '';
   return ids.sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt)[0];
-}
-
-export function shouldPrewarmSandbox(text: string, attachments?: AttachmentData[]): boolean {
-  const normalized = text.toLowerCase();
-  const intentRegex =
-    /\b(edit|modify|change|refactor|fix|implement|write|create|add|remove|rename|run|test|build|lint|compile|typecheck|type-check|commit|push|patch|bug|failing|error|debug)\b/;
-  if (intentRegex.test(normalized)) return true;
-
-  const fileHintRegex =
-    /\b([a-z0-9_\-/]+\.(ts|tsx|js|jsx|py|rs|go|java|rb|css|html|json|md|yml|yaml|toml|sh))\b/i;
-  if (fileHintRegex.test(text)) return true;
-
-  if (attachments?.some((att) => att.type === 'code' || att.type === 'document')) {
-    return true;
-  }
-  return false;
 }

@@ -9,7 +9,7 @@ import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
 import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
 import { SandboxExpiryBanner } from '@/components/chat/SandboxExpiryBanner';
-import { SandboxStatusBanner, SandboxStatusChip } from '@/components/chat/SandboxStatusBanner';
+import { SandboxStatusChip } from '@/components/chat/SandboxStatusBanner';
 import { AutoBackRestoreBanner } from '@/components/chat/AutoBackRestoreBanner';
 import { usePerfMark } from '@/hooks/usePerfMark';
 import {
@@ -30,7 +30,9 @@ import type { ActiveRepo } from '@/types';
 type RepoChatDrawerProps = ComponentProps<typeof RepoChatDrawer>;
 type ChatContainerProps = ComponentProps<typeof ChatContainer>;
 type ChatInputProps = ComponentProps<typeof ChatInput>;
-type SandboxStatusBannerProps = ComponentProps<typeof SandboxStatusBanner>;
+// The sandbox-status error banner was removed; the surviving consumers are the
+// SandboxStatusChip (error tooltip) and the streaming gate below.
+type SandboxStatusBannerProps = { error: string | null; isStreaming: boolean };
 type SandboxExpiryBannerProps = ComponentProps<typeof SandboxExpiryBanner>;
 type AutoBackRestoreBannerProps = ComponentProps<typeof AutoBackRestoreBanner>;
 
@@ -38,7 +40,7 @@ interface ChatScreenWorkspaceProps {
   activeRepo: ActiveRepo | null;
   isScratch: boolean;
   activeRepoAppearance: RepoAppearance | null;
-  sandboxStatus: SandboxStatusBannerProps['status'];
+  sandboxStatus: ComponentProps<typeof SandboxStatusChip>['status'];
   sandboxDownloading: boolean;
   onSandboxDownload: () => Promise<void>;
   instructions: ProjectInstructionsManager;
@@ -313,8 +315,6 @@ export function ChatScreen({
           </div>
           <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
         </header>
-
-        <SandboxStatusBanner {...sandboxStatusBannerProps} />
 
         {autoBackRestoreBannerProps && <AutoBackRestoreBanner {...autoBackRestoreBannerProps} />}
 

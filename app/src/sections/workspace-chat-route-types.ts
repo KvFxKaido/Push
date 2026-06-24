@@ -1,7 +1,6 @@
 import type { ApprovalMode } from '@/lib/approval-mode';
 import type { PreferredProvider } from '@/lib/providers';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { SandboxStartMode } from '@/lib/sandbox-start-mode';
 import type { GitHubTokenKind } from '@/lib/github-auth';
 import type { BranchManager } from '@/hooks/useBranchManager';
 import type { ModelCatalog } from '@/hooks/useModelCatalog';
@@ -233,8 +232,6 @@ export interface ChatRouteUiStateProps {
   showToolActivity: boolean;
   approvalMode: ApprovalMode;
   updateApprovalMode: (mode: ApprovalMode) => void;
-  sandboxStartMode: SandboxStartMode;
-  updateSandboxStartMode: (mode: SandboxStartMode) => void;
   updateShowToolActivity: (value: boolean) => void;
   providerFailover: boolean;
   updateProviderFailover: (value: boolean) => void;

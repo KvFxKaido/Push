@@ -22,12 +22,11 @@
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import { resolveChatProviderSelection } from '@/lib/provider-selection';
-import { getSandboxStartMode } from '@/lib/sandbox-start-mode';
 import { getActiveProvider, isProviderAvailable, type ActiveProvider } from '@/lib/orchestrator';
 import { setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
-import { createId, generateTitle, shouldPrewarmSandbox } from './chat-persistence';
+import { createId, generateTitle } from './chat-persistence';
 import type {
   AgentStatus,
   AIProviderType,
@@ -195,15 +194,18 @@ export async function prepareSendContext(
   if (!skipStreamingPlaceholder) callbacks.setIsStreaming(true);
   refs.abortRef.current = false;
 
-  // Pre-warm sandbox if the start mode opts in. Best effort — a failed
-  // prewarm doesn't block the chat flow; the run loop will lazily
-  // ensure the sandbox if a tool call needs it later.
-  const sandboxStartMode = getSandboxStartMode();
-  const shouldAutoStartSandbox =
-    sandboxStartMode === 'always' ||
-    (sandboxStartMode === 'smart' && shouldPrewarmSandbox(trimmedText, attachments));
-  if (!refs.sandboxIdRef.current && refs.ensureSandboxRef.current && shouldAutoStartSandbox) {
-    callbacks.updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
+  // Always pre-warm the sandbox when one can actually be created. Best effort —
+  // a failed prewarm doesn't block the chat flow; the run loop will lazily
+  // ensure the sandbox if a tool call needs it later. (The off/smart/always
+  // start-mode setting was removed — auto-start is now the only behavior.)
+  //
+  // Deliberately NO "Starting sandbox..." agent-status here: chat sessions still
+  // register an ensureSandbox that resolves to null (no repo/scratch), so
+  // announcing a start up front would append a phantom sandbox-start event into
+  // chat-mode history for a sandbox that never exists. The sandbox's own
+  // 'creating' status (the status chip) is the real start feedback for sandbox
+  // workspaces; the prewarm itself stays silent.
+  if (!refs.sandboxIdRef.current && refs.ensureSandboxRef.current) {
     try {
       const prewarmedId = await refs.ensureSandboxRef.current();
       if (prewarmedId) refs.sandboxIdRef.current = prewarmedId;

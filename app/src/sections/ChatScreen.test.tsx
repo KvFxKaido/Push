@@ -88,7 +88,7 @@ function baseChat(): Props['chat'] {
 function baseBanners(): Props['banners'] {
   return {
     sandboxStatusBannerProps: {
-      status: 'idle',
+      error: null,
       isStreaming: false,
     } as Props['banners']['sandboxStatusBannerProps'],
     sandboxExpiryBannerProps: null,
@@ -177,7 +177,7 @@ describe('ChatScreen', () => {
         chat={baseChat()}
         banners={{
           sandboxStatusBannerProps: {
-            status: 'ready',
+            error: null,
             isStreaming: false,
           } as Props['banners']['sandboxStatusBannerProps'],
           sandboxExpiryBannerProps: {} as Props['banners']['sandboxExpiryBannerProps'],

@@ -2,11 +2,6 @@ import { useCallback, useEffect, useState } from 'react';
 import { useUserProfile } from '@/hooks/useUserProfile';
 import { useSetting } from '@/hooks/useSetting';
 import { getApprovalMode, setApprovalMode, type ApprovalMode } from '@/lib/approval-mode';
-import {
-  getSandboxStartMode,
-  setSandboxStartMode,
-  type SandboxStartMode,
-} from '@/lib/sandbox-start-mode';
 import { safeStorageGet } from '@/lib/safe-storage';
 import { SETTINGS_KEYS } from '@/lib/settings-store';
 
@@ -54,9 +49,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     null,
     { coerce: coerceTokenBudget },
   );
-  const [sandboxStartMode, setSandboxStartModeState] = useState<SandboxStartMode>(() =>
-    getSandboxStartMode(),
-  );
   const [approvalMode, setApprovalModeState] = useState<ApprovalMode>(() => getApprovalMode());
 
   useEffect(() => {
@@ -98,11 +90,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
   const updateApprovalMode = useCallback((mode: ApprovalMode) => {
     setApprovalMode(mode);
     setApprovalModeState(mode);
-  }, []);
-
-  const updateSandboxStartMode = useCallback((mode: SandboxStartMode) => {
-    setSandboxStartMode(mode);
-    setSandboxStartModeState(mode);
   }, []);
 
   const updateShowToolActivity = useCallback(
@@ -180,8 +167,6 @@ export function useWorkspacePreferences(validatedGithubLogin: string | null | un
     updateProviderFailover,
     runTokenBudget,
     updateRunTokenBudget,
-    sandboxStartMode,
-    updateSandboxStartMode,
     approvalMode,
     updateApprovalMode,
     allowlistSecretCmd: ALLOWLIST_SECRET_COMMAND,
