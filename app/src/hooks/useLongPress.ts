@@ -13,7 +13,7 @@ interface UseLongPress {
   pointerHandlers: {
     onPointerDown: (e: PointerEvent) => void;
     onPointerUp: () => void;
-    onPointerMove: () => void;
+    onPointerMove: (e: PointerEvent) => void;
     onPointerLeave: () => void;
     onPointerCancel: () => void;
   };
@@ -25,12 +25,19 @@ interface UseLongPress {
   consumeClick: () => boolean;
 }
 
+// A held finger jitters by a few px; only a real drag/scroll should abort the
+// press. Without a threshold, the sub-pixel `pointermove` events a stationary
+// touch emits kill the timer before it fires — the "long-press does nothing on
+// touch" bug. Tuned to the usual tap-vs-drag slop.
+const MOVE_CANCEL_THRESHOLD_PX = 10;
+
 /**
  * Press-and-hold detection for touch. Pointer devices reveal via hover, so the
- * handlers only arm on `pointerType === 'touch'`; any move/lift/cancel before
- * the hold completes aborts (so a scroll that starts on the trigger never fires
- * it). Shared by the `Tip` tooltip (long-press to reveal the explanation) and
- * the workspace branch picker (long-press to reveal Delete).
+ * handlers only arm on `pointerType === 'touch'`; a lift/cancel, or movement
+ * past `MOVE_CANCEL_THRESHOLD_PX` from the press origin, aborts (so a scroll
+ * that starts on the trigger never fires it — but finger micro-jitter doesn't).
+ * Shared by the `Tip` tooltip (long-press to reveal the explanation) and the
+ * workspace branch picker (long-press to reveal Delete).
  */
 export function useLongPress(
   onLongPress: () => void,
@@ -38,12 +45,14 @@ export function useLongPress(
 ): UseLongPress {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fired = useRef(false);
+  const startPos = useRef<{ x: number; y: number } | null>(null);
 
   const clear = useCallback(() => {
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
     }
+    startPos.current = null;
   }, []);
 
   const onPointerDown = useCallback(
@@ -51,12 +60,24 @@ export function useLongPress(
       if (e.pointerType !== 'touch') return;
       fired.current = false;
       clear();
+      startPos.current = { x: e.clientX, y: e.clientY };
       timer.current = setTimeout(() => {
         fired.current = true;
         onLongPress();
       }, delayMs);
     },
     [clear, delayMs, onLongPress],
+  );
+
+  const onPointerMove = useCallback(
+    (e: PointerEvent) => {
+      const start = startPos.current;
+      if (!start || !timer.current) return;
+      if (Math.hypot(e.clientX - start.x, e.clientY - start.y) > MOVE_CANCEL_THRESHOLD_PX) {
+        clear();
+      }
+    },
+    [clear],
   );
 
   // Cancel any in-flight hold if the trigger unmounts mid-press.
@@ -74,7 +95,7 @@ export function useLongPress(
     pointerHandlers: {
       onPointerDown,
       onPointerUp: clear,
-      onPointerMove: clear,
+      onPointerMove,
       onPointerLeave: clear,
       onPointerCancel: clear,
     },

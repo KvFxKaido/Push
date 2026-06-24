@@ -405,7 +405,13 @@ function completeAssistantMessage(
     msgs[targetIdx] = {
       ...msgs[targetIdx],
       content: update.content,
-      thinking: undefined,
+      // Preserve the reasoning streamed onto this message during the run — the
+      // spread carries the last `thinking` write from the live handler above.
+      // The old `thinking: undefined` here wiped the reasoning pane the instant
+      // the turn settled, on every model (the answer streams fine, the pane
+      // vanishes at stream-stop). The stranded-answer salvage already clears
+      // thinking in-run when it promotes reasoning to content, so there's no
+      // legitimate thinking left to drop here.
       status: 'done',
       ...(update.cards && update.cards.length > 0 ? { cards: update.cards } : {}),
     };

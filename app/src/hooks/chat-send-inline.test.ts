@@ -817,6 +817,25 @@ describe('startInlineCoderTurn', () => {
     logSpy.mockRestore();
   });
 
+  it('preserves reasoning streamed onto the placeholder when finalizing (no wipe on settle)', async () => {
+    const { ctx, store } = makeHarness();
+    // Simulate the reasoning the live mirror writes onto the placeholder while
+    // the kernel streams. The finalizer used to hardcode `thinking: undefined`,
+    // wiping the reasoning pane the instant the turn settled — on every model.
+    const conv = store.current['chat-1'];
+    const lastIdx = conv.messages.length - 1;
+    conv.messages[lastIdx] = {
+      ...conv.messages[lastIdx],
+      thinking: 'weighed two approaches before answering',
+    };
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const final = lastAssistant(store);
+    expect(final.status).toBe('done');
+    expect(final.thinking).toBe('weighed two approaches before answering');
+  });
+
   it('renders an incomplete verdict as a structured card, not appended prose', async () => {
     mockRunCoderAuditorGate.mockResolvedValue({
       evalResult: {
