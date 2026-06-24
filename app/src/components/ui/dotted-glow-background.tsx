@@ -22,6 +22,14 @@ export interface DottedGlowBackgroundProps {
   speedMax?: number;
   /** Global multiplier applied to every dot's pulse speed. */
   speedScale?: number;
+  /**
+   * Bump this whenever the *resolved value* of a color CSS var changes while
+   * the canvas stays mounted (e.g. the host repaints `--accent` from a new
+   * hex). The var names don't change, so React can't see it on its own — this
+   * key forces a re-resolve so the dots track live accent edits the way the
+   * gradient wash does. Pass the accent hex/color id.
+   */
+  colorKey?: string | number;
 }
 
 interface Dot {
@@ -78,8 +86,13 @@ export function DottedGlowBackground({
   speedMin = 0.3,
   speedMax = 1.6,
   speedScale = 1,
+  colorKey,
 }: DottedGlowBackgroundProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Handles published by the animation effect so the color-refresh effect
+  // below can re-resolve CSS-var colors (and repaint a frozen frame under
+  // reduced motion) without tearing down and rebuilding the canvas.
+  const refreshColorsRef = useRef<(() => void) | null>(null);
 
   // Stash animation params in a ref so the long-lived rAF loop reads live
   // values without restarting on every prop change. Written from an effect
@@ -253,12 +266,28 @@ export function DottedGlowBackground({
       rafId = window.requestAnimationFrame(loop);
     }
 
+    // Let the color-refresh effect re-resolve on demand. The running rAF loop
+    // already paints the new colors next frame; the frozen reduced-motion path
+    // has no loop, so repaint its single frame here.
+    refreshColorsRef.current = () => {
+      resolveColors();
+      if (reducedMotion) draw(0);
+    };
+
     return () => {
       if (rafId) window.cancelAnimationFrame(rafId);
       resizeObserver?.disconnect();
       themeObserver?.disconnect();
+      refreshColorsRef.current = null;
     };
   }, []);
+
+  // Re-resolve colors when the host signals a live color change (new colorKey)
+  // or swaps the var names outright. Cheap getComputedStyle reads, only on the
+  // edit — not per frame.
+  useEffect(() => {
+    refreshColorsRef.current?.();
+  }, [colorKey, colorLightVar, colorDarkVar, glowColorLightVar, glowColorDarkVar]);
 
   return (
     <canvas

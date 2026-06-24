@@ -75,6 +75,9 @@ function DottedChatGlow({ active, color }: { active: boolean; color: string }) {
           speedMin={0.3}
           speedMax={1.6}
           speedScale={1}
+          // The var names are constant; the accent feeding them is not. Key the
+          // re-resolve on the live color so edits track without a remount.
+          colorKey={color}
         />
       )}
       <div className="absolute inset-x-0 bottom-0 h-[55%] bg-gradient-to-t from-black via-black/85 to-transparent" />
