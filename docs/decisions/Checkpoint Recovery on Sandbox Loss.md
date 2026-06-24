@@ -44,13 +44,17 @@ checkpoint offer fires against the fresh sandbox (which it reaches by constructi
 — `restoredFromSnapshotSandboxId` stays null on native). The hub's
 hibernate/restore/forget affordances are hidden on native.
 
-**Deferred to follow-up PRs (device-validate PR1 first):** native-restore-before
-workspace-patch-replay ordering; resume "re-apply" suppression in
-`useChatCheckpoint`; the post-restore derived-cache invalidation audit (the
-load-bearing "continues as normal" item — note this gap is *shared* with the
-increment-1 manual restore, not introduced here); detection↔capture race
-ordering; auto-restore-vs-banner UX; and eager auto-cold-start-without-user-action
-on mid-session loss (PR1 unstrands, so recovery fires on the next
+**PR2 — landed (post-restore cache invalidation):** both stores' `restore()` now
+call `invalidateWorkspaceSnapshots(sandboxId)` on success, so a whole-tree restore
+clears the file-version cache, prefetched-edit cache, and symbol + file ledgers
+(not just the mutation listeners) — the load-bearing "continues as normal" item.
+The gap was *shared* with the increment-1 manual restore (and the remote/web
+store), so the fix covers both stores. See Post-restore consistency below.
+
+**Deferred to follow-up PRs:** native-restore-before workspace-patch-replay
+ordering; resume "re-apply" suppression in `useChatCheckpoint`; detection↔capture
+race ordering; auto-restore-vs-banner UX; and eager auto-cold-start-without-user-
+action on mid-session loss (PR1 unstrands, so recovery fires on the next
 sandbox-requiring action).
 
 Increment 2 of the native checkpoint arc. Increment 1 (the manual
@@ -167,22 +171,27 @@ The sandbox is still the execution environment (the device doesn't run code), so
 after a device→sandbox restore the sandbox's *derived* state must be coherent or
 the agent can't just keep going. Checklist to audit/wire:
 
-- **Mutation signal alone is not enough.** Restore passes `markWorkspaceMutated:
-  true` (`native-jgit-store.ts` ~558), which wakes mutation listeners
-  (`sandbox-client.ts` ~1303) — but a **whole-tree** restore also has to invalidate
-  the derived caches a single edit doesn't: file-version cache, prefetched-edit
-  cache, the symbol ledger, the file ledger. There's already a broad invalidator
-  for this (`sandbox-edit-ops.ts` ~109) — the restore must run the equivalent, or
-  editor saves and symbol/file awareness go stale against the new tree. **This is
-  the load-bearing "continues as normal" item.**
-- **Workspace revision** — confirm the restore bumps/refreshes the sandbox
-  workspace revision so the UI's "where we are" settles (it's `0` on Cloudflare —
-  verify nothing keys off a stale value).
+- ✅ **Mutation signal alone is not enough — DONE (PR2).** Restore passed only
+  `markWorkspaceMutated: true`, which wakes mutation *listeners* (the auto-back
+  coordinator via `sandbox-mutation-signal.ts`) but clears nothing. A **whole-tree**
+  restore also has to invalidate the derived caches a single edit doesn't:
+  file-version cache, prefetched-edit cache, the symbol ledger, the file ledger.
+  Both stores' `restore()` now call `invalidateWorkspaceSnapshots(sandboxId)`
+  (`sandbox-edit-ops.ts`) on success — placed inside `restore()` so it covers
+  every caller (the offer banner *and* the hub `CheckpointHistory`) without
+  asymmetry. Was the load-bearing "continues as normal" item; device validation
+  (the agent turn ran clean post-recovery) plus the new unit assertions cover it.
+- **Workspace revision** — left untouched: it's `0` on the Cloudflare backend, so
+  it's not the "where we are" signal; the provider-agnostic mutation signal is.
+  `invalidateWorkspaceSnapshots` only writes a revision when one is passed, and PR2
+  passes none. (Revisit only if a revision-keyed consumer appears.)
 - **Next-checkpoint base** — after restore the device tree and sandbox tree match
   (we just pushed device→sandbox), so the next delta capture's base is correct by
   construction. ✔ (state it, don't re-derive.)
-- **Auto-back re-clobber** — ensure the capture coordinator doesn't immediately
-  re-capture/treat the just-restored tree as a fresh mutation in a way that loops.
+- **Auto-back re-clobber** — not a loop: after a restore the working tree equals
+  the restored checkpoint's tree, so the `markWorkspaceMutated` wake-up's debounced
+  capture hits the tree-hash dedup (`unchanged`) and commits nothing. One benign
+  no-op probe, not a re-capture cycle. ✔ (handled by the existing dedup.)
 - **Lifecycle flags** — `freshSandboxId` / `restoredFromSnapshotSandboxId` are the
   hooks the restore enabling keys on; the cold-start→native-restore path must set
   them so the offer fires **exactly once** per lane and isn't itself suppressed.

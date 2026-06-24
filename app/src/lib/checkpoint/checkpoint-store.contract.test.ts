@@ -7,9 +7,13 @@ vi.mock('../sandbox-auto-back-restore', () => ({
   detectAutoBackRestore: vi.fn(),
   applyAutoBackRestore: vi.fn(),
 }));
+// Both stores must invalidate the derived client caches after a whole-tree
+// restore; mock the invalidator so the remote adapter's call is observable.
+vi.mock('../sandbox-edit-ops', () => ({ invalidateWorkspaceSnapshots: vi.fn(() => 0) }));
 
 import { backUpWorkingTree } from '../sandbox-auto-back';
 import { detectAutoBackRestore, applyAutoBackRestore } from '../sandbox-auto-back-restore';
+import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import { remoteDraftRefCheckpointStore } from './remote-draft-ref-store';
 import { createNativeJgitCheckpointStore } from './native-jgit-store';
 import { selectCheckpointStore, type CheckpointStore } from './checkpoint-store';
@@ -17,6 +21,7 @@ import { selectCheckpointStore, type CheckpointStore } from './checkpoint-store'
 const mockBackUp = vi.mocked(backUpWorkingTree);
 const mockDetect = vi.mocked(detectAutoBackRestore);
 const mockApply = vi.mocked(applyAutoBackRestore);
+const mockInvalidate = vi.mocked(invalidateWorkspaceSnapshots);
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -144,16 +149,24 @@ describe('RemoteDraftRefCheckpointStore restore mapping', () => {
       await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
     ).toEqual({ status: 'restored', checkpointId: 'abc123' });
     expect(mockApply).toHaveBeenCalledWith('sb', 'b', 'abc123');
+    // A successful restore replaced the tree → invalidate the derived caches.
+    expect(mockInvalidate).toHaveBeenCalledWith('sb');
 
+    mockInvalidate.mockClear();
     mockApply.mockResolvedValueOnce({ status: 'skipped-dirty' });
     expect(
       await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
     ).toEqual({ status: 'skipped-dirty' });
+    // Refused before touching the tree → no invalidation.
+    expect(mockInvalidate).not.toHaveBeenCalled();
 
     mockApply.mockResolvedValueOnce({ status: 'failed', reason: 'nope' });
     expect(
       await remoteDraftRefCheckpointStore.restore({ ...scope, checkpointId: 'abc123' }),
     ).toEqual({ status: 'failed', reason: 'nope' });
+    // `read-tree -u --reset` may have partially mutated the tree → invalidate
+    // even on failure (over-invalidation is cheap; stale caches are a bug).
+    expect(mockInvalidate).toHaveBeenCalledWith('sb');
   });
 
   it('list is a degenerate empty (single draft ref, no history)', async () => {

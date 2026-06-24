@@ -23,6 +23,7 @@
  */
 
 import { execInSandbox, downloadFileFromSandbox, uploadFileToSandbox } from '../sandbox-client';
+import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import { isInvalidGitRef } from '../git-ref-validation';
 import { NativeGit } from '../native-git/plugin';
 import type { NativeGitPlugin } from '../native-git/definitions';
@@ -554,6 +555,20 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
       // `write`, so a real ~7 MB checkpoint (~9 MB base64) round-trips.
       const wrote = await upload(input.sandboxId, RESTORE_UPLOAD_B64, archiveBase64);
       if (!wrote.ok) return { status: 'failed', reason: wrote.error ?? 'upload failed' };
+      // The sync is destructive — it clears /workspace, then extracts the
+      // checkpoint. Once it's DISPATCHED the working tree can be mutated on ANY
+      // outcome (OK, not-OK, or a thrown/lost response), so every post-dispatch
+      // path must drop the derived client caches keyed on the old tree:
+      // file-version cache (optimistic-concurrency on edits), prefetched-edit
+      // cache, and the symbol + file-awareness ledgers. A partial/failed sync
+      // leaves a tree that is neither the old tree nor the checkpoint, so serving
+      // cached old versions/symbols against it is the same staleness bug as the
+      // success case — over-invalidation on failure is cheap (caches rebuild on
+      // next read). The earlier returns (invalid branch, missing checkpoint,
+      // failed upload) bail BEFORE the sync, so the tree is untouched and they
+      // skip this. `markWorkspaceMutated` only wakes the auto-back listener; it
+      // does not clear these caches. Revision is left untouched (0 on the CF
+      // backend; the provider-agnostic mutation signal is the real "where we are").
       try {
         const synced = await exec(input.sandboxId, RESTORE_SYNC_COMMAND, undefined, {
           markWorkspaceMutated: true,
@@ -566,6 +581,8 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
         }
       } catch (err) {
         return { status: 'failed', reason: err instanceof Error ? err.message : String(err) };
+      } finally {
+        invalidateWorkspaceSnapshots(input.sandboxId);
       }
       log('info', 'native_checkpoint_restored', { checkpointId: input.checkpointId });
       return { status: 'restored', checkpointId: input.checkpointId };
