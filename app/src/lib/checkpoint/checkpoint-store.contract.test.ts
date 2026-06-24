@@ -31,16 +31,29 @@ const native = createNativeJgitCheckpointStore({ log: () => {} });
 
 describe('CheckpointStore interface conformance', () => {
   const stores: CheckpointStore[] = [remoteDraftRefCheckpointStore, native];
-  it('both stores expose kind + capture/detectRestore/restore/list', () => {
+  it('both stores expose kind + capture/detectRestore/restore/list/drop/clear', () => {
     for (const store of stores) {
       expect(typeof store.kind).toBe('string');
       expect(typeof store.capture).toBe('function');
       expect(typeof store.detectRestore).toBe('function');
       expect(typeof store.restore).toBe('function');
       expect(typeof store.list).toBe('function');
+      expect(typeof store.drop).toBe('function');
+      expect(typeof store.clear).toBe('function');
     }
     expect(remoteDraftRefCheckpointStore.kind).toBe('remote-draft-ref');
     expect(native.kind).toBe('native-jgit');
+  });
+
+  it('the remote store reports drop/clear as unsupported (on-device-only mitigation)', async () => {
+    const scope = { repoFullName: REPO, branch: 'b' };
+    expect(await remoteDraftRefCheckpointStore.drop({ ...scope, checkpointId: 'x' })).toEqual({
+      status: 'unsupported',
+    });
+    expect(await remoteDraftRefCheckpointStore.clear(scope)).toEqual({ status: 'unsupported' });
+    expect(await remoteDraftRefCheckpointStore.clear(scope, { allLanes: true })).toEqual({
+      status: 'unsupported',
+    });
   });
 });
 

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { resolveCheckpointStore } from '@/lib/checkpoint/resolve-store';
 import type {
+  CheckpointClearResult,
+  CheckpointDropInput,
+  CheckpointDropResult,
   CheckpointRecord,
   CheckpointRestoreInput,
   CheckpointRestoreResult,
@@ -9,9 +12,16 @@ import type {
 
 type ListFn = (scope: CheckpointScope) => Promise<CheckpointRecord[]>;
 type RestoreFn = (input: CheckpointRestoreInput) => Promise<CheckpointRestoreResult>;
+type DropFn = (input: CheckpointDropInput) => Promise<CheckpointDropResult>;
+type ClearFn = (
+  scope: CheckpointScope,
+  options?: { allLanes?: boolean },
+) => Promise<CheckpointClearResult>;
 
 const defaultList: ListFn = (scope) => resolveCheckpointStore().list(scope);
 const defaultRestore: RestoreFn = (input) => resolveCheckpointStore().restore(input);
+const defaultDrop: DropFn = (input) => resolveCheckpointStore().drop(input);
+const defaultClear: ClearFn = (scope, options) => resolveCheckpointStore().clear(scope, options);
 
 export interface UseCheckpointHistoryArgs {
   sandboxId: string | null;
@@ -22,6 +32,8 @@ export interface UseCheckpointHistoryArgs {
   /** Injectable for tests. */
   list?: ListFn;
   restoreCheckpoint?: RestoreFn;
+  dropCheckpoint?: DropFn;
+  clearCheckpoints?: ClearFn;
 }
 
 export interface CheckpointHistoryState {
@@ -38,6 +50,14 @@ export interface CheckpointHistoryState {
   canRestore: boolean;
   refresh: () => void;
   restore: (checkpointId: string) => Promise<void>;
+  /** The checkpoint currently being deleted, or null. */
+  droppingId: string | null;
+  /** Whether a clear-all/clear-lane purge is in flight. */
+  clearing: boolean;
+  /** Delete one checkpoint from the lane (security mitigation, #1103). */
+  drop: (checkpointId: string) => Promise<void>;
+  /** Purge the lane's checkpoints, or every lane's (`allLanes`). */
+  clear: (allLanes?: boolean) => Promise<void>;
 }
 
 interface LoadedData {
@@ -58,6 +78,14 @@ export function restoreError(
   return result.reason || 'Restore failed.';
 }
 
+/** Map a failed drop/clear to a user-facing message. Exported for tests. */
+export function purgeError(
+  result: { status: 'failed'; reason: string } | { status: 'unsupported' },
+): string {
+  if (result.status === 'unsupported') return 'Clearing checkpoints is not available here.';
+  return result.reason || 'Could not clear checkpoints.';
+}
+
 /**
  * Loads the checkpoint history for the active lane (repo + branch) and exposes a
  * per-checkpoint restore. Thin glue over the active CheckpointStore; the
@@ -74,16 +102,24 @@ export function useCheckpointHistory({
   enabled = true,
   list = defaultList,
   restoreCheckpoint = defaultRestore,
+  dropCheckpoint = defaultDrop,
+  clearCheckpoints = defaultClear,
 }: UseCheckpointHistoryArgs): CheckpointHistoryState {
   const [data, setData] = useState<LoadedData>(EMPTY_DATA);
   const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [droppingId, setDroppingId] = useState<string | null>(null);
+  const [clearing, setClearing] = useState(false);
   const [nonce, setNonce] = useState(0);
 
   const listRef = useRef(list);
   const restoreRef = useRef(restoreCheckpoint);
+  const dropRef = useRef(dropCheckpoint);
+  const clearRef = useRef(clearCheckpoints);
   useEffect(() => {
     listRef.current = list;
     restoreRef.current = restoreCheckpoint;
+    dropRef.current = dropCheckpoint;
+    clearRef.current = clearCheckpoints;
   });
 
   const trimmedBranch = branch?.trim() || null;
@@ -147,6 +183,52 @@ export function useCheckpointHistory({
     [sandboxId, repoFullName, trimmedBranch],
   );
 
+  const drop = useCallback(
+    async (checkpointId: string) => {
+      if (!repoFullName || !trimmedBranch) return;
+      setDroppingId(checkpointId);
+      try {
+        const result = await dropRef.current({ repoFullName, branch: trimmedBranch, checkpointId });
+        // 'dropped' and 'not-found' both mean the entry is gone — re-list either way.
+        if (result.status === 'dropped' || result.status === 'not-found') {
+          refresh();
+        } else {
+          setData((current) => ({ ...current, error: purgeError(result) }));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setData((current) => ({ ...current, error: message }));
+      } finally {
+        setDroppingId(null);
+      }
+    },
+    [repoFullName, trimmedBranch, refresh],
+  );
+
+  const clear = useCallback(
+    async (allLanes?: boolean) => {
+      if (!repoFullName || !trimmedBranch) return;
+      setClearing(true);
+      try {
+        const result = await clearRef.current(
+          { repoFullName, branch: trimmedBranch },
+          { allLanes },
+        );
+        if (result.status === 'cleared' || result.status === 'noop') {
+          refresh();
+        } else {
+          setData((current) => ({ ...current, error: purgeError(result) }));
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setData((current) => ({ ...current, error: message }));
+      } finally {
+        setClearing(false);
+      }
+    },
+    [repoFullName, trimmedBranch, refresh],
+  );
+
   return {
     checkpoints,
     loading,
@@ -155,5 +237,9 @@ export function useCheckpointHistory({
     canRestore: Boolean(sandboxId),
     refresh,
     restore,
+    droppingId,
+    clearing,
+    drop,
+    clear,
   };
 }

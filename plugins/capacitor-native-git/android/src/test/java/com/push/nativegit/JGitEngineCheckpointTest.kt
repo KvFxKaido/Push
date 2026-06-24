@@ -106,6 +106,42 @@ class JGitEngineCheckpointTest {
   }
 
   @Test
+  fun dropCheckpointRemovesOnlyTheTargetedEntry() {
+    val dir = tempDir()
+    val c1 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("f" to "1")), "cp1").commitId
+    Thread.sleep(5)
+    val c2 = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("f" to "2")), "cp2").commitId
+
+    assertTrue("drops the targeted checkpoint", JGitEngine.dropCheckpoint(dir, c1!!))
+    val remaining = JGitEngine.listCheckpoints(dir)
+    assertEquals(1, remaining.size)
+    assertEquals("the other checkpoint survives", c2, remaining[0].commitId)
+
+    // Unknown / invalid commits are no-ops, not errors.
+    assertFalse(JGitEngine.dropCheckpoint(dir, "0".repeat(40)))
+    assertFalse(JGitEngine.dropCheckpoint(dir, "not-a-sha"))
+    assertEquals("a no-op drop changes nothing", 1, JGitEngine.listCheckpoints(dir).size)
+  }
+
+  @Test
+  fun clearCheckpointsDeletesTheRepoDirEntirely() {
+    val dir = tempDir()
+    JGitEngine.commitWorkingTree(dir, zipOf(mapOf("secret.txt" to "token")), "cp1")
+    assertTrue("repo exists before clear", File(File(dir), ".git").exists())
+
+    assertTrue("clear removes the dir", JGitEngine.clearCheckpoints(dir))
+    assertFalse("the repo dir is gone — no recoverable data", File(dir).exists())
+
+    // A fresh capture re-inits cleanly into the cleared lane.
+    val r = JGitEngine.commitWorkingTree(dir, zipOf(mapOf("a" to "1")), "cp2")
+    assertTrue("re-init after clear", r.committed)
+    assertEquals(1, JGitEngine.listCheckpoints(dir).size)
+
+    // Clearing a non-existent dir is a no-op false (not an error).
+    assertFalse(JGitEngine.clearCheckpoints(File(tempDir(), "absent").absolutePath))
+  }
+
+  @Test
   fun archiveOfMissingCommitReturnsNull() {
     val dir = tempDir()
     JGitEngine.commitWorkingTree(dir, zipOf(mapOf("f" to "1")), "cp1")

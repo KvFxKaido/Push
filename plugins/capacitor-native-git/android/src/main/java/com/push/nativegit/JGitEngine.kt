@@ -493,6 +493,46 @@ object JGitEngine {
   }
 
   /**
+   * Delete the single checkpoint whose commit is [commitId] (its ref, or refs if
+   * more than one points at it), then gc the now-unreferenced objects so the
+   * dropped content isn't recoverable from the object store. Returns true when a
+   * ref was removed; false on an unknown/invalid commit (a no-op).
+   */
+  fun dropCheckpoint(dir: String, commitId: String): Boolean {
+    if (!isCheckpointRepo(dir) || commitId.isEmpty()) return false
+    val target = try { ObjectId.fromString(commitId) } catch (e: Exception) { return false }
+    Git.open(File(dir)).use { git ->
+      val refs =
+        git.repository.refDatabase.getRefsByPrefix(CHECKPOINT_REF_PREFIX).filter {
+          it.objectId == target
+        }
+      if (refs.isEmpty()) return false
+      for (ref in refs) {
+        val update = git.repository.updateRef(ref.name)
+        update.setForceUpdate(true)
+        update.delete()
+      }
+      git.gc().setExpire(Date()).call()
+      return true
+    }
+  }
+
+  /**
+   * Securely purge the checkpoint repo at [dir] by deleting the directory OUTRIGHT
+   * — no surviving `.git` objects, packs, or reflogs. A ref-delete + gc (as prune
+   * does) can leave packed objects recoverable; a full directory delete cannot,
+   * which is the point of the security mitigation (#1103). The next capture
+   * re-`git init`s the dir via [openOrInit]. Either a single lane dir or the whole
+   * `checkpoints` root may be passed. Returns true when the dir existed and was
+   * removed (a missing dir is a no-op false).
+   */
+  fun clearCheckpoints(dir: String): Boolean {
+    val f = File(dir)
+    if (!f.exists()) return false
+    return f.deleteRecursively()
+  }
+
+  /**
    * Content-only manifest (`path → blob SHA-1`) of the NEWEST checkpoint ref's
    * tree — the base a diff capture diffs against. NOT HEAD: checkpoints are orphan
    * refs and HEAD never moves. Blob ids are content hashes (mode excluded), which

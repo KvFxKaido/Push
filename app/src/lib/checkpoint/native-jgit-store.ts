@@ -30,7 +30,10 @@ import type { NativeGitPlugin } from '../native-git/definitions';
 import type {
   CheckpointCaptureInput,
   CheckpointCaptureResult,
+  CheckpointClearResult,
   CheckpointDetectInput,
+  CheckpointDropInput,
+  CheckpointDropResult,
   CheckpointRecord,
   CheckpointRestoreAvailability,
   CheckpointRestoreInput,
@@ -243,8 +246,11 @@ function laneSegment(value: string): string {
 }
 
 /** App-private on-device checkpoint repo dir for a lane (relative; resolved under filesDir). */
+/** Root of every lane's checkpoint repo — the dir to purge for an all-lanes clear. */
+const CHECKPOINT_ROOT = 'checkpoints';
+
 function checkpointDir(scope: CheckpointScope): string {
-  return `checkpoints/${laneSegment(scope.repoFullName)}/${laneSegment(scope.branch)}`;
+  return `${CHECKPOINT_ROOT}/${laneSegment(scope.repoFullName)}/${laneSegment(scope.branch)}`;
 }
 
 export interface NativeCheckpointDeps {
@@ -590,6 +596,44 @@ export function createNativeJgitCheckpointStore(deps: NativeCheckpointDeps = {})
 
     list(scope: CheckpointScope): Promise<CheckpointRecord[]> {
       return listRecords(scope);
+    },
+
+    async drop(input: CheckpointDropInput): Promise<CheckpointDropResult> {
+      try {
+        const { dropped } = await plugin.dropCheckpoint({
+          dir: checkpointDir(input),
+          commitId: input.checkpointId,
+        });
+        log('info', 'native_checkpoint_dropped', {
+          checkpointId: input.checkpointId,
+          dropped,
+        });
+        return dropped ? { status: 'dropped' } : { status: 'not-found' };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        log('warn', 'native_checkpoint_drop_failed', { checkpointId: input.checkpointId, reason });
+        return { status: 'failed', reason };
+      }
+    },
+
+    async clear(
+      scope: CheckpointScope,
+      options?: { allLanes?: boolean },
+    ): Promise<CheckpointClearResult> {
+      const allLanes = Boolean(options?.allLanes);
+      // All-lanes deletes the whole `checkpoints` root (every repo + branch); a
+      // single clear deletes just this lane's dir. The native side deletes the dir
+      // outright, so nothing is recoverable.
+      const dir = allLanes ? CHECKPOINT_ROOT : checkpointDir(scope);
+      try {
+        const { cleared } = await plugin.clearCheckpoints({ dir });
+        log('info', 'native_checkpoints_cleared', { allLanes, cleared });
+        return cleared ? { status: 'cleared' } : { status: 'noop' };
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err);
+        log('warn', 'native_checkpoints_clear_failed', { allLanes, reason });
+        return { status: 'failed', reason };
+      }
     },
   };
 }

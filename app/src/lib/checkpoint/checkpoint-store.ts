@@ -99,6 +99,26 @@ export type CheckpointRestoreResult =
   | { status: 'failed'; reason: string }
   | { status: 'unsupported' };
 
+/** Delete one checkpoint from a lane's history (security mitigation, #1103). */
+export interface CheckpointDropInput extends CheckpointScope {
+  checkpointId: string;
+}
+
+export type CheckpointDropResult =
+  | { status: 'dropped' }
+  /** The checkpoint wasn't in the store (already gone). */
+  | { status: 'not-found' }
+  | { status: 'failed'; reason: string }
+  | { status: 'unsupported' };
+
+export type CheckpointClearResult =
+  /** Stored checkpoints were purged (the dir was deleted outright). */
+  | { status: 'cleared' }
+  /** Nothing was stored to clear. */
+  | { status: 'noop' }
+  | { status: 'failed'; reason: string }
+  | { status: 'unsupported' };
+
 export interface CheckpointStore {
   readonly kind: CheckpointStoreKind;
   /** Capture the current sandbox working tree as a checkpoint. */
@@ -109,6 +129,14 @@ export interface CheckpointStore {
   restore(input: CheckpointRestoreInput): Promise<CheckpointRestoreResult>;
   /** Checkpoint history for a lane, newest first (empty when none / unsupported). */
   list(scope: CheckpointScope): Promise<CheckpointRecord[]>;
+  /** Delete one checkpoint from the lane's history (user-initiated). */
+  drop(input: CheckpointDropInput): Promise<CheckpointDropResult>;
+  /**
+   * Purge stored checkpoints — the lane's, or every lane's (`allLanes`). The
+   * security mitigation: removes durable on-device WIP/secrets on demand. The
+   * remote/web store has nothing on-device to purge and returns `unsupported`.
+   */
+  clear(scope: CheckpointScope, options?: { allLanes?: boolean }): Promise<CheckpointClearResult>;
 }
 
 /**

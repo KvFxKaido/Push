@@ -36,7 +36,7 @@ vi.mock('react', () => ({
   },
 }));
 
-const { useCheckpointHistory, restoreError } = await import('./useCheckpointHistory');
+const { useCheckpointHistory, restoreError, purgeError } = await import('./useCheckpointHistory');
 
 const RECORDS: CheckpointRecord[] = [
   { checkpointId: 'c2', message: 'b', timestampMs: 200 },
@@ -131,5 +131,40 @@ describe('useCheckpointHistory', () => {
       branch: 'feat/x',
       checkpointId: 'c2',
     });
+  });
+
+  it('drop() calls the store with the lane scope + commitId (no sandbox needed)', async () => {
+    const list = vi.fn(async () => RECORDS);
+    const dropCheckpoint = vi.fn(async () => ({ status: 'dropped' as const }));
+    // sandboxId null: drop operates on the on-device dir, not the live sandbox.
+    const view = render({ ...base, sandboxId: null, list, dropCheckpoint });
+    await view.drop('c1');
+    expect(dropCheckpoint).toHaveBeenCalledWith({
+      repoFullName: 'owner/repo',
+      branch: 'feat/x',
+      checkpointId: 'c1',
+    });
+  });
+
+  it('clear() purges the lane; clear(true) purges all lanes', async () => {
+    const list = vi.fn(async () => RECORDS);
+    const clearCheckpoints = vi.fn(async () => ({ status: 'cleared' as const }));
+    const view = render({ ...base, sandboxId: null, list, clearCheckpoints });
+    await view.clear();
+    expect(clearCheckpoints).toHaveBeenCalledWith(
+      { repoFullName: 'owner/repo', branch: 'feat/x' },
+      { allLanes: undefined },
+    );
+    await view.clear(true);
+    expect(clearCheckpoints).toHaveBeenLastCalledWith(
+      { repoFullName: 'owner/repo', branch: 'feat/x' },
+      { allLanes: true },
+    );
+  });
+
+  it('purgeError maps failed/unsupported results', () => {
+    expect(purgeError({ status: 'unsupported' })).toMatch(/not available/);
+    expect(purgeError({ status: 'failed', reason: 'rm -rf went wrong' })).toBe('rm -rf went wrong');
+    expect(purgeError({ status: 'failed', reason: '' })).toBe('Could not clear checkpoints.');
   });
 });

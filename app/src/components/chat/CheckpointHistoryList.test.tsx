@@ -19,6 +19,10 @@ function html(props: Partial<Parameters<typeof CheckpointHistoryList>[0]>): stri
       restoringId={null}
       canRestore={true}
       onRestore={() => {}}
+      droppingId={null}
+      clearing={false}
+      onDrop={() => {}}
+      onClear={() => {}}
       nowMs={NOW}
       {...props}
     />,
@@ -67,5 +71,23 @@ describe('CheckpointHistoryList', () => {
     const out = html({ checkpoints: RECORDS, canRestore: false });
     expect(out).toMatch(/disabled/);
     expect(out).toContain('Start the workspace to restore');
+  });
+
+  it('renders clear (branch + all) and per-row delete controls when checkpoints exist (#1103)', () => {
+    const out = html({ checkpoints: RECORDS });
+    expect(out).toContain('Clear branch');
+    expect(out).toContain('Clear all');
+    expect(out).toContain('Delete checkpoint'); // per-row trash aria-label
+  });
+
+  it('omits the purge controls when there are no checkpoints', () => {
+    const out = html({ checkpoints: [] });
+    expect(out).not.toContain('Clear all');
+    expect(out).not.toContain('Clear branch');
+  });
+
+  it('shows a spinner while clearing', () => {
+    const out = html({ checkpoints: RECORDS, clearing: true });
+    expect(out).toMatch(/disabled/);
   });
 });
