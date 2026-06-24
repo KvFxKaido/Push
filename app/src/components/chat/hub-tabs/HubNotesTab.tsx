@@ -15,6 +15,12 @@ import { ScratchpadMemoryGallery } from '@/components/chat/scratchpad/Scratchpad
 import { Tip } from '@/components/Tip';
 import { HubKeptTab } from './HubKeptTab';
 
+// Passive inner well inside a notes section: a bordered sub-region carved into
+// the parent inset panel (no fill of its own — the panel surface shows through).
+// Shared by the note-controls box, the pinned-refs frame, and the plan list /
+// empty state so the four wells can't drift apart on radius or border token.
+const NOTES_WELL_CLASS = 'rounded-xl border border-push-edge-subtle';
+
 interface HubNotesTabProps {
   scratchpadContent: string;
   scratchpadMemories: ScratchpadMemory[];
@@ -86,7 +92,7 @@ export function HubNotesTab({
               )}
             </div>
 
-            <div className="rounded-xl border border-push-edge-subtle p-2.5">
+            <div className={`${NOTES_WELL_CLASS} p-2.5`}>
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   value={memoryName}
@@ -110,7 +116,7 @@ export function HubNotesTab({
                     <span>Save note</span>
                   </button>
                 </Tip>
-                <Tip content="Clear notes">
+                <Tip content="Clear notes" suppressClickAfterLongPress>
                   <button
                     type="button"
                     onClick={onClear}
@@ -176,7 +182,7 @@ export function HubNotesTab({
               </span>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-push-edge-subtle">
+            <div className={`min-h-0 flex-1 overflow-hidden ${NOTES_WELL_CLASS}`}>
               <HubKeptTab artifacts={artifacts} onUnpin={onUnpin} onUpdateLabel={onUpdateLabel} />
             </div>
           </section>
@@ -219,7 +225,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
               {done} of {todos.length} done
             </span>
           )}
-          <Tip content="Clear plan">
+          <Tip content="Clear plan" suppressClickAfterLongPress>
             <button
               type="button"
               onClick={onClear}
@@ -234,7 +240,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
       </div>
 
       {hasItems ? (
-        <ul className="flex flex-col gap-1.5 rounded-xl border border-push-edge-subtle p-2.5">
+        <ul className={`flex flex-col gap-1.5 ${NOTES_WELL_CLASS} p-2.5`}>
           {todos.map((todo) => (
             <li key={todo.id} className="flex items-start gap-2 text-push-xs">
               <StatusMarker status={todo.status} />
@@ -251,7 +257,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
           ))}
         </ul>
       ) : (
-        <p className="rounded-xl border border-push-edge-subtle px-3 py-2 text-push-2xs text-push-fg-dim">
+        <p className={`${NOTES_WELL_CLASS} px-3 py-2 text-push-2xs text-push-fg-dim`}>
           No plan yet — the model will populate this when it starts a multi-step task.
         </p>
       )}
