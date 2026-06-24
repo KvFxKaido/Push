@@ -176,11 +176,15 @@ Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-
 
 ### Duration Tokens
 
-| Token             | Value |
-| ----------------- | ----- |
-| `--motion-fast`   | 150ms |
-| `--motion-normal` | 250ms |
-| `--motion-slow`   | 350ms |
+| Token             | Value | Note |
+| ----------------- | ----- | ---- |
+| `--motion-stagger` | 40ms | per-item stagger offset |
+| `--motion-micro`   | 80ms | tooltip delay, tiny segments |
+| `--motion-fast`   | 150ms | quick — close beats, text swap |
+| `--motion-normal` | 250ms | fast — open beats, icon swap, tabs |
+| `--motion-slow`   | 350ms | panel close |
+| `--motion-slower` | 400ms | panel open, skeleton reveal |
+| `--motion-slowest` | 500ms | emphasis, badge appear, text reveal |
 
 ### Easing
 
@@ -190,19 +194,19 @@ Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-
 | `--ease-press`   | `cubic-bezier(0.34, 1.56, 0.64, 1)` |
 | `--ease-default` | `cubic-bezier(0.4, 0, 0.2, 1)`  |
 
-### Distance & blur
+### Distance, blur & scale
 
-Travel offsets and motion-blur for enter/exit motion. Keep distances small — motion should read as "settling into place", not flying across the screen. Promote a hardcoded `px` value to one of these the moment a second motion needs it (scale mirrors transitions.dev).
+Travel offsets, motion-blur, and enter/exit scale. Keep distances small — motion should read as "settling into place", not flying across the screen; surfaces grow in from just under 1. Promote a hardcoded value to one of these the moment a second motion needs it (scales mirror transitions.dev).
 
-| Distance | Value | | Blur | Value |
-| --- | --- | --- | --- | --- |
-| `--distance-micro` | 4px | | `--blur-small` | 2px |
-| `--distance-small` | 6px | | `--blur-medium` | 3px |
-| `--distance-base` | 8px | | `--blur-large` | 8px |
-| `--distance-medium` | 12px | | | |
-| `--distance-large` | 30px | | | |
+| Distance | Value | | Blur | Value | | Scale | Value |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `--distance-micro` | 4px | | `--blur-small` | 2px | | `--scale-large` | 0.96 (modal) |
+| `--distance-small` | 6px | | `--blur-medium` | 3px | | `--scale-medium` | 0.97 (dropdown) |
+| `--distance-base` | 8px | | `--blur-large` | 8px | | `--scale-small` | 0.98 (tooltip) |
+| `--distance-medium` | 12px | | | | | `--scale-tiny` | 0.99 |
+| `--distance-large` | 30px | | | | | | |
 
-Consumed by `.panel-reveal` (`--distance-base` default throw, `--panel-blur` → `--blur-small`), `ScrollToBottomButton` (`--distance-medium`), and the pager nav (`nav-transition.ts`: `--distance-base` slide + `--blur-medium`). Negating a token in an inline transform needs `calc(-1 * var(--…))` — you can't write `-var(…)`.
+Consumed by `.panel-reveal` (`--distance-base` default throw, `--panel-blur` → `--blur-small`), `ScrollToBottomButton` (`--distance-medium`), the pager nav (`nav-transition.ts`: `--distance-base` slide + `--blur-medium`), and `.menu-pop-in` (`--scale-large`). Negating a token in an inline transform needs `calc(-1 * var(--…))` — you can't write `-var(…)`.
 
 ### Panel reveal
 
@@ -223,6 +227,8 @@ One open/close vocabulary for every panel — the shadcn Sheets and any custom f
 Every menu that pops from a trigger — dropdown, context menu, menubar, select, popover, hover card, and their submenus — scales up from its trigger origin + fades. The scale/slide come from the shadcn primitives' own `animate-in` classes; `index.css` retimes them (by `[data-slot=…-content][data-state]`) onto the shared tokens with a snappy asymmetric cadence: **open `--motion-normal` (250ms), close `--motion-fast` (150ms)**, both on `--ease-spring`. The retune keys off Radix's `data-state`, so a menu opened by mouse, keyboard, or touch all get the same feel. One feel across the whole menu family; sheets and tooltips keep their own timing.
 
 Custom (non-Radix) menus that mount on open — e.g. the workspace branch picker — can't hook the `data-state` retune, so they reuse the **`.menu-pop-in`** class (a one-shot scale-from-origin + fade on the same open cadence; pair with an `origin-*` utility to anchor the scale to the trigger corner).
+
+**Modals / dialogs** (`dialog-content`, `alert-dialog-content`) join the same family on the same cadence (open `--motion-normal` / close `--motion-fast`, spring ease), but scale from **center** rather than a trigger origin — the shadcn dialog's own zoom-in keyframe, just retimed.
 
 ### Navigation model
 
