@@ -11,6 +11,7 @@ import {
   HUB_TAG_CLASS,
 } from '@/components/chat/hub-styles';
 import { KeptCacheIcon, NotebookPadIcon } from '@/components/icons/push-custom-icons';
+import { ScratchpadMemoryGallery } from '@/components/chat/scratchpad/ScratchpadMemoryGallery';
 import { HubKeptTab } from './HubKeptTab';
 
 interface HubNotesTabProps {
@@ -131,31 +132,16 @@ export function HubNotesTab({
                 ) : null}
               </div>
 
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <select
-                  value={activeMemoryId ?? ''}
-                  onChange={(event) => onLoadMemory(event.target.value || null)}
-                  className={`${HUB_MATERIAL_INPUT_CLASS} min-w-[180px] flex-1 pr-8 sm:max-w-[280px]`}
-                >
-                  <option value="">Current notes</option>
-                  {scratchpadMemories.map((memory) => (
-                    <option key={memory.id} value={memory.id}>
-                      {memory.name}
-                    </option>
-                  ))}
-                </select>
-                {activeMemoryId && (
-                  <button
-                    type="button"
-                    onClick={() => onDeleteMemory(activeMemoryId)}
-                    className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
-                    aria-label="Delete selected memory"
-                    title="Delete selected memory"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
+              {scratchpadMemories.length > 0 && (
+                <div className="mt-2.5">
+                  <ScratchpadMemoryGallery
+                    memories={scratchpadMemories}
+                    activeMemoryId={activeMemoryId}
+                    onLoad={onLoadMemory}
+                    onDelete={onDeleteMemory}
+                  />
+                </div>
+              )}
             </div>
 
             <textarea

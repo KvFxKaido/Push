@@ -1044,6 +1044,34 @@
   50% { transform: translate3d(-16%, 12%, 0) scale(1.12); }
 }
 
+/* Scratchpad memory card → reader morph.
+   The card and the reader panel share a `view-transition-name`, so the browser
+   tweens between their positions/sizes. We only tune duration/easing here;
+   Push is the only View Transitions user, so targeting all pseudos is safe.
+   The backdrop fade covers the non-View-Transitions fallback path (older
+   WebViews) where the panel just mounts in place. */
+::view-transition-group(*),
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes scratch-backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.scratch-overlay-backdrop {
+  animation: scratch-backdrop-fade 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scratch-overlay-backdrop {
+    animation: none;
+  }
+}
+
 /* Expand/collapse content */
 @keyframes expand-in {
   from {
