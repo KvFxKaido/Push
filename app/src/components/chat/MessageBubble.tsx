@@ -751,6 +751,14 @@ export const MessageBubble = memo(function MessageBubble({
       <div
         ref={bubbleRef}
         {...longPress.pointerHandlers}
+        onClickCapture={(e) => {
+          // Swallow the click that trails a long-press release so it doesn't also
+          // fire an inner element (a markdown link, the thinking-block toggle).
+          if (longPress.consumeClick()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
         className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up"
       >
         {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row. */}
@@ -792,6 +800,14 @@ export const MessageBubble = memo(function MessageBubble({
     <div
       ref={bubbleRef}
       {...longPress.pointerHandlers}
+      onClickCapture={(e) => {
+        // Swallow the click that trails a long-press release so it doesn't also
+        // fire an inner element (a markdown link, the thinking-block toggle).
+        if (longPress.consumeClick()) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
       className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in"
     >
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-push-edge bg-push-grad-icon">
