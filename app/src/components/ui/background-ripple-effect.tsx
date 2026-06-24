@@ -31,6 +31,13 @@ type CellStyle = CSSProperties & {
   '--duration'?: string;
 };
 
+// Vignette that dissolves the fixed-size grid into its surroundings so the cell
+// rectangle never shows a hard edge: fully opaque at the center, fully clear by
+// 85% of the radius (the last ~15% is the fade band). Applied as the grid's
+// mask. Named for the same reason BACKGROUND_TOPBAR_CLEAR_MASK is — so the
+// percentage reads as an intentional fade boundary, not a magic number.
+const RIPPLE_VIGNETTE_MASK = 'radial-gradient(circle at center, black, transparent 85%)';
+
 interface DivGridProps {
   rows: number;
   cols: number;
@@ -62,6 +69,8 @@ function DivGrid({
     width: cols * cellSize,
     height: rows * cellSize,
     marginInline: 'auto',
+    maskImage: RIPPLE_VIGNETTE_MASK,
+    WebkitMaskImage: RIPPLE_VIGNETTE_MASK,
   };
 
   return (
@@ -155,7 +164,6 @@ export function BackgroundRippleEffect({
             setClickedCell({ row, col });
             setRippleKey((key) => key + 1);
           }}
-          className="[mask-image:radial-gradient(circle_at_center,black,transparent_85%)]"
         />
       </div>
     </div>
