@@ -61,6 +61,19 @@ describe('MessageBubble', () => {
     expect(html).toContain('hello world');
   });
 
+  it('draws the hexagon avatar while the reply streams', () => {
+    const message = assistantMessage({ content: 'hello', status: 'streaming' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    // The avatar path carries the streaming trace class only while streaming.
+    expect(html).toContain('hex-thinking');
+  });
+
+  it('settles the hexagon avatar to a static stroke once done', () => {
+    const message = assistantMessage({ content: 'hello', status: 'done' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).not.toContain('hex-thinking');
+  });
+
   it('hides malformed tool JSON before any renderer (sanitation is upstream)', () => {
     // Fixture case 7: malformed tool JSON. Hiding happens in displayContentText /
     // hasContent, ahead of the markdown renderer, so it is renderer-agnostic —

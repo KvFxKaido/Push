@@ -1072,6 +1072,30 @@
   }
 }
 
+/* Streaming assistant avatar — the Push hexagon "draws" while a reply streams.
+   A small gap travels around the outline (path normalized to pathLength 100),
+   so the mark stays legible as a hexagon and settles to a solid stroke the
+   moment streaming stops and the class is removed. The pattern length (80 + 20)
+   equals the normalized perimeter, so offset 0 and -100 coincide — a seamless
+   loop. Calm by design: one slow lap, not a spinner. */
+@keyframes hex-thinking-trace {
+  to {
+    stroke-dashoffset: -100;
+  }
+}
+
+.hex-thinking {
+  stroke-dasharray: 80 20;
+  animation: hex-thinking-trace 1.6s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hex-thinking {
+    animation: none;
+    stroke-dasharray: none;
+  }
+}
+
 /* Expand/collapse content */
 @keyframes expand-in {
   from {

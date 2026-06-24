@@ -34,7 +34,10 @@ export function PushMarkIcon({ strokeWidth = 1.5, pathClassName, ...props }: Pus
       strokeLinejoin="round"
       {...props}
     >
-      <path className={pathClassName} d="M8 1 14.5 5v6L8 15 1.5 11V5L8 1Z" />
+      {/* pathLength normalizes the outline to 100 units so the streaming
+          `hex-thinking` trace can use percentage-based dashes regardless of the
+          icon's rendered size. Inert when no stroke-dasharray is applied. */}
+      <path className={pathClassName} pathLength={100} d="M8 1 14.5 5v6L8 15 1.5 11V5L8 1Z" />
     </svg>
   );
 }
