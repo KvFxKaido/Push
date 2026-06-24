@@ -123,4 +123,28 @@ describe('MessageBubble', () => {
     expect(html).toContain('npm install');
     expect(html).not.toMatch(/stream-word"[^>]*>npm</);
   });
+
+  it('renders the assistant action row hidden AND non-interactive at rest', () => {
+    // opacity-0 alone still receives taps (Codex P2), so the invisible row could
+    // fire Copy/Regenerate/Pin — pointer-events must be gated too. It reveals on
+    // hover (pointer) or long-press (touch); the always-on touch fallback is gone.
+    const message = assistantMessage({ content: 'hello', status: 'done' });
+    const html = renderToStaticMarkup(<MessageBubble message={message} onPin={() => {}} />);
+    expect(html).toContain('pointer-events-none');
+    expect(html).toContain('group-hover/assistant:pointer-events-auto');
+    expect(html).not.toContain('[@media(hover:none)]');
+  });
+
+  it('gates the user message action row the same way', () => {
+    const message: ChatMessage = {
+      id: 'user-1',
+      role: 'user',
+      content: 'hi',
+      timestamp: 1,
+      status: 'done',
+    };
+    const html = renderToStaticMarkup(<MessageBubble message={message} onEdit={() => {}} />);
+    expect(html).toContain('pointer-events-none');
+    expect(html).toContain('group-hover/user:pointer-events-auto');
+  });
 });
