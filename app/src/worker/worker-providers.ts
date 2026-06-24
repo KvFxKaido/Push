@@ -65,6 +65,46 @@ function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
   return taskId.includes('text-generation') || taskName.includes('text generation');
 }
 
+/**
+ * One entry of the Cloudflare model catalog surfaced to clients. The catalog
+ * is the binding's own `env.AI.models()` output (an `AiModelsSearchObject`);
+ * we project it down to the run-compatible id plus the capability flags the
+ * client's native-tool / structured-output gates consume. Only `functionCalling`
+ * is carried today — Workers AI's catalog exposes JSON-mode support implicitly
+ * through the same `function_calling` property (the two ship together), and
+ * `parseStructured` backstops the structured-output path.
+ */
+export interface CloudflareCatalogModel {
+  /** The `@cf/...` string env.AI.run() expects (the binding's `name`). */
+  id: string;
+  /** Whether the model card advertises the `function_calling` property. */
+  functionCalling: boolean;
+}
+
+/** Read a single `property_id`'s value from a model's `properties` array. */
+function readCloudflareModelProperty(
+  model: AiModelsSearchObject,
+  propertyId: string,
+): string | undefined {
+  const props = (model as { properties?: Array<{ property_id?: string; value?: string }> })
+    .properties;
+  if (!Array.isArray(props)) return undefined;
+  for (const prop of props) {
+    if (prop?.property_id === propertyId) return prop.value;
+  }
+  return undefined;
+}
+
+/**
+ * Whether the catalog flags the model with the `function_calling` property.
+ * Workers AI reports the value as a string (`"true"`); accept the common
+ * truthy spellings defensively rather than pinning one serialization.
+ */
+function cloudflareModelHasFunctionCalling(model: AiModelsSearchObject): boolean {
+  const raw = readCloudflareModelProperty(model, 'function_calling')?.trim().toLowerCase();
+  return raw === 'true' || raw === '1' || raw === 'yes';
+}
+
 // Cloudflare Workers AI PushStream implementation.
 // NOTE: SSE parsing here is deliberately minimal to match the chunk shape that
 // env.AI.run emits (single-line `data: {json}` frames terminated by `\n`). If
@@ -524,14 +564,21 @@ export async function handleCloudflareModels(request: Request, env: Env): Promis
     // The AI binding's catalog uses `id` as an internal UUID and `name` as
     // the `@cf/...` string that env.AI.run() expects as the model argument.
     // We surface the run-compatible name — not the UUID — as the selectable
-    // model id for the client.
-    const textModels = models
+    // model id, paired with the capability flags the client's gates read so
+    // the picker doesn't have to name-match Kimi/GLM to infer tool support.
+    const catalog: CloudflareCatalogModel[] = models
       .filter(isCloudflareTextGenerationModel)
-      .map((model) => model.name)
-      .filter((name): name is string => typeof name === 'string' && name.trim().length > 0)
-      .sort((left, right) => left.localeCompare(right));
+      .filter(
+        (model): model is AiModelsSearchObject & { name: string } =>
+          typeof model.name === 'string' && model.name.trim().length > 0,
+      )
+      .map((model) => ({
+        id: model.name.trim(),
+        functionCalling: cloudflareModelHasFunctionCalling(model),
+      }))
+      .sort((left, right) => left.id.localeCompare(right.id));
 
-    return Response.json(textModels, {
+    return Response.json(catalog, {
       headers: {
         [REQUEST_ID_HEADER]: requestId,
         'X-Push-Trace-Id': spanCtx.traceId,

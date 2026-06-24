@@ -1270,11 +1270,12 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('zen', 'big-pickle')).toBe(false);
   });
 
-  it('gates Cloudflare Workers AI by model name (Kimi / GLM only)', () => {
+  it('gates Cloudflare Workers AI by model name on a cold catalog cache (Kimi / GLM only)', () => {
     stubWindow();
-    // Workers AI has no models.dev metadata, so the gate is name-based. Kimi
-    // K2.x and GLM advertise structured outputs on their model cards; every
-    // other Workers AI model stays prompt-only. Covers the `@cf/...` ids the
+    // With no cached binding catalog (fresh window → empty localStorage), the
+    // gate falls back to the name heuristic. Kimi K2.x and GLM advertise
+    // structured outputs on their model cards; every other Workers AI model
+    // stays prompt-only until the catalog loads. Covers the `@cf/...` ids the
     // catalog returns.
     expect(
       providerModelSupportsStructuredOutput('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
@@ -1296,7 +1297,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('openrouter', undefined)).toBe(false);
   });
 
-  it('gates native tool calling for Cloudflare Kimi/GLM by name', () => {
+  it('gates native tool calling for Cloudflare Kimi/GLM by name on a cold catalog cache', () => {
     stubWindow();
     expect(
       providerModelSupportsNativeToolCalling('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
@@ -1306,6 +1307,74 @@ describe('providerModelSupportsStructuredOutput', () => {
       providerModelSupportsNativeToolCalling('cloudflare', '@cf/qwen/qwen2.5-coder-32b-instruct'),
     ).toBe(false);
     expect(providerModelSupportsNativeToolCalling('cloudflare', undefined)).toBe(false);
+  });
+
+  it('drives Cloudflare gating from the cached binding catalog, overriding the name heuristic', async () => {
+    // Reset modules so the catalog mem-cache starts cold, then seed it through
+    // a real fetchCloudflareModels round-trip (the path the picker takes).
+    vi.resetModules();
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        jsonResponse([
+          // A non-Kimi/GLM model the name heuristic alone would mark unsupported.
+          { id: '@cf/qwen/qwen2.5-coder-32b-instruct', functionCalling: true },
+          // A model the catalog explicitly says lacks function calling.
+          { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', functionCalling: false },
+        ]),
+      ),
+    );
+
+    const mc = await import('./model-catalog');
+    await mc.fetchCloudflareModels();
+
+    // Catalog says qwen supports function calling → both gates flip true even
+    // though the Kimi/GLM name heuristic would have returned false.
+    expect(
+      mc.providerModelSupportsNativeToolCalling(
+        'cloudflare',
+        '@cf/qwen/qwen2.5-coder-32b-instruct',
+      ),
+    ).toBe(true);
+    expect(
+      mc.providerModelSupportsStructuredOutput('cloudflare', '@cf/qwen/qwen2.5-coder-32b-instruct'),
+    ).toBe(true);
+    // Catalog says llama lacks it → stays text-dispatch / prompt-only.
+    expect(
+      mc.providerModelSupportsNativeToolCalling(
+        'cloudflare',
+        '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+      ),
+    ).toBe(false);
+    // A model absent from the (warm) catalog still falls back to the name
+    // heuristic rather than defaulting off.
+    expect(
+      mc.providerModelSupportsNativeToolCalling('cloudflare', '@cf/moonshotai/kimi-k2.7-code'),
+    ).toBe(true);
+  });
+
+  it('serves the Cloudflare catalog from cache and re-fetches only on force', async () => {
+    vi.resetModules();
+    stubWindow();
+    const fetchMock = vi.fn(async () =>
+      jsonResponse([{ id: '@cf/qwen/qwen3-30b-a3b-fp8', functionCalling: true }]),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const mc = await import('./model-catalog');
+    const first = await mc.fetchCloudflareModels();
+    expect(first).toEqual(['@cf/qwen/qwen3-30b-a3b-fp8']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Second call within the TTL serves from cache — no new network hit.
+    const second = await mc.fetchCloudflareModels();
+    expect(second).toEqual(['@cf/qwen/qwen3-30b-a3b-fp8']);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The picker's manual refresh forces a revalidation.
+    await mc.fetchCloudflareModels({ force: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('gates OpenRouter native tool calling on models.dev tool_call capability', async () => {
