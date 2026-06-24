@@ -1,4 +1,5 @@
 import { type PointerEvent, useCallback, useEffect, useRef } from 'react';
+import { hapticLight } from '@/lib/android/haptics';
 
 interface UseLongPressOptions {
   /** Hold duration before firing, in ms. */
@@ -63,6 +64,9 @@ export function useLongPress(
       startPos.current = { x: e.clientX, y: e.clientY };
       timer.current = setTimeout(() => {
         fired.current = true;
+        // A light tap confirms the hold registered — the native "it revealed" cue
+        // that pairs with the hover→long-press idiom. No-op off the native shell.
+        hapticLight();
         onLongPress();
       }, delayMs);
     },

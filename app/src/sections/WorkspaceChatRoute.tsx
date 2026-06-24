@@ -5,6 +5,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
+import { useBackHandler } from '@/hooks/useBackHandler';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
@@ -431,6 +432,17 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     },
     [setShowMergeFlow],
   );
+
+  // Android Back closes the topmost open overlay instead of backgrounding the
+  // app. Order matters only when two stack (e.g. a branch sheet over the hub):
+  // the most-recently-opened registers last and so closes first (LIFO). Inert on
+  // web. The branch sheets sit "over" the hub, so they're wired after it.
+  useBackHandler(isWorkspaceHubOpen, () => handleWorkspaceHubOpenChangeWithMount(false));
+  useBackHandler(isChatsDrawerOpen, () => setIsChatsDrawerOpen(false));
+  useBackHandler(isLauncherOpen, () => setLauncherOpenWithMount(false));
+  useBackHandler(showBranchCreate, () => setShowBranchCreateWithMount(false));
+  useBackHandler(showBranchFork, () => setShowBranchForkWithMount(false));
+  useBackHandler(showMergeFlow, () => setShowMergeFlowWithMount(false));
 
   const openCommitSwitchConfirm = useCallback((branch: string, probe: BranchSwitchProbe) => {
     setCommitSwitchConfirmBranch(branch);

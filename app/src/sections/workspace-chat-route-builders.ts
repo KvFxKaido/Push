@@ -7,6 +7,7 @@ import type {
   SettingsWorkspaceProps,
 } from '@/components/SettingsSheet';
 import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useSnapshotManager';
+import { hapticMedium } from '@/lib/android/haptics';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
 type WorkspaceHubProps = ComponentProps<
@@ -461,8 +462,15 @@ export function buildWorkspaceHubBranchProps(args: {
     defaultBranch: args.activeRepo?.default_branch,
     availableBranches: args.displayBranches ?? [],
     branchesLoading: args.repoBranchesLoading,
-    onSwitchBranch: args.setCurrentBranch,
-    onWarmSwitchBranch: args.switchBranchFromUI,
+    // A firmer tap on a branch switch — a committed context change (no-op on web).
+    onSwitchBranch: (branch) => {
+      hapticMedium();
+      args.setCurrentBranch(branch);
+    },
+    onWarmSwitchBranch: (branch) => {
+      hapticMedium();
+      return args.switchBranchFromUI(branch);
+    },
     onRefreshBranches: activeRepoFullName
       ? () => {
           void args.loadRepoBranches(activeRepoFullName);

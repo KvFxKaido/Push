@@ -13,6 +13,8 @@ import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
 import { getPairedDevice } from '@/lib/local-pc-storage';
 import { isRelayModeEnabled } from '@/lib/relay-binding';
 import { getPairedRemote } from '@/lib/relay-storage';
+import { initAndroidShell } from '@/lib/android/native-shell';
+import { bindAndroidBackHandler } from '@/lib/android/back-handler';
 import type {
   ActiveRepo,
   AppShellScreen,
@@ -227,6 +229,13 @@ function App() {
   useEffect(() => {
     perfMark('app:first-render');
     perfMeasure('app:boot', 'app:first-render');
+  }, []);
+
+  // Native (Android) shell affordances — status bar + keyboard setup and the
+  // hardware/gesture Back binding. All native-gated and best-effort; inert on web.
+  useEffect(() => {
+    void initAndroidShell();
+    void bindAndroidBackHandler();
   }, []);
 
   useEffect(() => {
