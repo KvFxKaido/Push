@@ -54,6 +54,21 @@ describe('coerceRepoAppearance', () => {
     });
   });
 
+  it('preserves a valid ripple glowStyle', () => {
+    const coerced = coerceRepoAppearance({
+      icon: 'mobile-slab',
+      color: 'indigo',
+      glowEnabled: true,
+      glowStyle: 'ripple',
+    });
+    expect(coerced).toEqual({
+      icon: 'mobile-slab',
+      color: 'indigo',
+      glowEnabled: true,
+      glowStyle: 'ripple',
+    });
+  });
+
   it('defaults glowEnabled to true when missing, independent of glowStyle', () => {
     const coerced = coerceRepoAppearance({ icon: 'repo-ledger', color: 'sky' });
     expect(coerced?.glowEnabled).toBe(true);

@@ -182,7 +182,7 @@ export function RepoAppearanceSheet({
               </h2>
               <span className="text-push-2xs text-push-fg-dim">Ambient accent</span>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {GLOW_OPTIONS.map((option) => {
                 const selected = option.enabled
                   ? draft.glowEnabled && draft.glowStyle === option.style

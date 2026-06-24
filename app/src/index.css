@@ -197,6 +197,33 @@
   animation: agent-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Background ripple effect (the `ripple` ambient-background variant). Each cell
+   flashes from its resting fill to the accent `--cell-ripple-color` and back; the
+   per-cell `--delay`/`--duration` (set inline from radial distance to the ripple
+   origin) make the flash expand outward. Plays once — `both` keeps the cell at its
+   resting fill before and after, so the grid settles to a static texture. */
+@keyframes cell-ripple {
+  0% {
+    background-color: var(--cell-fill-color);
+  }
+  30% {
+    background-color: var(--cell-ripple-color);
+  }
+  100% {
+    background-color: var(--cell-fill-color);
+  }
+}
+
+.animate-cell-ripple {
+  animation: cell-ripple var(--duration, 220ms) var(--ease-default) var(--delay, 0ms) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-cell-ripple {
+    animation: none;
+  }
+}
+
 /* Status-bar verb swap — the thinking-verb rotation (and phase-label changes)
    in AgentStatusBar used to hard-cut from one word to the next. This enters each
    new label from just below with a brief blur, matching the blur-bloom vocabulary
