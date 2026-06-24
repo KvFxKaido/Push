@@ -660,6 +660,99 @@
   animation: menu-pop-in var(--motion-normal) var(--ease-spring);
 }
 
+/* ── Feedback / status primitives (transitions.dev 02/03/10/12) ──────────────
+   Documented, reusable motion classes on the shared tokens. Reduced motion is
+   handled by the global wildcard at the foot of this file (it clamps every
+   animation/transition duration to ~0). */
+
+/* Error shake (12) — a brief horizontal shake to flag an invalid value. Travel
+   rides the distance tokens; one overshoot before settling. Add the class
+   (after a reflow, e.g. remove → void offsetWidth → add) to replay, and drop it
+   on `animationend`. */
+@keyframes error-shake {
+  0% { transform: translateX(0); }
+  28% { transform: translateX(var(--distance-small)); }
+  57% { transform: translateX(calc(var(--distance-small) * -1)); }
+  79% { transform: translateX(var(--distance-micro)); }
+  100% { transform: translateX(0); }
+}
+.error-shake {
+  animation: error-shake var(--motion-normal) var(--ease-spring);
+}
+
+/* Number / digit pop-in (02) — a digit rises + fades + unblurs into place;
+   bouncy ease for a tactile counter feel. For a rolling counter, stagger the
+   trailing digits with an `animation-delay` (e.g. `--motion-stagger` steps). */
+@keyframes digit-pop-in {
+  0% {
+    transform: translateY(var(--distance-base));
+    opacity: 0;
+    filter: blur(var(--blur-small));
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+.digit-pop-in {
+  animation: digit-pop-in var(--motion-slowest) var(--ease-press) both;
+}
+
+/* Notification badge (03) — the count dot pops in (scale + fade + unblur) and
+   pops out faster. Toggle `data-open` on the dot; default (attribute absent or
+   true) is the resting/visible state. */
+.badge-dot {
+  transform-origin: center;
+  transition:
+    transform var(--motion-slowest) var(--ease-press),
+    opacity var(--motion-slower) var(--ease-press),
+    filter var(--motion-slowest) var(--ease-press);
+}
+.badge-dot[data-open='false'] {
+  transform: scale(0);
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transition-duration: var(--motion-fast);
+  transition-timing-function: var(--ease-default);
+}
+
+/* Success check (10) — orchestrates fade + rotate-in + unblur + a bouncy bob on
+   `[data-state="in"]`. The richer sibling of the verdict `success-pop`/`glow`
+   beat. The drawn-checkmark stroke (an SVG `path` with `stroke-dashoffset`
+   tweened off `getTotalLength()`) is consumer-supplied — this covers the
+   container orchestration that works for any filled or stroked success glyph.
+   `rotate` and `translate` use the independent transform properties so they
+   compose without a shared `transform`. */
+@keyframes success-check-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes success-check-rotate {
+  from { rotate: 80deg; }
+  to { rotate: 0deg; }
+}
+@keyframes success-check-blur {
+  from { filter: blur(var(--blur-large)); }
+  to { filter: blur(0); }
+}
+@keyframes success-check-bob {
+  from { translate: 0 var(--distance-large); }
+  to { translate: 0 0; }
+}
+.success-check {
+  display: inline-block;
+  transform-origin: center;
+  opacity: 0;
+}
+.success-check[data-state='in'] {
+  animation:
+    success-check-fade var(--motion-slowest) var(--ease-spring) forwards,
+    success-check-rotate var(--motion-slowest) var(--ease-spring) forwards,
+    success-check-blur var(--motion-slowest) var(--ease-spring) forwards,
+    success-check-bob var(--motion-slowest) var(--ease-press) forwards;
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;
