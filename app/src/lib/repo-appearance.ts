@@ -16,10 +16,17 @@ export type RepoAppearanceColorId =
   | 'rose'
   | 'indigo';
 
+// How the ambient background glow renders when `glowEnabled` is true.
+// 'gradient' is the original drifting-blob wash; 'dotted' is the animated
+// dot field. Off is still carried by `glowEnabled: false` so every existing
+// boolean check keeps working.
+export type RepoAppearanceGlowStyleId = 'gradient' | 'dotted';
+
 export interface RepoAppearance {
   icon: RepoAppearanceIconId;
   color: RepoAppearanceColorId;
   glowEnabled: boolean;
+  glowStyle: RepoAppearanceGlowStyleId;
 }
 
 export const DEFAULT_REPO_APPEARANCE: RepoAppearance = {
@@ -29,6 +36,7 @@ export const DEFAULT_REPO_APPEARANCE: RepoAppearance = {
   // its own color. Per-repo overrides still win.
   color: 'sky',
   glowEnabled: true,
+  glowStyle: 'gradient',
 };
 
 export const REPO_APPEARANCE_ICON_OPTIONS: Array<{ id: RepoAppearanceIconId; label: string }> = [
@@ -55,11 +63,22 @@ export const REPO_APPEARANCE_COLOR_OPTIONS: Array<{
   { id: 'indigo', label: 'Indigo', hex: '#a5b4fc' },
 ];
 
+export const REPO_APPEARANCE_GLOW_STYLE_OPTIONS: Array<{
+  id: RepoAppearanceGlowStyleId;
+  label: string;
+}> = [
+  { id: 'gradient', label: 'Gradient' },
+  { id: 'dotted', label: 'Dotted' },
+];
+
 const ICON_ID_SET = new Set<RepoAppearanceIconId>(
   REPO_APPEARANCE_ICON_OPTIONS.map((option) => option.id),
 );
 const COLOR_ID_SET = new Set<RepoAppearanceColorId>(
   REPO_APPEARANCE_COLOR_OPTIONS.map((option) => option.id),
+);
+const GLOW_STYLE_ID_SET = new Set<RepoAppearanceGlowStyleId>(
+  REPO_APPEARANCE_GLOW_STYLE_OPTIONS.map((option) => option.id),
 );
 
 export function isRepoAppearanceIconId(value: unknown): value is RepoAppearanceIconId {
@@ -68,6 +87,10 @@ export function isRepoAppearanceIconId(value: unknown): value is RepoAppearanceI
 
 export function isRepoAppearanceColorId(value: unknown): value is RepoAppearanceColorId {
   return typeof value === 'string' && COLOR_ID_SET.has(value as RepoAppearanceColorId);
+}
+
+export function isRepoAppearanceGlowStyleId(value: unknown): value is RepoAppearanceGlowStyleId {
+  return typeof value === 'string' && GLOW_STYLE_ID_SET.has(value as RepoAppearanceGlowStyleId);
 }
 
 export function coerceRepoAppearance(value: unknown): RepoAppearance | null {
@@ -82,6 +105,9 @@ export function coerceRepoAppearance(value: unknown): RepoAppearance | null {
     icon: candidate.icon,
     color: candidate.color,
     glowEnabled: typeof candidate.glowEnabled === 'boolean' ? candidate.glowEnabled : true,
+    // glowStyle landed after glowEnabled; persisted records without it
+    // fall back to the original gradient wash.
+    glowStyle: isRepoAppearanceGlowStyleId(candidate.glowStyle) ? candidate.glowStyle : 'gradient',
   };
 }
 

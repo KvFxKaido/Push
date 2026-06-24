@@ -52,7 +52,11 @@ export function ChatSurfaceScreen({
         className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
         style={{ transform: chatShellTransform, ...chatShellStyle }}
       >
-        <ChatBackgroundGlow active={appearance.glowEnabled} color={accentHex} />
+        <ChatBackgroundGlow
+          active={appearance.glowEnabled}
+          color={accentHex}
+          variant={appearance.glowStyle}
+        />
         <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">
           <div className="relative z-20 flex min-w-0 items-center gap-2">
             <div className="flex h-[34px] min-w-0 items-center gap-1 pl-0.5 pr-1">

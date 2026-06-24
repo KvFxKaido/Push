@@ -16,10 +16,31 @@ import {
   getRepoAppearanceColorHex,
   hexToRgba,
   REPO_APPEARANCE_COLOR_OPTIONS,
+  REPO_APPEARANCE_GLOW_STYLE_OPTIONS,
   REPO_APPEARANCE_ICON_OPTIONS,
   type RepoAppearance,
+  type RepoAppearanceGlowStyleId,
 } from '@/lib/repo-appearance';
 import { RepoAppearanceBadge, RepoAppearanceGlyph } from './repo-appearance';
+
+// Flatten the glow choice into a single row: each enabled style, then Off
+// (carried by glowEnabled: false). Keeping Off here means the picker reads
+// as one mutually-exclusive control instead of a toggle plus a style switch.
+type GlowOption =
+  | { key: string; label: string; enabled: true; style: RepoAppearanceGlowStyleId }
+  | { key: 'off'; label: string; enabled: false };
+
+const GLOW_OPTIONS: GlowOption[] = [
+  ...REPO_APPEARANCE_GLOW_STYLE_OPTIONS.map(
+    (option): GlowOption => ({
+      key: option.id,
+      label: option.label,
+      enabled: true,
+      style: option.id,
+    }),
+  ),
+  { key: 'off', label: 'Off', enabled: false },
+];
 
 interface RepoAppearanceSheetProps {
   open: boolean;
@@ -159,21 +180,24 @@ export function RepoAppearanceSheet({
               <h2 className="text-xs font-medium uppercase tracking-[0.12em] text-push-fg-dim">
                 Background glow
               </h2>
-              <span className="text-push-2xs text-push-fg-dim">Ambient gradient</span>
+              <span className="text-push-2xs text-push-fg-dim">Ambient accent</span>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  { id: true, label: 'On' },
-                  { id: false, label: 'Off' },
-                ] as const
-              ).map((option) => {
-                const selected = draft.glowEnabled === option.id;
+            <div className="grid grid-cols-3 gap-2">
+              {GLOW_OPTIONS.map((option) => {
+                const selected = option.enabled
+                  ? draft.glowEnabled && draft.glowStyle === option.style
+                  : !draft.glowEnabled;
                 return (
                   <button
-                    key={String(option.id)}
+                    key={option.key}
                     type="button"
-                    onClick={() => setDraft((prev) => ({ ...prev, glowEnabled: option.id }))}
+                    onClick={() =>
+                      setDraft((prev) =>
+                        option.enabled
+                          ? { ...prev, glowEnabled: true, glowStyle: option.style }
+                          : { ...prev, glowEnabled: false },
+                      )
+                    }
                     className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-auto gap-2 px-3 py-3 ${
                       selected ? 'border-push-edge-hover text-push-fg' : 'text-push-fg-secondary'
                     }`}

@@ -206,7 +206,12 @@ describe('ChatScreen', () => {
     const html = renderToStaticMarkup(
       <ChatScreen
         workspace={baseWorkspace({
-          activeRepoAppearance: { icon: 'repo-ledger', color: 'sky', glowEnabled: true },
+          activeRepoAppearance: {
+            icon: 'repo-ledger',
+            color: 'sky',
+            glowEnabled: true,
+            glowStyle: 'gradient',
+          },
         })}
         shell={baseShell()}
         chat={baseChat()}
@@ -217,11 +222,38 @@ describe('ChatScreen', () => {
     expect(html).toContain('animation-play-state:running');
   });
 
+  it('renders the dotted glow canvas when glowStyle is dotted', () => {
+    const html = renderToStaticMarkup(
+      <ChatScreen
+        workspace={baseWorkspace({
+          activeRepoAppearance: {
+            icon: 'repo-ledger',
+            color: 'sky',
+            glowEnabled: true,
+            glowStyle: 'dotted',
+          },
+        })}
+        shell={baseShell()}
+        chat={baseChat()}
+        banners={baseBanners()}
+      />,
+    );
+
+    // The dotted treatment swaps the drifting blobs for an accent-fed canvas.
+    expect(html).toContain('canvas');
+    expect(html).not.toContain('push-glow-blob');
+  });
+
   it('pauses the background glow when the repo opts out via glowEnabled false', () => {
     const html = renderToStaticMarkup(
       <ChatScreen
         workspace={baseWorkspace({
-          activeRepoAppearance: { icon: 'repo-ledger', color: 'sky', glowEnabled: false },
+          activeRepoAppearance: {
+            icon: 'repo-ledger',
+            color: 'sky',
+            glowEnabled: false,
+            glowStyle: 'gradient',
+          },
         })}
         shell={baseShell()}
         chat={baseChat()}
