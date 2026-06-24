@@ -846,9 +846,15 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Near-zero duration, NOT `transition: none`: these are JS-driven and swap /
+     clean up on `transitionend` (text-swap especially). `transition: none` sets
+     `transition-property: none`, which suppresses that event and would strand
+     the old text; a 0.01ms duration keeps the swap instant while still firing
+     it. (Same reason the global wildcard clamps duration rather than killing
+     the property.) */
   .text-swap,
   .text-reveal-line {
-    transition: none;
+    transition-duration: 0.01ms;
   }
 }
 
