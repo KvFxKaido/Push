@@ -24,9 +24,13 @@
     color-scheme: dark;
 
     /* ── Motion tokens ────────────────────────────── */
+    --motion-stagger: 40ms; /* per-item stagger offset */
+    --motion-micro: 80ms; /* tooltip delay, tiny segments */
     --motion-fast: 150ms;
     --motion-normal: 250ms;
     --motion-slow: 350ms;
+    --motion-slower: 400ms; /* panel open, skeleton reveal */
+    --motion-slowest: 500ms; /* emphasis, badge appear, text reveal */
     --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
     --ease-press: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
@@ -45,6 +49,12 @@
     --blur-small: 2px;
     --blur-medium: 3px;
     --blur-large: 8px;
+
+    /* Scale — enter/exit size change; surfaces grow in from just under 1. */
+    --scale-large: 0.96; /* modal open/close */
+    --scale-medium: 0.97; /* dropdown open */
+    --scale-small: 0.98; /* tooltip open */
+    --scale-tiny: 0.99; /* dropdown close */
 
     /* Panel reveal — the shared open/close feel for panels and floating
        reveals. Open is deliberate, close is snappy; both ride `--ease-spring`
@@ -615,6 +625,22 @@
   animation-timing-function: var(--ease-spring);
 }
 
+/* Modal / dialog open feel — the same scale-up + fade as the menus, but the
+   shadcn dialog scales from center (its own zoom-in keyframe) rather than a
+   trigger origin. Retimed to the modal cadence — open `--motion-normal`
+   (250ms), close `--motion-fast` (150ms) on the spring ease — so dialogs join
+   the same motion family. The overlay fade and scale are the primitives' own. */
+[data-slot='dialog-content'][data-state='open'],
+[data-slot='alert-dialog-content'][data-state='open'] {
+  animation-duration: var(--motion-normal);
+  animation-timing-function: var(--ease-spring);
+}
+[data-slot='dialog-content'][data-state='closed'],
+[data-slot='alert-dialog-content'][data-state='closed'] {
+  animation-duration: var(--motion-fast);
+  animation-timing-function: var(--ease-spring);
+}
+
 /* Custom (non-Radix) menus that mount on open can't hook the [data-slot] retune
    above, so this gives them the same scale-from-origin + fade open beat as a
    one-shot mount animation (open cadence only; exit is an instant unmount).
@@ -623,7 +649,7 @@
 @keyframes menu-pop-in {
   from {
     opacity: 0;
-    transform: scale(0.96);
+    transform: scale(var(--scale-large));
   }
   to {
     opacity: 1;
