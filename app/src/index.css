@@ -600,6 +600,25 @@
   animation-timing-function: var(--ease-spring);
 }
 
+/* Custom (non-Radix) menus that mount on open can't hook the [data-slot] retune
+   above, so this gives them the same scale-from-origin + fade open beat as a
+   one-shot mount animation (open cadence only; exit is an instant unmount).
+   Pair with an `origin-*` utility to anchor the scale to the trigger corner.
+   Reduced motion is handled by the global wildcard at the foot of this file. */
+@keyframes menu-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.menu-pop-in {
+  animation: menu-pop-in var(--motion-normal) var(--ease-spring);
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;

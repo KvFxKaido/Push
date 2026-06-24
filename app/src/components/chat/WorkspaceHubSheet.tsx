@@ -1346,7 +1346,7 @@ export function WorkspaceHubSheet({
                             }}
                           />
                           <div
-                            className={`absolute left-0 top-full z-50 mt-2 w-[248px] overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}
+                            className={`menu-pop-in origin-top-left absolute left-0 top-full z-50 mt-2 w-[248px] overflow-hidden ${HUB_PANEL_SURFACE_CLASS}`}
                           >
                             {/* Branch actions */}
                             {isOnMain ? (

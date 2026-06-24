@@ -206,7 +206,9 @@ One open/close vocabulary for every panel — the shadcn Sheets and any custom f
 
 ### Menu / dropdown open
 
-Every menu that pops from a trigger — dropdown, context menu, menubar, select, popover, hover card, and their submenus — scales up from its trigger origin + fades. The scale/slide come from the shadcn primitives' own `animate-in` classes; `index.css` retimes them (by `[data-slot=…-content][data-state]`) onto the shared tokens with a snappy asymmetric cadence: **open `--motion-normal` (250ms), close `--motion-fast` (150ms)**, both on `--ease-spring`. One feel across the whole menu family; sheets and tooltips keep their own timing.
+Every menu that pops from a trigger — dropdown, context menu, menubar, select, popover, hover card, and their submenus — scales up from its trigger origin + fades. The scale/slide come from the shadcn primitives' own `animate-in` classes; `index.css` retimes them (by `[data-slot=…-content][data-state]`) onto the shared tokens with a snappy asymmetric cadence: **open `--motion-normal` (250ms), close `--motion-fast` (150ms)**, both on `--ease-spring`. The retune keys off Radix's `data-state`, so a menu opened by mouse, keyboard, or touch all get the same feel. One feel across the whole menu family; sheets and tooltips keep their own timing.
+
+Custom (non-Radix) menus that mount on open — e.g. the workspace branch picker — can't hook the `data-state` retune, so they reuse the **`.menu-pop-in`** class (a one-shot scale-from-origin + fade on the same open cadence; pair with an `origin-*` utility to anchor the scale to the trigger corner).
 
 ### Navigation model
 
