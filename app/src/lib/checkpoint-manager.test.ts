@@ -274,6 +274,40 @@ describe('checkpoint-manager', () => {
     expect(content).toContain('diff --git a/app.ts b/app.ts');
   });
 
+  it('on native recovery, makes re-apply conditional on the tree and keeps the diff as reference', () => {
+    const content = buildCheckpointReconciliationMessage(
+      makeCheckpoint({ savedDiff: 'diff --git a/app.ts b/app.ts\n+console.log("hi")' }),
+      { head: 'unknown', dirtyFiles: [], diffStat: '', changedFiles: [] },
+      { sandboxLost: true, localCheckpointRecovery: true },
+    );
+
+    expect(content).toContain('[SESSION_RESUMED]');
+    expect(content).toContain('on-device checkpoint');
+    // The model must inspect the actual tree before deciding.
+    expect(content).toContain('git status');
+    // The cloud-era UNCONDITIONAL "re-apply these changes" instruction is gone...
+    expect(content).not.toContain('Re-apply these changes to continue');
+    // ...but the diff is kept as a labeled reference (never dropped → no work loss
+    // when there is no on-device checkpoint), gated on a clean clone.
+    expect(content).toContain('For reference only');
+    expect(content).toContain('diff --git a/app.ts b/app.ts');
+    expect(content).toContain('never re-apply changes already in the tree');
+  });
+
+  it('on native recovery without a saved diff, still defers to the on-device checkpoint', () => {
+    const content = buildCheckpointReconciliationMessage(
+      makeCheckpoint(),
+      { head: 'unknown', dirtyFiles: [], diffStat: '', changedFiles: [] },
+      { sandboxLost: true, localCheckpointRecovery: true },
+    );
+
+    expect(content).toContain('on-device checkpoint');
+    // No diff was captured → no reference block, and the cloud-era "no diff snapshot
+    // → work is gone" framing must NOT appear (the on-device checkpoint holds WIP).
+    expect(content).not.toContain('For reference only');
+    expect(content).not.toContain('any uncommitted changes are gone');
+  });
+
   it('acquires, heartbeats, and releases a tab lock', () => {
     const tabId = acquireRunTabLock('chat-1');
 

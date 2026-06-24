@@ -39,6 +39,7 @@ import {
   recordResumeEvent,
   saveRunCheckpoint,
 } from '@/lib/checkpoint-manager';
+import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 import { captureRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
 import { getApprovalMode } from '@/lib/approval-mode';
 import { getZenGoMode } from '@/lib/providers';
@@ -641,11 +642,14 @@ export function useChatCheckpoint({
       );
     }
 
-    // Build reconciliation message
+    // Build reconciliation message. On the native shell the on-device checkpoint
+    // is the WIP authority, so the cold-resume message must NOT instruct the model
+    // to re-apply a saved diff (the checkpoint restore already brings the work
+    // back — re-applying would double-apply). See buildCheckpointReconciliationMessage.
     const reconciliationContent = buildCheckpointReconciliationMessage(
       resumeCheckpoint,
       sbStatus ?? EMPTY_SANDBOX_STATUS,
-      { sandboxLost: sandboxLostMidRun },
+      { sandboxLost: sandboxLostMidRun, localCheckpointRecovery: nativeCheckpointsActive() },
     );
 
     const conv = conversations[chatId];
