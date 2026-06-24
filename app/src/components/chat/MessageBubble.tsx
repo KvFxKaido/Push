@@ -10,6 +10,7 @@ import {
   Suspense,
 } from 'react';
 import { useLongPress } from '@/hooks/useLongPress';
+import { useMessageViewState } from '@/hooks/useMessageViewState';
 import {
   ChevronRight,
   FileCode,
@@ -333,16 +334,24 @@ function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.Re
   return nodes.map((node) => wrapStreamWordsNode(node, counter));
 }
 
-function ThinkingBlock({ thinking, isStreaming }: { thinking: string; isStreaming: boolean }) {
-  const [expanded, setExpanded] = useState(false);
-
+function ThinkingBlock({
+  thinking,
+  isStreaming,
+  expanded,
+  onToggle,
+}: {
+  thinking: string;
+  isStreaming: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   // Truncate preview to ~80 chars from the end of thinking
   const preview = thinking.length > 80 ? '\u2026' + thinking.slice(-80).trim() : thinking.trim();
 
   return (
     <div className="mb-2">
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={onToggle}
         className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-push-fg-muted transition-colors duration-150 group"
       >
         <ChevronRight
@@ -398,8 +407,15 @@ function hostnameOf(parsed: URL): string {
 
 /** Web-search sources surfaced by a provider's native search (OpenRouter).
  *  Collapsed by default to one line; expands to the full numbered list. */
-function SourcesFooter({ citations }: { citations: UrlCitation[] }) {
-  const [expanded, setExpanded] = useState(false);
+function SourcesFooter({
+  citations,
+  expanded,
+  onToggle,
+}: {
+  citations: UrlCitation[];
+  expanded: boolean;
+  onToggle: () => void;
+}) {
   // Drop citations whose URL isn't a safe http(s) link — they can't be
   // rendered as a trustworthy source and must not become a clickable href.
   const safe = useMemo(
@@ -414,7 +430,7 @@ function SourcesFooter({ citations }: { citations: UrlCitation[] }) {
   return (
     <div className="mt-2">
       <button
-        onClick={() => setExpanded((e) => !e)}
+        onClick={onToggle}
         className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-push-fg-muted transition-colors duration-150"
       >
         <ChevronRight
@@ -563,8 +579,15 @@ export const MessageBubble = memo(function MessageBubble({
   // revealed buttons — which sit inside the row — are left alone.
   // `swallowLongPressClick` eats the click that trails a hold so the same gesture
   // doesn't also fire an inner link or attachment thumbnail.
-  const [actionsRevealed, setActionsRevealed] = useState(false);
-  const longPress = useLongPress(() => setActionsRevealed(true));
+  // This row-reveal state, plus the reasoning/sources expansion below, is held
+  // above the transcript's virtualization boundary keyed by message.id (see
+  // `useMessageViewState`) — NOT in component-local `useState`. It has to be:
+  // the streaming→settled handoff (Footer → virtualized list) and Virtuoso
+  // scroll-remounts both remount this component, and local state would reset on
+  // each, collapsing the row and the reasoning pane "after a response".
+  const [viewState, setViewState] = useMessageViewState(message.id);
+  const { actionsRevealed } = viewState;
+  const longPress = useLongPress(() => setViewState({ actionsRevealed: true }));
   const swallowLongPressClick = useCallback(
     (e: React.MouseEvent) => {
       if (longPress.consumeClick()) {
@@ -578,11 +601,11 @@ export const MessageBubble = memo(function MessageBubble({
   useEffect(() => {
     if (!actionsRevealed) return;
     const onPointerDown = (e: PointerEvent) => {
-      if (!rowRef.current?.contains(e.target as Node)) setActionsRevealed(false);
+      if (!rowRef.current?.contains(e.target as Node)) setViewState({ actionsRevealed: false });
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
-  }, [actionsRevealed]);
+  }, [actionsRevealed, setViewState]);
   const displayContentText = useMemo(() => {
     if (isUser) {
       return message.displayContent ?? message.content;
@@ -773,7 +796,7 @@ export const MessageBubble = memo(function MessageBubble({
         <div
           {...longPress.pointerHandlers}
           onClickCapture={swallowLongPressClick}
-          className="chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md"
+          className="chat-longpress-target chat-user-bubble max-w-[85%] rounded-2xl rounded-br-md border px-4 py-3 shadow-push-md"
         >
           {hasAttachments && (
             <div className="flex flex-wrap gap-2 mb-2">
@@ -804,12 +827,19 @@ export const MessageBubble = memo(function MessageBubble({
         />
       </div>
       <div className="min-w-0 max-w-[85%]">
-        {hasThinking && <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming} />}
+        {hasThinking && (
+          <ThinkingBlock
+            thinking={message.thinking!}
+            isStreaming={isStreaming}
+            expanded={viewState.reasoningExpanded}
+            onToggle={() => setViewState({ reasoningExpanded: !viewState.reasoningExpanded })}
+          />
+        )}
         {hasContent && (
           <div
             {...longPress.pointerHandlers}
             onClickCapture={swallowLongPressClick}
-            className={`text-push-lg leading-relaxed break-words ${
+            className={`chat-longpress-target text-push-lg leading-relaxed break-words ${
               isError ? 'text-red-400' : 'text-push-fg-soft'
             }`}
           >
@@ -831,7 +861,11 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
         )}
         {message.citations && message.citations.length > 0 && (
-          <SourcesFooter citations={message.citations} />
+          <SourcesFooter
+            citations={message.citations}
+            expanded={viewState.sourcesExpanded}
+            onToggle={() => setViewState({ sourcesExpanded: !viewState.sourcesExpanded })}
+          />
         )}
         {hasContent && !isStreaming && (
           // Hover (pointer) or long-press (touch, `actionsRevealed`) reveals

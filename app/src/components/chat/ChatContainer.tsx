@@ -17,6 +17,7 @@ import { CIStatusBanner } from './CIStatusBanner';
 import { MergeDetectedBanner } from './MergeDetectedBanner';
 import { TranscriptList } from './transcript/TranscriptList';
 import type { TranscriptHandlers } from './transcript/segment-model';
+import { MessageViewStateProvider } from '@/hooks/MessageViewStateProvider';
 import { getEmptyStateQuickPrompts } from '@/lib/quick-prompts';
 import type { MergeDetectedBannerState } from '@/lib/merge-detected-banner-state';
 import { PushMarkIcon } from '@/components/icons/push-custom-icons';
@@ -408,13 +409,18 @@ export function ChatContainer({
         />
       )}
 
-      <TranscriptList
-        segments={segments}
-        activeMessage={activeMessage}
-        agentStatus={agentStatus}
-        handlers={handlers}
-        lastMessage={lastMessage}
-      />
+      {/* Holds per-message UI toggles (action row / reasoning / sources) above
+          the virtualization boundary so they survive the streaming→settled
+          handoff and Virtuoso remounts. */}
+      <MessageViewStateProvider>
+        <TranscriptList
+          segments={segments}
+          activeMessage={activeMessage}
+          agentStatus={agentStatus}
+          handlers={handlers}
+          lastMessage={lastMessage}
+        />
+      </MessageViewStateProvider>
     </div>
   );
 }

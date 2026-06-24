@@ -44,6 +44,19 @@ button,
   user-select: none;
 }
 
+/* Touch: a long-press on a message bubble must reveal its action row, not kick
+   off a native text selection — selection fires pointercancel and aborts the
+   useLongPress timer, so the reveal never lands and the text just highlights.
+   Scoped to touch (no hover + coarse pointer); pointer devices keep drag-to-
+   select and reveal the row via hover instead. */
+@media (hover: none) and (pointer: coarse) {
+  .chat-longpress-target {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+
 /* Focus visibility — keyboard only */
 :focus-visible {
   outline: 2px solid rgba(56, 189, 248, 0.5);
