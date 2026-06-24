@@ -12,6 +12,7 @@ import {
 } from '@/components/chat/hub-styles';
 import { KeptCacheIcon, NotebookPadIcon } from '@/components/icons/push-custom-icons';
 import { ScratchpadMemoryGallery } from '@/components/chat/scratchpad/ScratchpadMemoryGallery';
+import { Tip } from '@/components/Tip';
 import { HubKeptTab } from './HubKeptTab';
 
 interface HubNotesTabProps {
@@ -85,7 +86,7 @@ export function HubNotesTab({
               )}
             </div>
 
-            <div className="rounded-[16px] border border-push-edge/70 bg-black/10 p-2.5">
+            <div className="rounded-xl border border-push-edge-subtle p-2.5">
               <div className="flex flex-wrap items-center gap-2">
                 <input
                   value={memoryName}
@@ -93,31 +94,33 @@ export function HubNotesTab({
                   placeholder="Name this note"
                   className={`${HUB_MATERIAL_INPUT_CLASS} min-w-[150px] flex-1`}
                 />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const trimmed = memoryName.trim();
-                    if (!trimmed) return;
-                    onSaveMemory(trimmed);
-                    setMemoryName('');
-                  }}
-                  disabled={!scratchpadContent.trim() || !memoryName.trim()}
-                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
-                  title="Save current notes as a memory"
-                >
-                  <Check className="h-3.5 w-3.5" />
-                  <span>Save note</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={onClear}
-                  disabled={!scratchpadContent.trim()}
-                  className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
-                  aria-label="Clear notes"
-                  title="Clear notes"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                <Tip content="Save current notes as a memory">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const trimmed = memoryName.trim();
+                      if (!trimmed) return;
+                      onSaveMemory(trimmed);
+                      setMemoryName('');
+                    }}
+                    disabled={!scratchpadContent.trim() || !memoryName.trim()}
+                    className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} px-2.5`}
+                  >
+                    <Check className="h-3.5 w-3.5" />
+                    <span>Save note</span>
+                  </button>
+                </Tip>
+                <Tip content="Clear notes">
+                  <button
+                    type="button"
+                    onClick={onClear}
+                    disabled={!scratchpadContent.trim()}
+                    className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
+                    aria-label="Clear notes"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </Tip>
                 {onExportToRepo ? (
                   <button
                     type="button"
@@ -148,13 +151,15 @@ export function HubNotesTab({
               value={scratchpadContent}
               onChange={(event) => onContentChange(event.target.value)}
               placeholder="Capture notes, requirements, and the pieces you want the model to keep in mind..."
-              className="min-h-[240px] flex-1 resize-none rounded-[16px] border border-push-edge bg-black/15 px-3 py-2.5 text-sm leading-relaxed text-push-fg outline-none transition-colors placeholder:text-push-fg-dim/70 focus:border-push-sky/50"
+              className="min-h-[240px] flex-1 resize-none rounded-xl border border-push-edge-subtle bg-push-surface-inset px-3 py-2.5 text-sm leading-relaxed text-push-fg shadow-push-inset outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50"
             />
           </section>
 
           <HubTodoSection todos={todos} onClear={onTodoClear} />
 
-          <section className="flex min-h-[220px] flex-[0.85] flex-col gap-3 rounded-[18px] border border-push-edge/60 bg-[linear-gradient(180deg,rgba(8,11,16,0.78)_0%,rgba(4,7,11,0.9)_100%)] p-3.5 shadow-[0_10px_24px_rgba(0,0,0,0.22)]">
+          <section
+            className={`flex min-h-[220px] flex-[0.85] flex-col gap-3 p-3.5 ${HUB_PANEL_SUBTLE_SURFACE_CLASS}`}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -171,7 +176,7 @@ export function HubNotesTab({
               </span>
             </div>
 
-            <div className="min-h-0 flex-1 overflow-hidden rounded-[16px] border border-push-edge/60 bg-black/10">
+            <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-push-edge-subtle">
               <HubKeptTab artifacts={artifacts} onUnpin={onUnpin} onUpdateLabel={onUpdateLabel} />
             </div>
           </section>
@@ -214,21 +219,22 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
               {done} of {todos.length} done
             </span>
           )}
-          <button
-            type="button"
-            onClick={onClear}
-            disabled={!hasItems}
-            className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
-            aria-label="Clear plan"
-            title="Clear plan"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          <Tip content="Clear plan">
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={!hasItems}
+              className={HUB_MATERIAL_ROUND_BUTTON_CLASS}
+              aria-label="Clear plan"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          </Tip>
         </div>
       </div>
 
       {hasItems ? (
-        <ul className="flex flex-col gap-1.5 rounded-[16px] border border-push-edge/70 bg-black/10 p-2.5">
+        <ul className="flex flex-col gap-1.5 rounded-xl border border-push-edge-subtle p-2.5">
           {todos.map((todo) => (
             <li key={todo.id} className="flex items-start gap-2 text-push-xs">
               <StatusMarker status={todo.status} />
@@ -245,7 +251,7 @@ function HubTodoSection({ todos, onClear }: { todos: readonly TodoItem[]; onClea
           ))}
         </ul>
       ) : (
-        <p className="rounded-[16px] border border-push-edge/70 bg-black/10 px-3 py-2 text-push-2xs text-push-fg-dim">
+        <p className="rounded-xl border border-push-edge-subtle px-3 py-2 text-push-2xs text-push-fg-dim">
           No plan yet — the model will populate this when it starts a multi-step task.
         </p>
       )}
