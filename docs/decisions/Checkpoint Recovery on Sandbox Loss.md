@@ -40,11 +40,19 @@ When native checkpoints are active (`isNativePlatform() && VITE_NATIVE_CHECKPOIN
 the **cloud snapshot system is off** and the on-device checkpoint is the single
 recovery path. So **local always wins** — there is no second reservoir to lose to.
 
-- **No idle hibernation to Modal.** WIP stays on the device; the native
-  checkpoint store is the backup of record.
-- **No `restoreFromSnapshot` on loss.** Sandbox gone → cold-start a fresh sandbox
-  (normal clone from origin) → restore the native checkpoint into it (the
-  existing `.git`-preserving, delete-faithful sync). Recovery is device→sandbox.
+- **No hibernation to Modal — idle AND manual.** Gate off the idle-timer
+  hibernation *and* the manual `useSandbox.hibernate()` (the hub's **Hibernate**
+  button + the snapshot **Restore** affordance, `WorkspaceHubSheet.tsx` ~1474 /
+  ~1525, `WorkspaceChatRoute.tsx` ~784). Idle alone isn't enough — a hand-tapped
+  hibernate still ships WIP to Modal. Hide those affordances on the native shell.
+- **Loss → retire the dead id, then cold-start.** Gating off `restoreFromSnapshot`
+  is **not sufficient** — a lost sandbox today leaves the dead `sandboxId` in
+  place (`refresh`/`markUnreachable` keep it, `ensureSandbox` returns it without a
+  status check, `useWorkspaceSandboxController.ts` ~118). So native loss handling
+  must explicitly **clear/retire the dead id and create a fresh sandbox** (normal
+  clone from origin), then restore the native checkpoint into it (the existing
+  `.git`-preserving, delete-faithful sync). Without the retire step, gating the
+  snapshot path **strands** the session on a dead id instead of cold-starting.
 - **Keep the liveness probe.** The warm-reconnect *probe* (`execInSandbox(id,
   'true')` — "is my container still alive?") stays; it reattaches to a live
   container with no restore. Only the *snapshot* halves are gated off.
@@ -53,6 +61,11 @@ recovery path. So **local always wins** — there is no second reservoir to lose
   that already selects the native store (`selectCheckpointStore`). "If you're on
   native checkpoints, you're not on cloud snapshots." (A dedicated kill-switch
   flag is trivial to add later if an override is ever wanted; not needed now.)
+- **Split "touch activity" from "take snapshot."** The idle effect persists
+  `lastActivityAt` *before* the snapshot decision (`useSandbox.ts` ~418), and
+  reconnect recoverability reads it (`~203`, `sandbox-session.ts` ~155). Gate only
+  the snapshot call, not the whole effect — keep the activity bookkeeping so warm
+  reattach doesn't regress.
 - **Drop the snapshot-suppression of the local offer on the APK.** With cloud
   snapshot restore gone, `restoredFromSnapshotSandboxId` never matches on the
   native shell, so the native restore is reached. Make the intent explicit so a
@@ -65,7 +78,39 @@ recovery path. So **local always wins** — there is no second reservoir to lose
 - Fresh / lost / cold-cloned sandbox (no uncommitted work) → local checkpoint is
   the newer truth → restore it (auto or one-tap default-yes; UX in §UI).
 - Sandbox already has its **own uncommitted work** → the existing **dirty-tree
-  refusal** in `restore()` holds → never silently clobber; ask. (Unchanged.)
+  refusal** in `restore()` (`native-jgit-store.ts` ~531) holds → never silently
+  clobber; ask. (Unchanged.)
+
+**Caveat — the dirty-tree refusal does NOT cover cold-loss.** A freshly cloned
+sandbox is *clean*, so the refusal only guards live/manual restore. On cold-loss
+recovery the restore proceeds against a clean clone, which means it restores the
+**last checkpoint** — and the dead sandbox may have had up to one debounce-window
+(~45 s) of un-checkpointed work past it. That tail is lost. Accepted: the bounded
+window is the cost of the debounce, and it's strictly better than losing the whole
+sandbox. Flush-on-background already shrinks it; state it plainly, don't pretend
+the dirty-check saves it.
+
+### Precedence vs the *other* fresh-sandbox restore paths
+
+Native restore is not the only thing that touches a fresh sandbox — two others
+race it, and the native checkpoint must win (it's the authoritative WIP backup):
+
+- **Workspace-patch replay.** `WorkspaceSessionScreen` replays pending
+  `workspace-patch` cards on `creating → ready` (`~248`, via
+  `replayWorkspacePatch`), mutating the tree in parallel with native restore.
+  Unsequenced, whoever lands first breaks the other (replay first → native
+  dirty-refuses; native first → replay double-applies / mis-marks). **Decision:**
+  on the native shell, **native restore precedes patch replay** — defer/suppress
+  replay until restore resolves, and treat the restored tree as authoritative (the
+  checkpoint already contains the WIP those cards represent). Exact mechanism
+  (skip vs defer vs reconcile-against-result) to be nailed in implementation.
+- **Chat/session resume "re-apply".** `useChatCheckpoint` recreates a sandbox on
+  resume and builds a model message that says *"re-apply these changes"* with a
+  saved diff (`~512` / `~644`, `checkpoint-manager.ts` ~308). After a device
+  restore that instruction is **stale and dangerous** (double-apply). **Decision:**
+  when native restore is the recovery path, the resume reconciliation must **not**
+  instruct re-apply — the checkpoint already restored the work; the message should
+  be suppressed or reduced to a "restored from on-device checkpoint" note.
 
 ## Post-restore consistency — "Cloudflare sees it and continues as normal"
 
@@ -73,8 +118,14 @@ The sandbox is still the execution environment (the device doesn't run code), so
 after a device→sandbox restore the sandbox's *derived* state must be coherent or
 the agent can't just keep going. Checklist to audit/wire:
 
-- **Mutation signal** — restore already passes `markWorkspaceMutated: true`
-  (`native-jgit-store.ts`), so the diff view / coordinator see the change. ✔
+- **Mutation signal alone is not enough.** Restore passes `markWorkspaceMutated:
+  true` (`native-jgit-store.ts` ~558), which wakes mutation listeners
+  (`sandbox-client.ts` ~1303) — but a **whole-tree** restore also has to invalidate
+  the derived caches a single edit doesn't: file-version cache, prefetched-edit
+  cache, the symbol ledger, the file ledger. There's already a broad invalidator
+  for this (`sandbox-edit-ops.ts` ~109) — the restore must run the equivalent, or
+  editor saves and symbol/file awareness go stale against the new tree. **This is
+  the load-bearing "continues as normal" item.**
 - **Workspace revision** — confirm the restore bumps/refreshes the sandbox
   workspace revision so the UI's "where we are" settles (it's `0` on Cloudflare —
   verify nothing keys off a stale value).
@@ -84,8 +135,14 @@ the agent can't just keep going. Checklist to audit/wire:
 - **Auto-back re-clobber** — ensure the capture coordinator doesn't immediately
   re-capture/treat the just-restored tree as a fresh mutation in a way that loops.
 - **Lifecycle flags** — `freshSandboxId` / `restoredFromSnapshotSandboxId` are the
-  hooks the restore enabling keys on; make sure the cold-start→native-restore path
-  sets them so the offer fires exactly once per lane.
+  hooks the restore enabling keys on; the cold-start→native-restore path must set
+  them so the offer fires **exactly once** per lane and isn't itself suppressed.
+- **Detection ↔ capture race** — `useWorkspaceSandboxRestore` marks a lane probed
+  *before* async detection resolves (`~140`), while auto-back capture is
+  independently debounced/in-flight (`useWorkspaceSandboxAutoBack.ts` ~108). If
+  detection runs before a just-finishing device capture is visible, the fresh
+  sandbox won't re-probe and the offer is missed. Order detection after any
+  in-flight capture settles, or make detection re-runnable for the lane.
 
 ## Tradeoffs (accepted)
 
@@ -103,12 +160,19 @@ the agent can't just keep going. Checklist to audit/wire:
 ## Known limitation (decided): origin drift
 
 The checkpoint repo is `git init` with **no origin ancestry** (Native Checkpoint
-Store first-increment fork 1). So restoring overlays the WIP as unstaged changes
-against **whatever the fresh clone's origin HEAD is now** — correct for work-loss
-recovery, but if origin moved the base the WIP was authored against is gone. v1
-accepts overlay-on-current-HEAD. The **clone-based device repo with origin
-ancestry** (which would let the sandbox continue against the right base) stays
-**deferred** — revisit only if overlay-on-HEAD produces real confusion in use.
+Store first-increment fork 1), and restore is a **full-tree replacement**, not an
+overlay: the sync `find`s and `rm -rf`s every non-`.git` top-level entry, then
+extracts the checkpoint (`native-jgit-store.ts` ~114 / the `.git`-preserving sync).
+So the restored working tree **is the checkpoint's entire tree**, sitting on top of
+the fresh clone's `.git`/HEAD. If origin moved while the sandbox was gone, every
+file where the checkpoint differs from the new HEAD shows as a working change — the
+checkpoint is effectively "the whole tree as of last capture" diffed against
+current origin, which can be a large diff, not a tidy WIP overlay. For work-loss
+recovery that's the right content; the framing just has to be honest about it. v1
+accepts full-tree-replace against current HEAD. The **clone-based device repo with
+origin ancestry** (which would let the sandbox continue against the *right* base)
+stays **deferred** — revisit if the full-tree-vs-moved-HEAD diff causes real
+confusion in use.
 
 ## UI surfacing (to design in implementation)
 
@@ -117,6 +181,11 @@ ancestry** (which would let the sandbox continue against the right base) stays
   affordance. Decide: silent auto-restore on a fresh sandbox vs a default-yes
   one-tap banner (`AutoBackRestoreBanner`). Lean: auto-restore when the sandbox is
   unambiguously fresh/empty; banner only when there's anything to weigh.
+- The hub's manual **CheckpointHistory** browse/Restore is user-triggered and
+  already native-gated (`CheckpointHistory.tsx` ~32) — not an auto-collision, but
+  it calls the **same `restore()`**, so it inherits the same consistency
+  requirements (cache invalidation above) and the same full-tree-replace semantics.
+  It stays; the snapshot **Restore** affordance is what goes.
 
 ## Out of scope
 
