@@ -763,8 +763,8 @@ export const MessageBubble = memo(function MessageBubble({
       >
         {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row. */}
         <div
-          className={`opacity-0 group-hover/user:opacity-100 ${
-            actionsRevealed ? 'opacity-100' : ''
+          className={`opacity-0 pointer-events-none group-hover/user:opacity-100 group-hover/user:pointer-events-auto ${
+            actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
           } transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5`}
         >
           <CopyButton text={displayContentText} />
@@ -847,8 +847,8 @@ export const MessageBubble = memo(function MessageBubble({
           // Copy/Regenerate/Pin — touch has no real :hover, so the long-press is
           // the reveal gesture (app-wide idiom, matching the branch-picker Delete).
           <div
-            className={`opacity-0 group-hover/assistant:opacity-100 ${
-              actionsRevealed ? 'opacity-100' : ''
+            className={`opacity-0 pointer-events-none group-hover/assistant:opacity-100 group-hover/assistant:pointer-events-auto ${
+              actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
             } transition-opacity duration-200 mt-1.5 flex items-center gap-0.5`}
           >
             <CopyButton text={displayContentText} />
