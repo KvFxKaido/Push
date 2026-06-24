@@ -3,10 +3,13 @@ import {
   useMemo,
   useState,
   useCallback,
+  useRef,
+  useEffect,
   cloneElement,
   isValidElement,
   Suspense,
 } from 'react';
+import { useLongPress } from '@/hooks/useLongPress';
 import {
   ChevronRight,
   FileCode,
@@ -560,6 +563,22 @@ export const MessageBubble = memo(function MessageBubble({
   const isError = message.status === 'error';
   const isStreaming = message.status === 'streaming';
   const hasThinking = Boolean(message.thinking);
+
+  // The action row (Copy / Regenerate / Pin · Copy / Edit) reveals on hover on
+  // pointer devices; on touch there is no hover, so a long-press reveals it (the
+  // app-wide touch idiom — `useLongPress`, same as the branch-picker Delete). A
+  // tap outside the bubble dismisses it — the touch equivalent of hovering out.
+  const [actionsRevealed, setActionsRevealed] = useState(false);
+  const longPress = useLongPress(() => setActionsRevealed(true));
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!actionsRevealed) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (!bubbleRef.current?.contains(e.target as Node)) setActionsRevealed(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [actionsRevealed]);
   const displayContentText = useMemo(() => {
     if (isUser) {
       return message.displayContent ?? message.content;
@@ -729,9 +748,25 @@ export const MessageBubble = memo(function MessageBubble({
     const hasAttachments = message.attachments && message.attachments.length > 0;
 
     return (
-      <div className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
-        {/* Touch fallback: always-visible on hover-less devices (see assistant row above). */}
-        <div className="opacity-0 group-hover/user:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5">
+      <div
+        ref={bubbleRef}
+        {...longPress.pointerHandlers}
+        onClickCapture={(e) => {
+          // Swallow the click that trails a long-press release so it doesn't also
+          // fire an inner element (a markdown link, the thinking-block toggle).
+          if (longPress.consumeClick()) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
+        className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up"
+      >
+        {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row. */}
+        <div
+          className={`opacity-0 pointer-events-none group-hover/user:opacity-100 group-hover/user:pointer-events-auto ${
+            actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
+          } transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5`}
+        >
           <CopyButton text={displayContentText} />
           {onEdit && (
             <button
@@ -762,7 +797,19 @@ export const MessageBubble = memo(function MessageBubble({
   }
 
   return (
-    <div className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in">
+    <div
+      ref={bubbleRef}
+      {...longPress.pointerHandlers}
+      onClickCapture={(e) => {
+        // Swallow the click that trails a long-press release so it doesn't also
+        // fire an inner element (a markdown link, the thinking-block toggle).
+        if (longPress.consumeClick()) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      className="flex items-start gap-2.5 px-4 py-1.5 group/assistant animate-fade-in"
+    >
       <div className="mt-1.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-push-edge bg-push-grad-icon">
         <PushMarkIcon
           className="h-[10px] w-[10px] text-push-accent"
@@ -796,12 +843,14 @@ export const MessageBubble = memo(function MessageBubble({
           <SourcesFooter citations={message.citations} />
         )}
         {hasContent && !isStreaming && (
-          // Touch devices have no real :hover, so the hover-only reveal left
-          // Copy/Regenerate/Pin unreachable on the APK (only the WebView's flaky
-          // tap-synthesizes-hover ever surfaced them). `[@media(hover:none)]`
-          // keeps the row always-visible on hover-less devices while desktop
-          // keeps the hover-fade.
-          <div className="opacity-0 group-hover/assistant:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity duration-200 mt-1.5 flex items-center gap-0.5">
+          // Hover (pointer) or long-press (touch, `actionsRevealed`) reveals
+          // Copy/Regenerate/Pin — touch has no real :hover, so the long-press is
+          // the reveal gesture (app-wide idiom, matching the branch-picker Delete).
+          <div
+            className={`opacity-0 pointer-events-none group-hover/assistant:opacity-100 group-hover/assistant:pointer-events-auto ${
+              actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
+            } transition-opacity duration-200 mt-1.5 flex items-center gap-0.5`}
+          >
             <CopyButton text={displayContentText} />
             {canRegenerate && onRegenerate && (
               <button
