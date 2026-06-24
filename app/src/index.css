@@ -805,9 +805,11 @@
 
 /* Texts reveal (18) — staggered line entrance: each line rises + unblurs + fades
    in. JS toggles `.is-shown` on the container to reveal, `.is-hiding` to fade out
-   (without reversing the rise). Lines stagger by `--motion-stagger` steps.
-   Distinct from `.stagger-in` (keyframe-on-mount) — this is state-toggled and
-   reversible. */
+   (without reversing the rise). The sample `nth-child` rules stagger the first
+   few lines by `--motion-stagger` steps — add more rules (or set per-line
+   `transition-delay`) for longer passages; un-staggered lines just reveal on the
+   leading beat. Distinct from `.stagger-in` (keyframe-on-mount) — this is
+   state-toggled and reversible. */
 .text-reveal-line {
   display: block;
   opacity: 0;
