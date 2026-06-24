@@ -272,6 +272,7 @@ describe('runRoundLoop', () => {
       .find((o) => o?.event === 'round_stream_failed');
     expect(diag).toMatchObject({ event: 'round_stream_failed', chatId: 'chat-1', reason: 'boom' });
     expect(typeof diag.elapsedMs).toBe('number');
+    expect(typeof diag.streamedChars).toBe('number');
     expect(diag).toHaveProperty('phase');
     expect(diag).toHaveProperty('sandboxId');
     logSpy.mockRestore();

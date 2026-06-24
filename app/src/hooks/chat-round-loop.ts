@@ -412,11 +412,14 @@ export async function runRoundLoop(
     if (error) {
       // Diagnostic for the "killed after ~2 min of no edits" report. This fires
       // on the client (→ device logcat via Capacitor/Console), capturing the one
-      // bit that splits the causes: `elapsedMs` near 120000 + `phase` of a
-      // generation round + UNCHANGED `sandboxId` ⇒ an LLM request / round
-      // wall-clock timeout (the turn died, the container is fine). A `reason`
-      // mentioning NOT_FOUND / a null-or-changed `sandboxId` ⇒ real container
-      // loss. Anything else is a genuine stream error to read on its own terms.
+      // bit that splits the causes: `elapsedMs` near 120000 + UNCHANGED `sandboxId`
+      // ⇒ an LLM request / round wall-clock timeout (the turn died, the container
+      // is fine). A `reason` mentioning NOT_FOUND / a null-or-changed `sandboxId`
+      // ⇒ real container loss. Anything else is a genuine stream error.
+      // `streamedChars` is the honest "was it past dead-air" signal: `phase` is
+      // only the round's OPENING label (round 0 shows 'Thinking…' even if the
+      // stream had moved to responding), so a non-zero `streamedChars` at ~120s
+      // means it died mid-generation regardless of the static phase.
       console.log(
         JSON.stringify({
           level: 'warn',
@@ -424,6 +427,7 @@ export async function runRoundLoop(
           chatId,
           round,
           phase,
+          streamedChars: (accumulated?.length ?? 0) + (thinkingAccumulated?.length ?? 0),
           elapsedMs: Date.now() - roundStartedAt,
           sandboxId: loopCtx.sandboxIdRef.current ?? null,
           reason: error.message?.slice(0, 200),
