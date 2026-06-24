@@ -312,12 +312,23 @@ load-bearing, not polish:
 
 ## Diff transport (capture): manifest-rsync
 
-**Status: implemented (2026-06-23), pending on-device validation.** Device
-primitives (`listManifest`/`commitDelta`, JGit-tested) + the sandbox delta exec and
-`capture()` orchestration have landed behind the strictly-additive fallback;
-remaining is a small-delta round-trip on the Moto G. Capture-direction only;
-restore stays on the full-tree upload path (rare, user-initiated, already in the
-12 MB tier — its diff variant is still deferred, see Out of scope).
+**Status: shipped + device-validated (2026-06-24, Moto G).** The production
+checkpoint path captured a real delta on-device — `native_checkpoint_captured_delta`
+with **`deltaBytes: 208`** (vs the ~7 MB full tree). An isolated transport run
+confirmed correctness: base manifest **1696** files → new **1697** (one added) →
+**193-byte** delta archive → `commitDelta committed: true`, with **no verify
+mismatch, no `valDiff`, no file-count gap, no lock noise**. That `1696` is the
+receipt for the on-device fixes — the broken run was `actual=1665 expected=1696`
+(31 em-dash files dropped by `core.quotePath`); now the full set is present and the
+raw-bytes hashing agrees end-to-end. Capture-direction only; restore stays on the
+full-tree upload path (rare, user-initiated, already in the 12 MB tier — its diff
+variant is still deferred, see Out of scope).
+
+**Known timing behavior (benign):** if the model `git commit`s locally before the
+debounced snapshot fires, the working tree is clean by capture time, the diff is
+`empty_delta`, and capture **falls back to a full** — the work is still
+checkpointed, just not via the delta. A timing miss, not a verify failure; not
+worth chasing (rare, self-healing).
 
 ### Problem
 
@@ -426,7 +437,10 @@ delta verify fail, and the second is also a latent bug in the *full*-capture pat
   eol=crlf`), and JGit's `add()` honored it — normalizing content the sandbox
   hashed raw (`--no-filters`), so blob ids diverged. Fix: write `* -text` into the
   checkpoint repo's `.git/info/attributes` (highest attribute precedence), forcing
-  raw-bytes blobs that match the sandbox.
+  raw-bytes blobs that match the sandbox. (#1108 separately builds the index by
+  hand via `DirCacheEntry`/`FileMode`, which bypasses `add()`'s filtering at the
+  source — so the two are now belt-and-suspenders; either alone suffices, and one
+  could be dropped in a cleanup.)
 - **`core.quotePath` drops non-ASCII paths.** `git ls-files` C-quotes non-ASCII
   paths by default (em-dash → `"…\342\200\224…"`); `zip -@` then can't find the
   file and **silently omits it**. So every non-ASCII-named file was missing from
