@@ -19,6 +19,10 @@ function html(props: Partial<Parameters<typeof CheckpointHistoryList>[0]>): stri
       restoringId={null}
       canRestore={true}
       onRestore={() => {}}
+      droppingId={null}
+      clearing={false}
+      onDrop={() => {}}
+      onClear={() => {}}
       nowMs={NOW}
       {...props}
     />,
@@ -67,5 +71,31 @@ describe('CheckpointHistoryList', () => {
     const out = html({ checkpoints: RECORDS, canRestore: false });
     expect(out).toMatch(/disabled/);
     expect(out).toContain('Start the workspace to restore');
+  });
+
+  it('renders clear (branch + all) and per-row delete controls when checkpoints exist (#1103)', () => {
+    const out = html({ checkpoints: RECORDS });
+    expect(out).toContain('Clear branch');
+    expect(out).toContain('Clear all');
+    expect(out).toContain('Delete checkpoint'); // per-row trash aria-label
+  });
+
+  it('keeps Clear all reachable when this branch is empty, but hides branch-scoped controls (Codex P1)', () => {
+    const out = html({ checkpoints: [] });
+    // All-lanes purge must stay reachable — other branches/repos may hold data.
+    expect(out).toContain('Clear all');
+    // Current-lane-scoped controls are hidden when this lane has no entries.
+    expect(out).not.toContain('Clear branch');
+    expect(out).not.toContain('Delete checkpoint');
+  });
+
+  it('hides the purge controls while loading', () => {
+    const out = html({ loading: true });
+    expect(out).not.toContain('Clear all');
+  });
+
+  it('shows a spinner while clearing', () => {
+    const out = html({ checkpoints: RECORDS, clearing: true });
+    expect(out).toMatch(/disabled/);
   });
 });

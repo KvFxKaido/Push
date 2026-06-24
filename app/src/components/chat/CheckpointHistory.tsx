@@ -52,6 +52,10 @@ export function CheckpointHistory({
       restoringId={history.restoringId}
       canRestore={history.canRestore}
       onRestore={history.restore}
+      droppingId={history.droppingId}
+      clearing={history.clearing}
+      onDrop={history.drop}
+      onClear={history.clear}
       nowMs={nowMs}
     />
   );

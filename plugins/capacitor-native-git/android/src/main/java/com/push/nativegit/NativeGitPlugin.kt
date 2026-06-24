@@ -199,6 +199,29 @@ class NativeGitPlugin : Plugin() {
   }
 
   @PluginMethod
+  fun dropCheckpoint(call: PluginCall) {
+    val commitId = call.getString("commitId") ?: return call.reject("missing 'commitId'")
+    resolveAsync(call) {
+      JSObject().put("dropped", JGitEngine.dropCheckpoint(call.requireDir(), commitId))
+    }
+  }
+
+  @PluginMethod
+  fun clearCheckpoints(call: PluginCall) = resolveAsync(call) {
+    val dir = call.requireDir()
+    // Destructive purge — refuse anything outside the app-private checkpoints area
+    // so a bad caller (or an unexpected absolute dir) can never recursively delete
+    // arbitrary app storage. The TS side only ever passes a lane dir or the
+    // `checkpoints` root, both of which resolve under this guard.
+    val root = File(getContext().filesDir, "checkpoints").canonicalPath
+    val target = File(dir).canonicalPath
+    if (target != root && !target.startsWith(root + File.separator)) {
+      throw IllegalArgumentException("refusing to clear outside the checkpoints area")
+    }
+    JSObject().put("cleared", JGitEngine.clearCheckpoints(dir))
+  }
+
+  @PluginMethod
   fun listManifest(call: PluginCall) = resolveAsync(call) {
     val manifest = JSObject()
     for ((path, hash) in JGitEngine.listManifest(call.requireDir())) manifest.put(path, hash)

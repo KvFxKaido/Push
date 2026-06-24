@@ -19,7 +19,9 @@ import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import type {
   CheckpointCaptureInput,
   CheckpointCaptureResult,
+  CheckpointClearResult,
   CheckpointDetectInput,
+  CheckpointDropResult,
   CheckpointRecord,
   CheckpointRestoreAvailability,
   CheckpointRestoreInput,
@@ -104,5 +106,15 @@ export const remoteDraftRefCheckpointStore: CheckpointStore = {
   // is where a real checkpoint history lives).
   async list(): Promise<CheckpointRecord[]> {
     return [];
+  },
+
+  // drop / clear are the on-device security mitigation (#1103). The remote store
+  // holds no durable on-device data to purge (the draft ref is server-side and
+  // out of scope), so both are unsupported — the clear UI is native-gated anyway.
+  async drop(): Promise<CheckpointDropResult> {
+    return { status: 'unsupported' };
+  },
+  async clear(): Promise<CheckpointClearResult> {
+    return { status: 'unsupported' };
   },
 };

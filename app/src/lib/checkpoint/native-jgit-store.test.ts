@@ -57,6 +57,8 @@ function fakePlugin(over: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
     archiveCommit: vi.fn(async () => ({ archiveBase64: 'ARCHIVE' })),
     listCheckpoints: vi.fn(async () => ({ checkpoints: [] })),
     pruneCheckpoints: vi.fn(async () => ({ pruned: 0 })),
+    dropCheckpoint: vi.fn(async () => ({ dropped: true })),
+    clearCheckpoints: vi.fn(async () => ({ cleared: true })),
     ...over,
   } as unknown as NativeGitPlugin;
 }
@@ -265,6 +267,70 @@ describe('NativeJgitCheckpointStore.list / detectRestore', () => {
       available: false,
       reason: 'no_checkpoint',
     });
+  });
+});
+
+describe('NativeJgitCheckpointStore.drop / clear (#1103)', () => {
+  it('drop targets the lane dir + commitId and maps dropped→status', async () => {
+    const dropCheckpoint = vi.fn(async () => ({ dropped: true }));
+    const result = await store({ plugin: fakePlugin({ dropCheckpoint }) }).drop({
+      ...SCOPE,
+      checkpointId: 'commit-9',
+    });
+    expect(result).toEqual({ status: 'dropped' });
+    expect(dropCheckpoint).toHaveBeenCalledWith({ dir: DIR, commitId: 'commit-9' });
+  });
+
+  it('drop maps a missing checkpoint to not-found', async () => {
+    const dropCheckpoint = vi.fn(async () => ({ dropped: false }));
+    const result = await store({ plugin: fakePlugin({ dropCheckpoint }) }).drop({
+      ...SCOPE,
+      checkpointId: 'gone',
+    });
+    expect(result).toEqual({ status: 'not-found' });
+  });
+
+  it('drop maps a plugin throw to failed', async () => {
+    const dropCheckpoint = vi.fn(async () => {
+      throw new Error('jgit boom');
+    });
+    const result = await store({ plugin: fakePlugin({ dropCheckpoint }) }).drop({
+      ...SCOPE,
+      checkpointId: 'c',
+    });
+    expect(result).toEqual({ status: 'failed', reason: 'jgit boom' });
+  });
+
+  it('clear (single lane) deletes the lane dir', async () => {
+    const clearCheckpoints = vi.fn(async () => ({ cleared: true }));
+    const result = await store({ plugin: fakePlugin({ clearCheckpoints }) }).clear(SCOPE);
+    expect(result).toEqual({ status: 'cleared' });
+    expect(clearCheckpoints).toHaveBeenCalledWith({ dir: DIR });
+  });
+
+  it('clear (all lanes) deletes the checkpoints root', async () => {
+    const clearCheckpoints = vi.fn(async () => ({ cleared: true }));
+    const result = await store({ plugin: fakePlugin({ clearCheckpoints }) }).clear(SCOPE, {
+      allLanes: true,
+    });
+    expect(result).toEqual({ status: 'cleared' });
+    expect(clearCheckpoints).toHaveBeenCalledWith({ dir: 'checkpoints' });
+  });
+
+  it('clear maps cleared:false to noop and a throw to failed', async () => {
+    const noop = await store({
+      plugin: fakePlugin({ clearCheckpoints: vi.fn(async () => ({ cleared: false })) }),
+    }).clear(SCOPE);
+    expect(noop).toEqual({ status: 'noop' });
+
+    const failed = await store({
+      plugin: fakePlugin({
+        clearCheckpoints: vi.fn(async () => {
+          throw new Error('rm failed');
+        }),
+      }),
+    }).clear(SCOPE);
+    expect(failed).toEqual({ status: 'failed', reason: 'rm failed' });
   });
 });
 

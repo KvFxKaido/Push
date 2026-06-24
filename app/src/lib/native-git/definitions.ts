@@ -121,6 +121,21 @@ export interface NativeGitPlugin {
   pruneCheckpoints(options: { dir: string; keep: number }): Promise<{ pruned: number }>;
 
   /**
+   * Delete the single checkpoint whose commit is `commitId` and gc the orphaned
+   * objects. `dropped` is false for an unknown/invalid commit (a no-op).
+   */
+  dropCheckpoint(options: { dir: string; commitId: string }): Promise<{ dropped: boolean }>;
+
+  /**
+   * Securely purge the checkpoint repo at `dir` by deleting the directory outright
+   * (no recoverable objects/reflogs — the security mitigation, #1103). A single
+   * lane dir or the whole `checkpoints` root may be passed. `cleared` is false when
+   * the dir did not exist. The native side refuses any path outside the app-private
+   * checkpoints area.
+   */
+  clearCheckpoints(options: { dir: string }): Promise<{ cleared: boolean }>;
+
+  /**
    * Content-only manifest (`path -> blob SHA-1`) of the newest checkpoint's tree —
    * the base for a diff capture. Empty when there is no checkpoint yet. Blob ids
    * are content hashes (mode excluded), to agree with the sandbox's raw-bytes
