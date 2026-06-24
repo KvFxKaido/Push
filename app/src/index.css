@@ -565,6 +565,41 @@
   }
 }
 
+/* Menu / dropdown open feel — every menu that pops from a trigger (dropdown,
+   context menu, menubar, select, popover, hover card, and their submenus)
+   scales up from its trigger origin + fades. The scale/slide come from the
+   shadcn primitives' own animate-in classes; this only retimes them onto the
+   tokens with the transitions.dev cadence — open is deliberate
+   (`--motion-normal`, 250ms), close is quick (`--motion-fast`, 150ms), both on
+   the shared spring ease — so the whole menu family reads as one motion. The
+   two-attribute selector (0,2,0) beats animate-in's single-class default;
+   sheets (`--panel-*`) and tooltips keep their own timing. Reduced motion is
+   handled by the global wildcard at the foot of this file. */
+[data-slot='dropdown-menu-content'][data-state='open'],
+[data-slot='dropdown-menu-sub-content'][data-state='open'],
+[data-slot='context-menu-content'][data-state='open'],
+[data-slot='context-menu-sub-content'][data-state='open'],
+[data-slot='menubar-content'][data-state='open'],
+[data-slot='menubar-sub-content'][data-state='open'],
+[data-slot='select-content'][data-state='open'],
+[data-slot='popover-content'][data-state='open'],
+[data-slot='hover-card-content'][data-state='open'] {
+  animation-duration: var(--motion-normal);
+  animation-timing-function: var(--ease-spring);
+}
+[data-slot='dropdown-menu-content'][data-state='closed'],
+[data-slot='dropdown-menu-sub-content'][data-state='closed'],
+[data-slot='context-menu-content'][data-state='closed'],
+[data-slot='context-menu-sub-content'][data-state='closed'],
+[data-slot='menubar-content'][data-state='closed'],
+[data-slot='menubar-sub-content'][data-state='closed'],
+[data-slot='select-content'][data-state='closed'],
+[data-slot='popover-content'][data-state='closed'],
+[data-slot='hover-card-content'][data-state='closed'] {
+  animation-duration: var(--motion-fast);
+  animation-timing-function: var(--ease-spring);
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;
