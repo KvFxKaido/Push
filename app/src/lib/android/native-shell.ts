@@ -19,12 +19,12 @@ export async function initAndroidShell(): Promise<void> {
 async function initStatusBar(): Promise<void> {
   try {
     const { StatusBar, Style } = await import('@capacitor/status-bar');
-    // Match Push's black surface: light icons (Style.Dark = light content for
-    // dark backgrounds) on a black bar, instead of the mismatched OS default.
+    // Light icons for Push's dark surface (Style.Dark = light content for dark
+    // backgrounds), instead of the mismatched OS default. We deliberately do NOT
+    // set a background color: Android 15 enforces edge-to-edge and makes
+    // setStatusBarColor a no-op, so the bar is transparent over the app's black
+    // surface — the style (icon contrast) is the part that actually applies.
     await StatusBar.setStyle({ style: Style.Dark });
-    // setBackgroundColor is a no-op / deprecated under edge-to-edge on newer
-    // Android — wrapped so that never throws past here.
-    await StatusBar.setBackgroundColor({ color: '#000000' }).catch(() => {});
   } catch {
     // Best effort — startup must not depend on the status-bar plugin.
   }
