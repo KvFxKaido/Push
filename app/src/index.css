@@ -753,6 +753,25 @@
     success-check-bob var(--motion-slowest) var(--ease-press) forwards;
 }
 
+/* Explicit reduced-motion handling, matching the named-primitive convention
+   (`.icon-swap`, `.verdict-safe-icon`, …). The global wildcard already clamps
+   these to ~0, but `.success-check` is the reason an explicit block is needed:
+   its resting state is `opacity: 0` until it animates in, so disabling the
+   animation must also reveal it — otherwise reduced-motion users see nothing. */
+@media (prefers-reduced-motion: reduce) {
+  .error-shake,
+  .digit-pop-in,
+  .success-check[data-state='in'] {
+    animation: none;
+  }
+  .badge-dot {
+    transition: none;
+  }
+  .success-check {
+    opacity: 1;
+  }
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;
