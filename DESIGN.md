@@ -276,6 +276,17 @@ How the chat-history drawer and the workspace hub enter, shared across every cha
 - **Panel reveal:** Y-slide + fade + cross-blur on `--panel-*`; shared by sheets and `.panel-reveal` (see above)
 - Reduced motion is respected via `prefers-reduced-motion`
 
+**Hover-reveal → long-press on touch.** A secondary control that appears on **hover** on pointer devices reveals on **long-press** on touch — via `useLongPress` (`app/src/hooks/useLongPress.ts`, 400ms; touch-only; aborts on any pointer-move so a scroll that starts on the trigger never fires it). Keep `group-hover` / `group-focus-within` for pointer + keyboard and add a `revealed` state for touch. Precedent: the message action row (`MessageBubble`), the branch-picker Delete (`DrawerBranchListItem`), the `Tip` tooltip.
+
+It is **not** a blanket "every hover becomes long-press." Use it only when hover *reveals a hidden secondary control*. It bites when:
+
+- **Native long-press is already taken** — selectable text, links, images, draggable/reorderable rows already use press-and-hold (select, link menu, save, drag). Don't put the trigger *on* that content; put it on the chrome and **swallow the trailing click** (`consumeClick` / an `onClickCapture` guard) so the release doesn't also fire what's under the finger.
+- **The control is primary, not secondary** — long-press has no affordance and isn't discoverable. A primary/important action stays *visible* on mobile; never hover-only-and-therefore-long-press-only.
+- **The hover was for scanning** — tooltips you skim, row previews you glance at. Hover sweeps many; long-press is one deliberate gesture each. Show it on mobile or pick another pattern.
+- **The hover was passive feedback** — lift, highlight, cursor cue. Ambient state, not a hidden control; nothing to reveal.
+
+Two requirements or it breaks (both learned the hard way): **`pointer-events-none` while hidden** — `opacity-0` still receives taps, so an invisible row fires its buttons on a blind tap; gate pointer-events with opacity (`pointer-events-auto` only when revealed). And keep a **`group-focus-within`** path for keyboard.
+
 ### Animation Classes
 
 Named keyframe animations in `app/src/index.css`. Consume the class directly — don't re-declare keyframes in components. All respect `prefers-reduced-motion`.
