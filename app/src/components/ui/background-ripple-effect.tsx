@@ -68,13 +68,21 @@ function DivGrid({
     gridTemplateRows: `repeat(${rows}, ${cellSize}px)`,
     width: cols * cellSize,
     height: rows * cellSize,
-    marginInline: 'auto',
+    // Center the fixed-size grid on both axes. Auto margins can't do this when
+    // the grid is wider than its container (they clamp to 0, pinning it
+    // top-left), which would shove the `initialRipple='center'` origin and the
+    // radial vignette off-screen on phone/tablet widths. Absolute + transform
+    // keeps the center at the container center regardless of overflow.
+    position: 'absolute',
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
     maskImage: RIPPLE_VIGNETTE_MASK,
     WebkitMaskImage: RIPPLE_VIGNETTE_MASK,
   };
 
   return (
-    <div className={cn('relative z-[1]', className)} style={gridStyle}>
+    <div className={cn('z-[1]', className)} style={gridStyle}>
       {cells.map((idx) => {
         const rowIdx = Math.floor(idx / cols);
         const colIdx = idx % cols;
