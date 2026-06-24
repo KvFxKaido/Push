@@ -422,8 +422,6 @@ export function useDaemonSettingsBundles({
     const settingsWorkspace: SettingsWorkspaceProps = {
       approvalMode: prefs.approvalMode,
       updateApprovalMode: prefs.updateApprovalMode,
-      sandboxStartMode: prefs.sandboxStartMode,
-      updateSandboxStartMode: prefs.updateSandboxStartMode,
       // Daemon sessions don't have a cloud sandbox. The Settings UI's
       // Sandbox panel reads these to render the active-sandbox card;
       // null collapses it to "no sandbox active" which is accurate.

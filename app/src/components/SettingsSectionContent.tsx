@@ -655,59 +655,6 @@ export function SettingsSectionContent({
             </p>
           </div>
 
-          {/* Sandbox Start Mode */}
-          <div className={SECTION_CARD_CLASS}>
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-push-fg">Runtime warm-up</label>
-              <span className="text-xs text-push-fg-secondary">
-                {workspace.sandboxStartMode === 'off'
-                  ? 'Manual'
-                  : workspace.sandboxStartMode === 'smart'
-                    ? 'Smart'
-                    : 'Always'}
-              </span>
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => workspace.updateSandboxStartMode('off')}
-                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
-                  workspace.sandboxStartMode === 'off'
-                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                }`}
-              >
-                Manual
-              </button>
-              <button
-                type="button"
-                onClick={() => workspace.updateSandboxStartMode('smart')}
-                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
-                  workspace.sandboxStartMode === 'smart'
-                    ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400'
-                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                }`}
-              >
-                Smart
-              </button>
-              <button
-                type="button"
-                onClick={() => workspace.updateSandboxStartMode('always')}
-                className={`rounded-lg border px-2 py-2 text-xs font-medium transition-colors ${
-                  workspace.sandboxStartMode === 'always'
-                    ? 'border-amber-500/50 bg-amber-500/10 text-amber-400'
-                    : 'border-push-edge bg-push-surface text-push-fg-muted hover:text-push-fg-secondary'
-                }`}
-              >
-                Always
-              </button>
-            </div>
-            <p className="text-push-xs text-push-fg-secondary">
-              Smart starts a runtime when a prompt looks code-heavy. Always starts one on every
-              message.
-            </p>
-          </div>
-
           {/* Show Tool Activity */}
           <div className={SECTION_CARD_CLASS}>
             <div className="flex items-center justify-between">

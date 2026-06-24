@@ -1,41 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
-import { SandboxStatusBanner, SandboxStatusChip } from './SandboxStatusBanner';
+import { SandboxStatusChip } from './SandboxStatusBanner';
 
 const noop = vi.fn();
 
-const baseBannerProps = {
-  error: null,
-  isStreaming: false,
-  sandboxId: 'sbx-1',
-  isInScratchWorkspace: false,
-  onRetry: noop,
-  onNewSandbox: noop,
-};
-
-describe('SandboxStatusBanner', () => {
-  it('keeps ambient sandbox states out of the top banner lane', () => {
-    for (const status of ['idle', 'creating', 'reconnecting', 'ready'] as const) {
-      const html = renderToStaticMarkup(
-        <SandboxStatusBanner {...baseBannerProps} status={status} />,
-      );
-
-      expect(html).toBe('');
-    }
-  });
-
-  it('keeps error as an actionable banner', () => {
-    const html = renderToStaticMarkup(
-      <SandboxStatusBanner {...baseBannerProps} status="error" error="connection refused" />,
-    );
-
-    expect(html).toContain('Sandbox unreachable');
-    expect(html).toContain('Retry');
-    expect(html).toContain('Restart runtime');
-  });
-});
-
+// The red top-of-chat SandboxStatusBanner was removed; the compact chip is the
+// only surviving sandbox-status surface (error now lives in its tooltip).
 describe('SandboxStatusChip', () => {
   it('renders a compact ambient status for non-ready states', () => {
     const html = renderToStaticMarkup(

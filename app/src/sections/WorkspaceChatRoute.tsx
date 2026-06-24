@@ -341,7 +341,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleFixReviewFinding,
     handleResumeConversationFromLauncher,
     handleStartWorkspaceRequest,
-    handleExitWorkspaceRequest,
     handleDisconnectRequest,
   } = useWorkspaceChatPanelsController({
     activeRepo,
@@ -720,17 +719,11 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     },
   };
   const chatScreenBanners = {
+    // The red sandbox-status error banner was removed; only the chip's error
+    // tooltip and the streaming gate still read from this bag.
     sandboxStatusBannerProps: {
-      status: sandbox.status,
       error: sandbox.error,
       isStreaming,
-      sandboxId: sandbox.sandboxId,
-      isInScratchWorkspace: Boolean(isScratch),
-      onRetry: () => {
-        void sandbox.refresh();
-      },
-      onNewSandbox: restartCurrentSandbox,
-      onExitWorkspace: handleExitWorkspaceRequest,
     },
     sandboxExpiryBannerProps: isScratch
       ? {

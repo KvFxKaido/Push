@@ -198,7 +198,7 @@ export function HubSettingsTab({
       badge: sandboxLabel,
       icon: SETTINGS_SECTION_ICONS.workspace,
       lines: [
-        `Runtime warm-up is ${workspace.sandboxStartMode === 'off' ? 'manual' : workspace.sandboxStartMode}.`,
+        'The sandbox auto-starts on demand.',
         `Main protection is ${workspace.protectMainGlobal ? 'on' : 'off'} and the console is ${workspace.showToolActivity ? 'visible' : 'hidden'}.`,
       ],
       onClick: () => setActiveView('workspace'),
