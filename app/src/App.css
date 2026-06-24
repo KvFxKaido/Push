@@ -164,9 +164,13 @@ select:focus-visible {
   border-top-color: var(--repo-theme-accent) !important;
 }
 
+/* The thinking indicator is the brand hexagon SVG (fill=currentColor + a
+   drop-shadow glow), not the old rounded span — so theme it via `color` and a
+   shape-hugging `drop-shadow`, NOT background-color / box-shadow, which would
+   paint a square box + square glow behind the hexagon. */
 :root[data-repo-theme='active'] .agent-pulse {
-  background-color: var(--repo-theme-accent) !important;
-  box-shadow: 0 0 8px var(--repo-theme-accent-glow) !important;
+  color: var(--repo-theme-accent) !important;
+  filter: drop-shadow(0 0 4px var(--repo-theme-accent-glow)) !important;
 }
 
 /* Hex icon tap animation */

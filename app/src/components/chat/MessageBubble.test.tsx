@@ -74,10 +74,10 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('hex-thinking');
   });
 
-  it('renders the pill stream caret by default while streaming', () => {
+  it('renders the pill stream caret while streaming', () => {
     const message = assistantMessage({ content: 'hello', status: 'streaming' });
     const html = renderToStaticMarkup(<MessageBubble message={message} />);
-    // Default caret style is the pill; the hexagon caret is opt-in via ?caret=.
+    // The caret is the pill; the experimental hexagon caret variant was reverted.
     expect(html).toContain('stream-caret');
     expect(html).not.toContain('stream-caret-hex');
   });

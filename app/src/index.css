@@ -438,40 +438,6 @@
   }
 }
 
-/* Hexagon streaming caret (opt-in via ?caret=hexagon) — a tiny Push mark at the
-   text edge that gently pulses, echoing the streaming avatar so the two read as
-   one system. Sized in `em` so it tracks the surrounding text.
-
-   The pulse animates opacity only — not transform/scale. `drop-shadow` (needed
-   so the glow follows the hexagon outline, where a box-shadow would draw a
-   square halo) is a filter; animating a transform alongside it forces the
-   filter to re-rasterize every frame. Opacity-only keeps the shadow static and
-   cacheable, so the breathe stays cheap on low-end mobile. */
-@keyframes stream-caret-hex-pulse {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0.45;
-  }
-}
-
-.stream-caret-hex {
-  display: inline-block;
-  width: 0.95em;
-  height: 0.95em;
-  margin-left: 3px;
-  vertical-align: text-bottom;
-  filter: drop-shadow(0 0 4px var(--repo-theme-accent-glow));
-  animation: stream-caret-hex-pulse 0.9s var(--ease-default) infinite alternate;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .stream-caret-hex {
-    animation: none;
-  }
-}
-
 /* Per-word shimmer reveal — each newly-revealed word blooms in: a soft blur +
    accent glow that sharpens and settles to plain text. Driven entirely by mount
    (one iteration, `backwards` so the hidden start state applies pre-paint), with
