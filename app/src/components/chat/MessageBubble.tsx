@@ -770,9 +770,7 @@ export const MessageBubble = memo(function MessageBubble({
         />
       </div>
       <div className="min-w-0 max-w-[85%]">
-        {hasThinking && (
-          <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming && !hasContent} />
-        )}
+        {hasThinking && <ThinkingBlock thinking={message.thinking!} isStreaming={isStreaming} />}
         {hasContent && (
           <div
             className={`text-push-lg leading-relaxed break-words ${
