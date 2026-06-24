@@ -68,6 +68,18 @@ describe('Blackbox display grouping', () => {
     expect(getModelDisplayLeafName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
   });
 
+  it('groups bare vendor ids with their routed siblings instead of the Blackbox bucket', () => {
+    // Blackbox serves Anthropic models as bare dated ids; infer the vendor so they
+    // land under "Anthropic" alongside any `blackboxai/anthropic/...` entries.
+    expect(getModelDisplayGroupKey('blackbox', 'claude-haiku-4-5-20251001')).toBe('anthropic');
+    expect(getModelDisplayLeafName('blackbox', 'claude-haiku-4-5-20251001')).toBe(
+      'claude-haiku-4-5-20251001',
+    );
+    expect(formatModelDisplayName('blackbox', 'claude-haiku-4-5-20251001')).toBe(
+      'Anthropic / claude-haiku-4-5-20251001',
+    );
+  });
+
   it('sorts by provider bucket, then model name', () => {
     const models = [
       'blackboxai/qwen/qwen3-coder-32b-instruct',

@@ -197,6 +197,42 @@ function normalizeProviderModelId(provider: AIProviderType | string, modelId: st
   return trimmed;
 }
 
+// Blackbox serves some vendor families (notably Anthropic) as bare, slash-less
+// ids — e.g. the dated `claude-haiku-4-5-20251001` — rather than the routed
+// `blackboxai/<vendor>/<model>` form. The leaf still carries the vendor as a
+// name prefix, so infer it for both display grouping (here) and live-catalog
+// dedup (model-catalog.ts). Single source of truth shared by both call sites.
+const BLACKBOX_ALIAS_PROVIDER_PREFIXES: Array<[RegExp, string]> = [
+  [/^claude\b/i, 'anthropic'],
+  [/^(?:gpt|o1\b|o3\b|o4\b|codex\b)/i, 'openai'],
+  [/^gemini\b/i, 'google'],
+  [/^(?:llama|meta\b)/i, 'meta'],
+  [/^qwen\b/i, 'qwen'],
+  [/^(?:kimi|moonshot)\b/i, 'moonshotai'],
+  [/^glm\b/i, 'z-ai'],
+  [/^deepseek\b/i, 'deepseek'],
+  [/^(?:mistral|codestral|devstral)\b/i, 'mistralai'],
+  [/^sonar\b/i, 'perplexity'],
+  [/^grok\b/i, 'x-ai'],
+];
+
+export function inferBlackboxAliasProvider(normalizedLeaf: string): string | null {
+  for (const [pattern, provider] of BLACKBOX_ALIAS_PROVIDER_PREFIXES) {
+    if (pattern.test(normalizedLeaf)) return provider;
+  }
+  return null;
+}
+
+export function normalizeBlackboxAliasLeaf(id: string): string {
+  return id
+    .trim()
+    .toLowerCase()
+    .replace(/^blackboxai\//i, '')
+    .replace(/_/g, '-')
+    .replace(/[-_.]?20\d{6}$/, '')
+    .replace(/(\d)-(\d)/g, '$1.$2');
+}
+
 export function getModelDisplayGroupKey(
   provider: AIProviderType | string,
   modelId: string,
@@ -208,7 +244,13 @@ export function getModelDisplayGroupKey(
   }
   const slash = normalized.indexOf('/');
   if (slash > 0) return normalized.slice(0, slash);
-  if (provider === 'blackbox' && normalized) return 'blackbox';
+  if (provider === 'blackbox' && normalized) {
+    // Bare vendor ids (e.g. `claude-haiku-4-5-20251001`) group with their routed
+    // `blackboxai/<vendor>/...` siblings instead of landing in a generic
+    // "Blackbox" bucket. First-party ids (`blackbox-pro`) match no vendor prefix
+    // and stay under 'blackbox'.
+    return inferBlackboxAliasProvider(normalizeBlackboxAliasLeaf(normalized)) ?? 'blackbox';
+  }
   return '';
 }
 
