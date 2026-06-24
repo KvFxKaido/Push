@@ -238,6 +238,7 @@ describe('runRoundLoop', () => {
       reasoningBlocks: [],
       error: new Error('boom'),
     });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const result = await runRoundLoop(
       h.loopCtx,
@@ -257,6 +258,24 @@ describe('runRoundLoop', () => {
     expect(lastMessage?.status).toBe('error');
     expect(lastMessage?.content).toBe('Something went wrong: boom');
     expect(h.dirtyRef.current.has('chat-1')).toBe(true);
+
+    // The 2-min-kill diagnostic: a structured line carrying elapsedMs + phase +
+    // sandboxId + reason so device logcat can attribute the cause.
+    const diag = logSpy.mock.calls
+      .map(([arg]) => {
+        try {
+          return JSON.parse(arg as string);
+        } catch {
+          return null;
+        }
+      })
+      .find((o) => o?.event === 'round_stream_failed');
+    expect(diag).toMatchObject({ event: 'round_stream_failed', chatId: 'chat-1', reason: 'boom' });
+    expect(typeof diag.elapsedMs).toBe('number');
+    expect(typeof diag.streamedChars).toBe('number');
+    expect(diag).toHaveProperty('phase');
+    expect(diag).toHaveProperty('sandboxId');
+    logSpy.mockRestore();
   });
 
   it('breaks early when abort is set after streaming', async () => {
