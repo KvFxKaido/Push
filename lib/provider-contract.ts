@@ -21,6 +21,34 @@ export type LlmContentPart =
   | { type: 'image_url'; image_url: { url: string }; cache_control?: { type: 'ephemeral' } };
 
 /**
+ * Anthropic-canonical image source — base64 inline or a remote URL. This is the
+ * shape Anthropic's Messages API speaks (`media_type` + `data`), chosen as the
+ * neutral canonical form so adapters *downcast* from it (Anthropic ≈ identity,
+ * OpenAI/Gemini translate) rather than the Anthropic bridge upcasting from
+ * OpenAI's `image_url`. See
+ * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`.
+ */
+export type LlmImageSource =
+  | { type: 'base64'; media_type: string; data: string }
+  | { type: 'url'; url: string };
+
+/**
+ * A single content block in the Anthropic-conceptual neutral message model —
+ * the migration target that will eventually replace the flat
+ * `content` / `contentParts` representation (slice 1 of the decision doc:
+ * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
+ *
+ * Phase 1 carries only `text` and `image`; later slices extend the union with
+ * `thinking`, `tool_use`, and `tool_result` so the rich provider concepts the
+ * Anthropic bridge currently reconstructs become first-class here and every
+ * serializer downcasts from them. Additive and optional: see
+ * {@link LlmMessage.contentBlocks}.
+ */
+export type LlmContentBlock =
+  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
+  | { type: 'image'; source: LlmImageSource; cache_control?: { type: 'ephemeral' } };
+
+/**
  * Minimum portable message shape understood by all lib/-side agent roles.
  */
 export interface LlmMessage {
@@ -40,6 +68,18 @@ export interface LlmMessage {
    * Adapters that don't read this field simply use `content` (text-only).
    */
   contentParts?: LlmContentPart[];
+  /**
+   * Anthropic-conceptual block representation of the turn — the migration
+   * target (slice 1; see
+   * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
+   * Additive and optional, with the same precedence pattern as `contentParts`:
+   * a serializer that understands blocks prefers `contentBlocks` when present,
+   * else `contentParts`, else the `content` text. No production path emits this
+   * yet — it is wired adapter-by-adapter ahead of the producer flip (the final
+   * slice), exactly as `reasoningBlocks` was introduced before its producer.
+   * Adapters that don't read it are unaffected.
+   */
+  contentBlocks?: LlmContentBlock[];
   timestamp: number;
   /** Signed reasoning blocks captured on prior assistant turns.
    *  Forwarded verbatim to providers that consume them (currently Anthropic
