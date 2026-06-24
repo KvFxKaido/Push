@@ -31,6 +31,21 @@
     --ease-press: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-default: cubic-bezier(0.4, 0, 0.2, 1);
 
+    /* Distance — travel offsets for enter/exit motion. Kept small so motion
+       reads as "settling into place", not flying across the screen. (Scale
+       mirrors transitions.dev; promote a hardcoded px offset to one of these
+       when a second motion needs it.) */
+    --distance-micro: 4px;
+    --distance-small: 6px;
+    --distance-base: 8px;
+    --distance-medium: 12px;
+    --distance-large: 30px;
+
+    /* Blur — motion blur applied while travelling, cleared to 0 at rest. */
+    --blur-small: 2px;
+    --blur-medium: 3px;
+    --blur-large: 8px;
+
     /* Panel reveal — the shared open/close feel for panels and floating
        reveals. Open is deliberate, close is snappy; both ride `--ease-spring`
        (a soft decel, no overshoot) so the shadcn Sheets and the `.panel-reveal`
@@ -41,7 +56,7 @@
     --panel-open-dur: var(--motion-slow); /* 350ms — open */
     --panel-close-dur: var(--motion-normal); /* 250ms — close */
     --panel-ease: var(--ease-spring);
-    --panel-blur: 2px;
+    --panel-blur: var(--blur-small);
     /* ─────────────────────────────────────────────── */
 
     /* ── Type stacks ──────────────────────────────── */
@@ -512,7 +527,7 @@
    longer throw. The cross-blur is cheap here because these elements are small;
    it is deliberately NOT applied to the large sheets (see the token note). */
 .panel-reveal {
-  transform: translateY(var(--panel-translate-y, 0.5rem));
+  transform: translateY(var(--panel-translate-y, var(--distance-base)));
   opacity: 0;
   filter: blur(var(--panel-blur));
   pointer-events: none;
