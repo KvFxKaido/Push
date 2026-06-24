@@ -70,6 +70,10 @@ const sandboxSession = vi.hoisted(() => ({
   shouldRetryReconnect: vi.fn(() => false),
 }));
 
+// The native-recovery gate. Default OFF (web behavior); flipped per-test to
+// assert the native shell skips every cloud-snapshot path.
+const checkpointGate = vi.hoisted(() => ({ nativeCheckpointsActive: vi.fn(() => false) }));
+
 vi.mock('@/lib/sandbox-client', () => sandboxClient);
 vi.mock('@/lib/safe-storage', () => ({
   safeStorageGet: (k: string) => safeStorage.get(k),
@@ -82,6 +86,10 @@ vi.mock('@/lib/sandbox-file-version-cache', () => cacheLib);
 vi.mock('@/lib/github-auth', () => ghAuth);
 vi.mock('@/lib/github-repo-coverage', () => repoCoverage);
 vi.mock('@/lib/sandbox-session', () => sandboxSession);
+vi.mock('@/lib/checkpoint/checkpoint-store', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/checkpoint/checkpoint-store')>();
+  return { ...actual, nativeCheckpointsActive: checkpointGate.nativeCheckpointsActive };
+});
 
 type Cell = { value: unknown };
 const reactState = vi.hoisted(() => ({
@@ -173,6 +181,7 @@ beforeEach(() => {
     (repo, branch) => `sbx:${repo}:${branch}`,
   );
   sandboxSession.loadSandboxSession.mockReturnValue(null);
+  checkpointGate.nativeCheckpointsActive.mockReset().mockReturnValue(false);
   reactState.cells = [];
   reactState.index = 0;
   reactState.refs = [];
@@ -501,5 +510,116 @@ describe('useSandbox.markUnreachable', () => {
     hook.markUnreachable('second');
     // error message is preserved from the initial failure
     expect(reactState.cells[2].value).toBe('first');
+  });
+});
+
+describe('useSandbox — native local-only recovery (Increment 2)', () => {
+  it('manual hibernate is a no-op on native and never ships WIP to the cloud', async () => {
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    const ok = await hook.hibernate();
+    expect(ok).toBe(false);
+    // The whole point: no snapshot call to Modal on the native shell.
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+  });
+
+  it('retires the dead id to idle on a definitively-gone refresh (so ensureSandbox cold-starts)', async () => {
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    const ok = await hook.refresh({ silent: true });
+    expect(ok).toBe(false);
+    // Unlike web (which parks at 'error' and keeps the id for snapshot restore),
+    // native clears the corpse: sandboxId → null, status → idle.
+    expect(reactState.cells[0].value).toBeNull();
+    expect(reactState.cells[1].value).toBe('idle');
+    expect(reactState.cells[2].value).toBeNull();
+    expect(sandboxSession.clearSandboxSessionByStorageKey).toHaveBeenCalled();
+  });
+
+  it('keeps the web error surface on a definitively-gone refresh (control)', async () => {
+    // Gate OFF (default): web keeps the dead id + error so reconnect/snapshot recover.
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    await hook.refresh({ silent: true });
+    expect(reactState.cells[1].value).toBe('error');
+    expect(reactState.cells[0].value).toBe('sb-1');
+  });
+
+  it('markUnreachable probes and retires a definitively-gone container on native', async () => {
+    // The tool-execution loss path: ensureSandbox would otherwise reuse the dead
+    // id. On native, markUnreachable fires a silent probe; a definitive-gone
+    // result retires the id → idle so the next ensureSandbox cold-starts.
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'Sandbox not found' });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    // The probe runs async; flush microtasks (mirrors runEffects' double-await).
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+    expect(reactState.cells[0].value).toBeNull();
+    expect(reactState.cells[1].value).toBe('idle');
+  });
+
+  it('markUnreachable heals back to ready when the native probe finds the container alive', async () => {
+    // A transient SANDBOX_UNREACHABLE must NOT retire — the probe confirms the
+    // container is live and the session recovers in place.
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(reactState.cells[0].value).toBe('sb-1');
+    expect(reactState.cells[1].value).toBe('ready');
   });
 });

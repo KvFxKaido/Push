@@ -63,6 +63,7 @@ import {
   touchSandboxSessionActivity,
 } from '@/lib/sandbox-session';
 import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
+import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
@@ -243,6 +244,21 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     }, 0);
 
     const attemptSnapshotRestore = async (): Promise<string | null> => {
+      // On the native shell the on-device checkpoint is the sole recovery path —
+      // no cloud restore. Returning null here drops the reconnect through to
+      // clearTrackedSession + idle, so the controller cold-starts a fresh
+      // sandbox and the native restore offer fires against it (Increment 2).
+      if (nativeCheckpointsActive()) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'sandbox_cloud_restore_skipped_native',
+            sandboxId: saved.sandboxId,
+            reason: 'native_checkpoints_active',
+          }),
+        );
+        return null;
+      }
       if (!saved.snapshotId || !saved.restoreToken) return null;
       console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
       setStatus('reconnecting');
@@ -423,6 +439,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       if (Number.isFinite(idle)) {
         touchSandboxSessionActivity(activeRepoFullName, activeBranch, id, Date.now() - idle);
       }
+
+      // On the native shell, WIP never leaves the device — no keep-warm snapshot
+      // to Modal. Gate ONLY the snapshot, after the activity bookkeeping above,
+      // so warm-reattach recency still works (Increment 2). A lost container is
+      // recovered from the on-device checkpoint, not a cloud snapshot.
+      if (nativeCheckpointsActive()) return;
 
       if (idle < IDLE_HIBERNATE_MS) return;
 
@@ -766,6 +788,20 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const hibernate = useCallback(async (): Promise<boolean> => {
     const id = sandboxIdRef.current;
     if (!id) return false;
+    // Native shell: no manual hibernate to Modal either — the affordance is
+    // hidden on native (WorkspaceChatRoute drops the handler), but guard the
+    // call too so nothing ships WIP to the cloud (Increment 2).
+    if (nativeCheckpointsActive()) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'sandbox_manual_hibernate_skipped_native',
+          sandboxId: id,
+          reason: 'native_checkpoints_active',
+        }),
+      );
+      return false;
+    }
     if (statusRef.current !== 'ready') return false;
     if (activeRepoFullName == null || !activeBranch) return false;
 
@@ -855,6 +891,32 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     const id = sandboxIdRef.current;
     if (!id) return false;
 
+    // On the native shell, a definitively-gone container must not strand the
+    // session on its dead id: `ensureSandbox` returns the current id without a
+    // status check, so without retiring it the next tool send reuses the corpse.
+    // Clearing it drops us to a clean 'idle' so the next ensureSandbox cold-starts
+    // a fresh sandbox and the on-device checkpoint offer fires against it
+    // (Increment 2). On web this path keeps the 'error' surface — reconnect +
+    // cloud snapshot handle recovery there.
+    const retireDeadIdOnNative = (): boolean => {
+      if (!nativeCheckpointsActive()) return false;
+      setSandboxId(null);
+      sandboxIdRef.current = null;
+      freshSandboxIdRef.current = null;
+      setFreshSandboxId(null);
+      snapshotRestoredSandboxIdRef.current = null;
+      setRestoredFromSnapshotSandboxId(null);
+      // Drop the module-level active-environment pointer too, so a later call
+      // can't route at the dead id before the cold-start rebinds it.
+      setActiveSandboxEnvironment(null);
+      setStatus('idle');
+      setError(null);
+      console.log(
+        JSON.stringify({ level: 'info', event: 'sandbox_retired_dead_id_native', sandboxId: id }),
+      );
+      return true;
+    };
+
     if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
 
     try {
@@ -880,6 +942,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       if (isDefinitivelyGoneMessage(reason)) {
         console.debug(`[useSandbox] Refresh: container gone for ${id}: ${reason}`);
         clearTrackedSession(sessionStorageKeyRef.current, id);
+        retireDeadIdOnNative();
       } else {
         console.debug(
           `[useSandbox] Refresh: transient failure for ${id} (exit ${result.exitCode}): ${reason} — keeping session`,
@@ -894,6 +957,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       if (isDefinitivelyGoneError(err)) {
         console.debug(`[useSandbox] Refresh: container gone for ${id}: ${msg}`);
         clearTrackedSession(sessionStorageKeyRef.current, id);
+        retireDeadIdOnNative();
       } else {
         console.debug(`[useSandbox] Refresh: transient error for ${id}: ${msg} — keeping session`);
       }
@@ -905,12 +969,27 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
    * Transition sandbox to error state from outside (e.g. tool dispatch
    * detected SANDBOX_UNREACHABLE). Does not ping — just updates UI state
    * so the user can see the error and act on it.
+   *
+   * On the native shell this is also a strand risk: a reported-unreachable
+   * container keeps its dead id (like refresh's gone-path), and `ensureSandbox`
+   * returns that id without a status check — so the next tool send would reuse
+   * the corpse and the on-device checkpoint offer never fires. SANDBOX_UNREACHABLE
+   * can be transient, though, so we don't blindly retire here; we fire a silent
+   * `refresh` probe, which owns the transient-vs-definitive decision (transient →
+   * keep + heal back to ready; definitive → retire the id → cold-start). On web
+   * the error surface stands and reconnect/cloud snapshot recover (Increment 2).
    */
-  const markUnreachable = useCallback((reason: string) => {
-    if (statusRef.current === 'error') return; // already in error
-    setStatus('error');
-    setError(reason);
-  }, []);
+  const markUnreachable = useCallback(
+    (reason: string) => {
+      if (statusRef.current === 'error') return; // already in error
+      setStatus('error');
+      setError(reason);
+      if (nativeCheckpointsActive()) {
+        void refresh({ silent: true });
+      }
+    },
+    [refresh],
+  );
 
   // Track when the page was hidden to detect "returned from background"
   const hiddenAtRef = useRef<number | null>(null);
