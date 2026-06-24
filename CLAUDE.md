@@ -123,6 +123,17 @@ Tool calls normalize to the same text-dispatch path: fenced/bare JSON in the mod
 
 If a prompt change is compensating for something the runtime *should* handle (validation, routing, safety, correctness), **fix the runtime instead**. Prompts are guidance for cooperating models — not a control plane. Legitimate prompt/doc updates: surfacing hard runtime boundaries (e.g. that the parser ignores reasoning tokens), clarifying role contracts, or documenting quirks models can't infer. Test: if a non-cooperating model could break it, the fix belongs in code.
 
+### Capability sourcing: fold in, don't outsource
+
+Build capabilities into shared `lib/` as first-party tools; don't pull in a third-party MCP server for functionality Push could own. The boundary that decides which is which:
+
+- **Runtime-contract capabilities** — git, shell, fs, code, CI, AI, GitHub-as-repo-backend → **fold in, always.** These *are* the stack Push collapses into one conversation; owning them is the thesis. `lib/github-tool-core.ts` is the template: the capability lives in shared `lib/` (reused by the web Worker, the CLI, and our own `mcp/github-server`), built to close the gap against the official GitHub MCP rather than consume it. Own the core, optionally publish the adapter, never depend on someone else's.
+- **External-product integrations** — Notion, Linear, Slack, Stripe → **don't fold in.** Re-implementing an API surface that isn't Push's domain means owning its maintenance on someone else's release schedule — the one job MCP legitimately does. GitHub straddles the line but leans *core* (the repo **is** the runtime), so folding it in was right.
+
+Test: is this capability part of the stack Push *is* (fold in), or an integration to a product it merely talks to (leave it for MCP)?
+
+**MCP, when it lands, is CLI-scoped.** A folded-in tool is *governed* — capability gating, the role-filter, the Auditor gate, the per-turn side-effect budget, structured logs. An MCP tool on the web/cloud surface is ungoverned reach outside the runtime contract: acceptable on the CLI (user owns the machine, sole-user trust), a governance hole on a deployed multi-user surface. MCP attach is therefore CLI-only and scoped to the attached tools — also the only place tool **deferral** would earn its keep. The first-party catalog is small enough to eager-load (~3k tokens across ~68 tools) and never needs progressive disclosure; a long tail of user-attached MCP tools (mostly irrelevant per turn) would. See **Tool protocol** above for the eager-load surface.
+
 ### Symmetric structured logs
 
 When a runtime function has multiple early-exit paths that change observable behavior, emit a structured log line on each branch — not just the loud-failure one. Anything callers can't distinguish from "still in progress" is invisible to ops until you add the log.
