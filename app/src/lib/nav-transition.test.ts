@@ -1,40 +1,50 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { getChatShellNav, resolveNavMode } from './nav-transition';
 
-function reset() {
-  window.localStorage.clear();
-  window.history.replaceState({}, '', '/');
+// The app's vitest runs in the `node` environment (no DOM), so `window` is
+// undefined by default — which also exercises resolveNavMode's SSR fallback.
+// For the override cases we stub a minimal `window` (search + localStorage).
+function stubWindow(search: string, store: Record<string, string> = {}) {
+  vi.stubGlobal('window', {
+    location: { search },
+    localStorage: {
+      getItem: (key: string) => (key in store ? store[key] : null),
+    },
+  });
 }
 
-beforeEach(reset);
-afterEach(reset);
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe('resolveNavMode', () => {
-  it('defaults to pager', () => {
+  it('falls back to the default (pager) with no window (SSR)', () => {
+    expect(resolveNavMode()).toBe('pager');
+  });
+
+  it('defaults to pager when no override is present', () => {
+    stubWindow('', {});
     expect(resolveNavMode()).toBe('pager');
   });
 
   it('honors a ?nav= URL override', () => {
-    window.history.replaceState({}, '', '/?nav=push');
+    stubWindow('?nav=push');
     expect(resolveNavMode()).toBe('push');
-    window.history.replaceState({}, '', '/?nav=pager');
-    expect(resolveNavMode()).toBe('pager');
   });
 
   it('honors a localStorage override', () => {
-    window.localStorage.setItem('push:navMode', 'push');
+    stubWindow('', { 'push:navMode': 'push' });
     expect(resolveNavMode()).toBe('push');
   });
 
   it('ignores an invalid override and falls back to the default', () => {
-    window.localStorage.setItem('push:navMode', 'sideways');
+    stubWindow('', { 'push:navMode': 'sideways' });
     expect(resolveNavMode()).toBe('pager');
   });
 
   it('prefers the URL over localStorage', () => {
-    window.localStorage.setItem('push:navMode', 'pager');
-    window.history.replaceState({}, '', '/?nav=push');
+    stubWindow('?nav=push', { 'push:navMode': 'pager' });
     expect(resolveNavMode()).toBe('push');
   });
 });
