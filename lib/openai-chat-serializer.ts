@@ -116,15 +116,17 @@ function llmContentPartsToOpenAI(
 
 /**
  * Downcast the Anthropic-conceptual `LlmContentBlock[]` into OpenAI content
- * parts — slice 1 of the contract migration (see
+ * parts — contract migration (see
  * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
- * Phase 1 handles `text` and `image`; the Anthropic-canonical image `source`
- * collapses to OpenAI's `image_url` (base64 → a `data:` URL, remote → the URL
- * verbatim). Mirrors {@link llmContentPartsToOpenAI}: THROWS on an
- * unsupported/malformed block rather than dropping it, and `keepCacheControl`
- * gates the per-part marker the same way. Later slices extend the block union
- * (`thinking`/`tool_use`/`tool_result`); those become their own OpenAI-shape
- * targets then (the "boss fight" downcast), so this stays text/image-only.
+ * Handles `text` and `image` (the Anthropic-canonical image `source` collapses
+ * to OpenAI's `image_url`: base64 → a `data:` URL, remote → the URL verbatim),
+ * and DROPS `thinking` / `redacted_thinking` blocks — OpenAI-compat endpoints
+ * reject the Push-private signed-reasoning sidecar, exactly as `reasoningBlocks`
+ * are never emitted here (slice 2). Mirrors {@link llmContentPartsToOpenAI}:
+ * THROWS on an unsupported/malformed block rather than dropping it, and
+ * `keepCacheControl` gates the per-part marker the same way. Later slices add
+ * `tool_use`/`tool_result`; those become their own OpenAI-shape targets then
+ * (the "boss fight" downcast — `content` + `tool_calls` + `role: tool`).
  */
 function llmContentBlocksToOpenAI(
   blocks: readonly LlmContentBlock[],
@@ -169,6 +171,12 @@ function llmContentBlocksToOpenAI(
         continue;
       }
       // Malformed image source — fall through to the loud throw below.
+    }
+    // Signed reasoning has no OpenAI content-part representation and the
+    // Push-private sidecar would be rejected by strict OpenAI-compat endpoints —
+    // drop it, mirroring how `reasoningBlocks` are never emitted here.
+    if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+      continue;
     }
     throw new Error(
       `toOpenAIChat: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
