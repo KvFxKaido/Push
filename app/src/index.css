@@ -772,6 +772,92 @@
   }
 }
 
+/* ── Text primitives (transitions.dev 04/18) ─────────────────────────────────
+   CSS scaffolds for JS-driven text swaps/reveals; the JS toggles the state
+   classes. Explicit reduced-motion at the foot of the block. */
+
+/* Text-states swap (04) — swap a span's text with a quick exit-up + enter-from-
+   below, both blurred and faded. JS-driven: add `.is-exit`; on `transitionend`
+   swap the text + add `.is-enter-start` (transition off) → force reflow → remove
+   it to transition in. The enter-only `status-verb-swap` covers AgentStatusBar's
+   keyed remount; this is the general swap-in-place. */
+.text-swap {
+  display: inline-block;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--motion-fast) var(--ease-default),
+    filter var(--motion-fast) var(--ease-default),
+    opacity var(--motion-fast) var(--ease-default);
+}
+.text-swap.is-exit {
+  transform: translateY(calc(var(--distance-micro) * -1));
+  filter: blur(var(--blur-small));
+  opacity: 0;
+}
+.text-swap.is-enter-start {
+  transform: translateY(var(--distance-micro));
+  filter: blur(var(--blur-small));
+  opacity: 0;
+  transition: none;
+}
+
+/* Texts reveal (18) — staggered line entrance: each line rises + unblurs + fades
+   in. JS toggles `.is-shown` on the container to reveal, `.is-hiding` to fade out
+   (without reversing the rise). The sample `nth-child` rules stagger the first
+   few lines by `--motion-stagger` steps — add more rules (or set per-line
+   `transition-delay`) for longer passages; un-staggered lines just reveal on the
+   leading beat. Distinct from `.stagger-in` (keyframe-on-mount) — this is
+   state-toggled and reversible. */
+.text-reveal-line {
+  display: block;
+  opacity: 0;
+  transform: translateY(var(--distance-medium));
+  filter: blur(var(--blur-medium));
+  transition:
+    opacity var(--motion-slowest) var(--ease-spring),
+    transform var(--motion-slowest) var(--ease-spring),
+    filter var(--motion-slowest) var(--ease-spring);
+}
+.text-reveal-line:nth-child(2) {
+  transition-delay: var(--motion-stagger);
+}
+.text-reveal-line:nth-child(3) {
+  transition-delay: calc(var(--motion-stagger) * 2);
+}
+.text-reveal-line:nth-child(4) {
+  transition-delay: calc(var(--motion-stagger) * 3);
+}
+.text-reveal.is-shown .text-reveal-line {
+  opacity: 1;
+  transform: translateY(0);
+  filter: blur(0);
+}
+.text-reveal.is-hiding .text-reveal-line {
+  opacity: 0;
+  transform: translateY(0);
+  filter: blur(0);
+  transition:
+    opacity var(--motion-normal) ease,
+    transform 0s linear,
+    filter 0s linear;
+  transition-delay: 0s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Near-zero duration, NOT `transition: none`: these are JS-driven and swap /
+     clean up on `transitionend` (text-swap especially). `transition: none` sets
+     `transition-property: none`, which suppresses that event and would strand
+     the old text; a 0.01ms duration keeps the swap instant while still firing
+     it. (Same reason the global wildcard clamps duration rather than killing
+     the property.) */
+  .text-swap,
+  .text-reveal-line {
+    transition-duration: 0.01ms;
+  }
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;

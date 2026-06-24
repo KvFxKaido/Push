@@ -262,7 +262,11 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 | `.digit-pop-in` | `digit-pop-in`: rise `--distance-base` + fade + unblur `--blur-small` | `--motion-slowest` `--ease-press` | Number / counter pop-in (`02`). Stagger trailing digits with `animation-delay` for a rolling counter. |
 | `.success-check[data-state=in]` | parallel `success-check-` fade + rotate (80°→0) + unblur (`--blur-large`) + bob (`--distance-large`) | `--motion-slowest`; bob on `--ease-press`, rest `--ease-spring` | Richer success-glyph entrance (`10`) — the sibling of the verdict `success-pop`/`glow` beat. The drawn-checkmark stroke (SVG `path` + `getTotalLength()`) is consumer-supplied; this is the container orchestration. |
 
-**Transition-based (not keyframe):** `.badge-dot` (notification badge, `03`) pops/fades/unblurs the count dot via a `data-open` toggle — `--motion-slowest` pop on `--ease-press`, snappier `--motion-fast` close on `--ease-default`. Default (attribute absent) is the visible resting state.
+**Transition-based (not keyframe):**
+
+- `.badge-dot` (notification badge, `03`) pops/fades/unblurs the count dot via a `data-open` toggle — `--motion-slowest` pop on `--ease-press`, snappier `--motion-fast` close on `--ease-default`. Default (attribute absent) is the visible resting state.
+- `.text-swap` (text-states swap, `04`) — swap a span's text with a quick exit-up + enter-from-below (blur + fade) on `--motion-fast`. JS-driven 3-phase: add `.is-exit` → on `transitionend` swap text + `.is-enter-start` (no transition) → reflow → remove to transition in. The general swap-in-place; `status-verb-swap` is the enter-only keyed-remount variant.
+- `.text-reveal` (texts reveal, `18`) — staggered line entrance: `.text-reveal-line` children rise (`--distance-medium`) + unblur (`--blur-medium`) + fade on `--motion-slowest`, staggered by `--motion-stagger`. JS toggles `.is-shown` to reveal / `.is-hiding` to fade out without reversing. The state-toggled, reversible cousin of the keyframe-on-mount `.stagger-in`.
 
 > **Deferred (component-level, not pure CSS):** transitions.dev `13` input-clear-dissolve is driven by per-frame JS (no keyframes), and `10`'s drawn checkmark needs an SVG path calibrated via `getTotalLength()`. Both are wired up when a consumer needs them, not as standalone CSS primitives.
 
