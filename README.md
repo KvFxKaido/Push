@@ -123,6 +123,14 @@ npm install
 
 Push is actively improving CLI ergonomics, daemon-backed Local PC/Remote sessions, and the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
 
+## Acknowledgements
+
+Push stands on the shoulders of a few open projects:
+
+- [**transitions.dev**](https://transitions.dev) — Jakub Antalík's motion recipes and five-axis token system, which Push's design-system motion tokens and primitives (`app/src/index.css`, see [DESIGN.md](DESIGN.md)) are translated from.
+- [**models.dev**](https://models.dev) — the open model/provider catalog whose logos back the provider icons across Push's settings and model pickers.
+- [**Streamdown**](https://streamdown.ai) — Vercel's streaming-markdown renderer, adapted in `PushMarkdownRenderer` to drive Push's chat prose with its own reveal cadence and Shiki-themed code chrome.
+
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
