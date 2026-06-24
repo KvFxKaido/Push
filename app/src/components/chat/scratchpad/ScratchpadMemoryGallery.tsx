@@ -230,9 +230,16 @@ function MemoryOverlay({ memory, isActive, onClose, onLoad, onDelete }: MemoryOv
 function useEscapeAndScrollLock(onEscape: () => void): void {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onEscape();
+      if (event.key !== 'Escape') return;
+      // The reader can be mounted inside the workspace hub's Radix Sheet. Radix
+      // dismisses the topmost dialog on a bubble-phase Escape (its listener sits
+      // on `document`), which would close the whole hub behind the reader. We
+      // listen in the capture phase — which precedes every bubble-phase
+      // listener — and stop propagation so Esc dismisses only this reader.
+      event.stopPropagation();
+      onEscape();
     };
-    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keydown', onKeyDown, true);
     // Scroll lock is save/restore rather than hard-set-to-'auto': we cache the
     // prior `overflow` and put it back on unmount. Only one memory reader is
     // ever open at a time (a single `active` state drives it), so locks don't
@@ -241,7 +248,7 @@ function useEscapeAndScrollLock(onEscape: () => void): void {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keydown', onKeyDown, true);
       document.body.style.overflow = previousOverflow;
     };
   }, [onEscape]);
