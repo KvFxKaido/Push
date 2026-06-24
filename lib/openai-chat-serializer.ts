@@ -131,26 +131,47 @@ function llmContentBlocksToOpenAI(
   keepCacheControl: boolean,
 ): OpenAIContentPart[] {
   const out: OpenAIContentPart[] = [];
-  for (const block of blocks) {
+  for (const rawBlock of blocks) {
+    const block = rawBlock as {
+      type?: unknown;
+      text?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+      cache_control?: unknown;
+    };
     const keep =
       keepCacheControl && block.cache_control
         ? { cache_control: block.cache_control as { type: 'ephemeral' } }
         : {};
-    if (block.type === 'text') {
+    if (block.type === 'text' && typeof block.text === 'string') {
       out.push({ type: 'text', text: block.text, ...keep });
       continue;
     }
-    if (block.type === 'image') {
+    if (block.type === 'image' && block.source && typeof block.source === 'object') {
       const source = block.source;
-      const url =
-        source.type === 'base64' ? `data:${source.media_type};base64,${source.data}` : source.url;
-      out.push({ type: 'image_url', image_url: { url }, ...keep });
-      continue;
+      // Validate the source shape before building the URL — a malformed source
+      // (unknown `type`, or a `url` source missing its `url`) must throw the
+      // advertised strict error, not serialize an `image_url` with an undefined
+      // URL. Mirrors the runtime shape checks in `llmContentPartsToOpenAI`.
+      if (
+        source.type === 'base64' &&
+        typeof source.media_type === 'string' &&
+        typeof source.data === 'string'
+      ) {
+        out.push({
+          type: 'image_url',
+          image_url: { url: `data:${source.media_type};base64,${source.data}` },
+          ...keep,
+        });
+        continue;
+      }
+      if (source.type === 'url' && typeof source.url === 'string') {
+        out.push({ type: 'image_url', image_url: { url: source.url }, ...keep });
+        continue;
+      }
+      // Malformed image source — fall through to the loud throw below.
     }
     throw new Error(
-      `toOpenAIChat: unsupported or malformed content block (type: ${JSON.stringify(
-        (block as { type?: unknown }).type,
-      )})`,
+      `toOpenAIChat: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
     );
   }
   return out.length > 0 ? out : [{ type: 'text', text: '' }];

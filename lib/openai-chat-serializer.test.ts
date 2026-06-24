@@ -291,6 +291,45 @@ describe('toOpenAIChat', () => {
       ),
     ).toThrow(/unsupported or malformed content block/);
   });
+
+  it('throws on a malformed image block source rather than emitting an undefined URL', () => {
+    // An unknown source.type must fail locally, not fall through to source.url
+    // and serialize `image_url: { url: undefined }`.
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'bogus' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+    // A url source missing its `url`, and a base64 source missing `data`, both throw.
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'url' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/png' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+  });
 });
 
 describe('toOpenAIResponseFormat', () => {
