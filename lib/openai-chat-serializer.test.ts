@@ -223,6 +223,113 @@ describe('toOpenAIChat', () => {
       json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // contentBlocks — slice 1 of the Anthropic-conceptual contract migration.
+  // The block model is the canonical hub; the OpenAI serializer DOWNCASTS it.
+  // ---------------------------------------------------------------------------
+
+  it('downcasts Anthropic-canonical contentBlocks to OpenAI content parts (base64 + url image)', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'fallback', {
+          contentBlocks: [
+            { type: 'text', text: 'what is this?' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+            },
+            { type: 'image', source: { type: 'url', url: 'https://example.com/cat.png' } },
+          ],
+        }),
+      ]),
+    );
+    // base64 source collapses to a `data:` URL; remote source passes verbatim.
+    expect(body.messages?.[0].content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+      { type: 'image_url', image_url: { url: 'https://example.com/cat.png' } },
+    ]);
+  });
+
+  it('prefers contentBlocks over contentParts and the content text fallback', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'text fallback', {
+          contentParts: [{ type: 'text', text: 'parts fallback' }],
+          contentBlocks: [{ type: 'text', text: 'blocks win' }],
+        }),
+      ]),
+    );
+    expect(body.messages?.[0].content).toEqual([{ type: 'text', text: 'blocks win' }]);
+  });
+
+  it('leaves behavior identical to the legacy path when no contentBlocks are present', () => {
+    const body = toOpenAIChat(reqWith([llm('1', 'user', 'plain string')]));
+    expect(body.messages?.[0]).toEqual({ role: 'user', content: 'plain string' });
+  });
+
+  it('strips per-block cache_control markers when tagCacheBreakpoints is off (default)', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'fallback', {
+          contentBlocks: [{ type: 'text', text: 'cached?', cache_control: { type: 'ephemeral' } }],
+        }),
+      ]),
+    );
+    expect(body.messages?.[0].content).toEqual([{ type: 'text', text: 'cached?' }]);
+  });
+
+  it('throws on an unsupported content block rather than dropping it', () => {
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [{ type: 'tool_use' }] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+  });
+
+  it('throws on a malformed image block source rather than emitting an undefined URL', () => {
+    // An unknown source.type must fail locally, not fall through to source.url
+    // and serialize `image_url: { url: undefined }`.
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'bogus' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+    // A url source missing its `url`, and a base64 source missing `data`, both throw.
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'url' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'fallback', {
+            contentBlocks: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/png' } },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+  });
 });
 
 describe('toOpenAIResponseFormat', () => {

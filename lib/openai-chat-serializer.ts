@@ -32,6 +32,7 @@ import type {
   OpenAIMessage,
 } from './openai-chat-types.ts';
 import type {
+  LlmContentBlock,
   LlmContentPart,
   LlmMessage,
   PushStreamRequest,
@@ -113,6 +114,69 @@ function llmContentPartsToOpenAI(
   return out.length > 0 ? out : [{ type: 'text', text: '' }];
 }
 
+/**
+ * Downcast the Anthropic-conceptual `LlmContentBlock[]` into OpenAI content
+ * parts — slice 1 of the contract migration (see
+ * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
+ * Phase 1 handles `text` and `image`; the Anthropic-canonical image `source`
+ * collapses to OpenAI's `image_url` (base64 → a `data:` URL, remote → the URL
+ * verbatim). Mirrors {@link llmContentPartsToOpenAI}: THROWS on an
+ * unsupported/malformed block rather than dropping it, and `keepCacheControl`
+ * gates the per-part marker the same way. Later slices extend the block union
+ * (`thinking`/`tool_use`/`tool_result`); those become their own OpenAI-shape
+ * targets then (the "boss fight" downcast), so this stays text/image-only.
+ */
+function llmContentBlocksToOpenAI(
+  blocks: readonly LlmContentBlock[],
+  keepCacheControl: boolean,
+): OpenAIContentPart[] {
+  const out: OpenAIContentPart[] = [];
+  for (const rawBlock of blocks) {
+    const block = rawBlock as {
+      type?: unknown;
+      text?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+      cache_control?: unknown;
+    };
+    const keep =
+      keepCacheControl && block.cache_control
+        ? { cache_control: block.cache_control as { type: 'ephemeral' } }
+        : {};
+    if (block.type === 'text' && typeof block.text === 'string') {
+      out.push({ type: 'text', text: block.text, ...keep });
+      continue;
+    }
+    if (block.type === 'image' && block.source && typeof block.source === 'object') {
+      const source = block.source;
+      // Validate the source shape before building the URL — a malformed source
+      // (unknown `type`, or a `url` source missing its `url`) must throw the
+      // advertised strict error, not serialize an `image_url` with an undefined
+      // URL. Mirrors the runtime shape checks in `llmContentPartsToOpenAI`.
+      if (
+        source.type === 'base64' &&
+        typeof source.media_type === 'string' &&
+        typeof source.data === 'string'
+      ) {
+        out.push({
+          type: 'image_url',
+          image_url: { url: `data:${source.media_type};base64,${source.data}` },
+          ...keep,
+        });
+        continue;
+      }
+      if (source.type === 'url' && typeof source.url === 'string') {
+        out.push({ type: 'image_url', image_url: { url: source.url }, ...keep });
+        continue;
+      }
+      // Malformed image source — fall through to the loud throw below.
+    }
+    throw new Error(
+      `toOpenAIChat: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
+    );
+  }
+  return out.length > 0 ? out : [{ type: 'text', text: '' }];
+}
+
 /** Tag a message's content with `cache_control: ephemeral` — promoting a
  *  bare-string content to a single text part, or tagging the last text part of
  *  a multimodal message. Mirrors the wire-tagging the CLI/orchestrator apply. */
@@ -161,8 +225,9 @@ export interface ToOpenAIChatOptions {
 /**
  * Build an OpenAI Chat Completions request body directly from the neutral
  * `PushStreamRequest`. `systemPromptOverride` is prepended as a `system`
- * message; `messages` map 1:1 (multimodal `contentParts` → OpenAI content
- * parts); `reasoningBlocks` are dropped (OpenAI-compat-unsafe).
+ * message; `messages` map 1:1, with content resolved by precedence
+ * (`contentBlocks` → `contentParts` → `content` text); `reasoningBlocks` are
+ * dropped (OpenAI-compat-unsafe).
  */
 export function toOpenAIChat(
   req: PushStreamRequest<LlmMessage>,
@@ -179,13 +244,19 @@ export function toOpenAIChat(
     messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
   for (const m of reqMessages) {
-    messages.push({
-      role: m.role,
-      content:
-        m.contentParts && m.contentParts.length > 0
-          ? llmContentPartsToOpenAI(m.contentParts, tagCache)
-          : m.content,
-    });
+    // Precedence mirrors the additive-field pattern: the rich block
+    // representation wins when present, else the legacy `contentParts`, else
+    // the `content` text fallback. No production path emits `contentBlocks`
+    // yet (slice 1 — see the decision doc), so existing traffic is unaffected.
+    let content: OpenAIMessage['content'];
+    if (m.contentBlocks && m.contentBlocks.length > 0) {
+      content = llmContentBlocksToOpenAI(m.contentBlocks, tagCache);
+    } else if (m.contentParts && m.contentParts.length > 0) {
+      content = llmContentPartsToOpenAI(m.contentParts, tagCache);
+    } else {
+      content = m.content;
+    }
+    messages.push({ role: m.role, content });
   }
 
   const rawBreakpoints = req.cacheBreakpointIndices;
