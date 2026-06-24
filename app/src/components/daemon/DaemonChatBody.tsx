@@ -44,6 +44,7 @@ import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
+import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { useChat } from '@/hooks/useChat';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
@@ -625,21 +626,12 @@ export function DaemonChatBody({
   // local user hasn't taken over with their own turn.
   const showReattachedRun = Boolean(reattachedRun) && !isStreaming;
 
-  // Shell slide transform: drawer pushes the chat right, hub pulls it
-  // left, matching ChatSurfaceScreen / WorkspaceChatRoute. Sized at the
-  // same offsets so the visual rhythm is identical.
-  const drawerOffset = 'min(86vw, 24rem)';
-  const hubOffset = '94vw';
-  const chatShellTransform = drawerOpen
-    ? `translateX(${drawerOffset})`
-    : hubOpen
-      ? `translateX(-${hubOffset})`
-      : 'translateX(0px)';
-  const chatShellShadow = drawerOpen
-    ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
-    : hubOpen
-      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
-      : '';
+  // Chat-shell navigation, shared with ChatSurfaceScreen / WorkspaceChatRoute
+  // via lib/nav-transition. `pager` (default) cross-fades the chat out as a page
+  // swap; `push` keeps the legacy parallax. See that module to revert.
+  const chatShellNav = getChatShellNav(resolveNavMode(), { drawerOpen, hubOpen });
+  const chatShellTransform = chatShellNav.transform;
+  const chatShellShadow = chatShellNav.shadowClass;
 
   // Pre-filter conversations to the active daemon mode before passing
   // them to the drawer. The daemon screen stays mounted with the same
@@ -724,7 +716,7 @@ export function DaemonChatBody({
       <div className="relative flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top safe-area-bottom">
         <div
           className={`relative z-10 isolate flex min-h-0 flex-1 flex-col bg-push-surface-inset transition-[transform,box-shadow] duration-500 ease-in-out will-change-transform ${chatShellShadow}`}
-          style={{ transform: chatShellTransform }}
+          style={{ transform: chatShellTransform, ...chatShellNav.style }}
         >
           <ChatBackgroundGlow active={daemonAppearance.glowEnabled} color={daemonAppearanceHex} />
           <header className="relative z-10 grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 px-3 pt-3 pb-2">

@@ -5,6 +5,7 @@ import { useChatModeAppearance } from '@/hooks/useChatModeAppearance';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
 import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
+import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import { ChatSurfaceScreen } from './ChatSurfaceScreen';
 import {
   buildRepoChatDrawerProps,
@@ -220,18 +221,13 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     [setIsLauncherOpen],
   );
 
-  const chatsDrawerOffset = 'min(86vw, 24rem)';
-  const workspaceHubOffset = '94vw';
-  const chatShellTransform = isChatsDrawerOpen
-    ? `translateX(${chatsDrawerOffset})`
-    : isWorkspaceHubOpen
-      ? `translateX(-${workspaceHubOffset})`
-      : 'translateX(0px)';
-  const chatShellShadow = isChatsDrawerOpen
-    ? 'shadow-[-24px_0_56px_rgba(0,0,0,0.42)]'
-    : isWorkspaceHubOpen
-      ? 'shadow-[24px_0_56px_rgba(0,0,0,0.42)]'
-      : '';
+  const chatShellNav = getChatShellNav(resolveNavMode(), {
+    drawerOpen: isChatsDrawerOpen,
+    hubOpen: isWorkspaceHubOpen,
+  });
+  const chatShellTransform = chatShellNav.transform;
+  const chatShellShadow = chatShellNav.shadowClass;
+  const chatShellStyle = chatShellNav.style;
 
   const settingsAuth = buildSettingsAuth(props, handleDisconnectRequest);
   const settingsProfile = buildSettingsProfile(props);
@@ -293,6 +289,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
       <ChatSurfaceScreen
         chatShellTransform={chatShellTransform}
         chatShellShadow={chatShellShadow}
+        chatShellStyle={chatShellStyle}
         onOpenLauncher={openLauncherWithMount}
         onOpenWorkspaceHub={openWorkspaceHubWithMount}
         drawerProps={drawerProps}
