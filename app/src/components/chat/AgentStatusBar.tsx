@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { AgentStatus } from '@/types';
 import { formatElapsedTime } from '@/lib/utils';
+import { PushMarkIcon } from '@/components/icons/push-custom-icons';
 
 interface AgentStatusBarProps {
   status: AgentStatus;
@@ -44,8 +45,14 @@ export function AgentStatusBar({ status }: AgentStatusBarProps) {
 
   return (
     <div className="flex items-center gap-2.5 px-5 py-2.5 animate-fade-in">
-      {/* Glow matches the sky push-accent dot (was a stale #0070f3 blue). */}
-      <span className="agent-pulse inline-block h-1.5 w-1.5 rounded-full bg-push-accent shadow-[0_0_8px_rgba(125,211,252,0.4)]" />
+      {/* The brand hexagon (filled), echoing the streaming avatar's mark — same
+          agent-pulse breathe + accent glow as the old dot, just hexagonal not
+          round. drop-shadow (not box-shadow) so the glow hugs the hexagon. */}
+      <PushMarkIcon
+        className="agent-pulse h-2 w-2 shrink-0 text-push-accent drop-shadow-[0_0_4px_rgba(125,211,252,0.45)]"
+        fill="currentColor"
+        aria-hidden="true"
+      />
       {/* Mono so the live phase/verb line reads like the TUI status line. */}
       <span className="font-mono text-xs text-push-fg-secondary tracking-wide">
         {/* Keyed on `label` so each verb/phase change remounts the span and
