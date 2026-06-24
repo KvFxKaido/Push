@@ -858,6 +858,139 @@
   }
 }
 
+/* ── Structural primitives (transitions.dev 01/11/14/16) ─────────────────────
+   Layout-motion scaffolds: size, position, and reveal transitions for
+   structural elements (resizing cards, sliding tabs, skeleton→content, avatar
+   groups). JS-driven wherever the geometry is dynamic — the CSS owns the
+   transition, the consumer owns the measured values (the tab pill's offset, the
+   avatar falloff). transitions.dev's per-recipe 300/320ms defaults map onto the
+   nearest core token (`--motion-slow`, 350ms). Explicit reduced-motion at the
+   foot of the block (matching each source recipe, which kills the transition
+   outright — none of these four clean up on `transitionend`, so `transition:
+   none` is safe here, unlike the text primitives). */
+
+/* Card resize (01) — animate a container to its new size instead of snapping as
+   its content/state changes. Pure CSS: the consumer toggles a class/attribute or
+   sets an explicit width/height and the transition rides the size change.
+   `will-change` hints the two axes. Only animates between resolvable sizes
+   (explicit, or a definite track in a grid/flex parent) — `auto`→`auto` won't
+   transition. */
+.resize-smooth {
+  transition:
+    width var(--motion-slow) var(--ease-spring),
+    height var(--motion-slow) var(--ease-spring);
+  will-change: width, height;
+}
+
+/* Tab indicator slide (16) — the moving pill behind a segmented control slides +
+   resizes from the old tab to the new one in one motion. The geometry is
+   dynamic, so JS measures the active tab (offsetLeft / offsetWidth) and writes it
+   to the pill as `transform: translateX(<left>)` + `width`; this owns the
+   transition. On first paint and on resize, snap without animation (add
+   `.is-static` → set geometry → force reflow → remove) so the pill doesn't slide
+   in from 0. Tab labels cross-fade their tint via `.tab-trigger`. No colors here
+   — the consumer paints the pill and the active/idle label tints. */
+.tab-indicator {
+  transition:
+    transform var(--motion-normal) var(--ease-spring),
+    width var(--motion-normal) var(--ease-spring);
+  will-change: transform, width;
+}
+.tab-indicator.is-static {
+  transition: none;
+}
+.tab-trigger {
+  transition: color var(--motion-normal) var(--ease-spring);
+}
+
+/* Skeleton → content reveal (14) — a loading skeleton cross-fades into the real
+   content with a soft blur as data arrives. Skeleton and content are stacked
+   (both `absolute inset-0`, content on top); toggling `.is-revealed` on the
+   container fades the skeleton out + the content in, each (un)blurring. JS owns
+   the data-ready toggle; to replay, add `.is-resetting` (transition off) → clear
+   `.is-revealed` → force reflow → remove `.is-resetting`. The optional breathing
+   shimmer on the skeleton is `.skeleton-pulse` (an ambient infinite loop, so it
+   uses a literal ~1.4s like `.agent-pulse`, not a discrete motion token). */
+.skeleton-reveal {
+  position: relative;
+}
+.skeleton-reveal-skeleton,
+.skeleton-reveal-content {
+  transition:
+    opacity var(--motion-slower) var(--ease-default),
+    filter var(--motion-slower) var(--ease-default);
+}
+.skeleton-reveal-skeleton {
+  opacity: 1;
+  filter: blur(0);
+}
+.skeleton-reveal-content {
+  opacity: 0;
+  filter: blur(var(--blur-small));
+}
+.skeleton-reveal.is-revealed .skeleton-reveal-skeleton {
+  opacity: 0;
+  filter: blur(var(--blur-small));
+}
+.skeleton-reveal.is-revealed .skeleton-reveal-content {
+  opacity: 1;
+  filter: blur(0);
+}
+.skeleton-reveal.is-resetting .skeleton-reveal-skeleton,
+.skeleton-reveal.is-resetting .skeleton-reveal-content {
+  transition: none;
+}
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+.skeleton-pulse {
+  animation: skeleton-pulse 1.4s ease-in-out infinite;
+}
+
+/* Avatar group hover (11) — hovering an avatar in an overlapping row lifts it and
+   gently nudges its neighbors, the lift falling off with distance. The geometry
+   is dynamic (per-item falloff), so JS writes two custom props per avatar —
+   `--avatar-shift` (the Y lift) and `--avatar-scale` (only the hovered item
+   scales up) — and clears them on mouseleave; this owns the transition.
+   Independent `translate`/`scale` properties (not a shared `transform`) so the
+   two compose cleanly, the same convention as `.success-check`. */
+.avatar-lift {
+  translate: 0 var(--avatar-shift, 0px);
+  scale: var(--avatar-scale, 1);
+  transition:
+    translate var(--motion-slow) var(--ease-spring),
+    scale var(--motion-slow) var(--ease-spring);
+  will-change: translate, scale;
+}
+
+/* Reduced motion: structural motions resolve instantly. Skeleton/tab/resize land
+   on their end state with no slide/blur (the end states are class-driven, so
+   nothing is stranded); the avatar lift is dropped entirely (its source recipe
+   forces `transform: none`), so neighbors don't shift for these users. */
+@media (prefers-reduced-motion: reduce) {
+  .resize-smooth,
+  .tab-indicator,
+  .tab-trigger,
+  .skeleton-reveal-skeleton,
+  .skeleton-reveal-content {
+    transition: none;
+  }
+  .skeleton-pulse {
+    animation: none;
+  }
+  .avatar-lift {
+    translate: none;
+    scale: none;
+    transition: none;
+  }
+}
+
 /* Staggered entrance for lists (uses fade-in-up keyframe from tailwind.config) */
 .stagger-in > * {
   animation: fade-in-up var(--motion-normal) var(--ease-spring) backwards;
