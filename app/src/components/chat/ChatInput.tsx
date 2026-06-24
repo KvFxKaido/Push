@@ -23,6 +23,7 @@ import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import { hapticLight } from '@/lib/android/haptics';
 import {
   AttachmentLinkIcon,
   SendLiftIcon,
@@ -606,6 +607,8 @@ export function ChatInput({
       }),
     );
 
+    // Light tap on a real send — the native "it's away" cue (no-op on web).
+    hapticLight();
     onSend(
       value.trim(),
       attachments.length > 0 ? attachments : undefined,

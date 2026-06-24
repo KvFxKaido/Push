@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Check, History, Loader2, RotateCcw, Trash2, X } from 'lucide-react';
+import { hapticMedium } from '@/lib/android/haptics';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS, HUB_PANEL_SURFACE_CLASS } from './hub-styles';
 import { formatCheckpointAge } from '@/lib/checkpoint/checkpoint-format';
 import type { CheckpointRecord } from '@/lib/checkpoint/checkpoint-store';
@@ -57,10 +58,12 @@ export function CheckpointHistoryList({
 
   const confirmDrop = (checkpointId: string) => {
     setConfirmDropId(null);
+    hapticMedium(); // a committed destructive action
     onDrop(checkpointId);
   };
   const confirmDoClear = (allLanes: boolean) => {
     setConfirmClear(null);
+    hapticMedium();
     onClear(allLanes);
   };
 
