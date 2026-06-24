@@ -98,6 +98,13 @@ Kept first so it survives the reviewer-context size cap.
   uniform-CRLF / mixed-ending files. Normalization is lossy-by-default — flag any
   canonicalization that fires without the file proving a single convention, and
   any one-line edit that produces collateral diffs on untouched lines.
+- **Hidden-but-interactive elements.** A visually-hidden control still receives
+  input unless hit-testing is disabled too. `opacity-0` (and `transform`) leave the
+  element in layout and **clickable** — so a hidden action row fires its buttons on
+  a blind tap, and a long-press starting over it can reveal-and-click in one
+  gesture. Confirm anything hidden-until-hover/reveal gates `pointer-events`
+  (`pointer-events-none` at rest, `-auto` only when shown) — or uses
+  `visibility`/unmount, which do stop hit-testing.
 
 ### Consult the canonical docs
 
