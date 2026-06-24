@@ -238,8 +238,10 @@ load-bearing, not polish:
   `CheckpointHistory` offers per-checkpoint delete, `Clear branch` (this lane),
   and `Clear all` (every lane — always reachable, the security purge). The native
   `clearCheckpoints` deletes the repo dir outright (no gc-recoverable objects) and
-  throws on a partial delete so a failed purge can't read as success. Device
-  validation of the on-device purge is the remaining step.
+  throws on a partial delete so a failed purge can't read as success.
+  **Device-validated on the Moto G (2026-06-24):** `Clear all` purged the entire
+  `checkpoints` root — `adb run-as` confirmed `files/checkpoints` is gone, no
+  recoverable data.
 - Mark checkpoint storage **sensitive** in any surfacing.
 
 ## PR sequencing
