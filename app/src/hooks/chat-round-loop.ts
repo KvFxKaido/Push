@@ -376,6 +376,11 @@ export async function runRoundLoop(
 
   for (let round = 0; ; round++) {
     roundEvents = [];
+    // Wall-clock for this round, so a failure can be attributed: a stream that
+    // dies at ~120s during 'Responding...'/'Thinking…' with no tool calls is an
+    // LLM request / round wall-clock timeout (worker-side 120s), NOT the sandbox
+    // container (which only sleeps after 1h). Logged on the error path below.
+    const roundStartedAt = Date.now();
     if (abortRef.current) break;
     fileLedger.advanceRound();
 
@@ -405,6 +410,25 @@ export async function runRoundLoop(
     }
 
     if (error) {
+      // Diagnostic for the "killed after ~2 min of no edits" report. This fires
+      // on the client (→ device logcat via Capacitor/Console), capturing the one
+      // bit that splits the causes: `elapsedMs` near 120000 + `phase` of a
+      // generation round + UNCHANGED `sandboxId` ⇒ an LLM request / round
+      // wall-clock timeout (the turn died, the container is fine). A `reason`
+      // mentioning NOT_FOUND / a null-or-changed `sandboxId` ⇒ real container
+      // loss. Anything else is a genuine stream error to read on its own terms.
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'round_stream_failed',
+          chatId,
+          round,
+          phase,
+          elapsedMs: Date.now() - roundStartedAt,
+          sandboxId: loopCtx.sandboxIdRef.current ?? null,
+          reason: error.message?.slice(0, 200),
+        }),
+      );
       loopCtx.emitRunEngineEvent({
         type: 'LOOP_FAILED',
         timestamp: Date.now(),
