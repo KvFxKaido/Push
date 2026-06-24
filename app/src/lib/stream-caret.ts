@@ -21,6 +21,10 @@ function isStreamCaretStyle(value: string | null): value is StreamCaretStyle {
 export function resolveStreamCaret(): StreamCaretStyle {
   if (typeof window === 'undefined') return STREAM_CARET_DEFAULT;
   try {
+    // Bare URL key (`caret`) but namespaced storage key (`push:caret`) — the
+    // same split `resolveNavMode` uses (`?nav=` + `push:navMode`): the query
+    // param is a transient, easily-typed override while the localStorage key is
+    // shared global state that wants the `push:` namespace.
     const fromUrl = new URLSearchParams(window.location.search).get('caret');
     if (isStreamCaretStyle(fromUrl)) return fromUrl;
     const fromStore = window.localStorage.getItem('push:caret');

@@ -413,15 +413,19 @@
 
 /* Hexagon streaming caret (opt-in via ?caret=hexagon) — a tiny Push mark at the
    text edge that gently pulses, echoing the streaming avatar so the two read as
-   one system. Sized in `em` so it tracks the surrounding text. */
+   one system. Sized in `em` so it tracks the surrounding text.
+
+   The pulse animates opacity only — not transform/scale. `drop-shadow` (needed
+   so the glow follows the hexagon outline, where a box-shadow would draw a
+   square halo) is a filter; animating a transform alongside it forces the
+   filter to re-rasterize every frame. Opacity-only keeps the shadow static and
+   cacheable, so the breathe stays cheap on low-end mobile. */
 @keyframes stream-caret-hex-pulse {
   from {
     opacity: 1;
-    transform: scale(1);
   }
   to {
-    opacity: 0.5;
-    transform: scale(0.8);
+    opacity: 0.45;
   }
 }
 
@@ -431,7 +435,6 @@
   height: 0.95em;
   margin-left: 3px;
   vertical-align: text-bottom;
-  transform-origin: center;
   filter: drop-shadow(0 0 4px var(--repo-theme-accent-glow));
   animation: stream-caret-hex-pulse 0.9s var(--ease-default) infinite alternate;
 }
