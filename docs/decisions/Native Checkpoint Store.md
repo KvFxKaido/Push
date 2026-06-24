@@ -233,8 +233,13 @@ load-bearing, not polish:
   boundary against a USB-connected attacker. This is acceptable for an experimental
   flag, but it is *why* the retention cap + manual-clear matter — they are the real
   mitigation, since the storage boundary itself is soft on debug builds.
-- **Retention cap** — bound checkpoint count/age (also bounds storage growth).
-- **Manual "clear checkpoints" action** (can land after the first increment).
+- **Retention cap** — bound checkpoint count/age (also bounds storage growth). ✅ shipped (`pruneCheckpoints`, keep 50/lane).
+- ✅ **Manual "clear checkpoints" action — shipped (#1103).** The hub's
+  `CheckpointHistory` offers per-checkpoint delete, `Clear branch` (this lane),
+  and `Clear all` (every lane — always reachable, the security purge). The native
+  `clearCheckpoints` deletes the repo dir outright (no gc-recoverable objects) and
+  throws on a partial delete so a failed purge can't read as success. Device
+  validation of the on-device purge is the remaining step.
 - Mark checkpoint storage **sensitive** in any surfacing.
 
 ## PR sequencing
