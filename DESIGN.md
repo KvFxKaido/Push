@@ -97,6 +97,30 @@ Applied via `data-repo-theme='active'` on `:root`. Default values:
 - Border: `rgba(125, 211, 252, 0.38)`
 - Glow: `rgba(125, 211, 252, 0.45)`
 
+### Ambient backgrounds (chat surface)
+
+Every ambient chat background (`ChatBackgroundGlow`) composes the same three
+pieces so the chrome stays legible and the variants stay consistent. **Any new
+background style we add follows this standard** — don't paint a texture edge to
+edge:
+
+1. **Top-bar wash** (`ChatGlowTopBarWash`) — the soft accent gradient blobs
+   behind the app bar. This is both the whole `gradient` identity and the
+   legibility wash for textured variants.
+2. **Top-bar clear** (`BACKGROUND_TOPBAR_CLEAR_MASK`) — a *textured* background
+   (the `dotted` dot field; any future grid / aurora / scanline) is masked so
+   dense texture never sits directly under the app-bar chrome (repo name, tab
+   pills, icons). The texture fades in below the bar over ~5→12rem; the wash
+   shows through the cleared strip.
+3. **Bottom fade** (`ChatGlowBottomFade`) — fades the background into black
+   toward the composer so the message area and input stay legible.
+
+The `gradient` variant is wash + bottom fade (no texture, so no mask). The
+`dotted` variant is wash + masked dot field + bottom fade. The blobs read
+`--push-glow-strong` / `--push-glow-soft`; textured layers read their own accent
+pair (e.g. `--push-glow-dot` / `--push-glow-dot-glow`) so they can tint
+independently of the wash.
+
 ## Typography
 
 ### Font Stacks
