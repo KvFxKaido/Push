@@ -353,10 +353,29 @@ describe('prepareSendContext — sandbox prewarm', () => {
 
     expect(ensure).toHaveBeenCalledOnce();
     expect(refs.sandboxIdRef.current).toBe('sbx-1');
-    expect(callbacks.capturedAgentStatusCalls[0]).toEqual({
-      status: { active: true, phase: 'Starting sandbox...' },
-      opts: { chatId: 'chat-1' },
-    });
+    // The prewarm is silent — no "Starting sandbox..." agent event (it would
+    // pollute chat-mode history, where ensureSandbox resolves to null).
+    expect(
+      callbacks.capturedAgentStatusCalls.some((c) => c.status.phase === 'Starting sandbox...'),
+    ).toBe(false);
+  });
+
+  it('prewarms silently even when ensureSandbox resolves null (chat mode — no phantom status)', async () => {
+    const ensure = vi.fn(async () => null);
+    const refs = refsWithEnsure(ensure);
+    const callbacks = makeCallbacks();
+
+    await prepareSendContext(
+      { trimmedText: 'x', attachments: undefined, options: undefined, chatId: 'chat-1' },
+      refs,
+      callbacks,
+    );
+
+    expect(ensure).toHaveBeenCalledOnce();
+    expect(refs.sandboxIdRef.current).toBeNull();
+    expect(
+      callbacks.capturedAgentStatusCalls.some((c) => c.status.phase === 'Starting sandbox...'),
+    ).toBe(false);
   });
 
   it('does not prewarm when no ensureSandbox is wired (e.g. pure chat)', async () => {

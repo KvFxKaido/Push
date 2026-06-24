@@ -194,12 +194,18 @@ export async function prepareSendContext(
   if (!skipStreamingPlaceholder) callbacks.setIsStreaming(true);
   refs.abortRef.current = false;
 
-  // Always pre-warm the sandbox when a workspace can provide one. Best effort —
+  // Always pre-warm the sandbox when one can actually be created. Best effort —
   // a failed prewarm doesn't block the chat flow; the run loop will lazily
   // ensure the sandbox if a tool call needs it later. (The off/smart/always
   // start-mode setting was removed — auto-start is now the only behavior.)
+  //
+  // Deliberately NO "Starting sandbox..." agent-status here: chat sessions still
+  // register an ensureSandbox that resolves to null (no repo/scratch), so
+  // announcing a start up front would append a phantom sandbox-start event into
+  // chat-mode history for a sandbox that never exists. The sandbox's own
+  // 'creating' status (the status chip) is the real start feedback for sandbox
+  // workspaces; the prewarm itself stays silent.
   if (!refs.sandboxIdRef.current && refs.ensureSandboxRef.current) {
-    callbacks.updateAgentStatus({ active: true, phase: 'Starting sandbox...' }, { chatId });
     try {
       const prewarmedId = await refs.ensureSandboxRef.current();
       if (prewarmedId) refs.sandboxIdRef.current = prewarmedId;
