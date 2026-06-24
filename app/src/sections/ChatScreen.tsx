@@ -40,7 +40,7 @@ interface ChatScreenWorkspaceProps {
   activeRepo: ActiveRepo | null;
   isScratch: boolean;
   activeRepoAppearance: RepoAppearance | null;
-  sandboxStatus: SandboxStatusBannerProps['status'];
+  sandboxStatus: ComponentProps<typeof SandboxStatusChip>['status'];
   sandboxDownloading: boolean;
   onSandboxDownload: () => Promise<void>;
   instructions: ProjectInstructionsManager;

@@ -252,8 +252,6 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     showToolActivity: false,
     approvalMode: 'supervised',
     updateApprovalMode: vi.fn(),
-    sandboxStartMode: 'smart',
-    updateSandboxStartMode: vi.fn(),
     updateShowToolActivity: vi.fn(),
     providerFailover: false,
     updateProviderFailover: vi.fn(),
