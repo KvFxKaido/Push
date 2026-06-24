@@ -233,6 +233,11 @@ function useEscapeAndScrollLock(onEscape: () => void): void {
       if (event.key === 'Escape') onEscape();
     };
     window.addEventListener('keydown', onKeyDown);
+    // Scroll lock is save/restore rather than hard-set-to-'auto': we cache the
+    // prior `overflow` and put it back on unmount. Only one memory reader is
+    // ever open at a time (a single `active` state drives it), so locks don't
+    // nest here; if another component already locked the body, we capture and
+    // faithfully restore its 'hidden', not clobber it back to scrollable.
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
