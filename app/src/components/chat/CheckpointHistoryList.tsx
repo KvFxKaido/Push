@@ -173,15 +173,19 @@ export function CheckpointHistoryList({
         </ul>
       )}
 
-      {/* Purge controls — the on-demand security mitigation. Only meaningful when
-          something is stored; clear-all spans every lane, clear-branch just this one. */}
-      {!loading && checkpoints.length > 0 ? (
+      {/* Purge controls — the on-demand security mitigation. `Clear all` spans
+          EVERY lane (the whole on-device store), so it must stay reachable even
+          when THIS branch has no checkpoints — other branches/repos may still
+          hold data (Codex P1). `Clear branch` + per-row delete are
+          current-lane-scoped, so they only appear when this lane has entries. The
+          footer therefore renders whenever the list has settled (not loading). */}
+      {!loading ? (
         <div className="mt-2.5 border-t border-push-edge/60 pt-2">
           {confirmClear ? (
             <div className="flex items-center justify-between gap-2">
               <span className="min-w-0 truncate text-push-xs text-push-rose">
                 {confirmClear === 'all'
-                  ? 'Delete ALL on-device checkpoints?'
+                  ? 'Delete ALL on-device checkpoints (every branch & repo)?'
                   : "Delete this branch's checkpoints?"}
               </span>
               <div className="flex shrink-0 items-center gap-1.5">
@@ -210,18 +214,20 @@ export function CheckpointHistoryList({
             </div>
           ) : (
             <div className="flex items-center justify-end gap-1.5">
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmDropId(null);
-                  setConfirmClear('lane');
-                }}
-                disabled={busy}
-                className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-2.5 text-push-fg-dim disabled:opacity-50`}
-              >
-                <Trash2 className="h-3 w-3" />
-                <span>Clear branch</span>
-              </button>
+              {checkpoints.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmDropId(null);
+                    setConfirmClear('lane');
+                  }}
+                  disabled={busy}
+                  className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} gap-1.5 px-2.5 text-push-fg-dim disabled:opacity-50`}
+                >
+                  <Trash2 className="h-3 w-3" />
+                  <span>Clear branch</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {

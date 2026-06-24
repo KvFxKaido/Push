@@ -529,7 +529,15 @@ object JGitEngine {
   fun clearCheckpoints(dir: String): Boolean {
     val f = File(dir)
     if (!f.exists()) return false
-    return f.deleteRecursively()
+    // A partial/failed delete must NOT read as a no-op — that would report a
+    // security purge as successful while checkpoint files (secrets) remain on
+    // disk. `deleteRecursively()` returns false on any failure; re-check the dir
+    // is actually gone and throw otherwise, so the caller surfaces a real error.
+    val deleted = f.deleteRecursively()
+    if (!deleted || f.exists()) {
+      throw IllegalStateException("checkpoint dir not fully removed: $dir")
+    }
+    return true
   }
 
   /**

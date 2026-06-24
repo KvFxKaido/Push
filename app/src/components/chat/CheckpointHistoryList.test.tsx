@@ -80,10 +80,18 @@ describe('CheckpointHistoryList', () => {
     expect(out).toContain('Delete checkpoint'); // per-row trash aria-label
   });
 
-  it('omits the purge controls when there are no checkpoints', () => {
+  it('keeps Clear all reachable when this branch is empty, but hides branch-scoped controls (Codex P1)', () => {
     const out = html({ checkpoints: [] });
-    expect(out).not.toContain('Clear all');
+    // All-lanes purge must stay reachable — other branches/repos may hold data.
+    expect(out).toContain('Clear all');
+    // Current-lane-scoped controls are hidden when this lane has no entries.
     expect(out).not.toContain('Clear branch');
+    expect(out).not.toContain('Delete checkpoint');
+  });
+
+  it('hides the purge controls while loading', () => {
+    const out = html({ loading: true });
+    expect(out).not.toContain('Clear all');
   });
 
   it('shows a spinner while clearing', () => {
