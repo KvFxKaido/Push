@@ -1,6 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+// A whole-tree restore must invalidate the derived client caches; mock the
+// invalidator so we can assert it fires on success and is skipped on refuse/fail.
+vi.mock('../sandbox-edit-ops', () => ({ invalidateWorkspaceSnapshots: vi.fn(() => 3) }));
 import { createNativeJgitCheckpointStore, CHECKPOINT_ARCHIVE_MAX_BYTES } from './native-jgit-store';
+import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import type { NativeGitPlugin } from '../native-git/definitions';
+
+const mockInvalidate = vi.mocked(invalidateWorkspaceSnapshots);
+beforeEach(() => mockInvalidate.mockClear());
 
 const REPO = 'owner/repo';
 const SCOPE = { repoFullName: REPO, sandboxId: 'sb', branch: 'feat/x' };
@@ -184,6 +191,8 @@ describe('NativeJgitCheckpointStore.restore', () => {
     expect(result).toEqual({ status: 'restored', checkpointId: 'commit-1' });
     expect(plugin.archiveCommit).toHaveBeenCalledWith({ dir: DIR, commitId: 'commit-1' });
     expect(upload).toHaveBeenCalledWith('sb', '/workspace/.push-checkpoint-restore.b64', 'ARCHIVE');
+    // The whole-tree replace must invalidate the derived caches for this sandbox.
+    expect(mockInvalidate).toHaveBeenCalledWith('sb');
   });
 
   it('refuses a dirty target tree (does not clobber live work)', async () => {
@@ -192,20 +201,39 @@ describe('NativeJgitCheckpointStore.restore', () => {
       checkpointId: 'c',
     });
     expect(result).toEqual({ status: 'skipped-dirty' });
+    // No tree changed → caches must NOT be invalidated.
+    expect(mockInvalidate).not.toHaveBeenCalled();
   });
 
   it('fails when the checkpoint is missing on-device', async () => {
     const plugin = fakePlugin({ archiveCommit: vi.fn(async () => ({ archiveBase64: null })) });
     const result = await store({ plugin }).restore({ ...SCOPE, checkpointId: 'gone' });
     expect(result.status).toBe('failed');
+    expect(mockInvalidate).not.toHaveBeenCalled();
   });
 
-  it('fails when the sandbox sync does not report OK', async () => {
+  it('fails when the sandbox sync does not report OK — but still invalidates', async () => {
     const result = await store({ exec: fakeExec({ sync: 'ERR extract' }) }).restore({
       ...SCOPE,
       checkpointId: 'c',
     });
     expect(result.status).toBe('failed');
+    // The destructive sync (clear /workspace + extract) was DISPATCHED, so the
+    // tree may be partially mutated — caches must be dropped even on failure, or
+    // we'd serve stale versions against a half-cleared tree (Codex).
+    expect(mockInvalidate).toHaveBeenCalledWith('sb');
+  });
+
+  it('invalidates even when the sync throws (tree may be partially mutated)', async () => {
+    const exec = vi.fn(async (_id: string, command: string) => {
+      if (command.includes('git status --porcelain')) {
+        return { stdout: '', stderr: '', exitCode: 0 } as never;
+      }
+      throw new Error('connection reset');
+    });
+    const result = await store({ exec }).restore({ ...SCOPE, checkpointId: 'c' });
+    expect(result.status).toBe('failed');
+    expect(mockInvalidate).toHaveBeenCalledWith('sb');
   });
 });
 

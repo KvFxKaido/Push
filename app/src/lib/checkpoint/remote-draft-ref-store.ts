@@ -15,6 +15,7 @@
 
 import { backUpWorkingTree, type AutoBackResult } from '../sandbox-auto-back';
 import { applyAutoBackRestore, detectAutoBackRestore } from '../sandbox-auto-back-restore';
+import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import type {
   CheckpointCaptureInput,
   CheckpointCaptureResult,
@@ -74,6 +75,19 @@ export const remoteDraftRefCheckpointStore: CheckpointStore = {
 
   async restore(input: CheckpointRestoreInput): Promise<CheckpointRestoreResult> {
     const result = await applyAutoBackRestore(input.sandboxId, input.branch, input.checkpointId);
+    // A restore attempt runs `git read-tree -u --reset`, which updates the working
+    // tree — so on BOTH success and failure the tree may have been mutated, and
+    // the derived client caches keyed on the old tree (file-version cache,
+    // prefetched-edit cache, symbol + file ledgers) must be dropped or edits and
+    // symbol/file awareness answer against the pre-restore tree. `skipped-dirty`
+    // is the one outcome that refused before touching anything. Parity with the
+    // native store; same Increment-2 post-restore consistency requirement.
+    // Over-invalidation on a pre-mutation failure (e.g. no backup ref) is cheap —
+    // caches rebuild on next read — and applyAutoBackRestore doesn't expose the
+    // stage, so we invalidate on any non-refused outcome to stay correctness-safe.
+    if (result.status !== 'skipped-dirty') {
+      invalidateWorkspaceSnapshots(input.sandboxId);
+    }
     switch (result.status) {
       case 'restored':
         return { status: 'restored', checkpointId: result.sha };
