@@ -547,6 +547,7 @@ export function WorkspaceSessionScreen({
             onBranchSwitchPayload={applyBranchSwitchFromUI}
             accentHex={fileBrowserAccentHex}
             glowEnabled={fileBrowserAppearance?.glowEnabled ?? false}
+            glowStyle={fileBrowserAppearance?.glowStyle ?? 'gradient'}
           />
         </Suspense>
         <Toaster position="bottom-center" />

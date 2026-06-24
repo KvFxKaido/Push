@@ -323,15 +323,25 @@ export function ComposerDraftScreen({
   const ModeIcon = MODE_OPTIONS.find((m) => m.mode === state.mode)?.icon ?? FolderGit2;
 
   const glow = useMemo(() => {
-    if (state.mode === 'chat') return { active: true, color: COMPOSER_CHAT_GLOW };
-    if (state.mode === 'scratch') return { active: true, color: COMPOSER_SCRATCH_GLOW };
+    // Chat and scratch are fixed-chrome lanes: they paint a constant brand
+    // glow color (not a per-repo accent) and have no RepoAppearance to read,
+    // so the gradient style is intentional here. Only repo mode honors the
+    // user's glowStyle pick.
+    if (state.mode === 'chat')
+      return { active: true, color: COMPOSER_CHAT_GLOW, variant: 'gradient' as const };
+    if (state.mode === 'scratch')
+      return { active: true, color: COMPOSER_SCRATCH_GLOW, variant: 'gradient' as const };
     const appearance = resolveRepoAppearance(state.repoFullName);
-    return { active: appearance.glowEnabled, color: getRepoAppearanceColorHex(appearance.color) };
+    return {
+      active: appearance.glowEnabled,
+      color: getRepoAppearanceColorHex(appearance.color),
+      variant: appearance.glowStyle,
+    };
   }, [resolveRepoAppearance, state.mode, state.repoFullName]);
 
   return (
     <div className="relative isolate flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom text-push-fg">
-      <ChatBackgroundGlow active={glow.active} color={glow.color} />
+      <ChatBackgroundGlow active={glow.active} color={glow.color} variant={glow.variant} />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-white/[0.03] to-transparent" />
 
       <header className="relative flex items-center justify-between px-4 pt-3">

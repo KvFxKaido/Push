@@ -24,6 +24,7 @@ import {
 import { toast } from 'sonner';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
+import type { RepoAppearanceGlowStyleId } from '@/lib/repo-appearance';
 import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
 import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
@@ -69,6 +70,8 @@ interface FileBrowserProps {
   accentHex?: string | null;
   /** Mirrors `RepoAppearance.glowEnabled`. Toggle off without losing the accent. */
   glowEnabled?: boolean;
+  /** Mirrors `RepoAppearance.glowStyle`; picks the gradient or dotted treatment. */
+  glowStyle?: RepoAppearanceGlowStyleId;
 }
 
 export function FileBrowser({
@@ -86,6 +89,7 @@ export function FileBrowser({
   onBranchSwitchPayload,
   accentHex,
   glowEnabled = false,
+  glowStyle = 'gradient',
 }: FileBrowserProps) {
   const {
     currentPath,
@@ -246,7 +250,7 @@ export function FileBrowser({
 
   return (
     <div className="relative isolate flex h-dvh flex-col overflow-hidden bg-push-surface-inset safe-area-top">
-      {showGlow && <ChatBackgroundGlow active={true} color={accentHex} />}
+      {showGlow && <ChatBackgroundGlow active={true} color={accentHex} variant={glowStyle} />}
       {/* Header */}
       <header className="relative z-10 flex items-center gap-2 border-b border-push-edge-subtle bg-push-grad-panel px-3 py-3">
         <button
