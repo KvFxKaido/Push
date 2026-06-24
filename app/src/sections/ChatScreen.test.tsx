@@ -245,6 +245,29 @@ describe('ChatScreen', () => {
     expect(html).toContain('push-glow-blob');
   });
 
+  it('renders the ripple cell grid when glowStyle is ripple', () => {
+    const html = renderToStaticMarkup(
+      <ChatScreen
+        workspace={baseWorkspace({
+          activeRepoAppearance: {
+            icon: 'repo-ledger',
+            color: 'sky',
+            glowEnabled: true,
+            glowStyle: 'ripple',
+          },
+        })}
+        shell={baseShell()}
+        chat={baseChat()}
+        banners={baseBanners()}
+      />,
+    );
+
+    // The ripple treatment renders the entrance-animated cell grid, and keeps
+    // the gradient blobs as a top-bar wash so the app-bar chrome stays legible.
+    expect(html).toContain('animate-cell-ripple');
+    expect(html).toContain('push-glow-blob');
+  });
+
   it('pauses the background glow when the repo opts out via glowEnabled false', () => {
     const html = renderToStaticMarkup(
       <ChatScreen

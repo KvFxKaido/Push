@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react';
+import { BackgroundRippleEffect } from '@/components/ui/background-ripple-effect';
 import { DottedGlowBackground } from '@/components/ui/dotted-glow-background';
 import { hexToRgba, type RepoAppearanceGlowStyleId } from '@/lib/repo-appearance';
 
@@ -38,6 +39,10 @@ export function ChatBackgroundGlow({
     // variant, which ignores them.
     '--push-glow-dot': hexToRgba(color, 0.55),
     '--push-glow-dot-glow': hexToRgba(color, 0.95),
+    // Ripple cells read their own accent triple; harmless for the other variants.
+    '--push-ripple-fill': hexToRgba(color, 0.08),
+    '--push-ripple-border': hexToRgba(color, 0.2),
+    '--push-ripple-glow': hexToRgba(color, 0.55),
     opacity: active ? 1 : 0,
   } as CSSProperties;
 
@@ -71,6 +76,27 @@ export function ChatBackgroundGlow({
             // The var names are constant; the accent feeding them is not. Key the
             // re-resolve on the live color so edits track without a remount.
             colorKey={color}
+          />
+        </div>
+      )}
+      {variant === 'ripple' && active && (
+        <div
+          className="absolute inset-0"
+          style={{
+            maskImage: BACKGROUND_TOPBAR_CLEAR_MASK,
+            WebkitMaskImage: BACKGROUND_TOPBAR_CLEAR_MASK,
+          }}
+        >
+          <BackgroundRippleEffect
+            // Behind chat content: decorative only, so don't capture pointers.
+            // A generous cell grid keeps the texture covering mobile/tablet
+            // viewports; the radial cell mask + topbar clear + bottom fade clip
+            // the edges so nothing reaches the chrome.
+            interactive={false}
+            rows={18}
+            cols={18}
+            cellSize={52}
+            initialRipple="center"
           />
         </div>
       )}

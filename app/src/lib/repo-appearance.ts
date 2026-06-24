@@ -18,9 +18,9 @@ export type RepoAppearanceColorId =
 
 // How the ambient background glow renders when `glowEnabled` is true.
 // 'gradient' is the original drifting-blob wash; 'dotted' is the animated
-// dot field. Off is still carried by `glowEnabled: false` so every existing
-// boolean check keeps working.
-export type RepoAppearanceGlowStyleId = 'gradient' | 'dotted';
+// dot field; 'ripple' is the cell-grid ripple. Off is still carried by
+// `glowEnabled: false` so every existing boolean check keeps working.
+export type RepoAppearanceGlowStyleId = 'gradient' | 'dotted' | 'ripple';
 
 export interface RepoAppearance {
   icon: RepoAppearanceIconId;
@@ -69,6 +69,7 @@ export const REPO_APPEARANCE_GLOW_STYLE_OPTIONS: Array<{
 }> = [
   { id: 'gradient', label: 'Gradient' },
   { id: 'dotted', label: 'Dotted' },
+  { id: 'ripple', label: 'Ripple' },
 ];
 
 const ICON_ID_SET = new Set<RepoAppearanceIconId>(

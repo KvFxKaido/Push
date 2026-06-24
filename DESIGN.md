@@ -116,10 +116,14 @@ edge:
    toward the composer so the message area and input stay legible.
 
 The `gradient` variant is wash + bottom fade (no texture, so no mask). The
-`dotted` variant is wash + masked dot field + bottom fade. The blobs read
-`--push-glow-strong` / `--push-glow-soft`; textured layers read their own accent
-pair (e.g. `--push-glow-dot` / `--push-glow-dot-glow`) so they can tint
-independently of the wash.
+`dotted` variant is wash + masked dot field + bottom fade. The `ripple` variant
+is wash + masked cell-grid ripple + bottom fade (`BackgroundRippleEffect`,
+rendered non-interactive behind chat content, with an entrance ripple from the
+center). The blobs read `--push-glow-strong` / `--push-glow-soft`; textured
+layers read their own accent triple (e.g. `--push-glow-dot` /
+`--push-glow-dot-glow` for dots, `--push-ripple-fill` / `--push-ripple-border` /
+`--push-ripple-glow` for the ripple cells) so they can tint independently of the
+wash.
 
 ## Typography
 
