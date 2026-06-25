@@ -1,32 +1,33 @@
 import type { AttachmentData } from '@/types';
-import type { LlmContentPart } from '@push/lib/provider-contract';
+import { imageUrlToSource } from '@push/lib/content-blocks';
+import type { LlmContentBlock, LlmContentPart } from '@push/lib/provider-contract';
 
-export function buildAttachmentContentParts(
+export function buildAttachmentContentBlocks(
   text: string,
   attachments: AttachmentData[] | undefined,
-): LlmContentPart[] | undefined {
+): LlmContentBlock[] | undefined {
   if (!attachments || attachments.length === 0) return undefined;
 
-  const contentParts: LlmContentPart[] = [];
+  const contentBlocks: LlmContentBlock[] = [];
   if (text) {
-    contentParts.push({ type: 'text', text });
+    contentBlocks.push({ type: 'text', text });
   }
 
   for (const att of attachments) {
     if (att.type === 'image') {
-      contentParts.push({
-        type: 'image_url',
-        image_url: { url: att.content },
+      contentBlocks.push({
+        type: 'image',
+        source: imageUrlToSource(att.content),
       });
     } else {
-      contentParts.push({
+      contentBlocks.push({
         type: 'text',
         text: `[Attached file: ${att.filename}]\n\`\`\`\n${att.content}\n\`\`\``,
       });
     }
   }
 
-  return contentParts;
+  return contentBlocks;
 }
 
 /** Convert a flat list of prior-turn attachments into content parts for
@@ -50,6 +51,25 @@ export function buildPriorTurnAttachmentParts(attachments: AttachmentData[]): Ll
   return parts;
 }
 
+function buildInitialUserAttachmentParts(
+  attachments: AttachmentData[] | undefined,
+): LlmContentPart[] {
+  if (!attachments || attachments.length === 0) return [];
+
+  const parts: LlmContentPart[] = [];
+  for (const att of attachments) {
+    if (att.type === 'image') {
+      parts.push({ type: 'image_url', image_url: { url: att.content } });
+    } else {
+      parts.push({
+        type: 'text',
+        text: `[Attached file: ${att.filename}]\n\`\`\`\n${att.content}\n\`\`\``,
+      });
+    }
+  }
+  return parts;
+}
+
 /** Assemble the kernel's initial user message content parts: the task
  *  preamble text first, then prior-turn attachment parts, then current-turn
  *  attachment parts. Returns `undefined` when there is no multimodal content
@@ -57,16 +77,13 @@ export function buildPriorTurnAttachmentParts(attachments: AttachmentData[]): Ll
  *
  *  Centralizes the merge so the inline lane (`chat-send-inline.ts`) and the
  *  background DO lane (`coder-job-do.ts`) stay symmetric, and so the text
- *  part is emitted explicitly rather than relying on `buildAttachmentContentParts`
- *  happening to place it at index 0. */
+ *  part is emitted explicitly. */
 export function mergeInitialUserContentParts(
   taskPreamble: string,
   priorAttParts: LlmContentPart[],
   currentAttachments: AttachmentData[] | undefined,
 ): LlmContentPart[] | undefined {
-  // Pass an empty text so we get only the attachment parts back; the text
-  // preamble is emitted once, explicitly, below.
-  const currentAttParts = buildAttachmentContentParts('', currentAttachments) ?? [];
+  const currentAttParts = buildInitialUserAttachmentParts(currentAttachments);
   if (priorAttParts.length === 0 && currentAttParts.length === 0) {
     return undefined;
   }

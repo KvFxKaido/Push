@@ -250,6 +250,72 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
   });
 });
 
+describe('toLLMMessages attachment content blocks', () => {
+  function makeMessage(partial: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: partial.id ?? 'm',
+      role: partial.role ?? 'user',
+      content: partial.content ?? '',
+      timestamp: partial.timestamp ?? 0,
+      ...partial,
+    };
+  }
+
+  it('builds Anthropic-canonical contentBlocks from attachments', () => {
+    const llm = toLLMMessages([
+      makeMessage({
+        id: 'u1',
+        role: 'user',
+        content: 'see image',
+        attachments: [
+          {
+            id: 'att-1',
+            type: 'image',
+            filename: 'screen.png',
+            mimeType: 'image/png',
+            sizeBytes: 3,
+            content: 'data:image/png;base64,AAA',
+          },
+        ],
+      }),
+    ]);
+    const user = llm.find((m) => m.role === 'user');
+    expect(user?.content).toBe('see image');
+    expect(user?.contentBlocks).toEqual([
+      { type: 'text', text: 'see image' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
+    ]);
+  });
+
+  it('preserves explicit contentParts instead of rebuilding attachments', () => {
+    const contentParts = [
+      { type: 'text' as const, text: 'explicit' },
+      { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,OLD' } },
+    ];
+    const llm = toLLMMessages([
+      makeMessage({
+        id: 'u1',
+        role: 'user',
+        content: 'see image',
+        contentParts,
+        attachments: [
+          {
+            id: 'att-1',
+            type: 'image',
+            filename: 'screen.png',
+            mimeType: 'image/png',
+            sizeBytes: 3,
+            content: 'ftp://example.com/ignored.png',
+          },
+        ],
+      }),
+    ]);
+    const user = llm.find((m) => m.role === 'user');
+    expect(user?.content).toEqual(contentParts);
+    expect(user?.contentBlocks).toBeUndefined();
+  });
+});
+
 describe('toLLMMessages — aborted assistant message leakage', () => {
   // Cancellation invariant pin (Hermes #6 follow-up).
   //

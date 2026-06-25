@@ -37,7 +37,7 @@ import {
   PROJECT_INSTRUCTIONS_CLOSE,
 } from '@push/lib/project-instructions';
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
-import { buildAttachmentContentParts } from './attachment-content-parts';
+import { buildAttachmentContentBlocks } from './attachment-content-parts';
 // Whether a `(provider, model)` route lands on the Anthropic Messages API via
 // the Worker bridge. Shared with the failover candidate resolver — only routes
 // that pass through the bridge can consume the Push-private `reasoning_blocks`
@@ -775,18 +775,24 @@ export function toLLMMessages(
 
     // Prefer pre-converted `contentParts` (the Coder kernel's surface-agnostic
     // multimodal turn — it has no `AttachmentData`); fall back to rebuilding
-    // from `attachments` for Orchestrator-loop messages. Without honoring
-    // `contentParts` here, kernel-lane image turns serialize text-only and the
-    // attachment is silently dropped (Codex P1, #937).
+    // Anthropic-canonical `contentBlocks` from `attachments` for
+    // Orchestrator-loop messages. Without honoring `contentParts` here,
+    // kernel-lane image turns serialize text-only and the attachment is
+    // silently dropped (Codex P1, #937).
     const contentParts =
-      msg.contentParts && msg.contentParts.length > 0
-        ? msg.contentParts
-        : buildAttachmentContentParts(msg.content, msg.attachments);
-    if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+      msg.contentParts && msg.contentParts.length > 0 ? msg.contentParts : undefined;
+    const existingContentBlocks =
+      msg.contentBlocks && msg.contentBlocks.length > 0 ? msg.contentBlocks : undefined;
+    const attachmentContentBlocks =
+      contentParts || existingContentBlocks
+        ? undefined
+        : buildAttachmentContentBlocks(msg.content, msg.attachments);
+    const contentBlocks = existingContentBlocks ?? attachmentContentBlocks;
+    if (contentBlocks && contentBlocks.length > 0) {
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: contentParts ?? msg.content,
-        contentBlocks: msg.contentBlocks,
+        contentBlocks,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
       });
     } else if (contentParts) {

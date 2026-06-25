@@ -94,7 +94,7 @@ describe('toRunCheckpointMessages', () => {
     expect(out[0].content).toBe('kept');
   });
 
-  it('converts attachments to contentParts like the wire builder', () => {
+  it('converts attachments to contentBlocks like the wire builder', () => {
     const out = toRunCheckpointMessages([
       msg({
         content: 'see image',
@@ -118,11 +118,12 @@ describe('toRunCheckpointMessages', () => {
         ],
       }),
     ]);
-    expect(out[0].contentParts).toEqual([
+    expect(out[0].contentBlocks).toEqual([
       { type: 'text', text: 'see image' },
-      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAA' } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
       { type: 'text', text: '[Attached file: a.ts]\n```\nconst x = 1;\n```' },
     ]);
+    expect(out[0].contentParts).toBeUndefined();
   });
 
   it('preserves a kernel turn’s existing contentParts (no attachments to rebuild from)', () => {

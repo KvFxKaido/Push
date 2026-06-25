@@ -89,12 +89,33 @@ describe('checkpointMessagesToChatMessages', () => {
     expect(msg.attachments?.[0].mimeType).toBe('image/png');
   });
 
-  it('rebuilds attached-file text parts as document attachments (capture-path inverse)', () => {
+  it('rebuilds image contentBlocks as image attachments (pixels survive replay)', () => {
+    const [msg] = checkpointMessagesToChatMessages([
+      {
+        role: 'user',
+        content: 'what is in this screenshot?',
+        contentBlocks: [
+          { type: 'text', text: 'what is in this screenshot?' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+          },
+        ],
+      },
+    ]);
+    expect(msg.content).toBe('what is in this screenshot?');
+    expect(msg.attachments).toHaveLength(1);
+    expect(msg.attachments?.[0].type).toBe('image');
+    expect(msg.attachments?.[0].content).toBe('data:image/png;base64,iVBORw0KGgo=');
+    expect(msg.attachments?.[0].mimeType).toBe('image/png');
+  });
+
+  it('rebuilds attached-file text blocks as document attachments (capture-path inverse)', () => {
     const [msg] = checkpointMessagesToChatMessages([
       {
         role: 'user',
         content: 'review this config',
-        contentParts: [
+        contentBlocks: [
           { type: 'text', text: 'review this config' },
           { type: 'text', text: '[Attached file: wrangler.jsonc]\n```\n{ "name": "push" }\n```' },
         ],

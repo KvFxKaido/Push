@@ -106,6 +106,18 @@ test('runCheckpointToCoderResumeState maps the transcript and appends the adopti
   assert.ok(note.content.includes('Fix the bug in foo.ts'), 'carries the user-goal anchor');
 });
 
+test('runCheckpointToCoderResumeState preserves contentBlocks on checkpointed messages', () => {
+  const contentBlocks = [
+    { type: 'text', text: 'describe this' },
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAA' } },
+  ];
+  const cp = makeCheckpoint({
+    messages: [{ role: 'user', content: 'describe this', contentBlocks }],
+  });
+  const seed = runCheckpointToCoderResumeState(cp);
+  assert.deepEqual(seed.messages[0].contentBlocks, contentBlocks);
+});
+
 test('checkpointed `tool` turns become user turns flagged isToolResult', () => {
   const cp = makeCheckpoint({
     messages: [
@@ -149,7 +161,16 @@ test('coderStateToRunCheckpoint produces a valid checkpoint that keeps identity 
     {
       round: 7,
       messages: [
-        { id: 'a', role: 'user', content: 'task', timestamp: 1 },
+        {
+          id: 'a',
+          role: 'user',
+          content: 'task',
+          contentBlocks: [
+            { type: 'text', text: 'task' },
+            { type: 'image', source: { type: 'url', url: 'https://example.com/task.png' } },
+          ],
+          timestamp: 1,
+        },
         {
           id: 'b',
           role: 'assistant',
@@ -191,6 +212,10 @@ test('coderStateToRunCheckpoint produces a valid checkpoint that keeps identity 
   assert.equal(cp.provider, 'zen');
   assert.equal(cp.model, 'glm-5.1');
   assert.equal(cp.messages.length, 3);
+  assert.deepEqual(cp.messages[0].contentBlocks, [
+    { type: 'text', text: 'task' },
+    { type: 'image', source: { type: 'url', url: 'https://example.com/task.png' } },
+  ]);
   assert.equal(cp.messages[1].isToolCall, true);
   assert.deepEqual(cp.messages[1].toolUses, [
     { type: 'tool_use', id: 'toolu_read_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },

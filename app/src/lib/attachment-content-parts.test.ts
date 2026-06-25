@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AttachmentData } from '@/types';
 import {
-  buildAttachmentContentParts,
+  buildAttachmentContentBlocks,
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
 } from './attachment-content-parts';
@@ -18,30 +18,38 @@ function attachment(overrides: Partial<AttachmentData>): AttachmentData {
   };
 }
 
-describe('buildAttachmentContentParts', () => {
+describe('buildAttachmentContentBlocks', () => {
   it('returns undefined when there are no attachments', () => {
-    expect(buildAttachmentContentParts('Task: inspect this', undefined)).toBeUndefined();
-    expect(buildAttachmentContentParts('Task: inspect this', [])).toBeUndefined();
+    expect(buildAttachmentContentBlocks('Task: inspect this', undefined)).toBeUndefined();
+    expect(buildAttachmentContentBlocks('Task: inspect this', [])).toBeUndefined();
   });
 
-  it('puts the text part first and maps image attachments to image_url parts', () => {
-    const parts = buildAttachmentContentParts('Task: inspect this', [
+  it('puts the text block first and maps image attachments to source blocks', () => {
+    const blocks = buildAttachmentContentBlocks('Task: inspect this', [
       attachment({
         type: 'image',
         filename: 'screen.png',
         mimeType: 'image/png',
         content: 'data:image/png;base64,abc123',
       }),
+      attachment({
+        id: 'att-2',
+        type: 'image',
+        filename: 'remote.png',
+        mimeType: 'image/png',
+        content: 'https://example.com/remote.png',
+      }),
     ]);
 
-    expect(parts).toEqual([
+    expect(blocks).toEqual([
       { type: 'text', text: 'Task: inspect this' },
-      { type: 'image_url', image_url: { url: 'data:image/png;base64,abc123' } },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'abc123' } },
+      { type: 'image', source: { type: 'url', url: 'https://example.com/remote.png' } },
     ]);
   });
 
   it('embeds code and document attachments as labeled text blocks', () => {
-    const parts = buildAttachmentContentParts('Task: read these', [
+    const blocks = buildAttachmentContentBlocks('Task: read these', [
       attachment({
         id: 'code-1',
         type: 'code',
@@ -58,7 +66,7 @@ describe('buildAttachmentContentParts', () => {
       }),
     ]);
 
-    expect(parts).toEqual([
+    expect(blocks).toEqual([
       { type: 'text', text: 'Task: read these' },
       {
         type: 'text',
@@ -69,6 +77,19 @@ describe('buildAttachmentContentParts', () => {
         text: '[Attached file: brief.md]\n```\n# Brief\n```',
       },
     ]);
+  });
+
+  it('throws on an unrepresentable image URL', () => {
+    expect(() =>
+      buildAttachmentContentBlocks('Task: inspect this', [
+        attachment({
+          type: 'image',
+          filename: 'screen.png',
+          mimeType: 'image/png',
+          content: 'ftp://example.com/screen.png',
+        }),
+      ]),
+    ).toThrow(/unsupported or malformed content part/);
   });
 });
 
