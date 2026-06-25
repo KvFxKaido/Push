@@ -23,7 +23,12 @@ import {
   estimateTokens,
   getContextBudget,
 } from '../lib/context-budget.ts';
-import type { ReasoningBlock, UrlCitation } from '../lib/provider-contract.ts';
+import type {
+  LlmToolResultBlock,
+  LlmToolUseBlock,
+  ReasoningBlock,
+  UrlCitation,
+} from '../lib/provider-contract.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
 
 export interface Message {
@@ -42,6 +47,16 @@ export interface Message {
    *  `openrouter:web_search`). Display-only — rendered as a "Sources" footer
    *  in the terminal, never sent back to the model. Deduped by url. */
   citations?: UrlCitation[];
+  /** Structured tool-call sidecar (CLI peer of the web `ChatMessage.toolUses`):
+   *  the `tool_use` blocks parsed from this assistant turn, carried alongside the
+   *  fenced-JSON text in `content`. Additive + optional; no producer/consumer on
+   *  the CLI yet (Slice 0 — shape only). The web + CLI transcripts MUST gain this
+   *  in lockstep so the Anthropic path doesn't regress to text-only re-parsing on
+   *  one surface. See `docs/decisions/Structured Tool-Call Sourcing.md`. */
+  toolUses?: LlmToolUseBlock[];
+  /** Structured tool-result sidecar — `tool_result` blocks linked to their calls
+   *  via `tool_use_id`. Plural for batched calls. Same contract as {@link toolUses}. */
+  toolResults?: LlmToolResultBlock[];
 }
 
 export interface TrimResult {

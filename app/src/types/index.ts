@@ -43,6 +43,8 @@ export type {
 import type {
   AIProviderType,
   LlmContentPart,
+  LlmToolResultBlock,
+  LlmToolUseBlock,
   ReasoningBlock,
   UrlCitation,
 } from '@push/lib/provider-contract';
@@ -372,6 +374,26 @@ export interface ChatMessage {
   isToolCall?: boolean; // Assistant message that requested a tool
   isToolResult?: boolean; // Synthetic user message carrying tool data
   isMalformed?: boolean; // Assistant message that attempted a tool call but produced invalid JSON
+  /**
+   * Structured tool-call sidecar — the Anthropic-canonical `tool_use` blocks
+   * parsed from this assistant turn (one per call; a turn can batch several).
+   * Additive + optional, written alongside the fenced-JSON text in `content`
+   * (the model-facing boundary): `toLLMMessages` maps it to
+   * `LlmMessage.contentBlocks` so serializers downcast structure instead of the
+   * Anthropic bridge re-parsing text. Absent on old transcripts → the text arm
+   * still serves them (the per-exchange fallback). See
+   * `docs/decisions/Structured Tool-Call Sourcing.md`. Slice 0: shape only — no
+   * producer/consumer yet (the `reasoningBlocks`-before-its-producer pattern).
+   */
+  toolUses?: LlmToolUseBlock[];
+  /**
+   * Structured tool-result sidecar — the `tool_result` blocks on a result
+   * message, each linked to its call via `tool_use_id`. Plural: a parallel batch
+   * lands as one result message per call (one block each), a file-mutation batch
+   * as one combined message (several blocks). Same additive/dual-read contract as
+   * {@link toolUses}.
+   */
+  toolResults?: LlmToolResultBlock[];
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
   /** Branch active when this message was authored. Currently stamped at
