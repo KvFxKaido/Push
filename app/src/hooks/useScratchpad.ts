@@ -208,25 +208,32 @@ export function useScratchpad(repoFullName: string | null = null) {
   const open = useCallback(() => setIsOpen(true), []);
   const close = useCallback(() => setIsOpen(false), []);
 
-  const detachActiveMemoryIfNeeded = useCallback(
-    (nextContent: string) => {
-      if (!activeMemoryId) return;
-      const activeMemory = memories.find((memory) => memory.id === activeMemoryId);
-      if (!activeMemory || activeMemory.content !== nextContent) {
-        setActiveMemoryId(null);
-      }
-    },
-    [activeMemoryId, memories],
-  );
+  // Write-through: while a saved memory is the live note, edits persist back to
+  // that memory in place (Apple-Notes-style) rather than forking an unsaved
+  // draft. The equality guard skips the bump when `content` already matches the
+  // snapshot — i.e. right after `loadMemory` seeds it — so merely opening a note
+  // doesn't reorder the gallery by edited-time. When no memory is active the
+  // draft auto-save effect above owns persistence instead.
+  useEffect(() => {
+    if (!activeMemoryId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMemories((prev) => {
+      const target = prev.find((memory) => memory.id === activeMemoryId);
+      if (!target || target.content === content) return prev;
+      return prev.map((memory) =>
+        memory.id === activeMemoryId ? { ...memory, content, updatedAt: Date.now() } : memory,
+      );
+    });
+  }, [content, activeMemoryId]);
 
-  const setContent = useCallback(
-    (nextContent: string) => {
-      setContentState(nextContent);
-      detachActiveMemoryIfNeeded(nextContent);
-    },
-    [detachActiveMemoryIfNeeded],
-  );
+  const setContent = useCallback((nextContent: string) => {
+    setContentState(nextContent);
+  }, []);
 
+  // Clear resets the live notes to an empty draft; it detaches the active memory
+  // (so the write-through effect above no-ops) rather than wiping the saved note.
+  // React batches both updates, so the effect observes `activeMemoryId === null`
+  // and never persists the blank into the memory.
   const clear = useCallback(() => {
     setContentState('');
     if (activeMemoryId) {
@@ -234,26 +241,16 @@ export function useScratchpad(repoFullName: string | null = null) {
     }
   }, [activeMemoryId]);
 
-  const append = useCallback(
-    (text: string) => {
-      setContentState((prev) => {
-        const trimmed = prev.trim();
-        return trimmed ? `${trimmed}\n\n${text}` : text;
-      });
-      if (activeMemoryId) {
-        setActiveMemoryId(null);
-      }
-    },
-    [activeMemoryId],
-  );
+  const append = useCallback((text: string) => {
+    setContentState((prev) => {
+      const trimmed = prev.trim();
+      return trimmed ? `${trimmed}\n\n${text}` : text;
+    });
+  }, []);
 
-  const replace = useCallback(
-    (text: string) => {
-      setContentState(text);
-      detachActiveMemoryIfNeeded(text);
-    },
-    [detachActiveMemoryIfNeeded],
-  );
+  const replace = useCallback((text: string) => {
+    setContentState(text);
+  }, []);
 
   const saveMemory = useCallback(
     (name: string) => {

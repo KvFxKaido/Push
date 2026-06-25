@@ -1,8 +1,10 @@
-import { useState } from 'react';
-import { Check, Download, Trash2 } from 'lucide-react';
+import { useState, type CSSProperties } from 'react';
+import { Check, Download, Maximize2, Trash2 } from 'lucide-react';
 import type { ScratchpadMemory } from '@/hooks/useScratchpad';
 import type { PinnedArtifact } from '@/hooks/usePinnedArtifacts';
 import type { TodoItem } from '@/lib/todo-tools';
+import { runViewTransition } from '@/lib/view-transition';
+import { timeAgoCompact } from '@/lib/utils';
 import {
   HUB_MATERIAL_INPUT_CLASS,
   HUB_MATERIAL_PILL_BUTTON_CLASS,
@@ -12,8 +14,22 @@ import {
 } from '@/components/chat/hub-styles';
 import { KeptCacheIcon, NotebookPadIcon } from '@/components/icons/push-custom-icons';
 import { ScratchpadMemoryGallery } from '@/components/chat/scratchpad/ScratchpadMemoryGallery';
+import { ScratchpadNoteEditor } from '@/components/chat/scratchpad/ScratchpadNoteEditor';
+import { cardViewTransitionName } from '@/components/chat/scratchpad/scratchpad-morph';
 import { Tip } from '@/components/Tip';
 import { HubKeptTab } from './HubKeptTab';
+
+// Morph name for the Working notes preview ↔ full-screen editor transition. The
+// preview surrenders it to the editor panel while open (one element per name).
+const WORKING_NOTES_MORPH = 'scratch-working-notes';
+
+// Which note the editor is bound to: the unsaved draft (`memoryId: null`) or a
+// saved memory. `morph` is the source surface's view-transition-name so the
+// editor morphs out of, and back into, whatever was tapped.
+interface NoteEditorTarget {
+  memoryId: string | null;
+  morph: string;
+}
 
 interface HubNotesTabProps {
   scratchpadContent: string;
@@ -51,9 +67,41 @@ export function HubNotesTab({
   onTodoClear,
 }: HubNotesTabProps) {
   const [memoryName, setMemoryName] = useState('');
+  const [editor, setEditor] = useState<NoteEditorTarget | null>(null);
   const activeMemory = activeMemoryId
     ? (scratchpadMemories.find((memory) => memory.id === activeMemoryId) ?? null)
     : null;
+
+  // Tapping the Working notes field edits whatever is live — the unsaved draft
+  // or, if a memory is loaded, that memory in place. The field is the morph
+  // source, so it claims WORKING_NOTES_MORPH.
+  const openLiveEditor = () =>
+    runViewTransition(() => setEditor({ memoryId: activeMemoryId, morph: WORKING_NOTES_MORPH }));
+
+  // Tapping a saved card loads it as the live note, then morphs that card into
+  // the editor. Edits write through to the memory in place (see useScratchpad).
+  const openMemoryEditor = (memory: ScratchpadMemory) =>
+    runViewTransition(() => {
+      onLoadMemory(memory.id);
+      setEditor({ memoryId: memory.id, morph: cardViewTransitionName(memory.id) });
+    });
+
+  const closeEditor = () => runViewTransition(() => setEditor(null));
+
+  const deleteFromEditor = (id: string) =>
+    runViewTransition(() => {
+      onDeleteMemory(id);
+      setEditor(null);
+    });
+
+  const editorMemory =
+    editor && editor.memoryId
+      ? (scratchpadMemories.find((memory) => memory.id === editor.memoryId) ?? null)
+      : null;
+  const editorTitle = editorMemory ? editorMemory.name : 'Working notes';
+  const editorSubtitle = editorMemory
+    ? `Edited ${timeAgoCompact(editorMemory.updatedAt)} · ${scratchpadContent.length} chars`
+    : `${scratchpadContent.length} chars · the model sees these notes`;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -140,19 +188,34 @@ export function HubNotesTab({
                   <ScratchpadMemoryGallery
                     memories={scratchpadMemories}
                     activeMemoryId={activeMemoryId}
+                    openMemoryId={editor?.memoryId ?? null}
                     onLoad={onLoadMemory}
-                    onDelete={onDeleteMemory}
+                    onOpenMemory={openMemoryEditor}
                   />
                 </div>
               )}
             </div>
 
-            <textarea
-              value={scratchpadContent}
-              onChange={(event) => onContentChange(event.target.value)}
-              placeholder="Capture notes, requirements, and the pieces you want the model to keep in mind..."
-              className="min-h-[240px] flex-1 resize-none rounded-xl border border-push-edge-subtle bg-push-surface-inset px-3 py-2.5 text-sm leading-relaxed text-push-fg shadow-push-inset outline-none transition-colors placeholder:text-push-fg-dim focus:border-push-sky/50"
-            />
+            <button
+              type="button"
+              onClick={openLiveEditor}
+              style={
+                { viewTransitionName: editor ? undefined : WORKING_NOTES_MORPH } as CSSProperties
+              }
+              aria-label="Edit notes full screen"
+              className="relative min-h-[240px] flex-1 overflow-hidden rounded-xl border border-push-edge-subtle bg-push-surface-inset px-3 py-2.5 text-left shadow-push-inset transition-colors hover:border-push-edge-hover focus:border-push-sky/50 focus:outline-none"
+            >
+              <Maximize2 className="pointer-events-none absolute right-2.5 top-2.5 h-3.5 w-3.5 text-push-fg-dim" />
+              {scratchpadContent.trim() ? (
+                <span className="block whitespace-pre-wrap break-words pr-6 text-sm leading-relaxed text-push-fg">
+                  {scratchpadContent}
+                </span>
+              ) : (
+                <span className="block pr-6 text-sm leading-relaxed text-push-fg-dim">
+                  Capture notes, requirements, and the pieces you want the model to keep in mind…
+                </span>
+              )}
+            </button>
           </section>
 
           <HubTodoSection todos={todos} onClear={onTodoClear} />
@@ -182,6 +245,19 @@ export function HubNotesTab({
           </section>
         </div>
       </div>
+
+      {editor && (
+        <ScratchpadNoteEditor
+          title={editorTitle}
+          subtitle={editorSubtitle}
+          content={scratchpadContent}
+          onChange={onContentChange}
+          onClose={closeEditor}
+          onDelete={editor.memoryId ? () => deleteFromEditor(editor.memoryId as string) : undefined}
+          morphName={editor.morph}
+          glowKey={editor.memoryId ?? 'draft'}
+        />
+      )}
     </div>
   );
 }
