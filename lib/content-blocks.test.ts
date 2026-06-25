@@ -68,6 +68,19 @@ describe('deriveContentBlocks', () => {
       ),
     ).toThrow(/unsupported or malformed content part/);
   });
+
+  it('throws on an unknown part type rather than silently dropping it (loud-fail parity)', () => {
+    expect(() =>
+      deriveContentBlocks(
+        msg({
+          contentParts: [
+            { type: 'text', text: 'ok' },
+            { type: 'audio' },
+          ] as unknown as LlmMessage['contentParts'],
+        }),
+      ),
+    ).toThrow(/unsupported or malformed content part/);
+  });
 });
 
 describe('withContentBlocks', () => {

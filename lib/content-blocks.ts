@@ -31,7 +31,7 @@ function imageUrlToSource(url: string): LlmImageSource {
   );
 }
 
-function contentPartToBlock(part: LlmContentPart): LlmContentBlock | null {
+function contentPartToBlock(part: LlmContentPart): LlmContentBlock {
   if (part.type === 'text') {
     return {
       type: 'text',
@@ -52,7 +52,14 @@ function contentPartToBlock(part: LlmContentPart): LlmContentBlock | null {
       ...(part.cache_control ? { cache_control: part.cache_control } : {}),
     };
   }
-  return null;
+  // Unknown part type: fail loud rather than silently drop it, matching the
+  // legacy strict converters (`llmContentPartsToOpenAI` et al. throw here). A
+  // silent skip would let a mixed array install a non-empty `contentBlocks`
+  // and bypass the serializers' strict paths — dropping an attachment-like
+  // part without notice.
+  throw new Error(
+    `toContentBlocks: unsupported or malformed content part (type: ${JSON.stringify((part as { type?: unknown }).type)})`,
+  );
 }
 
 /**
@@ -71,8 +78,7 @@ export function deriveContentBlocks(message: LlmMessage): LlmContentBlock[] {
   }
   if (message.contentParts && message.contentParts.length > 0) {
     for (const part of message.contentParts) {
-      const block = contentPartToBlock(part);
-      if (block) blocks.push(block);
+      blocks.push(contentPartToBlock(part));
     }
   } else if (message.content) {
     blocks.push({ type: 'text', text: message.content });
