@@ -108,11 +108,26 @@ test('runCheckpointToCoderResumeState maps the transcript and appends the adopti
 
 test('checkpointed `tool` turns become user turns flagged isToolResult', () => {
   const cp = makeCheckpoint({
-    messages: [{ role: 'tool', content: '[Tool Result] exit=0' }],
+    messages: [
+      {
+        role: 'tool',
+        content: '[Tool Result] exit=0',
+        toolResults: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_exec_1',
+            content: 'exit=0',
+          },
+        ],
+      },
+    ],
   });
   const seed = runCheckpointToCoderResumeState(cp);
   assert.equal(seed.messages[0].role, 'user');
   assert.equal(seed.messages[0].isToolResult, true);
+  assert.deepEqual(seed.messages[0].toolResults, [
+    { type: 'tool_result', tool_use_id: 'toolu_exec_1', content: 'exit=0' },
+  ]);
 });
 
 test('resume note states the mode semantics', () => {
@@ -135,7 +150,35 @@ test('coderStateToRunCheckpoint produces a valid checkpoint that keeps identity 
       round: 7,
       messages: [
         { id: 'a', role: 'user', content: 'task', timestamp: 1 },
-        { id: 'b', role: 'assistant', content: 'done', timestamp: 2, isToolCall: true },
+        {
+          id: 'b',
+          role: 'assistant',
+          content: 'done',
+          timestamp: 2,
+          isToolCall: true,
+          toolUses: [
+            {
+              type: 'tool_use',
+              id: 'toolu_read_1',
+              name: 'sandbox_read_file',
+              input: { path: 'a.ts' },
+            },
+          ],
+        },
+        {
+          id: 'c',
+          role: 'user',
+          content: '[TOOL_RESULT] contents [/TOOL_RESULT]',
+          timestamp: 3,
+          isToolResult: true,
+          toolResults: [
+            {
+              type: 'tool_result',
+              tool_use_id: 'toolu_read_1',
+              content: 'contents',
+            },
+          ],
+        },
       ],
       workingMemory: { plan: 'updated plan' },
     },
@@ -147,8 +190,14 @@ test('coderStateToRunCheckpoint produces a valid checkpoint that keeps identity 
   assert.equal(cp.runId, 'run-1');
   assert.equal(cp.provider, 'zen');
   assert.equal(cp.model, 'glm-5.1');
-  assert.equal(cp.messages.length, 2);
+  assert.equal(cp.messages.length, 3);
   assert.equal(cp.messages[1].isToolCall, true);
+  assert.deepEqual(cp.messages[1].toolUses, [
+    { type: 'tool_use', id: 'toolu_read_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+  ]);
+  assert.deepEqual(cp.messages[2].toolResults, [
+    { type: 'tool_result', tool_use_id: 'toolu_read_1', content: 'contents' },
+  ]);
   assert.deepEqual(cp.workingMemory, { plan: 'updated plan' });
   assert.equal(cp.pendingApproval, null);
 });

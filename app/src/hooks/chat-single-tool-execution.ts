@@ -43,6 +43,11 @@ import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-pro
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
+import {
+  buildToolResultBlock,
+  buildToolUseBlock,
+  createToolUseBlockId,
+} from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatCard, ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
@@ -108,6 +113,12 @@ export async function executeSingleToolCall(
 
   console.log(`[Push] Tool call detected:`, toolCall);
   const executionId = createId();
+  const toolUseId = createToolUseBlockId(executionId);
+  const toolUseBlock = buildToolUseBlock({
+    id: toolUseId,
+    name: toolCall.call.tool,
+    input: 'args' in toolCall.call ? toolCall.call.args : undefined,
+  });
 
   setConversations((prev) => {
     const conv = prev[chatId];
@@ -279,7 +290,7 @@ export async function executeSingleToolCall(
   let toolResultMsg: ChatMessage;
   let cardsToAttach: ChatCard[];
   if (singleRawResult) {
-    const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider);
+    const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider, { toolUseId });
     toolResultMsg = outcome.resultMessage;
     cardsToAttach = outcome.cards;
     const isError = outcome.raw.text.includes('[Tool Error]');
@@ -318,6 +329,13 @@ export async function executeSingleToolCall(
         durationMs: toolExecDurationMs,
         isError,
       }),
+      toolResults: [
+        buildToolResultBlock({
+          toolUseId,
+          content: toolExecResult.text,
+          isError,
+        }),
+      ],
     });
     cardsToAttach =
       toolExecResult.card && toolExecResult.card.type !== 'sandbox-state'
@@ -349,7 +367,12 @@ export async function executeSingleToolCall(
   setConversations((prev) => {
     const conv = prev[chatId];
     if (!conv) return prev;
-    const updated = { ...prev, [chatId]: { ...conv, messages: [...conv.messages, toolResultMsg] } };
+    const msgs = markLastAssistantToolCall(conv.messages, {
+      content: accumulated,
+      thinking: thinkingAccumulated,
+      toolUses: [toolUseBlock],
+    });
+    const updated = { ...prev, [chatId]: { ...conv, messages: [...msgs, toolResultMsg] } };
     dirtyConversationIdsRef.current.add(chatId);
     return updated;
   });
@@ -363,6 +386,7 @@ export async function executeSingleToolCall(
       timestamp: Date.now(),
       status: 'done' as const,
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+      toolUses: [toolUseBlock],
     },
     toolResultMsg,
   ];

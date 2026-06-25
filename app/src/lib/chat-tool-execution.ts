@@ -36,6 +36,7 @@ import {
 } from '@/lib/tool-call-recovery';
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getToolSource } from '@push/lib/tool-call-diagnosis';
+import { buildToolResultBlock } from '@push/lib/tool-blocks';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
   correlationToSpanAttributes,
@@ -230,7 +231,9 @@ export function buildToolOutcome(
   rawResult: ToolExecRawResult,
   metaLine: string,
   provider: ActiveProvider,
+  options: { toolUseId?: string } = {},
 ): ToolExecOutcome {
+  const isError = rawResult.raw.text.includes('[Tool Error]');
   const resultMessage = buildToolResultMessage({
     id: createId(),
     timestamp: Date.now(),
@@ -242,13 +245,24 @@ export function buildToolOutcome(
       source: rawResult.call.source,
       provider,
       durationMs: rawResult.durationMs,
-      isError: rawResult.raw.text.includes('[Tool Error]'),
+      isError,
     }),
     // R11: stamp delegate result messages with their LAUNCH branch (captured
     // at delegation dispatch into ToolExecutionResult.originBranch). For
     // non-delegate tools this is undefined and the message stays unstamped,
     // falling back to conv.branch via effectiveMessageBranch.
     branch: rawResult.raw.originBranch,
+    ...(options.toolUseId
+      ? {
+          toolResults: [
+            buildToolResultBlock({
+              toolUseId: options.toolUseId,
+              content: rawResult.raw.text,
+              isError,
+            }),
+          ],
+        }
+      : {}),
   });
 
   return { ...rawResult, resultMessage };

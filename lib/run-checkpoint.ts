@@ -34,7 +34,12 @@
  */
 
 import type { ApprovalMode } from './approval-gates.ts';
-import type { LlmContentPart, ReasoningBlock } from './provider-contract.ts';
+import type {
+  LlmContentPart,
+  LlmToolResultBlock,
+  LlmToolUseBlock,
+  ReasoningBlock,
+} from './provider-contract.ts';
 import { type ValidationIssue, isStrictModeEnabled } from './protocol-schema.ts';
 import type { LoopPhase } from './runtime-contract.ts';
 import type { VerificationPolicy } from './verification-policy.ts';
@@ -70,6 +75,8 @@ export interface RunCheckpointMessage {
   content: string;
   contentParts?: LlmContentPart[];
   reasoningBlocks?: ReasoningBlock[];
+  toolUses?: LlmToolUseBlock[];
+  toolResults?: LlmToolResultBlock[];
   isToolCall?: boolean;
   isToolResult?: boolean;
 }
@@ -259,6 +266,46 @@ function validateContentPart(value: unknown, path: string, issues: ValidationIss
   }
 }
 
+function validateToolUseBlock(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push(issue(path, 'tool_use block must be an object'));
+    return;
+  }
+  if (value.type !== 'tool_use') {
+    issues.push(issue(`${path}.type`, 'tool_use block must carry type "tool_use"'));
+  }
+  if (typeof value.id !== 'string' || value.id.length === 0) {
+    issues.push(issue(`${path}.id`, 'tool_use block must carry a non-empty id'));
+  }
+  if (typeof value.name !== 'string' || value.name.length === 0) {
+    issues.push(issue(`${path}.name`, 'tool_use block must carry a non-empty name'));
+  }
+  if (!isPlainObject(value.input)) {
+    issues.push(issue(`${path}.input`, 'tool_use block input must be an object'));
+  }
+}
+
+function validateToolResultBlock(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push(issue(path, 'tool_result block must be an object'));
+    return;
+  }
+  if (value.type !== 'tool_result') {
+    issues.push(issue(`${path}.type`, 'tool_result block must carry type "tool_result"'));
+  }
+  if (typeof value.tool_use_id !== 'string' || value.tool_use_id.length === 0) {
+    issues.push(
+      issue(`${path}.tool_use_id`, 'tool_result block must carry a non-empty tool_use_id'),
+    );
+  }
+  if (typeof value.content !== 'string') {
+    issues.push(issue(`${path}.content`, 'tool_result block content must be a string'));
+  }
+  if (value.is_error !== undefined && typeof value.is_error !== 'boolean') {
+    issues.push(issue(`${path}.is_error`, 'tool_result block is_error must be a boolean'));
+  }
+}
+
 function validateMessage(value: unknown, path: string, issues: ValidationIssue[]): void {
   if (!isPlainObject(value)) {
     issues.push(issue(path, 'message must be an object'));
@@ -282,6 +329,24 @@ function validateMessage(value: unknown, path: string, issues: ValidationIssue[]
   }
   if (value.reasoningBlocks !== undefined && !Array.isArray(value.reasoningBlocks)) {
     issues.push(issue(`${path}.reasoningBlocks`, 'reasoningBlocks must be an array when present'));
+  }
+  if (value.toolUses !== undefined) {
+    if (!Array.isArray(value.toolUses)) {
+      issues.push(issue(`${path}.toolUses`, 'toolUses must be an array when present'));
+    } else {
+      value.toolUses.forEach((block, i) =>
+        validateToolUseBlock(block, `${path}.toolUses[${i}]`, issues),
+      );
+    }
+  }
+  if (value.toolResults !== undefined) {
+    if (!Array.isArray(value.toolResults)) {
+      issues.push(issue(`${path}.toolResults`, 'toolResults must be an array when present'));
+    } else {
+      value.toolResults.forEach((block, i) =>
+        validateToolResultBlock(block, `${path}.toolResults[${i}]`, issues),
+      );
+    }
   }
 }
 

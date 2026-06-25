@@ -1,8 +1,10 @@
 # Structured Tool-Call Sourcing
 
 Date: 2026-06-24
-Status: **Draft** — design for review (issue #1154 §1; the big arc the contract
-migration deferred). Not yet implemented.
+Status: **Draft** — implementation is proceeding in slices for issue #1154 §1.
+Slice 0 storage shape shipped in #1157; Slice 1 writes producer sidecars in this
+branch. Slice 2 (mapping sidecars to `LlmMessage.contentBlocks`) is not yet
+implemented, so the provider wire still uses the text fallback.
 
 The next slice of the Anthropic-conceptual contract arc (see [`Provider Contract
 — Anthropic-Conceptual Neutral Hub.md`](<Provider Contract — Anthropic-Conceptual Neutral Hub.md>)).
@@ -33,10 +35,13 @@ block from the parsed call, a `tool_result` block from the outcome), carry it
 through to the provider serializers (which already read it), and let the Anthropic
 bridge stop reconstructing what the round loop knew all along.
 
-## Current state (verified in code, 2026-06-24)
+## Current state (verified in code, 2026-06-25)
 
-Tool calls are text everywhere; the structured target types exist but have **no
-producer**.
+Tool calls remain **text at the model-facing boundary**. The structured target
+types exist, transcript storage has additive `toolUses` / `toolResults`
+sidecars, and Slice 1 writes those sidecars from the parsed call + outcome. The
+wire flip has **not** happened yet: no path maps the sidecars to
+`LlmMessage.contentBlocks`.
 
 **Emit → parse.** Models emit fenced/bare JSON in `content`;
 `detectToolFromText` / the `lib/tool-dispatch.ts` kernel scan **content only**
@@ -47,33 +52,29 @@ recovery (`tool-call-recovery.ts`) also assumes text.
 
 **Execute → store.** The web round loop (`app/src/hooks/chat-round-loop.ts` →
 `chat-send.ts` `processAssistantTurn` → `chat-single-tool-execution.ts` /
-`chat-batched-execution.ts`) and the CLI loop (`cli/engine.ts`) run the parsed
-call, then:
-- `markLastAssistantToolCall` (`app/src/lib/chat-tool-messages.ts:177`) stamps the
-  assistant `ChatMessage` with `isToolCall: true` and the **fenced JSON text** in
-  `content`.
-- `buildToolResultMessage` (`:164`) writes a synthetic `role:'user'` message with
-  the result wrapped in a `[TOOL_RESULT …]` **text envelope**, plus `toolMeta`.
+`chat-batched-execution.ts`) and the shared Coder kernel (`lib/coder-agent.ts`,
+used by CLI lead turns) run the parsed call, then write:
+- `toolUses` on the assistant tool-call turn, linked by a minted `toolu_*` id.
+- `toolResults` on the synthetic result/denial message, using the same id.
+- The legacy display/model text remains: fenced JSON in `content` and the
+  `[TOOL_RESULT …]` envelope.
 
-**Storage shape.** `ChatMessage` (`app/src/types/index.ts`) has **no structured
-tool fields** — only `content` text + the `isToolCall` / `isToolResult` /
-`toolMeta` flags. (`reasoningBlocks` is the precedent for a structured sidecar
-added before its producer.)
+**Storage shape.** `ChatMessage` (`app/src/types/index.ts`), CLI `Message`
+(`cli/context-manager.ts`), shared `CoderLoopMessage`, and run checkpoints carry
+the optional structured sidecars. They are shadow data only until Slice 2.
 
 **Re-serialize.** `toLLMMessages` (`app/src/lib/orchestrator.ts:292`) maps
-`ChatMessage[]` → `LlmMessage[]`, populating `content` / `contentParts` but
-**never `contentBlocks`** (grep: zero producers). The Anthropic bridge then
-re-parses the fenced text back into `tool_use` / `tool_result` for the wire
-(`lib/openai-anthropic-bridge.ts` — the ~48 tool refs; `convertOpenAIContentToAnthropic`
-is the text arm, the streaming translator extracts native `tool_use` → fenced
-text).
+`ChatMessage[]` → `LlmMessage[]`, populating `content` / `contentParts` but does
+not yet translate `toolUses` / `toolResults` into `contentBlocks`. Until Slice 2,
+serializers still see the legacy text form for tool turns.
 
-**Already serializer-ready (no producer).** `LlmToolUseBlock` /
+**Already serializer-ready (producer sidecar only).** `LlmToolUseBlock` /
 `LlmToolResultBlock` + `LlmMessage.contentBlocks` exist
 (`lib/provider-contract.ts:79-101`), and all three serializers already **read**
 them: `llmContentBlocksToAnthropic` (bridge), `flattenToolBearingBlocks`
-(`openai-chat-serializer.ts:212`), and the Gemini bridge. They downcast from
-blocks; nothing fills the blocks.
+(`openai-chat-serializer.ts:212`), and the Gemini bridge. Slice 1 now writes the
+transcript sidecars (`toolUses` / `toolResults`), but Slice 2 has not mapped
+those sidecars into `contentBlocks` yet.
 
 **Drift pins.** `cli/tests/protocol-drift.test.mjs` pins the `tool_call` event
 envelope as a flat `{ toolName, args }` (text-derived); `daemon-integration.test.mjs`
@@ -157,11 +158,11 @@ dual-read is sound **only** under these rules:
 Mirrors the contract migration's vocabulary → producer → dual-read → flip →
 delete shape:
 
-- **Slice 0 — vocabulary + storage shape.** Add the structured tool fields to
+- ✅ **Slice 0 — vocabulary + storage shape.** Add the structured tool fields to
   `ChatMessage` (and the CLI session message) — the exact shape decided below.
   Pure additive types + a drift test; no behavior change. *(Vocabulary half is
   partly done: `LlmToolUseBlock` / `LlmToolResultBlock` already exist.)*
-- **Slice 1 — producer writes blocks.** `markLastAssistantToolCall` /
+- ✅ **Slice 1 — producer writes blocks.** `markLastAssistantToolCall` /
   `buildToolResultMessage` (web) + the CLI equivalents populate the structured
   fields from the already-parsed call + outcome. Still text-primary; blocks are a
   shadow nobody reads yet (like `reasoningBlocks` pre-flip).

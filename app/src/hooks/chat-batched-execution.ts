@@ -34,8 +34,9 @@ import {
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-progress';
 import { createId } from '@push/lib/id-utils';
+import { buildToolUseBlock, createToolUseBlockId } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
-import type { DetectedToolCalls } from '@/lib/tool-dispatch';
+import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import {
@@ -102,6 +103,21 @@ export async function executeBatchedToolCalls(
 
   const parallelToolCalls = detected.readOnly;
   const fileMutationBatch = detected.fileMutations;
+  const allDetectedToolCalls: AnyToolCall[] = [
+    ...parallelToolCalls,
+    ...fileMutationBatch,
+    ...(detected.mutating ? [detected.mutating] : []),
+  ];
+  const toolUseIdByCall = new Map<AnyToolCall, string>();
+  const toolUses = allDetectedToolCalls.map((call) => {
+    const id = createToolUseBlockId(createId());
+    toolUseIdByCall.set(call, id);
+    return buildToolUseBlock({
+      id,
+      name: call.call.tool,
+      input: 'args' in call.call ? call.call.args : undefined,
+    });
+  });
 
   console.log(`[Push] Batched tool calls detected:`, {
     reads: parallelToolCalls.length,
@@ -214,7 +230,10 @@ export async function executeBatchedToolCalls(
       : undefined,
   );
   const toolResultMessages = parallelRawResults.map(
-    (r) => buildToolOutcome(r, parallelMetaLine, lockedProvider).resultMessage,
+    (r) =>
+      buildToolOutcome(r, parallelMetaLine, lockedProvider, {
+        toolUseId: toolUseIdByCall.get(r.call),
+      }).resultMessage,
   );
   parallelRawResults.forEach((result, index) => {
     const isError = result.raw.text.includes('[Tool Error]');
@@ -236,11 +255,19 @@ export async function executeBatchedToolCalls(
   setConversations((prev) => {
     const conv = prev[chatId];
     if (!conv) return prev;
+    const msgs =
+      toolResultMessages.length > 0
+        ? markLastAssistantToolCall(conv.messages, {
+            content: accumulated,
+            thinking: thinkingAccumulated,
+            toolUses,
+          })
+        : conv.messages;
     const updated = {
       ...prev,
       [chatId]: {
         ...conv,
-        messages: [...conv.messages, ...toolResultMessages],
+        messages: [...msgs, ...toolResultMessages],
         lastMessageAt: Date.now(),
       },
     };
@@ -257,6 +284,7 @@ export async function executeBatchedToolCalls(
       timestamp: Date.now(),
       status: 'done' as const,
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+      ...(toolUses.length > 0 ? { toolUses } : {}),
     },
     ...toolResultMessages,
   ];
@@ -333,7 +361,9 @@ export async function executeBatchedToolCalls(
         batchSandboxStatus,
         { includePulse: true, pulseReason: 'mutation' },
       );
-      const batchOutcome = buildToolOutcome(batchRawResult, batchMetaLine, lockedProvider);
+      const batchOutcome = buildToolOutcome(batchRawResult, batchMetaLine, lockedProvider, {
+        toolUseId: toolUseIdByCall.get(batchCall),
+      });
       const isBatchError = batchOutcome.raw.text.includes('[Tool Error]');
       recordToolFailure(batchCall, isBatchError);
       appendRunEvent(chatId, {
@@ -366,11 +396,16 @@ export async function executeBatchedToolCalls(
           batchOutcome.cards.length > 0
             ? appendCardsToLatestToolCall(conv.messages, batchOutcome.cards)
             : conv.messages;
+        const withToolUses = markLastAssistantToolCall(withCards, {
+          content: accumulated,
+          thinking: thinkingAccumulated,
+          toolUses,
+        });
         return {
           ...prev,
           [chatId]: {
             ...conv,
-            messages: [...withCards, batchOutcome.resultMessage],
+            messages: [...withToolUses, batchOutcome.resultMessage],
             lastMessageAt: Date.now(),
           },
         };
@@ -531,7 +566,9 @@ export async function executeBatchedToolCalls(
       mutSandboxStatus,
       { includePulse: true, pulseReason: 'mutation' },
     );
-    const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider);
+    const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider, {
+      toolUseId: toolUseIdByCall.get(mutCall),
+    });
     const isMutError = mutOutcome.raw.text.includes('[Tool Error]');
     recordToolFailure(mutCall, isMutError);
     // Delegations carry a structured `complete | incomplete | inconclusive`
@@ -569,11 +606,16 @@ export async function executeBatchedToolCalls(
     setConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;
+      const msgs = markLastAssistantToolCall(conv.messages, {
+        content: accumulated,
+        thinking: thinkingAccumulated,
+        toolUses,
+      });
       return {
         ...prev,
         [chatId]: {
           ...conv,
-          messages: [...conv.messages, mutOutcome.resultMessage],
+          messages: [...msgs, mutOutcome.resultMessage],
           lastMessageAt: Date.now(),
         },
       };
