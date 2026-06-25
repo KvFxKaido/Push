@@ -30,6 +30,7 @@ import { createId } from '@push/lib/id-utils';
 import {
   buildToolCallParseErrorBlock,
   buildValidationFailedHint,
+  composeToolResultBody,
   formatToolResultEnvelope,
   MAX_TOOL_CALL_DIAGNOSIS_RETRIES,
   type ToolCallRecoveryResult,
@@ -257,7 +258,10 @@ export function buildToolOutcome(
           toolResults: [
             buildToolResultBlock({
               toolUseId: options.toolUseId,
-              content: rawResult.raw.text,
+              // Persist the SAME body the text envelope wraps (metaLine + result)
+              // so the sidecar doesn't drop runtime [meta]/[pulse] context on
+              // replay once Slice 2 prefers blocks over the text fallback.
+              content: composeToolResultBody(rawResult.raw.text, metaLine),
               isError,
             }),
           ],

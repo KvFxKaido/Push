@@ -70,6 +70,7 @@ import { formatProjectInstructionsBlock } from './project-instructions.js';
 import {
   buildToolCallParseErrorBlock,
   buildValidationFailedHint,
+  composeToolResultBody,
   formatToolResultEnvelope,
   MAX_REASONING_TOOL_CALL_NUDGES,
   promoteReasoningAnswer,
@@ -2025,7 +2026,12 @@ export async function runCoderAgent<TCall, TCard>(
           content: wrappedResult,
           timestamp: Date.now(),
           isToolResult: true,
-          ...toolResultSidecar(toolUseIdByCall, call, truncatedResult, Boolean(entry.errorType)),
+          ...toolResultSidecar(
+            toolUseIdByCall,
+            call,
+            composeToolResultBody(truncatedResult, awarenessBlock),
+            Boolean(entry.errorType),
+          ),
         });
       }
 
@@ -2149,7 +2155,7 @@ export async function runCoderAgent<TCall, TCard>(
           ...toolResultSidecar(
             toolUseIdByCall,
             mutationCall,
-            truncatedMut,
+            composeToolResultBody(truncatedMut, `${coderMetaLine}${stateBlock}${awarenessBlock2}`),
             Boolean(mutResult.errorType),
           ),
         });
@@ -2557,7 +2563,12 @@ export async function runCoderAgent<TCall, TCard>(
       content: wrappedResult,
       timestamp: Date.now(),
       isToolResult: true,
-      ...toolResultSidecar(toolUseIdByCall, toolCall, truncatedResult, Boolean(result.errorType)),
+      ...toolResultSidecar(
+        toolUseIdByCall,
+        toolCall,
+        composeToolResultBody(truncatedResult, `${coderMetaLine}${stateBlock}${awarenessBlock}`),
+        Boolean(result.errorType),
+      ),
     });
 
     // --- Guardrail: Mutation Failure Tracking ---

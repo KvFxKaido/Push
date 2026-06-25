@@ -49,6 +49,7 @@ import {
   createToolUseBlockId,
 } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
+import { composeToolResultBody } from '@/lib/tool-call-recovery';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatCard, ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
 import {
@@ -332,7 +333,9 @@ export async function executeSingleToolCall(
       toolResults: [
         buildToolResultBlock({
           toolUseId,
-          content: toolExecResult.text,
+          // Same body the text envelope wraps (metaLine + result) so the sidecar
+          // keeps runtime [meta]/[pulse] context for the Slice 2 block path.
+          content: composeToolResultBody(toolExecResult.text, metaLine),
           isError,
         }),
       ],
