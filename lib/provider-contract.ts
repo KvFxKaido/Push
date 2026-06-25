@@ -11,14 +11,30 @@
 // ---------------------------------------------------------------------------
 
 /**
+ * Prompt-cache breakpoint marker — Anthropic's `cache_control` shape, centralized
+ * here as the single neutral source so every content-block type and serializer
+ * references ONE definition instead of re-declaring the inline `{ type:
+ * 'ephemeral' }` literal across the bridges. Anthropic emits it ~verbatim; the
+ * OpenAI serializer preserves it on cache-aware endpoints; Gemini drops it (no
+ * cache markers). The lone `type` field keeps it forward-compatible if a
+ * non-ephemeral tier ever lands.
+ */
+export interface CacheControl {
+  type: 'ephemeral';
+}
+
+/** Canonical `cache_control` value — use instead of an inline `{ type: 'ephemeral' }`. */
+export const EPHEMERAL_CACHE_CONTROL: CacheControl = { type: 'ephemeral' };
+
+/**
  * A single content part for multimodal messages. Mirrors the OpenAI-compatible
  * `image_url` shape the rest of the codebase already uses (web `LLMMessage`,
  * `OpenAIContentPart`). `image_url.url` is a `data:` base64 URL or an `http(s)`
  * URL; both are carried losslessly to providers that accept images.
  */
 export type LlmContentPart =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image_url'; image_url: { url: string }; cache_control?: { type: 'ephemeral' } };
+  | { type: 'text'; text: string; cache_control?: CacheControl }
+  | { type: 'image_url'; image_url: { url: string }; cache_control?: CacheControl };
 
 /**
  * Anthropic-canonical image source — base64 inline or a remote URL. This is the
@@ -48,8 +64,8 @@ export type LlmImageSource =
  * Additive and optional: see {@link LlmMessage.contentBlocks}.
  */
 export type LlmContentBlock =
-  | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image'; source: LlmImageSource; cache_control?: { type: 'ephemeral' } }
+  | { type: 'text'; text: string; cache_control?: CacheControl }
+  | { type: 'image'; source: LlmImageSource; cache_control?: CacheControl }
   | ReasoningBlock
   | LlmToolUseBlock
   | LlmToolResultBlock;
@@ -65,7 +81,7 @@ export interface LlmToolUseBlock {
   id: string;
   name: string;
   input: Record<string, unknown>;
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: CacheControl;
 }
 
 /**
@@ -81,7 +97,7 @@ export interface LlmToolResultBlock {
   tool_use_id: string;
   content: string;
   is_error?: boolean;
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: CacheControl;
 }
 
 /**

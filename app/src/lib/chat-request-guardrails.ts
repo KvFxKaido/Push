@@ -1,4 +1,5 @@
 import { asRecord } from './utils';
+import { type CacheControl, EPHEMERAL_CACHE_CONTROL } from '@push/lib/provider-contract';
 import type {
   OpenAIChatRequest,
   OpenAIContentPart,
@@ -95,10 +96,10 @@ function normalizeAssistantContentBlocks(raw: unknown): Array<Record<string, unk
  *  Push currently only emits `{ type: 'ephemeral' }`. Future variants
  *  (`ttl`, `{ type: 'persistent' }`) can extend this without changing the
  *  upstream contract; just add the new keys here. */
-function pickCacheControl(rawPart: Record<string, unknown>): { type: 'ephemeral' } | undefined {
+function pickCacheControl(rawPart: Record<string, unknown>): CacheControl | undefined {
   const cc = asRecord(rawPart.cache_control);
   if (!cc) return undefined;
-  if (cc.type === 'ephemeral') return { type: 'ephemeral' };
+  if (cc.type === 'ephemeral') return EPHEMERAL_CACHE_CONTROL;
   return undefined;
 }
 

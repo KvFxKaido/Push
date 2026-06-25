@@ -38,12 +38,14 @@ import type {
   OpenAIToolCall,
 } from './openai-chat-types.ts';
 import type {
+  CacheControl,
   LlmContentBlock,
   LlmContentPart,
   LlmMessage,
   PushStreamRequest,
   ResponseFormatSpec,
 } from './provider-contract.ts';
+import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withContentBlocks } from './content-blocks.ts';
 
@@ -94,7 +96,7 @@ function llmContentPartsToOpenAI(
         type: 'text',
         text: part.text,
         ...(keepCacheControl && part.cache_control
-          ? { cache_control: part.cache_control as { type: 'ephemeral' } }
+          ? { cache_control: part.cache_control as CacheControl }
           : {}),
       });
       continue;
@@ -109,7 +111,7 @@ function llmContentPartsToOpenAI(
         type: 'image_url',
         image_url: { url: (part.image_url as { url: string }).url },
         ...(keepCacheControl && part.cache_control
-          ? { cache_control: part.cache_control as { type: 'ephemeral' } }
+          ? { cache_control: part.cache_control as CacheControl }
           : {}),
       });
       continue;
@@ -149,7 +151,7 @@ function llmContentBlocksToOpenAI(
     };
     const keep =
       keepCacheControl && block.cache_control
-        ? { cache_control: block.cache_control as { type: 'ephemeral' } }
+        ? { cache_control: block.cache_control as CacheControl }
         : {};
     if (block.type === 'text' && typeof block.text === 'string') {
       out.push({ type: 'text', text: block.text, ...keep });
@@ -290,7 +292,7 @@ function flattenToolBearingBlocks(
 function tagMessageCacheControl(message: OpenAIMessage): void {
   if (typeof message.content === 'string') {
     message.content = [
-      { type: 'text', text: message.content, cache_control: { type: 'ephemeral' } },
+      { type: 'text', text: message.content, cache_control: EPHEMERAL_CACHE_CONTROL },
     ];
     return;
   }
@@ -298,7 +300,7 @@ function tagMessageCacheControl(message: OpenAIMessage): void {
     for (let i = message.content.length - 1; i >= 0; i -= 1) {
       const part = message.content[i];
       if (part.type === 'text') {
-        part.cache_control = { type: 'ephemeral' };
+        part.cache_control = EPHEMERAL_CACHE_CONTROL;
         break;
       }
     }
