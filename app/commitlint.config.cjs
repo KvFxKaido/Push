@@ -18,6 +18,7 @@ module.exports = {
         'auth',
         'settings',
         'context',
+        'contract',
         'tools',
         'scratchpad',
         'providers',
