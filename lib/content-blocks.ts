@@ -135,6 +135,37 @@ function sidecarIdsForMessage(message: ToolSidecarMessage): string[] {
   return ids;
 }
 
+/**
+ * Adjacency guard (Codex review, PR #1159). Anthropic/OpenAI require a
+ * `tool_use` to be answered in the immediately-following user turn(s) — the API
+ * coalesces consecutive `user` turns, but a non-result message between the
+ * assistant tool-call turn and its `tool_result` breaks the pair. This is
+ * reachable: `transformContextBeforeLLM` can splice a synthetic goal /
+ * session-digest *user* message in just before the last message, yielding
+ * `assistant(tool_use)`, `user(digest)`, `user(tool_result)`. A use is adjacency-
+ * valid for a result only if every message strictly between them is a user
+ * message carrying ONLY block-valid tool_results (another result in the same
+ * coalesced answer turn) — any assistant turn, or any user message that isn't a
+ * pure valid-tool_result message, breaks adjacency and degrades the exchange to
+ * the text arm. Validity-aware (checks `validIds`) so it composes with the
+ * whole-message fixpoint below: an intervening result that itself degrades to
+ * text also breaks adjacency. */
+function isAdjacent(
+  useIndex: number,
+  resultIndex: number,
+  messages: readonly ToolSidecarMessage[],
+  validIds: ReadonlySet<string>,
+): boolean {
+  for (let k = useIndex + 1; k < resultIndex; k += 1) {
+    const between = messages[k];
+    if (between.role === 'assistant') return false;
+    const resultIds = (between.toolResults ?? []).map((block) => block.tool_use_id);
+    if (resultIds.length === 0) return false;
+    if (!resultIds.every((id) => validIds.has(id))) return false;
+  }
+  return true;
+}
+
 function computePairedToolIds(messages: readonly ToolSidecarMessage[]): Set<string> {
   const useIndexById = new Map<string, number>();
   const resultIndexesById = new Map<string, number[]>();
@@ -174,6 +205,7 @@ function computePairedToolIds(messages: readonly ToolSidecarMessage[]): Set<stri
       }
       const hasValidResult = (resultIndexesById.get(id) ?? []).some((resultIndex) => {
         if (resultIndex <= useIndex) return false;
+        if (!isAdjacent(useIndex, resultIndex, messages, validIds)) return false;
         const resultMessageIds = sidecarIdsForMessage(messages[resultIndex]);
         return (
           resultMessageIds.length > 0 &&
@@ -234,13 +266,15 @@ function toolBlocksForMessage(
  * behavior change, not a re-encoding of the same wire. Anthropic permits
  * `tool_use`/`tool_result` history without a top-level `tools` definition
  * (relaxed 2025-02-27), so Push's text-dispatch turns (no `req.tools`) serialize
- * fine. The transform is *structure-preserving* — one message in, one message
- * out, no reorder/split/drop — so the assistant→result adjacency Anthropic
- * requires is inherited from the round loop's existing message ordering (which
- * the text arm already depends on), not established here. The exchange-pairing
- * filter only swaps a message's content representation; it does not move
- * messages, so it cannot create an adjacency violation the text arm didn't
- * already have. See the adjacency regression test in content-blocks.test.ts.
+ * fine. The transform is per-message (one in, one out — no reorder/split/drop),
+ * but that alone does NOT guarantee Anthropic's tool_use→tool_result adjacency:
+ * the text arm imposes no adjacency, so the INPUT (already run through
+ * `transformContextBeforeLLM`, which can splice a synthetic digest / goal-anchor
+ * user message between a tool-call turn and its result) may carry a non-adjacent
+ * pair that text tolerated but native tool blocks reject. `computePairedToolIds`
+ * therefore enforces adjacency explicitly (`isAdjacent`) and degrades any
+ * non-adjacent exchange to the text arm. See the adjacency regression tests in
+ * content-blocks.test.ts.
  */
 export function materializeToolContentBlocks<M extends ToolSidecarMessage>(
   messages: readonly M[],

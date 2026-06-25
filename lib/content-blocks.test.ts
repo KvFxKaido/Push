@@ -270,4 +270,68 @@ describe('materializeToolContentBlocks', () => {
     );
     expect(new Set(resultRefs)).toEqual(new Set(useIds));
   });
+
+  // Codex P1 (PR #1159). transformContextBeforeLLM can splice a synthetic
+  // goal/session-digest *user* message between the assistant tool-call turn and
+  // its tool_result, giving assistant(tool_use), user(digest), user(tool_result).
+  // The result is "later" but NOT adjacent — Anthropic/OpenAI reject a non-result
+  // message between a tool_use and its tool_result. The whole exchange must
+  // degrade to the text arm.
+  it('degrades when a non-result message is spliced between tool_use and tool_result', () => {
+    const use: LlmToolUseBlock = {
+      type: 'tool_use',
+      id: 'toolu_x',
+      name: 'read_file',
+      input: { path: 'x.ts' },
+    };
+    const out = materializeToolContentBlocks([
+      sidecarMsg({ id: 'a1', role: 'assistant', content: 'fenced', toolUses: [use] }),
+      // Synthetic digest/goal-anchor turn injected by the context transformer —
+      // a user message with NO tool_results.
+      sidecarMsg({ id: 'digest', role: 'user', content: '[SESSION_DIGEST] ...' }),
+      sidecarMsg({
+        id: 'r1',
+        role: 'user',
+        content: '[TOOL_RESULT] x [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: use.id, content: 'x' }],
+      }),
+    ]);
+
+    expect(out[0].contentBlocks).toBeUndefined();
+    expect(out[1].contentBlocks).toBeUndefined();
+    expect(out[2].contentBlocks).toBeUndefined();
+  });
+
+  // Adjacency is validity-aware: an intervening message that IS a tool_result
+  // turn but whose own pair is invalid (so it degrades to text) also breaks
+  // adjacency for a later result.
+  it('degrades when an intervening result message is itself unpaired (degrades to text)', () => {
+    const use: LlmToolUseBlock = {
+      type: 'tool_use',
+      id: 'toolu_real',
+      name: 'read_file',
+      input: { path: 'r.ts' },
+    };
+    const out = materializeToolContentBlocks([
+      sidecarMsg({ id: 'a1', role: 'assistant', content: 'fenced', toolUses: [use] }),
+      // Orphan result (no matching tool_use) — degrades to text, so it can't sit
+      // between `use` and its real result as a valid block turn.
+      sidecarMsg({
+        id: 'orphan',
+        role: 'user',
+        content: '[TOOL_RESULT] orphan [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: 'toolu_missing', content: 'orphan' }],
+      }),
+      sidecarMsg({
+        id: 'r1',
+        role: 'user',
+        content: '[TOOL_RESULT] real [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: use.id, content: 'real' }],
+      }),
+    ]);
+
+    expect(out[0].contentBlocks).toBeUndefined();
+    expect(out[1].contentBlocks).toBeUndefined();
+    expect(out[2].contentBlocks).toBeUndefined();
+  });
 });
