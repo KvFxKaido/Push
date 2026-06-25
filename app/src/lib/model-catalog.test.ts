@@ -31,6 +31,17 @@ import {
 } from '@push/lib/provider-models';
 import { VERTEX_MODEL_OPTIONS } from './vertex-provider';
 
+// Vertex structured-output gating depends on the configured wire mode
+// (`getVertexMode()`): only native (push.stream.v1) Vertex reaches the Anthropic
+// serializer, so legacy/none resolve to no structured output. Default the mock to
+// 'native' so the existing provider/model gate tests exercise the supported path;
+// the legacy-mode test flips it.
+const vertexModeMock = vi.hoisted(() => ({ value: 'native' as 'native' | 'legacy' | 'none' }));
+vi.mock('@/hooks/useVertexConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useVertexConfig')>()),
+  getVertexMode: () => vertexModeMock.value,
+}));
+
 function createStorageMock() {
   const store = new Map<string, string>();
   return {
@@ -65,6 +76,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vertexModeMock.value = 'native';
 });
 
 describe('parseOpenRouterCatalog', () => {
@@ -1324,6 +1336,25 @@ describe('providerModelSupportsStructuredOutput', () => {
       structuredOutput: 'best-effort',
     });
     expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
+  });
+
+  it('keeps legacy-mode Vertex prompt-only (the OpenAI-proxy wire never serializes the constraint)', () => {
+    stubWindow();
+    // The legacy (OpenAI-proxy) Vertex wire drops `responseFormat` and targets an
+    // unconfirmed user-configured base URL, so structured output must gate off even
+    // for a Claude model that would qualify on the native wire — otherwise the
+    // auditor/reviewer attach a constraint the stream silently discards.
+    vertexModeMock.value = 'legacy';
+    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
+      false,
+    );
+    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4-5@20250929')).toMatchObject({
+      structuredOutput: 'none',
+    });
+    vertexModeMock.value = 'none';
+    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
+      false,
+    );
   });
 
   it('gates Zen-Go Anthropic-transport models on the fallback bridge; OpenAI-transport stays capability-based', () => {

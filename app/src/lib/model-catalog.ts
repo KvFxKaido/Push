@@ -28,6 +28,7 @@ import {
 } from './providers';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
+import { getVertexMode } from '@/hooks/useVertexConfig';
 import { asRecord } from './utils';
 import {
   DEFAULT_PUSH_CAPABILITY_PROFILE,
@@ -549,6 +550,15 @@ function resolveStructuredOutputMode(
   // MiniMax/Qwen routes keep the forced-tool fallback.
   if (provider === 'vertex') {
     if (getVertexModelTransport(modelId) !== 'anthropic') return 'none';
+    // Only the native (push.stream.v1) Vertex wire reaches `toAnthropicMessages`,
+    // where the constraint becomes `output_config.format` / the forced tool. The
+    // legacy OpenAI-proxy wire (`vertexStream`'s `legacyBase`) never serializes
+    // `response_format`, and its upstream base URL is user-configured/unconfirmed —
+    // attaching a constraint there would silently route around the prompt-only
+    // `parseStructured` fallback. Keep legacy Vertex prompt-only. Reads the same
+    // `getVertexMode()` ground truth `vertexStream` uses for its `requestWire`, so
+    // gate and wire stay in lockstep.
+    if (getVertexMode() !== 'native') return 'none';
     return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
   }
   if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
