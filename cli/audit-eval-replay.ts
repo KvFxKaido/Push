@@ -172,7 +172,10 @@ async function runReplay(
   }
 
   const limit = values.limit ? Number(values.limit) : undefined;
-  if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+  // Strict integer: rejects NaN, Infinity, and decimals (3.5) — Number.isInteger
+  // is false for all three — so the value matches the "positive integer" contract
+  // the error message promises (a decimal would otherwise slice-truncate silently).
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     throw new Error(`Invalid --limit "${values.limit}" — expected a positive integer.`);
   }
   const selected = limit !== undefined ? cases.slice(0, limit) : cases;

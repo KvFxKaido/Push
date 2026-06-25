@@ -115,4 +115,15 @@ describe('push audit-evals command', () => {
       /Unknown audit-evals subcommand/,
     );
   });
+
+  it('rejects a non-integer --limit before resolving a provider', async () => {
+    await writeCorpus(root, [caseLine()]);
+    for (const bad of ['3.5', 'Infinity', '0', '-1', 'abc']) {
+      await assert.rejects(
+        () => runAuditEvalsSubcommand({ cwd: root, limit: bad }, ['audit-evals', 'replay']),
+        /Invalid --limit/,
+        `expected --limit ${bad} to be rejected`,
+      );
+    }
+  });
 });
