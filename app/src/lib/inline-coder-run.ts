@@ -1096,12 +1096,17 @@ export async function runInPageCoderKernel(
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,
+    // Lead surface only. The delegated sub-Coder stays text-dispatch by
+    // invariant; native schemas are already lead-gated, but withholding the
+    // native detector too enforces it at the dispatch layer — a stray
+    // `native_tool_call` on a delegated run degrades to the text arm instead
+    // of executing. (#1162 review, Codex P2.)
     detectNativeToolCalls: leadRuntime
       ? (calls) =>
           detectNativeToolCalls(calls, {
             maxParallelDelegations: INLINE_MAX_PARALLEL_EXPLORERS,
           })
-      : detectNativeToolCalls,
+      : undefined,
     detectAnyToolCall: detectCoderToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     sandboxToolProtocol: getSandboxToolProtocol(),

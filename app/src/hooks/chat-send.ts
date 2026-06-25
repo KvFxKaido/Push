@@ -24,7 +24,7 @@
  * `branch-fork-migration.ts`.
  */
 
-import { detectAllToolCalls, detectNativeToolCalls } from '@/lib/tool-dispatch';
+import { detectAllToolCalls, detectAnyToolCall, detectNativeToolCalls } from '@/lib/tool-dispatch';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
@@ -216,13 +216,14 @@ export async function processAssistantTurn(
     );
   }
 
-  const singleDetectedCalls = [
-    ...detected.readOnly,
-    ...(detected.parallelDelegations ?? []),
-    ...detected.fileMutations,
-    ...(detected.mutating ? [detected.mutating] : []),
-  ];
-  const toolCall = singleDetectedCalls.length === 1 ? singleDetectedCalls[0] : null;
+  const singleDetectedCalls = detected.readOnly.concat(
+    detected.parallelDelegations ?? [],
+    detected.fileMutations,
+    detected.mutating ? [detected.mutating] : [],
+  );
+  const nativeSingle = singleDetectedCalls.length === 1 ? singleDetectedCalls[0] : null;
+  // Text path keeps detectAnyToolCall's recovery (bare-args/namespaced/xml/token) that detectAllToolCalls gates off (#1162).
+  const toolCall = nativeToolCalls.length > 0 ? nativeSingle : detectAnyToolCall(accumulated);
   if (!toolCall) {
     return processNoToolPath(
       round,

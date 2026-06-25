@@ -429,6 +429,31 @@ describe('detectAllToolCalls', () => {
     ]);
   });
 
+  // Regression: the web lead's single-call TEXT path must use detectAnyToolCall,
+  // not a call derived from detectAllToolCalls. The two diverge on bare-args
+  // recovery — a non-cooperating model emitting just the args object (no
+  // {"tool","args"} wrapper) is recovered by detectAnyToolCall's
+  // tryRecoverBareToolArgs, while detectAllToolCalls deliberately gates bare-args
+  // inference on hasExplicitWrappers (to avoid firing on prose JSON examples), so
+  // its grouped result surfaces no call. Swapping the detector silently drops the
+  // call into the no-tool path. (#1162 review, Codex P1.)
+  it('recovers a bare-args single call via detectAnyToolCall that detectAllToolCalls gates off', () => {
+    const bareArgs = 'Let me read it.\n{"path": "README.md"}';
+
+    const recovered = detectAnyToolCall(bareArgs);
+    expect(recovered).not.toBeNull();
+    expect(recovered?.source).toBe('sandbox');
+
+    const grouped = detectAllToolCalls(bareArgs);
+    const singleFromGrouped = [
+      ...grouped.readOnly,
+      ...(grouped.parallelDelegations ?? []),
+      ...grouped.fileMutations,
+      ...(grouped.mutating ? [grouped.mutating] : []),
+    ];
+    expect(singleFromGrouped).toHaveLength(0);
+  });
+
   it('detects delegate_explorer JSON blocks as delegation tool calls', () => {
     const text =
       '```json\n{"tool":"delegate_explorer","args":{"task":"trace auth flow","files":["src/auth.ts"]}}\n```';
