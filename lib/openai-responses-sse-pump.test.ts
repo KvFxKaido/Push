@@ -109,6 +109,30 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('surfaces refusal deltas as text so a refused turn is not blank', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.refusal.delta', delta: "I can't help with that." });
+    s.push({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        usage: { input_tokens: 3, output_tokens: 4, total_tokens: 7 },
+      },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'text_delta', text: "I can't help with that." },
+      {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      },
+    ]);
+  });
+
   it('accumulates function call argument deltas into a native_tool_call', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

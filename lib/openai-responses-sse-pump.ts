@@ -169,6 +169,16 @@ export async function* openAIResponsesSSEPump(
       return;
     }
 
+    // Safety refusals stream on the refusal channel, not `output_text`. Surface
+    // them as visible text so a refused turn renders the model's explanation
+    // instead of completing as a blank assistant response. (Codex P2, #1170.)
+    if (type === 'response.refusal.delta') {
+      if (typeof parsed.delta === 'string' && parsed.delta) {
+        yield { type: 'text_delta', text: parsed.delta };
+      }
+      return;
+    }
+
     if (
       type === 'response.reasoning_summary_text.delta' ||
       type === 'response.reasoning_summary.delta'
