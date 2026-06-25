@@ -26,6 +26,7 @@ import { ProviderStreamError } from './stream-error';
 export async function* zenStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
+  const goMode = getZenGoMode();
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
@@ -44,6 +45,7 @@ export async function* zenStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: goMode,
   });
 
   // 2. Request body — two shapes by tier:
@@ -64,7 +66,6 @@ export async function* zenStream(
   //  models (minimax/qwen) translate `tools` to Anthropic's custom-tool shape via
   //  `toAnthropicMessages`, and their `tool_use` responses round-trip through
   //  `createAnthropicTranslatedStream` — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
-  const goMode = getZenGoMode();
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const body = goMode
     ? toPushStreamWire(llmMessages, {

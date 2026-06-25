@@ -366,6 +366,51 @@ describe('toOpenAIChat', () => {
   // tool_result blocks into OpenAI's split content + tool_calls + role:tool.
   // ---------------------------------------------------------------------------
 
+  it('materializes paired transcript tool sidecars before OpenAI downcast', () => {
+    const toolUse = {
+      type: 'tool_use' as const,
+      id: 'toolu_read_1',
+      name: 'sandbox_read_file',
+      input: { path: 'a.ts' },
+    };
+    const toolResult = {
+      type: 'tool_result' as const,
+      tool_use_id: toolUse.id,
+      content: '[meta] round=1\nfile body',
+    };
+    const body = toOpenAIChat(
+      reqWith([
+        {
+          ...llm(
+            'a1',
+            'assistant',
+            '```json\n{"tool":"sandbox_read_file","args":{"path":"a.ts"}}\n```',
+          ),
+          toolUses: [toolUse],
+        } as LlmMessage & { toolUses: [typeof toolUse] },
+        {
+          ...llm('r1', 'user', '[TOOL_RESULT] file body [/TOOL_RESULT]'),
+          toolResults: [toolResult],
+        } as LlmMessage & { toolResults: [typeof toolResult] },
+      ]),
+    );
+
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: toolUse.id,
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: toolUse.id, content: '[meta] round=1\nfile body' },
+    ]);
+  });
+
   it('flattens text + tool_use into one assistant message with content and tool_calls', () => {
     const body = toOpenAIChat(
       reqWith([

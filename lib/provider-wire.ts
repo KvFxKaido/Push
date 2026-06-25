@@ -26,6 +26,7 @@
 
 import type {
   AIProviderType,
+  LlmContentBlock,
   LlmContentPart,
   ReasoningBlock,
   ResponseFormatSpec,
@@ -46,6 +47,8 @@ export type PushStreamWireContract = typeof PUSH_STREAM_WIRE_CONTRACT;
 export interface PushStreamWireMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LlmContentPart[];
+  /** Anthropic-conceptual content blocks. Preferred by neutral serializers when present. */
+  contentBlocks?: LlmContentBlock[];
   /** Signed reasoning blocks from a prior assistant turn (round-tripped to Anthropic). */
   reasoningBlocks?: ReasoningBlock[];
 }
@@ -99,6 +102,7 @@ export interface PushStreamRequestWire {
 export interface WireSerializableMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LlmContentPart[];
+  contentBlocks?: LlmContentBlock[];
   reasoning_blocks?: ReasoningBlock[];
 }
 
@@ -141,6 +145,7 @@ export function toPushStreamWire(
   const wireMessages: PushStreamWireMessage[] = messages.map((m) => ({
     role: m.role,
     content: m.content,
+    ...(m.contentBlocks && m.contentBlocks.length > 0 ? { contentBlocks: m.contentBlocks } : {}),
     // Only assistant turns carry signed reasoning blocks (validator posture);
     // rename the materializer's snake_case field to the wire's camelCase.
     ...(m.role === 'assistant' && m.reasoning_blocks && m.reasoning_blocks.length > 0

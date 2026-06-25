@@ -14,7 +14,9 @@ export type {
 } from '@push/lib/openai-chat-types';
 import type {
   AIProviderType,
+  LlmContentBlock,
   LlmContentPart,
+  LlmImageSource,
   LlmMessage,
   PushStreamRequest,
   ResponseFormatSpec,
@@ -451,6 +453,165 @@ function normalizeWireContentParts(
   return { ok: true, parts };
 }
 
+function normalizeWireImageSource(
+  raw: unknown,
+  messageNumber: number,
+  routeLabel: string,
+): { ok: true; source: LlmImageSource } | { ok: false; status: number; error: string } {
+  const source = asRecord(raw);
+  if (!source) {
+    return validationError(
+      `${routeLabel} request message ${messageNumber} has an image block without a source.`,
+    );
+  }
+  if (source.type === 'base64') {
+    if (typeof source.media_type !== 'string' || typeof source.data !== 'string') {
+      return validationError(
+        `${routeLabel} request message ${messageNumber} has a malformed base64 image block.`,
+      );
+    }
+    return {
+      ok: true,
+      source: { type: 'base64', media_type: source.media_type, data: source.data },
+    };
+  }
+  if (source.type === 'url') {
+    if (typeof source.url !== 'string' || !source.url.trim()) {
+      return validationError(
+        `${routeLabel} request message ${messageNumber} has a malformed URL image block.`,
+      );
+    }
+    return { ok: true, source: { type: 'url', url: source.url } };
+  }
+  return validationError(
+    `${routeLabel} request message ${messageNumber} has an unsupported image block source.`,
+  );
+}
+
+function normalizeWireContentBlocks(
+  raw: unknown[],
+  messageNumber: number,
+  routeLabel: string,
+): { ok: true; blocks: LlmContentBlock[] } | { ok: false; status: number; error: string } {
+  const blocks: LlmContentBlock[] = [];
+  for (let blockIndex = 0; blockIndex < raw.length; blockIndex += 1) {
+    const rawBlock = asRecord(raw[blockIndex]);
+    if (!rawBlock) {
+      return validationError(
+        `${routeLabel} request message ${messageNumber} has an invalid content block.`,
+      );
+    }
+    const cacheControl = pickCacheControl(rawBlock);
+    if (rawBlock.type === 'text') {
+      if (typeof rawBlock.text !== 'string') {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a text block without "text".`,
+        );
+      }
+      blocks.push({
+        type: 'text',
+        text: rawBlock.text,
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
+      });
+      continue;
+    }
+    if (rawBlock.type === 'image') {
+      const source = normalizeWireImageSource(rawBlock.source, messageNumber, routeLabel);
+      if (!source.ok) return source;
+      blocks.push({
+        type: 'image',
+        source: source.source,
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
+      });
+      continue;
+    }
+    if (rawBlock.type === 'thinking') {
+      if (
+        typeof rawBlock.text !== 'string' ||
+        rawBlock.text.length > MAX_REASONING_BLOCK_TEXT_LENGTH
+      ) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed thinking block.`,
+        );
+      }
+      if (
+        typeof rawBlock.signature !== 'string' ||
+        !rawBlock.signature ||
+        rawBlock.signature.length > MAX_REASONING_BLOCK_SIGNATURE_LENGTH
+      ) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed thinking signature.`,
+        );
+      }
+      blocks.push({ type: 'thinking', text: rawBlock.text, signature: rawBlock.signature });
+      continue;
+    }
+    if (rawBlock.type === 'redacted_thinking') {
+      if (
+        typeof rawBlock.data !== 'string' ||
+        !rawBlock.data ||
+        rawBlock.data.length > MAX_REASONING_BLOCK_SIGNATURE_LENGTH
+      ) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed redacted thinking block.`,
+        );
+      }
+      blocks.push({ type: 'redacted_thinking', data: rawBlock.data });
+      continue;
+    }
+    if (rawBlock.type === 'tool_use') {
+      const input = asRecord(rawBlock.input);
+      if (
+        typeof rawBlock.id !== 'string' ||
+        !rawBlock.id ||
+        typeof rawBlock.name !== 'string' ||
+        !rawBlock.name ||
+        !input
+      ) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed tool_use block.`,
+        );
+      }
+      blocks.push({
+        type: 'tool_use',
+        id: rawBlock.id,
+        name: rawBlock.name,
+        input,
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
+      });
+      continue;
+    }
+    if (rawBlock.type === 'tool_result') {
+      if (
+        typeof rawBlock.tool_use_id !== 'string' ||
+        !rawBlock.tool_use_id ||
+        typeof rawBlock.content !== 'string'
+      ) {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed tool_result block.`,
+        );
+      }
+      if (rawBlock.is_error !== undefined && typeof rawBlock.is_error !== 'boolean') {
+        return validationError(
+          `${routeLabel} request message ${messageNumber} has a malformed tool_result error flag.`,
+        );
+      }
+      blocks.push({
+        type: 'tool_result',
+        tool_use_id: rawBlock.tool_use_id,
+        content: rawBlock.content,
+        ...(rawBlock.is_error !== undefined ? { is_error: rawBlock.is_error } : {}),
+        ...(cacheControl ? { cache_control: cacheControl } : {}),
+      });
+      continue;
+    }
+    return validationError(
+      `${routeLabel} request message ${messageNumber} has an unsupported content block type.`,
+    );
+  }
+  return { ok: true, blocks };
+}
+
 export function validateAndNormalizeWireRequest(
   bodyText: string,
   policy: ChatRequestPolicy,
@@ -509,6 +670,26 @@ export function validateAndNormalizeWireRequest(
     // the legacy validator.
     const reasoningBlocks =
       role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoningBlocks) : undefined;
+    let contentBlocks: LlmContentBlock[] | undefined;
+    if (messageRecord.contentBlocks !== undefined) {
+      if (!Array.isArray(messageRecord.contentBlocks) || messageRecord.contentBlocks.length === 0) {
+        return validationError(
+          `${policy.routeLabel} request message ${index + 1} has invalid "contentBlocks".`,
+        );
+      }
+      if (messageRecord.contentBlocks.length > maxContentPartsPerMessage) {
+        return validationError(
+          `${policy.routeLabel} request message ${index + 1} has too many content blocks (${messageRecord.contentBlocks.length}). Limit is ${maxContentPartsPerMessage}.`,
+        );
+      }
+      const blocksResult = normalizeWireContentBlocks(
+        messageRecord.contentBlocks,
+        index + 1,
+        policy.routeLabel,
+      );
+      if (!blocksResult.ok) return blocksResult;
+      contentBlocks = blocksResult.blocks;
+    }
 
     const rawContent = messageRecord.content;
     let content = '';
@@ -540,6 +721,7 @@ export function validateAndNormalizeWireRequest(
       role: role as LlmMessage['role'],
       content,
       ...(contentParts ? { contentParts } : {}),
+      ...(contentBlocks ? { contentBlocks } : {}),
       timestamp: 0,
       ...(reasoningBlocks ? { reasoningBlocks } : {}),
     });

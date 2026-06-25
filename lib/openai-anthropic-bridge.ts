@@ -12,7 +12,7 @@ import type {
 import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provider-contract.ts';
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
-import { withContentBlocks } from './content-blocks.ts';
+import { withRequestContentBlocks } from './content-blocks.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
@@ -721,10 +721,9 @@ export function toAnthropicMessages(
   req: PushStreamRequest<LlmMessage>,
   options?: ToAnthropicMessagesOptions,
 ): Record<string, unknown> {
-  // Producer flip: materialize contentBlocks for multimodal turns so they run
-  // the block path in production (byte-identical to the legacy contentParts
-  // path). See lib/content-blocks.ts.
-  const messages = (Array.isArray(req.messages) ? req.messages : []).map(withContentBlocks);
+  // Producer flip: materialize contentBlocks for multimodal/tool turns so they
+  // run the block path in production. See lib/content-blocks.ts.
+  const messages = withRequestContentBlocks(Array.isArray(req.messages) ? req.messages : []);
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
 
@@ -811,8 +810,11 @@ export function toAnthropicMessages(
       return;
     }
 
-    // Prefer the Anthropic-conceptual `contentBlocks` (near-identity downcast)
-    // when present, else the rich `contentParts`, else the `content` text. When
+    // Prefer the Anthropic-conceptual `contentBlocks` when present, else the
+    // rich `contentParts`, else the `content` text. Near-identity for multimodal
+    // turns; for tool turns the block path emits native `tool_use`/`tool_result`
+    // where the legacy text arm emitted fenced JSON as text — a behavior change,
+    // not a re-encoding (see lib/content-blocks.ts). When
     // blocks are present, signed thinking is carried in-stream and in order, so
     // the legacy `reasoningBlocks` sidecar prepend is skipped (it's the old
     // representation of the same thing — applying both would duplicate it).

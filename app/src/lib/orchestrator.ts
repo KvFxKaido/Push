@@ -22,7 +22,12 @@ import {
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
-import { type CacheControl, EPHEMERAL_CACHE_CONTROL } from '@push/lib/provider-contract';
+import {
+  type CacheControl,
+  EPHEMERAL_CACHE_CONTROL,
+  type LlmContentBlock,
+} from '@push/lib/provider-contract';
+import { materializeToolContentBlocks } from '@push/lib/content-blocks';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { estimateContextTokens } from './orchestrator-context';
 import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
@@ -208,6 +213,7 @@ type LLMReasoningBlock =
 interface LLMMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LLMMessageContent[];
+  contentBlocks?: LlmContentBlock[];
   intentHint?: string | null;
   reasoning_blocks?: LLMReasoningBlock[];
 }
@@ -229,6 +235,16 @@ function isNonEmptyContent(content: string | LLMMessageContent[]): boolean {
     return content.length > 0;
   }
   return content.trim().length > 0;
+}
+
+function tagLastContentBlock(blocks: LlmContentBlock[]): boolean {
+  for (let i = blocks.length - 1; i >= 0; i -= 1) {
+    const block = blocks[i];
+    if (block.type === 'thinking' || block.type === 'redacted_thinking') continue;
+    block.cache_control = EPHEMERAL_CACHE_CONTROL;
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -287,6 +303,10 @@ export interface ToLLMMessagesOptions {
   todoContent?: string;
   sessionDigestOptions?: SessionDigestOptions;
   linkedLibraryContent?: string;
+  /** True only for neutral request shapes whose worker-side serializers consume
+   *  `LlmMessage.contentBlocks`. Strict OpenAI-shaped transports must leave it
+   *  off or upstreams may reject the unknown message field. */
+  emitContentBlocks?: boolean;
 }
 
 export function toLLMMessages(
@@ -305,6 +325,7 @@ export function toLLMMessages(
     todoContent,
     sessionDigestOptions,
     linkedLibraryContent,
+    emitContentBlocks = false,
   } = options;
   // When a systemPromptOverride is provided (Auditor, Coder), the caller has already
   // composed a complete system prompt — don't append Orchestrator-specific protocols.
@@ -713,6 +734,8 @@ export function toLLMMessages(
     },
   });
   const windowedMessages = transformed.messages;
+  const materializedMessages: Array<ChatMessage & { contentBlocks?: LlmContentBlock[] }> =
+    emitContentBlocks ? materializeToolContentBlocks(windowedMessages) : windowedMessages;
 
   // Surface the emitted digest to the caller so they can persist it for
   // the next turn's `priorSessionDigest`. The transformer doesn't return
@@ -736,7 +759,7 @@ export function toLLMMessages(
   // back to an Anthropic-bridge route, future turns pick them up again.
   const emitReasoningBlocks = routesThroughAnthropicBridge(providerType, providerModel);
 
-  for (const msg of windowedMessages) {
+  for (const msg of materializedMessages) {
     // Anthropic requires signed thinking blocks to be re-sent verbatim on
     // the assistant turn that produced them, ahead of any text/tool_use.
     // The wire field rides as a sidecar on the assistant LLMMessage; the
@@ -759,7 +782,14 @@ export function toLLMMessages(
       msg.contentParts && msg.contentParts.length > 0
         ? msg.contentParts
         : buildAttachmentContentParts(msg.content, msg.attachments);
-    if (contentParts) {
+    if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+      llmMessages.push({
+        role: msg.role === 'user' ? 'user' : 'assistant',
+        content: contentParts ?? msg.content,
+        contentBlocks: msg.contentBlocks,
+        ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+      });
+    } else if (contentParts) {
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: contentParts,
@@ -807,7 +837,9 @@ export function toLLMMessages(
     for (let i = llmMessages.length - 1; i >= 0 && tagged < 3; i--) {
       const msg = llmMessages[i];
       if (msg.role === 'system') continue;
-      if (typeof msg.content === 'string') {
+      if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+        if (tagLastContentBlock(msg.contentBlocks)) tagged++;
+      } else if (typeof msg.content === 'string') {
         msg.content = [{ type: 'text', text: msg.content, cache_control: EPHEMERAL_CACHE_CONTROL }];
         tagged++;
       } else if (Array.isArray(msg.content)) {
@@ -827,6 +859,7 @@ export function toLLMMessages(
   // empty on the wire).
   return llmMessages.filter((msg) => {
     if (msg.role !== 'assistant') return true;
+    if (msg.contentBlocks && msg.contentBlocks.length > 0) return true;
     if (msg.reasoning_blocks && msg.reasoning_blocks.length > 0) return true;
     return isNonEmptyContent(msg.content);
   });

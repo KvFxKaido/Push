@@ -381,6 +381,110 @@ describe('toLLMMessages — kernel contentParts pass-through (#937)', () => {
   });
 });
 
+describe('toLLMMessages — structured tool contentBlocks', () => {
+  function makeMessage(partial: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: partial.id ?? 'm',
+      role: partial.role ?? 'user',
+      content: partial.content ?? '',
+      timestamp: partial.timestamp ?? 0,
+      ...partial,
+    };
+  }
+
+  const toolUse = {
+    type: 'tool_use' as const,
+    id: 'toolu_read_1',
+    name: 'read_file',
+    input: { path: 'README.md' },
+  };
+  const toolResult = {
+    type: 'tool_result' as const,
+    tool_use_id: toolUse.id,
+    content: '[meta] round=1\nfile body',
+  };
+
+  it('emits paired tool sidecars as contentBlocks for neutral routes', () => {
+    const llm = toLLMMessages(
+      [
+        makeMessage({ id: 'u1', role: 'user', content: 'read the file' }),
+        makeMessage({
+          id: 'a1',
+          role: 'assistant',
+          content: '```json\n{"tool":"read_file","args":{"path":"README.md"}}\n```',
+          reasoningBlocks: [{ type: 'thinking', text: 'need context', signature: 'sig' }],
+          toolUses: [toolUse],
+        }),
+        makeMessage({
+          id: 'r1',
+          role: 'user',
+          content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+          isToolResult: true,
+          toolResults: [toolResult],
+        }),
+      ],
+      { providerType: 'anthropic', providerModel: 'claude-sonnet-4.6', emitContentBlocks: true },
+    );
+
+    const assistant = llm.find((m) => m.role === 'assistant');
+    const result = llm.find(
+      (m) => m.role === 'user' && typeof m.content === 'string' && m.content.includes('file body'),
+    );
+    expect(assistant?.content).toContain('read_file');
+    expect(assistant?.contentBlocks).toEqual([
+      { type: 'thinking', text: 'need context', signature: 'sig' },
+      { ...toolUse, cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(result?.contentBlocks).toEqual([
+      { ...toolResult, cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(toolUse).not.toHaveProperty('cache_control');
+    expect(toolResult).not.toHaveProperty('cache_control');
+  });
+
+  it('keeps strict OpenAI-shaped routes free of the Push-private contentBlocks field', () => {
+    const llm = toLLMMessages(
+      [
+        makeMessage({
+          id: 'a1',
+          role: 'assistant',
+          content: '```json\n{"tool":"read_file","args":{"path":"README.md"}}\n```',
+          toolUses: [toolUse],
+        }),
+        makeMessage({
+          id: 'r1',
+          role: 'user',
+          content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+          isToolResult: true,
+          toolResults: [toolResult],
+        }),
+      ],
+      { providerType: 'openai', providerModel: 'gpt-5.1' },
+    );
+
+    expect(llm.some((m) => m.contentBlocks && m.contentBlocks.length > 0)).toBe(false);
+  });
+
+  it('falls back to text when a tool_result lacks a matching tool_use sidecar', () => {
+    const llm = toLLMMessages(
+      [
+        makeMessage({
+          id: 'r1',
+          role: 'user',
+          content: '[TOOL_RESULT] orphan body [/TOOL_RESULT]',
+          isToolResult: true,
+          toolResults: [{ type: 'tool_result', tool_use_id: 'missing', content: 'orphan body' }],
+        }),
+      ],
+      { providerType: 'google', providerModel: 'gemini-3-pro', emitContentBlocks: true },
+    );
+
+    const result = llm.find((m) => m.role === 'user');
+    expect(result?.content).toContain('[TOOL_RESULT]');
+    expect(result?.contentBlocks).toBeUndefined();
+  });
+});
+
 describe('chat-mode web-search gating', () => {
   function buildChatMessages(): ChatMessage[] {
     return [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 } as unknown as ChatMessage];

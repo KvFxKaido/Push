@@ -51,6 +51,7 @@ import { ProviderStreamError } from './stream-error';
 export async function* vertexStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
+  const mode = getVertexMode();
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
@@ -69,6 +70,7 @@ export async function* vertexStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: mode === 'native',
   });
 
   // 2. Native web search splits by transport. Vertex carries both Claude and
@@ -94,7 +96,6 @@ export async function* vertexStream(
   //    dual-accept `handleVertexChat`, so it sends the neutral push.stream.v1
   //    wire; legacy mode falls through to `handleLegacyVertexChat`, which does
   //    NOT dual-accept, so it keeps the OpenAI Chat Completions shape.
-  const mode = getVertexMode();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
