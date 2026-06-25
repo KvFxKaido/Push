@@ -14,6 +14,7 @@ module.exports = {
         'github',
         'chat',
         'ui',
+        'design',
         'worker',
         'auth',
         'settings',
