@@ -15,7 +15,20 @@ import type {
   LlmContentPart,
   LlmImageSource,
   LlmMessage,
+  LlmToolResultBlock,
+  LlmToolUseBlock,
+  ReasoningBlock,
 } from './provider-contract.ts';
+
+export interface ToolSidecarMessage {
+  role: LlmMessage['role'];
+  content: string;
+  contentParts?: LlmContentPart[];
+  contentBlocks?: LlmContentBlock[];
+  reasoningBlocks?: ReasoningBlock[];
+  toolUses?: LlmToolUseBlock[];
+  toolResults?: LlmToolResultBlock[];
+}
 
 /** Split an `image_url.url` into the Anthropic-canonical image source: a
  *  `data:<mime>;base64,<data>` URL becomes a base64 source, an `http(s)` URL a
@@ -101,4 +114,122 @@ export function withContentBlocks(message: LlmMessage): LlmMessage {
   const contentBlocks = deriveContentBlocks(message);
   if (contentBlocks.length === 0) return message;
   return { ...message, contentBlocks };
+}
+
+function sidecarIdsForMessage(message: ToolSidecarMessage): string[] {
+  const ids: string[] = [];
+  if (message.role === 'assistant') {
+    for (const block of message.toolUses ?? []) ids.push(block.id);
+  }
+  if (message.role !== 'assistant') {
+    for (const block of message.toolResults ?? []) ids.push(block.tool_use_id);
+  }
+  return ids;
+}
+
+function computePairedToolIds(messages: readonly ToolSidecarMessage[]): Set<string> {
+  const useIndexById = new Map<string, number>();
+  const resultIndexesById = new Map<string, number[]>();
+
+  messages.forEach((message, index) => {
+    if (message.role === 'assistant') {
+      for (const block of message.toolUses ?? []) {
+        if (!useIndexById.has(block.id)) useIndexById.set(block.id, index);
+      }
+      return;
+    }
+    for (const block of message.toolResults ?? []) {
+      const indexes = resultIndexesById.get(block.tool_use_id) ?? [];
+      indexes.push(index);
+      resultIndexesById.set(block.tool_use_id, indexes);
+    }
+  });
+
+  let validIds = new Set<string>();
+  for (const [id, useIndex] of useIndexById) {
+    if ((resultIndexesById.get(id) ?? []).some((resultIndex) => resultIndex > useIndex)) {
+      validIds.add(id);
+    }
+  }
+
+  for (;;) {
+    const next = new Set<string>();
+    for (const id of validIds) {
+      const useIndex = useIndexById.get(id);
+      if (useIndex === undefined) continue;
+      const useMessageIds = sidecarIdsForMessage(messages[useIndex]);
+      if (
+        useMessageIds.length === 0 ||
+        !useMessageIds.every((messageId) => validIds.has(messageId))
+      ) {
+        continue;
+      }
+      const hasValidResult = (resultIndexesById.get(id) ?? []).some((resultIndex) => {
+        if (resultIndex <= useIndex) return false;
+        const resultMessageIds = sidecarIdsForMessage(messages[resultIndex]);
+        return (
+          resultMessageIds.length > 0 &&
+          resultMessageIds.every((messageId) => validIds.has(messageId))
+        );
+      });
+      if (hasValidResult) next.add(id);
+    }
+
+    if (next.size === validIds.size && [...next].every((id) => validIds.has(id))) {
+      return next;
+    }
+    validIds = next;
+  }
+}
+
+function toolBlocksForMessage(
+  message: ToolSidecarMessage,
+  pairedToolIds: ReadonlySet<string>,
+): LlmContentBlock[] | undefined {
+  if (message.contentBlocks && message.contentBlocks.length > 0) return undefined;
+
+  if (message.role === 'assistant') {
+    const toolUses = (message.toolUses ?? [])
+      .filter((block) => pairedToolIds.has(block.id))
+      .map((block) => ({ ...block }));
+    if (toolUses.length === 0 || toolUses.length !== (message.toolUses ?? []).length) {
+      return undefined;
+    }
+    return [...(message.reasoningBlocks ?? []), ...toolUses];
+  }
+
+  const toolResults = (message.toolResults ?? [])
+    .filter((block) => pairedToolIds.has(block.tool_use_id))
+    .map((block) => ({ ...block }));
+  if (toolResults.length === 0 || toolResults.length !== (message.toolResults ?? []).length) {
+    return undefined;
+  }
+  return toolResults;
+}
+
+/**
+ * Map transcript tool sidecars to provider-facing `contentBlocks`, enforcing the
+ * Anthropic exchange invariant over the whole request. If a `tool_use` or
+ * `tool_result` is missing its counterpart, the entire sidecar-bearing message
+ * falls back to the legacy text arm so serializers never see a half-block pair.
+ */
+export function materializeToolContentBlocks<M extends ToolSidecarMessage>(
+  messages: readonly M[],
+): Array<M & { contentBlocks?: LlmContentBlock[] }> {
+  const pairedToolIds = computePairedToolIds(messages);
+  if (pairedToolIds.size === 0) return [...messages];
+
+  return messages.map((message) => {
+    const contentBlocks = toolBlocksForMessage(message, pairedToolIds);
+    return contentBlocks && contentBlocks.length > 0 ? { ...message, contentBlocks } : message;
+  });
+}
+
+/**
+ * Request-level producer flip for serializers. Tool sidecars need whole-request
+ * pairing before blocks are safe; multimodal `contentParts` can still be
+ * materialized per message after that pass.
+ */
+export function withRequestContentBlocks(messages: readonly LlmMessage[]): LlmMessage[] {
+  return materializeToolContentBlocks(messages).map(withContentBlocks);
 }

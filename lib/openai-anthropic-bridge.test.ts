@@ -485,6 +485,51 @@ describe('toAnthropicMessages — contentBlocks (near-identity downcast)', () =>
     ]);
   });
 
+  it('materializes paired transcript tool sidecars before the Anthropic downcast', () => {
+    const toolUse = {
+      type: 'tool_use' as const,
+      id: 'toolu_read_1',
+      name: 'read_file',
+      input: { path: 'README.md' },
+    };
+    const toolResult = {
+      type: 'tool_result' as const,
+      tool_use_id: toolUse.id,
+      content: '[meta] round=1\nfile body',
+    };
+    const body = toAnthropicMessages({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: '```json\n{"tool":"read_file","args":{"path":"README.md"}}\n```',
+          timestamp: 0,
+          toolUses: [toolUse],
+        } as LlmMessage & { toolUses: [typeof toolUse] },
+        {
+          id: 'r1',
+          role: 'user',
+          content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+          timestamp: 0,
+          toolResults: [toolResult],
+        } as LlmMessage & { toolResults: [typeof toolResult] },
+      ],
+    });
+
+    expect(msgs(body)).toEqual([
+      {
+        role: 'assistant',
+        content: [toolUse],
+      },
+      {
+        role: 'user',
+        content: [toolResult],
+      },
+    ]);
+  });
+
   it('carries an image block source verbatim (already Anthropic shape)', () => {
     const body = toAnthropicMessages(
       req({

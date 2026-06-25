@@ -9,7 +9,7 @@ import type {
   ToolFunctionSchema,
 } from './provider-contract.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
-import { withContentBlocks } from './content-blocks.ts';
+import { withRequestContentBlocks } from './content-blocks.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -505,10 +505,9 @@ export function toGeminiGenerateContent(
   req: PushStreamRequest<LlmMessage>,
   options?: ToGeminiGenerateContentOptions,
 ): Record<string, unknown> {
-  // Producer flip: materialize contentBlocks for multimodal turns so they run
-  // the block path in production (byte-identical to the legacy contentParts
-  // path). See lib/content-blocks.ts.
-  const messages = (Array.isArray(req.messages) ? req.messages : []).map(withContentBlocks);
+  // Producer flip: materialize contentBlocks for multimodal/tool turns so they
+  // run the block path in production. See lib/content-blocks.ts.
+  const messages = withRequestContentBlocks(Array.isArray(req.messages) ? req.messages : []);
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
 

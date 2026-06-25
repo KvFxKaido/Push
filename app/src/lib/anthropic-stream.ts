@@ -51,6 +51,7 @@ export async function* anthropicStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: true,
   });
 
   // Per-request flag wins; otherwise the Web Search menu's mode decides.

@@ -12,7 +12,7 @@ import type {
 import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provider-contract.ts';
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
-import { withContentBlocks } from './content-blocks.ts';
+import { withRequestContentBlocks } from './content-blocks.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
@@ -721,10 +721,9 @@ export function toAnthropicMessages(
   req: PushStreamRequest<LlmMessage>,
   options?: ToAnthropicMessagesOptions,
 ): Record<string, unknown> {
-  // Producer flip: materialize contentBlocks for multimodal turns so they run
-  // the block path in production (byte-identical to the legacy contentParts
-  // path). See lib/content-blocks.ts.
-  const messages = (Array.isArray(req.messages) ? req.messages : []).map(withContentBlocks);
+  // Producer flip: materialize contentBlocks for multimodal/tool turns so they
+  // run the block path in production. See lib/content-blocks.ts.
+  const messages = withRequestContentBlocks(Array.isArray(req.messages) ? req.messages : []);
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
 

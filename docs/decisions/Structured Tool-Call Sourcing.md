@@ -1,10 +1,12 @@
 # Structured Tool-Call Sourcing
 
 Date: 2026-06-24
-Status: **Draft** — implementation is proceeding in slices for issue #1154 §1.
-Slice 0 storage shape shipped in #1157; Slice 1 writes producer sidecars in this
-branch. Slice 2 (mapping sidecars to `LlmMessage.contentBlocks`) is not yet
-implemented, so the provider wire still uses the text fallback.
+Status: **Current** — Slice 2 maps producer sidecars to
+`LlmMessage.contentBlocks`; bridge thinning remains Slice 3 / #1154 §3.
+Slice 0 storage shape shipped in #1157; Slice 1 producer sidecars shipped in
+#1158. Slice 2 is the producer flip: new complete tool exchanges reach
+block-aware serializers as `contentBlocks`, while legacy/split exchanges keep
+using the text fallback.
 
 The next slice of the Anthropic-conceptual contract arc (see [`Provider Contract
 — Anthropic-Conceptual Neutral Hub.md`](<Provider Contract — Anthropic-Conceptual Neutral Hub.md>)).
@@ -39,9 +41,9 @@ bridge stop reconstructing what the round loop knew all along.
 
 Tool calls remain **text at the model-facing boundary**. The structured target
 types exist, transcript storage has additive `toolUses` / `toolResults`
-sidecars, and Slice 1 writes those sidecars from the parsed call + outcome. The
-wire flip has **not** happened yet: no path maps the sidecars to
-`LlmMessage.contentBlocks`.
+sidecars, Slice 1 writes those sidecars from the parsed call + outcome, and
+Slice 2 maps paired sidecars to `LlmMessage.contentBlocks` at request
+materialization.
 
 **Emit → parse.** Models emit fenced/bare JSON in `content`;
 `detectToolFromText` / the `lib/tool-dispatch.ts` kernel scan **content only**
@@ -61,20 +63,23 @@ used by CLI lead turns) run the parsed call, then write:
 
 **Storage shape.** `ChatMessage` (`app/src/types/index.ts`), CLI `Message`
 (`cli/context-manager.ts`), shared `CoderLoopMessage`, and run checkpoints carry
-the optional structured sidecars. They are shadow data only until Slice 2.
+the optional structured sidecars. They remain durable replay data; the provider
+wire reads them only after the request-level exchange invariant passes.
 
-**Re-serialize.** `toLLMMessages` (`app/src/lib/orchestrator.ts:292`) maps
-`ChatMessage[]` → `LlmMessage[]`, populating `content` / `contentParts` but does
-not yet translate `toolUses` / `toolResults` into `contentBlocks`. Until Slice 2,
-serializers still see the legacy text form for tool turns.
+**Re-serialize.** `toLLMMessages` (`app/src/lib/orchestrator.ts`) maps
+`ChatMessage[]` → provider-ready messages. Neutral/block-aware web transports
+(direct Anthropic, Gemini, Zen Go, native Vertex) opt into `contentBlocks`; strict
+OpenAI-shaped web transports stay text-only so Push-private fields do not leak
+to upstreams. Shared CLI/Coder serializers run the same request-level
+materializer via `lib/content-blocks.ts`.
 
-**Already serializer-ready (producer sidecar only).** `LlmToolUseBlock` /
-`LlmToolResultBlock` + `LlmMessage.contentBlocks` exist
+**Serializer block path.** `LlmToolUseBlock` / `LlmToolResultBlock` +
+`LlmMessage.contentBlocks` exist
 (`lib/provider-contract.ts:79-101`), and all three serializers already **read**
 them: `llmContentBlocksToAnthropic` (bridge), `flattenToolBearingBlocks`
-(`openai-chat-serializer.ts:212`), and the Gemini bridge. Slice 1 now writes the
-transcript sidecars (`toolUses` / `toolResults`), but Slice 2 has not mapped
-those sidecars into `contentBlocks` yet.
+(`openai-chat-serializer.ts:212`), and the Gemini bridge. Slice 2 now maps the
+transcript sidecars (`toolUses` / `toolResults`) into `contentBlocks` for paired
+exchanges.
 
 **Drift pins.** `cli/tests/protocol-drift.test.mjs` pins the `tool_call` event
 envelope as a flat `{ toolName, args }` (text-derived); `daemon-integration.test.mjs`
@@ -136,8 +141,8 @@ dual-read is sound **only** under these rules:
 - **Resume-across-deploy edge.** A run interrupted mid-exchange and resumed after
   this ships could pair a pre-flip `tool_use` (text) with a post-flip
   `tool_result` (block). The invariant above catches it: a `tool_result` whose
-  `tool_use` isn't a block degrades the pair to text. Slice 2's golden test must
-  include this split case.
+  `tool_use` isn't a block degrades the pair to text. Slice 2 pins this split
+  case.
 - **Orphan `tool_use` from early batch termination.** The reverse of the rule
   above, and just as load-bearing: a single assistant turn mints a `tool_use`
   block per *detected* call up front, but the mutation queue **short-circuits** on
@@ -145,11 +150,11 @@ dual-read is sound **only** under these rules:
   sees a consistent snapshot), so later queued calls get a `tool_use` block but
   **never a `tool_result`**. Slice 1 writes these unpaired `tool_use` blocks as
   shadow data harmlessly. But Anthropic rejects a `tool_use` with no following
-  `tool_result` just as it rejects the inverse — so **Slice 2's `toLLMMessages`
-  must prune unpaired blocks on BOTH sides**: a `tool_use` with no matching
-  `tool_result` degrades to the text arm exactly like a `tool_result` with no
-  matching `tool_use`. Wholeness is enforced once, at the consumer, over the full
-  `LlmMessage[]` — not per-producer-site. Slice 2's golden test must include this
+  `tool_result` just as it rejects the inverse — so **Slice 2's request
+  materializer prunes unpaired blocks on BOTH sides**: a `tool_use` with no
+  matching `tool_result` degrades to the text arm exactly like a `tool_result`
+  with no matching `tool_use`. Wholeness is enforced once, at the consumer, over
+  the full `LlmMessage[]` — not per-producer-site. Slice 2 pins this
   early-termination case (batch with a denied/failed mutation mid-queue).
 - **Pair-aware context trimming.** Context compaction must never drop a `tool_use`
   while keeping its `tool_result` (an orphan result Anthropic rejects). This is a
@@ -179,11 +184,11 @@ delete shape:
   `buildToolResultMessage` (web) + the CLI equivalents populate the structured
   fields from the already-parsed call + outcome. Still text-primary; blocks are a
   shadow nobody reads yet (like `reasoningBlocks` pre-flip).
-- **Slice 2 — `toLLMMessages` emits `contentBlocks`.** Map the sidecar to blocks
+- ✅ **Slice 2 — `toLLMMessages` emits `contentBlocks`.** Map the sidecar to blocks
   so serializers receive them. Behind the existing block-preference in the
   serializers, so Anthropic now uses the structured arm for new turns; old turns
-  fall back. **This is the producer flip** — measure that tool turns round-trip
-  identically (golden-transcript diff against the text path).
+  fall back. **This is the producer flip** — request tests pin that tool turns
+  avoid duplication and split/orphan exchanges stay on the text path.
 - **Slice 3 — bridge thinning (#1154 §3).** Delete the legacy reconstruction arms
   once the cutover criteria hold. The reward, not separable work.
 
@@ -221,8 +226,8 @@ delete shape:
   turns. (This is why §3 is "thin," not "delete the text path entirely.")
 - **Drift tests.** The `tool_call` event envelope pin stays (the event is still
   flat `{ toolName, args }` — UI/log surface, not the storage block). Slice 0 adds
-  a new drift pin for the structured fields; Slice 2 adds a golden round-trip
-  test (block path vs text path produce the same Anthropic/OpenAI wire).
+  a new drift pin for the structured fields; Slice 2 adds request golden tests
+  for block-path emission, no duplicated tool calls, and split/orphan fallback.
 - **CLI/web parity.** Both round loops must produce the sidecar (the CLI session
   store + `cli/engine.ts`), or the CLI regresses to text-only re-parsing on the
   Anthropic path. Slice 1 covers both surfaces in the same PR (per the
@@ -252,8 +257,8 @@ delete shape:
 
 ## Status flip plan
 
-Promote to **Current** when Slice 2 ships (producer fills `contentBlocks`, the
-Anthropic bridge uses the structured arm for new tool turns) and a golden
-round-trip test proves wire-identity with the text path. Flip the
+Promoted to **Current** with Slice 2: producer sidecars fill `contentBlocks`, the
+Anthropic bridge uses the structured arm for complete new tool turns, and golden
+request tests pin the no-duplication / text-fallback behavior. Flip the
 `Provider Contract` doc's §3 note and #1154 §1 when Slice 3 lands the bridge
 thinning.

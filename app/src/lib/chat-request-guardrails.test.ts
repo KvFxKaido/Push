@@ -599,6 +599,43 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
     ]);
   });
 
+  it('round-trips tool contentBlocks onto LlmMessage.contentBlocks', () => {
+    const toolUse = {
+      type: 'tool_use' as const,
+      id: 'toolu_read_1',
+      name: 'read_file',
+      input: { path: 'README.md' },
+    };
+    const toolResult = {
+      type: 'tool_result' as const,
+      tool_use_id: toolUse.id,
+      content: '[meta] round=1\nfile body',
+      cache_control: { type: 'ephemeral' as const },
+    };
+    const wire = toPushStreamWire(
+      [
+        {
+          role: 'assistant',
+          content: '```json\n{"tool":"read_file","args":{"path":"README.md"}}\n```',
+          contentBlocks: [toolUse],
+        },
+        {
+          role: 'user',
+          content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+          contentBlocks: [toolResult],
+        },
+      ],
+      { provider: 'anthropic', model: 'claude-sonnet-4-6' },
+    );
+
+    expect(wire.messages[0].contentBlocks).toEqual([toolUse]);
+    const result = validateAndNormalizeWireRequest(JSON.stringify(wire), POLICY);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.messages[0].contentBlocks).toEqual([toolUse]);
+    expect(result.value.request.messages[1].contentBlocks).toEqual([toolResult]);
+  });
+
   it('round-trips native tools + responseFormat (the Zen Go flip carries these)', () => {
     const tool = {
       type: 'function' as const,

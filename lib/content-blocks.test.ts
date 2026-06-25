@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LlmMessage } from './provider-contract.ts';
-import { deriveContentBlocks, withContentBlocks } from './content-blocks.ts';
+import type { LlmMessage, LlmToolResultBlock, LlmToolUseBlock } from './provider-contract.ts';
+import {
+  deriveContentBlocks,
+  materializeToolContentBlocks,
+  withContentBlocks,
+} from './content-blocks.ts';
 
 const msg = (extra: Partial<LlmMessage>): LlmMessage => ({
   id: '1',
@@ -9,6 +13,17 @@ const msg = (extra: Partial<LlmMessage>): LlmMessage => ({
   content: '',
   timestamp: 0,
   ...extra,
+});
+
+const sidecarMsg = (
+  extra: Partial<LlmMessage> & {
+    toolUses?: LlmToolUseBlock[];
+    toolResults?: LlmToolResultBlock[];
+  },
+): LlmMessage & { toolUses?: LlmToolUseBlock[]; toolResults?: LlmToolResultBlock[] } => ({
+  ...msg(extra),
+  ...(extra.toolUses ? { toolUses: extra.toolUses } : {}),
+  ...(extra.toolResults ? { toolResults: extra.toolResults } : {}),
 });
 
 describe('deriveContentBlocks', () => {
@@ -106,5 +121,90 @@ describe('withContentBlocks', () => {
   it('is idempotent when contentBlocks already present', () => {
     const input = msg({ contentBlocks: [{ type: 'text', text: 'pre' }] });
     expect(withContentBlocks(input)).toBe(input);
+  });
+});
+
+describe('materializeToolContentBlocks', () => {
+  it('maps paired tool sidecars to contentBlocks without mutating the legacy content text', () => {
+    const toolUse: LlmToolUseBlock = {
+      type: 'tool_use',
+      id: 'toolu_read_1',
+      name: 'read_file',
+      input: { path: 'README.md' },
+    };
+    const toolResult: LlmToolResultBlock = {
+      type: 'tool_result',
+      tool_use_id: toolUse.id,
+      content: '[meta] round=1\nfile body',
+    };
+
+    const out = materializeToolContentBlocks([
+      sidecarMsg({
+        id: 'a1',
+        role: 'assistant',
+        content: '```json\n{"tool":"read_file","args":{"path":"README.md"}}\n```',
+        reasoningBlocks: [{ type: 'thinking', text: 'need file', signature: 'sig' }],
+        toolUses: [toolUse],
+      }),
+      sidecarMsg({
+        id: 'r1',
+        role: 'user',
+        content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+        toolResults: [toolResult],
+      }),
+    ]);
+
+    expect(out[0].content).toContain('read_file');
+    expect(out[0].contentBlocks).toEqual([
+      { type: 'thinking', text: 'need file', signature: 'sig' },
+      toolUse,
+    ]);
+    expect(out[1].contentBlocks).toEqual([toolResult]);
+  });
+
+  it('keeps an orphan tool_result on the text fallback', () => {
+    const out = materializeToolContentBlocks([
+      sidecarMsg({
+        id: 'r1',
+        role: 'user',
+        content: '[TOOL_RESULT] late body [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: 'missing', content: 'late body' }],
+      }),
+    ]);
+
+    expect(out[0].contentBlocks).toBeUndefined();
+  });
+
+  it('degrades a batched assistant turn when any tool_use lacks a result', () => {
+    const first: LlmToolUseBlock = {
+      type: 'tool_use',
+      id: 'toolu_first',
+      name: 'read_file',
+      input: { path: 'a.ts' },
+    };
+    const orphan: LlmToolUseBlock = {
+      type: 'tool_use',
+      id: 'toolu_second',
+      name: 'write_file',
+      input: { path: 'b.ts', content: 'x' },
+    };
+
+    const out = materializeToolContentBlocks([
+      sidecarMsg({
+        id: 'a1',
+        role: 'assistant',
+        content: '```json\n[{"tool":"read_file"},{"tool":"write_file"}]\n```',
+        toolUses: [first, orphan],
+      }),
+      sidecarMsg({
+        id: 'r1',
+        role: 'user',
+        content: '[TOOL_RESULT] first body [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: first.id, content: 'first body' }],
+      }),
+    ]);
+
+    expect(out[0].contentBlocks).toBeUndefined();
+    expect(out[1].contentBlocks).toBeUndefined();
   });
 });
