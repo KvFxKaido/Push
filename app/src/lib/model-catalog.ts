@@ -27,7 +27,13 @@ import {
   ZEN_MODELS,
 } from './providers';
 import { getZenGoTransport } from './zen-go';
+import { getVertexModelTransport } from './vertex-provider';
 import { asRecord } from './utils';
+import {
+  DEFAULT_PUSH_CAPABILITY_PROFILE,
+  type PushCapabilityProfile,
+  type PushContextTier,
+} from './capabilities';
 import {
   looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
@@ -327,6 +333,11 @@ export interface ResolvedModelCapabilities {
   contextLimit: number;
 }
 
+export interface PushCapabilityProfileOptions {
+  /** Request body contract for this route. `neutral` routes consume contentBlocks. */
+  requestWire?: 'neutral' | 'openai';
+}
+
 const EMPTY_CAPABILITIES: ResolvedModelCapabilities = {
   reasoning: false,
   toolCall: false,
@@ -480,21 +491,43 @@ function isCloudflareKimiOrGlm(modelId: string): boolean {
   return m.includes('kimi') || m.includes('moonshot') || m.includes('glm');
 }
 
-/**
- * Whether to attach a native `response_format` JSON-Schema constraint for the
- * given provider/model — gates the auditor verdict/evaluation and reviewer
- * kernels. Two conditions, both required: the provider's adapter must serialize
- * `response_format` (`STRUCTURED_OUTPUT_PROVIDERS`), AND the model's catalog
- * metadata must advertise structured-output support
- * (`getModelCapabilities().structuredOutput`). Generalizes the Phase 1
- * OpenRouter-only gate to every OpenAI-compatible provider; providers without
- * models.dev structured-output metadata (e.g. direct OpenAI / Azure today)
- * resolve `false` and stay prompt-only until that metadata lands.
- */
-export function providerModelSupportsStructuredOutput(
+function resolveContextTier(contextLimit: number): PushContextTier {
+  if (contextLimit >= 200_000) return 'large';
+  if (contextLimit >= MIN_CONTEXT_TOKENS || contextLimit === 0) return 'medium';
+  return 'small';
+}
+
+function routeConsumesContentBlocks(
   provider: string,
-  modelId: string | undefined,
+  options: PushCapabilityProfileOptions | undefined,
 ): boolean {
+  if (options?.requestWire === 'neutral') return true;
+  if (options?.requestWire === 'openai') return false;
+  return provider === 'anthropic' || provider === 'google';
+}
+
+function routeCarriesReasoningBlocks(provider: string, modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  if (provider === 'anthropic') return true;
+  if (provider === 'zen') return getZenGoTransport(modelId) === 'anthropic';
+  if (provider === 'vertex') return getVertexModelTransport(modelId) === 'anthropic';
+  return false;
+}
+
+function modelSupportsMultimodal(
+  provider: string,
+  modelId: string,
+  capabilities: ResolvedModelCapabilities,
+): boolean {
+  if (capabilities.vision) return true;
+  if (provider === 'anthropic' || provider === 'google') return true;
+  if (provider === 'vertex') {
+    return getVertexModelTransport(modelId) === 'anthropic' || /gemini/i.test(modelId);
+  }
+  return /(?:gpt-4o|gpt-4\.1|gpt-5|claude|gemini|vision|vl\b|llava|bakllava)/i.test(modelId);
+}
+
+function modelSupportsStructuredOutput(provider: string, modelId: string | undefined): boolean {
   if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return false;
   // Workers AI has no models.dev metadata, so resolve by name instead of the
   // catalog probe (which would always report `structuredOutput: false`).
@@ -514,6 +547,24 @@ export function providerModelSupportsStructuredOutput(
   // ignored gracefully if unsupported.
   if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') return true;
   return getModelCapabilities(provider, modelId).structuredOutput;
+}
+
+/**
+ * Whether to attach a native `response_format` JSON-Schema constraint for the
+ * given provider/model — gates the auditor verdict/evaluation and reviewer
+ * kernels. Two conditions, both required: the provider's adapter must serialize
+ * `response_format` (`STRUCTURED_OUTPUT_PROVIDERS`), AND the model's catalog
+ * metadata must advertise structured-output support
+ * (`getModelCapabilities().structuredOutput`). Generalizes the Phase 1
+ * OpenRouter-only gate to every OpenAI-compatible provider; providers without
+ * models.dev structured-output metadata (e.g. direct OpenAI / Azure today)
+ * resolve `false` and stay prompt-only until that metadata lands.
+ */
+export function providerModelSupportsStructuredOutput(
+  provider: string,
+  modelId: string | undefined,
+): boolean {
+  return resolvePushCapabilityProfile(provider, modelId).structuredOutput !== 'none';
 }
 
 /**
@@ -602,10 +653,7 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  * calling is wired and validated for them. Additive regardless: non-gated
  * models simply never receive a `tools` array.
  */
-export function providerModelSupportsNativeToolCalling(
-  provider: string,
-  modelId: string | undefined,
-): boolean {
+function modelSupportsNativeToolCalling(provider: string, modelId: string | undefined): boolean {
   if (!modelId) return false;
   if (provider === 'cloudflare') return cloudflareFunctionCallingGate(modelId);
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
@@ -628,6 +676,44 @@ export function providerModelSupportsNativeToolCalling(
   if (provider === 'openadapter') return OPENADAPTER_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
+}
+
+export function resolvePushCapabilityProfile(
+  provider: string,
+  modelId: string | undefined,
+  options?: PushCapabilityProfileOptions,
+): PushCapabilityProfile {
+  const model = modelId?.trim();
+  const contentBlocks = routeConsumesContentBlocks(provider, options);
+  const reasoningBlocks = routeCarriesReasoningBlocks(provider, model);
+  if (!model) {
+    return {
+      ...DEFAULT_PUSH_CAPABILITY_PROFILE,
+      toolCalling: 'none',
+      contentBlocks,
+      reasoningBlocks,
+      context: 'small',
+    };
+  }
+
+  const capabilities = getModelCapabilities(provider, model);
+  const nativeToolCalling = modelSupportsNativeToolCalling(provider, model);
+  return {
+    toolCalling: nativeToolCalling ? 'native' : 'json-text',
+    streamingTools: nativeToolCalling,
+    multimodal: modelSupportsMultimodal(provider, model, capabilities),
+    structuredOutput: modelSupportsStructuredOutput(provider, model) ? 'strict' : 'none',
+    contentBlocks,
+    reasoningBlocks,
+    context: resolveContextTier(capabilities.contextLimit),
+  };
+}
+
+export function providerModelSupportsNativeToolCalling(
+  provider: string,
+  modelId: string | undefined,
+): boolean {
+  return resolvePushCapabilityProfile(provider, modelId).toolCalling === 'native';
 }
 
 /** Build a compact icon string for display in model pickers. */

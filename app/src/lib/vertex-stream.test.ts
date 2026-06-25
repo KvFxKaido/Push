@@ -25,6 +25,22 @@ vi.mock('./providers', () => ({
   },
 }));
 
+vi.mock('./model-catalog', () => ({
+  resolvePushCapabilityProfile: (
+    _provider: string,
+    _model: string | undefined,
+    options?: { requestWire?: 'neutral' | 'openai' },
+  ) => ({
+    toolCalling: 'native',
+    streamingTools: true,
+    multimodal: true,
+    structuredOutput: 'none',
+    contentBlocks: options?.requestWire === 'neutral',
+    reasoningBlocks: false,
+    context: 'medium',
+  }),
+}));
+
 vi.mock('./orchestrator', () => ({
   toLLMMessages: (messages: ChatMessage[]) =>
     messages.map((m) => ({ role: m.role, content: m.content })),

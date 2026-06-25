@@ -84,7 +84,7 @@ import type {
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import { getActiveProvider, getProviderPushStream, type ActiveProvider } from './orchestrator';
 import { getModelForRole } from './providers';
-import { providerModelSupportsNativeToolCalling } from './model-catalog';
+import { resolvePushCapabilityProfile } from './model-catalog';
 import { getToolFunctionSchemasForSources } from '@push/lib/tool-function-schemas';
 import type { ToolRegistrySource } from '@push/lib/tool-registry';
 import { getUserProfile } from '@/hooks/useUserProfile';
@@ -1069,6 +1069,7 @@ export async function runInPageCoderKernel(
     maxCoderRounds: spec.harnessSettings?.maxCoderRounds,
     surface: 'full',
   });
+  const capabilityProfile = resolvePushCapabilityProfile(spec.provider, spec.modelId);
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
     provider: spec.provider,
     stream:
@@ -1163,7 +1164,7 @@ export async function runInPageCoderKernel(
     //      extra GitHub/ask/artifact surface. Advertising a tool the lead
     //      can't execute (e.g. `delegate_*`) would let a native call no-op.
     nativeToolSchemas:
-      leadRuntime && providerModelSupportsNativeToolCalling(spec.provider, spec.modelId)
+      leadRuntime && capabilityProfile.toolCalling === 'native'
         ? getToolFunctionSchemasForSources(
             leadNativeToolSources({
               hasMemoryScope: Boolean(spec.memoryScope),

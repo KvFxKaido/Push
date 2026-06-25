@@ -22,11 +22,15 @@ import { PROVIDER_URLS, ZEN_GO_URLS, getZenGoMode } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
+import { resolvePushCapabilityProfile } from './model-catalog';
 
 export async function* zenStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const goMode = getZenGoMode();
+  const capabilityProfile = resolvePushCapabilityProfile('zen', req.model, {
+    requestWire: goMode ? 'neutral' : 'openai',
+  });
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
@@ -45,7 +49,7 @@ export async function* zenStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
-    emitContentBlocks: goMode,
+    emitContentBlocks: capabilityProfile.contentBlocks,
   });
 
   // 2. Request body — two shapes by tier:

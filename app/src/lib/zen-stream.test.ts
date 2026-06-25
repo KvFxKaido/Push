@@ -23,6 +23,22 @@ vi.mock('./providers', () => ({
   },
 }));
 
+vi.mock('./model-catalog', () => ({
+  resolvePushCapabilityProfile: (
+    _provider: string,
+    _model: string | undefined,
+    options?: { requestWire?: 'neutral' | 'openai' },
+  ) => ({
+    toolCalling: 'native',
+    streamingTools: true,
+    multimodal: true,
+    structuredOutput: options?.requestWire === 'neutral' ? 'strict' : 'none',
+    contentBlocks: options?.requestWire === 'neutral',
+    reasoningBlocks: false,
+    context: 'medium',
+  }),
+}));
+
 // toLLMMessages pulls in huge dependency graph — stub to a trivial passthrough.
 vi.mock('./orchestrator', () => ({
   toLLMMessages: (messages: ChatMessage[]) =>

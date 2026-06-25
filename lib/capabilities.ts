@@ -79,6 +79,49 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
 ];
 
 // ---------------------------------------------------------------------------
+// Provider capability profile — model-wire degradation policy
+// ---------------------------------------------------------------------------
+
+export type PushToolCallingMode = 'native' | 'json-text' | 'none';
+export type PushStructuredOutputMode = 'strict' | 'best-effort' | 'none';
+export type PushContextTier = 'small' | 'medium' | 'large';
+
+/**
+ * Provider/model capability profile for the Push Protocol model-wire layer.
+ *
+ * This is intentionally distinct from the tool/role permission `Capability`
+ * vocabulary above: role capabilities decide what an agent may do; this profile
+ * decides how the provider adapter should degrade a request for a given
+ * provider+model route.
+ */
+export interface PushCapabilityProfile {
+  /** Native tool/function calling when available; otherwise permanent text dispatch. */
+  toolCalling: PushToolCallingMode;
+  /** True when native tool-call fragments can arrive incrementally while buffered. */
+  streamingTools: boolean;
+  /** True when the model route can inspect image inputs. */
+  multimodal: boolean;
+  /** Native/provider-enforced structured-output strength. */
+  structuredOutput: PushStructuredOutputMode;
+  /** True when the request route consumes `LlmMessage.contentBlocks`. */
+  contentBlocks: boolean;
+  /** True when signed reasoning blocks can round-trip on this route. */
+  reasoningBlocks: boolean;
+  /** Coarse context bucket for UI/degradation decisions. */
+  context: PushContextTier;
+}
+
+export const DEFAULT_PUSH_CAPABILITY_PROFILE: PushCapabilityProfile = {
+  toolCalling: 'json-text',
+  streamingTools: false,
+  multimodal: false,
+  structuredOutput: 'none',
+  contentBlocks: false,
+  reasoningBlocks: false,
+  context: 'medium',
+};
+
+// ---------------------------------------------------------------------------
 // Tool → Capability mapping
 // ---------------------------------------------------------------------------
 

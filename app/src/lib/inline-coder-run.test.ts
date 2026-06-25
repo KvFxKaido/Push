@@ -229,10 +229,10 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'memoryToolProtocol',
         'modelId',
         // Parity decision: the delegated arc threads `nativeToolSchemas:
-        // undefined` here — the gate (`providerModelSupportsNativeToolCalling`)
-        // returns false for this openrouter model, and native tool calling is
-        // scoped to the Cloudflare Kimi/GLM lead today. Additive regardless:
-        // native tool_calls dispatch through structured stream events.
+        // undefined` here — the profile returns text-dispatch for this
+        // openrouter model, and native tool calling is scoped to supported lead
+        // routes. Additive regardless: native tool_calls dispatch through
+        // structured stream events.
         'nativeToolSchemas',
         // Parity decision: only the web inline lane resolves linked libraries.
         // Delegated Coders receive all context through their brief/preload.
