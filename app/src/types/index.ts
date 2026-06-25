@@ -382,8 +382,8 @@ export interface ChatMessage {
    * `LlmMessage.contentBlocks` so serializers downcast structure instead of the
    * Anthropic bridge re-parsing text. Absent on old transcripts → the text arm
    * still serves them (the per-exchange fallback). See
-   * `docs/decisions/Structured Tool-Call Sourcing.md`. Slice 0: shape only — no
-   * producer/consumer yet (the `reasoningBlocks`-before-its-producer pattern).
+   * `docs/decisions/Structured Tool-Call Sourcing.md`. Slice 1 writes this
+   * producer sidecar; Slice 2 maps it onto `LlmMessage.contentBlocks`.
    */
   toolUses?: LlmToolUseBlock[];
   /**

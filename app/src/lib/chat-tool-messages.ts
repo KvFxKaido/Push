@@ -1,4 +1,5 @@
 import type { AIProviderType, ChatCard, ChatMessage, ToolMeta } from '@/types';
+import type { LlmToolResultBlock, LlmToolUseBlock } from '@push/lib/provider-contract';
 import { estimateContextTokens, getContextBudget, type ActiveProvider } from './orchestrator';
 import { fileLedger } from './file-awareness-ledger';
 import { getSandboxEnvironment } from './sandbox-client';
@@ -43,6 +44,7 @@ export interface BuildToolResultMessageOptions {
    *  branch at completion time. Omitted callers leave the message
    *  unstamped; the read-boundary fallback supplies `conv.branch`. */
   branch?: string;
+  toolResults?: LlmToolResultBlock[];
 }
 
 export interface MarkAssistantToolCallOptions {
@@ -50,6 +52,7 @@ export interface MarkAssistantToolCallOptions {
   thinking?: string;
   malformed?: boolean;
   toolMeta?: ToolMeta;
+  toolUses?: LlmToolUseBlock[];
 }
 
 export function getToolStatusLabel(toolCall: AnyToolCall): string {
@@ -171,6 +174,9 @@ export function buildToolResultMessage(options: BuildToolResultMessageOptions): 
     isToolResult: true,
     toolMeta: options.toolMeta,
     ...(options.branch !== undefined ? { branch: options.branch } : {}),
+    ...(options.toolResults && options.toolResults.length > 0
+      ? { toolResults: [...options.toolResults] }
+      : {}),
   };
 }
 
@@ -192,6 +198,7 @@ export function markLastAssistantToolCall(
     isToolCall: true,
     isMalformed: options.malformed || undefined,
     ...(options.toolMeta ? { toolMeta: options.toolMeta } : {}),
+    ...(options.toolUses && options.toolUses.length > 0 ? { toolUses: [...options.toolUses] } : {}),
   };
   return nextMessages;
 }

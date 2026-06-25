@@ -49,12 +49,15 @@ import type {
   AIProviderType,
   LlmContentPart,
   LlmMessage,
+  LlmToolResultBlock,
+  LlmToolUseBlock,
   PushStream,
   ToolFunctionSchema,
 } from './provider-contract.js';
 import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
 import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
+import { buildToolResultBlock, buildToolUseBlock, createToolUseBlockId } from './tool-blocks.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
@@ -67,6 +70,7 @@ import { formatProjectInstructionsBlock } from './project-instructions.js';
 import {
   buildToolCallParseErrorBlock,
   buildValidationFailedHint,
+  composeToolResultBody,
   formatToolResultEnvelope,
   MAX_REASONING_TOOL_CALL_NUDGES,
   promoteReasoningAnswer,
@@ -190,6 +194,64 @@ export class SandboxUnreachableError extends Error {
 export interface CoderLoopMessage extends LlmMessage {
   isToolResult?: boolean;
   isToolCall?: boolean;
+  toolUses?: LlmToolUseBlock[];
+  toolResults?: LlmToolResultBlock[];
+}
+
+function getKernelToolCallFields(call: unknown): { tool: string; args?: unknown } {
+  const raw = (call as { call?: { tool?: unknown; args?: unknown } } | null)?.call;
+  return {
+    tool: typeof raw?.tool === 'string' ? raw.tool : 'unknown',
+    args: raw?.args,
+  };
+}
+
+function createToolUseSidecars<TCall>(calls: readonly TCall[]): {
+  toolUses: LlmToolUseBlock[];
+  toolUseIdByCall: Map<TCall, string>;
+} {
+  const toolUseIdByCall = new Map<TCall, string>();
+  const toolUses = calls.map((call) => {
+    const { tool, args } = getKernelToolCallFields(call);
+    const id = createToolUseBlockId(createId());
+    toolUseIdByCall.set(call, id);
+    return buildToolUseBlock({ id, name: tool, input: args });
+  });
+  return { toolUses, toolUseIdByCall };
+}
+
+function markLatestAssistantToolUse(
+  messages: CoderLoopMessage[],
+  round: number,
+  toolUses: LlmToolUseBlock[],
+): void {
+  if (toolUses.length === 0) return;
+  const latest = messages[messages.length - 1];
+  if (!latest || latest.id !== `coder-response-${round}` || latest.role !== 'assistant') return;
+  messages[messages.length - 1] = {
+    ...latest,
+    isToolCall: true,
+    toolUses,
+  };
+}
+
+function toolResultSidecar(
+  toolUseIdByCall: Map<unknown, string>,
+  call: unknown,
+  content: string,
+  isError = false,
+): { toolResults: LlmToolResultBlock[] } | {} {
+  const toolUseId = toolUseIdByCall.get(call);
+  if (!toolUseId) return {};
+  return {
+    toolResults: [
+      buildToolResultBlock({
+        toolUseId,
+        content,
+        isError,
+      }),
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1890,6 +1952,16 @@ export async function runCoderAgent<TCall, TCard>(
         finishRound('aborted');
         throw new DOMException('Coder cancelled by user.', 'AbortError');
       }
+      const { toolUses, toolUseIdByCall } = createToolUseSidecars([
+        ...parallelCalls,
+        ...mutationQueue,
+      ]);
+      let toolUsesAttached = false;
+      const attachToolUsesBeforeResult = (): void => {
+        if (toolUsesAttached) return;
+        markLatestAssistantToolUse(messages, round, toolUses);
+        toolUsesAttached = true;
+      };
 
       const mutationLabel =
         mutationQueue.length > 0
@@ -1919,21 +1991,24 @@ export async function runCoderAgent<TCall, TCard>(
               (call as unknown as { call: { args?: unknown } }).call.args,
             ),
           });
-          return entry;
+          return { call, entry };
         }),
       );
 
       // Inject read results
       const awarenessBlock = getAwarenessBlock();
 
-      for (const entry of parallelResults) {
+      for (const { call, entry } of parallelResults) {
         if (entry.kind === 'denied') {
+          const content = `[TOOL_DENIED] ${entry.reason} [/TOOL_DENIED]`;
+          attachToolUsesBeforeResult();
           messages.push({
             id: `coder-parallel-denied-${round}-${messages.length}`,
             role: 'user',
-            content: `[TOOL_DENIED] ${entry.reason} [/TOOL_DENIED]`,
+            content,
             timestamp: Date.now(),
             isToolResult: true,
+            ...toolResultSidecar(toolUseIdByCall, call, content, true),
           });
           continue;
         }
@@ -1944,12 +2019,19 @@ export async function runCoderAgent<TCall, TCard>(
           'tool result',
         );
         const wrappedResult = formatToolResultEnvelope(truncatedResult, awarenessBlock);
+        attachToolUsesBeforeResult();
         messages.push({
           id: `coder-parallel-result-${round}-${messages.length}`,
           role: 'user',
           content: wrappedResult,
           timestamp: Date.now(),
           isToolResult: true,
+          ...toolResultSidecar(
+            toolUseIdByCall,
+            call,
+            composeToolResultBody(truncatedResult, awarenessBlock),
+            Boolean(entry.errorType),
+          ),
         });
       }
 
@@ -1989,12 +2071,15 @@ export async function runCoderAgent<TCall, TCard>(
           ),
         });
         if (mutResult.kind === 'denied') {
+          const content = `[TOOL_DENIED] ${mutResult.reason} [/TOOL_DENIED]`;
+          attachToolUsesBeforeResult();
           messages.push({
             id: `coder-mut-denied-${round}-${mqIdx}`,
             role: 'user',
-            content: `[TOOL_DENIED] ${mutResult.reason} [/TOOL_DENIED]`,
+            content,
             timestamp: Date.now(),
             isToolResult: true,
+            ...toolResultSidecar(toolUseIdByCall, mutationCall, content, true),
           });
           // A denied call stops further mutation work — the model should
           // reconcile the denial before we keep writing.
@@ -2060,12 +2145,19 @@ export async function runCoderAgent<TCall, TCard>(
           truncatedMut,
           `${coderMetaLine}${stateBlock}${awarenessBlock2}`,
         );
+        attachToolUsesBeforeResult();
         messages.push({
           id: `coder-mutation-result-${round}-${mqIdx}`,
           role: 'user',
           content: wrappedMut,
           timestamp: Date.now(),
           isToolResult: true,
+          ...toolResultSidecar(
+            toolUseIdByCall,
+            mutationCall,
+            composeToolResultBody(truncatedMut, `${coderMetaLine}${stateBlock}${awarenessBlock2}`),
+            Boolean(mutResult.errorType),
+          ),
         });
 
         // Track mutation failures in parallel path
@@ -2382,6 +2474,10 @@ export async function runCoderAgent<TCall, TCard>(
     const singleCall = toolCall as unknown as {
       call: { tool: string; args: Record<string, unknown> };
     };
+    const { toolUses, toolUseIdByCall } = createToolUseSidecars([toolCall]);
+    const attachToolUsesBeforeResult = (): void => {
+      markLatestAssistantToolUse(messages, round, toolUses);
+    };
     callbacks.onStatus('Coder executing...', singleCall.call.tool);
     const singleExecId = createId();
     const singleStartMs = Date.now();
@@ -2399,12 +2495,15 @@ export async function runCoderAgent<TCall, TCard>(
     });
 
     if (result.kind === 'denied') {
+      const content = `[TOOL_DENIED] ${result.reason} [/TOOL_DENIED]`;
+      attachToolUsesBeforeResult();
       messages.push({
         id: `coder-tool-denied-${round}`,
         role: 'user',
-        content: `[TOOL_DENIED] ${result.reason} [/TOOL_DENIED]`,
+        content,
         timestamp: Date.now(),
         isToolResult: true,
+        ...toolResultSidecar(toolUseIdByCall, toolCall, content, true),
       });
       finishRound('continued');
       continue;
@@ -2457,12 +2556,19 @@ export async function runCoderAgent<TCall, TCard>(
       truncatedResult,
       `${coderMetaLine}${stateBlock}${awarenessBlock}`,
     );
+    attachToolUsesBeforeResult();
     messages.push({
       id: `coder-tool-result-${round}`,
       role: 'user',
       content: wrappedResult,
       timestamp: Date.now(),
       isToolResult: true,
+      ...toolResultSidecar(
+        toolUseIdByCall,
+        toolCall,
+        composeToolResultBody(truncatedResult, `${coderMetaLine}${stateBlock}${awarenessBlock}`),
+        Boolean(result.errorType),
+      ),
     });
 
     // --- Guardrail: Mutation Failure Tracking ---

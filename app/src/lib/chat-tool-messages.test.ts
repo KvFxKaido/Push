@@ -240,6 +240,43 @@ describe('chat-tool-messages', () => {
     expect(message.branch).toBeUndefined();
   });
 
+  it('attaches structured tool result sidecars without changing wrapped display content', () => {
+    const toolMeta = buildToolMeta({
+      toolName: 'sandbox_read_file',
+      source: 'sandbox',
+      provider: 'anthropic',
+      durationMs: 12,
+      isError: true,
+    });
+
+    const message = buildToolResultMessage({
+      id: 'tool-result-structured',
+      timestamp: 100,
+      text: '[Tool Error] missing file',
+      metaLine: '[meta] round=1',
+      toolMeta,
+      toolResults: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'toolu_read_1',
+          content: '[Tool Error] missing file',
+          is_error: true,
+        },
+      ],
+    });
+
+    expect(message.content).toContain('[TOOL_RESULT');
+    expect(message.content).toContain('[meta] round=1');
+    expect(message.toolResults).toEqual([
+      {
+        type: 'tool_result',
+        tool_use_id: 'toolu_read_1',
+        content: '[Tool Error] missing file',
+        is_error: true,
+      },
+    ]);
+  });
+
   it('stamps the provided branch on the tool result message', () => {
     const toolMeta = buildToolMeta({
       toolName: 'delegate_coder',
@@ -278,6 +315,14 @@ describe('chat-tool-messages', () => {
         thinking: 'Need to inspect the repo',
         malformed: true,
         toolMeta,
+        toolUses: [
+          {
+            type: 'tool_use',
+            id: 'toolu_exec_1',
+            name: 'sandbox_exec',
+            input: { command: 'npm test' },
+          },
+        ],
       },
     );
 
@@ -288,6 +333,14 @@ describe('chat-tool-messages', () => {
       isToolCall: true,
       isMalformed: true,
       toolMeta,
+      toolUses: [
+        {
+          type: 'tool_use',
+          id: 'toolu_exec_1',
+          name: 'sandbox_exec',
+          input: { command: 'npm test' },
+        },
+      ],
     });
   });
 

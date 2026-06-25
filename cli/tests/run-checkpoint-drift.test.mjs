@@ -201,6 +201,59 @@ test('messages are structurally validated', () => {
   assert.ok(
     validateRunCheckpoint(badReasoning).some((i) => i.path === 'messages[0].reasoningBlocks'),
   );
+  const badToolUses = makeCheckpoint({
+    messages: [{ role: 'assistant', content: 'x', toolUses: [{ type: 'tool_use', id: '' }] }],
+  });
+  assert.ok(
+    validateRunCheckpoint(badToolUses).some((i) => i.path === 'messages[0].toolUses[0].id'),
+  );
+  const badToolResults = makeCheckpoint({
+    messages: [
+      {
+        role: 'user',
+        content: 'x',
+        toolResults: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 42 }],
+      },
+    ],
+  });
+  assert.ok(
+    validateRunCheckpoint(badToolResults).some(
+      (i) => i.path === 'messages[0].toolResults[0].content',
+    ),
+  );
+});
+
+test('structured tool sidecars pass checkpoint validation', () => {
+  const cp = makeCheckpoint({
+    messages: [
+      {
+        role: 'assistant',
+        content: '{"tool":"sandbox_read_file","args":{"path":"a.ts"}}',
+        isToolCall: true,
+        toolUses: [
+          {
+            type: 'tool_use',
+            id: 'toolu_read_1',
+            name: 'sandbox_read_file',
+            input: { path: 'a.ts' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: '[TOOL_RESULT] contents [/TOOL_RESULT]',
+        isToolResult: true,
+        toolResults: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_read_1',
+            content: 'contents',
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(validateRunCheckpoint(cp), []);
 });
 
 test('multimodal contentParts round-trip: valid parts pass, malformed parts fail', () => {

@@ -115,6 +115,8 @@ function toCoderLoopMessage(msg: RunCheckpointMessage, index: number): CoderLoop
     content: msg.content,
     ...(msg.contentParts ? { contentParts: msg.contentParts } : {}),
     ...(msg.reasoningBlocks ? { reasoningBlocks: msg.reasoningBlocks } : {}),
+    ...(msg.toolUses ? { toolUses: msg.toolUses } : {}),
+    ...(msg.toolResults ? { toolResults: msg.toolResults } : {}),
     ...(msg.isToolCall ? { isToolCall: true } : {}),
     ...(msg.isToolResult || msg.role === 'tool' ? { isToolResult: true } : {}),
     timestamp: 0,
@@ -215,6 +217,8 @@ function toRunCheckpointMessage(msg: CoderLoopMessage): RunCheckpointMessage {
     content: msg.content,
     ...(msg.contentParts ? { contentParts: msg.contentParts } : {}),
     ...(msg.reasoningBlocks ? { reasoningBlocks: msg.reasoningBlocks } : {}),
+    ...(msg.toolUses ? { toolUses: msg.toolUses } : {}),
+    ...(msg.toolResults ? { toolResults: msg.toolResults } : {}),
     ...(msg.isToolCall ? { isToolCall: true } : {}),
     ...(msg.isToolResult ? { isToolResult: true } : {}),
   };

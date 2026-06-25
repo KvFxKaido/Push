@@ -5,6 +5,7 @@ import {
   runCoderAgent,
   SandboxUnreachableError,
   type CoderAgentOptions,
+  type CoderLoopMessage,
 } from './coder-agent.js';
 import type { LlmContentPart, PushStream, PushStreamEvent } from './provider-contract.js';
 
@@ -685,6 +686,78 @@ describe('runCoderAgent (PushStream consumer)', () => {
     // Cadence is 5, skipping round 0 → exactly one checkpoint at round index 5.
     expect(checkpoints.map((c) => c.round)).toEqual([5]);
     expect(checkpoints[0]?.messageCount).toBeGreaterThan(0);
+  });
+
+  it('writes linked tool_use/tool_result sidecars for handled batched calls', async () => {
+    const { stream } = makePushStream(
+      Array.from({ length: 2 }, () => [
+        { type: 'text_delta' as const, text: 'reading files' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ]),
+    );
+    const readA = { call: { tool: 'sandbox_read_file', args: { path: 'a.ts' } } };
+    const readB = { call: { tool: 'sandbox_read_file', args: { path: 'b.ts' } } };
+    const detectAllToolCalls = () => ({
+      readOnly: [readA, readB],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async (call: Call) => ({
+      kind: 'executed' as const,
+      resultText: `contents:${call.call.args.path}`,
+    });
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
+    const checkpointMessages: CoderLoopMessage[][] = [];
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
+        toolExec,
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: () => {},
+        onCheckpoint: async (state) => {
+          checkpointMessages.push(state.messages.map((m) => ({ ...m })));
+        },
+      },
+    );
+
+    const messages = checkpointMessages[0] ?? [];
+    expect(messages.length).toBeGreaterThan(0);
+    const assistant = messages.find((m) => m.isToolCall);
+    const results = messages.filter((m) => m.isToolResult);
+
+    expect(assistant?.toolUses).toEqual([
+      expect.objectContaining({
+        type: 'tool_use',
+        name: 'sandbox_read_file',
+        input: { path: 'a.ts' },
+      }),
+      expect.objectContaining({
+        type: 'tool_use',
+        name: 'sandbox_read_file',
+        input: { path: 'b.ts' },
+      }),
+    ]);
+    expect(results).toHaveLength(2);
+    expect(results[0].toolResults).toEqual([
+      {
+        type: 'tool_result',
+        tool_use_id: assistant?.toolUses?.[0]?.id,
+        content: 'contents:a.ts',
+      },
+    ]);
+    expect(results[1].toolResults).toEqual([
+      {
+        type: 'tool_result',
+        tool_use_id: assistant?.toolUses?.[1]?.id,
+        content: 'contents:b.ts',
+      },
+    ]);
   });
 
   it('throws SandboxUnreachableError after consecutive SANDBOX_UNREACHABLE tool results', async () => {

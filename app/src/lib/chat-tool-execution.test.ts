@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
+import type { ActiveProvider } from './orchestrator';
 import type { AnyToolCall } from './tool-dispatch';
 import {
+  buildToolOutcome,
   handleDroppedCandidatesError,
   handleMultipleMutationsError,
   handleRecoveryResult,
@@ -280,5 +282,43 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
       'minimax-m2.7',
     );
     expect(action.assistantUpdate.toolMeta.source).toBe('github');
+  });
+});
+
+// buildToolOutcome mints the structured tool_result sidecar (Structured
+// Tool-Call Sourcing, Slice 1). The block content must carry the SAME body the
+// text envelope wraps — the runtime metaLine ([meta]/[pulse]) prepended to the
+// result — so the Slice 2 block path replays the context the text arm shows
+// today instead of a bare result frozen without it.
+describe('chat-tool-execution: tool_result sidecar preserves runtime meta', () => {
+  function rawResult(text: string) {
+    return {
+      call: sandboxCall('sandbox_read_file', { path: 'a.ts' }),
+      raw: { text } as unknown as ToolExecutionResult,
+      cards: [],
+      durationMs: 5,
+    };
+  }
+
+  it('persists metaLine + result in the structured tool_result block', () => {
+    const metaLine = '[meta] round=2 ctx=3kb tok=1k/200k pressure=low pct=0';
+    const outcome = buildToolOutcome(
+      rawResult('file contents'),
+      metaLine,
+      'cloudflare' as ActiveProvider,
+      { toolUseId: 'toolu_a' },
+    );
+    expect(outcome.resultMessage.toolResults).toEqual([
+      { type: 'tool_result', tool_use_id: 'toolu_a', content: `${metaLine}\nfile contents` },
+    ]);
+  });
+
+  it('omits the sidecar when no toolUseId is supplied (legacy text arm)', () => {
+    const outcome = buildToolOutcome(
+      rawResult('x'),
+      '[meta] round=1',
+      'cloudflare' as ActiveProvider,
+    );
+    expect(outcome.resultMessage.toolResults).toBeUndefined();
   });
 });

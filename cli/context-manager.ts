@@ -49,10 +49,11 @@ export interface Message {
   citations?: UrlCitation[];
   /** Structured tool-call sidecar (CLI peer of the web `ChatMessage.toolUses`):
    *  the `tool_use` blocks parsed from this assistant turn, carried alongside the
-   *  fenced-JSON text in `content`. Additive + optional; no producer/consumer on
-   *  the CLI yet (Slice 0 — shape only). The web + CLI transcripts MUST gain this
-   *  in lockstep so the Anthropic path doesn't regress to text-only re-parsing on
-   *  one surface. See `docs/decisions/Structured Tool-Call Sourcing.md`. */
+   *  fenced-JSON text in `content`. Additive + optional; Slice 1 writes this
+   *  producer sidecar and Slice 2 consumes it. The web + CLI transcripts MUST
+   *  gain this in lockstep so the Anthropic path doesn't regress to text-only
+   *  re-parsing on one surface. See
+   *  `docs/decisions/Structured Tool-Call Sourcing.md`. */
   toolUses?: LlmToolUseBlock[];
   /** Structured tool-result sidecar — `tool_result` blocks linked to their calls
    *  via `tool_use_id`. Plural for batched calls. Same contract as {@link toolUses}. */
