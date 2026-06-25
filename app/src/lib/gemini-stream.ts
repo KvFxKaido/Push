@@ -7,12 +7,12 @@
  * dual-accepts: a `contract` field routes to the neutral branch, which serializes
  * to Gemini via `toGeminiGenerateContent`, POSTs to
  * `generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent?alt=sse`,
- * and returns the response translated back to OpenAI SSE via
- * `createGeminiTranslatedStream`.
+ * and proxies the raw Gemini SSE straight back.
  *
  * Prompt materialization (`toLLMMessages`) stays client-side; the wire carries
- * already-materialized `messages`. The *response* axis is unchanged — the client
- * still reads OpenAI-shaped SSE. The API key never reaches the browser.
+ * already-materialized `messages`. The *response* axis is now native: the client
+ * parses Gemini's raw SSE with `geminiEventStream` (no OpenAI-SSE round-trip),
+ * matching the CLI. The API key never reaches the browser.
  *
  * Runs client-side. Timer/abort safety comes from `iterateChatStream`
  * wrapping this stream — no timer machinery lives here.
@@ -20,7 +20,7 @@
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { geminiEventStream } from '@push/lib/openai-gemini-bridge';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -116,9 +116,9 @@ export async function* geminiStream(
     throw new Error('Google response had no body');
   }
 
-  yield* openAISSEPump({
-    body: response.body,
-    signal: req.signal,
-    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-  });
+  // Native Gemini event stream — parses Gemini's `candidates[].content.parts[]`
+  // SSE directly into PushStreamEvent (no OpenAI-SSE serialize/reparse round-trip).
+  // The Worker now proxies Gemini's raw upstream body; `thoughtSignature` rides
+  // through as a first-class field on `native_tool_call`. Matches the CLI path.
+  yield* geminiEventStream(response, req.signal, (name) => KNOWN_TOOL_NAMES.has(name));
 }

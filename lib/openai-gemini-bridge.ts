@@ -850,6 +850,10 @@ export function createGeminiTranslatedStream(
 export async function* geminiEventStream(
   upstream: Response,
   signal?: AbortSignal,
+  // Optional early drop of hallucinated/unknown tool names, matching the
+  // `openAISSEPump` filter the web path used before this native pump replaced
+  // it. The CLI omits it and relies on downstream `detectNativeToolCalls`.
+  isKnownToolName?: (name: string) => boolean,
 ): AsyncIterable<PushStreamEvent> {
   const reader = upstream.body?.getReader();
   if (!reader) {
@@ -866,6 +870,10 @@ export async function* geminiEventStream(
 
   function* flushFunctionCalls(): Generator<PushStreamEvent> {
     for (const call of pendingFunctionCalls) {
+      if (isKnownToolName && !isKnownToolName(call.name)) {
+        console.warn(`[Push] Native tool call "${call.name}" is not a known tool — dropped`);
+        continue;
+      }
       yield {
         type: 'native_tool_call',
         call: {

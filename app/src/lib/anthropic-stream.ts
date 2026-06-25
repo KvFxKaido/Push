@@ -6,13 +6,14 @@
  * messages plus neutral scalars, tagged with `contract: "push.stream.v1"`. The
  * Worker (`handleAnthropicChat`) dual-accepts: a `contract` field routes to the
  * neutral branch, which serializes to Anthropic via `toAnthropicMessages`, POSTs
- * to `api.anthropic.com/v1/messages`, and returns the upstream stream translated
- * back to OpenAI SSE shape via `createAnthropicTranslatedStream`.
+ * to `api.anthropic.com/v1/messages`, and proxies the raw Anthropic SSE back.
  *
  * Prompt materialization (`toLLMMessages`) stays client-side, so the wire carries
  * already-materialized `messages` and `systemPromptOverride` is baked in. The
- * *response* axis is unchanged — the client still reads OpenAI-shaped SSE. The
- * API key stays out of the browser (Worker-side injection).
+ * *response* axis is now native: the client parses Anthropic's raw SSE with
+ * `anthropicEventStream` (signed thinking + `pause_turn` continuation surface
+ * directly, no OpenAI-SSE round-trip), matching the CLI. The API key stays out of
+ * the browser (Worker-side injection).
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
@@ -20,7 +21,7 @@
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -150,11 +151,14 @@ export async function* anthropicStream(
     }
 
     let paused: Array<Record<string, unknown>> | null = null;
-    for await (const event of openAISSEPump({
-      body: response.body,
-      signal: req.signal,
-      isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-    })) {
+    // Native Anthropic event stream — parses Anthropic's `content_block_*` /
+    // `message_delta` SSE directly into PushStreamEvent (no OpenAI-SSE
+    // round-trip). The Worker now proxies Anthropic's raw upstream body. Signed
+    // thinking blocks and `pause_turn` continuation surface identically to the
+    // pump path, so the loop below is unchanged. Matches the CLI path.
+    for await (const event of anthropicEventStream(response, req.signal, (name) =>
+      KNOWN_TOOL_NAMES.has(name),
+    )) {
       if (event.type === 'pause_turn') {
         paused = event.assistantBlocks;
         continue;

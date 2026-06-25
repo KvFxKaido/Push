@@ -1194,6 +1194,10 @@ export function createAnthropicTranslatedStream(
 export async function* anthropicEventStream(
   upstream: Response,
   signal?: AbortSignal,
+  // Optional early drop of hallucinated/unknown tool names, matching the
+  // `openAISSEPump` filter the web path used before this native pump replaced
+  // it. The CLI omits it and relies on downstream `detectNativeToolCalls`.
+  isKnownToolName?: (name: string) => boolean,
 ): AsyncIterable<PushStreamEvent> {
   const reader = upstream.body?.getReader();
   if (!reader) {
@@ -1225,6 +1229,10 @@ export async function* anthropicEventStream(
   function* flushToolUse(): Generator<PushStreamEvent> {
     for (const [, tc] of toolUseBlocks) {
       if (!tc.name) continue;
+      if (isKnownToolName && !isKnownToolName(tc.name)) {
+        console.warn(`[Push] Native tool call "${tc.name}" is not a known tool — dropped`);
+        continue;
+      }
       yield {
         type: 'native_tool_call',
         call: {
