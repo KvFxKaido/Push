@@ -343,24 +343,53 @@ function llmContentPartsToGemini(parts: readonly LlmContentPart[]): Array<Record
 }
 
 /**
+ * Build a `tool_use_id` → function-name map across all of a request's
+ * `contentBlocks`. Gemini's `functionResponse` is keyed by the function NAME,
+ * but a neutral `tool_result` block carries only the `tool_use_id` — so we
+ * resolve the name from the `tool_use` block that declared the call (which lives
+ * on a prior assistant turn in the same request).
+ */
+function buildToolNameById(messages: readonly LlmMessage[]): Map<string, string> {
+  const byId = new Map<string, string>();
+  for (const m of messages) {
+    if (!m.contentBlocks) continue;
+    for (const rawBlock of m.contentBlocks) {
+      const block = rawBlock as { type?: unknown; id?: unknown; name?: unknown };
+      if (
+        block.type === 'tool_use' &&
+        typeof block.id === 'string' &&
+        typeof block.name === 'string'
+      ) {
+        byId.set(block.id, block.name);
+      }
+    }
+  }
+  return byId;
+}
+
+/**
  * Strict converter for the neutral `LlmMessage.contentBlocks` → Gemini parts —
  * the Gemini downcast of the contract migration (see
  * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
- * This slice handles `text` and `image` and DROPS `thinking` /
- * `redacted_thinking` (Gemini surfaces text only and has no signed-reasoning
- * slot, same as the OpenAI path). A base64 image `source` maps to Gemini's
- * `inline_data`; a remote `url` source throws — Gemini inline parts can't carry
- * a URL (mirrors {@link geminiInlineImageFromUrl}).
+ * Handles `text` and `image`, DROPS `thinking` / `redacted_thinking` (Gemini
+ * surfaces text only and has no signed-reasoning slot, same as the OpenAI
+ * path), and maps the tool blocks: `tool_use` → a `functionCall` part (the
+ * parsed `input` object is Gemini's `args` verbatim) and `tool_result` → a
+ * `functionResponse` part. Unlike OpenAI, Gemini keeps these inline in the
+ * turn's `parts` array (no message splitting) — closer to Anthropic. A base64
+ * image `source` maps to `inline_data`; a remote `url` source throws — Gemini
+ * inline parts can't carry a URL (mirrors {@link geminiInlineImageFromUrl}).
  *
- * `tool_use` / `tool_result` are the Gemini "boss fight" — Gemini's
- * `functionResponse` keys results by function NAME, not the `tool_use_id` the
- * block carries, so it needs an id→name pre-pass. They land in a follow-up
- * slice and throw here for now (the producer flip is gated on every serializer
- * handling every block, so this incomplete edge isn't reachable yet). THROWS on
+ * `functionResponse` is keyed by function NAME (resolved via `toolNameById`,
+ * built by {@link buildToolNameById}); an unresolvable `tool_use_id` throws
+ * rather than emit an invalid response. Gemini wraps the result as an object
+ * (`{ output: <content> }`), and — like OpenAI — has no typed `is_error` slot,
+ * so a failed call is conveyed only through the content. THROWS on
  * unsupported/malformed blocks, mirroring {@link llmContentPartsToGemini}.
  */
 function llmContentBlocksToGemini(
   blocks: readonly LlmContentBlock[],
+  toolNameById: ReadonlyMap<string, string>,
 ): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   for (const rawBlock of blocks) {
@@ -368,6 +397,11 @@ function llmContentBlocksToGemini(
       type?: unknown;
       text?: unknown;
       source?: { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+      id?: unknown;
+      name?: unknown;
+      input?: unknown;
+      tool_use_id?: unknown;
+      content?: unknown;
     };
     if (block.type === 'text' && typeof block.text === 'string') {
       out.push({ text: block.text });
@@ -385,10 +419,31 @@ function llmContentBlocksToGemini(
       // Dropped — Gemini surfaces text only and has no signed-reasoning slot.
       continue;
     }
-    if (block.type === 'tool_use' || block.type === 'tool_result') {
-      throw new Error(
-        `toGeminiGenerateContent: ${block.type} blocks are not yet supported on the Gemini contentBlocks path (follow-up slice)`,
-      );
+    if (
+      block.type === 'tool_use' &&
+      typeof block.id === 'string' &&
+      typeof block.name === 'string' &&
+      block.input !== null &&
+      typeof block.input === 'object'
+    ) {
+      out.push({ functionCall: { name: block.name, args: block.input } });
+      continue;
+    }
+    if (
+      block.type === 'tool_result' &&
+      typeof block.tool_use_id === 'string' &&
+      typeof block.content === 'string'
+    ) {
+      const name = toolNameById.get(block.tool_use_id);
+      if (!name) {
+        throw new Error(
+          `toGeminiGenerateContent: cannot resolve a function name for tool_result (tool_use_id: ${JSON.stringify(
+            block.tool_use_id,
+          )} has no matching tool_use in the request)`,
+        );
+      }
+      out.push({ functionResponse: { name, response: { output: block.content } } });
+      continue;
     }
     throw new Error(
       `toGeminiGenerateContent: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
@@ -436,6 +491,12 @@ export function toGeminiGenerateContent(
   };
   if (hasOverride) pushSystemText(req.systemPromptOverride as string);
 
+  // Resolve tool_use ids → function names up front so `tool_result` blocks
+  // (which carry only `tool_use_id`) can emit Gemini's name-keyed
+  // `functionResponse`. Built across the whole request since a result's call
+  // lives on a prior turn.
+  const toolNameById = buildToolNameById(messages);
+
   for (const m of messages) {
     if (m.role === 'system') {
       // Gemini's systemInstruction is text-only. The web's google materializer
@@ -448,7 +509,7 @@ export function toGeminiGenerateContent(
       // `toAnthropicMessages`. Non-text parts are skipped (systemInstruction is
       // text-only).
       if (m.contentBlocks && m.contentBlocks.length > 0) {
-        for (const part of llmContentBlocksToGemini(m.contentBlocks)) {
+        for (const part of llmContentBlocksToGemini(m.contentBlocks, toolNameById)) {
           if (typeof part.text === 'string' && part.text.length > 0) pushSystemText(part.text);
         }
       } else if (m.contentParts && m.contentParts.length > 0) {
@@ -464,7 +525,7 @@ export function toGeminiGenerateContent(
     // rich `contentParts`, else the `content` text.
     const parts =
       m.contentBlocks && m.contentBlocks.length > 0
-        ? llmContentBlocksToGemini(m.contentBlocks)
+        ? llmContentBlocksToGemini(m.contentBlocks, toolNameById)
         : m.contentParts && m.contentParts.length > 0
           ? llmContentPartsToGemini(m.contentParts)
           : [{ text: m.content }];

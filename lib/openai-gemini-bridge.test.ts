@@ -793,15 +793,67 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
     ).toThrow(/unsupported or malformed content block/);
   });
 
-  it('throws on tool blocks (not yet supported on the Gemini block path)', () => {
+  it('maps a tool_use block to a Gemini functionCall part (input is args verbatim)', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          { type: 'text', text: 'calling' },
+          { type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } },
+        ],
+      }),
+    );
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    expect(contents.find((c) => c.role === 'model')?.parts).toEqual([
+      { text: 'calling' },
+      { functionCall: { name: 'read', args: { path: 'a.ts' } } },
+    ]);
+  });
+
+  it('maps a tool_result block to a functionResponse, resolving the name from the prior tool_use', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [
+        {
+          id: '1',
+          role: 'assistant',
+          content: '',
+          timestamp: 0,
+          contentBlocks: [{ type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } }],
+        },
+        {
+          id: '2',
+          role: 'user',
+          content: '',
+          timestamp: 0,
+          contentBlocks: [{ type: 'tool_result', tool_use_id: 'c1', content: 'file body' }],
+        },
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    // The result turn (user role) carries a name-keyed functionResponse.
+    expect(contents.at(-1)).toEqual({
+      role: 'user',
+      parts: [{ functionResponse: { name: 'read', response: { output: 'file body' } } }],
+    });
+  });
+
+  it('throws when a tool_result references a tool_use_id with no matching tool_use in the request', () => {
     expect(() =>
       toGeminiGenerateContent(
         req({
-          role: 'assistant',
-          contentBlocks: [{ type: 'tool_use', id: 'c1', name: 'foo', input: {} }],
+          role: 'user',
+          contentBlocks: [{ type: 'tool_result', tool_use_id: 'missing', content: 'x' }],
         }),
       ),
-    ).toThrow(/not yet supported on the Gemini contentBlocks path/);
+    ).toThrow(/cannot resolve a function name for tool_result/);
   });
 });
 
