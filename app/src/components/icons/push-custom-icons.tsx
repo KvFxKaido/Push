@@ -5,6 +5,58 @@ type PushMarkIconProps = IconProps & {
   pathClassName?: string;
 };
 
+/**
+ * Push custom icon pack — the brand-aligned icon family.
+ *
+ * Two parallel icon systems run in Push: Lucide React (`lucide-react`) is the
+ * general-purpose workhorse (chevrons, close, copy, check…); this pack is the
+ * brand expression. Same visual language as Lucide — 24px viewBox, stroke 2,
+ * round caps + joins — but each icon names a Push-specific noun. When a concept
+ * maps to one of these, use it; Lucide is the fallback. All render with
+ * `stroke="currentColor"`, so they inherit text color and pick up status hues.
+ *
+ * When to reach for which (concept → surface). Keep this in sync as icons are
+ * added/removed — it is the only "when to use" map and lives here, next to the
+ * definitions, not duplicated in DESIGN.md.
+ *
+ *   PushOrbitIcon       orchestration / momentum — marketing hero, "Push" mark in headers
+ *   PushMarkIcon        brand hex glyph — app icon, agent avatar, splash, hex-thinking trace
+ *   BranchWaveIcon      branching — branch picker, fork sheet
+ *   SandboxCubeIcon     ephemeral workspace — "New Sandbox" CTA, sandbox surfaces
+ *   WorkspaceSparkIcon  resume work — "Resume latest chat" CTA
+ *   AttachmentLinkIcon  file attachment — composer attach button
+ *   VoicePulseIcon      voice input — composer voice button
+ *   SendLiftIcon        send message — composer send
+ *   MergeShieldIcon     safe merge — merge flow, protection badges
+ *   LivePipelineIcon    live execution — running tasks, CI / pipeline status
+ *   LauncherGridIcon    choose-a-workspace — launcher tile grid
+ *   WorkspaceDockIcon   workspace sheet — workspace toggle, dock affordance
+ *   NotebookPadIcon     scratchpad notes — Pad tab, draft chat
+ *   ReviewLensIcon      inspect & verify — Review tab, audit
+ *   YouBadgeIcon        user avatar — settings, profile
+ *   WorkspaceTuneIcon   configure workspace — sandbox config
+ *   AICoreIcon          model picker — provider / model selector
+ *   SettingsCellsIcon   configuration — settings sheet
+ *   KeptCacheIcon       pinned / saved — pin chip, library
+ *   ConsoleTraceIcon    trace / log — Console tab, debug
+ *   FilesStackIcon      file browser — Files tab
+ *   DiffSeamIcon        diff view — Diff tab
+ *   CommitPulseIcon     recent work — commit list, activity badge
+ *   HistoryStackIcon    chat history — library, prior chats
+ *   PRThreadIcon        pull request review — PR cards, review surfaces
+ *   RepoLedgerIcon      repository-as-notebook — repo selector, repo card
+ *   RobotBotIcon        automation-heavy repo — AI / automation repo badges
+ *   MobileSlabIcon      mobile app repo — mobile-targeted repo cards
+ *   TerminalCrateIcon   CLI / shell — Console tab, terminal cards
+ *   ApiNodesIcon        backend / API repo — backend repo badges
+ *   DocsLeafIcon        docs / content repo — docs repo badges
+ *   GitHubMarkIcon      GitHub brand mark — repo source attribution, GitHub auth / links
+ *   LockIcon            locked / protected — Protect Main, private repo, locked branch (Settings)
+ *   ReasoningBoltIcon   model-picker capability badge — reasoning / thinking-capable model
+ *   VisionEyeIcon       model-picker capability badge — vision / image input
+ *   ImageGenIcon        model-picker capability badge — image generation
+ *   ToolWrenchIcon      model-picker capability badge — native tool calling
+ */
 export function PushOrbitIcon({ strokeWidth = 2, ...props }: IconProps) {
   return (
     <svg
