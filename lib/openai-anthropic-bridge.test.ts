@@ -1429,8 +1429,10 @@ describe('toAnthropicMessages — multimodal contentParts', () => {
   });
 
   it('throws loudly on an image URL that is neither data: nor http(s)', () => {
+    // The producer flip materializes multimodal turns through the block path,
+    // so an unrepresentable image now fails loudly in deriveContentBlocks.
     expect(() =>
       reqWith(userWithParts([{ type: 'image_url', image_url: { url: 'ftp://nope/x.png' } }])),
-    ).toThrow(/cannot represent image/);
+    ).toThrow(/unsupported or malformed content part/);
   });
 });

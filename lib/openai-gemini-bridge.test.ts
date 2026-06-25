@@ -790,7 +790,7 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
           ],
         }),
       ),
-    ).toThrow(/unsupported or malformed content block/);
+    ).toThrow(/cannot represent image/);
   });
 
   it('maps a tool_use block to a Gemini functionCall part (input is args verbatim)', () => {

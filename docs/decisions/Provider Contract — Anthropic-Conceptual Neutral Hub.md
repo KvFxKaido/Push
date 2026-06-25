@@ -1,6 +1,6 @@
 # Provider Contract — Anthropic-Conceptual Neutral Hub
 
-Status: **Draft**, added 2026-06-24. Needs a `ROADMAP.md` entry to graduate past Phase 1. Direction-setting; implemented incrementally (main stays green every slice).
+Status: **Current**, added 2026-06-24, producer flip landed 2026-06-25. The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and the producer materializes `contentBlocks` for multimodal turns in production (`lib/content-blocks.ts`), so the block path is live. Intentionally scoped: plain-text and fenced-tool-call turns keep their `content` string / `reasoningBlocks` sidecar — routing those through blocks would array-ify a string the legacy path emits verbatim, with no benefit. Sourcing tool calls as structured `tool_use`/`tool_result` blocks (rather than fenced text) is a separate, larger feature, tracked below — not part of this migration.
 
 ## Context
 
@@ -40,17 +40,21 @@ Every serializer — **including the OpenAI one** — then becomes a peer that *
 - **Not** a big-bang. No long-lived broken branch. Every slice ships green.
 - **Not** a third "fully neutral" shape — that would tax all paths. We adopt the richest *real* dialect's conceptual model.
 
-## Slice plan (green at every step)
+## Slice plan (shipped)
 
-Each slice is independently shippable, behind the additive-field pattern already used for `contentParts` / `reasoningBlocks` (adapters prefer the new field, fall back to the old one). The producer that emits blocks in production is flipped **last**, after every serializer handles every block variant.
+Each slice shipped independently, behind the additive-field pattern already used for `contentParts` / `reasoningBlocks` (adapters prefer the new field, fall back to the old one). The producer flip landed last, after every serializer handled every block variant.
 
-1. **Block vocabulary + additive field** *(this slice)* — add `LlmContentBlock` (`text`, `image` in Anthropic-canonical shape) and `contentBlocks?` on `LlmMessage`; wire `toOpenAIChat` to downcast it (image block → `image_url`). No production producer yet; exercised by tests. Demonstrates the downcast direction on the easy case.
-2. **`thinking` block** — extend the union; Anthropic bridge reads it natively, OpenAI/Gemini drop it. Folds `reasoningBlocks` toward the unified block stream.
-3. **Native structured output** — express the JSON constraint natively for Anthropic (delete the forced-tool fake), map to `response_format` for OpenAI-compat.
-4. **`tool_use` / `tool_result` blocks** — define them; Anthropic bridge near-identity, Gemini maps to `functionCall`/`functionResponse`.
-5. **OpenAI downcast of tool blocks** *(the boss fight)* — flatten interleaved blocks into OpenAI's split `content` + `tool_calls[]` + `role: tool` representation, ordering-correct. Scheduled here, once the contract has settled — not first.
-6. **Flip the producer + thin the bridge** — context materialization emits blocks in production; delete the now-dead upcast code from `toAnthropicMessages`; lift `cache_control` into a neutral marker; doc-honesty pass; promote this doc to **Current**.
+1. ✅ **Block vocabulary + additive field** (#1147) — `LlmContentBlock` (`text`, `image` Anthropic-canonical) + `contentBlocks?` on `LlmMessage`; `toOpenAIChat` downcast.
+2. ✅ **`thinking` block** (#1148) — reused `ReasoningBlock` verbatim; OpenAI drops it.
+3. ✅ **`tool_use` / `tool_result` blocks + OpenAI flatten** (#1149) — the boss fight: one neutral message → `content` + `tool_calls[]` + `role: tool`.
+4. ✅ **Anthropic bridge reads blocks** (#1150) — the near-identity direction; `is_error` preserved.
+5. ✅ **Gemini bridge reads blocks** (#1151, #1152) — text/image/thinking, then `functionCall`/`functionResponse` with id correlation.
+6. ✅ **Producer flip** — `lib/content-blocks.ts` (`deriveContentBlocks` / `withContentBlocks`) materializes `contentBlocks` for multimodal turns at the three serializer front-doors, so the block path is **live in production** (byte-identical to the legacy `contentParts` path).
 
-## Status / graduation
+> Note: slice "native structured output" from the original plan was dropped — `ResponseFormatSpec` is already neutral and Anthropic's forced-tool is idiomatic, not a fake.
 
-Phase 1 (slice 1) lands as a standalone change. Slices 2–6 each need their own review; promoting past slice 1 needs a `ROADMAP.md` entry per this folder's convention. Until then this is design-in-motion, not a commitment.
+## Intentionally out of scope (not part of this migration)
+
+- **Plain-text / fenced-tool-call turns stay on `content` / `reasoningBlocks`.** Routing them through blocks would array-ify a string the legacy path emits verbatim, with no benefit — so the flip is scoped to multimodal turns. The serializers keep their legacy string path for these (not dead code).
+- **Structured tool-call sourcing.** Tool calls round-trip as fenced JSON *text* in `content` today (the tool protocol). Emitting them as structured `tool_use`/`tool_result` blocks — which is what would let the Anthropic bridge shed its tool reconstruction — is a separate feature touching the round loop and transcript storage, not this contract refactor.
+- **`cache_control` → neutral marker** and full **bridge thinning** (deleting the legacy branches) — follow-ups, gated on the structured-tool work above.

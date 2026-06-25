@@ -9,6 +9,7 @@ import type {
   ToolFunctionSchema,
 } from './provider-contract.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
+import { withContentBlocks } from './content-blocks.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -417,7 +418,14 @@ function llmContentBlocksToGemini(
         out.push({ inline_data: { mime_type: s.media_type, data: s.data } });
         continue;
       }
-      // A remote `url` source can't be inlined — fall through to the loud throw.
+      if (s.type === 'url' && typeof s.url === 'string') {
+        // Gemini inline parts can't carry a remote URL (mirrors
+        // geminiInlineImageFromUrl) — fail loudly rather than drop the image.
+        throw new Error(
+          `toGeminiGenerateContent: cannot represent image (Gemini inline parts require a data:image base64 URL): ${s.url.slice(0, 48)}`,
+        );
+      }
+      // Malformed image source — fall through to the loud throw below.
     }
     if (block.type === 'thinking' || block.type === 'redacted_thinking') {
       // Dropped — Gemini surfaces text only and has no signed-reasoning slot.
@@ -497,7 +505,10 @@ export function toGeminiGenerateContent(
   req: PushStreamRequest<LlmMessage>,
   options?: ToGeminiGenerateContentOptions,
 ): Record<string, unknown> {
-  const messages = Array.isArray(req.messages) ? req.messages : [];
+  // Producer flip: materialize contentBlocks for multimodal turns so they run
+  // the block path in production (byte-identical to the legacy contentParts
+  // path). See lib/content-blocks.ts.
+  const messages = (Array.isArray(req.messages) ? req.messages : []).map(withContentBlocks);
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
 
