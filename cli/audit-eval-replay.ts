@@ -53,6 +53,18 @@ function out(text: string): void {
 }
 
 /**
+ * Normalize a provider string the way the CLI's `normalizeProviderInput` does
+ * (trim + lowercase; treat empty / "undefined" / "null" as unset), so replay's
+ * provider precedence matches `parseProvider` exactly.
+ */
+function normalizeProvider(value: string | undefined): string {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
+  return normalized;
+}
+
+/**
  * Build a verdict function backed by the active CLI provider's Auditor, or
  * return a typed reason when no provider/key/model is resolvable. Kept separate
  * so `list` (which needs no provider) never triggers provider resolution.
@@ -61,7 +73,17 @@ async function resolveAuditorVerdictFn(
   values: AuditEvalsValues,
 ): Promise<{ getVerdict: AuditVerdictFn; label: string } | { error: string }> {
   const config = await loadConfig();
-  const providerId = values.provider || config.provider || 'ollama';
+  // Mirror the CLI's `parseProvider` precedence so replay resolves the SAME
+  // provider the commit gate uses: flag → PUSH_PROVIDER env → config → ollama,
+  // each trimmed/lowercased. Skipping the env var (the normal env-driven CI
+  // path, e.g. `PUSH_PROVIDER=openrouter push audit-evals replay`) would fall
+  // through to ollama and replay against the wrong provider — so the regression
+  // gate wouldn't actually mirror the active CLI provider.
+  const providerId =
+    normalizeProvider(values.provider) ||
+    normalizeProvider(process.env.PUSH_PROVIDER) ||
+    normalizeProvider(config.provider) ||
+    'ollama';
   const cliProvider = PROVIDER_CONFIGS[providerId];
   if (!cliProvider) {
     return { error: `unknown provider "${providerId}" (set one with: push config)` };

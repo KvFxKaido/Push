@@ -116,6 +116,35 @@ describe('push audit-evals command', () => {
     );
   });
 
+  it('honors PUSH_PROVIDER when no --provider flag is given', async () => {
+    await writeCorpus(root, [caseLine()]);
+    const saved = {};
+    // Clear any openrouter key so resolution reaches the "no API key" error,
+    // which echoes the resolved provider id — proving PUSH_PROVIDER was honored.
+    for (const k of [
+      'PUSH_OPENROUTER_API_KEY',
+      'OPENROUTER_API_KEY',
+      'VITE_OPENROUTER_API_KEY',
+      'PUSH_PROVIDER',
+    ]) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    process.env.PUSH_PROVIDER = 'openrouter';
+    try {
+      const { code, out } = await captureStdout(() =>
+        runAuditEvalsSubcommand({ cwd: root }, ['audit-evals', 'replay']),
+      );
+      assert.equal(code, 1);
+      assert.match(out, /openrouter/);
+    } finally {
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
+
   it('rejects a non-integer --limit before resolving a provider', async () => {
     await writeCorpus(root, [caseLine()]);
     for (const bad of ['3.5', 'Infinity', '0', '-1', 'abc']) {
