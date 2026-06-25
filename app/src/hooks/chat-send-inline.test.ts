@@ -590,9 +590,12 @@ describe('startInlineCoderTurn', () => {
       expect.objectContaining({
         role: 'user',
         content: 'what changed recently?',
-        contentParts: [
+        contentBlocks: [
           { type: 'text', text: 'what changed recently?' },
-          { type: 'image_url', image_url: { url: 'data:image/png;base64,linked123' } },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'linked123' },
+          },
         ],
       }),
     ]);
