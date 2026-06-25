@@ -32,6 +32,7 @@
 import type {
   OpenAIChatRequest,
   OpenAIContentPart,
+  OpenAIFunctionTool,
   OpenAIJsonSchemaResponseFormat,
   OpenAIMessage,
   OpenAIToolCall,
@@ -42,6 +43,7 @@ import type {
   LlmMessage,
   PushStreamRequest,
   ResponseFormatSpec,
+  ToolFunctionSchema,
 } from './provider-contract.ts';
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
@@ -62,6 +64,30 @@ export function toOpenAIResponseFormat(spec: ResponseFormatSpec): OpenAIJsonSche
       strict: spec.strict ?? true,
       schema: spec.schema,
     },
+  };
+}
+
+export function flatToolToOpenAITool(tool: ToolFunctionSchema): OpenAIFunctionTool {
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input_schema,
+    },
+  };
+}
+
+/** Inverse of {@link flatToolToOpenAITool}: lift OpenAI's nested function-tool
+ *  wire shape back into the flat canonical `ToolFunctionSchema`. Used by the
+ *  legacy OpenAI-shape → Anthropic/Gemini bridge entry points, which receive an
+ *  `OpenAIChatRequest` (nested tools) and must normalize to the flat canonical
+ *  before the providers' downcast converters (which now read flat). */
+export function openAIToolToFlatTool(tool: OpenAIFunctionTool): ToolFunctionSchema {
+  return {
+    name: tool.function.name,
+    description: tool.function.description,
+    input_schema: tool.function.parameters,
   };
 }
 
@@ -366,7 +392,9 @@ export function toOpenAIChat(
     // 'auto'` keeps prose answers available. This serializer feeds neutral
     // OpenAI-compatible Worker paths (Vertex Gemini, Zen-Go) and the CLI
     // OpenAI-compat adapters; all ignore the field when no caller sets `tools`.
-    ...(nativeTools.length > 0 ? { tools: nativeTools, tool_choice: 'auto' } : {}),
+    ...(nativeTools.length > 0
+      ? { tools: nativeTools.map(flatToolToOpenAITool), tool_choice: 'auto' }
+      : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 }

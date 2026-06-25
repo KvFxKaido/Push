@@ -304,16 +304,13 @@ describe('cloudflareStream', () => {
     const { cloudflareStream } = await import('./cloudflare-stream');
     const tools = [
       {
-        type: 'function' as const,
-        function: {
-          name: 'exec',
-          description: 'Run a shell command',
-          parameters: {
-            type: 'object' as const,
-            properties: { command: { type: 'string' as const } },
-            required: ['command'],
-            additionalProperties: false as const,
-          },
+        name: 'exec',
+        description: 'Run a shell command',
+        input_schema: {
+          type: 'object' as const,
+          properties: { command: { type: 'string' as const } },
+          required: ['command'],
+          additionalProperties: false as const,
         },
       },
     ];
@@ -325,7 +322,16 @@ describe('cloudflareStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.tools).toEqual(tools);
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: tools[0].name,
+          description: tools[0].description,
+          parameters: tools[0].input_schema,
+        },
+      },
+    ]);
     expect(body.tool_choice).toBe('auto');
   });
 

@@ -1,5 +1,6 @@
 import type { Env } from './worker-middleware';
 import type { AiModelsSearchObject } from '@cloudflare/workers-types';
+import { asRecord } from '../lib/utils';
 import {
   createStreamProxyHandler,
   createJsonProxyHandler,
@@ -23,7 +24,11 @@ import {
   createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
-import { toOpenAIChat, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import {
+  flatToolToOpenAITool,
+  toOpenAIChat,
+  toOpenAIResponseFormat,
+} from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
@@ -144,21 +149,46 @@ function parseResponseFormatSpec(raw: unknown): ResponseFormatSpec | undefined {
 }
 
 /**
- * Validate the OpenAI-shaped `tools` array the client serializes into the body.
- * The client builds these from the registry (`tool-function-schemas.ts`), so
- * this is a shape guard, not a re-derivation: keep only well-formed
- * `{ type: 'function', function: { name } }` entries and drop the field
- * entirely if none survive (so a malformed payload doesn't reach env.AI.run).
+ * Validate the OpenAI-shaped `tools` array the client serializes into the body
+ * and lift it back into Push's canonical flat schema shape. The client builds
+ * these from the registry (`tool-function-schemas.ts`), so this is a shape
+ * guard, not a re-derivation: keep only well-formed function entries and drop
+ * the field entirely if none survive.
  */
 function parseToolSchemas(raw: unknown): ToolFunctionSchema[] | undefined {
   if (!Array.isArray(raw)) return undefined;
-  const valid = raw.filter((entry): entry is ToolFunctionSchema => {
-    if (!entry || typeof entry !== 'object') return false;
+  const valid: ToolFunctionSchema[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
     const e = entry as Record<string, unknown>;
-    if (e.type !== 'function') return false;
+    if (e.type !== 'function') continue;
     const fn = e.function as Record<string, unknown> | undefined;
-    return Boolean(fn && typeof fn === 'object' && typeof fn.name === 'string' && fn.name);
-  });
+    if (!fn || typeof fn !== 'object') continue;
+    const name = typeof fn.name === 'string' ? fn.name.trim() : '';
+    if (!name) continue;
+    const parameters = asRecord(fn.parameters);
+    const properties = parameters ? asRecord(parameters.properties) : null;
+    const required = parameters?.required;
+    if (
+      parameters?.type !== 'object' ||
+      !properties ||
+      !Array.isArray(required) ||
+      !required.every((field) => typeof field === 'string') ||
+      parameters?.additionalProperties !== false
+    ) {
+      continue;
+    }
+    valid.push({
+      name,
+      description: typeof fn.description === 'string' ? fn.description : '',
+      input_schema: {
+        type: 'object',
+        properties: properties as ToolFunctionSchema['input_schema']['properties'],
+        required: required as string[],
+        additionalProperties: false,
+      },
+    });
+  }
   return valid.length > 0 ? valid : undefined;
 }
 
@@ -176,11 +206,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   // shape; gated upstream by `providerModelSupportsStructuredOutput` so it's
   // only set for supporting models.
   if (req.responseFormat) input.response_format = toOpenAIResponseFormat(req.responseFormat);
-  // Native function calling — same binding accepts the OpenAI `tools` shape.
+  // Native function calling — the binding accepts the OpenAI `tools` shape, so
+  // downcast from Push's canonical flat schema at this provider boundary.
   // Gated upstream (only models that support it get a `tools` array), so its
   // presence here is the signal to forward it.
   if (req.tools && req.tools.length > 0) {
-    input.tools = req.tools;
+    input.tools = req.tools.map(flatToolToOpenAITool);
     input.tool_choice = 'auto';
   }
 

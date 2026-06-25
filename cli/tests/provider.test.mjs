@@ -780,16 +780,21 @@ describe('streamCompletion', () => {
       requiresKey: false,
     };
     const sampleTool = {
+      name: 'read_file',
+      description: 'Read a file',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    };
+    const openAITool = {
       type: 'function',
       function: {
-        name: 'read_file',
-        description: 'Read a file',
-        parameters: {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-          additionalProperties: false,
-        },
+        name: sampleTool.name,
+        description: sampleTool.description,
+        parameters: sampleTool.input_schema,
       },
     };
 
@@ -870,7 +875,7 @@ describe('streamCompletion', () => {
         else process.env.PUSH_OPENROUTER_WEB_SEARCH = prev;
       }
 
-      assert.deepEqual(capturedBody.tools, [sampleTool, { type: 'openrouter:web_search' }]);
+      assert.deepEqual(capturedBody.tools, [openAITool, { type: 'openrouter:web_search' }]);
       assert.equal(capturedBody.tool_choice, 'auto');
       assert.deepEqual(capturedBody.provider, { require_parameters: true });
     });

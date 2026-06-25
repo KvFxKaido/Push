@@ -12,7 +12,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -90,7 +90,8 @@ export async function* openrouterStream(
   // so native function schemas and the `openrouter:web_search` server tool merge
   // (web search appended last) when both are active.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
-  const toolsArray = [...nativeTools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
+  const openAITools = nativeTools.map(flatToolToOpenAITool);
+  const toolsArray = [...openAITools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
   // `provider.require_parameters` is load-bearing whenever we send native tools
   // or a `response_format` constraint: by default OpenRouter may route to an
   // endpoint that doesn't honor those params and silently drops them — dropping

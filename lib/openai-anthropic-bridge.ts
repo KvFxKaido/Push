@@ -9,6 +9,7 @@ import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
 import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
+import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
 
 /**
  * Reserved tool name for the structured-output forced tool. Anthropic has no
@@ -406,7 +407,7 @@ export function buildAnthropicMessagesRequest(
     temperature: request.temperature,
     topP: request.top_p,
     enableWebSearch: request.anthropic_web_search === true,
-    tools: request.tools,
+    tools: request.tools?.map(openAIToolToFlatTool),
     structuredOutput: request.response_format
       ? {
           name: request.response_format.json_schema.name,
@@ -439,8 +440,8 @@ interface AnthropicBodyAssembly {
   temperature?: number;
   topP?: number;
   enableWebSearch: boolean;
-  /** Native function-calling schemas (OpenAI shape), translated to Anthropic's
-   *  flat `{ name, description, input_schema }` custom-tool shape. */
+  /** Native function-calling schemas in Anthropic's flat
+   *  `{ name, description, input_schema }` custom-tool shape. */
   tools?: ToolFunctionSchema[];
   /** Structured-output JSON-Schema constraint, expressed as a forced tool. */
   structuredOutput?: { name: string; schema: Record<string, unknown>; strict?: boolean };
@@ -577,9 +578,9 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
  */
 function openAIToolToAnthropicTool(tool: ToolFunctionSchema): Record<string, unknown> {
   return {
-    name: tool.function.name,
-    description: tool.function.description,
-    input_schema: tool.function.parameters,
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema,
   };
 }
 

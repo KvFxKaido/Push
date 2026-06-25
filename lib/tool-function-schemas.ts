@@ -1,5 +1,5 @@
 /**
- * tool-function-schemas.ts — derive OpenAI-style function-calling schemas for
+ * tool-function-schemas.ts — derive Anthropic-style custom-tool schemas for
  * Push's tools from the single tool registry (`tool-registry.ts`).
  *
  * Why this exists: Push's tool protocol is text-dispatch — tools are described
@@ -172,16 +172,13 @@ export function toolSpecToFunctionSchema(
     if (param.required) required.push(param.name);
   }
   return {
-    type: 'function',
-    function: {
-      name: spec.publicName,
-      description: spec.protocolDescription,
-      parameters: {
-        type: 'object',
-        properties,
-        required,
-        additionalProperties: false,
-      },
+    name: spec.publicName,
+    description: spec.protocolDescription,
+    input_schema: {
+      type: 'object',
+      properties,
+      required,
+      additionalProperties: false,
     },
   };
 }

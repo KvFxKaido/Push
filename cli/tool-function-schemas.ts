@@ -73,16 +73,13 @@ function parseProtocolSchemas(protocol: string): ToolFunctionSchema[] {
       if (!optional) required.push(paramName);
     }
     schemas.push({
-      type: 'function',
-      function: {
-        name,
-        description,
-        parameters: {
-          type: 'object',
-          properties,
-          required,
-          additionalProperties: false,
-        },
+      name,
+      description,
+      input_schema: {
+        type: 'object',
+        properties,
+        required,
+        additionalProperties: false,
       },
     });
   }

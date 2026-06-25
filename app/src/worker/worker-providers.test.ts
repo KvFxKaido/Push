@@ -366,16 +366,13 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
   it('translates neutral tools to Anthropic custom-tool shape on the Anthropic transport', async () => {
     const get = captureUpstream();
     const tool = {
-      type: 'function',
-      function: {
-        name: 'sandbox_read_file',
-        description: 'Read a file',
-        parameters: {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-          additionalProperties: false,
-        },
+      name: 'sandbox_read_file',
+      description: 'Read a file',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        additionalProperties: false,
       },
     };
     await handleZenGoChat(
@@ -393,7 +390,7 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
       {
         name: 'sandbox_read_file',
         description: 'Read a file',
-        input_schema: tool.function.parameters,
+        input_schema: tool.input_schema,
       },
     ]);
   });
@@ -449,16 +446,13 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
   it('forwards neutral tools + responseFormat onto the OpenAI-transport upstream body', async () => {
     const get = captureUpstream();
     const tool = {
-      type: 'function',
-      function: {
-        name: 'sandbox_write_file',
-        description: 'Write a file',
-        parameters: {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-          additionalProperties: false,
-        },
+      name: 'sandbox_write_file',
+      description: 'Write a file',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        additionalProperties: false,
       },
     };
     await handleZenGoChat(
@@ -471,8 +465,18 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
       makeEnv({ ZEN_API_KEY: 'zen-key' }),
     );
     const body = JSON.parse(get()!.init.body as string);
-    // toOpenAIChat re-serializes the neutral request: tools + tool_choice + response_format.
-    expect(body.tools).toEqual([tool]);
+    // toOpenAIChat re-serializes the neutral request: flat tools downcast to the
+    // OpenAI-nested wire shape, plus tool_choice + response_format.
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'sandbox_write_file',
+          description: 'Write a file',
+          parameters: tool.input_schema,
+        },
+      },
+    ]);
     expect(body.tool_choice).toBe('auto');
     expect(body.response_format).toEqual({
       type: 'json_schema',
@@ -1765,16 +1769,13 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
   }
 
   const readFileTool = {
-    type: 'function',
-    function: {
-      name: 'sandbox_read_file',
-      description: 'Read a file',
-      parameters: {
-        type: 'object',
-        properties: { path: { type: 'string', description: 'Repo-relative path' } },
-        required: ['path'],
-        additionalProperties: false,
-      },
+    name: 'sandbox_read_file',
+    description: 'Read a file',
+    input_schema: {
+      type: 'object',
+      properties: { path: { type: 'string', description: 'Repo-relative path' } },
+      required: ['path'],
+      additionalProperties: false,
     },
   };
 
@@ -1830,7 +1831,17 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
       makeEnv(),
     );
     const body = JSON.parse(get()!.init.body as string);
-    expect(body.tools).toEqual([readFileTool]);
+    // OpenAPI branch goes through toOpenAIChat → flat canonical downcast to nested.
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'sandbox_read_file',
+          description: 'Read a file',
+          parameters: readFileTool.input_schema,
+        },
+      },
+    ]);
     expect(body.tool_choice).toBe('auto');
   });
 
@@ -1848,7 +1859,17 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
       makeEnv(),
     );
     const body = JSON.parse(get()!.init.body as string);
-    expect(body.tools).toEqual([readFileTool]);
+    // OpenAPI branch goes through toOpenAIChat → flat canonical downcast to nested.
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: 'sandbox_read_file',
+          description: 'Read a file',
+          parameters: readFileTool.input_schema,
+        },
+      },
+    ]);
     expect(body.tools).not.toContainEqual({ googleSearch: {} });
     expect(body.tool_choice).toBe('auto');
   });
@@ -1882,7 +1903,7 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
       {
         name: 'sandbox_read_file',
         description: 'Read a file',
-        input_schema: readFileTool.function.parameters,
+        input_schema: readFileTool.input_schema,
       },
     ]);
   });
@@ -2234,16 +2255,13 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
   it('translates neutral tools to Anthropic custom-tool shape on the direct Anthropic path', async () => {
     const get = captureUpstream();
     const tool = {
-      type: 'function',
-      function: {
-        name: 'sandbox_read_file',
-        description: 'Read a file',
-        parameters: {
-          type: 'object',
-          properties: { path: { type: 'string' } },
-          required: ['path'],
-          additionalProperties: false,
-        },
+      name: 'sandbox_read_file',
+      description: 'Read a file',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        additionalProperties: false,
       },
     };
     await handleAnthropicChat(
@@ -2259,7 +2277,7 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
       {
         name: 'sandbox_read_file',
         description: 'Read a file',
-        input_schema: tool.function.parameters,
+        input_schema: tool.input_schema,
       },
     ]);
   });
@@ -2483,16 +2501,13 @@ describe('handleGoogleChat — neutral wire (dual-accept)', () => {
         messages: [{ role: 'user', content: 'read it' }],
         tools: [
           {
-            type: 'function',
-            function: {
-              name: 'sandbox_read_file',
-              description: 'Read a file',
-              parameters: {
-                type: 'object',
-                properties: { path: { type: 'string', description: 'Repo-relative path' } },
-                required: ['path'],
-                additionalProperties: false,
-              },
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            input_schema: {
+              type: 'object',
+              properties: { path: { type: 'string', description: 'Repo-relative path' } },
+              required: ['path'],
+              additionalProperties: false,
             },
           },
         ],

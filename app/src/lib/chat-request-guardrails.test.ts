@@ -638,16 +638,13 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
 
   it('round-trips native tools + responseFormat (the Zen Go flip carries these)', () => {
     const tool = {
-      type: 'function' as const,
-      function: {
-        name: 'sandbox_write_file',
-        description: 'Write a file',
-        parameters: {
-          type: 'object' as const,
-          properties: { path: { type: 'string' as const } },
-          required: ['path'],
-          additionalProperties: false as const,
-        },
+      name: 'sandbox_write_file',
+      description: 'Write a file',
+      input_schema: {
+        type: 'object' as const,
+        properties: { path: { type: 'string' as const } },
+        required: ['path'],
+        additionalProperties: false as const,
       },
     };
     const wire = toPushStreamWire([{ role: 'user', content: 'hi' }], {
@@ -675,7 +672,7 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
         contract: PUSH_STREAM_WIRE_CONTRACT,
         model: 'glm-5.1',
         messages: [{ role: 'user', content: 'hi' }],
-        tools: [{ type: 'function' }], // missing function.name
+        tools: [{ description: 'Write a file' }], // missing name/input_schema
       }),
       POLICY,
     );

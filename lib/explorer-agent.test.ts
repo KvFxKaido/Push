@@ -91,16 +91,13 @@ describe('runExplorerAgent (PushStream consumer)', () => {
     ]);
     const nativeToolSchemas = [
       {
-        type: 'function' as const,
-        function: {
-          name: 'read_file',
-          description: 'Read file content',
-          parameters: {
-            type: 'object' as const,
-            properties: { path: { type: 'string' as const } },
-            required: ['path'],
-            additionalProperties: false,
-          },
+        name: 'read_file',
+        description: 'Read file content',
+        input_schema: {
+          type: 'object' as const,
+          properties: { path: { type: 'string' as const } },
+          required: ['path'],
+          additionalProperties: false,
         },
       },
     ];

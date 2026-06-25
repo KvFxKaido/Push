@@ -22,6 +22,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { flatToolToOpenAITool } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -58,6 +59,7 @@ export async function* bedrockStream(
 
   // 2. Plain OpenAI-compatible request body. The Worker forwards verbatim.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -68,7 +70,7 @@ export async function* bedrockStream(
     // Native function calling. Bedrock's OpenAI-compatible proxy accepts the
     // same tools/tool_choice shape as the other OpenAI-compatible adapters, and
     // the shared SSE pump emits native tool_calls as structured events.
-    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
   };
 
   // 3. Headers. The Worker reads `X-Push-Upstream-Base` to pick the upstream

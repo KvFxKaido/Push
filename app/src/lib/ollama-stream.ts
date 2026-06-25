@@ -12,6 +12,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { flatToolToOpenAITool } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -63,6 +64,7 @@ export async function* ollamaStream(
   //    Ollama Cloud has no provider-specific extensions on
   //    `/v1/chat/completions`.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -73,7 +75,7 @@ export async function* ollamaStream(
     ...(supportsReasoning ? { reasoning_effort: reasoningEffort } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
     // pump emits native tool_calls as structured events for dispatch.
-    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
   };
 
   // 4. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy

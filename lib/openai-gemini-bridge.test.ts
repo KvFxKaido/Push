@@ -14,6 +14,7 @@ import {
   toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
 import { openAISSEPump } from './openai-sse-pump.ts';
+import { flatToolToOpenAITool } from './openai-chat-serializer.ts';
 import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
@@ -44,18 +45,15 @@ async function collectChunks(stream: ReadableStream<Uint8Array>): Promise<string
 }
 
 const readFileTool: ToolFunctionSchema = {
-  type: 'function',
-  function: {
-    name: 'sandbox_read_file',
-    description: 'Read a file from the active workspace',
-    parameters: {
-      type: 'object',
-      properties: {
-        path: { type: 'string', description: 'Repo-relative path' },
-      },
-      required: ['path'],
-      additionalProperties: false,
+  name: 'sandbox_read_file',
+  description: 'Read a file from the active workspace',
+  input_schema: {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: 'Repo-relative path' },
     },
+    required: ['path'],
+    additionalProperties: false,
   },
 };
 
@@ -183,7 +181,7 @@ describe('buildGeminiGenerateContentRequest', () => {
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-3.1-pro-preview',
       messages: [{ role: 'user', content: 'Read README.md' }],
-      tools: [readFileTool],
+      tools: [flatToolToOpenAITool(readFileTool)],
       google_search_grounding: true,
     } as OpenAIChatRequest);
 
@@ -210,7 +208,7 @@ describe('buildGeminiGenerateContentRequest', () => {
     const withTools = buildGeminiGenerateContentRequest({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', content: 'Read README.md' }],
-      tools: [readFileTool],
+      tools: [flatToolToOpenAITool(readFileTool)],
       google_search_grounding: true,
     } as OpenAIChatRequest);
     // Only functionDeclarations — no googleSearch entry.
@@ -245,7 +243,8 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', content: 'go' }],
-      tools: [tool],
+      // Legacy entry takes OpenAI-nested tools; nest the flat canonical fixture.
+      tools: [flatToolToOpenAITool(tool)],
     } as OpenAIChatRequest);
     const tools = body.tools as Array<{ functionDeclarations: Array<Record<string, unknown>> }>;
     return tools[0].functionDeclarations[0];
@@ -253,12 +252,9 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
 
   it('omits `parameters` for a parameterless tool (no empty OBJECT)', () => {
     const noArg: ToolFunctionSchema = {
-      type: 'function',
-      function: {
-        name: 'sandbox_typecheck',
-        description: 'Run typecheck',
-        parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
-      },
+      name: 'sandbox_typecheck',
+      description: 'Run typecheck',
+      input_schema: { type: 'object', properties: {}, required: [], additionalProperties: false },
     };
     const d = decl(noArg);
     expect(d).toEqual({ name: 'sandbox_typecheck', description: 'Run typecheck' });
@@ -267,16 +263,13 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
 
   it('represents an open-ended object property as STRING', () => {
     const objParam: ToolFunctionSchema = {
-      type: 'function',
-      function: {
-        name: 'workflow_run',
-        description: 'Dispatch a workflow',
-        parameters: {
-          type: 'object',
-          properties: { inputs: { type: 'object' } },
-          required: ['inputs'],
-          additionalProperties: false,
-        },
+      name: 'workflow_run',
+      description: 'Dispatch a workflow',
+      input_schema: {
+        type: 'object',
+        properties: { inputs: { type: 'object' } },
+        required: ['inputs'],
+        additionalProperties: false,
       },
     };
     const params = decl(objParam).parameters as {
@@ -292,16 +285,13 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
 
   it('represents object-typed array items as STRING items', () => {
     const arrParam: ToolFunctionSchema = {
-      type: 'function',
-      function: {
-        name: 'edit_file',
-        description: 'Apply edits',
-        parameters: {
-          type: 'object',
-          properties: { edits: { type: 'array', items: { type: 'object' } } },
-          required: ['edits'],
-          additionalProperties: false,
-        },
+      name: 'edit_file',
+      description: 'Apply edits',
+      input_schema: {
+        type: 'object',
+        properties: { edits: { type: 'array', items: { type: 'object' } } },
+        required: ['edits'],
+        additionalProperties: false,
       },
     };
     const params = decl(arrParam).parameters as {
@@ -314,16 +304,13 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
     // A property whose value is not a valid schema object gets skipped; the
     // converter must not leave it dangling in `required` (Gemini rejects that too).
     const dangling: ToolFunctionSchema = {
-      type: 'function',
-      function: {
-        name: 'odd_tool',
-        description: 'x',
-        parameters: {
-          type: 'object',
-          properties: { path: { type: 'string' }, ghost: null as unknown as object },
-          required: ['path', 'ghost'],
-          additionalProperties: false,
-        },
+      name: 'odd_tool',
+      description: 'x',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' }, ghost: null as unknown as object },
+        required: ['path', 'ghost'],
+        additionalProperties: false,
       },
     };
     const params = decl(dangling).parameters as {
@@ -344,7 +331,7 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
     const body = buildGeminiGenerateContentRequest({
       model: 'gemini-2.5-flash',
       messages: [{ role: 'user', content: 'go' }],
-      tools,
+      tools: tools.map(flatToolToOpenAITool),
     } as OpenAIChatRequest);
 
     const offenders: string[] = [];

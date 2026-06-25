@@ -29,6 +29,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { flatToolToOpenAITool } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
@@ -154,6 +155,8 @@ export async function* vertexStream(
   //    legacy → the OpenAI Chat Completions shape `handleLegacyVertexChat` still
   //    expects. Both carry the matching search flag (only one is ever set).
   const isNeutral = mode === 'native';
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const neutralBase = isNeutral
     ? toPushStreamWire(llmMessages, {
         provider: 'vertex',
@@ -163,7 +166,7 @@ export async function* vertexStream(
         topP: req.topP,
         ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
         ...(googleSearchGrounding ? { googleSearchGrounding: true } : {}),
-        ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
+        ...(nativeTools ? { tools: nativeTools } : {}),
       })
     : null;
   const legacyBase: Record<string, unknown> | null = isNeutral
@@ -177,7 +180,7 @@ export async function* vertexStream(
         ...(req.topP !== undefined ? { top_p: req.topP } : {}),
         ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
         ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
-        ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: 'auto' } : {}),
+        ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
       };
 
   // 5. POST + stream response. Anthropic-transport models (Claude on Vertex)

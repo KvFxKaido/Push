@@ -264,6 +264,9 @@ describe('buildAnthropicMessagesRequest', () => {
       model: 'claude-opus-4-7',
       messages: [{ role: 'user', content: 'read it' }],
       stream: true,
+      // buildAnthropicMessagesRequest takes an OpenAIChatRequest (OpenAI-nested
+      // tools); it un-nests to the flat canonical, then emits the Anthropic
+      // custom-tool shape.
       tools: [
         {
           type: 'function',
@@ -271,7 +274,7 @@ describe('buildAnthropicMessagesRequest', () => {
         },
       ],
     });
-    // Flat shape: { name, description, input_schema } — not OpenAI-nested.
+    // Output is the Anthropic flat custom-tool shape { name, description, input_schema }.
     expect(body.tools).toEqual([
       { name: 'sandbox_read_file', description: 'Read a file', input_schema: params },
     ]);
@@ -411,8 +414,9 @@ describe('toAnthropicMessages — native tools', () => {
         messages: [{ id: '1', role: 'user', content: 'read it', timestamp: 0 } as LlmMessage],
         tools: [
           {
-            type: 'function',
-            function: { name: 'sandbox_read_file', description: 'Read a file', parameters: params },
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            input_schema: params,
           },
         ],
       } as PushStreamRequest<LlmMessage>,

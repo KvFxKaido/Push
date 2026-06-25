@@ -7,7 +7,7 @@ import {
 import { cliProviderModelSupportsNativeToolCalling } from '../native-tool-gate.ts';
 
 function byName(schemas) {
-  return new Map(schemas.map((schema) => [schema.function.name, schema]));
+  return new Map(schemas.map((schema) => [schema.name, schema]));
 }
 
 describe('CLI native tool function schemas', () => {
@@ -31,17 +31,14 @@ describe('CLI native tool function schemas', () => {
 
     assert.equal(schemas.has('read'), false, 'must not advertise web registry read name');
     assert.equal(schemas.has('search'), false, 'must not advertise web registry search name');
-    assert.deepEqual(schemas.get('read_file').function.parameters.required, ['path']);
-    assert.equal(
-      schemas.get('read_file').function.parameters.properties.start_line.type,
-      'integer',
-    );
-    assert.equal(schemas.get('exec_start').function.parameters.properties.tty.type, 'boolean');
+    assert.deepEqual(schemas.get('read_file').input_schema.required, ['path']);
+    assert.equal(schemas.get('read_file').input_schema.properties.start_line.type, 'integer');
+    assert.equal(schemas.get('exec_start').input_schema.properties.tty.type, 'boolean');
     // Exec session ids are strings (`exec_<base36>_<n>`); the executor calls
     // asString(session_id). The schema must not tell the model they're integers.
     for (const tool of ['exec_poll', 'exec_write', 'exec_stop']) {
       assert.equal(
-        schemas.get(tool).function.parameters.properties.session_id.type,
+        schemas.get(tool).input_schema.properties.session_id.type,
         'string',
         `${tool}.session_id must be string`,
       );
