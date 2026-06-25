@@ -21,6 +21,7 @@ import {
 } from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
+  createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
 import {
@@ -1008,7 +1009,12 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     }
 
     if (transport === 'anthropic') {
-      return new Response(upstream.body, {
+      // Multiplexed route: this handler's web client (`vertex-stream` /
+      // `zen-stream`) still parses with `openAISSEPump`, so the Anthropic-native
+      // upstream must be translated to OpenAI-SSE here. Direct Anthropic/Gemini
+      // routes proxy raw (their clients use the native event streams); migrating
+      // these multiplexed clients to native is tracked separately.
+      return new Response(createAnthropicTranslatedStream(upstream, model), {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',
@@ -1419,7 +1425,12 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
     }
 
     if (transport === 'anthropic') {
-      return new Response(upstream.body, {
+      // Multiplexed route: this handler's web client (`vertex-stream` /
+      // `zen-stream`) still parses with `openAISSEPump`, so the Anthropic-native
+      // upstream must be translated to OpenAI-SSE here. Direct Anthropic/Gemini
+      // routes proxy raw (their clients use the native event streams); migrating
+      // these multiplexed clients to native is tracked separately.
+      return new Response(createAnthropicTranslatedStream(upstream, model), {
         status: 200,
         headers: {
           'Content-Type': 'text/event-stream',
