@@ -22,6 +22,7 @@ import {
 } from './orchestrator-prompt-builder';
 import { manageContext } from './message-context-manager';
 import { transformContextBeforeLLM } from '@push/lib/context-transformer';
+import { type CacheControl, EPHEMERAL_CACHE_CONTROL } from '@push/lib/provider-contract';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import { estimateContextTokens } from './orchestrator-context';
 import { estimateTokens as estimateRawTokens } from '@push/lib/context-budget';
@@ -186,7 +187,7 @@ export function peekLastPromptSnapshot(
 interface LLMMessageContentText {
   type: 'text';
   text: string;
-  cache_control?: { type: 'ephemeral' };
+  cache_control?: CacheControl;
 }
 
 interface LLMMessageContentImage {
@@ -590,7 +591,7 @@ export function toLLMMessages(
     systemMessage = {
       role: 'system',
       content: [
-        { type: 'text', text: systemSegments.stable, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: systemSegments.stable, cache_control: EPHEMERAL_CACHE_CONTROL },
         { type: 'text', text: `\n\n${systemSegments.volatile}` },
       ] as LLMMessageContent[],
     };
@@ -600,7 +601,7 @@ export function toLLMMessages(
     systemMessage = {
       role: 'system',
       content: [
-        { type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: systemContent, cache_control: EPHEMERAL_CACHE_CONTROL },
       ] as LLMMessageContent[],
     };
   } else {
@@ -807,13 +808,13 @@ export function toLLMMessages(
       const msg = llmMessages[i];
       if (msg.role === 'system') continue;
       if (typeof msg.content === 'string') {
-        msg.content = [{ type: 'text', text: msg.content, cache_control: { type: 'ephemeral' } }];
+        msg.content = [{ type: 'text', text: msg.content, cache_control: EPHEMERAL_CACHE_CONTROL }];
         tagged++;
       } else if (Array.isArray(msg.content)) {
         // Already an array (e.g. from attachments) — tag the last text part.
         const lastPart = msg.content[msg.content.length - 1];
         if (lastPart.type === 'text') {
-          lastPart.cache_control = { type: 'ephemeral' };
+          lastPart.cache_control = EPHEMERAL_CACHE_CONTROL;
           tagged++;
         }
       }

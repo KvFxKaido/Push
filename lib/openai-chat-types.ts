@@ -23,11 +23,11 @@
  * trust this shape; they don't re-validate.
  */
 
-import type { ToolFunctionSchema } from './provider-contract.js';
+import type { CacheControl, ToolFunctionSchema } from './provider-contract.js';
 
 export type OpenAIContentPart =
-  | { type: 'text'; text?: string; cache_control?: { type: 'ephemeral' } }
-  | { type: 'image_url'; image_url?: { url?: string }; cache_control?: { type: 'ephemeral' } };
+  | { type: 'text'; text?: string; cache_control?: CacheControl }
+  | { type: 'image_url'; image_url?: { url?: string }; cache_control?: CacheControl };
 
 /** Structured reasoning blocks attached to a prior assistant message.
  *  Push-private extension — not part of OpenAI's public schema. The

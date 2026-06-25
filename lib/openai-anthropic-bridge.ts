@@ -10,6 +10,7 @@ import type {
   PushStreamRequest,
 } from './provider-contract.ts';
 import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provider-contract.ts';
+import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withContentBlocks } from './content-blocks.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
@@ -203,7 +204,7 @@ function contentPartsToAnthropic(
   if (tagLast) {
     for (let i = blocks.length - 1; i >= 0; i -= 1) {
       if (blocks[i].type === 'text') {
-        blocks[i].cache_control = { type: 'ephemeral' };
+        blocks[i].cache_control = EPHEMERAL_CACHE_CONTROL;
         break;
       }
     }
@@ -315,7 +316,7 @@ function llmContentBlocksToAnthropic(
   if (tagLast) {
     for (let i = out.length - 1; i >= 0; i -= 1) {
       if (out[i].type === 'text') {
-        out[i].cache_control = { type: 'ephemeral' };
+        out[i].cache_control = EPHEMERAL_CACHE_CONTROL;
         break;
       }
     }
@@ -759,7 +760,7 @@ export function toAnthropicMessages(
   const toContent = (content: string, tagged: boolean): Array<Record<string, unknown>> =>
     tagged
       ? convertOpenAIContentToAnthropic([
-          { type: 'text', text: content, cache_control: { type: 'ephemeral' } },
+          { type: 'text', text: content, cache_control: EPHEMERAL_CACHE_CONTROL },
         ])
       : convertOpenAIContentToAnthropic(content);
 
