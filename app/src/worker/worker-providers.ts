@@ -52,6 +52,7 @@ import type {
   ResponseFormatSpec,
   ToolFunctionSchema,
 } from '@push/lib/provider-contract';
+import { parseNativeToolCallArgs } from '@push/lib/openai-sse-pump';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { KNOWN_TOOL_NAMES } from '@push/lib/tool-call-diagnosis';
 // --- Cloudflare Workers AI ---
@@ -221,23 +222,21 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   req.signal?.addEventListener('abort', onAbort, { once: true });
 
   // Native function calling: Kimi/GLM answer with OpenAI `delta.tool_calls`
-  // (name + args split across frames). Accumulate by index and flush as the
-  // same fenced JSON `{"tool","args"}` the dispatcher consumes — mirrors
-  // `openai-sse-pump`'s flushNativeToolCalls. Without this the native call is
-  // dropped here and the client pump never sees it, so the turn reaches the
-  // Coder as an empty completion. Filtered by KNOWN_TOOL_NAMES so a
-  // hallucinated function name doesn't reach the dispatcher.
-  const pendingToolCalls = new Map<number, { name: string; args: string }>();
+  // (name + args split across frames). Accumulate by index and flush as
+  // structured native_tool_call events. The outer Worker response serializer
+  // converts those back to OpenAI `delta.tool_calls` frames so the browser pump
+  // can dispatch them without fenced assistant text. Filtered by
+  // KNOWN_TOOL_NAMES so a hallucinated function name doesn't reach dispatch.
+  const pendingToolCalls = new Map<number, { id: string; name: string; args: string }>();
   function* flushToolCalls(): Generator<PushStreamEvent> {
     if (pendingToolCalls.size === 0) return;
     for (const [, tc] of pendingToolCalls) {
       const known = Boolean(tc.name && KNOWN_TOOL_NAMES.has(tc.name));
-      let parsedArgs: unknown;
+      const parsedArgs = parseNativeToolCallArgs(tc.args);
       let parsedOk = true;
       try {
-        parsedArgs = tc.args ? JSON.parse(tc.args) : {};
+        if (tc.args) JSON.parse(tc.args);
       } catch {
-        parsedArgs = {};
         parsedOk = false;
       }
       // Observability for the native-function-calling path (#955). Lets us see
@@ -252,8 +251,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       });
       if (!known) continue;
       yield {
-        type: 'text_delta',
-        text: `\n\`\`\`json\n${JSON.stringify({ tool: tc.name, args: parsedArgs })}\n\`\`\`\n`,
+        type: 'native_tool_call',
+        call: {
+          ...(tc.id ? { id: tc.id } : {}),
+          name: tc.name,
+          args: parsedArgs,
+        },
       };
     }
     pendingToolCalls.clear();
@@ -301,18 +304,20 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
       if (Array.isArray(toolCalls)) {
         for (const tc of toolCalls as Array<{
           index?: unknown;
+          id?: unknown;
           function?: { name?: unknown; arguments?: unknown };
         }>) {
           const idx = typeof tc?.index === 'number' ? tc.index : 0;
           const fnCall = tc?.function;
           if (!fnCall) continue;
-          const entry = pendingToolCalls.get(idx) ?? { name: '', args: '' };
+          const entry = pendingToolCalls.get(idx) ?? { id: '', name: '', args: '' };
+          if (typeof tc?.id === 'string') entry.id = tc.id;
           if (typeof fnCall.name === 'string') entry.name = fnCall.name;
           if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
           pendingToolCalls.set(idx, entry);
         }
       }
-      // Flush as fenced JSON when the model signals completion of the call(s).
+      // Flush structured native tool calls when the model signals completion.
       const finishReason = parsed.choices?.[0]?.finish_reason;
       if (typeof finishReason === 'string' && finishReason) {
         yield* flushToolCalls();
@@ -473,12 +478,37 @@ export async function handleCloudflareChat(request: Request, env: Env): Promise<
           // models (DeepSeek-R1, QwQ) pass through unchanged.
           const rawStream = cloudflareStream({ ...pushReq, signal: abortController.signal }, env);
           const stream = normalizeReasoning(rawStream);
+          let nativeToolCallIndex = 0;
           for await (const event of stream) {
             if (abortController.signal.aborted) break;
             if (event.type === 'text_delta') {
               c.enqueue(
                 encoder.encode(
                   `data: ${JSON.stringify({ choices: [{ delta: { content: event.text } }] })}\n\n`,
+                ),
+              );
+            } else if (event.type === 'native_tool_call') {
+              c.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({
+                    choices: [
+                      {
+                        delta: {
+                          tool_calls: [
+                            {
+                              index: nativeToolCallIndex++,
+                              ...(event.call.id ? { id: event.call.id } : {}),
+                              type: 'function',
+                              function: {
+                                name: event.call.name,
+                                arguments: JSON.stringify(event.call.args ?? {}),
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  })}\n\n`,
                 ),
               );
             } else if (event.type === 'reasoning_delta') {

@@ -1,5 +1,6 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type {
+  NativeToolCall,
   PreCompactEvent,
   PushStream,
   PushStreamEvent,
@@ -439,6 +440,7 @@ export async function streamChat(
   sessionDigest?: SessionDigestPlumbing,
   linkedLibraryContent?: string,
   onCitations?: (citations: UrlCitation[]) => void,
+  onNativeToolCall?: (call: NativeToolCall) => void,
 ): Promise<void> {
   const provider = providerOverride || getActiveProvider();
 
@@ -511,6 +513,7 @@ export async function streamChat(
       onThinkingToken,
       onReasoningBlock,
       onCitations,
+      onNativeToolCall,
     },
     {
       timeouts: buildChatTimeouts(provider),

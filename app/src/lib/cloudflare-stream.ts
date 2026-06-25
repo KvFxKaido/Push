@@ -75,7 +75,7 @@ export async function* cloudflareStream(
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
     // Native function calling. The Worker forwards `tools` to `env.AI.run` for
     // models that support it (Kimi/GLM); the binding emits native `tool_calls`
-    // which `openai-sse-pump` normalizes back into fenced JSON. Additive to the
+    // which the Worker forwards as structured tool-call frames. Additive to the
     // prompt-described tool path. `tool_choice: 'auto'` keeps prose answers
     // available when no tool is needed.
     ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: 'auto' } : {}),

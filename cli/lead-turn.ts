@@ -52,6 +52,7 @@ import type { ProviderConfig } from './provider.js';
 import { getCliNativeToolSchemas } from './tool-function-schemas.js';
 import {
   detectAllToolCalls as cliDetectAllToolCalls,
+  detectNativeToolCalls as cliDetectNativeToolCalls,
   detectToolCall as cliDetectToolCall,
   executeToolCall,
   getGitHubToolProtocolAsync,
@@ -77,6 +78,7 @@ import { maybeCompactLeadHistory } from './lead-compaction.js';
 import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import type { RunOptions, RunResult } from './engine.js';
+import type { NativeToolCall } from '../lib/provider-contract.js';
 
 // ─── CLI call shapes ─────────────────────────────────────────────
 
@@ -121,6 +123,17 @@ function wrapCall(call: CliToolCall): CliKernelCall {
  */
 export function wrapCliDetectAllToolCalls(text: string): DetectedToolCalls<CliKernelCall> {
   const { calls } = cliDetectAllToolCalls(text) as { calls: CliToolCall[] };
+  return classifyCliToolCalls(calls);
+}
+
+export function wrapCliDetectNativeToolCalls(
+  nativeCalls: readonly NativeToolCall[],
+): DetectedToolCalls<CliKernelCall> {
+  const { calls } = cliDetectNativeToolCalls(nativeCalls) as { calls: CliToolCall[] };
+  return classifyCliToolCalls(calls);
+}
+
+function classifyCliToolCalls(calls: readonly CliToolCall[]): DetectedToolCalls<CliKernelCall> {
   const readOnly: CliKernelCall[] = [];
   const fileMutations: CliKernelCall[] = [];
   const extraMutations: CliKernelCall[] = [];
@@ -615,6 +628,7 @@ export async function runLeadKernelTurn(
         symbolSummary: null,
         toolExec,
         detectAllToolCalls: wrapCliDetectAllToolCalls,
+        detectNativeToolCalls: wrapCliDetectNativeToolCalls,
         detectAnyToolCall: wrapCliDetectAnyToolCall,
         webSearchToolProtocol: '',
         // The CLI's full tool protocol rides the kernel's sandbox slot, same

@@ -24,7 +24,7 @@
  * `branch-fork-migration.ts`.
  */
 
-import { detectAllToolCalls, detectAnyToolCall } from '@/lib/tool-dispatch';
+import { detectAllToolCalls, detectAnyToolCall, detectNativeToolCalls } from '@/lib/tool-dispatch';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
@@ -35,6 +35,7 @@ import {
   type SimilarityLoopDetector,
 } from '@push/lib/loop-detection';
 import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { NativeToolCall } from '@push/lib/provider-contract';
 import {
   createLoopLadderState,
   createTurnRunContext,
@@ -103,22 +104,20 @@ export async function processAssistantTurn(
   },
   loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector(),
   loopLadder: LoopLadderState = createLoopLadderState(),
+  nativeToolCalls: readonly NativeToolCall[] = [],
 ): Promise<AssistantTurnResult> {
   const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
 
-  // --- Detect all tool calls in one pass ---
-  const detected = detectAllToolCalls(accumulated);
+  const detected =
+    nativeToolCalls.length > 0
+      ? detectNativeToolCalls(nativeToolCalls)
+      : detectAllToolCalls(accumulated);
   const parallelToolCalls = detected.readOnly;
 
-  // Measurement pass for the schema-deferral decision: record whether this
-  // protocol-paying turn actually called a GitHub tool. See the helper.
+  // Measurement pass for the schema-deferral decision.
   recordGithubToolTurnUsage(detected, ctx, round);
 
-  // --- Circuit breaker: evaluate the per-turn loop verdict (exact-match
-  // breakers + graded near-duplicate ladder). `handleLoopVerdict` returns a
-  // turn result when the loop fires (abort → break; warn/block/compact →
-  // inject steering + skip the batch), else null to proceed. See
-  // `checkLoopBreaker` for the trip rules.
+  // Exact-match breakers + graded near-duplicate ladder.
   const loopResult = handleLoopVerdict(
     detected,
     tracker,
@@ -217,7 +216,14 @@ export async function processAssistantTurn(
     );
   }
 
-  const toolCall = detectAnyToolCall(accumulated);
+  const singleDetectedCalls = detected.readOnly.concat(
+    detected.parallelDelegations ?? [],
+    detected.fileMutations,
+    detected.mutating ? [detected.mutating] : [],
+  );
+  const nativeSingle = singleDetectedCalls.length === 1 ? singleDetectedCalls[0] : null;
+  // Text path keeps detectAnyToolCall's recovery (bare-args/namespaced/xml/token) that detectAllToolCalls gates off (#1162).
+  const toolCall = nativeToolCalls.length > 0 ? nativeSingle : detectAnyToolCall(accumulated);
   if (!toolCall) {
     return processNoToolPath(
       round,

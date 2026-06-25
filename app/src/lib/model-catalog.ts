@@ -597,11 +597,10 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *     unknowns stay text-dispatch.
  *   - **Direct Anthropic** — name-based against the curated direct-provider
  *     catalog; the neutral Worker path translates schemas to Anthropic custom
- *     tools and normalizes `tool_use` back to fenced JSON.
+ *     tools and surfaces `tool_use` as structured native tool-call events.
  * Other providers stay on the text-dispatch tool protocol until native tool
- * calling is wired and validated for them. Additive regardless: `openai-sse-pump`
- * normalizes any native `tool_calls` back into the fenced JSON the dispatcher
- * consumes, so a non-gated model simply never receives a `tools` array.
+ * calling is wired and validated for them. Additive regardless: non-gated
+ * models simply never receive a `tools` array.
  */
 export function providerModelSupportsNativeToolCalling(
   provider: string,

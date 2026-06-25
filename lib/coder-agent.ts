@@ -49,6 +49,7 @@ import type {
   AIProviderType,
   LlmContentPart,
   LlmMessage,
+  NativeToolCall,
   LlmToolResultBlock,
   LlmToolUseBlock,
   PushStream,
@@ -901,6 +902,9 @@ export interface CoderAgentOptions<TCall, TCard> {
   /** Multi-call detector (reads + optional trailing mutation). */
   detectAllToolCalls: (text: string) => DetectedToolCalls<TCall>;
 
+  /** Structured provider-native tool-call detector. Omitted keeps text dispatch only. */
+  detectNativeToolCalls?: (calls: readonly NativeToolCall[]) => DetectedToolCalls<TCall>;
+
   /** Single-call detector. */
   detectAnyToolCall: (text: string) => TCall | null;
 
@@ -1019,8 +1023,8 @@ export interface CoderAgentOptions<TCall, TCard> {
    * Native function-calling tool schemas to attach to each round's request
    * (the OpenAI `tools` array). Set by the caller only for models that support
    * native tool calling; the provider adapter serializes it. Additive to the
-   * prompt-described tool protocol — native `tool_calls` are normalized back
-   * into fenced JSON by `openai-sse-pump`, so the dispatch path is unchanged.
+   * prompt-described tool protocol — native `tool_calls` are dispatched from
+   * structured stream events, while text-dispatch models keep using fenced JSON.
    * Omitted ⇒ text-dispatch only (today's behavior for every other model).
    */
   nativeToolSchemas?: ToolFunctionSchema[];
@@ -1087,6 +1091,7 @@ export async function runCoderAgent<TCall, TCard>(
     symbolSummary,
     toolExec: rawToolExec,
     detectAllToolCalls,
+    detectNativeToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
     sandboxToolProtocol,
@@ -1531,6 +1536,7 @@ export async function runCoderAgent<TCall, TCard>(
       error: streamError,
       text: rawModelText,
       reasoningText,
+      nativeToolCalls,
       usage: roundUsage,
     } = await iteratePushStreamText(
       cancellableStream,
@@ -1613,7 +1619,8 @@ export async function runCoderAgent<TCall, TCard>(
     const reasoningHasToolCall = Boolean(
       detectAnyToolCall(reasoningText) ||
         detectUpdateStateCall(reasoningText) ||
-        detectCheckpointCall(reasoningText),
+        detectCheckpointCall(reasoningText) ||
+        nativeToolCalls.length > 0,
     );
     const promotedReasoningAnswer = promoteReasoningAnswer(
       rawModelText,
@@ -1668,6 +1675,7 @@ export async function runCoderAgent<TCall, TCard>(
     const buriedReasoningCall =
       reasoningToolCallNudges < MAX_REASONING_TOOL_CALL_NUDGES &&
       reasoningText.trim().length > 0 &&
+      nativeToolCalls.length === 0 &&
       !detectAnyToolCall(accumulated)
         ? detectAnyToolCall(reasoningText)
         : null;
@@ -1750,7 +1758,10 @@ export async function runCoderAgent<TCall, TCard>(
     }
 
     // Check for multiple tool calls (parallel reads + file-mutation batch + optional trailing side-effect)
-    const detected = detectAllToolCalls(accumulated);
+    const detected =
+      nativeToolCalls.length > 0 && detectNativeToolCalls
+        ? detectNativeToolCalls(nativeToolCalls)
+        : detectAllToolCalls(accumulated);
 
     // --- Dropped-candidate guard: the model emitted one or more
     // `{tool, args}` shapes that no source validated (wrong args,
@@ -2326,7 +2337,14 @@ export async function runCoderAgent<TCall, TCard>(
       }
 
       // If only a state update was emitted (no sandbox tool AND no checkpoint), inject ack and continue
-      const otherToolCall = detectAnyToolCall(accumulated);
+      const otherToolCall =
+        nativeToolCalls.length > 0 && detectNativeToolCalls
+          ? detected.readOnly[0] ||
+            detected.fileMutations[0] ||
+            detected.mutating ||
+            detected.extraMutations[0] ||
+            null
+          : detectAnyToolCall(accumulated);
       if (!otherToolCall) {
         const checkpointInSameTurn = detectCheckpointCall(accumulated);
         if (!checkpointInSameTurn) {
@@ -2348,7 +2366,18 @@ export async function runCoderAgent<TCall, TCard>(
     }
 
     // Check for single tool call (sandbox or web search)
-    const toolCall = detectAnyToolCall(accumulated);
+    const singleDetectedCalls = [
+      ...detected.readOnly,
+      ...(detected.parallelDelegations ?? []),
+      ...detected.fileMutations,
+      ...(detected.mutating ? [detected.mutating] : []),
+    ];
+    const toolCall =
+      nativeToolCalls.length > 0 && detectNativeToolCalls
+        ? singleDetectedCalls.length === 1
+          ? singleDetectedCalls[0]
+          : null
+        : detectAnyToolCall(accumulated);
 
     if (!toolCall) {
       // Check for interactive checkpoint (Coder asking Orchestrator for guidance)

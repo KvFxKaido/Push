@@ -72,7 +72,7 @@ export async function* ollamaStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     ...(supportsReasoning ? { reasoning_effort: reasoningEffort } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
-    // pump normalizes native tool_calls back into fenced JSON for dispatch.
+    // pump emits native tool_calls as structured events for dispatch.
     ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
   };
 

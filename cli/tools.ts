@@ -1161,6 +1161,7 @@ function clamp(value, min, max) {
 // See docs/decisions/Tool-Call Parser Convergence Gap.md for the full
 // four-layer analysis.
 import { createToolDispatcher, PASS_THROUGH_CLI_SOURCE } from '../lib/tool-dispatch.js';
+import type { NativeToolCall } from '../lib/provider-contract.js';
 
 const cliToolDispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
 
@@ -1169,6 +1170,13 @@ export function detectAllToolCalls(text: string): {
   malformed: { reason: string; sample: string; rawToolName?: string }[];
 } {
   return cliToolDispatcher.detectAllToolCalls(text);
+}
+
+export function detectNativeToolCalls(calls: readonly NativeToolCall[]): {
+  calls: { tool: string; args: Record<string, unknown> }[];
+  malformed: { reason: string; sample: string; rawToolName?: string }[];
+} {
+  return cliToolDispatcher.detectNativeToolCalls(calls);
 }
 
 export function detectToolCall(text) {

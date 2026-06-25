@@ -8,7 +8,7 @@ import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provide
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
-import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
+import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
 
 /**
  * Reserved tool name for the structured-output forced tool. Anthropic has no
@@ -529,9 +529,9 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // Tools array: native function-calling schemas (translated to Anthropic's flat
   // custom-tool shape) plus the server-side web-search tool, in one array —
   // Anthropic accepts a mix. Function tools come first; the model emits a
-  // `tool_use` content block per call, which the SSE translators turn back into
-  // the OpenAI `tool_calls` / fenced-JSON the dispatcher consumes (additive to
-  // text-dispatch). Web search emits `server_tool_use` + `web_search_tool_result`
+  // `tool_use` content block per call, which the SSE translators surface as
+  // structured native tool-call events (additive to text-dispatch). Web search
+  // emits `server_tool_use` + `web_search_tool_result`
   // blocks instead; the translators capture those for pause_turn but never surface
   // them as tool calls, so the user just sees the model's narration + citations.
   const anthropicTools: Array<Record<string, unknown>> = [];
@@ -1193,8 +1193,7 @@ export async function* anthropicEventStream(
   const inputJsonBuffers = new Map<number, string>();
   // Per-index model `tool_use` blocks (native function calls). No downstream
   // pump here (the CLI consumes events directly), so we accumulate name + args
-  // and flush each as the same fenced JSON `text_delta` the pump emits — keeping
-  // event-for-event parity with the translate→pump path (pinned by the drift test).
+  // and flush each as a structured native_tool_call event.
   const toolUseBlocks = new Map<number, { id: string; name: string; args: string }>();
   // Structured-output forced-tool blocks: their `input` streams out as plain
   // text content (mirrors the web translator), so the JSON arrives as message
@@ -1203,7 +1202,14 @@ export async function* anthropicEventStream(
   function* flushToolUse(): Generator<PushStreamEvent> {
     for (const [, tc] of toolUseBlocks) {
       if (!tc.name) continue;
-      yield { type: 'text_delta', text: formatNativeToolCallFenced(tc.name, tc.args) };
+      yield {
+        type: 'native_tool_call',
+        call: {
+          ...(tc.id ? { id: tc.id } : {}),
+          name: tc.name,
+          args: parseNativeToolCallArgs(tc.args),
+        },
+      };
     }
     toolUseBlocks.clear();
   }

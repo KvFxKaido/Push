@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { detectAllToolCalls, diagnoseToolCallFailure, detectAnyToolCall } from './tool-dispatch';
+import {
+  detectAllToolCalls,
+  detectNativeToolCalls,
+  diagnoseToolCallFailure,
+  detectAnyToolCall,
+} from './tool-dispatch';
 import { repairToolJson, detectToolFromText, diagnoseJsonSyntaxError } from './utils';
 
 // ---------------------------------------------------------------------------
@@ -396,6 +401,59 @@ describe('diagnoseToolCallFailure natural language intent detection', () => {
 });
 
 describe('detectAllToolCalls', () => {
+  it('classifies structured native tool calls without fenced text', () => {
+    const detected = detectNativeToolCalls([
+      { id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } },
+    ]);
+
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.readOnly[0]).toMatchObject({
+      source: 'sandbox',
+      call: { tool: 'sandbox_read_file', args: { path: '/workspace/README.md' } },
+    });
+    expect(detected.droppedCandidates).toHaveLength(0);
+  });
+
+  it('reports malformed structured native tool calls through dropped candidates', () => {
+    const detected = detectNativeToolCalls([
+      { id: 'call_1', name: 'not_a_tool', args: { path: 'README.md' } },
+    ]);
+
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.droppedCandidates).toEqual([
+      {
+        rawToolName: 'not_a_tool',
+        resolvedToolName: null,
+        sample: '{"id":"call_1","tool":"not_a_tool","args":{"path":"README.md"}}',
+      },
+    ]);
+  });
+
+  // Regression: the web lead's single-call TEXT path must use detectAnyToolCall,
+  // not a call derived from detectAllToolCalls. The two diverge on bare-args
+  // recovery — a non-cooperating model emitting just the args object (no
+  // {"tool","args"} wrapper) is recovered by detectAnyToolCall's
+  // tryRecoverBareToolArgs, while detectAllToolCalls deliberately gates bare-args
+  // inference on hasExplicitWrappers (to avoid firing on prose JSON examples), so
+  // its grouped result surfaces no call. Swapping the detector silently drops the
+  // call into the no-tool path. (#1162 review, Codex P1.)
+  it('recovers a bare-args single call via detectAnyToolCall that detectAllToolCalls gates off', () => {
+    const bareArgs = 'Let me read it.\n{"path": "README.md"}';
+
+    const recovered = detectAnyToolCall(bareArgs);
+    expect(recovered).not.toBeNull();
+    expect(recovered?.source).toBe('sandbox');
+
+    const grouped = detectAllToolCalls(bareArgs);
+    const singleFromGrouped = [
+      ...grouped.readOnly,
+      ...(grouped.parallelDelegations ?? []),
+      ...grouped.fileMutations,
+      ...(grouped.mutating ? [grouped.mutating] : []),
+    ];
+    expect(singleFromGrouped).toHaveLength(0);
+  });
+
   it('detects delegate_explorer JSON blocks as delegation tool calls', () => {
     const text =
       '```json\n{"tool":"delegate_explorer","args":{"task":"trace auth flow","files":["src/auth.ts"]}}\n```';

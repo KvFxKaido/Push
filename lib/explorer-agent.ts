@@ -29,6 +29,7 @@
 import type {
   AIProviderType,
   LlmMessage,
+  NativeToolCall,
   PushStream,
   ToolFunctionSchema,
 } from './provider-contract.js';
@@ -324,6 +325,9 @@ export interface ExplorerAgentOptions<TCall, TCard> {
   /** Multi-call detector (reads + optional trailing mutation). */
   detectAllToolCalls: (text: string) => DetectedToolCalls<TCall>;
 
+  /** Structured provider-native tool-call detector. Omitted keeps text dispatch only. */
+  detectNativeToolCalls?: (calls: readonly NativeToolCall[]) => DetectedToolCalls<TCall>;
+
   /** Single-call detector. */
   detectAnyToolCall: (text: string) => TCall | null;
 
@@ -413,6 +417,7 @@ export async function runExplorerAgent<TCall, TCard>(
     symbolSummary,
     toolExec,
     detectAllToolCalls,
+    detectNativeToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol,
     nativeToolSchemas,
@@ -513,7 +518,11 @@ export async function runExplorerAgent<TCall, TCard>(
     rounds = round + 1;
     callbacks.onStatus('Explorer investigating...', `Round ${rounds}`);
 
-    const { error: streamError, text: rawAccumulated } = await iteratePushStreamText(
+    const {
+      error: streamError,
+      text: rawAccumulated,
+      nativeToolCalls,
+    } = await iteratePushStreamText(
       cancellableStream,
       {
         provider,
@@ -559,7 +568,10 @@ export async function runExplorerAgent<TCall, TCard>(
       callbacks.onStatus('Explorer reasoning', reasoningSnippet);
     }
 
-    const detected = detectAllToolCalls(accumulated);
+    const detected =
+      nativeToolCalls.length > 0 && detectNativeToolCalls
+        ? detectNativeToolCalls(nativeToolCalls)
+        : detectAllToolCalls(accumulated);
 
     // --- Dropped-candidate guard: the model emitted one or more
     // `{tool, args}` shapes that no source validated (wrong args,
@@ -647,7 +659,18 @@ export async function runExplorerAgent<TCall, TCard>(
       continue;
     }
 
-    const toolCall = detectAnyToolCall(accumulated);
+    const singleDetectedCalls = [
+      ...detected.readOnly,
+      ...(detected.parallelDelegations ?? []),
+      ...detected.fileMutations,
+      ...(detected.mutating ? [detected.mutating] : []),
+    ];
+    const toolCall =
+      nativeToolCalls.length > 0 && detectNativeToolCalls
+        ? singleDetectedCalls.length === 1
+          ? singleDetectedCalls[0]
+          : null
+        : detectAnyToolCall(accumulated);
     if (toolCall) {
       const toolName = (toolCall as unknown as { call?: { tool?: string } }).call?.tool ?? 'tool';
       callbacks.onStatus('Explorer executing...', toolName);

@@ -7,7 +7,7 @@ import type {
   StreamUsage,
   ToolFunctionSchema,
 } from './provider-contract.ts';
-import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
+import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
 
 /**
@@ -545,7 +545,7 @@ function buildOpenAISseChunk(params: {
     delta.tool_calls = [
       {
         index: params.toolCall.index,
-        id: params.toolCall.id ?? `call_${crypto.randomUUID()}`,
+        ...(params.toolCall.id ? { id: params.toolCall.id } : {}),
         type: 'function',
         function: fn,
       },
@@ -835,8 +835,11 @@ export async function* geminiEventStream(
   function* flushFunctionCalls(): Generator<PushStreamEvent> {
     for (const call of pendingFunctionCalls) {
       yield {
-        type: 'text_delta',
-        text: formatNativeToolCallFenced(call.name, call.argsJson),
+        type: 'native_tool_call',
+        call: {
+          name: call.name,
+          args: parseNativeToolCallArgs(call.argsJson),
+        },
       };
     }
     pendingFunctionCalls.length = 0;

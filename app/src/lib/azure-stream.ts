@@ -67,7 +67,7 @@ export async function* azureStream(
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
-    // pump normalizes native tool_calls back into fenced JSON for dispatch.
+    // pump emits native tool_calls as structured events for dispatch.
     ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared

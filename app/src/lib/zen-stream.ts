@@ -61,8 +61,8 @@ export async function* zenStream(
   //      (`handleZenChat`) is a plain stream proxy with no dual-accept, so it must
   //      receive an OpenAI-shape body. Standard Zen is pure OpenAI-compat (no
   //      Anthropic transport) and was never a migration target.
-  //  Native FC is additive either way — `openAISSEPump` normalizes any native
-  //  `tool_calls` back into the dispatcher's fenced JSON. Anthropic-transport Go
+  //  Native FC is additive either way — `openAISSEPump` emits complete native
+  //  `tool_calls` as structured `native_tool_call` events. Anthropic-transport Go
   //  models (minimax/qwen) translate `tools` to Anthropic's custom-tool shape via
   //  `toAnthropicMessages`, and their `tool_use` responses round-trip through
   //  `createAnthropicTranslatedStream` — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.

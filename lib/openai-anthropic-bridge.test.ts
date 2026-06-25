@@ -1275,8 +1275,8 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
     },
     {
       // A model `tool_use` block: both paths stream tool_call_delta markers and
-      // flush the call as the same fenced JSON text_delta on stop.
-      name: 'native tool_use block -> fenced tool call',
+      // flush the call as a structured native_tool_call on stop.
+      name: 'native tool_use block -> native tool call',
       lines: [
         'data: {"type":"message_start","message":{"usage":{"input_tokens":9,"output_tokens":0}}}',
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',

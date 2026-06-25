@@ -45,7 +45,12 @@ import type {
   ExplorerResult,
 } from '@/types';
 import { getUserProfile } from '@/hooks/useUserProfile';
-import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
+import {
+  detectAllToolCalls,
+  detectAnyToolCall,
+  detectNativeToolCalls,
+  type AnyToolCall,
+} from './tool-dispatch';
 import { EXPLORER_ALLOWED_TOOLS } from './explorer-constants';
 import { createToolHookRegistry, type ToolHookRegistry } from './tool-hooks';
 import { getModelForRole } from './providers';
@@ -198,6 +203,7 @@ export async function runExplorerAgent(
       return entry;
     },
     detectAllToolCalls,
+    detectNativeToolCalls,
     detectAnyToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     evaluateAfterModel: async (response, round): Promise<ExplorerAfterModelResult> => {

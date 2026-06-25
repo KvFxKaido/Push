@@ -312,10 +312,16 @@ export type PushStreamEvent =
   // Native `delta.tool_calls` fragment from an OpenAI-shaped provider.
   // Streams emit one per fragment so the adapter's content timer can see
   // progress while a model is mid-way through a long tool-arg payload.
-  // The fragment payload itself stays internal to the provider stream — by
-  // the time a consumer cares about tool dispatch, the stream has flushed
-  // the assembled call as fenced JSON `text_delta` on finish.
+  // The fragment payload itself stays internal to the provider stream; the
+  // assembled call is surfaced separately as `native_tool_call` on flush.
   | { type: 'tool_call_delta' }
+  /**
+   * Complete provider-native function/tool call. Native-tool providers emit
+   * this once the provider has assembled the full call name + arguments, so
+   * dispatch consumers can validate and execute the structured payload without
+   * first round-tripping it through fenced assistant text.
+   */
+  | { type: 'native_tool_call'; call: NativeToolCall }
   /**
    * Emitted by the Anthropic bridge when the upstream returns
    * `stop_reason: pause_turn` — the server-side sampling loop hit its
@@ -333,6 +339,15 @@ export type PushStreamEvent =
       finishReason: 'stop' | 'length' | 'tool_calls' | 'aborted' | 'unknown';
       usage?: StreamUsage;
     };
+
+export interface NativeToolCall {
+  /** Provider-supplied tool-call id when the upstream exposes one. */
+  id?: string;
+  /** Provider-native function/tool name. */
+  name: string;
+  /** Provider-native argument payload. Tool dispatch validates this shape. */
+  args: unknown;
+}
 
 /**
  * Provider-agnostic request for a JSON-Schema-constrained response, mapping to
@@ -475,8 +490,9 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    * Native function-calling tool schemas (OpenAI `tools` array). Attached only
    * for models that support native function calling; adapters serialize it
    * alongside `tool_choice: 'auto'`. Purely additive to the text-dispatch tool
-   * protocol — `openai-sse-pump` normalizes any native `tool_calls` back into
-   * the fenced JSON the dispatcher consumes, so the two paths converge.
+   * protocol — provider streams surface complete native calls as
+   * `native_tool_call` events, while non-native/text-dispatch models keep using
+   * fenced JSON in assistant text.
    * Adapters that don't support it ignore the field. See `ToolFunctionSchema`
    * and `lib/tool-function-schemas.ts`.
    */

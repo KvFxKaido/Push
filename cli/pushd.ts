@@ -2865,8 +2865,12 @@ function resolveRoleRouting(entry, role) {
  * existing test imports (`cli/tests/daemon-integration.test.mjs`) keep
  * resolving against pushd.
  */
-import { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall } from './lead-turn.js';
-export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall };
+import {
+  wrapCliDetectAllToolCalls,
+  wrapCliDetectAnyToolCall,
+  wrapCliDetectNativeToolCalls,
+} from './lead-turn.js';
+export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall, wrapCliDetectNativeToolCalls };
 
 /**
  * Build a `CoderToolExecResult`-shaped tool executor bound to a running
@@ -3229,6 +3233,7 @@ async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleE
       symbolSummary: null,
       toolExec,
       detectAllToolCalls: wrapCliDetectAllToolCalls,
+      detectNativeToolCalls: wrapCliDetectNativeToolCalls,
       detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
       // `sandboxToolProtocol` replaces the kernel's default
@@ -3368,6 +3373,7 @@ async function runCoderForTaskGraph(
       symbolSummary: null,
       toolExec,
       detectAllToolCalls: wrapCliDetectAllToolCalls,
+      detectNativeToolCalls: wrapCliDetectNativeToolCalls,
       detectAnyToolCall: wrapCliDetectAnyToolCall,
       webSearchToolProtocol: '',
       // `sandboxToolProtocol` is the tool-instruction block the kernel
@@ -4709,6 +4715,7 @@ async function handleDelegateExplorer(req) {
           symbolSummary: null,
           toolExec,
           detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectNativeToolCalls: wrapCliDetectNativeToolCalls,
           detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
           // See `runExplorerForTaskGraph` above for why this matters:
@@ -5081,6 +5088,7 @@ async function handleDelegateCoder(req) {
           symbolSummary: null,
           toolExec,
           detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectNativeToolCalls: wrapCliDetectNativeToolCalls,
           detectAnyToolCall: wrapCliDetectAnyToolCall,
           webSearchToolProtocol: '',
           // `sandboxToolProtocol` is the tool-instruction block the kernel
@@ -5755,6 +5763,7 @@ async function handleDelegateDeepReviewer(req) {
           userProfile: null,
           toolExec,
           detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectNativeToolCalls: wrapCliDetectNativeToolCalls,
           detectAnyToolCall: wrapCliDetectAnyToolCall,
           // Advertise the CLI-native read-only tool names (matches the
           // detector + executor); see the handler doc above. The block already

@@ -637,7 +637,7 @@ describe('openAISSEPump', () => {
   // Native delta.tool_calls accumulation
   // -------------------------------------------------------------------------
 
-  it('accumulates native tool_call fragments and flushes them as fenced JSON on finish', async () => {
+  it('accumulates native tool_call fragments and flushes them as native_tool_call on finish', async () => {
     const s = makeStream();
     const events = collect(
       openAISSEPump({
@@ -678,14 +678,15 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
-    expect(textEvents[0].text).toContain('"path":"foo.ts"');
-    expect(textEvents[0].text).toContain('"content":"x"');
-    expect(textEvents[0].text).toMatch(/```json/);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({
+      name: 'sandbox_write_file',
+      args: { path: 'foo.ts', content: 'x' },
+    });
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',
@@ -739,7 +740,7 @@ describe('openAISSEPump', () => {
       'tool_call_delta',
       'tool_call_delta',
       'tool_call_delta',
-      'text_delta',
+      'native_tool_call',
       'done',
     ]);
   });
@@ -768,7 +769,7 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    expect(out.filter((e) => e.type === 'text_delta')).toHaveLength(0);
+    expect(out.filter((e) => e.type === 'native_tool_call')).toHaveLength(0);
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',
@@ -796,11 +797,12 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('arbitrary_tool');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'arbitrary_tool', args: { x: 1 } });
   });
 
   it('flushes pending native tool_calls on [DONE] without a prior finish_reason frame', async () => {
@@ -823,11 +825,12 @@ describe('openAISSEPump', () => {
     s.finish();
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_read_file');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_read_file', args: { path: 'a' } });
   });
 
   it('flushes pending tool_calls on clean stream close (no [DONE] / no finish_reason)', async () => {
@@ -850,14 +853,15 @@ describe('openAISSEPump', () => {
     s.close();
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_read_file');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_read_file', args: { p: 'a' } });
   });
 
-  it('emits a fenced shell with empty args when tool_call arguments are malformed JSON', async () => {
+  it('emits a native tool call with empty args when tool_call arguments are malformed JSON', async () => {
     const s = makeStream();
     const events = collect(openAISSEPump({ body: s.body, isKnownToolName: () => true }));
 
@@ -877,12 +881,12 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
-    expect(textEvents[0].text).toMatch(/"args":\s*\{\s*\}/);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_write_file', args: {} });
   });
 
   it('warns and drops a native tool_call that arrived with no function name', async () => {
@@ -903,7 +907,7 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    expect(out.filter((e) => e.type === 'text_delta')).toHaveLength(0);
+    expect(out.filter((e) => e.type === 'native_tool_call')).toHaveLength(0);
     expect(warnSpy).toHaveBeenCalledWith(
       expect.stringContaining('no function name'),
       expect.any(String),
@@ -946,15 +950,15 @@ describe('openAISSEPump', () => {
     s.push(finishFrame('tool_calls'));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(2);
-    const joined = textEvents.map((e) => e.text).join('|');
-    expect(joined).toContain('tool_a');
-    expect(joined).toContain('"a":1');
-    expect(joined).toContain('tool_b');
-    expect(joined).toContain('"b":2');
+    expect(toolEvents).toHaveLength(2);
+    expect(toolEvents.map((e) => e.call)).toEqual([
+      { name: 'tool_a', args: { a: 1 } },
+      { name: 'tool_b', args: { b: 2 } },
+    ]);
   });
 
   it('parses delta.reasoning_block into a structured reasoning_block event', async () => {

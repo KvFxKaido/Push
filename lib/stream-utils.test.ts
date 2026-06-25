@@ -278,6 +278,34 @@ describe('iteratePushStreamText', () => {
     expect(error?.message).toBe('timed out');
   });
 
+  it('returns native tool calls separately and counts them as activity', async () => {
+    const stream = makeGappedPushStream([
+      {
+        event: {
+          type: 'native_tool_call',
+          call: { id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } },
+        },
+        gapMs: 30,
+      },
+      { event: { type: 'done', finishReason: 'tool_calls' }, gapMs: 30 },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'openrouter', model: 'm', messages: [] },
+      50,
+      'timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error, text, nativeToolCalls } = await promise;
+
+    expect(error).toBeNull();
+    expect(text).toBe('');
+    expect(nativeToolCalls).toEqual([
+      { id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } },
+    ]);
+  });
+
   it('returns accumulated text when the stream completes within the activity window', async () => {
     const stream = makePushStream([
       { type: 'text_delta', text: '{"verdict":"safe",' },
