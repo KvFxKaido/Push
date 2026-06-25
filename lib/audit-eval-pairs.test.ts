@@ -5,7 +5,11 @@ import {
   serializeTrainsetLine,
   parseTrainset,
   toTrainsetCase,
+  replayCase,
+  replayTrainset,
+  summarizeReplay,
   type AuditEvalPair,
+  type AuditEvalTrainsetCase,
   type AuditVerdictObservation,
 } from './audit-eval-pairs.js';
 
@@ -222,5 +226,111 @@ describe('trainset serialization', () => {
 
   it('ignores blank lines', () => {
     expect(parseTrainset('\n\n  \n')).toEqual([]);
+  });
+});
+
+describe('replay', () => {
+  function caseFor(overrides: Partial<AuditEvalTrainsetCase> = {}): AuditEvalTrainsetCase {
+    return {
+      id: 'aep_test0001',
+      scope: SCOPE,
+      correctedDiff: diffFor('src/a.ts', 'const t = process.env.TOKEN;'),
+      expectedVerdict: 'safe',
+      rejectedDiff: diffFor('src/a.ts', 'const t = "sk-live";'),
+      priorVerdict: 'unsafe',
+      priorRisks: [{ level: 'high', description: 'hardcoded secret' }],
+      rejectedSummary: 'secret',
+      correctedSummary: 'env var',
+      sharedFiles: ['src/a.ts'],
+      ...overrides,
+    };
+  }
+
+  it('passes when the Auditor reproduces both recorded verdicts', async () => {
+    // Corrected → safe, rejected → unsafe (the corpus's recorded expectation).
+    const getVerdict = async (diff: string) =>
+      diff.includes('sk-live') ? ('unsafe' as const) : ('safe' as const);
+    const result = await replayCase(caseFor(), getVerdict);
+    expect(result.regressions).toEqual([]);
+    expect(result.corrected.ok).toBe(true);
+    expect(result.rejected?.ok).toBe(true);
+  });
+
+  it('flags rejected_now_safe when the Auditor stops catching the issue', async () => {
+    const getVerdict = async () => 'safe' as const; // always safe now
+    const result = await replayCase(caseFor(), getVerdict);
+    expect(result.regressions).toContain('rejected_now_safe');
+    expect(result.corrected.ok).toBe(true);
+    expect(result.rejected?.ok).toBe(false);
+  });
+
+  it('flags corrected_now_unsafe when the Auditor gets stricter', async () => {
+    const getVerdict = async () => 'unsafe' as const; // always unsafe now
+    const result = await replayCase(caseFor(), getVerdict);
+    expect(result.regressions).toContain('corrected_now_unsafe');
+    expect(result.corrected.ok).toBe(false);
+  });
+
+  it('skips the rejected arm when checkRejected is false', async () => {
+    const getVerdict = vi.fn(async () => 'safe' as const);
+    const result = await replayCase(caseFor(), getVerdict, { checkRejected: false });
+    expect(result.rejected).toBeUndefined();
+    expect(getVerdict).toHaveBeenCalledTimes(1); // corrected arm only
+    expect(result.regressions).toEqual([]);
+  });
+
+  it('summarizes a mixed corpus', async () => {
+    const cases = [
+      caseFor({ id: 'aep_ok000001' }),
+      caseFor({ id: 'aep_lax00001' }),
+      caseFor({ id: 'aep_strict01' }),
+    ];
+    const getVerdict = async (diff: string) => {
+      // ok case: behaves correctly. lax case: rejected diff now safe.
+      // strict case: corrected diff now unsafe.
+      if (diff.includes('strict-marker')) return 'unsafe' as const;
+      if (diff.includes('sk-live')) return 'unsafe' as const;
+      return 'safe' as const;
+    };
+    // Make case 2's rejected diff slip past (now safe) and case 3's corrected
+    // diff trip the stricter rule.
+    cases[1].rejectedDiff = diffFor('src/a.ts', 'const t = OBFUSCATED;');
+    cases[2].correctedDiff = diffFor('src/a.ts', 'const t = "strict-marker";');
+
+    const { results, summary } = await replayTrainset(cases, getVerdict);
+    expect(results).toHaveLength(3);
+    expect(summary.total).toBe(3);
+    expect(summary.passed).toBe(1);
+    expect(summary.regressed).toBe(2);
+    expect(summary.rejectedNowSafe).toBe(1);
+    expect(summary.correctedNowUnsafe).toBe(1);
+  });
+
+  it('stops early and reports partial results when the signal aborts', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const getVerdict = async (diff: string) => {
+      calls += 1;
+      controller.abort(); // abort after the first verdict
+      return diff.includes('sk-live') ? ('unsafe' as const) : ('safe' as const);
+    };
+    const cases = [caseFor({ id: 'aep_a' }), caseFor({ id: 'aep_b' })];
+    const { results, aborted } = await replayTrainset(cases, getVerdict, {
+      signal: controller.signal,
+    });
+    expect(aborted).toBe(true);
+    // First case's corrected arm ran, then abort caught before its rejected arm.
+    expect(results.length).toBeLessThan(2);
+    expect(calls).toBeLessThanOrEqual(2);
+  });
+
+  it('summarizeReplay counts an empty result set as all-passed', () => {
+    expect(summarizeReplay([])).toEqual({
+      total: 0,
+      passed: 0,
+      regressed: 0,
+      rejectedNowSafe: 0,
+      correctedNowUnsafe: 0,
+    });
   });
 });

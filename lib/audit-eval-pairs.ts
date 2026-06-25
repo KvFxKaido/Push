@@ -324,3 +324,150 @@ export function parseTrainset(jsonl: string): AuditEvalTrainsetCase[] {
   }
   return cases;
 }
+
+// ---------------------------------------------------------------------------
+// Replay — drive the corpus back through the Auditor and flag regressions
+// ---------------------------------------------------------------------------
+
+/**
+ * The two regression classes a replay can surface:
+ * - `rejected_now_safe`: the Auditor no longer flags a diff it previously
+ *   rejected — a *safety* regression (it stopped catching a real issue). The
+ *   one that matters most: usually a model swap that made the Auditor laxer.
+ * - `corrected_now_unsafe`: the Auditor now rejects a diff it previously
+ *   accepted — a *precision* regression (it got stricter / noisier), or drift
+ *   in the surrounding code. Worth knowing, less alarming than the above.
+ */
+export type AuditEvalRegression = 'rejected_now_safe' | 'corrected_now_unsafe';
+
+/** One arm of a replayed case — expected vs. the verdict the Auditor returned. */
+export interface AuditEvalReplayArm {
+  expected: 'safe' | 'unsafe';
+  actual: 'safe' | 'unsafe';
+  ok: boolean;
+}
+
+export interface AuditEvalReplayCaseResult {
+  id: string;
+  scope: AuditEvalScope;
+  /** Corrected diff should stay SAFE. Always replayed. */
+  corrected: AuditEvalReplayArm;
+  /** Rejected diff should reproduce UNSAFE. Replayed unless `checkRejected` is off. */
+  rejected?: AuditEvalReplayArm;
+  regressions: AuditEvalRegression[];
+}
+
+export interface AuditEvalReplaySummary {
+  total: number;
+  /** Cases with no regressions on any replayed arm. */
+  passed: number;
+  /** Cases with at least one regression. */
+  regressed: number;
+  rejectedNowSafe: number;
+  correctedNowUnsafe: number;
+}
+
+/** Verdict function injected by the caller — wraps `runAuditor` on a diff. */
+export type AuditVerdictFn = (diff: string) => Promise<'safe' | 'unsafe'>;
+
+export interface AuditEvalReplayOptions {
+  /** Also replay the rejected diff (expect UNSAFE). Default `true`. */
+  checkRejected?: boolean;
+  /** Abort cooperatively between cases / arms. */
+  signal?: AbortSignal;
+}
+
+function abortError(): Error {
+  const err = new Error('Audit eval replay aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+/** Replay a single case. Throws `AbortError` if the signal fires mid-case. */
+export async function replayCase(
+  trainCase: AuditEvalTrainsetCase,
+  getVerdict: AuditVerdictFn,
+  options: AuditEvalReplayOptions = {},
+): Promise<AuditEvalReplayCaseResult> {
+  const checkRejected = options.checkRejected ?? true;
+  const regressions: AuditEvalRegression[] = [];
+
+  if (options.signal?.aborted) throw abortError();
+  const correctedActual = await getVerdict(trainCase.correctedDiff);
+  const corrected: AuditEvalReplayArm = {
+    expected: 'safe',
+    actual: correctedActual,
+    ok: correctedActual === 'safe',
+  };
+  if (!corrected.ok) regressions.push('corrected_now_unsafe');
+
+  let rejected: AuditEvalReplayArm | undefined;
+  if (checkRejected) {
+    if (options.signal?.aborted) throw abortError();
+    const rejectedActual = await getVerdict(trainCase.rejectedDiff);
+    rejected = {
+      expected: 'unsafe',
+      actual: rejectedActual,
+      ok: rejectedActual === 'unsafe',
+    };
+    if (!rejected.ok) regressions.push('rejected_now_safe');
+  }
+
+  return { id: trainCase.id, scope: trainCase.scope, corrected, rejected, regressions };
+}
+
+/** Roll case results up into counts. */
+export function summarizeReplay(results: AuditEvalReplayCaseResult[]): AuditEvalReplaySummary {
+  let regressed = 0;
+  let rejectedNowSafe = 0;
+  let correctedNowUnsafe = 0;
+  for (const r of results) {
+    if (r.regressions.length > 0) regressed += 1;
+    if (r.regressions.includes('rejected_now_safe')) rejectedNowSafe += 1;
+    if (r.regressions.includes('corrected_now_unsafe')) correctedNowUnsafe += 1;
+  }
+  return {
+    total: results.length,
+    passed: results.length - regressed,
+    regressed,
+    rejectedNowSafe,
+    correctedNowUnsafe,
+  };
+}
+
+/**
+ * Replay every case in the corpus through `getVerdict`, sequentially. Sequential
+ * by design: each `getVerdict` is an Auditor LLM call, and the gate's own
+ * `runAuditor` coalesces concurrent identical diffs anyway — parallelism would
+ * mostly add provider rate-limit pressure for a corpus that's typically small.
+ * The loop checks `signal` before each case so a long run is interruptible (it
+ * resolves with the partial results gathered so far rather than throwing).
+ */
+export async function replayTrainset(
+  cases: AuditEvalTrainsetCase[],
+  getVerdict: AuditVerdictFn,
+  options: AuditEvalReplayOptions = {},
+): Promise<{
+  results: AuditEvalReplayCaseResult[];
+  summary: AuditEvalReplaySummary;
+  aborted: boolean;
+}> {
+  const results: AuditEvalReplayCaseResult[] = [];
+  let aborted = false;
+  for (const trainCase of cases) {
+    if (options.signal?.aborted) {
+      aborted = true;
+      break;
+    }
+    try {
+      results.push(await replayCase(trainCase, getVerdict, options));
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        aborted = true;
+        break;
+      }
+      throw err;
+    }
+  }
+  return { results, summary: summarizeReplay(results), aborted };
+}

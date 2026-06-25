@@ -21,8 +21,10 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import {
   AuditEvalRecorder,
+  parseTrainset,
   serializeTrainsetLine,
   type AuditEvalPair,
+  type AuditEvalTrainsetCase,
   type AuditVerdictObservation,
 } from '../lib/audit-eval-pairs.ts';
 
@@ -30,6 +32,27 @@ export const AUDIT_EVAL_TRAINSET_RELPATH = path.join('.push', 'audit-evals.jsonl
 
 function trainsetPath(workspaceRoot: string): string {
   return path.join(workspaceRoot, AUDIT_EVAL_TRAINSET_RELPATH);
+}
+
+/**
+ * Load the workspace's captured trainset. Returns `[]` when the corpus file
+ * does not exist yet (no pairs captured) — the caller distinguishes "empty"
+ * from "missing" via the `existed` flag. Any other read error propagates.
+ */
+export async function loadTrainset(
+  workspaceRoot: string,
+): Promise<{ cases: AuditEvalTrainsetCase[]; existed: boolean }> {
+  const file = trainsetPath(workspaceRoot);
+  let text: string;
+  try {
+    text = await fs.readFile(file, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      return { cases: [], existed: false };
+    }
+    throw err;
+  }
+  return { cases: parseTrainset(text), existed: true };
 }
 
 async function appendPair(workspaceRoot: string, pair: AuditEvalPair): Promise<void> {
