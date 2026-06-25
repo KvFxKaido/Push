@@ -8,11 +8,10 @@
  * OpenAI, and the OpenAI-compat transports of Vertex / Zen-Go), so this is what
  * those neutral paths serialize to instead of hand-rolling the body inline.
  *
- * For the legacy `content` / `contentParts` path there's little translation to
- * do: `LlmMessage` roles map 1:1 to OpenAI roles, and `LlmContentPart` is
- * already the OpenAI `image_url` content-part shape. The Anthropic-conceptual
- * `contentBlocks` path (the contract migration) does real downcasting — most
- * notably the tool-block flatten, where one neutral message carrying
+ * Plain text remains a 1:1 fallback for text-only and degraded exchanges. Rich
+ * content runs through the Anthropic-conceptual `contentBlocks` path (the
+ * contract migration), which does real downcasting — most notably the tool-block
+ * flatten, where one neutral message carrying
  * `tool_use` / `tool_result` blocks expands into several OpenAI messages
  * (`content` + `tool_calls[]` + standalone `role: 'tool'` results). The notable
  * choices:
@@ -40,7 +39,6 @@ import type {
 import type {
   CacheControl,
   LlmContentBlock,
-  LlmContentPart,
   LlmMessage,
   PushStreamRequest,
   ResponseFormatSpec,
@@ -68,62 +66,6 @@ export function toOpenAIResponseFormat(spec: ResponseFormatSpec): OpenAIJsonSche
 }
 
 /**
- * Strict multimodal converter for `LlmMessage.contentParts`. Maps text/image
- * parts to OpenAI content parts and THROWS on an unsupported/malformed part,
- * rather than silently dropping it. (OpenAI accepts `image_url` with any URL, so
- * there's no per-URL loud-fail — only unknown part types throw.)
- *
- * `keepCacheControl` gates whether an incoming part's Push-private
- * `cache_control` marker is preserved on the wire. When false (the default for
- * strict OpenAI-compat routes), the marker is dropped — those endpoints can
- * reject unknown content-part fields, and the message-level cache gate is off,
- * so a per-part marker must not slip through it.
- */
-function llmContentPartsToOpenAI(
-  parts: readonly LlmContentPart[],
-  keepCacheControl: boolean,
-): OpenAIContentPart[] {
-  const out: OpenAIContentPart[] = [];
-  for (const rawPart of parts) {
-    const part = rawPart as {
-      type?: unknown;
-      text?: unknown;
-      image_url?: unknown;
-      cache_control?: unknown;
-    };
-    if (part.type === 'text' && typeof part.text === 'string') {
-      out.push({
-        type: 'text',
-        text: part.text,
-        ...(keepCacheControl && part.cache_control
-          ? { cache_control: part.cache_control as CacheControl }
-          : {}),
-      });
-      continue;
-    }
-    if (
-      part.type === 'image_url' &&
-      part.image_url &&
-      typeof part.image_url === 'object' &&
-      typeof (part.image_url as { url?: unknown }).url === 'string'
-    ) {
-      out.push({
-        type: 'image_url',
-        image_url: { url: (part.image_url as { url: string }).url },
-        ...(keepCacheControl && part.cache_control
-          ? { cache_control: part.cache_control as CacheControl }
-          : {}),
-      });
-      continue;
-    }
-    throw new Error(
-      `toOpenAIChat: unsupported or malformed content part (type: ${JSON.stringify(part.type)})`,
-    );
-  }
-  return out.length > 0 ? out : [{ type: 'text', text: '' }];
-}
-
-/**
  * Downcast the Anthropic-conceptual `LlmContentBlock[]` into OpenAI content
  * parts — contract migration (see
  * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
@@ -131,8 +73,8 @@ function llmContentPartsToOpenAI(
  * to OpenAI's `image_url`: base64 → a `data:` URL, remote → the URL verbatim),
  * and DROPS `thinking` / `redacted_thinking` blocks — OpenAI-compat endpoints
  * reject the Push-private signed-reasoning sidecar, exactly as `reasoningBlocks`
- * are never emitted here (slice 2). Mirrors {@link llmContentPartsToOpenAI}:
- * THROWS on an unsupported/malformed block rather than dropping it, and
+ * are never emitted here (slice 2). THROWS on an unsupported/malformed block
+ * rather than dropping it, and
  * `keepCacheControl` gates the per-part marker the same way. Later slices add
  * `tool_use`/`tool_result`; those become their own OpenAI-shape targets then
  * (the "boss fight" downcast — `content` + `tool_calls` + `role: tool`).
@@ -162,7 +104,7 @@ function llmContentBlocksToOpenAI(
       // Validate the source shape before building the URL — a malformed source
       // (unknown `type`, or a `url` source missing its `url`) must throw the
       // advertised strict error, not serialize an `image_url` with an undefined
-      // URL. Mirrors the runtime shape checks in `llmContentPartsToOpenAI`.
+      // URL. Mirrors the runtime shape checks in the request materializer.
       if (
         source.type === 'base64' &&
         typeof source.media_type === 'string' &&
@@ -335,8 +277,9 @@ export interface ToOpenAIChatOptions {
  * Build an OpenAI Chat Completions request body directly from the neutral
  * `PushStreamRequest`. `systemPromptOverride` is prepended as a `system`
  * message; `messages` map 1:1, with content resolved by precedence
- * (`contentBlocks` → `contentParts` → `content` text); `reasoningBlocks` are
- * dropped (OpenAI-compat-unsafe).
+ * (`contentBlocks` → `content` text); `reasoningBlocks` are dropped
+ * (OpenAI-compat-unsafe). `contentParts` are normalized into `contentBlocks` by
+ * `withRequestContentBlocks` before this loop.
  */
 export function toOpenAIChat(
   req: PushStreamRequest<LlmMessage>,
@@ -363,9 +306,8 @@ export function toOpenAIChat(
   const reqIndexToWireIndex: number[] = [];
   for (const m of reqMessages) {
     // Precedence mirrors the additive-field pattern: the rich block
-    // representation wins when present, else the legacy `contentParts`, else
-    // the `content` text fallback. No production path emits `contentBlocks`
-    // yet (see the decision doc), so existing traffic is unaffected.
+    // representation wins when present, else the permanent `content` text
+    // fallback carries text-only and degraded tool exchanges.
     if (m.contentBlocks && m.contentBlocks.length > 0) {
       const hasToolBlocks = m.contentBlocks.some(
         (b) => b.type === 'tool_use' || b.type === 'tool_result',
@@ -381,8 +323,6 @@ export function toOpenAIChat(
           content: llmContentBlocksToOpenAI(m.contentBlocks, tagCache),
         });
       }
-    } else if (m.contentParts && m.contentParts.length > 0) {
-      messages.push({ role: m.role, content: llmContentPartsToOpenAI(m.contentParts, tagCache) });
     } else {
       messages.push({ role: m.role, content: m.content });
     }
