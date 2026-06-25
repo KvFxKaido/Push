@@ -35,6 +35,7 @@ import { retainReducedOutput } from '../lib/verbatim-retain.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
 import { resolveAuditorGateEnabled, AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.ts';
 import { buildAuditorGateRuntimeContext } from './auditor-gate-memory.ts';
+import { recordAuditGateVerdict } from './audit-eval-store.ts';
 import { runMemoryGrep, runMemoryExpand } from '../lib/memory-tool-exec.ts';
 import { getDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provider.js';
@@ -1809,6 +1810,33 @@ function makeAuditorPreCommitGate({
       const message = err instanceof Error ? err.message : String(err);
       console.log(JSON.stringify({ level: 'error', event: 'auditor_gate_error', message }));
       return { ok: false, reason: `Auditor errored: ${message} (defaulting to blocked)` };
+    }
+
+    // Capture this verdict for the audit eval-pair trainset. A later SAFE
+    // verdict on the same branch+files completes a rejection→correction pair
+    // (see lib/audit-eval-pairs.ts). Awaited (not fire-and-forget) so a one-shot
+    // CLI process can't exit before the append flushes; it's a fast file append
+    // and `recordAuditGateVerdict` is internally best-effort, so this never
+    // affects the commit outcome. The UNSAFE observation is recorded here
+    // regardless of a later interactive override: the Auditor's verdict trains
+    // the corpus, not whether a human waved it through.
+    try {
+      const identity = await resolveWorkspaceIdentity(workspaceRoot);
+      if (identity.repoFullName) {
+        await recordAuditGateVerdict(workspaceRoot, {
+          scope: { repoFullName: identity.repoFullName, branch: identity.branch },
+          diff: stagedDiff,
+          verdict: auditResult.verdict,
+          summary: auditResult.card?.summary ?? '',
+          risks: Array.isArray(auditResult.card?.risks) ? auditResult.card.risks : [],
+          at: Date.now(),
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'auditor_gate_eval_record_failed', message }),
+      );
     }
 
     if (auditResult.verdict === 'safe') {

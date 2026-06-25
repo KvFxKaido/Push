@@ -133,6 +133,9 @@ const KNOWN_OPTIONS = new Set([
   'match-model',
   'matchModel',
   'empty',
+  'limit',
+  'no-rejected',
+  'noRejected',
 ]);
 
 const KNOWN_SUBCOMMANDS = new Set([
@@ -151,6 +154,7 @@ const KNOWN_SUBCOMMANDS = new Set([
   'spinner',
   'memory',
   'init-deep',
+  'audit-evals',
 ]);
 const SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 const DEFAULT_COMPACT_TURNS = 6;
@@ -240,6 +244,9 @@ Usage:
   push init-deep                Generate AGENTS.md skeletons for significant directories
   push init-deep --dry-run      Preview the init-deep plan without writing files
   push init-deep --force        Overwrite existing AGENTS.md files
+  push audit-evals list         Show captured Auditor rejection→correction pairs
+  push audit-evals replay       Replay the corpus through the Auditor; exits non-zero on regressions
+  push audit-evals replay --no-rejected --limit <n> --json
   push config show              Show saved CLI config
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
@@ -3331,6 +3338,13 @@ export async function main() {
       // Phase 2.f: `push daemon pair --remote` switches to the
       // relay-bundle pairing flow.
       remote: { type: 'boolean' },
+      // `push audit-evals replay` controls. `--limit <n>` is value-taking, so
+      // it must be declared as a string under `strict: false` (same footgun as
+      // `--keep` / `--tail` above); `--no-rejected` skips the rejected-arm
+      // replay.
+      limit: { type: 'string' },
+      'no-rejected': { type: 'boolean' },
+      noRejected: { type: 'boolean' },
     },
   });
 
@@ -3420,6 +3434,11 @@ export async function main() {
 
   if (subcommand === 'memory') {
     return runMemorySubcommand(positionals);
+  }
+
+  if (subcommand === 'audit-evals') {
+    const { runAuditEvalsSubcommand } = await import('./audit-eval-replay.ts');
+    return runAuditEvalsSubcommand(values, positionals);
   }
 
   if (subcommand === 'resume' || subcommand === 'sessions') {
@@ -3734,7 +3753,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, memory, init-deep. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, memory, init-deep, audit-evals. See: push --help`,
     );
   }
 
