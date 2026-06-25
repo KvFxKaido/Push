@@ -118,6 +118,7 @@ async function* cliProviderStream(
   const baseBody = toOpenAIChat(req, {
     modelOverride: model,
     temperatureDefault: 0.1,
+    maxTokensField: config.id === 'openai' ? 'max_completion_tokens' : 'max_tokens',
     tagCacheBreakpoints: config.id === 'openrouter',
   });
   const nativeTools = Array.isArray(baseBody.tools) ? baseBody.tools : [];

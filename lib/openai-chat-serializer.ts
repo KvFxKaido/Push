@@ -281,6 +281,12 @@ export interface ToOpenAIChatOptions {
   modelOverride?: string;
   /** Temperature applied when `req.temperature` is unset (the CLI passes 0.1). */
   temperatureDefault?: number;
+  /**
+   * Request field used for `req.maxTokens`. Defaults to `max_tokens` for broad
+   * OpenAI-compatible provider support; direct OpenAI opts into the current
+   * Chat Completions `max_completion_tokens` field.
+   */
+  maxTokensField?: 'max_tokens' | 'max_completion_tokens';
   /** Whether to set `stream: true`. Defaults to true. */
   stream?: boolean;
   /**
@@ -384,7 +390,11 @@ export function toOpenAIChat(
     stream: options?.stream ?? true,
     ...(typeof temperature === 'number' ? { temperature } : {}),
     ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
-    ...(typeof req.maxTokens === 'number' ? { max_tokens: req.maxTokens } : {}),
+    ...(typeof req.maxTokens === 'number'
+      ? options?.maxTokensField === 'max_completion_tokens'
+        ? { max_completion_tokens: req.maxTokens }
+        : { max_tokens: req.maxTokens }
+      : {}),
     ...(options?.includeUsage ? { stream_options: { include_usage: true } } : {}),
     // Native function-calling tool schemas, when the caller attached them (gated
     // on model support upstream). Additive — `openai-sse-pump` emits complete

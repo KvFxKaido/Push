@@ -55,7 +55,7 @@ export async function* openaiStream(
     model: req.model,
     messages: llmMessages,
     stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(req.maxTokens !== undefined ? { max_completion_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     // Native function calling: gated upstream by model support. The shared SSE

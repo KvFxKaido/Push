@@ -59,6 +59,14 @@ describe('toOpenAIChat', () => {
     });
   });
 
+  it('can emit max_completion_tokens for direct OpenAI callers', () => {
+    const body = toOpenAIChat(reqWith([llm('1', 'user', 'hi')], { maxTokens: 2048 }), {
+      maxTokensField: 'max_completion_tokens',
+    });
+    expect(body).toMatchObject({ max_completion_tokens: 2048 });
+    expect(body).not.toHaveProperty('max_tokens');
+  });
+
   it('omits temperature when neither the request nor a default sets it (Worker use)', () => {
     const body = toOpenAIChat(reqWith([llm('1', 'user', 'hi')]));
     expect(body).not.toHaveProperty('temperature');
