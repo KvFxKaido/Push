@@ -861,7 +861,8 @@ export async function* geminiEventStream(
   let buffer = '';
   let usage: StreamUsage | undefined;
   let terminalFinishReason: 'stop' | 'length' | 'tool_calls' = 'stop';
-  const pendingFunctionCalls: Array<{ name: string; argsJson: string }> = [];
+  const pendingFunctionCalls: Array<{ name: string; argsJson: string; thoughtSignature?: string }> =
+    [];
 
   function* flushFunctionCalls(): Generator<PushStreamEvent> {
     for (const call of pendingFunctionCalls) {
@@ -870,6 +871,11 @@ export async function* geminiEventStream(
         call: {
           name: call.name,
           args: parseNativeToolCallArgs(call.argsJson),
+          // Round-trip Gemini's signed-reasoning token so it survives into the
+          // stored tool_use sidecar and replays next turn. The web pump already
+          // carries this; the CLI's direct event stream must too, or CLI Gemini
+          // native calls lose the signature.
+          ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
         },
       };
     }

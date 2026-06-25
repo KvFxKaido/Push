@@ -858,6 +858,69 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(parts[1]).not.toHaveProperty('thoughtSignature');
   });
 
+  it('round-trips a Gemini thoughtSignature nested under .call (CLI CliKernelCall shape)', async () => {
+    // On the CLI, the shared dispatcher attaches `thoughtSignature` to the inner
+    // matched call, which the lead binding re-wraps as `{ source, call }` — so the
+    // signature sits at `.call.thoughtSignature`, not top-level like the web shape.
+    // The kernel must read both positions. (#1162 / Gemini signature CLI path.)
+    const { stream } = makePushStream(
+      Array.from({ length: 2 }, () => [
+        { type: 'text_delta' as const, text: 'reading' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ]),
+    );
+    // Nested shape: thoughtSignature under `.call`, not top-level.
+    const signedRead = {
+      call: {
+        tool: 'sandbox_read_file',
+        args: { path: 'cli-signed.ts' },
+        thoughtSignature: 'CLIsig789==',
+      },
+    } as unknown as Call;
+    const unsignedRead = {
+      call: { tool: 'sandbox_read_file', args: { path: 'cli-unsigned.ts' } },
+    } as unknown as Call;
+    const detectAllToolCalls = () => ({
+      readOnly: [signedRead, unsignedRead],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async (call: Call) => ({
+      kind: 'executed' as const,
+      resultText: `contents:${call.call.args.path}`,
+    });
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
+    const checkpointMessages: CoderLoopMessage[][] = [];
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
+        toolExec,
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: () => {},
+        onCheckpoint: async (state) => {
+          checkpointMessages.push(state.messages.map((m) => ({ ...m })));
+        },
+      },
+    );
+
+    const assistant = (checkpointMessages[0] ?? []).find((m) => m.isToolCall);
+    expect(assistant?.toolUses?.[0]).toEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        name: 'sandbox_read_file',
+        input: { path: 'cli-signed.ts' },
+        thoughtSignature: 'CLIsig789==',
+      }),
+    );
+    expect(assistant?.toolUses?.[1]).not.toHaveProperty('thoughtSignature');
+  });
+
   it('throws SandboxUnreachableError after consecutive SANDBOX_UNREACHABLE tool results', async () => {
     const { stream } = makePushStream([
       [

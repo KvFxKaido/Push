@@ -205,15 +205,24 @@ function getKernelToolCallFields(call: unknown): {
   thoughtSignature?: string;
 } {
   const source = call as {
-    call?: { tool?: unknown; args?: unknown };
+    call?: { tool?: unknown; args?: unknown; thoughtSignature?: unknown };
     thoughtSignature?: unknown;
   } | null;
   const raw = source?.call;
+  // `thoughtSignature` sits top-level on the web call shape (AnyToolCall) but
+  // nested under `.call` on the CLI shape (CliKernelCall, re-wrapped from the
+  // shared dispatcher's inner call). Read both so Gemini signatures round-trip
+  // on either surface.
+  const thoughtSignature =
+    typeof source?.thoughtSignature === 'string'
+      ? source.thoughtSignature
+      : typeof raw?.thoughtSignature === 'string'
+        ? raw.thoughtSignature
+        : undefined;
   return {
     tool: typeof raw?.tool === 'string' ? raw.tool : 'unknown',
     args: raw?.args,
-    thoughtSignature:
-      typeof source?.thoughtSignature === 'string' ? source.thoughtSignature : undefined,
+    thoughtSignature,
   };
 }
 
