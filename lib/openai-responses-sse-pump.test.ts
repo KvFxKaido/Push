@@ -267,4 +267,18 @@ describe('openAIResponsesSSEPump', () => {
 
     await expect(events).rejects.toThrow(/bad_request: Nope/);
   });
+
+  it('honors an aborted signal — emits nothing and no terminal done', async () => {
+    const s = makeStream();
+    const ac = new AbortController();
+    ac.abort();
+    const events = collect(openAIResponsesSSEPump({ body: s.body, signal: ac.signal }));
+    // Anything enqueued after abort must not surface, and the pump must not
+    // synthesize a `done` (the round loop treats abort as cancellation, not
+    // completion).
+    s.push({ type: 'response.output_text.delta', delta: 'should not appear' });
+    s.close();
+
+    expect(await events).toEqual([]);
+  });
 });
