@@ -43,11 +43,12 @@ export function getCuratedModels(providerId: string): readonly string[] {
 }
 
 /**
- * Derive the /models endpoint from a provider's chat/completions URL.
- * Works for all OpenAI-compatible providers.
+ * Derive the /models endpoint from a provider streaming URL.
+ * Works for OpenAI-compatible `/chat/completions` providers and direct
+ * OpenAI's `/responses` endpoint.
  */
 function deriveModelsUrl(chatUrl: string): string {
-  return chatUrl.replace(/\/chat\/completions\/?$/, '/models');
+  return chatUrl.replace(/\/(?:chat\/completions|responses)\/?$/, '/models');
 }
 
 interface ProviderConfig {

@@ -1,0 +1,73 @@
+/**
+ * Shared OpenAI Responses wire-shape types.
+ *
+ * Direct OpenAI uses these for `/v1/responses`. OpenAI-compatible providers
+ * stay on `openai-chat-types.ts` because their contract is Chat Completions,
+ * not Responses.
+ */
+
+import type { ToolFunctionSchema } from './provider-contract.js';
+
+export type OpenAIResponsesInputContent =
+  | { type: 'input_text'; text: string }
+  | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' | 'original' };
+
+export interface OpenAIResponsesMessageItem {
+  type: 'message';
+  role: 'system' | 'developer' | 'user' | 'assistant';
+  content: OpenAIResponsesInputContent[];
+}
+
+export interface OpenAIResponsesFunctionCallItem {
+  type: 'function_call';
+  /** Provider item id when a prior Responses output item exposed one. */
+  id?: string;
+  /** Stable function-call id used to attach `function_call_output` results. */
+  call_id: string;
+  name: string;
+  arguments: string;
+  status?: 'in_progress' | 'completed' | 'incomplete';
+}
+
+export interface OpenAIResponsesFunctionCallOutputItem {
+  type: 'function_call_output';
+  call_id: string;
+  output: string;
+}
+
+export type OpenAIResponsesInputItem =
+  | OpenAIResponsesMessageItem
+  | OpenAIResponsesFunctionCallItem
+  | OpenAIResponsesFunctionCallOutputItem;
+
+export interface OpenAIResponsesFunctionTool {
+  type: 'function';
+  name: string;
+  description: string;
+  parameters: ToolFunctionSchema['input_schema'];
+}
+
+export interface OpenAIResponsesTextFormat {
+  type: 'json_schema';
+  name: string;
+  strict?: boolean;
+  schema: Record<string, unknown>;
+}
+
+export interface OpenAIResponsesRequest {
+  model: string;
+  input: OpenAIResponsesInputItem[];
+  stream: boolean;
+  /**
+   * Push sends the full neutral history every turn. Disabling server-side
+   * storage keeps this path stateless and avoids depending on
+   * `previous_response_id` conversation state.
+   */
+  store: false;
+  temperature?: number;
+  top_p?: number;
+  max_output_tokens?: number;
+  text?: { format: OpenAIResponsesTextFormat };
+  tools?: OpenAIResponsesFunctionTool[];
+  tool_choice?: 'auto' | 'none' | 'required';
+}

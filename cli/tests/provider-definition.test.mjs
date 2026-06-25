@@ -11,7 +11,7 @@ import {
   SHARED_PROVIDER_MODEL_CATALOG,
 } from '../../lib/provider-models.ts';
 
-const VALID_STREAM_SHAPES = new Set(['openai-compat', 'anthropic', 'gemini']);
+const VALID_STREAM_SHAPES = new Set(['openai-compat', 'openai-responses', 'anthropic', 'gemini']);
 const KEBAB_ID = /^[a-z][a-z0-9-]*$/;
 
 // Drift-detector: internal consistency of every ProviderDefinition entry.

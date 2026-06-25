@@ -23,6 +23,7 @@ import type {
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
+import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
 import { createCliGeminiStream } from './gemini-stream.ts';
 
@@ -35,14 +36,15 @@ const RETRY_BASE_DELAY_MS: number = 1_000;
  *  per-provider dispatch stays aligned with the canonical scaffold.
  *
  *  - `openai-compat`: OpenAI Chat Completions schema; consume via
- *    `cli/openai-stream.ts`. Default — every provider before the direct
- *    track used this shape.
+ *    `cli/openai-stream.ts`. Default for generic gateways.
+ *  - `openai-responses`: OpenAI Responses schema; consume via
+ *    `cli/openai-responses-stream.ts`. Direct OpenAI only.
  *  - `anthropic`: Anthropic Messages API; consume via
  *    `cli/anthropic-stream.ts` (translates via `lib/openai-anthropic-bridge`).
  *  - `gemini`: Google Generative Language API; consume via
  *    `cli/gemini-stream.ts` (translates via `lib/openai-gemini-bridge`).
  */
-export type CliProviderStreamShape = 'openai-compat' | 'anthropic' | 'gemini';
+export type CliProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthropic' | 'gemini';
 
 export interface ProviderConfig {
   id: string;
@@ -229,17 +231,17 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   },
   openai: {
     id: 'openai',
-    // OpenAI is OpenAI-compatible by definition — the existing
-    // `createCliProviderStream` handles the wire shape unchanged.
+    // Direct OpenAI uses the provider-native Responses API. OpenAI-compatible
+    // gateways stay on their own Chat Completions entries above.
     get url() {
-      return process.env.PUSH_OPENAI_URL || 'https://api.openai.com/v1/chat/completions';
+      return process.env.PUSH_OPENAI_URL || 'https://api.openai.com/v1/responses';
     },
     get defaultModel() {
       return process.env.PUSH_OPENAI_MODEL || OPENAI_DEFAULT_MODEL;
     },
     apiKeyEnv: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
     requiresKey: true,
-    streamShape: 'openai-compat',
+    streamShape: 'openai-responses',
   },
   anthropic: {
     id: 'anthropic',
@@ -285,6 +287,8 @@ export function createProviderStream(
   options: { sessionId?: string } = {},
 ): PushStream<LlmMessage> {
   switch (config.streamShape) {
+    case 'openai-responses':
+      return createCliOpenAIResponsesStream(config, apiKey);
     case 'anthropic':
       return createCliAnthropicStream(config, apiKey);
     case 'gemini':

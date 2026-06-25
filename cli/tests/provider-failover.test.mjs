@@ -86,12 +86,23 @@ describe('resolveCliFailoverCandidates', () => {
       PUSH_ANTHROPIC_API_KEY: 'k-anthropic',
     });
     try {
-      // openai is openai-compat; anthropic (different shape) is excluded even
-      // though it has a key. Order follows PROVIDER_CONFIGS declaration.
-      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), [
-        'openrouter',
+      // openai is Responses-native; anthropic (different shape) is excluded
+      // even though it has a key. Order follows PROVIDER_CONFIGS declaration.
+      assert.deepEqual(ids(resolveCliFailoverCandidates('openrouter', new Set(['openrouter']))), [
         'fireworks',
       ]);
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps direct OpenAI Responses out of the OpenAI-compatible failover bucket', () => {
+    const restore = withProviderKeys({
+      PUSH_OPENAI_API_KEY: 'k-openai',
+      PUSH_OPENROUTER_API_KEY: 'k-openrouter',
+    });
+    try {
+      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), []);
     } finally {
       restore();
     }
@@ -105,8 +116,8 @@ describe('resolveCliFailoverCandidates', () => {
     });
     try {
       assert.deepEqual(
-        ids(resolveCliFailoverCandidates('openai', new Set(['openai', 'openrouter']))),
-        ['fireworks'],
+        ids(resolveCliFailoverCandidates('openrouter', new Set(['openrouter', 'fireworks']))),
+        [],
       );
     } finally {
       restore();

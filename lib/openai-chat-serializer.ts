@@ -283,8 +283,8 @@ export interface ToOpenAIChatOptions {
   temperatureDefault?: number;
   /**
    * Request field used for `req.maxTokens`. Defaults to `max_tokens` for broad
-   * OpenAI-compatible provider support; direct OpenAI opts into the current
-   * Chat Completions `max_completion_tokens` field.
+   * OpenAI-compatible provider support; callers can opt into the newer Chat
+   * Completions `max_completion_tokens` field when their upstream requires it.
    */
   maxTokensField?: 'max_tokens' | 'max_completion_tokens';
   /** Whether to set `stream: true`. Defaults to true. */

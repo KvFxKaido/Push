@@ -213,7 +213,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
-| `PUSH_OPENAI_URL` | OpenAI endpoint (default: `https://api.openai.com/v1/chat/completions`) |
+| `PUSH_OPENAI_URL` | OpenAI Responses endpoint (default: `https://api.openai.com/v1/responses`) |
 | `PUSH_OPENAI_API_KEY` | OpenAI API key |
 | `PUSH_OPENAI_MODEL` | OpenAI model (default: `gpt-5.4`) |
 | `PUSH_ANTHROPIC_URL` | Anthropic Messages endpoint (default: `https://api.anthropic.com/v1/messages`) |
@@ -239,7 +239,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships eleven providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`) plus `openai` speak OpenAI Chat Completions natively. `anthropic` and `google` carry the upstream's native wire shape — the CLI translates OpenAI-shaped messages via the shared bridges in `lib/openai-anthropic-bridge.ts` and `lib/openai-gemini-bridge.ts`, then pipes the response back through the same OpenAI SSE pump so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships eleven providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` uses the Responses API (`/v1/responses`). `anthropic` and `google` carry the upstream's native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -261,7 +261,7 @@ You can switch provider/model mid-session with `/provider` and `/model`. Switchi
 
 ## Tools
 
-All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` are also accepted: `cli/openai-stream.ts` uses the shared SSE pump to accumulate them and flush each assembled call back into the same text-based dispatcher.
+All providers support prompt-engineered tool calls (fenced JSON blocks in the content stream). OpenAI-compatible native `delta.tool_calls` and direct OpenAI Responses `response.function_call_arguments.*` events are also accepted; the provider pumps accumulate them and flush each assembled call back into the same dispatcher.
 
 Available tools:
 
