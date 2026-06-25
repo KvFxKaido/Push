@@ -9,6 +9,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
+import type { NativeToolCall } from '@push/lib/provider-contract';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { MigrationGuard } from '@/lib/chat-message';
 import type { RunEngineEvent } from '@/lib/run-engine';
@@ -154,6 +155,8 @@ export interface StreamRoundResult {
    *  survive across turns. Empty array when the upstream emitted no
    *  signed reasoning. */
   reasoningBlocks: ReasoningBlock[];
+  /** Complete provider-native tool/function calls captured this round. */
+  nativeToolCalls: NativeToolCall[];
   error: Error | null;
 }
 

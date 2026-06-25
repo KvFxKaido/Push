@@ -226,7 +226,7 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         // undefined` here — the gate (`providerModelSupportsNativeToolCalling`)
         // returns false for this openrouter model, and native tool calling is
         // scoped to the Cloudflare Kimi/GLM lead today. Additive regardless:
-        // native tool_calls normalize back into fenced JSON.
+        // native tool_calls dispatch through structured stream events.
         'nativeToolSchemas',
         // Parity decision: only the web inline lane resolves linked libraries.
         // Delegated Coders receive all context through their brief/preload.

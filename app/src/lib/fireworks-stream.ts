@@ -57,8 +57,8 @@ export async function* fireworksStream(
     // Native function calling: forward the caller's tool schemas (gated on model
     // support via `providerModelSupportsNativeToolCalling`) so the OpenAI-compatible
     // endpoint can answer through its constrained tool-calling path. Additive to
-    // text-dispatch — `openAISSEPump` normalizes any native `tool_calls` back into
-    // the fenced JSON the dispatcher consumes. `tool_choice: 'auto'` keeps prose
+    // text-dispatch — `openAISSEPump` emits native `tool_calls` as structured
+    // events. `tool_choice: 'auto'` keeps prose
     // answers available when no tool is needed.
     ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so

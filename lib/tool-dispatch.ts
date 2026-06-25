@@ -36,6 +36,7 @@ import {
 import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
 import { recoverTokenDelimitedToolCalls } from './tool-call-token-recovery.js';
 import { recoverXmlToolCalls } from './tool-call-xml-recovery.js';
+import type { NativeToolCall } from './provider-contract.js';
 
 /**
  * Result of scanning assistant text for tool calls.
@@ -134,6 +135,7 @@ export interface ParsedToolObject {
 
 export interface ToolDispatcher<TCall> {
   detectAllToolCalls(text: string): ToolDispatchResult<TCall>;
+  detectNativeToolCalls(calls: readonly NativeToolCall[]): ToolDispatchResult<TCall>;
 }
 
 export interface ToolDispatcherOptions {
@@ -203,7 +205,66 @@ export function createToolDispatcher<TCall>(
   options: ToolDispatcherOptions = {},
 ): ToolDispatcher<TCall> {
   const enableInternalRecovery = options.enableInternalRecovery !== false;
+  const detectParsedCandidate = (
+    parsed: ParsedToolObject,
+    sample: string,
+  ): { ok: true; call: TCall } | { ok: false; report: ToolMalformedReport } => {
+    const matched = matchSources(sources, parsed);
+    if (matched.ok) {
+      return { ok: true, call: matched.call };
+    }
+    return {
+      ok: false,
+      report: {
+        reason: 'unknown_tool',
+        sample: truncateSample(sample),
+        rawToolName: parsed.tool.trim(),
+        canonicalInvocationKey: canonicalKey(parsed),
+      },
+    };
+  };
+
   return {
+    detectNativeToolCalls(nativeCalls: readonly NativeToolCall[]): ToolDispatchResult<TCall> {
+      const calls: TCall[] = [];
+      const callOffsets: number[] = [];
+      const malformed: ToolMalformedReport[] = [];
+      const seen = new Set<string>();
+
+      nativeCalls.forEach((nativeCall, index) => {
+        const sample = nativeToolCallSample(nativeCall);
+        const shaped = shapeParsedObject({
+          tool: nativeCall.name,
+          args: nativeCall.args,
+          ...(nativeCall.id ? { id: nativeCall.id } : {}),
+        });
+        if (!shaped.ok) {
+          malformed.push({
+            reason: shaped.reason,
+            sample: truncateSample(sample),
+            rawToolName: shaped.rawToolName,
+          });
+          return;
+        }
+
+        const key = canonicalKey(shaped.value);
+        if (seen.has(key)) return;
+        seen.add(key);
+
+        const detected = detectParsedCandidate(shaped.value, sample);
+        if (detected.ok) {
+          calls.push(detected.call);
+          // Native calls are ordered by stream position, not text position.
+          // Preserve that order for callers that still sort by callOffsets.
+          callOffsets.push(index);
+          return;
+        }
+        malformed.push(detected.report);
+      });
+
+      return { calls, callOffsets, malformed };
+    },
+
     detectAllToolCalls(text: string): ToolDispatchResult<TCall> {
       const malformed: ToolMalformedReport[] = [];
       const candidates: DetectedCandidate[] = [];
@@ -408,9 +469,9 @@ export function createToolDispatcher<TCall>(
         const key = canonicalKey(candidate.parsed);
         if (seen.has(key)) continue;
         seen.add(key);
-        const matched = matchSources(sources, candidate.parsed);
-        if (matched.ok) {
-          calls.push(matched.call);
+        const detected = detectParsedCandidate(candidate.parsed, candidate.sample);
+        if (detected.ok) {
+          calls.push(detected.call);
           // Mirror the candidate's textual offset alongside the call so
           // callers can sort/merge with their own textual-order parses
           // without re-deriving offsets via `text.indexOf` heuristics.
@@ -432,12 +493,7 @@ export function createToolDispatcher<TCall>(
           candidate.kind === 'xml' ||
           candidate.kind === 'token'
         ) {
-          malformed.push({
-            reason: 'unknown_tool',
-            sample: truncateSample(candidate.sample),
-            rawToolName: candidate.parsed.tool.trim(),
-            canonicalInvocationKey: canonicalKey(candidate.parsed),
-          });
+          malformed.push(detected.report);
         }
       }
 
@@ -969,4 +1025,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function truncateSample(text: string): string {
   return text.length > 120 ? text.slice(0, 120) : text;
+}
+
+function nativeToolCallSample(call: NativeToolCall): string {
+  try {
+    return JSON.stringify({
+      ...(call.id ? { id: call.id } : {}),
+      tool: call.name,
+      args: call.args,
+    });
+  } catch {
+    return `{"tool":${JSON.stringify(call.name)},"args":null}`;
+  }
 }

@@ -118,7 +118,12 @@ import { buildGitHubToolProtocol } from './github-tools';
 import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import { CapabilityLedger, ROLE_CAPABILITIES, type Capability } from './capabilities';
-import { detectAllToolCalls, detectAnyToolCall, type AnyToolCall } from './tool-dispatch';
+import {
+  detectAllToolCalls,
+  detectAnyToolCall,
+  detectNativeToolCalls,
+  type AnyToolCall,
+} from './tool-dispatch';
 import { fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
@@ -1091,6 +1096,12 @@ export async function runInPageCoderKernel(
     symbolSummary: symbolLedger.getSummary(),
     toolExec,
     detectAllToolCalls: detectAllToolCallsFiltered,
+    detectNativeToolCalls: leadRuntime
+      ? (calls) =>
+          detectNativeToolCalls(calls, {
+            maxParallelDelegations: INLINE_MAX_PARALLEL_EXPLORERS,
+          })
+      : detectNativeToolCalls,
     detectAnyToolCall: detectCoderToolCall,
     webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
     sandboxToolProtocol: getSandboxToolProtocol(),
@@ -1138,8 +1149,8 @@ export async function runInPageCoderKernel(
     // TOOL_PROTOCOL uses different names).
     leadToolGuidance: spec.leadToolSurface,
     // Native function calling for models that support it. Additive: the binding
-    // emits native tool_calls which the pump normalizes back into fenced JSON,
-    // so dispatch is unchanged. Two guards:
+    // emits native tool_calls which the stream carries directly into dispatch.
+    // Two guards:
     //   1. Lead surface only (`leadRuntime`). The delegated Coder wires a
     //      narrower surface and stays text-dispatch for now.
     //   2. Scope schemas to the EXACT sources wired for this run — base

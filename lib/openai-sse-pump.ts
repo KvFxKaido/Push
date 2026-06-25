@@ -71,24 +71,24 @@ export function stripTemplateTokens(text: string): string {
   return text.replace(/<\|[a-z_]+\|>/gi, '');
 }
 
-/**
- * Render an accumulated native tool call as the fenced `{"tool","args"}` JSON the
- * text dispatcher consumes — the single normalization point both native paths
- * converge on. `rawArgs` is the concatenated JSON-arguments string; malformed
- * JSON still emits a fenced shell (with empty args) so the dispatcher's
- * malformed-tool-call diagnostic can guide a retry rather than dropping silently.
- *
- * Single-sourced here so the OpenAI-native flush (`flushNativeToolCalls` below)
- * and the Anthropic `tool_use` translators (`createAnthropicTranslatedStream` /
- * `anthropicEventStream` in `openai-anthropic-bridge.ts`) can't drift on format.
- */
-export function formatNativeToolCallFenced(toolName: string, rawArgs: string): string {
+export function parseNativeToolCallArgs(rawArgs: string): unknown {
   let parsedArgs: unknown = {};
   try {
     parsedArgs = rawArgs ? JSON.parse(rawArgs) : {};
   } catch {
     parsedArgs = {};
   }
+  return parsedArgs;
+}
+
+/**
+ * Render an accumulated native tool call as the fenced `{"tool","args"}` JSON
+ * legacy text-dispatch consumers expect. New native-tool paths emit
+ * `native_tool_call` instead; this remains as a compatibility formatter for
+ * translation tests and any legacy callback surface that can only receive text.
+ */
+export function formatNativeToolCallFenced(toolName: string, rawArgs: string): string {
+  const parsedArgs = parseNativeToolCallArgs(rawArgs);
   return `\n\`\`\`json\n${JSON.stringify({ tool: toolName, args: parsedArgs })}\n\`\`\`\n`;
 }
 
@@ -159,6 +159,7 @@ export interface OpenAISSEPumpOptions {
 }
 
 interface PendingNativeToolCall {
+  id: string;
   name: string;
   args: string;
 }
@@ -175,8 +176,8 @@ interface PendingNativeToolCall {
  *   template-token stripping), and/or `delta.tool_calls` fragments
  *   (accumulated by `index`; one `tool_call_delta` per fragment so the
  *   adapter's content timer treats long tool-arg payloads as activity).
- * - `finish_reason` flushes pending native tool calls as fenced JSON
- *   `text_delta`s and yields `done` with the mapped reason. So does
+ * - `finish_reason` flushes pending native tool calls as `native_tool_call`
+ *   events and yields `done` with the mapped reason. So does
  *   stream end without a `[DONE]` or `finish_reason`.
  * - Malformed JSON frames are skipped (upstream may emit keepalives).
  * - When `signal` aborts mid-stream, the reader is cancelled and the
@@ -192,10 +193,9 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
   let stopped = false;
 
   // Accumulate native `delta.tool_calls` fragments by index; flush as
-  // fenced JSON text_delta on finish_reason / [DONE] / clean close so the
-  // downstream text-based tool dispatcher picks them up. Names not in the
-  // injected predicate are dropped on flush — the orchestrator filters
-  // hallucinated tools the same way on the legacy path.
+  // structured native_tool_call events on finish_reason / [DONE] / clean
+  // close. Names not in the injected predicate are dropped on flush — the
+  // orchestrator filters hallucinated tools the same way on the legacy path.
   const pendingNativeToolCalls = new Map<number, PendingNativeToolCall>();
 
   function* flushNativeToolCalls(): Generator<PushStreamEvent> {
@@ -214,8 +214,12 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         continue;
       }
       yield {
-        type: 'text_delta',
-        text: formatNativeToolCallFenced(tc.name, tc.args),
+        type: 'native_tool_call',
+        call: {
+          ...(tc.id ? { id: tc.id } : {}),
+          name: tc.name,
+          args: parseNativeToolCallArgs(tc.args),
+        },
       };
     }
     pendingNativeToolCalls.clear();
@@ -323,8 +327,8 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
     }
 
     // Native tool_call fragments — accumulate by index; the name and
-    // arguments often arrive split across frames. Flushed as fenced
-    // JSON `text_delta` on finish_reason / [DONE]. Yield one
+    // arguments often arrive split across frames. Flushed as a structured
+    // `native_tool_call` on finish_reason / [DONE]. Yield one
     // `tool_call_delta` per fragment so the adapter's content timer
     // counts native tool-arg streaming as progress while we buffer.
     const toolCalls = delta?.tool_calls;
@@ -332,12 +336,14 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
       let observedFragment = false;
       for (const tc of toolCalls as Array<{
         index?: unknown;
+        id?: unknown;
         function?: { name?: unknown; arguments?: unknown };
       }>) {
         const idx = typeof tc?.index === 'number' ? tc.index : 0;
         const fnCall = tc?.function;
         if (!fnCall) continue;
-        const entry = pendingNativeToolCalls.get(idx) ?? { name: '', args: '' };
+        const entry = pendingNativeToolCalls.get(idx) ?? { id: '', name: '', args: '' };
+        if (typeof tc?.id === 'string') entry.id = tc.id;
         if (typeof fnCall.name === 'string') entry.name = fnCall.name;
         if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
         pendingNativeToolCalls.set(idx, entry);

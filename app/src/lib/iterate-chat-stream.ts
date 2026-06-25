@@ -37,6 +37,7 @@
 import type {
   AIProviderType,
   LlmMessage,
+  NativeToolCall,
   PreCompactEvent,
   PushStream,
   ReasoningBlock,
@@ -109,6 +110,8 @@ export interface IterateChatStreamCallbacks {
    *  turn's request body must echo back. Consumers persist these on the
    *  assistant message so chained turns survive. */
   onReasoningBlock?: (block: ReasoningBlock) => void;
+  /** Fired once per complete provider-native tool/function call. */
+  onNativeToolCall?: (call: NativeToolCall) => void;
   /** Fired when a provider's native web search returns `url_citation`
    *  annotations (OpenRouter). Additive to `onToken`: the grounded answer
    *  still streams as text; this carries the sources for a "Sources" UI
@@ -154,7 +157,15 @@ export async function iterateChatStream<M extends LlmMessage>(
   callbacks: IterateChatStreamCallbacks,
   options?: IterateChatStreamOptions,
 ): Promise<void> {
-  const { onToken, onDone, onError, onThinkingToken, onReasoningBlock, onCitations } = callbacks;
+  const {
+    onToken,
+    onDone,
+    onError,
+    onThinkingToken,
+    onReasoningBlock,
+    onNativeToolCall,
+    onCitations,
+  } = callbacks;
   const externalSignal = request.signal;
 
   if (externalSignal?.aborted) {
@@ -286,6 +297,13 @@ export async function iterateChatStream<M extends LlmMessage>(
             // Doesn't surface to the legacy callbacks — assembly stays
             // inside the stream.
             resetContentTimer();
+            break;
+          case 'native_tool_call':
+            // Complete provider-native tool call. Dispatch remains post-stream
+            // so the round loop keeps the same batch/ordering policy as
+            // text-discovered calls, but the payload is already structured.
+            resetContentTimer();
+            onNativeToolCall?.(event.call);
             break;
           case 'citations':
             // Native web-search sources. Additive metadata; doesn't reset

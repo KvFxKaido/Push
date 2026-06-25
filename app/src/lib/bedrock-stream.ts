@@ -67,7 +67,7 @@ export async function* bedrockStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     // Native function calling. Bedrock's OpenAI-compatible proxy accepts the
     // same tools/tool_choice shape as the other OpenAI-compatible adapters, and
-    // the shared SSE pump normalizes native tool_calls back into fenced JSON.
+    // the shared SSE pump emits native tool_calls as structured events.
     ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
   };
 

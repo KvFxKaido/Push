@@ -142,6 +142,7 @@ describe('chat-send', () => {
       accumulated: 'Hello world',
       thinkingAccumulated: 'Need to inspect',
       reasoningBlocks: [],
+      nativeToolCalls: [],
       error: null,
     });
     expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
@@ -159,6 +160,46 @@ describe('chat-send', () => {
     const lastAccumulated = accumulatedEvents.at(-1);
     expect(lastAccumulated.text).toBe('Hello world');
     expect(lastAccumulated.thinking).toBe('Need to inspect');
+  });
+
+  it('collects provider-native tool calls separately from streamed text', async () => {
+    const conversationsRef = {
+      current: makeConversation([makeMessage()]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    mockStreamChat.mockImplementation((...args: unknown[]) => {
+      const onDone = args[2] as (usage?: unknown) => void;
+      const onNativeToolCall = args.at(-1) as
+        | ((call: { id: string; name: string; args: Record<string, unknown> }) => void)
+        | undefined;
+      onNativeToolCall?.({
+        id: 'call_1',
+        name: 'sandbox_read_file',
+        args: { path: 'README.md' },
+      });
+      onDone({ inputTokens: 5, outputTokens: 2 });
+    });
+
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Read README', status: 'done' })],
+      ctx,
+      ['Thinking…'],
+    );
+
+    expect(result).toEqual({
+      accumulated: '',
+      thinkingAccumulated: '',
+      reasoningBlocks: [],
+      nativeToolCalls: [{ id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } }],
+      error: null,
+    });
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+      content: '',
+      status: 'streaming',
+    });
   });
 
   it('promotes a reasoning-only answer to content (stranded-answer salvage)', async () => {
@@ -301,6 +342,7 @@ describe('chat-send', () => {
       accumulated: 'Here is the full answer, accidentally on the reasoning channel.',
       thinkingAccumulated: '',
       reasoningBlocks: [],
+      nativeToolCalls: [],
       error: null,
     });
     expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({

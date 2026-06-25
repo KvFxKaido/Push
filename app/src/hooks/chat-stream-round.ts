@@ -28,6 +28,7 @@ import { getReasoningPhaseDisplay } from '@push/lib/role-display';
 import { isReasoningHeavyModel } from '@push/lib/reasoning-models';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
+import { type NativeToolCall } from '@push/lib/provider-contract';
 import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
 
 /** Threshold above which we eagerly pre-fetch memory records each round
@@ -103,6 +104,7 @@ export async function streamAssistantRound(
   let accumulated = '';
   let thinkingAccumulated = '';
   const reasoningBlocks: ReasoningBlock[] = [];
+  const nativeToolCalls: NativeToolCall[] = [];
   // Web-search citations, deduped by url. Some engines resend the cumulative
   // list on every frame, so a Map keyed by url collapses repeats while
   // preserving first-seen order for the "Sources" footer.
@@ -123,7 +125,13 @@ export async function streamAssistantRound(
     invariantError = err instanceof Error ? err : new Error(String(err));
   }
   if (invariantError) {
-    return { accumulated, thinkingAccumulated, reasoningBlocks, error: invariantError };
+    return {
+      accumulated,
+      thinkingAccumulated,
+      reasoningBlocks,
+      nativeToolCalls,
+      error: invariantError,
+    };
   }
 
   // Pre-fetch the scope-filtered MemoryRecord rows for the session-digest
@@ -360,6 +368,10 @@ export async function streamAssistantRound(
             return { ...prev, [chatId]: { ...conv, messages: msgs } };
           });
         },
+        (call) => {
+          if (abortRef.current) return;
+          nativeToolCalls.push(call);
+        },
       ).catch((err: unknown) =>
         // Safety net: if streamChat rejects without having called onDone/onError
         // (e.g. a throw while building the stream), settle the attempt so it
@@ -405,6 +417,7 @@ export async function streamAssistantRound(
       accumulated.length > 0 ||
       thinkingAccumulated.length > 0 ||
       reasoningBlocks.length > 0 ||
+      nativeToolCalls.length > 0 ||
       citationsByUrl.size > 0;
     const decision = decideStreamFailover({
       classification: {
@@ -637,5 +650,5 @@ export async function streamAssistantRound(
     });
   }
 
-  return { accumulated, thinkingAccumulated, reasoningBlocks, error };
+  return { accumulated, thinkingAccumulated, reasoningBlocks, nativeToolCalls, error };
 }

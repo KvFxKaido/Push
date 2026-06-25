@@ -395,12 +395,8 @@ export async function runRoundLoop(
     const phase = round === 0 ? 'Thinking…' : 'Responding...';
     loopCtx.updateAgentStatus({ active: true, phase, verbs: vibeVerbs }, { chatId });
 
-    const { accumulated, thinkingAccumulated, reasoningBlocks, error } = await streamAssistantRound(
-      round,
-      apiMessages,
-      loopCtx,
-      vibeVerbs,
-    );
+    const { accumulated, thinkingAccumulated, reasoningBlocks, nativeToolCalls, error } =
+      await streamAssistantRound(round, apiMessages, loopCtx, vibeVerbs);
 
     if (abortRef.current) {
       markPartialAssistantInvisibleOnAbort(loopCtx);
@@ -483,6 +479,7 @@ export async function runRoundLoop(
       tracker,
       loopDetector,
       loopLadder,
+      nativeToolCalls,
     );
 
     apiMessages = turnResult.nextApiMessages;

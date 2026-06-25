@@ -20,6 +20,7 @@ import type {
   ReasoningBlock,
   UrlCitation,
 } from '../lib/provider-contract.ts';
+import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
@@ -497,9 +498,20 @@ export async function streamCompletion(
             break;
           case 'tool_call_delta':
             // Structural progress signal — not surfaced through the legacy
-            // callback API. The text-based dispatcher picks the assembled
-            // call up later as a fenced JSON `text_delta`.
+            // callback API.
             break;
+          case 'native_tool_call': {
+            // Legacy callback consumers only receive text. Downgrade at this
+            // boundary so old callers keep working; PushStream kernels consume
+            // the structured event before this adapter.
+            const text = formatNativeToolCallFenced(
+              event.call.name,
+              JSON.stringify(event.call.args ?? {}),
+            );
+            accumulated += text;
+            onToken?.(text);
+            break;
+          }
           case 'citations':
             // Native web-search sources (OpenRouter `openrouter:web_search`).
             // Hand off to the caller, which dedupes + renders a "Sources"

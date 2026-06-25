@@ -361,8 +361,8 @@ export function toOpenAIChat(
     ...(typeof req.maxTokens === 'number' ? { max_tokens: req.maxTokens } : {}),
     ...(options?.includeUsage ? { stream_options: { include_usage: true } } : {}),
     // Native function-calling tool schemas, when the caller attached them (gated
-    // on model support upstream). Additive — `openai-sse-pump` normalizes any
-    // native `tool_calls` back into the dispatcher's fenced JSON. `tool_choice:
+    // on model support upstream). Additive — `openai-sse-pump` emits complete
+    // native calls as structured `native_tool_call` events. `tool_choice:
     // 'auto'` keeps prose answers available. This serializer feeds neutral
     // OpenAI-compatible Worker paths (Vertex Gemini, Zen-Go) and the CLI
     // OpenAI-compat adapters; all ignore the field when no caller sets `tools`.

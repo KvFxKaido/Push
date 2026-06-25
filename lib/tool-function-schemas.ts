@@ -5,10 +5,9 @@
  * Why this exists: Push's tool protocol is text-dispatch — tools are described
  * in the system prompt and the model emits fenced `{"tool","args"}` JSON. Some
  * providers (Cloudflare Workers AI's Kimi/GLM, etc.) also support *native*
- * function calling, which is more reliable than free-text JSON. Because
- * `openai-sse-pump` already normalizes native `tool_calls` back into the same
- * fenced JSON the dispatcher consumes, attaching a `tools` array is purely
- * additive: whichever way the model answers, it converges at the dispatcher.
+ * function calling, which is more reliable than free-text JSON. Native provider
+ * calls surface as structured stream events and still pass through the same
+ * dispatcher validation; text-dispatch models keep using fenced JSON.
  *
  * The `tools` array must be COMPLETE — a partial list tells the model those are
  * its only tools — so this derives one schema per `ToolSpec`. Function `name`

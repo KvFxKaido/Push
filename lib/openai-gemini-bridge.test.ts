@@ -485,8 +485,8 @@ describe('createGeminiTranslatedStream', () => {
 
     expect(events[0]).toEqual({ type: 'tool_call_delta' });
     expect(events[1]).toEqual({
-      type: 'text_delta',
-      text: '\n```json\n{"tool":"sandbox_read_file","args":{"path":"README.md"}}\n```\n',
+      type: 'native_tool_call',
+      call: { name: 'sandbox_read_file', args: { path: 'README.md' } },
     });
     expect(events[2]).toMatchObject({ type: 'done', finishReason: 'tool_calls' });
   });

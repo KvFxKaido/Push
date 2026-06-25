@@ -721,11 +721,12 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
     expect(input.tool_choice).toBe('auto');
   });
 
-  it('forwards a native tool_call from env.AI.run to the client as fenced JSON', async () => {
+  it('forwards a native tool_call from env.AI.run to the client as OpenAI tool_calls', async () => {
     // P1 regression guard: Workers AI emits OpenAI `delta.tool_calls` when the
     // model uses native function calling. The Worker must accumulate + flush
-    // them as the fenced JSON the dispatcher consumes — otherwise the native
-    // call is dropped inside the Worker and the turn reaches the Coder empty.
+    // them as OpenAI tool_calls so the browser pump can emit native_tool_call —
+    // otherwise the native call is dropped inside the Worker and the turn
+    // reaches the Coder empty.
     const encoder = new TextEncoder();
     const frames = [
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"exec"}}]}}]}',
@@ -745,10 +746,11 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
       makeEnv({ AI: { run } as unknown as Env['AI'] }),
     );
     const body = await new Response(response.body).text();
-    // The fenced tool JSON is re-serialized into client `content` frames.
+    // The structured tool call is re-serialized into client `tool_calls` frames.
     expect(body).toContain('exec');
     expect(body).toContain('npm test');
-    expect(body).toContain('```json');
+    expect(body).toContain('tool_calls');
+    expect(body).not.toContain('```json');
   });
 
   it('drops a malformed tools payload rather than forwarding it', async () => {

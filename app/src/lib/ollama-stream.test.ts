@@ -515,7 +515,7 @@ describe('ollamaStream', () => {
   // Native tool_call bridge — mirrors the OpenRouter / Zen coverage.
   // -------------------------------------------------------------------------
 
-  it('accumulates native tool_call fragments and flushes them as fenced JSON on finish', async () => {
+  it('accumulates native tool_call fragments and flushes them as native_tool_call on finish', async () => {
     const { push } = installStreamFetch(fetchMock);
     const { ollamaStream } = await import('./ollama-stream');
     const events = collect(ollamaStream(baseRequest));
@@ -560,14 +560,15 @@ describe('ollamaStream', () => {
     );
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
-    expect(textEvents[0].text).toContain('"path":"foo.ts"');
-    expect(textEvents[0].text).toContain('"content":"x"');
-    expect(textEvents[0].text).toMatch(/```json/);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({
+      name: 'sandbox_write_file',
+      args: { path: 'foo.ts', content: 'x' },
+    });
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',

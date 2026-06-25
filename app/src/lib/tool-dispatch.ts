@@ -58,6 +58,7 @@ import {
   type ToolMalformedReport,
   type ToolSource,
 } from '@push/lib/tool-dispatch';
+import type { NativeToolCall } from '@push/lib/provider-contract';
 
 // ---------------------------------------------------------------------------
 // Re-exports — the tool-call diagnosis kernel now lives in
@@ -227,8 +228,7 @@ export type { DroppedToolCallCandidate } from '@push/lib/deep-reviewer-agent';
 const WEB_DISPATCH_SOURCE: ToolSource<AnyToolCall> = {
   name: 'web-cascade',
   detect: (parsed: ParsedToolObject) => {
-    const serialized = JSON.stringify({ tool: parsed.tool, args: parsed.args });
-    return detectAnyToolCall(serialized);
+    return detectStructuredToolCall(parsed.tool, parsed.args);
   },
 };
 
@@ -613,6 +613,57 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
   return { ...classifyDetectedCalls(allCalls, opts), droppedCandidates };
 }
 
+export function detectNativeToolCalls(
+  nativeCalls: readonly NativeToolCall[],
+  opts?: DetectToolCallsOptions,
+): DetectedToolCalls {
+  const allCalls: AnyToolCall[] = [];
+  const droppedCandidates: DroppedToolCallCandidate[] = [];
+  const seen = new Set<string>();
+
+  for (const nativeCall of nativeCalls) {
+    const rawToolName = nativeCall.name.trim();
+    const args = asRecord(nativeCall.args);
+    const sample = sampleNativeToolCall(nativeCall);
+    if (!rawToolName || !args) {
+      droppedCandidates.push({
+        rawToolName: rawToolName || '(missing)',
+        resolvedToolName: rawToolName ? resolveToolName(rawToolName) : null,
+        sample,
+      });
+      continue;
+    }
+
+    const key = stableInvocationKey(rawToolName, args);
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    const call = detectStructuredToolCall(rawToolName, args);
+    if (call) {
+      allCalls.push(call);
+      continue;
+    }
+    droppedCandidates.push({
+      rawToolName,
+      resolvedToolName: resolveToolName(rawToolName),
+      sample,
+    });
+  }
+
+  if (allCalls.length === 0) {
+    return {
+      readOnly: [],
+      parallelDelegations: [],
+      fileMutations: [],
+      mutating: null,
+      batchOverflow: [],
+      extraMutations: [],
+      droppedCandidates,
+    };
+  }
+  return { ...classifyDetectedCalls(allCalls, opts), droppedCandidates };
+}
+
 /**
  * Run the reads → fileMutations → trailing side-effect grouping over a
  * deduped, ordered list of tool calls. Delegates to the shared kernel
@@ -906,14 +957,62 @@ function wrapRecoveredCallToAny(
   args: Record<string, unknown>,
 ): AnyToolCall | null {
   const tryName = (name: string): AnyToolCall | null => {
-    const wrapped = JSON.stringify({ tool: name, args });
-    return detectAnyToolCall(wrapped);
+    return detectStructuredToolCall(name, args);
   };
   const direct = tryName(toolName);
   if (direct) return direct;
   const inferred = inferToolFromArgs(args);
   if (inferred && inferred !== toolName) return tryName(inferred);
   return null;
+}
+
+function detectStructuredToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+): AnyToolCall | null {
+  const text = JSON.stringify({ tool: toolName, args });
+
+  const delegateMatch = detectDelegationTool(text);
+  if (delegateMatch) return delegateMatch;
+
+  const scratchpadCall = detectScratchpadToolCall(text);
+  if (scratchpadCall) return { source: 'scratchpad', call: scratchpadCall };
+
+  const todoCall = detectTodoToolCall(text);
+  if (todoCall) return { source: 'todo', call: todoCall };
+
+  const webSearchCall = detectWebSearchToolCall(text);
+  if (webSearchCall) return { source: 'web-search', call: webSearchCall };
+
+  const askUserCall = detectAskUserToolCall(text);
+  if (askUserCall) return { source: 'ask-user', call: askUserCall };
+
+  const artifactCall = detectArtifactToolCall(text);
+  if (artifactCall) return { source: 'artifacts', call: artifactCall };
+
+  const memoryCall = detectMemoryToolCall(text);
+  if (memoryCall) return { source: 'memory', call: memoryCall };
+
+  const sandboxCall = detectSandboxToolCall(text);
+  if (sandboxCall) return { source: 'sandbox', call: sandboxCall };
+
+  const githubCall = detectToolCall(text);
+  if (githubCall) return { source: 'github', call: githubCall };
+
+  return null;
+}
+
+function sampleNativeToolCall(call: NativeToolCall): string {
+  try {
+    const sample = JSON.stringify({
+      ...(call.id ? { id: call.id } : {}),
+      tool: call.name,
+      args: call.args,
+    });
+    return sample.length > 200 ? `${sample.slice(0, 200)}…` : sample;
+  } catch {
+    return `{"tool":${JSON.stringify(call.name)},"args":null}`;
+  }
 }
 
 /**

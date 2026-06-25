@@ -83,10 +83,10 @@ export async function* openrouterStream(
   // Native function calling: when the caller attached function schemas (gated on
   // model support via `providerModelSupportsNativeToolCalling`), forward them so
   // OpenRouter routes through the model's constrained tool-calling path. Additive
-  // to text-dispatch — `openai-sse-pump` normalizes any native `tool_calls` back
-  // into the fenced JSON the dispatcher consumes, so the prompt-described path is
-  // untouched and the two converge. `tool_choice: 'auto'` keeps prose answers
-  // available when no tool is needed. OpenRouter accepts a mixed `tools` array,
+  // to text-dispatch — `openai-sse-pump` emits native `tool_calls` as structured
+  // events, while prompt-described text tools keep using fenced JSON.
+  // `tool_choice: 'auto'` keeps prose answers available when no tool is needed.
+  // OpenRouter accepts a mixed `tools` array,
   // so native function schemas and the `openrouter:web_search` server tool merge
   // (web search appended last) when both are active.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];

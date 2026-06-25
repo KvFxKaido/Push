@@ -270,11 +270,12 @@ describe('blackboxStream', () => {
     push(finishFrame('tool_calls'));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_write_file', args: { path: 'a' } });
   });
 
   it('forwards responseFormat as an OpenAI response_format json_schema', async () => {

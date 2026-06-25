@@ -8,6 +8,7 @@
 
 import type {
   LlmMessage,
+  NativeToolCall,
   PushStream,
   PushStreamRequest,
   StreamUsage,
@@ -121,10 +122,10 @@ export function streamWithTimeout(
  * `timeoutMessage` (or `wallClockTimeoutMessage` if set and applicable) is
  * returned in the result's `error` field.
  *
- * `reasoning_delta` events are accumulated separately as `reasoningText` —
- * the helper's `text` result still feeds JSON parsers that don't want
- * reasoning prose mixed in, while callers with policy backstops can inspect
- * the side channel.
+ * `reasoning_delta` events are accumulated separately as `reasoningText`.
+ * Complete `native_tool_call` events are accumulated separately too, so native
+ * provider tool dispatch can skip the fenced-text round-trip while legacy text
+ * parsing still reads the helper's `text` result.
  */
 export async function iteratePushStreamText<M extends LlmMessage>(
   stream: PushStream<M>,
@@ -134,7 +135,13 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   wallClockTimeoutMs?: number,
   wallClockTimeoutMessage?: string,
   opts?: { reasoningResetsActivityTimer?: boolean; firstTokenGraceMs?: number },
-): Promise<{ error: Error | null; text: string; reasoningText: string; usage?: StreamUsage }> {
+): Promise<{
+  error: Error | null;
+  text: string;
+  reasoningText: string;
+  nativeToolCalls: NativeToolCall[];
+  usage?: StreamUsage;
+}> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
@@ -144,6 +151,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   let timeoutKind: 'activity' | 'wallClock' | null = null;
   let text = '';
   let reasoningText = '';
+  const nativeToolCalls: NativeToolCall[] = [];
   let error: Error | null = null;
   let usage: StreamUsage | undefined;
 
@@ -198,6 +206,10 @@ export async function iteratePushStreamText<M extends LlmMessage>(
           sawActivity = true;
           resetTimer();
         }
+      } else if (event.type === 'native_tool_call') {
+        sawActivity = true;
+        resetTimer();
+        nativeToolCalls.push(event.call);
       } else if (event.type === 'done') {
         // Capture usage if the adapter reported it. Absent on most non-final
         // events; the terminal `done` is the only place it arrives.
@@ -222,7 +234,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     error = new Error(timeoutMessage);
   }
 
-  return { error, text, reasoningText, usage };
+  return { error, text, reasoningText, nativeToolCalls, usage };
 }
 
 // Re-export event type for callers that want to narrow.

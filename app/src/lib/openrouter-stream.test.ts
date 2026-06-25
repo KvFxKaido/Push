@@ -519,7 +519,7 @@ describe('openrouterStream', () => {
   // Native tool_call bridge — PR #384 review #3
   // -------------------------------------------------------------------------
 
-  it('accumulates native tool_call fragments and flushes them as fenced JSON on finish', async () => {
+  it('accumulates native tool_call fragments and flushes them as native_tool_call on finish', async () => {
     const { push } = installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');
     const events = collect(openrouterStream(baseRequest));
@@ -566,16 +566,15 @@ describe('openrouterStream', () => {
     );
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
-    expect(textEvents[0].text).toContain('"path":"foo.ts"');
-    expect(textEvents[0].text).toContain('"content":"x"');
-    // Fenced with ```json so the downstream text dispatcher picks it up.
-    expect(textEvents[0].text).toMatch(/```json/);
-    expect(textEvents[0].text).toMatch(/```/);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({
+      name: 'sandbox_write_file',
+      args: { path: 'foo.ts', content: 'x' },
+    });
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',
@@ -625,12 +624,12 @@ describe('openrouterStream', () => {
 
     const out = await events;
     expect(out.filter((e) => e.type === 'tool_call_delta')).toHaveLength(3);
-    // Order: three progress deltas, then the flushed fenced text_delta, then done.
+    // Order: three progress deltas, then the structured native call, then done.
     expect(out.map((e) => e.type)).toEqual([
       'tool_call_delta',
       'tool_call_delta',
       'tool_call_delta',
-      'text_delta',
+      'native_tool_call',
       'done',
     ]);
   });
@@ -656,8 +655,8 @@ describe('openrouterStream', () => {
     push(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', delta: {} }] }));
 
     const out = await events;
-    const textEvents = out.filter((e) => e.type === 'text_delta');
-    expect(textEvents).toHaveLength(0);
+    const toolEvents = out.filter((e) => e.type === 'native_tool_call');
+    expect(toolEvents).toHaveLength(0);
     expect(out[out.length - 1]).toEqual({
       type: 'done',
       finishReason: 'tool_calls',
@@ -690,14 +689,15 @@ describe('openrouterStream', () => {
     finish();
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_read_file');
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_read_file', args: { path: 'a' } });
   });
 
-  it('emits a fenced shell with empty args when tool_call arguments are malformed JSON', async () => {
+  it('emits a native tool call with empty args when tool_call arguments are malformed JSON', async () => {
     const { push } = installStreamFetch(fetchMock);
     const { openrouterStream } = await import('./openrouter-stream');
     const events = collect(openrouterStream(baseRequest));
@@ -721,13 +721,12 @@ describe('openrouterStream', () => {
     push(JSON.stringify({ choices: [{ finish_reason: 'tool_calls', delta: {} }] }));
 
     const out = await events;
-    const textEvents = out.filter(
-      (e): e is { type: 'text_delta'; text: string } => e.type === 'text_delta',
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
     );
-    // Shell still emitted so malformed diagnostics can guide a retry.
-    expect(textEvents).toHaveLength(1);
-    expect(textEvents[0].text).toContain('sandbox_write_file');
-    expect(textEvents[0].text).toMatch(/"args":\s*\{\s*\}/);
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toEqual({ name: 'sandbox_write_file', args: {} });
   });
 
   // -------------------------------------------------------------------------
