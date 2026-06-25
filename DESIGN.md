@@ -5,7 +5,37 @@
 Dark-only, mobile-first interface for a developer productivity tool.
 High information density, minimal visual noise, careful motion timing.
 Built on Tailwind CSS + shadcn/ui (New York style) with Radix primitives.
-This document defines the visual system for the graphical app surfaces. CLI/TUI presentation is documented separately and may follow shared semantic intent without matching these exact tokens or components.
+This document defines the visual system for the graphical app surfaces — tokens, components, motion, and the product voice the copy on those surfaces follows. CLI/TUI presentation is documented separately and may follow shared semantic intent without matching these exact tokens or components.
+
+## Voice & content
+
+Push copy is calm, declarative, and developer-direct. It assumes you ship code and does not hype. This governs everything a surface *says* — labels, microcopy, empty states, marketing. The agent's user-facing role/phase **labels** are a separate concern owned by `lib/role-display.ts`; don't hand-spell them here or anywhere.
+
+### Voice
+
+- Second person, lowercase verbs: "Resume work or jump into a repo." "Switch context." "Browse All Repos."
+- Direct verbs over noun phrases: `New Sandbox`, not "Create a new sandbox session." `Save` / `Download` / `Copy All`.
+- Short and real. Hero copy is one sentence. Confidence without swagger — the brand's warmest adjectives are "calm", "real", "anchored". No "lightning fast" / "magical" / "delightful".
+- "you", never "I" / "we". The chat agent narrates without personification — a working-state line is `role + ellipsis verb` ("Exploring…", "Editing…"), with the role/phase label resolved through `lib/role-display.ts`.
+- No exclamation marks. No non-actionable questions — "Ready to ship?" → "Open on branch."
+- No emoji anywhere in product copy. Status is iconography + colored dots, never an emoji.
+
+### Casing
+
+| Form          | Use                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------ |
+| Title Case    | page / sheet titles, primary actions — `Workspace`, `New Sandbox`, `Browse All Repos` |
+| Sentence case | descriptions, microcopy, body text                                                   |
+| UPPERCASE     | section micro-labels in panels — `AGENT CONSOLE`, `RECENT REPOS` (the `HUB_TAG_CLASS` register) |
+| lowercase     | branch names, commands, identifiers — `main`, `npm install`, `--task`                |
+
+### Mechanics
+
+- Em dash with spaces is the house clause separator: "Ephemeral workspace — write code, run commands…". It also qualifies labels: `Sandbox · ephemeral`, `Push · main`.
+- Numbers as digits, always: `2h ago`, `10 recent commits`. UI time is relative: `1h ago`, `11d ago`.
+- Path-style attribution in chat bylines: `Push / main · 1m ago` (slash + middot).
+
+Reference copy: launcher hero "Push — Resume work or jump into a repo."; sandbox empty state "Ephemeral workspace — write code, run commands, and prototype ideas from scratch."; chat placeholder "Ask about code…"; agent trace "Fetching from GitHub…".
 
 ## Colors
 
@@ -422,9 +452,11 @@ A new top-level surface (full-screen pairing flow, settings sub-page, onboarding
 
 ## Icons
 
-Lucide React (`lucide-react`). Default size `size-4` (16px).
+Two systems. **Lucide React** (`lucide-react`) is the general-purpose workhorse — default size `size-4` (16px); common sizes `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32px).
 
-Common sizes: `size-3` (12px), `size-3.5` (14px), `size-4` (16px), `size-8` (32px).
+The **Push custom pack** (`app/src/components/icons/push-custom-icons.tsx`, with SVG exports under `app/src/assets/icons/push-pack-v1/`) is the brand expression: 24px viewBox, stroke 2, round caps + joins, `stroke="currentColor"` so each picks up text + status color. When a concept maps to a custom icon (branch, commit, diff, sandbox, review, a repo type, a model capability…), use it; Lucide is the fallback. The per-icon **"when to use" map lives in that file's header comment** — keep it there, next to the definitions, not copied here.
+
+No emoji in chrome; status uses colored dot indicators + iconography, never glyphs.
 
 ## Layout
 
