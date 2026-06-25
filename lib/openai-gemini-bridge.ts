@@ -1,5 +1,6 @@
 import type { OpenAIChatRequest, OpenAIContentPart } from './openai-chat-types.ts';
 import type {
+  LlmContentBlock,
   LlmContentPart,
   LlmMessage,
   PushStreamEvent,
@@ -341,6 +342,61 @@ function llmContentPartsToGemini(parts: readonly LlmContentPart[]): Array<Record
   return out.length > 0 ? out : [{ text: '' }];
 }
 
+/**
+ * Strict converter for the neutral `LlmMessage.contentBlocks` → Gemini parts —
+ * the Gemini downcast of the contract migration (see
+ * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
+ * This slice handles `text` and `image` and DROPS `thinking` /
+ * `redacted_thinking` (Gemini surfaces text only and has no signed-reasoning
+ * slot, same as the OpenAI path). A base64 image `source` maps to Gemini's
+ * `inline_data`; a remote `url` source throws — Gemini inline parts can't carry
+ * a URL (mirrors {@link geminiInlineImageFromUrl}).
+ *
+ * `tool_use` / `tool_result` are the Gemini "boss fight" — Gemini's
+ * `functionResponse` keys results by function NAME, not the `tool_use_id` the
+ * block carries, so it needs an id→name pre-pass. They land in a follow-up
+ * slice and throw here for now (the producer flip is gated on every serializer
+ * handling every block, so this incomplete edge isn't reachable yet). THROWS on
+ * unsupported/malformed blocks, mirroring {@link llmContentPartsToGemini}.
+ */
+function llmContentBlocksToGemini(
+  blocks: readonly LlmContentBlock[],
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const rawBlock of blocks) {
+    const block = rawBlock as {
+      type?: unknown;
+      text?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+    };
+    if (block.type === 'text' && typeof block.text === 'string') {
+      out.push({ text: block.text });
+      continue;
+    }
+    if (block.type === 'image' && block.source && typeof block.source === 'object') {
+      const s = block.source;
+      if (s.type === 'base64' && typeof s.media_type === 'string' && typeof s.data === 'string') {
+        out.push({ inline_data: { mime_type: s.media_type, data: s.data } });
+        continue;
+      }
+      // A remote `url` source can't be inlined — fall through to the loud throw.
+    }
+    if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+      // Dropped — Gemini surfaces text only and has no signed-reasoning slot.
+      continue;
+    }
+    if (block.type === 'tool_use' || block.type === 'tool_result') {
+      throw new Error(
+        `toGeminiGenerateContent: ${block.type} blocks are not yet supported on the Gemini contentBlocks path (follow-up slice)`,
+      );
+    }
+    throw new Error(
+      `toGeminiGenerateContent: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
+    );
+  }
+  return out.length > 0 ? out : [{ text: '' }];
+}
+
 /** Options for the neutral `PushStreamRequest` → Gemini serializer. */
 export interface ToGeminiGenerateContentOptions {
   /** Attach the native `googleSearch` grounding tool. The caller owns the policy
@@ -385,11 +441,17 @@ export function toGeminiGenerateContent(
       // Gemini's systemInstruction is text-only. The web's google materializer
       // emits a plain-string system message (google isn't cacheable, so unlike
       // the anthropic/openrouter path it never arrays the system content). Still,
-      // honor `contentParts` defensively — if a system message ever arrives in
-      // the content-part form (the wire validator lands array content there with
-      // an empty `content`), reading `content` alone would silently drop the
-      // whole system prompt, mirroring the bug fixed in `toAnthropicMessages`.
-      if (m.contentParts && m.contentParts.length > 0) {
+      // honor `contentParts`/`contentBlocks` defensively — if a system message
+      // ever arrives in a rich form (the wire validator lands array content
+      // there with an empty `content`), reading `content` alone would silently
+      // drop the whole system prompt, mirroring the bug fixed in
+      // `toAnthropicMessages`. Non-text parts are skipped (systemInstruction is
+      // text-only).
+      if (m.contentBlocks && m.contentBlocks.length > 0) {
+        for (const part of llmContentBlocksToGemini(m.contentBlocks)) {
+          if (typeof part.text === 'string' && part.text.length > 0) pushSystemText(part.text);
+        }
+      } else if (m.contentParts && m.contentParts.length > 0) {
         for (const part of m.contentParts) {
           if (part.type === 'text' && part.text.length > 0) pushSystemText(part.text);
         }
@@ -398,10 +460,14 @@ export function toGeminiGenerateContent(
       }
       continue;
     }
+    // Prefer the Anthropic-conceptual `contentBlocks` when present, else the
+    // rich `contentParts`, else the `content` text.
     const parts =
-      m.contentParts && m.contentParts.length > 0
-        ? llmContentPartsToGemini(m.contentParts)
-        : [{ text: m.content }];
+      m.contentBlocks && m.contentBlocks.length > 0
+        ? llmContentBlocksToGemini(m.contentBlocks)
+        : m.contentParts && m.contentParts.length > 0
+          ? llmContentPartsToGemini(m.contentParts)
+          : [{ text: m.content }];
     contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts });
   }
 

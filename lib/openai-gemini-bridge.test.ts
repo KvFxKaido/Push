@@ -714,6 +714,97 @@ describe('toGeminiGenerateContent — multimodal contentParts', () => {
   });
 });
 
+describe('toGeminiGenerateContent — contentBlocks', () => {
+  const req = (message: Partial<LlmMessage>): PushStreamRequest<LlmMessage> =>
+    ({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [
+        { id: '1', role: 'user', content: 'fallback', timestamp: 0, ...message } as LlmMessage,
+      ],
+    }) as PushStreamRequest<LlmMessage>;
+  const firstParts = (body: Record<string, unknown>): Array<Record<string, unknown>> =>
+    (body.contents as Array<{ parts: Array<Record<string, unknown>> }>)[0].parts;
+
+  it('serializes text + base64 image blocks as Gemini text + inline_data', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        contentBlocks: [
+          { type: 'text', text: 'what is this?' },
+          {
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+          },
+        ],
+      }),
+    );
+    expect(firstParts(body)).toEqual([
+      { text: 'what is this?' },
+      { inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' } },
+    ]);
+  });
+
+  it('drops thinking blocks (Gemini surfaces text only)', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          { type: 'thinking', text: 'hmm', signature: 's' },
+          { type: 'text', text: 'answer' },
+        ],
+      }),
+    );
+    // Assistant turns are renamed to `model`; assert on that turn directly
+    // (Gemini front-pads an empty user turn before a leading model turn).
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    expect(contents.find((c) => c.role === 'model')?.parts).toEqual([{ text: 'answer' }]);
+  });
+
+  it('prefers contentBlocks over contentParts and content', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        content: 'text fallback',
+        contentParts: [{ type: 'text', text: 'parts fallback' }],
+        contentBlocks: [{ type: 'text', text: 'blocks win' }],
+      }),
+    );
+    expect(firstParts(body)).toEqual([{ text: 'blocks win' }]);
+  });
+
+  it('honors contentBlocks on a system turn (hoisted into systemInstruction)', () => {
+    const body = toGeminiGenerateContent(
+      req({ role: 'system', content: '', contentBlocks: [{ type: 'text', text: 'be terse' }] }),
+    );
+    expect(body.systemInstruction).toEqual({ parts: [{ text: 'be terse' }] });
+  });
+
+  it('throws on a remote image url source (Gemini inline needs base64)', () => {
+    expect(() =>
+      toGeminiGenerateContent(
+        req({
+          contentBlocks: [
+            { type: 'image', source: { type: 'url', url: 'https://example.com/c.png' } },
+          ],
+        }),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+  });
+
+  it('throws on tool blocks (not yet supported on the Gemini block path)', () => {
+    expect(() =>
+      toGeminiGenerateContent(
+        req({
+          role: 'assistant',
+          contentBlocks: [{ type: 'tool_use', id: 'c1', name: 'foo', input: {} }],
+        }),
+      ),
+    ).toThrow(/not yet supported on the Gemini contentBlocks path/);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Phase 3a (Gemini): geminiEventStream — Gemini SSE parsed directly into neutral
 // PushStreamEvents. Pinned event-for-event against the legacy
