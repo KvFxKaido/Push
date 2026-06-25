@@ -12,6 +12,7 @@ import {
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
+import { anthropicModelSupportsNativeStructuredOutput } from './anthropic-structured-output.ts';
 import { openAISSEPump } from './openai-sse-pump.ts';
 import type { PushStreamEvent } from './provider-contract.ts';
 
@@ -60,6 +61,31 @@ describe('anthropicModelRejectsSamplingParams', () => {
     }
     expect(anthropicModelRejectsSamplingParams(undefined)).toBe(false);
     expect(anthropicModelRejectsSamplingParams(null)).toBe(false);
+  });
+});
+
+describe('anthropicModelSupportsNativeStructuredOutput', () => {
+  it('recognizes supported Claude JSON-output model id shapes', () => {
+    for (const model of [
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-5@20250929',
+      'anthropic/claude-sonnet-4.6:nitro',
+    ]) {
+      expect(anthropicModelSupportsNativeStructuredOutput(model), model).toBe(true);
+    }
+  });
+
+  it('rejects older Claude and non-Claude Anthropic-transport ids', () => {
+    for (const model of [
+      'claude-sonnet-4@20250514',
+      'claude-opus-4-1@20250805',
+      'claude-3-5-sonnet-20241022',
+      'minimax-m3',
+    ]) {
+      expect(anthropicModelSupportsNativeStructuredOutput(model), model).toBe(false);
+    }
   });
 });
 
@@ -605,7 +631,7 @@ describe('toAnthropicMessages — contentBlocks (multimodal near-identity; tool 
   });
 });
 
-describe('Anthropic structured outputs (forced tool)', () => {
+describe('Anthropic structured outputs', () => {
   const schema = {
     type: 'object',
     properties: { verdict: { type: 'string' } },
@@ -613,10 +639,44 @@ describe('Anthropic structured outputs (forced tool)', () => {
     additionalProperties: false,
   };
 
-  it('toAnthropicMessages turns responseFormat into a forced tool + tool_choice', () => {
+  it('toAnthropicMessages prefers native output_config.format on supported Claude models', () => {
     const body = toAnthropicMessages({
       provider: 'anthropic',
       model: 'claude-sonnet-4-6',
+      messages: [{ id: '1', role: 'user', content: 'audit', timestamp: 0 } as LlmMessage],
+      responseFormat: { name: 'auditor_verdict', schema },
+    } as PushStreamRequest<LlmMessage>);
+    expect(body.output_config).toEqual({
+      format: {
+        type: 'json_schema',
+        schema,
+      },
+    });
+    expect(body).not.toHaveProperty('tool_choice');
+    expect(body).not.toHaveProperty('tools');
+  });
+
+  it('buildAnthropicMessagesRequest prefers native output_config.format on supported Claude models', () => {
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-4-6',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: { type: 'json_schema', json_schema: { name: 'auditor_verdict', schema } },
+    });
+    expect(body.output_config).toEqual({
+      format: {
+        type: 'json_schema',
+        schema,
+      },
+    });
+    expect(body).not.toHaveProperty('tool_choice');
+    expect(body).not.toHaveProperty('tools');
+  });
+
+  it('falls back to a forced tool on Anthropic routes without native JSON outputs', () => {
+    const body = toAnthropicMessages({
+      provider: 'zen',
+      model: 'minimax-m3',
       messages: [{ id: '1', role: 'user', content: 'audit', timestamp: 0 } as LlmMessage],
       responseFormat: { name: 'auditor_verdict', schema },
     } as PushStreamRequest<LlmMessage>);
@@ -629,24 +689,29 @@ describe('Anthropic structured outputs (forced tool)', () => {
       },
     ]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+    expect(body).not.toHaveProperty('output_config');
   });
 
-  it('buildAnthropicMessagesRequest turns response_format into a forced tool + tool_choice', () => {
+  it('falls back to a forced tool when strict mode is explicitly disabled', () => {
     const body = buildAnthropicMessagesRequest({
       model: 'claude-sonnet-4-6',
       messages: [{ role: 'user', content: 'audit' }],
       stream: true,
-      response_format: { type: 'json_schema', json_schema: { name: 'auditor_verdict', schema } },
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema, strict: false },
+      },
     });
     expect(body.tools).toEqual([
       {
         name: STRUCTURED_OUTPUT_TOOL_NAME,
         description: expect.any(String),
         input_schema: schema,
-        strict: true,
+        strict: false,
       },
     ]);
     expect(body.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+    expect(body).not.toHaveProperty('output_config');
   });
 
   it('omits tool_choice when no responseFormat is set', () => {

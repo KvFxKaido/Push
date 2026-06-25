@@ -350,13 +350,15 @@ export interface NativeToolCall {
 }
 
 /**
- * Provider-agnostic request for a JSON-Schema-constrained response, mapping to
- * the OpenAI `response_format: { type: 'json_schema', json_schema }` field that
- * OpenRouter and the OpenAI-compat routes honor. When set, the adapter asks the
+ * Provider-agnostic request for a JSON-Schema-constrained response. OpenAI-
+ * compatible routes map it to
+ * `response_format: { type: 'json_schema', json_schema }`; Anthropic Messages
+ * routes map it to native `output_config.format` where supported, with the
+ * forced-tool fallback for older routes. When set, the adapter asks the
  * upstream to constrain generation to `schema` server-side, so the model emits
  * conforming JSON in the first place rather than relying solely on the post-hoc
- * `parseStructured` repair/validate pass. Adapters that can't honor it (the
- * Anthropic / Gemini native serializers) ignore the field.
+ * `parseStructured` repair/validate pass. Adapters that can't honor it (for
+ * example Gemini native serializers) ignore the field.
  */
 /** JSON-schema scalar/compound types used in tool-parameter schemas. */
 export type JsonSchemaType = 'string' | 'integer' | 'number' | 'boolean' | 'array' | 'object';
@@ -478,9 +480,9 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *  cited results back to the model. */
   openrouterWebSearch?: boolean;
   /**
-   * Constrain the response to a JSON Schema (OpenAI `response_format`). Honored
-   * by the OpenRouter adapter and the OpenAI-compat serializer (`toOpenAIChat`);
-   * ignored by the Anthropic / Gemini native serializers. See `ResponseFormatSpec`.
+   * Constrain the response to a JSON Schema. Honored by provider adapters whose
+   * capability profile advertises structured outputs; ignored by adapters that
+   * do not have a confirmed structured-output wire. See `ResponseFormatSpec`.
    */
   responseFormat?: ResponseFormatSpec;
   /**

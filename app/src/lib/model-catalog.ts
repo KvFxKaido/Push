@@ -28,12 +28,15 @@ import {
 } from './providers';
 import { getZenGoTransport } from './zen-go';
 import { getVertexModelTransport } from './vertex-provider';
+import { getVertexMode } from '@/hooks/useVertexConfig';
 import { asRecord } from './utils';
 import {
   DEFAULT_PUSH_CAPABILITY_PROFILE,
   type PushCapabilityProfile,
   type PushContextTier,
+  type PushStructuredOutputMode,
 } from './capabilities';
+import { anthropicModelSupportsNativeStructuredOutput } from '@push/lib/anthropic-structured-output';
 import {
   looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
@@ -419,14 +422,13 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 }
 
 /**
- * Providers whose web adapter serializes the OpenAI `response_format` json_schema
- * field onto the wire — the OpenAI-shaped endpoints routed through
- * `openAISSEPump`. The Anthropic / Gemini / Vertex native serializers are
- * excluded because they ignore the field by contract (see `ResponseFormatSpec`
- * in `lib/provider-contract.ts`); `bedrock` and `ollama` are omitted because
- * their `response_format` support isn't confirmed (Ollama Cloud does not honor
- * structured outputs per its docs, so attaching one would route around the
- * prompt-only `parseStructured` fallback). `cloudflare` IS included: the
+ * Providers whose web adapter can honor Push's neutral `ResponseFormatSpec`.
+ * OpenAI-compatible endpoints serialize it as `response_format`; Anthropic
+ * Messages routes serialize it as native `output_config.format` when supported
+ * and fall back to the forced-tool bridge otherwise. Gemini native serializers,
+ * Bedrock, and Ollama are omitted because their structured-output support is
+ * either absent or unconfirmed, so attaching one would route around the
+ * prompt-only `parseStructured` fallback. `cloudflare` IS included: the
  * Workers AI binding accepts the OpenAI `response_format` shape for the models
  * whose model cards advertise structured outputs (Kimi K2.x, GLM) — but it has
  * no models.dev metadata, so its per-model gate is name-based (see
@@ -447,6 +449,7 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'zen',
   'cloudflare',
   'anthropic',
+  'vertex',
 ]);
 
 /**
@@ -527,38 +530,51 @@ function modelSupportsMultimodal(
   return /(?:gpt-4o|gpt-4\.1|gpt-5|claude|gemini|vision|vl\b|llava|bakllava)/i.test(modelId);
 }
 
-function modelSupportsStructuredOutput(provider: string, modelId: string | undefined): boolean {
-  if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return false;
+function resolveStructuredOutputMode(
+  provider: string,
+  modelId: string | undefined,
+): PushStructuredOutputMode {
+  if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return 'none';
   // Workers AI has no models.dev metadata, so resolve by name instead of the
   // catalog probe (which would always report `structuredOutput: false`).
-  if (provider === 'cloudflare') return cloudflareModelSupportsStructuredOutput(modelId);
-  // Anthropic has no OpenAI-style `response_format`; the bridge expresses the
-  // JSON-Schema constraint as a forced tool (`toAnthropicMessages` →
-  // `STRUCTURED_OUTPUT_TOOL_NAME`), which works on any tool-capable Claude — i.e.
-  // every model Push offers on this provider. Name-based like Cloudflare (no
-  // models.dev structured-output metadata for the native Anthropic ids).
-  if (provider === 'anthropic') return true;
-  // Zen-Go Anthropic-transport models (minimax/qwen) get structured outputs via
-  // the same forced-tool bridge (`handleZenGoChat` → `toAnthropicMessages`),
-  // which works regardless of models.dev metadata — same rationale as the direct
-  // `anthropic` gate above. Zen's OpenAI-transport models stay capability-gated
-  // (`response_format`). `getZenGoTransport` is name-based, so this also enables
-  // the dual-tier ids on standard tier, where `response_format` is sent and
-  // ignored gracefully if unsupported.
-  if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') return true;
-  return getModelCapabilities(provider, modelId).structuredOutput;
+  if (provider === 'cloudflare') {
+    return cloudflareModelSupportsStructuredOutput(modelId) ? 'strict' : 'none';
+  }
+  // Direct Anthropic gets native `output_config.format` on supported Claude
+  // models and keeps the forced-tool bridge on older/unknown Claude ids.
+  if (provider === 'anthropic') {
+    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
+  }
+  // Anthropic-transport routes share the Messages serializer. Claude models on
+  // Vertex can use `output_config.format`; older Claude ids and Zen-Go
+  // MiniMax/Qwen routes keep the forced-tool fallback.
+  if (provider === 'vertex') {
+    if (getVertexModelTransport(modelId) !== 'anthropic') return 'none';
+    // Only the native (push.stream.v1) Vertex wire reaches `toAnthropicMessages`,
+    // where the constraint becomes `output_config.format` / the forced tool. The
+    // legacy OpenAI-proxy wire (`vertexStream`'s `legacyBase`) never serializes
+    // `response_format`, and its upstream base URL is user-configured/unconfirmed —
+    // attaching a constraint there would silently route around the prompt-only
+    // `parseStructured` fallback. Keep legacy Vertex prompt-only. Reads the same
+    // `getVertexMode()` ground truth `vertexStream` uses for its `requestWire`, so
+    // gate and wire stay in lockstep.
+    if (getVertexMode() !== 'native') return 'none';
+    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
+  }
+  if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
+    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
+  }
+  return getModelCapabilities(provider, modelId).structuredOutput ? 'strict' : 'none';
 }
 
 /**
  * Whether to attach a native `response_format` JSON-Schema constraint for the
  * given provider/model — gates the auditor verdict/evaluation and reviewer
- * kernels. Two conditions, both required: the provider's adapter must serialize
- * `response_format` (`STRUCTURED_OUTPUT_PROVIDERS`), AND the model's catalog
- * metadata must advertise structured-output support
- * (`getModelCapabilities().structuredOutput`). Generalizes the Phase 1
- * OpenRouter-only gate to every OpenAI-compatible provider; providers without
- * models.dev structured-output metadata (e.g. direct OpenAI / Azure today)
- * resolve `false` and stay prompt-only until that metadata lands.
+ * kernels. OpenAI-compatible providers emit OpenAI `response_format`;
+ * Anthropic Messages routes emit native `output_config.format` where supported
+ * and fall back to the forced-tool bridge where not. Providers without a
+ * confirmed structured-output wire stay prompt-only until their adapter proves
+ * support.
  */
 export function providerModelSupportsStructuredOutput(
   provider: string,
@@ -702,7 +718,7 @@ export function resolvePushCapabilityProfile(
     toolCalling: nativeToolCalling ? 'native' : 'json-text',
     streamingTools: nativeToolCalling,
     multimodal: modelSupportsMultimodal(provider, model, capabilities),
-    structuredOutput: modelSupportsStructuredOutput(provider, model) ? 'strict' : 'none',
+    structuredOutput: resolveStructuredOutputMode(provider, model),
     contentBlocks,
     reasoningBlocks,
     context: resolveContextTier(capabilities.contextLimit),

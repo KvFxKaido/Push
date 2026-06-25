@@ -10,15 +10,18 @@ import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
 import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
 import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
+import { anthropicModelSupportsNativeStructuredOutput } from './anthropic-structured-output.ts';
+import type { PushStructuredOutputMode } from './capabilities.ts';
 
 /**
- * Reserved tool name for the structured-output forced tool. Anthropic has no
- * `response_format`, so a JSON-schema constraint becomes a single forced tool
- * (see `assembleAnthropicBody`). The SSE translators recognize this name and
- * route the tool's streamed `input` to plain text content — so the JSON arrives
- * as message content, matching OpenAI `response_format`, rather than as a
- * fenced `tool_call`. The double-underscore name avoids colliding with any
- * registry tool (`KNOWN_TOOL_NAMES`).
+ * Reserved tool name for the structured-output forced-tool fallback. Modern
+ * Claude models prefer native `output_config.format`; older Anthropic-transport
+ * routes still express the JSON-schema constraint as this single forced tool.
+ * The SSE translators recognize the name and route the tool's streamed `input`
+ * to plain text content — so the JSON arrives as message content, matching
+ * OpenAI `response_format`, rather than as a fenced `tool_call`. The
+ * double-underscore name avoids colliding with any registry tool
+ * (`KNOWN_TOOL_NAMES`).
  */
 export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
@@ -415,6 +418,9 @@ export function buildAnthropicMessagesRequest(
           strict: request.response_format.json_schema.strict,
         }
       : undefined,
+    structuredOutputMode: anthropicModelSupportsNativeStructuredOutput(request.model)
+      ? 'strict'
+      : 'best-effort',
     anthropicVersion: options?.anthropicVersion,
     // `buildAnthropicMessagesRequest` intentionally omits `model` — callers
     // re-attach it (the body translation is provider-version-agnostic).
@@ -443,8 +449,10 @@ interface AnthropicBodyAssembly {
   /** Native function-calling schemas in Anthropic's flat
    *  `{ name, description, input_schema }` custom-tool shape. */
   tools?: ToolFunctionSchema[];
-  /** Structured-output JSON-Schema constraint, expressed as a forced tool. */
+  /** Structured-output JSON-Schema constraint. */
   structuredOutput?: { name: string; schema: Record<string, unknown>; strict?: boolean };
+  /** Serializer policy for Anthropic structured outputs. */
+  structuredOutputMode?: PushStructuredOutputMode;
   anthropicVersion?: string;
   /**
    * When set, emitted as the top-level `model`. `buildAnthropicMessagesRequest`
@@ -542,26 +550,37 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   if (parts.enableWebSearch) {
     anthropicTools.push({ type: 'web_search_20250305', name: 'web_search' });
   }
-  // Structured outputs: Anthropic has no `response_format`, so a JSON-schema
-  // constraint is expressed as a single forced tool whose `input_schema` is the
-  // schema, with `tool_choice` pinned to it. The model is forced to emit exactly
-  // one `tool_use` block for this tool; the SSE translators recognize the reserved
-  // name (`STRUCTURED_OUTPUT_TOOL_NAME`) and route its streamed `input` to plain
-  // text content (not a tool call), so callers `JSON.parse` the accumulated text
+  // Structured outputs: modern Claude routes support native JSON outputs via
+  // `output_config.format`. Older Anthropic-transport routes fall back to the
+  // historical forced-tool bridge: a single custom tool with `tool_choice`
+  // pinned to it. The SSE translators recognize the reserved name
+  // (`STRUCTURED_OUTPUT_TOOL_NAME`) and route its streamed `input` to plain text
+  // content (not a tool call), so callers `JSON.parse` the accumulated text
   // exactly as they do with OpenAI `response_format`.
   if (parts.structuredOutput) {
-    anthropicTools.push({
-      name: STRUCTURED_OUTPUT_TOOL_NAME,
-      description:
-        'Return the response as a single JSON object matching the schema. Call this tool exactly once.',
-      input_schema: parts.structuredOutput.schema,
-      // Top-level `strict` makes Anthropic enforce schema conformance for the
-      // tool input (without it the model is only forced to *call* the tool, not
-      // to fill the schema exactly). Defaults true, mirroring the OpenAI
-      // `response_format` path (`ResponseFormatSpec.strict ?? true`).
-      strict: parts.structuredOutput.strict ?? true,
-    });
-    body.tool_choice = { type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME };
+    const useNativeOutputConfig =
+      parts.structuredOutputMode === 'strict' && parts.structuredOutput.strict !== false;
+    if (useNativeOutputConfig) {
+      body.output_config = {
+        format: {
+          type: 'json_schema',
+          schema: parts.structuredOutput.schema,
+        },
+      };
+    } else {
+      anthropicTools.push({
+        name: STRUCTURED_OUTPUT_TOOL_NAME,
+        description:
+          'Return the response as a single JSON object matching the schema. Call this tool exactly once.',
+        input_schema: parts.structuredOutput.schema,
+        // Top-level `strict` makes Anthropic enforce schema conformance for the
+        // tool input (without it the model is only forced to *call* the tool, not
+        // to fill the schema exactly). Defaults true, mirroring the OpenAI
+        // `response_format` path (`ResponseFormatSpec.strict ?? true`).
+        strict: parts.structuredOutput.strict ?? true,
+      });
+      body.tool_choice = { type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME };
+    }
   }
   if (anthropicTools.length > 0) {
     body.tools = anthropicTools;
@@ -790,6 +809,9 @@ export function toAnthropicMessages(
           strict: req.responseFormat.strict,
         }
       : undefined,
+    structuredOutputMode: anthropicModelSupportsNativeStructuredOutput(model)
+      ? 'strict'
+      : 'best-effort',
     anthropicVersion: options?.anthropicVersion,
     // `model` stays the sampling-gate input above; only the top-level body
     // field is suppressed when the transport carries the model out-of-band.

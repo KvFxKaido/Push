@@ -79,7 +79,9 @@ export interface PushStreamRequestWire {
   /**
    * Native structured-output JSON-Schema constraint. Carried so the flipped
    * Zen Go client keeps structured outputs the legacy passthrough used to
-   * preserve; the Worker re-serializes it via `toOpenAIChat` → `response_format`.
+   * preserve; Workers re-serialize it to each transport's native shape
+   * (`response_format`, Anthropic `output_config.format`, or forced-tool
+   * fallback).
    */
   responseFormat?: ResponseFormatSpec;
   /**

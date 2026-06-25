@@ -393,6 +393,23 @@ describe('vertexStream', () => {
     expect(body).not.toHaveProperty('tool_choice');
   });
 
+  it('carries responseFormat on the native neutral wire body', async () => {
+    installStreamFetch(fetchMock);
+    const { vertexStream } = await import('./vertex-stream');
+    const responseFormat = { name: 'verdict', schema: { type: 'object' } };
+    const iter = vertexStream({ ...baseRequest, responseFormat });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.contract).toBe('push.stream.v1');
+    expect(body.responseFormat).toEqual(responseFormat);
+    expect(body).not.toHaveProperty('response_format');
+  });
+
   it('maps finish_reason onto the done event', async () => {
     const { push, finish } = installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');

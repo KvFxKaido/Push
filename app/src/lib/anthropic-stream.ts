@@ -81,8 +81,9 @@ export async function* anthropicStream(
     ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
     // Structured outputs: the neutral wire carries the JSON-Schema constraint
     // (validated by the wire guardrail); the Worker's `toAnthropicMessages`
-    // turns it into a forced tool + `tool_choice`. Gated upstream by
-    // `providerModelSupportsStructuredOutput('anthropic', model)`.
+    // emits native `output_config.format` on supported Claude models and keeps
+    // the forced-tool fallback for older Anthropic-transport routes. Gated
+    // upstream by `providerModelSupportsStructuredOutput('anthropic', model)`.
     ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
   });
 
