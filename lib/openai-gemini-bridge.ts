@@ -15,9 +15,9 @@ import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
  * OpenAI ↔ Gemini bridge.
  *
  * Translates an OpenAI-shaped chat request into Google's Generative Language
- * `:streamGenerateContent` body, and translates the upstream SSE response back
- * into OpenAI Chat Completions SSE so the client adapter can read it through
- * `openAISSEPump` like every other provider.
+ * `:streamGenerateContent` body, and parses the upstream SSE response directly
+ * into neutral `PushStreamEvent`s via `geminiEventStream` — the production
+ * response path for both the CLI and the direct web Gemini route.
  *
  * Differences from Anthropic that drive shape choices:
  *   - Gemini's role vocabulary is `user` / `model` (not `user` / `assistant`).
@@ -30,10 +30,10 @@ import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
  *     no `[DONE]` sentinel.
  *
  * Gemini does not currently emit signed reasoning blocks the way Anthropic
- * does, so this translator surfaces text only. Prompt caching markers aren't
- * preserved here either — Gemini's explicit-cache API is opt-in and lives on
- * a different endpoint, so passing `cache_control: ephemeral` through would
- * be a no-op.
+ * does, so the response path surfaces text (and native function calls) only.
+ * Prompt caching markers aren't preserved here either — Gemini's explicit-cache
+ * API is opt-in and lives on a different endpoint, so passing
+ * `cache_control: ephemeral` through would be a no-op.
  */
 
 function dataUrlToGeminiInlinePart(dataUrl: string): Record<string, unknown> | null {
@@ -533,70 +533,6 @@ export function toGeminiGenerateContent(
   });
 }
 
-function buildOpenAISseChunk(params: {
-  model: string;
-  content?: string;
-  finishReason?: string | null;
-  usage?: {
-    prompt_tokens?: number;
-    completion_tokens?: number;
-    total_tokens?: number;
-  };
-  toolCall?: {
-    index: number;
-    id?: string;
-    name?: string;
-    arguments?: string;
-    thoughtSignature?: string;
-  };
-}): string {
-  const delta: Record<string, unknown> = {};
-  if (params.content) delta.content = params.content;
-  if (params.toolCall) {
-    const fn: Record<string, unknown> = {};
-    if (params.toolCall.name) fn.name = params.toolCall.name;
-    if (typeof params.toolCall.arguments === 'string') fn.arguments = params.toolCall.arguments;
-    delta.tool_calls = [
-      {
-        index: params.toolCall.index,
-        ...(params.toolCall.id ? { id: params.toolCall.id } : {}),
-        type: 'function',
-        function: fn,
-        // Push-private extension on the OpenAI-SSE intermediate: Gemini's
-        // `thoughtSignature` has no native OpenAI slot, so carry it as a sibling
-        // field that `openAISSEPump` lifts back onto the neutral tool call.
-        ...(params.toolCall.thoughtSignature
-          ? { thoughtSignature: params.toolCall.thoughtSignature }
-          : {}),
-      },
-    ];
-  }
-
-  const payload: Record<string, unknown> = {
-    id: `chatcmpl-${crypto.randomUUID()}`,
-    object: 'chat.completion.chunk',
-    created: Math.floor(Date.now() / 1000),
-    model: params.model,
-    choices: [
-      {
-        index: 0,
-        delta,
-        finish_reason: params.finishReason ?? null,
-      },
-    ],
-  };
-
-  if (params.usage) {
-    payload.usage = {
-      prompt_tokens: params.usage.prompt_tokens ?? 0,
-      completion_tokens: params.usage.completion_tokens ?? 0,
-      total_tokens: params.usage.total_tokens ?? 0,
-    };
-  }
-
-  return `data: ${JSON.stringify(payload)}\n\n`;
-}
-
 function mapGeminiFinishReason(reason: string | null | undefined): string {
   switch (reason) {
     case 'MAX_TOKENS':
@@ -689,156 +625,14 @@ function extractFunctionCallsFromCandidate(
   return out;
 }
 
-export function createGeminiTranslatedStream(
-  upstream: Response,
-  model: string,
-): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = upstream.body?.getReader();
-      if (!reader) {
-        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop' })));
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-        return;
-      }
-
-      let buffer = '';
-      let usage:
-        | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
-        | undefined;
-      let terminalFinishReason: string | null = null;
-      let sawFunctionCall = false;
-      let nextToolCallIndex = 0;
-      let closed = false;
-
-      const finishWithCurrent = (): void => {
-        if (closed) return;
-        closed = true;
-        controller.enqueue(
-          encoder.encode(
-            buildOpenAISseChunk({
-              model,
-              finishReason: terminalFinishReason ?? (sawFunctionCall ? 'tool_calls' : 'stop'),
-              usage,
-            }),
-          ),
-        );
-        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-        controller.close();
-      };
-
-      const handleChunk = (raw: string): void => {
-        if (closed) return;
-        const trimmed = raw.trim();
-        if (!trimmed) return;
-
-        // Gemini emits SSE frames as `data: { ... }` when invoked with
-        // `?alt=sse`. Strip the `data:` prefix when present; otherwise treat
-        // the chunk as a bare JSON object (some intermediaries / library
-        // helpers normalize the framing away).
-        const jsonStr = trimmed.startsWith('data:') ? trimmed.slice(5).trimStart() : trimmed;
-        if (!jsonStr || jsonStr === '[DONE]') return;
-
-        let parsed: GeminiStreamChunk;
-        try {
-          parsed = JSON.parse(jsonStr) as GeminiStreamChunk;
-        } catch {
-          return;
-        }
-
-        const candidate = parsed.candidates?.[0];
-        const text = extractTextFromCandidate(candidate);
-        if (text) {
-          controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: text })));
-        }
-
-        const functionCalls = extractFunctionCallsFromCandidate(candidate);
-        for (const call of functionCalls) {
-          sawFunctionCall = true;
-          controller.enqueue(
-            encoder.encode(
-              buildOpenAISseChunk({
-                model,
-                toolCall: {
-                  index: nextToolCallIndex++,
-                  name: call.name,
-                  arguments: call.argsJson,
-                  ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
-                },
-              }),
-            ),
-          );
-        }
-
-        if (parsed.usageMetadata) {
-          const prompt = parsed.usageMetadata.promptTokenCount ?? usage?.prompt_tokens ?? 0;
-          const completion =
-            parsed.usageMetadata.candidatesTokenCount ?? usage?.completion_tokens ?? 0;
-          const total = parsed.usageMetadata.totalTokenCount ?? prompt + completion;
-          usage = { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total };
-        }
-
-        if (candidate?.finishReason) {
-          const mapped = mapGeminiFinishReason(candidate.finishReason);
-          terminalFinishReason = sawFunctionCall && mapped === 'stop' ? 'tool_calls' : mapped;
-        }
-      };
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Normalize CRLF → LF before scanning. SSE permits `\r\n\r\n`
-          // framing and Google's edge can emit it; without the rewrite the
-          // single-form `\n\n` boundary scan would never match, buffer the
-          // entire response, and fail JSON.parse on the multi-frame blob at
-          // EOF — same defense `coder-job-stream-adapter.ts` already applies.
-          buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, '\n');
-
-          // SSE event boundary is a blank line (\n\n). Process every complete
-          // event in the buffer and keep the trailing partial for the next
-          // iteration.
-          let boundary = buffer.indexOf('\n\n');
-          while (boundary !== -1) {
-            const rawEvent = buffer.slice(0, boundary);
-            buffer = buffer.slice(boundary + 2);
-            handleChunk(rawEvent);
-            boundary = buffer.indexOf('\n\n');
-          }
-        }
-
-        if (buffer.trim()) {
-          handleChunk(buffer);
-        }
-
-        finishWithCurrent();
-      } catch (err) {
-        if (!closed) {
-          try {
-            controller.error(err);
-          } catch {
-            /* controller may already be closed */
-          }
-        }
-      }
-    },
-  });
-}
-
 /**
  * Phase 3a (Gemini): parse the Gemini `:streamGenerateContent` SSE stream
  * **directly into neutral `PushStreamEvent`s**, with no OpenAI Chat-Completions
- * SSE intermediate. The inverse of `createGeminiTranslatedStream` (which rebuilds
- * OpenAI SSE bytes for the web Worker's response wire) — same parse, neutral
- * output. The CLI consumes this directly, dropping the old
- * `createGeminiTranslatedStream → openAISSEPump` serialize-then-reparse
- * round-trip; the web Worker still uses the translator until the response-contract
- * migration. The drift test pins the two to emit the same event sequence.
+ * SSE intermediate. This is the production response path for both the CLI and
+ * the direct web Gemini route (the worker proxies Gemini's raw upstream SSE
+ * straight through), so there's no translator left — the old
+ * OpenAI-SSE-serialize-then-reparse detour has been removed. The test corpus
+ * pins this pump to the event sequence that detour produced.
  *
  * Gemini is text-only here (no reasoning blocks, no pause_turn): each frame's
  * candidate text becomes a `text_delta` (through the same `stripTemplateTokens`

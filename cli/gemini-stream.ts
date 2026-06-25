@@ -5,9 +5,9 @@
  * directly with `x-goog-api-key`, builds the `:generateContent` body straight
  * from the neutral `PushStreamRequest` via `toGeminiGenerateContent`, and parses
  * the upstream SSE directly into neutral `PushStreamEvent`s via
- * `geminiEventStream` (Phase 3a — no OpenAI-SSE serialize/reparse round-trip; the
- * web Worker still uses `createGeminiTranslatedStream` for its response wire
- * until the response-contract migration).
+ * `geminiEventStream` (no OpenAI-SSE serialize/reparse round-trip). The direct
+ * web Gemini path now uses this same native pump — the worker proxies Gemini's
+ * raw upstream SSE straight through — so there is no translator left.
  *
  * Shape mirrors the Worker's `handleGoogleChat`. Difference vs the Worker
  * version: no preamble / rate-limit preflight, and `config.url` is treated
