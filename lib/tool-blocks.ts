@@ -15,12 +15,15 @@ export function buildToolUseBlock(options: {
   id: string;
   name: string;
   input?: unknown;
+  /** Gemini `thoughtSignature` to round-trip on replay (see `LlmToolUseBlock`). */
+  thoughtSignature?: string;
 }): LlmToolUseBlock {
   return {
     type: 'tool_use',
     id: options.id,
     name: options.name,
     input: normalizeToolInput(options.input),
+    ...(options.thoughtSignature ? { thoughtSignature: options.thoughtSignature } : {}),
   };
 }
 

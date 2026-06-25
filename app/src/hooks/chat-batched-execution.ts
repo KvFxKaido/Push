@@ -116,6 +116,9 @@ export async function executeBatchedToolCalls(
       id,
       name: call.call.tool,
       input: 'args' in call.call ? call.call.args : undefined,
+      // Round-trips Gemini's `thoughtSignature` (native calls only); Gemini 3.x
+      // 400s on the next turn if a prior call replays without it.
+      thoughtSignature: call.thoughtSignature,
     });
   });
 

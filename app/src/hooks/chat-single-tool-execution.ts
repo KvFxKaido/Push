@@ -119,6 +119,9 @@ export async function executeSingleToolCall(
     id: toolUseId,
     name: toolCall.call.tool,
     input: 'args' in toolCall.call ? toolCall.call.args : undefined,
+    // Round-trips Gemini's `thoughtSignature` (native calls only) so the next
+    // turn's replay carries it — Gemini 3.x 400s without it.
+    thoughtSignature: toolCall.thoughtSignature,
   });
 
   setConversations((prev) => {

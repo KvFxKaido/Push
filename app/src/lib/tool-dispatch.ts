@@ -640,7 +640,14 @@ export function detectNativeToolCalls(
 
     const call = detectStructuredToolCall(rawToolName, args);
     if (call) {
-      allCalls.push(call);
+      // Carry the Gemini signed-reasoning token (when present) onto the detected
+      // call so it survives classification and lands on the stored tool_use
+      // block for replay. Top-level sibling — the per-tool `call` stays typed.
+      allCalls.push(
+        nativeCall.thoughtSignature
+          ? { ...call, thoughtSignature: nativeCall.thoughtSignature }
+          : call,
+      );
       continue;
     }
     droppedCandidates.push({
@@ -864,7 +871,7 @@ function normalizeJsonValue(value: unknown): unknown {
 // variant with a union of `call` shapes) so that `Extract<AnyToolCall, { call:
 // { tool: '...' } }>` distributes correctly in each handler. The runtime
 // payload is unchanged; this is purely for the type projection.
-export type AnyToolCall =
+type AnyToolCallSource =
   | { source: 'github'; call: ToolCall }
   | { source: 'sandbox'; call: SandboxToolCall }
   | { source: 'delegate'; call: { tool: 'delegate_coder'; args: CoderDelegationArgs } }
@@ -876,6 +883,16 @@ export type AnyToolCall =
   | { source: 'ask-user'; call: AskUserToolCall }
   | { source: 'artifacts'; call: ArtifactToolCall }
   | { source: 'memory'; call: MemoryToolCall };
+
+/**
+ * A detected tool call. `thoughtSignature` is an optional top-level sibling
+ * (not inside the per-tool `call`, which is strongly typed per source) carrying
+ * Gemini's signed-reasoning token from a native function-call so it can be
+ * stored on the tool_use block and replayed. The intersection distributes the
+ * optional field across every arm without touching any construction site or
+ * disturbing discriminant narrowing on `source` / `call.tool`.
+ */
+export type AnyToolCall = AnyToolCallSource & { thoughtSignature?: string };
 
 /**
  * Scan assistant output for any tool call (GitHub, Sandbox, Scratchpad, or delegation).
