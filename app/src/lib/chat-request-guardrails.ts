@@ -572,11 +572,23 @@ function normalizeWireContentBlocks(
           `${routeLabel} request message ${messageNumber} has a malformed tool_use block.`,
         );
       }
+      // Gemini's signed-reasoning `thoughtSignature` must round-trip on the
+      // replay turn or Gemini 3.x 400s ("Function call is missing a
+      // thought_signature"). Model-generated, low-risk; pass through when it's a
+      // sane non-empty string, else drop the field (fail-closed, like reasoning
+      // signatures) rather than 400 the turn.
+      const thoughtSignature =
+        typeof rawBlock.thoughtSignature === 'string' &&
+        rawBlock.thoughtSignature.length > 0 &&
+        rawBlock.thoughtSignature.length <= MAX_REASONING_BLOCK_SIGNATURE_LENGTH
+          ? rawBlock.thoughtSignature
+          : undefined;
       blocks.push({
         type: 'tool_use',
         id: rawBlock.id,
         name: rawBlock.name,
         input,
+        ...(thoughtSignature ? { thoughtSignature } : {}),
         ...(cacheControl ? { cache_control: cacheControl } : {}),
       });
       continue;
