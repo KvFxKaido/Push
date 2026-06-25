@@ -380,12 +380,15 @@ function buildToolNameById(messages: readonly LlmMessage[]): Map<string, string>
  * image `source` maps to `inline_data`; a remote `url` source throws — Gemini
  * inline parts can't carry a URL (mirrors {@link geminiInlineImageFromUrl}).
  *
- * `functionResponse` is keyed by function NAME (resolved via `toolNameById`,
- * built by {@link buildToolNameById}); an unresolvable `tool_use_id` throws
- * rather than emit an invalid response. Gemini wraps the result as an object
- * (`{ output: <content> }`), and — like OpenAI — has no typed `is_error` slot,
- * so a failed call is conveyed only through the content. THROWS on
- * unsupported/malformed blocks, mirroring {@link llmContentPartsToGemini}.
+ * Both tool parts also carry an `id` (`tool_use.id` / `tool_result.tool_use_id`)
+ * — Gemini 3 correlates a `functionResponse` to its `functionCall` by id, which
+ * is what disambiguates parallel or repeated same-name calls. `functionResponse`
+ * is additionally keyed by function NAME (resolved via `toolNameById`, built by
+ * {@link buildToolNameById}); an unresolvable `tool_use_id` throws rather than
+ * emit an invalid response. The result is wrapped as `{ output: <content> }`;
+ * Gemini has no typed `is_error` slot but its `response` is free-form, so the
+ * flag is preserved there structurally when set. THROWS on unsupported/malformed
+ * blocks, mirroring {@link llmContentPartsToGemini}.
  */
 function llmContentBlocksToGemini(
   blocks: readonly LlmContentBlock[],
@@ -402,6 +405,7 @@ function llmContentBlocksToGemini(
       input?: unknown;
       tool_use_id?: unknown;
       content?: unknown;
+      is_error?: unknown;
     };
     if (block.type === 'text' && typeof block.text === 'string') {
       out.push({ text: block.text });
@@ -423,10 +427,15 @@ function llmContentBlocksToGemini(
       block.type === 'tool_use' &&
       typeof block.id === 'string' &&
       typeof block.name === 'string' &&
+      // `input` is a non-null object — an empty `{}` (parameterless call) is
+      // valid; an absent input would be null/undefined and falls through to throw.
       block.input !== null &&
       typeof block.input === 'object'
     ) {
-      out.push({ functionCall: { name: block.name, args: block.input } });
+      // Emit the call `id` for correlation — Gemini 3 matches each
+      // `functionResponse` to its `functionCall` by id, which is what keeps
+      // parallel or repeated same-name calls from being mis-associated.
+      out.push({ functionCall: { id: block.id, name: block.name, args: block.input } });
       continue;
     }
     if (
@@ -442,7 +451,16 @@ function llmContentBlocksToGemini(
           )} has no matching tool_use in the request)`,
         );
       }
-      out.push({ functionResponse: { name, response: { output: block.content } } });
+      // Gemini has no typed `is_error` slot (like OpenAI), but its
+      // `functionResponse.response` is a free-form object — so preserve the
+      // flag there structurally rather than dropping it or hacking it into the
+      // content string. Anthropic keeps its native slot; this is the closest
+      // Gemini-faithful equivalent.
+      const response: Record<string, unknown> = { output: block.content };
+      if (block.is_error === true) response.is_error = true;
+      // `id` ties this response back to its `functionCall` (Gemini 3 correlation
+      // for parallel / repeated same-name calls); `name` is still required.
+      out.push({ functionResponse: { id: block.tool_use_id, name, response } });
       continue;
     }
     throw new Error(

@@ -809,11 +809,12 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
     }>;
     expect(contents.find((c) => c.role === 'model')?.parts).toEqual([
       { text: 'calling' },
-      { functionCall: { name: 'read', args: { path: 'a.ts' } } },
+      // The call `id` is emitted for Gemini 3 correlation.
+      { functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } } },
     ]);
   });
 
-  it('maps a tool_result block to a functionResponse, resolving the name from the prior tool_use', () => {
+  it('maps a tool_result block to a functionResponse with the id + resolved name', () => {
     const body = toGeminiGenerateContent({
       provider: 'google',
       model: 'gemini-3.5-flash',
@@ -838,11 +839,45 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
       role: string;
       parts: Array<Record<string, unknown>>;
     }>;
-    // The result turn (user role) carries a name-keyed functionResponse.
+    // The result turn (user role) carries an id- and name-keyed functionResponse.
     expect(contents.at(-1)).toEqual({
       role: 'user',
-      parts: [{ functionResponse: { name: 'read', response: { output: 'file body' } } }],
+      parts: [{ functionResponse: { id: 'c1', name: 'read', response: { output: 'file body' } } }],
     });
+  });
+
+  it('preserves is_error structurally in the functionResponse', () => {
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.5-flash',
+      messages: [
+        {
+          id: '1',
+          role: 'assistant',
+          content: '',
+          timestamp: 0,
+          contentBlocks: [{ type: 'tool_use', id: 'c1', name: 'read', input: {} }],
+        },
+        {
+          id: '2',
+          role: 'user',
+          content: '',
+          timestamp: 0,
+          contentBlocks: [
+            { type: 'tool_result', tool_use_id: 'c1', content: 'boom', is_error: true },
+          ],
+        },
+      ],
+    } as PushStreamRequest<LlmMessage>);
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    expect(contents.at(-1)?.parts).toEqual([
+      {
+        functionResponse: { id: 'c1', name: 'read', response: { output: 'boom', is_error: true } },
+      },
+    ]);
   });
 
   it('throws when a tool_result references a tool_use_id with no matching tool_use in the request', () => {
