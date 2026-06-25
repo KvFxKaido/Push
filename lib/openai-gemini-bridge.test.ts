@@ -477,6 +477,48 @@ describe('createGeminiTranslatedStream', () => {
     });
     expect(events[2]).toMatchObject({ type: 'done', finishReason: 'tool_calls' });
   });
+
+  it("lifts a Gemini part's thoughtSignature onto the neutral native_tool_call", async () => {
+    // Gemini 3.x attaches a `thoughtSignature` as a sibling of `functionCall` on
+    // the part. It must survive the Gemini -> OpenAI-SSE -> pump path so it can
+    // be stored and replayed; without round-tripping it the next turn 400s.
+    const frames = [
+      `data: ${JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } },
+                  thoughtSignature: 'AgQKAabc123==',
+                },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      })}\n\n`,
+    ];
+
+    const events = await collectEvents(
+      openAISSEPump({
+        body: createGeminiTranslatedStream(
+          createEventStreamResponse(frames),
+          'gemini-3.1-pro-preview',
+        ),
+        isKnownToolName: (name) => name === 'sandbox_read_file',
+      }),
+    );
+
+    expect(events[1]).toEqual({
+      type: 'native_tool_call',
+      call: {
+        name: 'sandbox_read_file',
+        args: { path: 'README.md' },
+        thoughtSignature: 'AgQKAabc123==',
+      },
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -799,6 +841,52 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
       // The call `id` is emitted for Gemini 3 correlation.
       { functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } } },
     ]);
+  });
+
+  it('replays a tool_use block thoughtSignature as a sibling of the functionCall part', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          {
+            type: 'tool_use',
+            id: 'c1',
+            name: 'read',
+            input: { path: 'a.ts' },
+            thoughtSignature: 'AgQKAabc123==',
+          },
+        ],
+      }),
+    );
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    // The signature is a sibling of `functionCall` on the part (not nested in
+    // it), replayed verbatim so Gemini 3.x accepts the continued turn.
+    expect(contents.find((c) => c.role === 'model')?.parts).toEqual([
+      {
+        functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } },
+        thoughtSignature: 'AgQKAabc123==',
+      },
+    ]);
+  });
+
+  it('omits thoughtSignature on replay when the tool_use block carries none', () => {
+    // Non-Gemini history (or Gemini calls that never carried a signature) must
+    // not gain a spurious empty `thoughtSignature` key on the part.
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [{ type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } }],
+      }),
+    );
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    const part = contents.find((c) => c.role === 'model')?.parts[0];
+    expect(part).not.toHaveProperty('thoughtSignature');
   });
 
   it('maps a tool_result block to a functionResponse with the id + resolved name', () => {

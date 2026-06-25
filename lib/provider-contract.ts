@@ -82,6 +82,15 @@ export interface LlmToolUseBlock {
   name: string;
   input: Record<string, unknown>;
   cache_control?: CacheControl;
+  /**
+   * Gemini-private signed-reasoning token (`thoughtSignature`) carried on the
+   * model's function-call part. Gemini 3.x **requires** it to be replayed
+   * verbatim on the prior call when the conversation continues, or the next
+   * request 400s ("Function call is missing a thought_signature"). Captured by
+   * the Gemini stream translator and re-attached by `toGeminiGenerateContent`;
+   * every other serializer ignores it (the field has no slot on their wire).
+   */
+  thoughtSignature?: string;
 }
 
 /**
@@ -347,6 +356,13 @@ export interface NativeToolCall {
   name: string;
   /** Provider-native argument payload. Tool dispatch validates this shape. */
   args: unknown;
+  /**
+   * Gemini-private `thoughtSignature` lifted off the function-call part during
+   * stream translation. Threaded through so it lands on the stored
+   * `LlmToolUseBlock` and round-trips on replay (see that type). Absent for
+   * every non-Gemini provider.
+   */
+  thoughtSignature?: string;
 }
 
 /**

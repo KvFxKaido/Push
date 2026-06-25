@@ -162,6 +162,9 @@ interface PendingNativeToolCall {
   id: string;
   name: string;
   args: string;
+  /** Gemini-private `thoughtSignature` carried as a tool_call sibling field by
+   *  the Gemini→OpenAI-SSE translator; lifted back onto the neutral call. */
+  thoughtSignature?: string;
 }
 
 /**
@@ -219,6 +222,7 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
           ...(tc.id ? { id: tc.id } : {}),
           name: tc.name,
           args: parseNativeToolCallArgs(tc.args),
+          ...(tc.thoughtSignature ? { thoughtSignature: tc.thoughtSignature } : {}),
         },
       };
     }
@@ -338,6 +342,7 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         index?: unknown;
         id?: unknown;
         function?: { name?: unknown; arguments?: unknown };
+        thoughtSignature?: unknown;
       }>) {
         const idx = typeof tc?.index === 'number' ? tc.index : 0;
         const fnCall = tc?.function;
@@ -346,6 +351,9 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         if (typeof tc?.id === 'string') entry.id = tc.id;
         if (typeof fnCall.name === 'string') entry.name = fnCall.name;
         if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
+        // Push-private Gemini sidecar (see `PendingNativeToolCall`). Non-Gemini
+        // upstreams never set it; arrives whole on the call fragment, not split.
+        if (typeof tc?.thoughtSignature === 'string') entry.thoughtSignature = tc.thoughtSignature;
         pendingNativeToolCalls.set(idx, entry);
         observedFragment = true;
       }

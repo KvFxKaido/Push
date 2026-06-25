@@ -366,6 +366,7 @@ function llmContentBlocksToGemini(
       tool_use_id?: unknown;
       content?: unknown;
       is_error?: unknown;
+      thoughtSignature?: unknown;
     };
     if (block.type === 'text' && typeof block.text === 'string') {
       out.push({ text: block.text });
@@ -402,7 +403,18 @@ function llmContentBlocksToGemini(
       // Emit the call `id` for correlation — Gemini 3 matches each
       // `functionResponse` to its `functionCall` by id, which is what keeps
       // parallel or repeated same-name calls from being mis-associated.
-      out.push({ functionCall: { id: block.id, name: block.name, args: block.input } });
+      //
+      // `thoughtSignature` is a sibling field on the *part* (not inside
+      // `functionCall`), replayed verbatim. Gemini 3.x rejects the follow-up
+      // request 400 if a prior call's signature is missing; an altered value
+      // breaks the model's chain of reasoning. Only emitted when the captured
+      // call carried one (non-Gemini history never does).
+      out.push({
+        functionCall: { id: block.id, name: block.name, args: block.input },
+        ...(typeof block.thoughtSignature === 'string' && block.thoughtSignature
+          ? { thoughtSignature: block.thoughtSignature }
+          : {}),
+      });
       continue;
     }
     if (
@@ -535,6 +547,7 @@ function buildOpenAISseChunk(params: {
     id?: string;
     name?: string;
     arguments?: string;
+    thoughtSignature?: string;
   };
 }): string {
   const delta: Record<string, unknown> = {};
@@ -549,6 +562,12 @@ function buildOpenAISseChunk(params: {
         ...(params.toolCall.id ? { id: params.toolCall.id } : {}),
         type: 'function',
         function: fn,
+        // Push-private extension on the OpenAI-SSE intermediate: Gemini's
+        // `thoughtSignature` has no native OpenAI slot, so carry it as a sibling
+        // field that `openAISSEPump` lifts back onto the neutral tool call.
+        ...(params.toolCall.thoughtSignature
+          ? { thoughtSignature: params.toolCall.thoughtSignature }
+          : {}),
       },
     ];
   }
@@ -605,6 +624,9 @@ type GeminiFunctionCall = {
 type GeminiCandidatePart = {
   text?: unknown;
   functionCall?: GeminiFunctionCall;
+  // Gemini 3.x signed-reasoning token; on the REST wire it is a camelCase
+  // sibling of `functionCall` on the part, not a field inside it.
+  thoughtSignature?: unknown;
 };
 
 type GeminiCandidate = {
@@ -646,16 +668,23 @@ function stringifyGeminiFunctionCallArgs(args: unknown): string {
 
 function extractFunctionCallsFromCandidate(
   candidate: GeminiCandidate | undefined,
-): Array<{ name: string; argsJson: string }> {
+): Array<{ name: string; argsJson: string; thoughtSignature?: string }> {
   const parts = candidate?.content?.parts;
   if (!Array.isArray(parts)) return [];
-  const out: Array<{ name: string; argsJson: string }> = [];
+  const out: Array<{ name: string; argsJson: string; thoughtSignature?: string }> = [];
   for (const part of parts) {
     const call = asRecord(part?.functionCall);
     if (!call) continue;
     const rawName = call?.name;
     if (typeof rawName !== 'string' || rawName.trim().length === 0) continue;
-    out.push({ name: rawName.trim(), argsJson: stringifyGeminiFunctionCallArgs(call.args) });
+    // The signature rides on the part, not on `functionCall`. Carry it through
+    // so it survives the OpenAI-SSE intermediate and reaches the stored block.
+    const sig = part?.thoughtSignature;
+    out.push({
+      name: rawName.trim(),
+      argsJson: stringifyGeminiFunctionCallArgs(call.args),
+      ...(typeof sig === 'string' && sig ? { thoughtSignature: sig } : {}),
+    });
   }
   return out;
 }
@@ -738,6 +767,7 @@ export function createGeminiTranslatedStream(
                   index: nextToolCallIndex++,
                   name: call.name,
                   arguments: call.argsJson,
+                  ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {}),
                 },
               }),
             ),
