@@ -31,8 +31,10 @@ import {
  * Wire shape for streaming + request bodies.
  *
  * - `openai-compat`: OpenAI Chat Completions schema; consume via
- *   `lib/openai-sse-pump.ts`. Used by OpenAI proper plus the existing
- *   OpenAI-compatible providers (OpenRouter, NVIDIA, Zen, etc.).
+ *   `lib/openai-sse-pump.ts`. Used by OpenAI-compatible providers
+ *   (OpenRouter, NVIDIA, Zen, etc.).
+ * - `openai-responses`: OpenAI Responses schema; consume via
+ *   `lib/openai-responses-sse-pump.ts`. Direct OpenAI only.
  * - `anthropic`: Anthropic Messages API (`/v1/messages`); translate via
  *   `lib/openai-anthropic-bridge.ts` (shared across web Worker and CLI).
  *   Reasoning blocks must round-trip with signatures intact when extended
@@ -42,7 +44,7 @@ import {
  *   (`contents[].parts[]`, `systemInstruction` field) and `?key=` query-param
  *   auth (or `x-goog-api-key` header). Distinct from Vertex.
  */
-export type ProviderStreamShape = 'openai-compat' | 'anthropic' | 'gemini';
+export type ProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthropic' | 'gemini';
 
 /**
  * ID space for direct providers. Intentionally separate from
@@ -85,12 +87,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   {
     id: 'openai',
     displayName: 'OpenAI',
-    baseUrl: 'https://api.openai.com/v1/chat/completions',
+    baseUrl: 'https://api.openai.com/v1/responses',
     defaultModel: OPENAI_DEFAULT_MODEL,
     models: OPENAI_MODELS,
     apiKeyEnvVars: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
     webProxyPath: '/api/openai/chat',
-    streamShape: 'openai-compat',
+    streamShape: 'openai-responses',
   },
   {
     id: 'anthropic',

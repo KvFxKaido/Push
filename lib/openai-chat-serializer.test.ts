@@ -59,7 +59,7 @@ describe('toOpenAIChat', () => {
     });
   });
 
-  it('can emit max_completion_tokens for direct OpenAI callers', () => {
+  it('can emit max_completion_tokens for callers that opt in', () => {
     const body = toOpenAIChat(reqWith([llm('1', 'user', 'hi')], { maxTokens: 2048 }), {
       maxTokensField: 'max_completion_tokens',
     });

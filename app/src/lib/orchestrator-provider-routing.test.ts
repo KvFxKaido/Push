@@ -258,7 +258,6 @@ describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)
     expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual([
       'openrouter',
       'azure',
-      'openai',
     ]);
   });
 });
@@ -269,17 +268,21 @@ describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #
     // target; ordering follows FAILOVER_PROVIDER_ORDER.
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([
-      'openrouter',
+    expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([
       'azure',
     ]);
+  });
+
+  it('keeps direct OpenAI Responses out of the OpenAI-compatible failover bucket', async () => {
+    mockFailoverState();
+    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
+    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([]);
   });
 
   it('excludes model-dependent Anthropic-transport targets from openai-compatible failover', async () => {
     mockFailoverState({ zen: true, zenTransport: 'anthropic' });
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([
-      'openrouter',
+    expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([
       'azure',
     ]);
   });
@@ -318,8 +321,8 @@ describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(
-      resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai', 'openrouter'])),
-    ).toEqual(['azure']);
+      resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter', 'azure'])),
+    ).toEqual([]);
   });
 
   it('returns [] for the demo provider', async () => {

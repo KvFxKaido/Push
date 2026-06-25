@@ -3,9 +3,8 @@
  *
  * Hits the Worker proxy at `/api/openai/chat`. The Worker
  * (`handleOpenAIChat` in `app/src/worker/worker-providers.ts`) proxies the
- * request to `api.openai.com/v1/chat/completions` with Bearer auth and
- * pipes the OpenAI-shape SSE response back unchanged — no bridge needed
- * since OpenAI is, by definition, OpenAI-compatible.
+ * request to `api.openai.com/v1/responses` with Bearer auth and pipes the
+ * typed Responses SSE stream back unchanged.
  *
  * OpenAI's prompt caching is automatic at the prefix level (no
  * `cache_control` markers required), so this adapter doesn't need any of
@@ -16,9 +15,15 @@
  */
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
-import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import type {
+  LlmContentBlock,
+  LlmContentPart,
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+} from '@push/lib/provider-contract';
+import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
+import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -27,6 +32,33 @@ import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
+
+type OpenAILlmMessage = {
+  role: LlmMessage['role'];
+  content: string | LlmContentPart[];
+  contentBlocks?: LlmContentBlock[];
+};
+
+function contentFallbackText(content: string | LlmContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part): part is Extract<LlmContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function toNeutralMessages(messages: OpenAILlmMessage[]): LlmMessage[] {
+  return messages.map((message, index) => ({
+    id: `openai-response-${index}`,
+    role: message.role,
+    content: contentFallbackText(message.content),
+    timestamp: 0,
+    ...(Array.isArray(message.content) ? { contentParts: message.content } : {}),
+    ...(message.contentBlocks && message.contentBlocks.length > 0
+      ? { contentBlocks: message.contentBlocks }
+      : {}),
+  }));
+}
 
 export async function* openaiStream(
   req: PushStreamRequest<ChatMessage>,
@@ -47,26 +79,20 @@ export async function* openaiStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
-  });
+    emitContentBlocks: true,
+  }) as OpenAILlmMessage[];
 
-  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
-  const openAITools = nativeTools?.map(flatToolToOpenAITool);
-  const body: Record<string, unknown> = {
+  const body = toOpenAIResponses({
+    provider: 'openai',
     model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_completion_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    // Native function calling: gated upstream by model support. The shared SSE
-    // pump emits complete native tool_calls as structured events for dispatch.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
-    // Native structured outputs: forward the caller's JSON-Schema constraint so
-    // the OpenAI-compatible endpoint constrains generation server-side. Shared
-    // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`
-    // guard — that field is OpenRouter-specific.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
-  };
+    messages: toNeutralMessages(llmMessages),
+    maxTokens: req.maxTokens,
+    temperature: req.temperature,
+    topP: req.topP,
+    signal: req.signal,
+    responseFormat: req.responseFormat,
+    tools: req.tools,
+  });
 
   // The Worker prefers its own server-side OPENAI_API_KEY when set and
   // ignores the client-side header. Sending the client key as a Bearer when
@@ -108,7 +134,7 @@ export async function* openaiStream(
     throw new Error('OpenAI response had no body');
   }
 
-  yield* openAISSEPump({
+  yield* openAIResponsesSSEPump({
     body: response.body,
     signal: req.signal,
     isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),

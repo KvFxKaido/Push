@@ -79,7 +79,7 @@ const STANDARD_TIMEOUTS = {
  * `routesThroughAnthropicBridge` guard in `resolveFailoverCandidates`, not
  * here. `anthropic` is alone in its bucket for the static case.
  */
-export type ProviderWireShape = 'anthropic' | 'gemini' | 'openai-compat';
+export type ProviderWireShape = 'anthropic' | 'gemini' | 'openai-compat' | 'openai-responses';
 
 const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   anthropic: 'anthropic',
@@ -96,7 +96,7 @@ const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   openadapter: 'openai-compat',
   azure: 'openai-compat',
   bedrock: 'openai-compat',
-  openai: 'openai-compat',
+  openai: 'openai-responses',
   // 'demo' has no wire shape; it can never be a failover source or target.
   demo: 'openai-compat',
 };

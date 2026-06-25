@@ -48,6 +48,7 @@ import {
   formatVertexProviderHttpError,
 } from '../lib/provider-error-utils';
 import type { ExperimentalProviderType } from '../lib/experimental-providers';
+import { buildTraceparent, createChildContext } from './worker-tracing';
 
 // Gateway Abstraction imports
 import type {
@@ -1481,27 +1482,181 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
   });
 }
 
-// --- OpenAI (direct /v1/chat/completions) ---
+// --- OpenAI (direct /v1/responses) ---
 //
-// OpenAI is OpenAI-compatible (obviously), so the standard
-// createStreamProxyHandler factory handles everything — no bridge, no body
-// translation, no response rewriting. Bearer auth, vanilla shape.
+// Direct OpenAI is now a Responses-native adapter. Do not route it through the
+// generic Chat proxy: that factory validates and normalizes Chat Completions
+// fields (`messages`, `response_format`, `max_completion_tokens`), while this
+// path must preserve Responses fields (`input`, `text.format`,
+// `max_output_tokens`) for the provider-native contract.
 
-export const handleOpenAIChat = createStreamProxyHandler({
-  name: 'OpenAI',
-  logTag: 'api/openai/chat',
-  upstreamUrl: 'https://api.openai.com/v1/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 12_288,
-  buildAuth: standardAuth('OPENAI_API_KEY'),
-  keyMissingError:
-    'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
-  timeoutError: 'OpenAI request timed out after 120 seconds',
-  formatUpstreamError: (status, bodyText) => ({
-    error: `OpenAI ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
-    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-  }),
-});
+const OPENAI_RESPONSES_UPSTREAM_URL = 'https://api.openai.com/v1/responses';
+const OPENAI_RESPONSES_TIMEOUT_MS = 120_000;
+const OPENAI_RESPONSES_MAX_OUTPUT_TOKENS = 12_288;
+
+function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
+  | { ok: true; bodyText: string; model: string; adjustments: string[] }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+    } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bodyText);
+  } catch {
+    return { ok: false, status: 400, error: 'OpenAI request body must be valid JSON.' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, status: 400, error: 'OpenAI request body must be a JSON object.' };
+  }
+  const body = { ...(parsed as Record<string, unknown>) };
+  const model = typeof body.model === 'string' && body.model.trim() ? body.model : 'unknown';
+  if (!Array.isArray(body.input) && typeof body.input !== 'string') {
+    return {
+      ok: false,
+      status: 400,
+      error: 'OpenAI Responses request field "input" must be a string or item array.',
+    };
+  }
+  if (body.stream !== undefined && typeof body.stream !== 'boolean') {
+    return { ok: false, status: 400, error: 'OpenAI request field "stream" must be a boolean.' };
+  }
+  const adjustments: string[] = [];
+  if (body.stream !== true) {
+    body.stream = true;
+    adjustments.push('forced_stream');
+  }
+  if (body.store !== false) {
+    body.store = false;
+    adjustments.push('forced_store_false');
+  }
+  if (body.max_output_tokens !== undefined) {
+    if (
+      typeof body.max_output_tokens !== 'number' ||
+      !Number.isInteger(body.max_output_tokens) ||
+      body.max_output_tokens < 1
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'OpenAI request field "max_output_tokens" must be a positive integer.',
+      };
+    }
+    if (body.max_output_tokens > OPENAI_RESPONSES_MAX_OUTPUT_TOKENS) {
+      body.max_output_tokens = OPENAI_RESPONSES_MAX_OUTPUT_TOKENS;
+      adjustments.push('max_output_tokens_clamped');
+    }
+  }
+  for (const field of ['temperature', 'top_p'] as const) {
+    if (
+      body[field] !== undefined &&
+      (typeof body[field] !== 'number' || !Number.isFinite(body[field]))
+    ) {
+      return { ok: false, status: 400, error: `OpenAI request field "${field}" must be a number.` };
+    }
+  }
+  return { ok: true, bodyText: JSON.stringify(body), model, adjustments };
+}
+
+export async function handleOpenAIChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: standardAuth('OPENAI_API_KEY'),
+    keyMissingError:
+      'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader, bodyText, requestId, spanCtx } = preamble;
+  const normalized = validateAndNormalizeOpenAIResponsesRequest(bodyText);
+  if (!normalized.ok) {
+    return Response.json({ error: normalized.error }, { status: normalized.status });
+  }
+  if (normalized.adjustments.length > 0) {
+    wlog('warn', 'responses_request_adjusted', {
+      requestId,
+      route: 'api/openai/chat',
+      adjustments: normalized.adjustments,
+    });
+  }
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/openai/chat',
+    bytes: normalized.bodyText.length,
+    model: normalized.model,
+  });
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), OPENAI_RESPONSES_TIMEOUT_MS);
+  const upstreamCtx = createChildContext(spanCtx);
+  let upstream: Response;
+  try {
+    upstream = await fetch(OPENAI_RESPONSES_UPSTREAM_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+        [REQUEST_ID_HEADER]: requestId,
+        traceparent: buildTraceparent(upstreamCtx),
+      },
+      body: normalized.bodyText,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    const message = err instanceof Error ? err.message : String(err);
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/openai/chat',
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'OpenAI request timed out after 120 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  wlog('info', 'upstream_ok', {
+    requestId,
+    route: 'api/openai/chat',
+    status: upstream.status,
+    trace_id: spanCtx.traceId,
+  });
+
+  if (!upstream.ok) {
+    const errBody = await upstream.text().catch(() => '');
+    wlog('error', 'upstream_error', {
+      requestId,
+      route: 'api/openai/chat',
+      status: upstream.status,
+      body: errBody.slice(0, 500),
+    });
+    return Response.json(
+      {
+        error: `OpenAI ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+        code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+      },
+      { status: upstream.status },
+    );
+  }
+
+  return new Response(upstream.body, {
+    status: upstream.status,
+    headers: {
+      'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      [REQUEST_ID_HEADER]: requestId,
+      'X-Push-Trace-Id': spanCtx.traceId,
+      'X-Push-Span-Id': spanCtx.spanId,
+      'X-Accel-Buffering': 'no',
+    },
+  });
+}
 
 // OpenAI's /v1/models returns embeddings, TTS, Whisper, image, moderation, and
 // legacy text-completion models alongside chat models — none of which the chat

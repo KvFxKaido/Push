@@ -81,7 +81,7 @@ function installStreamFetch(fetchMock: ReturnType<typeof vi.fn>): ControllableSt
 }
 
 function contentFrame(text: string): string {
-  return JSON.stringify({ choices: [{ delta: { content: text } }] });
+  return JSON.stringify({ type: 'response.output_text.delta', delta: text });
 }
 
 const baseRequest: PushStreamRequest<ChatMessage> = {
@@ -150,11 +150,9 @@ describe('openaiStream', () => {
     expect(body.tools).toEqual([
       {
         type: 'function',
-        function: {
-          name: sampleTool.name,
-          description: sampleTool.description,
-          parameters: sampleTool.input_schema,
-        },
+        name: sampleTool.name,
+        description: sampleTool.description,
+        parameters: sampleTool.input_schema,
       },
     ]);
     expect(body.tool_choice).toBe('auto');
@@ -173,6 +171,32 @@ describe('openaiStream', () => {
     const body = JSON.parse(init.body as string);
     expect(body.tools).toBeUndefined();
     expect(body.tool_choice).toBeUndefined();
+  });
+
+  it('forwards structured outputs through Responses text.format', async () => {
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const schema = {
+      type: 'object',
+      properties: { ok: { type: 'boolean' } },
+      required: ['ok'],
+      additionalProperties: false,
+    };
+    const iter = openaiStream({
+      ...baseRequest,
+      responseFormat: { name: 'verdict', schema },
+    });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.text).toEqual({
+      format: { type: 'json_schema', name: 'verdict', strict: true, schema },
+    });
+    expect(body.response_format).toBeUndefined();
   });
 
   it('hits PROVIDER_URLS.openai.chat', async () => {
@@ -241,7 +265,7 @@ describe('openaiStream', () => {
     expect(caught!.message).toMatch(/Invalid API key/);
   });
 
-  it('forwards max_completion_tokens / temperature / top_p into the request body', async () => {
+  it('forwards max_output_tokens / temperature / top_p into the request body', async () => {
     installStreamFetch(fetchMock);
     const { openaiStream } = await import('./openai-stream');
     const iter = openaiStream({ ...baseRequest, maxTokens: 4096, temperature: 0.5, topP: 0.95 });
@@ -252,9 +276,13 @@ describe('openaiStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_output_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBeUndefined();
     expect(body.max_tokens).toBeUndefined();
     expect(body.temperature).toBe(0.5);
     expect(body.top_p).toBe(0.95);
+    expect(body.input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+    ]);
   });
 });

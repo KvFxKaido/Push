@@ -26,10 +26,13 @@
 import type {
   AIProviderType,
   LlmContentPart,
+  LlmMessage,
   PushStream,
   PushStreamEvent,
   StreamUsage,
 } from '@push/lib/provider-contract';
+import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
+import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import type { ChatMessage } from '@/types';
 import { getUserProviderKey } from './user-secrets';
 import type { Env } from './worker-middleware';
@@ -140,6 +143,44 @@ export function toCoderJobPayloadMessages(
   );
 }
 
+function toCoderJobLlmMessages(
+  messages: ReadonlyArray<{ role: string; content?: string; contentParts?: LlmContentPart[] }>,
+  systemPromptOverride?: string,
+): LlmMessage[] {
+  const out: LlmMessage[] = [];
+  if (systemPromptOverride && !messages.some((message) => message.role === 'system')) {
+    out.push({
+      id: 'system',
+      role: 'system',
+      content: systemPromptOverride,
+      timestamp: 0,
+    });
+  }
+  messages.forEach((message, index) => {
+    const role: LlmMessage['role'] =
+      message.role === 'assistant' ? 'assistant' : message.role === 'system' ? 'system' : 'user';
+    const text =
+      message.contentParts && message.contentParts.length > 0
+        ? message.contentParts
+            .filter(
+              (part): part is Extract<LlmContentPart, { type: 'text' }> => part.type === 'text',
+            )
+            .map((part) => part.text)
+            .join('\n')
+        : (message.content ?? '');
+    out.push({
+      id: `m${index}`,
+      role,
+      content: text,
+      timestamp: 0,
+      ...(message.contentParts && message.contentParts.length > 0
+        ? { contentParts: message.contentParts }
+        : {}),
+    });
+  });
+  return out;
+}
+
 export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStream<ChatMessage> {
   // Strip trailing slash so URL construction can't produce double
   // slashes (`https://host//api/...`).
@@ -161,26 +202,38 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error('Stream aborted before provider dispatch');
       }
 
-      // Build an OpenAI-compatible chat payload. The Worker's
-      // createStreamProxyHandler validates and normalizes this body
-      // before forwarding upstream, so we only need the portable shape.
-      const payloadMessages = toCoderJobPayloadMessages(req.messages);
-      const systemPromptOverride = req.systemPromptOverride;
-      if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
-        payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
-      }
+      const body =
+        args.provider === 'openai'
+          ? JSON.stringify(
+              toOpenAIResponses({
+                provider: 'openai',
+                model: req.model || args.modelId || '',
+                messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
+                signal: req.signal,
+              }),
+            )
+          : (() => {
+              // Build an OpenAI-compatible chat payload. The Worker's
+              // createStreamProxyHandler validates and normalizes this body
+              // before forwarding upstream, so we only need the portable shape.
+              const payloadMessages = toCoderJobPayloadMessages(req.messages);
+              const systemPromptOverride = req.systemPromptOverride;
+              if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
+                payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
+              }
 
-      const body = JSON.stringify({
-        model: req.model || args.modelId,
-        messages: payloadMessages,
-        stream: true,
-        // Ask OpenAI-compatible upstreams to emit a final usage chunk
-        // (`choices: []` + `usage`). Providers that don't support it ignore
-        // the field; the Anthropic-transport bridge rebuilds the body and
-        // emits usage natively. `validateAndNormalizeChatRequest` spreads the
-        // original body, so this survives normalization to the upstream.
-        stream_options: { include_usage: true },
-      });
+              return JSON.stringify({
+                model: req.model || args.modelId,
+                messages: payloadMessages,
+                stream: true,
+                // Ask OpenAI-compatible upstreams to emit a final usage chunk
+                // (`choices: []` + `usage`). Providers that don't support it ignore
+                // the field; the Anthropic-transport bridge rebuilds the body and
+                // emits usage natively. `validateAndNormalizeChatRequest` spreads the
+                // original body, so this survives normalization to the upstream.
+                stream_options: { include_usage: true },
+              });
+            })();
 
       // Owner's stored key, resolved fresh per dispatch (key rotation or
       // deletion mid-job takes effect on the next round; nothing is cached
@@ -227,10 +280,14 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // only — this is the live lane for background/inline turns, so the log
       // lands in Worker logs, never CLI stdout.
       let usageLogged = false;
-      for await (const event of pumpSseBody(
-        response.body as unknown as ReadableStream<Uint8Array>,
-        signal,
-      )) {
+      const events =
+        args.provider === 'openai'
+          ? openAIResponsesSSEPump({
+              body: response.body as unknown as ReadableStream<Uint8Array>,
+              signal,
+            })
+          : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+      for await (const event of events) {
         if (event.type === 'done' && !usageLogged) {
           usageLogged = true;
           const u = event.usage;

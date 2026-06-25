@@ -4,6 +4,7 @@ import {
   resolveApiKey,
   getProviderList,
   streamCompletion,
+  createProviderStream,
   PROVIDER_CONFIGS,
   DEFAULT_TIMEOUT_MS,
   MAX_RETRIES,
@@ -1427,7 +1428,7 @@ describe('streamCompletion', () => {
       assert.equal(capturedBody.max_completion_tokens, undefined);
     });
 
-    it('uses max_completion_tokens for the direct OpenAI CLI provider', async () => {
+    it('uses max_output_tokens for the direct OpenAI Responses CLI provider', async () => {
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1441,7 +1442,10 @@ describe('streamCompletion', () => {
         };
       };
 
-      const stream = createCliProviderStream({ ...testConfig, id: 'openai' }, 'key');
+      const stream = createProviderStream(
+        { ...testConfig, id: 'openai', streamShape: 'openai-responses' },
+        'key',
+      );
       for await (const _ of stream({
         provider: 'openai',
         model: 'gpt-5.4',
@@ -1451,7 +1455,12 @@ describe('streamCompletion', () => {
         // drain
       }
 
-      assert.equal(capturedBody.max_completion_tokens, 1234);
+      assert.equal(capturedBody.max_output_tokens, 1234);
+      assert.equal(capturedBody.store, false);
+      assert.deepEqual(capturedBody.input, [
+        { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+      ]);
+      assert.equal(capturedBody.max_completion_tokens, undefined);
       assert.equal(capturedBody.max_tokens, undefined);
     });
 

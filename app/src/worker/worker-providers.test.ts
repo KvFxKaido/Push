@@ -66,6 +66,23 @@ function makeChatRequest(): Request {
   });
 }
 
+function makeOpenAIResponsesRequest(body: Record<string, unknown> = {}): Request {
+  return new Request('https://push.example.test/api/openai/chat', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://push.example.test',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'test-model',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+      stream: true,
+      store: false,
+      ...body,
+    }),
+  });
+}
+
 function makeModelsRequest(): Request {
   return new Request('https://push.example.test/api/models', {
     method: 'GET',
@@ -1201,7 +1218,7 @@ describe('handleAnthropicModels', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleOpenAIChat', () => {
-  it('posts to api.openai.com/v1/chat/completions with OPENAI_API_KEY', async () => {
+  it('posts to api.openai.com/v1/responses with OPENAI_API_KEY', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -1213,16 +1230,22 @@ describe('handleOpenAIChat', () => {
         });
       }),
     );
-    await handleOpenAIChat(makeChatRequest(), makeEnv({ OPENAI_API_KEY: 'sk-server' }));
-    expect(captured?.url).toBe('https://api.openai.com/v1/chat/completions');
+    await handleOpenAIChat(makeOpenAIResponsesRequest(), makeEnv({ OPENAI_API_KEY: 'sk-server' }));
+    expect(captured?.url).toBe('https://api.openai.com/v1/responses');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-server');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'test-model',
+      stream: true,
+      store: false,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    });
   });
 
   it('returns 401 when OPENAI_API_KEY is not configured and the client supplies no Authorization', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    const response = await handleOpenAIChat(makeChatRequest(), makeEnv());
+    const response = await handleOpenAIChat(makeOpenAIResponsesRequest(), makeEnv());
     expect(response.status).toBe(401);
     const body = await response.json();
     expect(body.error).toMatch(/OpenAI API key not configured/i);
@@ -1241,7 +1264,7 @@ describe('handleOpenAIChat', () => {
       ),
     );
     const response = await handleOpenAIChat(
-      makeChatRequest(),
+      makeOpenAIResponsesRequest(),
       makeEnv({ OPENAI_API_KEY: 'sk-server' }),
     );
     expect(response.status).toBe(401);
@@ -1261,12 +1284,33 @@ describe('handleOpenAIChat', () => {
       ),
     );
     const response = await handleOpenAIChat(
-      makeChatRequest(),
+      makeOpenAIResponsesRequest(),
       makeEnv({ OPENAI_API_KEY: 'sk-server' }),
     );
     expect(response.status).toBe(429);
     const body = await response.json();
     expect(body.code).toBe('UPSTREAM_QUOTA_OR_RATE_LIMIT');
+  });
+
+  it('forces streaming/stateless Responses requests and clamps max_output_tokens', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedBody = JSON.parse(init.body as string);
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenAIChat(
+      makeOpenAIResponsesRequest({ stream: false, store: true, max_output_tokens: 99_999 }),
+      makeEnv({ OPENAI_API_KEY: 'sk-server' }),
+    );
+    expect(capturedBody?.stream).toBe(true);
+    expect(capturedBody?.store).toBe(false);
+    expect(capturedBody?.max_output_tokens).toBe(12_288);
   });
 });
 

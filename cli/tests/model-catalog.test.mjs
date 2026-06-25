@@ -15,6 +15,12 @@ import {
   OPENADAPTER_MODELS,
 } from '../model-catalog.ts';
 
+const originalFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
 function extractExportedStringArray(source, exportName) {
   const match = source.match(
     new RegExp(
@@ -175,5 +181,27 @@ describe('DEFAULT_MODELS', () => {
         `Default model "${model}" should appear in curated list for ${id}`,
       );
     }
+  });
+});
+
+describe('fetchModels', () => {
+  it('derives the OpenAI models URL from the Responses endpoint', async () => {
+    let capturedUrl;
+    globalThis.fetch = async (url) => {
+      capturedUrl = String(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ data: [{ id: 'gpt-test' }] }),
+      };
+    };
+
+    const result = await fetchModels(
+      { id: 'openai', url: 'https://api.openai.com/v1/responses' },
+      'sk-test',
+    );
+
+    assert.equal(capturedUrl, 'https://api.openai.com/v1/models');
+    assert.deepEqual(result, { models: ['gpt-test'], source: 'live' });
   });
 });

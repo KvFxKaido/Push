@@ -128,7 +128,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
   openai: {
     placeholder: 'OpenAI API key (sk-…)',
     saveLabel: 'Save OpenAI key',
-    hint: 'OpenAI API key from platform.openai.com. Direct /v1/chat/completions with automatic prefix-based prompt caching.',
+    hint: 'OpenAI API key from platform.openai.com. Direct /v1/responses with automatic prefix-based prompt caching.',
     labelTransform: (model) => formatModelDisplayName('openai', model),
   },
   google: {

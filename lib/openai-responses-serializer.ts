@@ -1,0 +1,205 @@
+/**
+ * Neutral `PushStreamRequest` -> OpenAI Responses serializer.
+ *
+ * This is the direct OpenAI peer of `toOpenAIChat`: it speaks `/v1/responses`
+ * with typed `input` items, flat function tools, and `text.format` structured
+ * output. OpenAI-compatible providers must not use this serializer unless they
+ * explicitly support Responses semantics.
+ */
+
+import type {
+  LlmContentBlock,
+  LlmMessage,
+  PushStreamRequest,
+  ResponseFormatSpec,
+  ToolFunctionSchema,
+} from './provider-contract.ts';
+import { withRequestContentBlocks } from './content-blocks.ts';
+import type {
+  OpenAIResponsesFunctionTool,
+  OpenAIResponsesInputContent,
+  OpenAIResponsesInputItem,
+  OpenAIResponsesRequest,
+  OpenAIResponsesTextFormat,
+} from './openai-responses-types.ts';
+
+export function toOpenAIResponsesTextFormat(spec: ResponseFormatSpec): OpenAIResponsesTextFormat {
+  return {
+    type: 'json_schema',
+    name: spec.name,
+    strict: spec.strict ?? true,
+    schema: spec.schema,
+  };
+}
+
+export function flatToolToOpenAIResponsesTool(
+  tool: ToolFunctionSchema,
+): OpenAIResponsesFunctionTool {
+  return {
+    type: 'function',
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.input_schema,
+  };
+}
+
+function blockToResponsesContent(block: LlmContentBlock): OpenAIResponsesInputContent | null {
+  if (block.type === 'text') {
+    return { type: 'input_text', text: block.text };
+  }
+  if (block.type === 'image') {
+    if (block.source.type === 'base64') {
+      return {
+        type: 'input_image',
+        image_url: `data:${block.source.media_type};base64,${block.source.data}`,
+        detail: 'auto',
+      };
+    }
+    if (block.source.type === 'url') {
+      return { type: 'input_image', image_url: block.source.url, detail: 'auto' };
+    }
+  }
+  // Responses has richer reasoning item support, but Push does not yet persist
+  // OpenAI encrypted reasoning items. Drop existing Anthropic/Gemini-private
+  // reasoning blocks here, matching the Chat serializer's direct-OpenAI rule.
+  if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+    return null;
+  }
+  throw new Error(
+    `toOpenAIResponses: unsupported or malformed content block (type: ${JSON.stringify(
+      (block as { type?: unknown }).type,
+    )})`,
+  );
+}
+
+function visibleBlocksToMessageContent(
+  blocks: readonly LlmContentBlock[],
+): OpenAIResponsesInputContent[] {
+  const content: OpenAIResponsesInputContent[] = [];
+  for (const block of blocks) {
+    if (block.type === 'tool_use' || block.type === 'tool_result') continue;
+    const converted = blockToResponsesContent(block);
+    if (converted) content.push(converted);
+  }
+  return content.length > 0 ? content : [{ type: 'input_text', text: '' }];
+}
+
+function pushMessageItem(
+  out: OpenAIResponsesInputItem[],
+  role: LlmMessage['role'],
+  content: OpenAIResponsesInputContent[],
+): void {
+  out.push({
+    type: 'message',
+    role,
+    content,
+  });
+}
+
+function appendBlocksAsResponsesItems(out: OpenAIResponsesInputItem[], message: LlmMessage): void {
+  const blocks = message.contentBlocks ?? [];
+  let visible: LlmContentBlock[] = [];
+
+  const flushVisible = () => {
+    if (visible.length === 0) return;
+    pushMessageItem(out, message.role, visibleBlocksToMessageContent(visible));
+    visible = [];
+  };
+
+  for (const block of blocks) {
+    if (block.type === 'tool_use') {
+      if (
+        typeof block.id !== 'string' ||
+        typeof block.name !== 'string' ||
+        block.input === null ||
+        typeof block.input !== 'object'
+      ) {
+        throw new Error(
+          `toOpenAIResponses: malformed tool_use block (id: ${JSON.stringify(
+            (block as { id?: unknown }).id,
+          )})`,
+        );
+      }
+      flushVisible();
+      out.push({
+        type: 'function_call',
+        call_id: block.id,
+        name: block.name,
+        arguments: JSON.stringify(block.input),
+        status: 'completed',
+      });
+      continue;
+    }
+
+    if (block.type === 'tool_result') {
+      if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string') {
+        throw new Error(
+          `toOpenAIResponses: malformed tool_result block (tool_use_id: ${JSON.stringify(
+            (block as { tool_use_id?: unknown }).tool_use_id,
+          )})`,
+        );
+      }
+      flushVisible();
+      out.push({
+        type: 'function_call_output',
+        call_id: block.tool_use_id,
+        output: block.content,
+      });
+      continue;
+    }
+
+    visible.push(block);
+  }
+
+  flushVisible();
+  if (blocks.length === 0) {
+    pushMessageItem(out, message.role, [{ type: 'input_text', text: message.content }]);
+  }
+}
+
+export interface ToOpenAIResponsesOptions {
+  modelOverride?: string;
+  temperatureDefault?: number;
+  stream?: boolean;
+}
+
+export function toOpenAIResponses(
+  req: PushStreamRequest<LlmMessage>,
+  options?: ToOpenAIResponsesOptions,
+): OpenAIResponsesRequest {
+  const model = options?.modelOverride ?? req.model;
+  const reqMessages = withRequestContentBlocks(Array.isArray(req.messages) ? req.messages : []);
+  const input: OpenAIResponsesInputItem[] = [];
+
+  if (req.systemPromptOverride) {
+    pushMessageItem(input, 'system', [{ type: 'input_text', text: req.systemPromptOverride }]);
+  }
+
+  for (const message of reqMessages) {
+    if (message.contentBlocks && message.contentBlocks.length > 0) {
+      appendBlocksAsResponsesItems(input, message);
+      continue;
+    }
+    pushMessageItem(input, message.role, [{ type: 'input_text', text: message.content }]);
+  }
+
+  const temperature =
+    typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault;
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
+
+  return {
+    model,
+    input,
+    stream: options?.stream ?? true,
+    store: false,
+    ...(typeof temperature === 'number' ? { temperature } : {}),
+    ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
+    ...(typeof req.maxTokens === 'number' ? { max_output_tokens: req.maxTokens } : {}),
+    ...(req.responseFormat
+      ? { text: { format: toOpenAIResponsesTextFormat(req.responseFormat) } }
+      : {}),
+    ...(nativeTools.length > 0
+      ? { tools: nativeTools.map(flatToolToOpenAIResponsesTool), tool_choice: 'auto' }
+      : {}),
+  };
+}
