@@ -56,7 +56,7 @@ export function MultiStepLoader({
             key={step.key}
             aria-current={status === 'active' ? 'step' : undefined}
             className={cn(
-              'flex items-center gap-2 text-push-xs transition-opacity duration-200',
+              'flex items-center gap-2 text-push-xs transition-opacity duration-[var(--motion-normal)]',
               status === 'pending' && 'opacity-40',
             )}
           >

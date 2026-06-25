@@ -295,6 +295,10 @@ const PHASE_LABELS: Record<CommitPhase, string> = {
 // Auditor gate) — when skipped, the phase jumps past them and they render as
 // done, the universal progress-bar convention. Keep this list and
 // COMMIT_PHASE_STEP_INDEX in sync with the updateCommitPhase calls in handleCommit.
+// These phase names are this surface's own (`fetching-diff`/`branching`/…); the
+// daemon commit flow in `useCommitPush.ts` uses a different set (`reviewing`/
+// `recovering`/…) by design — the two surfaces don't share a phase vocabulary.
+const DEFAULT_COMMIT_STEP = 0;
 const COMMIT_STEPS: readonly MultiStepLoaderStep[] = [
   { key: 'fetching-diff', label: 'Checking changes', doneLabel: 'Changes checked', icon: Search },
   { key: 'branching', label: 'Creating branch', doneLabel: 'Branch ready', icon: GitBranch },
@@ -483,11 +487,11 @@ export function WorkspaceHubSheet({
   // updateCommitPhase) rather than an effect to avoid cascading renders; idle
   // resets it. Running phases set it, terminal phases (success/error) leave it
   // pointing at the last running step.
-  const [lastCommitStep, setLastCommitStep] = useState(0);
+  const [lastCommitStep, setLastCommitStep] = useState(DEFAULT_COMMIT_STEP);
   const updateCommitPhase = useCallback((phase: CommitPhase) => {
     setCommitPhase(phase);
     if (phase === 'idle') {
-      setLastCommitStep(0);
+      setLastCommitStep(DEFAULT_COMMIT_STEP);
       return;
     }
     const idx = COMMIT_PHASE_STEP_INDEX[phase];
@@ -1737,7 +1741,7 @@ export function WorkspaceHubSheet({
                         ? COMMIT_STEPS.length
                         : commitPhase === 'error'
                           ? lastCommitStep
-                          : (COMMIT_PHASE_STEP_INDEX[commitPhase] ?? 0)
+                          : (COMMIT_PHASE_STEP_INDEX[commitPhase] ?? DEFAULT_COMMIT_STEP)
                     }
                     state={
                       commitPhase === 'success'
