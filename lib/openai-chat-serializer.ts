@@ -45,6 +45,7 @@ import type {
   ResponseFormatSpec,
 } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
+import { withContentBlocks } from './content-blocks.ts';
 
 /**
  * Build the OpenAI `response_format` payload from the neutral `ResponseFormatSpec`.
@@ -340,7 +341,10 @@ export function toOpenAIChat(
   options?: ToOpenAIChatOptions,
 ): OpenAIChatRequest {
   const model = options?.modelOverride ?? req.model;
-  const reqMessages = Array.isArray(req.messages) ? req.messages : [];
+  // Producer flip: materialize contentBlocks for multimodal turns so they run
+  // the block path in production (byte-identical to the legacy contentParts
+  // path). See lib/content-blocks.ts.
+  const reqMessages = (Array.isArray(req.messages) ? req.messages : []).map(withContentBlocks);
   const hasOverride =
     typeof req.systemPromptOverride === 'string' && req.systemPromptOverride.length > 0;
   const tagCache = options?.tagCacheBreakpoints === true;

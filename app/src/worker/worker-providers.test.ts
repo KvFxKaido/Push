@@ -2351,7 +2351,7 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
     expect(response.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
     const body = await response.json();
-    expect(body.error).toMatch(/cannot represent image/);
+    expect(body.error).toMatch(/unsupported or malformed content part/);
   });
 
   it('returns the validator 400 for a malformed neutral body without calling upstream', async () => {
