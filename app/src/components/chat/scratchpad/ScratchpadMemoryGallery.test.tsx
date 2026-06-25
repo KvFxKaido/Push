@@ -18,7 +18,13 @@ describe('ScratchpadMemoryGallery', () => {
 
   it('renders nothing when there are no memories', () => {
     const html = renderToStaticMarkup(
-      <ScratchpadMemoryGallery memories={[]} activeMemoryId={null} onLoad={noop} onDelete={noop} />,
+      <ScratchpadMemoryGallery
+        memories={[]}
+        activeMemoryId={null}
+        openMemoryId={null}
+        onLoad={noop}
+        onOpenMemory={noop}
+      />,
     );
     expect(html).toBe('');
   });
@@ -31,8 +37,9 @@ describe('ScratchpadMemoryGallery', () => {
           memory({ id: 'mem-2', name: 'API notes', content: 'Endpoints and auth flow.' }),
         ]}
         activeMemoryId={null}
+        openMemoryId={null}
         onLoad={noop}
-        onDelete={noop}
+        onOpenMemory={noop}
       />,
     );
     expect(html).toContain('Release checklist');
@@ -48,8 +55,9 @@ describe('ScratchpadMemoryGallery', () => {
       <ScratchpadMemoryGallery
         memories={[memory({ id: 'abc-123' })]}
         activeMemoryId={null}
+        openMemoryId={null}
         onLoad={noop}
-        onDelete={noop}
+        onOpenMemory={noop}
       />,
     );
     expect(html).toContain('view-transition-name:scratch-card-abc-123');
@@ -60,8 +68,9 @@ describe('ScratchpadMemoryGallery', () => {
       <ScratchpadMemoryGallery
         memories={[memory()]}
         activeMemoryId={null}
+        openMemoryId={null}
         onLoad={noop}
-        onDelete={noop}
+        onOpenMemory={noop}
       />,
     );
     expect(html).toContain('Current notes');
@@ -73,8 +82,9 @@ describe('ScratchpadMemoryGallery', () => {
       <ScratchpadMemoryGallery
         memories={[memory({ content: '   ' })]}
         activeMemoryId={null}
+        openMemoryId={null}
         onLoad={noop}
-        onDelete={noop}
+        onOpenMemory={noop}
       />,
     );
     expect(html).toContain('Empty note');
