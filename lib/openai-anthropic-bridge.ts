@@ -810,8 +810,11 @@ export function toAnthropicMessages(
       return;
     }
 
-    // Prefer the Anthropic-conceptual `contentBlocks` (near-identity downcast)
-    // when present, else the rich `contentParts`, else the `content` text. When
+    // Prefer the Anthropic-conceptual `contentBlocks` when present, else the
+    // rich `contentParts`, else the `content` text. Near-identity for multimodal
+    // turns; for tool turns the block path emits native `tool_use`/`tool_result`
+    // where the legacy text arm emitted fenced JSON as text — a behavior change,
+    // not a re-encoding (see lib/content-blocks.ts). When
     // blocks are present, signed thinking is carried in-stream and in order, so
     // the legacy `reasoningBlocks` sidecar prepend is skipped (it's the old
     // representation of the same thing — applying both would duplicate it).

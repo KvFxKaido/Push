@@ -5,9 +5,17 @@
  * Derives the canonical `LlmContentBlock[]` representation from a message's
  * legacy `content` / `contentParts` / `reasoningBlocks` fields, so the
  * serializers run their block path in production rather than the legacy
- * branches. The mapping is lossless for everything the legacy serializer paths
- * read, so the wire output is equivalent — this turns the migration on, it does
- * not change behavior.
+ * branches.
+ *
+ * Two cases with different fidelity:
+ * - Multimodal turns (`contentParts`): the legacy path already emits an array,
+ *   so routing through blocks is lossless / byte-equivalent on the wire.
+ * - Tool turns (`toolUses` / `toolResults`): NOT equivalent. The legacy text arm
+ *   sent the tool call to Anthropic as fenced JSON inside a `text` block; this
+ *   path sends a native `tool_use` / `tool_result` block. That's a deliberate
+ *   behavior change (text-dispatch → structured tool history), not a re-encoding.
+ *   It also drops assistant prose that accompanied the call — see
+ *   `toolBlocksForMessage`, which emits reasoning + tool_use only.
  */
 
 import type {
@@ -195,6 +203,13 @@ function toolBlocksForMessage(
     if (toolUses.length === 0 || toolUses.length !== (message.toolUses ?? []).length) {
       return undefined;
     }
+    // Behavior change vs the text arm: the assistant turn's `content` (model
+    // prose around the call, e.g. "I'll read the file." before the fenced JSON)
+    // is NOT carried into the block representation — only signed reasoning and
+    // the tool_use blocks are. The structured tool_use is canonical for replay;
+    // the prose was display-only narration. Anthropic accepts text before
+    // tool_use, so re-including it is possible later if we decide narration
+    // should survive replay — today it's intentionally dropped.
     return [...(message.reasoningBlocks ?? []), ...toolUses];
   }
 
@@ -212,6 +227,20 @@ function toolBlocksForMessage(
  * Anthropic exchange invariant over the whole request. If a `tool_use` or
  * `tool_result` is missing its counterpart, the entire sidecar-bearing message
  * falls back to the legacy text arm so serializers never see a half-block pair.
+ *
+ * NOT an identity transform for tool turns. The legacy text arm sends a tool
+ * call to Anthropic as a `{ type: 'text' }` block (the fenced JSON verbatim);
+ * this path sends a native `tool_use` / `tool_result` block instead — a real
+ * behavior change, not a re-encoding of the same wire. Anthropic permits
+ * `tool_use`/`tool_result` history without a top-level `tools` definition
+ * (relaxed 2025-02-27), so Push's text-dispatch turns (no `req.tools`) serialize
+ * fine. The transform is *structure-preserving* — one message in, one message
+ * out, no reorder/split/drop — so the assistant→result adjacency Anthropic
+ * requires is inherited from the round loop's existing message ordering (which
+ * the text arm already depends on), not established here. The exchange-pairing
+ * filter only swaps a message's content representation; it does not move
+ * messages, so it cannot create an adjacency violation the text arm didn't
+ * already have. See the adjacency regression test in content-blocks.test.ts.
  */
 export function materializeToolContentBlocks<M extends ToolSidecarMessage>(
   messages: readonly M[],

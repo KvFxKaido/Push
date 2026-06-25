@@ -81,6 +81,24 @@ them: `llmContentBlocksToAnthropic` (bridge), `flattenToolBearingBlocks`
 transcript sidecars (`toolUses` / `toolResults`) into `contentBlocks` for paired
 exchanges.
 
+**Correction — the request path never reconstructed tool blocks (verified
+2026-06-24, Slice 2 review).** Earlier framing in this doc described the bridge
+as "re-parsing fenced text back into `tool_use` / `tool_result` for the wire,"
+and Slice 3 as "deleting that reconstruction." That is **inaccurate for the
+request path.** `convertOpenAIContentToAnthropic` (the legacy text arm) emits
+assistant tool-call content as a `{ type: 'text' }` block — the fenced JSON
+verbatim; it never recovered `tool_use`. The bridge's tool-block code (`the ~48
+tool refs`) lives almost entirely in the **streaming-response translator** (the
+*other* direction: Anthropic-native `tool_use` → fenced text for the dispatcher).
+Consequences: (a) Slice 2 is a real **behavior change** — Anthropic tool history
+now travels as native `tool_use`/`tool_result` instead of as text — not a
+near-identity flip; (b) Slice 3 has **no request-path reconstruction to delete**
+(the payoff there shrinks to dead-code removal in the legacy arms, not bridge
+thinning). The text-fallback for unpaired/malformed turns still matters. Anthropic
+**permits** `tool_use`/`tool_result` history with no top-level `tools` definition
+(relaxed 2025-02-27 release note), so Push's text-dispatch turns (no `req.tools`)
+serialize without a 400.
+
 **Drift pins.** `cli/tests/protocol-drift.test.mjs` pins the `tool_call` event
 envelope as a flat `{ toolName, args }` (text-derived); `daemon-integration.test.mjs`
 pins prompt-vs-capability sync.

@@ -435,7 +435,7 @@ describe('toAnthropicMessages — native tools', () => {
   });
 });
 
-describe('toAnthropicMessages — contentBlocks (near-identity downcast)', () => {
+describe('toAnthropicMessages — contentBlocks (multimodal near-identity; tool turns structural)', () => {
   const req = (message: Partial<LlmMessage>): PushStreamRequest<LlmMessage> =>
     ({
       provider: 'anthropic',
