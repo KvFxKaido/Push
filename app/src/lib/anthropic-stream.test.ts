@@ -120,16 +120,13 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
 };
 
 const sampleTool: ToolFunctionSchema = {
-  type: 'function' as const,
-  function: {
-    name: 'sandbox_read_file',
-    description: 'Read a file',
-    parameters: {
-      type: 'object' as const,
-      properties: { path: { type: 'string' as const } },
-      required: ['path'],
-      additionalProperties: false,
-    },
+  name: 'sandbox_read_file',
+  description: 'Read a file',
+  input_schema: {
+    type: 'object' as const,
+    properties: { path: { type: 'string' as const } },
+    required: ['path'],
+    additionalProperties: false,
   },
 };
 

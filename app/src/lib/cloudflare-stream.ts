@@ -25,7 +25,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -60,6 +60,8 @@ export async function* cloudflareStream(
 
   // 2. Plain OpenAI-compatible request body. The Worker normalizes the
   //    upstream `env.AI.run` events back into this shape before responding.
+  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -78,7 +80,7 @@ export async function* cloudflareStream(
     // which the Worker forwards as structured tool-call frames. Additive to the
     // prompt-described tool path. `tool_choice: 'auto'` keeps prose answers
     // available when no tool is needed.
-    ...(req.tools && req.tools.length > 0 ? { tools: req.tools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
   };
 
   // 3. Headers. No Authorization — the Worker uses its `env.AI` binding for

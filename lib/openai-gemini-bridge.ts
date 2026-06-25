@@ -9,6 +9,7 @@ import type {
 } from './provider-contract.ts';
 import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
+import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -168,9 +169,9 @@ function openAIJsonSchemaToGeminiSchema(schema: unknown): Record<string, unknown
 }
 
 function openAIToolToGeminiFunctionDeclaration(tool: ToolFunctionSchema): Record<string, unknown> {
-  const declaration: Record<string, unknown> = { name: tool.function.name };
-  if (tool.function.description) declaration.description = tool.function.description;
-  const parameters = openAIJsonSchemaToGeminiSchema(tool.function.parameters);
+  const declaration: Record<string, unknown> = { name: tool.name };
+  if (tool.description) declaration.description = tool.description;
+  const parameters = openAIJsonSchemaToGeminiSchema(tool.input_schema);
   // Attach `parameters` only for an OBJECT with at least one property. A
   // parameterless tool (empty object, collapsed to STRING above) must be declared
   // with name + description only — Gemini rejects an empty OBJECT parameter block.
@@ -221,7 +222,7 @@ export function buildGeminiGenerateContentRequest(
     // Strict `=== true` so a malformed input (e.g. the string `"false"`) can't
     // accidentally enable grounding.
     enableGoogleSearch: request.google_search_grounding === true,
-    tools: request.tools,
+    tools: request.tools?.map(openAIToolToFlatTool),
   });
 }
 

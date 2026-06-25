@@ -121,16 +121,21 @@ const baseRequest: PushStreamRequest<ChatMessage> = {
 };
 
 const readFileTool = {
-  type: 'function' as const,
+  name: 'sandbox_read_file',
+  description: 'Read a file',
+  input_schema: {
+    type: 'object' as const,
+    properties: { path: { type: 'string' as const } },
+    required: ['path'],
+    additionalProperties: false as const,
+  },
+};
+const openAIReadFileTool = {
+  type: 'function',
   function: {
-    name: 'sandbox_read_file',
-    description: 'Read a file',
-    parameters: {
-      type: 'object' as const,
-      properties: { path: { type: 'string' as const } },
-      required: ['path'],
-      additionalProperties: false as const,
-    },
+    name: readFileTool.name,
+    description: readFileTool.description,
+    parameters: readFileTool.input_schema,
   },
 };
 
@@ -498,7 +503,7 @@ describe('vertexStream', () => {
 
     const body = JSON.parse(fetchMock.mock.calls[0][1]!.body as string);
     expect(body.contract).toBeUndefined();
-    expect(body.tools).toEqual([readFileTool]);
+    expect(body.tools).toEqual([openAIReadFileTool]);
     expect(body.tool_choice).toBe('auto');
   });
 

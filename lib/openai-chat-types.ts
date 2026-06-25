@@ -49,6 +49,20 @@ export interface OpenAIToolCall {
   function: { name: string; arguments: string };
 }
 
+/** OpenAI's NESTED function-tool wire shape for the request `tools` array.
+ *  The canonical `ToolFunctionSchema` is now Anthropic-flat (`{ name,
+ *  description, input_schema }`); `flatToolToOpenAITool` downcasts each one into
+ *  this nested `{ type:'function', function:{ name, description, parameters } }`
+ *  for OpenAI-compatible request bodies (`parameters` ← `input_schema`). */
+export interface OpenAIFunctionTool {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: ToolFunctionSchema['input_schema'];
+  };
+}
+
 export type OpenAIMessage = {
   role?: string;
   content?: string | OpenAIContentPart[] | null;
@@ -111,6 +125,6 @@ export interface OpenAIChatRequest extends OpenAIChatRequestNativeWebSearch {
   /** Native function-calling tool schemas + selection mode. Serialized by
    *  `toOpenAIChat` for callers that attach them (gated on model support); the
    *  legacy guardrail validator preserves them on the forwarded body. */
-  tools?: ToolFunctionSchema[];
+  tools?: OpenAIFunctionTool[];
   tool_choice?: 'auto' | 'none' | 'required';
 }

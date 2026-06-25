@@ -11,7 +11,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
@@ -71,6 +71,7 @@ export async function* zenStream(
   //  `toAnthropicMessages`, and their `tool_use` responses round-trip through
   //  `createAnthropicTranslatedStream` — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body = goMode
     ? toPushStreamWire(llmMessages, {
         provider: 'zen',
@@ -88,7 +89,7 @@ export async function* zenStream(
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-        ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
+        ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
         ...(req.responseFormat
           ? { response_format: toOpenAIResponseFormat(req.responseFormat) }
           : {}),

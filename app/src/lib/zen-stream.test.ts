@@ -351,16 +351,13 @@ describe('zenStream', () => {
   it('forwards native function tools + tool_choice into the request body', async () => {
     installStreamFetch(fetchMock);
     const sampleTool = {
-      type: 'function' as const,
-      function: {
-        name: 'sandbox_write_file',
-        description: 'Write a file to the sandbox',
-        parameters: {
-          type: 'object' as const,
-          properties: { path: { type: 'string' as const } },
-          required: ['path'],
-          additionalProperties: false as const,
-        },
+      name: 'sandbox_write_file',
+      description: 'Write a file to the sandbox',
+      input_schema: {
+        type: 'object' as const,
+        properties: { path: { type: 'string' as const } },
+        required: ['path'],
+        additionalProperties: false as const,
       },
     };
     const { zenStream } = await import('./zen-stream');
@@ -372,7 +369,16 @@ describe('zenStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.tools).toEqual([sampleTool]);
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        function: {
+          name: sampleTool.name,
+          description: sampleTool.description,
+          parameters: sampleTool.input_schema,
+        },
+      },
+    ]);
     expect(body.tool_choice).toBe('auto');
   });
 
@@ -459,16 +465,13 @@ describe('zenStream', () => {
     }));
     installStreamFetch(fetchMock);
     const sampleTool = {
-      type: 'function' as const,
-      function: {
-        name: 'sandbox_write_file',
-        description: 'Write a file to the sandbox',
-        parameters: {
-          type: 'object' as const,
-          properties: { path: { type: 'string' as const } },
-          required: ['path'],
-          additionalProperties: false as const,
-        },
+      name: 'sandbox_write_file',
+      description: 'Write a file to the sandbox',
+      input_schema: {
+        type: 'object' as const,
+        properties: { path: { type: 'string' as const } },
+        required: ['path'],
+        additionalProperties: false as const,
       },
     };
     const { zenStream } = await import('./zen-stream');

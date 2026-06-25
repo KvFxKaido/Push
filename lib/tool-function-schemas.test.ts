@@ -15,9 +15,7 @@ describe('getToolFunctionSchemas', () => {
     const specs = getAllToolSpecs();
     const schemas = getToolFunctionSchemas();
     expect(schemas).toHaveLength(specs.length);
-    expect(new Set(schemas.map((s) => s.function.name))).toEqual(
-      new Set(specs.map((s) => s.publicName)),
-    );
+    expect(new Set(schemas.map((s) => s.name))).toEqual(new Set(specs.map((s) => s.publicName)));
   });
 
   it('names functions by publicName so flushed native calls dispatch', () => {
@@ -25,16 +23,16 @@ describe('getToolFunctionSchemas', () => {
     // KNOWN_TOOL_NAMES (which includes publicNames) and resolved via
     // resolveToolName. publicName is the only name that satisfies both.
     const schemas = getToolFunctionSchemas();
-    const exec = schemas.find((s) => s.function.name === 'exec');
+    const exec = schemas.find((s) => s.name === 'exec');
     expect(exec).toBeDefined();
-    expect(exec?.function.parameters.required).toContain('command');
+    expect(exec?.input_schema.required).toContain('command');
   });
 
   it('includes every signature parameter in the schema with correct required flags', () => {
     for (const spec of getAllToolSpecs()) {
       const schema = toolSpecToFunctionSchema(spec);
-      const props = schema.function.parameters.properties;
-      const required = schema.function.parameters.required;
+      const props = schema.input_schema.properties;
+      const required = schema.input_schema.required;
       const open = spec.protocolSignature.indexOf('(');
       const close = spec.protocolSignature.lastIndexOf(')');
       const inner = spec.protocolSignature.slice(open + 1, close).trim();
@@ -46,24 +44,24 @@ describe('getToolFunctionSchemas', () => {
         expect(required.includes(name)).toBe(!optional);
       }
       // additionalProperties locked off for predictable native calls.
-      expect(schema.function.parameters.additionalProperties).toBe(false);
+      expect(schema.input_schema.additionalProperties).toBe(false);
     }
   });
 
   it('types known non-string args (numbers, booleans, arrays) from the curated map', () => {
-    const byName = Object.fromEntries(getToolFunctionSchemas().map((s) => [s.function.name, s]));
+    const byName = Object.fromEntries(getToolFunctionSchemas().map((s) => [s.name, s]));
     // integer
-    expect(byName.pr.function.parameters.properties.pr.type).toBe('integer');
-    expect(byName.read.function.parameters.properties.start_line.type).toBe('integer');
+    expect(byName.pr.input_schema.properties.pr.type).toBe('integer');
+    expect(byName.read.input_schema.properties.start_line.type).toBe('integer');
     // boolean
-    expect(byName.show_commit.function.parameters.properties.stat.type).toBe('boolean');
+    expect(byName.show_commit.input_schema.properties.stat.type).toBe('boolean');
     // string array (items typed)
-    expect(byName.explorer.function.parameters.properties.files).toEqual({
+    expect(byName.explorer.input_schema.properties.files).toEqual({
       type: 'array',
       items: { type: 'string' },
     });
     // object array
-    expect(byName.plan_tasks.function.parameters.properties.tasks).toEqual({
+    expect(byName.plan_tasks.input_schema.properties.tasks).toEqual({
       type: 'array',
       items: { type: 'object' },
     });
@@ -77,7 +75,7 @@ describe('getToolFunctionSchemasForSources', () => {
     const specBySource = new Map(getAllToolSpecs().map((s) => [s.publicName, s.source]));
     expect(schemas.length).toBeGreaterThan(0);
     for (const schema of schemas) {
-      expect(sources.has(specBySource.get(schema.function.name)!)).toBe(true);
+      expect(sources.has(specBySource.get(schema.name)!)).toBe(true);
     }
   });
 
@@ -92,7 +90,7 @@ describe('getToolFunctionSchemasForSources', () => {
       'ask-user',
       'artifacts',
     ]);
-    const names = getToolFunctionSchemasForSources(leadSources).map((s) => s.function.name);
+    const names = getToolFunctionSchemasForSources(leadSources).map((s) => s.name);
     expect(names).toContain('exec'); // sandbox
     expect(names).toContain('pr'); // github
     expect(names).not.toContain('coder'); // delegate
@@ -103,19 +101,18 @@ describe('getToolFunctionSchemasForSources', () => {
   it('pins GitHub `repo` to the active repo when provided (anti-placeholder)', () => {
     const sources = new Set<ToolRegistrySource>(['github', 'sandbox']);
     const schemas = getToolFunctionSchemasForSources(sources, { activeRepo: 'KvFxKaido/Push' });
-    const byName = Object.fromEntries(schemas.map((s) => [s.function.name, s]));
+    const byName = Object.fromEntries(schemas.map((s) => [s.name, s]));
     // GitHub tool: repo pinned via enum + description.
-    const repoProp = byName.commits.function.parameters.properties.repo;
+    const repoProp = byName.commits.input_schema.properties.repo;
     expect(repoProp.enum).toEqual(['KvFxKaido/Push']);
     expect(repoProp.description).toContain('KvFxKaido/Push');
     // Non-GitHub tool: a `path`-style arg is untouched (no enum leakage).
-    expect(byName.exec.function.parameters.properties.command.enum).toBeUndefined();
+    expect(byName.exec.input_schema.properties.command.enum).toBeUndefined();
   });
 
   it('leaves `repo` unconstrained when no active repo is provided', () => {
     const schemas = getToolFunctionSchemasForSources(new Set<ToolRegistrySource>(['github']));
-    const repoProp = schemas.find((s) => s.function.name === 'commits')!.function.parameters
-      .properties.repo;
+    const repoProp = schemas.find((s) => s.name === 'commits')!.input_schema.properties.repo;
     expect(repoProp.enum).toBeUndefined();
     expect(repoProp).toEqual({ type: 'string' });
   });

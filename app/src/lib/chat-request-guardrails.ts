@@ -778,8 +778,8 @@ export function validateAndNormalizeWireRequest(
     }
   }
 
-  // Native function-calling tool schemas (OpenAI-compatible shape). Shape-check
-  // the discriminant + function name so a malformed payload can't reach the
+  // Native function-calling tool schemas (Anthropic-compatible flat shape).
+  // Shape-check the tool name + input schema so a malformed payload can't reach the
   // provider serializers; the schemas themselves are generated server-internally
   // (the registry), so deeper validation isn't warranted.
   let tools: ToolFunctionSchema[] | undefined;
@@ -789,8 +789,11 @@ export function validateAndNormalizeWireRequest(
       Array.isArray(raw) &&
       raw.every((t) => {
         const tool = asRecord(t);
-        const fn = tool ? asRecord(tool.function) : null;
-        return tool?.type === 'function' && fn !== null && typeof fn.name === 'string';
+        return (
+          typeof tool?.name === 'string' &&
+          tool.name.trim().length > 0 &&
+          asRecord(tool.input_schema) !== null
+        );
       });
     if (!valid) {
       return validationError(

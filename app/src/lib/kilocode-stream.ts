@@ -11,7 +11,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -47,6 +47,7 @@ export async function* kilocodeStream(
 
   // 2. Plain OpenAI-compatible request body — no Kilo Code-specific fields.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body: Record<string, unknown> = {
     model: req.model,
     messages: llmMessages,
@@ -56,7 +57,7 @@ export async function* kilocodeStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
     // pump emits native tool_calls as structured events for dispatch.
-    ...(nativeTools ? { tools: nativeTools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared
     // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`

@@ -375,21 +375,18 @@ export interface ToolFunctionParameterSchema {
 }
 
 /**
- * OpenAI-style function-calling tool schema. The neutral wire shape for native
- * tool calling; adapters that support it serialize it into the `tools` array.
- * Built from the tool registry by `lib/tool-function-schemas.ts`.
+ * Anthropic-style custom-tool schema. The neutral wire shape for native tool
+ * calling; adapters that support it serialize it into the `tools` array. Built
+ * from the tool registry by `lib/tool-function-schemas.ts`.
  */
 export interface ToolFunctionSchema {
-  type: 'function';
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: 'object';
-      properties: Record<string, ToolFunctionParameterSchema>;
-      required: string[];
-      additionalProperties: false;
-    };
+  name: string;
+  description: string;
+  input_schema: {
+    type: 'object';
+    properties: Record<string, ToolFunctionParameterSchema>;
+    required: string[];
+    additionalProperties: false;
   };
 }
 
