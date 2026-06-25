@@ -7,9 +7,10 @@ import {
   type CoderAgentOptions,
   type CoderLoopMessage,
 } from './coder-agent.js';
+import { toGeminiGenerateContent } from './openai-gemini-bridge.js';
 import type { LlmContentPart, PushStream, PushStreamEvent } from './provider-contract.js';
 
-type Call = { call: { tool: string; args: Record<string, unknown> } };
+type Call = { call: { tool: string; args: Record<string, unknown> }; thoughtSignature?: string };
 
 function makePushStream(rounds: PushStreamEvent[][]): {
   stream: PushStream;
@@ -758,6 +759,103 @@ describe('runCoderAgent (PushStream consumer)', () => {
         content: 'contents:b.ts',
       },
     ]);
+  });
+
+  it('round-trips Gemini thoughtSignature through delegated Coder tool_use sidecars', async () => {
+    const { stream } = makePushStream(
+      Array.from({ length: 2 }, () => [
+        { type: 'text_delta' as const, text: 'reading files' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ]),
+    );
+    const signedRead: Call = {
+      call: { tool: 'sandbox_read_file', args: { path: 'signed.ts' } },
+      thoughtSignature: 'AgQKAabc123==',
+    };
+    const unsignedRead: Call = {
+      call: { tool: 'sandbox_read_file', args: { path: 'unsigned.ts' } },
+    };
+    const detectAllToolCalls = () => ({
+      readOnly: [signedRead, unsignedRead],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async (call: Call) => ({
+      kind: 'executed' as const,
+      resultText: `contents:${call.call.args.path}`,
+    });
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
+    const checkpointMessages: CoderLoopMessage[][] = [];
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
+        toolExec,
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: () => {},
+        onCheckpoint: async (state) => {
+          checkpointMessages.push(state.messages.map((m) => ({ ...m })));
+        },
+      },
+    );
+
+    const messages = checkpointMessages[0] ?? [];
+    const assistant = messages.find((m) => m.isToolCall);
+    expect(assistant?.toolUses?.[0]).toEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        name: 'sandbox_read_file',
+        input: { path: 'signed.ts' },
+        thoughtSignature: 'AgQKAabc123==',
+      }),
+    );
+    expect(assistant?.toolUses?.[1]).toEqual(
+      expect.objectContaining({
+        type: 'tool_use',
+        name: 'sandbox_read_file',
+        input: { path: 'unsigned.ts' },
+      }),
+    );
+    expect(assistant?.toolUses?.[1]).not.toHaveProperty('thoughtSignature');
+
+    const body = toGeminiGenerateContent({
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      messages,
+    });
+    const contents = body.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    const parts =
+      contents.find(
+        (content) =>
+          content.role === 'model' &&
+          content.parts.some((part) => Object.hasOwn(part, 'functionCall')),
+      )?.parts ?? [];
+    expect(parts).toEqual([
+      {
+        functionCall: {
+          id: assistant?.toolUses?.[0]?.id,
+          name: 'sandbox_read_file',
+          args: { path: 'signed.ts' },
+        },
+        thoughtSignature: 'AgQKAabc123==',
+      },
+      {
+        functionCall: {
+          id: assistant?.toolUses?.[1]?.id,
+          name: 'sandbox_read_file',
+          args: { path: 'unsigned.ts' },
+        },
+      },
+    ]);
+    expect(parts[1]).not.toHaveProperty('thoughtSignature');
   });
 
   it('throws SandboxUnreachableError after consecutive SANDBOX_UNREACHABLE tool results', async () => {

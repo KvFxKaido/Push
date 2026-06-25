@@ -199,11 +199,21 @@ export interface CoderLoopMessage extends LlmMessage {
   toolResults?: LlmToolResultBlock[];
 }
 
-function getKernelToolCallFields(call: unknown): { tool: string; args?: unknown } {
-  const raw = (call as { call?: { tool?: unknown; args?: unknown } } | null)?.call;
+function getKernelToolCallFields(call: unknown): {
+  tool: string;
+  args?: unknown;
+  thoughtSignature?: string;
+} {
+  const source = call as {
+    call?: { tool?: unknown; args?: unknown };
+    thoughtSignature?: unknown;
+  } | null;
+  const raw = source?.call;
   return {
     tool: typeof raw?.tool === 'string' ? raw.tool : 'unknown',
     args: raw?.args,
+    thoughtSignature:
+      typeof source?.thoughtSignature === 'string' ? source.thoughtSignature : undefined,
   };
 }
 
@@ -213,10 +223,10 @@ function createToolUseSidecars<TCall>(calls: readonly TCall[]): {
 } {
   const toolUseIdByCall = new Map<TCall, string>();
   const toolUses = calls.map((call) => {
-    const { tool, args } = getKernelToolCallFields(call);
+    const { tool, args, thoughtSignature } = getKernelToolCallFields(call);
     const id = createToolUseBlockId(createId());
     toolUseIdByCall.set(call, id);
-    return buildToolUseBlock({ id, name: tool, input: args });
+    return buildToolUseBlock({ id, name: tool, input: args, thoughtSignature });
   });
   return { toolUses, toolUseIdByCall };
 }
