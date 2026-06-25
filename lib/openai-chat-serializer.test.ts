@@ -486,6 +486,67 @@ describe('toOpenAIChat', () => {
       ),
     ).toThrow(/malformed tool_result block/);
   });
+
+  it('preserves call→result order: a tool_result after a tool_use flushes the assistant call first', () => {
+    // Interleaved within one turn: the assistant message declaring the call must
+    // come BEFORE the role:tool result, not after (OpenAI rejects a tool message
+    // that precedes its assistant call).
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'tool_use', id: 'c1', name: 'foo', input: { a: 1 } },
+            { type: 'tool_result', tool_use_id: 'c1', content: 'done' },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'c1', type: 'function', function: { name: 'foo', arguments: '{"a":1}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: 'done' },
+    ]);
+  });
+
+  it('maps cache breakpoints to the right wire message even when an earlier message flattens to several', () => {
+    const body = toOpenAIChat(
+      reqWith(
+        [
+          // req-index 0 expands to TWO wire messages (assistant call + tool result).
+          llm('1', 'assistant', 'fallback', {
+            contentBlocks: [
+              { type: 'tool_use', id: 'c1', name: 'foo', input: {} },
+              { type: 'tool_result', tool_use_id: 'c1', content: 'res' },
+            ],
+          }),
+          // req-index 1 — the breakpoint targets this one.
+          llm('2', 'user', 'hi'),
+        ],
+        { cacheBreakpointIndices: [1] },
+      ),
+      { tagCacheBreakpoints: true },
+    );
+    // The breakpoint at req-index 1 must tag the 'hi' user message (wire index 2),
+    // not collide with req-index 0's expansion. With the old reqIndex+offset
+    // mapping it would have wrongly tagged the tool-result message at wire index 1.
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'foo', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: 'res' },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }],
+      },
+    ]);
+  });
 });
 
 describe('toOpenAIResponseFormat', () => {
