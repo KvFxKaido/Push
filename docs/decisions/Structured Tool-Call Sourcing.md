@@ -138,6 +138,19 @@ dual-read is sound **only** under these rules:
   `tool_result` (block). The invariant above catches it: a `tool_result` whose
   `tool_use` isn't a block degrades the pair to text. Slice 2's golden test must
   include this split case.
+- **Orphan `tool_use` from early batch termination.** The reverse of the rule
+  above, and just as load-bearing: a single assistant turn mints a `tool_use`
+  block per *detected* call up front, but the mutation queue **short-circuits** on
+  a denial or hard-failure (`lib/coder-agent.ts` — the queue `break`s so the model
+  sees a consistent snapshot), so later queued calls get a `tool_use` block but
+  **never a `tool_result`**. Slice 1 writes these unpaired `tool_use` blocks as
+  shadow data harmlessly. But Anthropic rejects a `tool_use` with no following
+  `tool_result` just as it rejects the inverse — so **Slice 2's `toLLMMessages`
+  must prune unpaired blocks on BOTH sides**: a `tool_use` with no matching
+  `tool_result` degrades to the text arm exactly like a `tool_result` with no
+  matching `tool_use`. Wholeness is enforced once, at the consumer, over the full
+  `LlmMessage[]` — not per-producer-site. Slice 2's golden test must include this
+  early-termination case (batch with a denied/failed mutation mid-queue).
 - **Pair-aware context trimming.** Context compaction must never drop a `tool_use`
   while keeping its `tool_result` (an orphan result Anthropic rejects). This is a
   *pre-existing* requirement for the text form; the block path must preserve it —
