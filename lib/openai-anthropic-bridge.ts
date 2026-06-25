@@ -3,7 +3,12 @@ import type {
   OpenAIContentPart,
   OpenAIReasoningBlock,
 } from './openai-chat-types.ts';
-import type { LlmContentPart, LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import type {
+  LlmContentBlock,
+  LlmContentPart,
+  LlmMessage,
+  PushStreamRequest,
+} from './provider-contract.ts';
 import type { PushStreamEvent, StreamUsage, ToolFunctionSchema } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { formatNativeToolCallFenced, stripTemplateTokens } from './openai-sse-pump.ts';
@@ -203,6 +208,118 @@ function contentPartsToAnthropic(
     }
   }
   return blocks.length > 0 ? blocks : [{ type: 'text', text: '' }];
+}
+
+/**
+ * Strict converter for the neutral `LlmMessage.contentBlocks` → Anthropic
+ * content blocks — the **near-identity** direction of the contract migration
+ * (see `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
+ * Because the block model is Anthropic-canonical, each block maps with only
+ * field-name nudges and zero upcasting/fakery: `image.source` is already
+ * Anthropic's shape, `thinking.text` → the `thinking` field, `tool_use` is
+ * verbatim, and `tool_result` keeps its `is_error` flag (which OpenAI lacks).
+ * THROWS on a malformed block. `tagLast` adds the `cache_control` breakpoint to
+ * the final text block, mirroring {@link contentPartsToAnthropic}.
+ *
+ * Block ORDER is preserved verbatim — Anthropic requires `thinking` blocks to
+ * lead an assistant turn using extended thinking, which the producer of
+ * `contentBlocks` is responsible for emitting in order (so the legacy
+ * `reasoningBlocks` sidecar prepend is skipped when blocks are present).
+ */
+function llmContentBlocksToAnthropic(
+  blocks: readonly LlmContentBlock[],
+  tagLast: boolean,
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  for (const rawBlock of blocks) {
+    const block = rawBlock as {
+      type?: unknown;
+      text?: unknown;
+      source?: { type?: unknown; media_type?: unknown; data?: unknown; url?: unknown };
+      signature?: unknown;
+      data?: unknown;
+      id?: unknown;
+      name?: unknown;
+      input?: unknown;
+      tool_use_id?: unknown;
+      content?: unknown;
+      is_error?: unknown;
+      cache_control?: unknown;
+    };
+    const cc = block.cache_control ? { cache_control: block.cache_control } : {};
+    if (block.type === 'text' && typeof block.text === 'string') {
+      out.push({ type: 'text', text: block.text, ...cc });
+      continue;
+    }
+    if (block.type === 'image' && block.source && typeof block.source === 'object') {
+      const s = block.source;
+      if (s.type === 'base64' && typeof s.media_type === 'string' && typeof s.data === 'string') {
+        out.push({
+          type: 'image',
+          source: { type: 'base64', media_type: s.media_type, data: s.data },
+          ...cc,
+        });
+        continue;
+      }
+      if (s.type === 'url' && typeof s.url === 'string') {
+        out.push({ type: 'image', source: { type: 'url', url: s.url }, ...cc });
+        continue;
+      }
+      // Malformed image source — fall through to the loud throw below.
+    }
+    if (
+      block.type === 'thinking' &&
+      typeof block.text === 'string' &&
+      typeof block.signature === 'string'
+    ) {
+      // Anthropic's thinking block carries the text under `thinking`, not `text`.
+      // No cache_control on signed-reasoning blocks.
+      out.push({ type: 'thinking', thinking: block.text, signature: block.signature });
+      continue;
+    }
+    if (block.type === 'redacted_thinking' && typeof block.data === 'string') {
+      out.push({ type: 'redacted_thinking', data: block.data });
+      continue;
+    }
+    if (
+      block.type === 'tool_use' &&
+      typeof block.id === 'string' &&
+      typeof block.name === 'string' &&
+      block.input !== null &&
+      typeof block.input === 'object'
+    ) {
+      out.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input, ...cc });
+      continue;
+    }
+    if (
+      block.type === 'tool_result' &&
+      typeof block.tool_use_id === 'string' &&
+      typeof block.content === 'string'
+    ) {
+      const result: Record<string, unknown> = {
+        type: 'tool_result',
+        tool_use_id: block.tool_use_id,
+        content: block.content,
+        ...cc,
+      };
+      // Anthropic HAS a typed `is_error` slot (unlike OpenAI) — preserve it.
+      if (block.is_error === true) result.is_error = true;
+      out.push(result);
+      continue;
+    }
+    throw new Error(
+      `toAnthropicMessages: unsupported or malformed content block (type: ${JSON.stringify(block.type)})`,
+    );
+  }
+  if (tagLast) {
+    for (let i = out.length - 1; i >= 0; i -= 1) {
+      if (out[i].type === 'text') {
+        out[i].cache_control = { type: 'ephemeral' };
+        break;
+      }
+    }
+  }
+  return out.length > 0 ? out : [{ type: 'text', text: '' }];
 }
 
 function buildOpenAISseChunk(params: {
@@ -684,21 +801,30 @@ export function toAnthropicMessages(
       return;
     }
 
-    // Prefer the rich multimodal representation when present so image content is
-    // carried (and loudly validated), not flattened to `content`'s text.
-    const contentBlocks =
-      m.contentParts && m.contentParts.length > 0
-        ? contentPartsToAnthropic(m.contentParts, tagged)
-        : toContent(m.content, tagged);
-    if (m.role === 'assistant') {
-      const reasoning = reasoningBlocksToAnthropic(m.reasoningBlocks);
-      anthropicMessages.push({
-        role: 'assistant',
-        content: reasoning.length > 0 ? [...reasoning, ...contentBlocks] : contentBlocks,
-      });
+    // Prefer the Anthropic-conceptual `contentBlocks` (near-identity downcast)
+    // when present, else the rich `contentParts`, else the `content` text. When
+    // blocks are present, signed thinking is carried in-stream and in order, so
+    // the legacy `reasoningBlocks` sidecar prepend is skipped (it's the old
+    // representation of the same thing — applying both would duplicate it).
+    let anthropicContent: Array<Record<string, unknown>>;
+    if (m.contentBlocks && m.contentBlocks.length > 0) {
+      anthropicContent = llmContentBlocksToAnthropic(m.contentBlocks, tagged);
     } else {
-      anthropicMessages.push({ role: 'user', content: contentBlocks });
+      const base =
+        m.contentParts && m.contentParts.length > 0
+          ? contentPartsToAnthropic(m.contentParts, tagged)
+          : toContent(m.content, tagged);
+      if (m.role === 'assistant') {
+        const reasoning = reasoningBlocksToAnthropic(m.reasoningBlocks);
+        anthropicContent = reasoning.length > 0 ? [...reasoning, ...base] : base;
+      } else {
+        anthropicContent = base;
+      }
     }
+    anthropicMessages.push({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: anthropicContent,
+    });
   });
 
   for (const blocks of options?.replayAssistantTurns ?? []) {

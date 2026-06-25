@@ -435,6 +435,116 @@ describe('toAnthropicMessages — native tools', () => {
   });
 });
 
+describe('toAnthropicMessages — contentBlocks (near-identity downcast)', () => {
+  const req = (message: Partial<LlmMessage>): PushStreamRequest<LlmMessage> =>
+    ({
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      messages: [{ id: '1', content: 'fallback', timestamp: 0, ...message } as LlmMessage],
+    }) as PushStreamRequest<LlmMessage>;
+  const msgs = (body: Record<string, unknown>) =>
+    body.messages as Array<{ role: string; content: unknown }>;
+
+  it('maps an assistant turn (thinking + text + tool_use) to Anthropic content, in order', () => {
+    const body = toAnthropicMessages(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          { type: 'thinking', text: 'pondering', signature: 'sig' },
+          { type: 'text', text: 'here goes' },
+          { type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } },
+        ],
+      }),
+    );
+    expect(msgs(body)).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'pondering', signature: 'sig' },
+          { type: 'text', text: 'here goes' },
+          { type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } },
+        ],
+      },
+    ]);
+  });
+
+  it('preserves the is_error flag on tool_result (the slot OpenAI lacks)', () => {
+    const body = toAnthropicMessages(
+      req({
+        role: 'user',
+        contentBlocks: [
+          { type: 'tool_result', tool_use_id: 'c1', content: 'boom', is_error: true },
+        ],
+      }),
+    );
+    expect(msgs(body)).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'tool_result', tool_use_id: 'c1', content: 'boom', is_error: true }],
+      },
+    ]);
+  });
+
+  it('carries an image block source verbatim (already Anthropic shape)', () => {
+    const body = toAnthropicMessages(
+      req({
+        role: 'user',
+        contentBlocks: [
+          { type: 'text', text: 'see' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      }),
+    );
+    expect(msgs(body)).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'see' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      },
+    ]);
+  });
+
+  it('prefers contentBlocks and does NOT double-apply the reasoningBlocks sidecar', () => {
+    const body = toAnthropicMessages(
+      req({
+        role: 'assistant',
+        content: 'text fallback',
+        contentParts: [{ type: 'text', text: 'parts fallback' }],
+        reasoningBlocks: [{ type: 'thinking', text: 'sidecar', signature: 'sidesig' }],
+        contentBlocks: [
+          { type: 'thinking', text: 'in-stream', signature: 'streamsig' },
+          { type: 'text', text: 'blocks win' },
+        ],
+      }),
+    );
+    // In-stream thinking is used; the sidecar is not prepended (no duplication).
+    expect(msgs(body)).toEqual([
+      {
+        role: 'assistant',
+        content: [
+          { type: 'thinking', thinking: 'in-stream', signature: 'streamsig' },
+          { type: 'text', text: 'blocks win' },
+        ],
+      },
+    ]);
+  });
+
+  it('throws on a malformed content block', () => {
+    expect(() =>
+      toAnthropicMessages(
+        req({
+          role: 'user',
+          contentBlocks: [
+            { type: 'tool_use', name: 'no-id' },
+          ] as unknown as LlmMessage['contentBlocks'],
+        }),
+      ),
+    ).toThrow(/unsupported or malformed content block/);
+  });
+});
+
 describe('Anthropic structured outputs (forced tool)', () => {
   const schema = {
     type: 'object',
