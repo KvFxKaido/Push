@@ -1288,35 +1288,54 @@ describe('providerModelSupportsStructuredOutput', () => {
     });
   });
 
-  it('returns false for providers whose adapter does not serialize response_format', () => {
+  it('returns false for providers without a confirmed structured-output wire', () => {
     stubWindow();
-    // Gemini / Vertex native serializers ignore `response_format` by contract;
-    // bedrock / ollama are unconfirmed (Ollama Cloud does not support structured
-    // outputs); demo has no wire. None of these may ever attach a constraint,
-    // regardless of any catalog metadata. (Anthropic IS supported now — via the
-    // forced-tool bridge — see the next test.)
-    for (const provider of ['google', 'vertex', 'bedrock', 'ollama', 'demo']) {
+    // Gemini native serializers, bedrock, and ollama are unconfirmed or absent
+    // (Ollama Cloud does not support structured outputs); demo has no wire.
+    // None of these may attach a constraint regardless of catalog metadata.
+    for (const provider of ['google', 'bedrock', 'ollama', 'demo']) {
       expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
     }
+    expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
   });
 
-  it('gates Anthropic structured outputs on (name-based; forced-tool bridge)', () => {
+  it('gates Anthropic structured outputs as native when supported and fallback otherwise', () => {
     stubWindow();
-    // Anthropic has no `response_format`; the bridge expresses the constraint as
-    // a forced tool, which works on any tool-capable Claude — so every Anthropic
-    // model Push offers is supported.
     expect(providerModelSupportsStructuredOutput('anthropic', 'claude-sonnet-4-6')).toBe(true);
     expect(providerModelSupportsStructuredOutput('anthropic', 'claude-opus-4-8')).toBe(true);
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-sonnet-4-6')).toMatchObject({
+      structuredOutput: 'strict',
+    });
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-sonnet-4@20250514')).toMatchObject({
+      structuredOutput: 'best-effort',
+    });
     expect(providerModelSupportsStructuredOutput('anthropic', undefined)).toBe(false);
   });
 
-  it('gates Zen-Go Anthropic-transport models on (forced-tool bridge); OpenAI-transport stays capability-based', () => {
+  it('gates Vertex-Claude structured outputs through the Anthropic transport only', () => {
+    stubWindow();
+    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
+      true,
+    );
+    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4-5@20250929')).toMatchObject({
+      structuredOutput: 'strict',
+    });
+    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514')).toMatchObject({
+      structuredOutput: 'best-effort',
+    });
+    expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
+  });
+
+  it('gates Zen-Go Anthropic-transport models on the fallback bridge; OpenAI-transport stays capability-based', () => {
     stubWindow();
     // minimax/qwen route over the Anthropic Messages transport on Go, where the
     // forced-tool bridge applies regardless of models.dev metadata.
     expect(providerModelSupportsStructuredOutput('zen', 'minimax-m3')).toBe(true);
     expect(providerModelSupportsStructuredOutput('zen', 'qwen3.7-max')).toBe(true);
     expect(providerModelSupportsStructuredOutput('zen', 'minimax-m2.7')).toBe(true);
+    expect(resolvePushCapabilityProfile('zen', 'minimax-m3')).toMatchObject({
+      structuredOutput: 'best-effort',
+    });
     // OpenAI-transport zen models fall through to the capability probe — with no
     // seeded opencode metadata here, that resolves false (response_format path).
     expect(providerModelSupportsStructuredOutput('zen', 'kimi-k2.6')).toBe(false);

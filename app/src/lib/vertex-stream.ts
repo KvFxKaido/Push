@@ -167,6 +167,7 @@ export async function* vertexStream(
         ...(anthropicWebSearch ? { anthropicWebSearch: true } : {}),
         ...(googleSearchGrounding ? { googleSearchGrounding: true } : {}),
         ...(nativeTools ? { tools: nativeTools } : {}),
+        ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
       })
     : null;
   const legacyBase: Record<string, unknown> | null = isNeutral

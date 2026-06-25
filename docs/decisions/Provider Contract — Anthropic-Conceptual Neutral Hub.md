@@ -1,6 +1,6 @@
 # Push Protocol V1 (PMP) — Anthropic-Conceptual Neutral Provider Contract
 
-Status: **Current**, added 2026-06-24, producer flips landed 2026-06-25, native tool-call dispatch landed 2026-06-25 (#1162/#1163), capability profile resolver added 2026-06-25 (#1164). The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and `lib/content-blocks.ts` materializes `contentBlocks` for multimodal turns plus complete, adjacent tool exchanges in production. Plain-text turns and degraded tool exchanges (legacy, malformed, split, or non-adjacent) keep their `content` string / `reasoningBlocks` sidecar; that text fallback is still live by design.
+Status: **Current**, added 2026-06-24, producer flips landed 2026-06-25, native tool-call dispatch landed 2026-06-25 (#1162/#1163), capability profile resolver and residual request-shape follow-through landed 2026-06-25 (#1164). The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and `lib/content-blocks.ts` materializes `contentBlocks` for multimodal turns plus complete, adjacent tool exchanges in production. Plain-text turns and degraded tool exchanges (legacy, malformed, split, or non-adjacent) keep their `content` string / `reasoningBlocks` sidecar; that text fallback is still live by design.
 
 ## Push Protocol V1 (PMP) — the named thesis
 
@@ -17,21 +17,21 @@ The protocol is the types in `lib/provider-contract.ts` (`LlmMessage`, `LlmConte
 3. **The text-dispatch tier is permanent, not transitional.** "Everything capable becomes blocks; everything else stays text." Non-cooperating models emit fenced JSON in `content` and Push parses it forever (`lib/tool-call-parsing.ts` + recovery). Degraded/malformed/non-adjacent tool exchanges deliberately fall back to text. PMP is capability-tiered by design, not a single shape.
 4. **Provider features get *promoted*, not quarantined.** A `providerMeta` / `native` escape hatch is right for diagnostics and replay, but history says interesting affordances do not stay quarantined — signed thinking (`reasoning_block`), `pause_turn`, server-tool web search, and native tool calls all got promoted into the core contract as first-class. Budget for that as the ongoing maintenance tax of being the customs office, not a rare event.
 
-### What's left (the unbuilt 20%)
+### What's left
 
-The protocol exists and is live. The scattered capability gates now route through `PushCapabilityProfile`; the remaining seam is the residual OpenAI-shaped request sub-types: `ToolFunctionSchema`, the OpenAI `image_url` shape in `LlmContentPart`, and the explicit decision that `ResponseFormatSpec` stays neutral enough unless a stronger case emerges (see Context below). This doc is the constitution; the issue is the punch-list.
+The protocol exists and is live. The scattered capability gates now route through `PushCapabilityProfile`, the residual OpenAI-shaped request producers have been retired (`contentBlocks` carry Anthropic-shaped images, `ToolFunctionSchema` is flat/custom-tool-shaped), and `ResponseFormatSpec` remains the neutral `{ name, schema }` contract. Anthropic Messages now prefers native `output_config.format` on supported Claude models and keeps the forced-tool fallback for older/non-Claude Anthropic-transport routes. What remains is ongoing provider-border maintenance, not another contract flip.
 
 ## Context
 
-The neutral provider contract (`lib/provider-contract.ts` — `PushStreamRequest` / `PushStreamEvent` / `LlmMessage`) is structurally its own type, but its **input sub-types are OpenAI-shaped**:
+At the start of this migration, the neutral provider contract (`lib/provider-contract.ts` — `PushStreamRequest` / `PushStreamEvent` / `LlmMessage`) was structurally its own type, but several **input sub-types were OpenAI-shaped**:
 
-- `ToolFunctionSchema` is OpenAI's nested `{ type: 'function', function: { … } }`.
-- `LlmContentPart` uses OpenAI's `image_url: { url }` image shape.
-- Structured output is modeled on OpenAI `response_format`.
+- `ToolFunctionSchema` was OpenAI's nested `{ type: 'function', function: { … } }`.
+- `LlmContentPart` used OpenAI's `image_url: { url }` image shape.
+- Structured output was modeled on OpenAI `response_format`, though the durable neutral contract is just `{ name, schema, strict? }`.
 
 Before this migration, OpenAI was the canonical shape: the OpenAI-compatible serializer (`toOpenAIChat`) was close to a passthrough, and the **Anthropic / Gemini bridges translated** — but the Anthropic bridge in particular had to **upcast** richer concepts the contract couldn't natively express. The tells:
 
-- Structured output on Anthropic is **faked** as a forced tool (`STRUCTURED_OUTPUT_TOOL_NAME`) because the contract has no native JSON-constraint Anthropic understands.
+- Structured output on Anthropic was originally **faked** as a forced tool (`STRUCTURED_OUTPUT_TOOL_NAME`) because Anthropic had no native JSON-output API when the bridge was written. Modern Claude routes now use `output_config.format`; the forced tool remains the fallback.
 - Signed reasoning (`reasoning_block`) and `pause_turn` were **bolted onto** an OpenAI-shaped envelope as the contract discovered it was conceptually poorer than the richest provider it serves.
 - `toAnthropicMessages` carried the request and response translation burden for content blocks, signed thinking, structured output, pause turns, and native Anthropic tool-use responses.
 
@@ -72,7 +72,7 @@ Each slice shipped independently, behind the additive-field pattern already used
 7. ✅ **Structured tool-call sourcing** (#1154 §1, #1157-#1159) — round loops persist parsed tool calls/results as sidecars; complete adjacent exchanges materialize as native `tool_use` / `tool_result` blocks on neutral/block-aware requests.
 8. ✅ **Serializer cleanup** (#1154 §3) — after request-level materialization became the single rich-content producer, the serializers dropped their duplicate local `contentParts` branches and kept only `contentBlocks` plus the permanent plain-text fallback.
 
-> Note: slice "native structured output" from the original plan was dropped — `ResponseFormatSpec` is already neutral and Anthropic's forced-tool is idiomatic, not a fake.
+> Note: the later #1164 follow-through kept `ResponseFormatSpec` neutral and modernized only the Anthropic implementation: native `output_config.format` where supported, forced-tool fallback where not.
 
 ## Intentionally out of scope (not part of this migration)
 

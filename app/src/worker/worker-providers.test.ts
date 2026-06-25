@@ -395,7 +395,7 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     ]);
   });
 
-  it('turns a neutral responseFormat into a forced structured-output tool on the Anthropic transport', async () => {
+  it('turns a neutral responseFormat into the forced structured-output fallback on non-Claude Anthropic transport', async () => {
     const get = captureUpstream();
     const schema = {
       type: 'object',
@@ -2280,6 +2280,30 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
         input_schema: tool.input_schema,
       },
     ]);
+  });
+
+  it('serializes neutral responseFormat as native output_config on supported Claude models', async () => {
+    const get = captureUpstream();
+    const schema = {
+      type: 'object',
+      properties: { verdict: { type: 'string' } },
+      required: ['verdict'],
+      additionalProperties: false,
+    };
+    await handleAnthropicChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'audit' }],
+        responseFormat: { name: 'auditor_verdict', schema },
+      }),
+      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.output_config).toEqual({
+      format: { type: 'json_schema', schema },
+    });
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.tools).toBeUndefined();
   });
 
   it('clamps neutral maxTokens to the route ceiling (12288)', async () => {
