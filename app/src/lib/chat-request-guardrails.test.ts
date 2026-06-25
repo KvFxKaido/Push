@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PUSH_STREAM_WIRE_CONTRACT, toPushStreamWire } from '@push/lib/provider-wire';
+import { toGeminiGenerateContent } from '@push/lib/openai-gemini-bridge';
 import {
   parseDualAcceptRequest,
   validateAndNormalizeChatRequest,
@@ -373,6 +374,96 @@ describe('validateAndNormalizeWireRequest', () => {
       { type: 'text', text: 'what is this?' },
       { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
     ]);
+  });
+
+  it('preserves Gemini thoughtSignature on a tool_use content block (round-2 replay)', () => {
+    // The browser materializes the stored tool_use sidecar into a wire
+    // contentBlock carrying `thoughtSignature`; the worker re-parses it here
+    // before `toGeminiGenerateContent`. Dropping it makes Gemini 3.x 400 on the
+    // replay turn ("Function call is missing a thought_signature"). This is the
+    // wire hop the producer/serializer unit tests bypass.
+    const result = validateAndNormalizeWireRequest(
+      body({
+        messages: [
+          { role: 'user', content: 'read it' },
+          {
+            role: 'assistant',
+            content: '',
+            contentBlocks: [
+              {
+                type: 'tool_use',
+                id: 'toolu_1',
+                name: 'sandbox_read_file',
+                input: { path: 'a.ts' },
+                thoughtSignature: 'AgQKAsig==',
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: '',
+            contentBlocks: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'contents' }],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.request.messages[1].contentBlocks?.[0]).toEqual({
+      type: 'tool_use',
+      id: 'toolu_1',
+      name: 'sandbox_read_file',
+      input: { path: 'a.ts' },
+      thoughtSignature: 'AgQKAsig==',
+    });
+  });
+
+  it('round-trips thoughtSignature end-to-end into the Gemini functionCall (the live failure)', () => {
+    // The exact path that 400'd in production: the worker validates the replay
+    // request, then serializes it for Gemini. Both halves must keep the signature.
+    const result = validateAndNormalizeWireRequest(
+      body({
+        model: 'gemini-3.5-flash',
+        messages: [
+          { role: 'user', content: 'read it' },
+          {
+            role: 'assistant',
+            content: '',
+            contentBlocks: [
+              {
+                type: 'tool_use',
+                id: 'toolu_1',
+                name: 'sandbox_read_file',
+                input: { path: 'a.ts' },
+                thoughtSignature: 'AgQKAsig==',
+              },
+            ],
+          },
+          {
+            role: 'user',
+            content: '',
+            contentBlocks: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'contents' }],
+          },
+        ],
+      }),
+      POLICY,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const geminiBody = toGeminiGenerateContent(result.value.request);
+    const contents = geminiBody.contents as Array<{
+      role: string;
+      parts: Array<Record<string, unknown>>;
+    }>;
+    const fnParts =
+      contents.find(
+        (c) => c.role === 'model' && c.parts.some((p) => Object.hasOwn(p, 'functionCall')),
+      )?.parts ?? [];
+    expect(fnParts[0]).toMatchObject({
+      functionCall: { name: 'sandbox_read_file', args: { path: 'a.ts' } },
+      thoughtSignature: 'AgQKAsig==',
+    });
   });
 
   it('clamps maxTokens to the policy ceiling and records the adjustment', () => {
