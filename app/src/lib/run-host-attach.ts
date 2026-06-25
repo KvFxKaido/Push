@@ -300,7 +300,7 @@ function displayLabelForNote(content: string): string | null {
   return null;
 }
 
-/** The capture side encodes non-image attachments as fenced text parts
+/** The capture side encodes non-image attachments as fenced text blocks
  * (`run-checkpoint-capture.ts` toRunCheckpointMessages) — this is the exact
  * inverse, so hydrated messages re-capture identically. */
 const ATTACHED_FILE_PART = /^\[Attached file: (.+)\]\n```\n([\s\S]*)\n```$/;
@@ -313,7 +313,7 @@ function dataUrlMime(url: string): string | null {
 /**
  * Rebuild a checkpoint message's multimodal payload as ChatMessage
  * attachments — the representation the wire builder converts BACK into
- * contentParts on the next send, so images and attached files survive
+ * contentBlocks on the next send, so images and attached files survive
  * hydration instead of degrading to the text fallback. Anything that doesn't
  * round-trip cleanly is folded into `content` verbatim: lossy formatting
  * beats lost context.
@@ -322,27 +322,30 @@ function rebuildAttachments(msg: RunCheckpointMessage): {
   content: string;
   attachments?: AttachmentData[];
 } {
-  if (!msg.contentParts || msg.contentParts.length === 0) {
+  if (
+    (!msg.contentBlocks || msg.contentBlocks.length === 0) &&
+    (!msg.contentParts || msg.contentParts.length === 0)
+  ) {
     return { content: msg.content };
   }
   const attachments: AttachmentData[] = [];
   const extraText: string[] = [];
-  for (const part of msg.contentParts) {
-    if (part.type === 'image_url') {
-      const url = part.image_url.url;
-      attachments.push({
-        id: createId(),
-        type: 'image',
-        filename: `attachment-${attachments.length + 1}`,
-        mimeType: dataUrlMime(url) ?? 'image/*',
-        sizeBytes: url.length,
-        content: url,
-      });
-      continue;
-    }
+
+  function pushImage(url: string, mimeType = dataUrlMime(url) ?? 'image/*'): void {
+    attachments.push({
+      id: createId(),
+      type: 'image',
+      filename: `attachment-${attachments.length + 1}`,
+      mimeType,
+      sizeBytes: url.length,
+      content: url,
+    });
+  }
+
+  function pushText(text: string): void {
     // The message's own text rides in `content` already.
-    if (part.text === msg.content) continue;
-    const fileMatch = ATTACHED_FILE_PART.exec(part.text);
+    if (text === msg.content) return;
+    const fileMatch = ATTACHED_FILE_PART.exec(text);
     if (fileMatch) {
       attachments.push({
         id: createId(),
@@ -352,9 +355,32 @@ function rebuildAttachments(msg: RunCheckpointMessage): {
         sizeBytes: fileMatch[2].length,
         content: fileMatch[2],
       });
-      continue;
+      return;
     }
-    extraText.push(part.text);
+    extraText.push(text);
+  }
+
+  if (msg.contentBlocks && msg.contentBlocks.length > 0) {
+    for (const block of msg.contentBlocks) {
+      if (block.type === 'image') {
+        const source = block.source;
+        if (source.type === 'base64') {
+          pushImage(`data:${source.media_type};base64,${source.data}`, source.media_type);
+        } else {
+          pushImage(source.url);
+        }
+      } else if (block.type === 'text') {
+        pushText(block.text);
+      }
+    }
+  } else {
+    for (const part of msg.contentParts ?? []) {
+      if (part.type === 'image_url') {
+        pushImage(part.image_url.url);
+      } else {
+        pushText(part.text);
+      }
+    }
   }
   const content =
     extraText.length > 0 ? [msg.content, ...extraText].filter(Boolean).join('\n\n') : msg.content;

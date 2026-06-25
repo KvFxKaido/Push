@@ -1,5 +1,5 @@
 import type { ChatMessage } from '@/types';
-import { buildAttachmentContentParts } from './attachment-content-parts';
+import { buildAttachmentContentBlocks } from './attachment-content-parts';
 import type { CoderLoopMessage } from '@push/lib/coder-agent';
 
 /**
@@ -24,7 +24,8 @@ import type { CoderLoopMessage } from '@push/lib/coder-agent';
  *   - `isToolResult` rides through (`CoderLoopMessage` carries it) so the
  *     stream's compaction treats prior tool output correctly.
  * Attachments (including linked-library images already spliced into the latest
- * user turn) render into `contentParts`.
+ * user turn) render into `contentBlocks` unless the message already carries
+ * explicit `contentParts`.
  */
 export function buildInlineConversationSeed(
   apiMessages: readonly ChatMessage[],
@@ -34,11 +35,11 @@ export function buildInlineConversationSeed(
 
 function toSeedMessage(message: ChatMessage): CoderLoopMessage {
   const contentParts =
-    message.contentParts && message.contentParts.length > 0
-      ? message.contentParts
-      : message.role === 'user'
-        ? buildAttachmentContentParts(message.content, message.attachments)
-        : undefined;
+    message.contentParts && message.contentParts.length > 0 ? message.contentParts : undefined;
+  const contentBlocks =
+    contentParts || message.role !== 'user'
+      ? undefined
+      : buildAttachmentContentBlocks(message.content, message.attachments);
 
   return {
     id: message.id,
@@ -46,6 +47,7 @@ function toSeedMessage(message: ChatMessage): CoderLoopMessage {
     content: message.content,
     timestamp: message.timestamp,
     ...(contentParts && contentParts.length > 0 ? { contentParts } : {}),
+    ...(contentBlocks && contentBlocks.length > 0 ? { contentBlocks } : {}),
     ...(message.reasoningBlocks && message.reasoningBlocks.length > 0
       ? { reasoningBlocks: message.reasoningBlocks }
       : {}),

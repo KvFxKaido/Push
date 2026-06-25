@@ -43,7 +43,7 @@ export interface ToolSidecarMessage {
  *  remote `url` source. Anything else THROWS — preserving the legacy
  *  contentParts paths' loud-fail on an unrepresentable image (so an attachment
  *  is never silently dropped on the wire). */
-function imageUrlToSource(url: string): LlmImageSource {
+export function imageUrlToSource(url: string): LlmImageSource {
   const match = url.match(/^data:([^;,]+);base64,(.+)$/);
   if (match) return { type: 'base64', media_type: match[1], data: match[2] };
   if (/^https?:\/\//i.test(url)) return { type: 'url', url };

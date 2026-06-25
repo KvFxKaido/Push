@@ -35,6 +35,7 @@
 
 import type { ApprovalMode } from './approval-gates.ts';
 import type {
+  LlmContentBlock,
   LlmContentPart,
   LlmToolResultBlock,
   LlmToolUseBlock,
@@ -66,13 +67,15 @@ const APPROVAL_MODES: ReadonlySet<string> = new Set(['supervised', 'autonomous',
 
 /** One LLM-visible transcript entry. Reasoning blocks ride along so
  * Anthropic signed-reasoning turns round-trip verbatim after adoption;
- * `contentParts` carries the multimodal representation (images/attachments)
- * for turns that have one — `content` stays the text fallback, exactly the
- * `LlmMessage` contract. A string-only transcript would silently resume
- * image-bearing runs as text-only. */
+ * `contentBlocks` carries the canonical multimodal representation for newly
+ * captured attachment turns; `contentParts` remains for old checkpoints and
+ * kernel-originated turns that already materialized the legacy shape. `content`
+ * stays the text fallback, exactly the `LlmMessage` contract. A string-only
+ * transcript would silently resume image-bearing runs as text-only. */
 export interface RunCheckpointMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  contentBlocks?: LlmContentBlock[];
   contentParts?: LlmContentPart[];
   reasoningBlocks?: ReasoningBlock[];
   toolUses?: LlmToolUseBlock[];
@@ -266,6 +269,58 @@ function validateContentPart(value: unknown, path: string, issues: ValidationIss
   }
 }
 
+function validateImageSource(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push(issue(path, 'image source must be an object'));
+    return;
+  }
+  if (value.type === 'base64') {
+    if (typeof value.media_type !== 'string' || value.media_type.length === 0) {
+      issues.push(issue(`${path}.media_type`, 'base64 image source must carry media_type'));
+    }
+    if (typeof value.data !== 'string') {
+      issues.push(issue(`${path}.data`, 'base64 image source must carry data'));
+    }
+  } else if (value.type === 'url') {
+    if (typeof value.url !== 'string' || value.url.length === 0) {
+      issues.push(issue(`${path}.url`, 'url image source must carry url'));
+    }
+  } else {
+    issues.push(issue(`${path}.type`, `unknown image source type: ${String(value.type)}`));
+  }
+}
+
+function validateContentBlock(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push(issue(path, 'content block must be an object'));
+    return;
+  }
+  if (value.type === 'text') {
+    if (typeof value.text !== 'string') {
+      issues.push(issue(`${path}.text`, 'text block must carry a string `text`'));
+    }
+  } else if (value.type === 'image') {
+    validateImageSource(value.source, `${path}.source`, issues);
+  } else if (value.type === 'thinking') {
+    if (typeof value.text !== 'string') {
+      issues.push(issue(`${path}.text`, 'thinking block must carry a string `text`'));
+    }
+    if (typeof value.signature !== 'string') {
+      issues.push(issue(`${path}.signature`, 'thinking block must carry a string `signature`'));
+    }
+  } else if (value.type === 'redacted_thinking') {
+    if (typeof value.data !== 'string') {
+      issues.push(issue(`${path}.data`, 'redacted_thinking block must carry a string `data`'));
+    }
+  } else if (value.type === 'tool_use') {
+    validateToolUseBlock(value, path, issues);
+  } else if (value.type === 'tool_result') {
+    validateToolResultBlock(value, path, issues);
+  } else {
+    issues.push(issue(`${path}.type`, `unknown content block type: ${String(value.type)}`));
+  }
+}
+
 function validateToolUseBlock(value: unknown, path: string, issues: ValidationIssue[]): void {
   if (!isPlainObject(value)) {
     issues.push(issue(path, 'tool_use block must be an object'));
@@ -324,6 +379,15 @@ function validateMessage(value: unknown, path: string, issues: ValidationIssue[]
     } else {
       value.contentParts.forEach((p, i) =>
         validateContentPart(p, `${path}.contentParts[${i}]`, issues),
+      );
+    }
+  }
+  if (value.contentBlocks !== undefined) {
+    if (!Array.isArray(value.contentBlocks)) {
+      issues.push(issue(`${path}.contentBlocks`, 'contentBlocks must be an array when present'));
+    } else {
+      value.contentBlocks.forEach((block, i) =>
+        validateContentBlock(block, `${path}.contentBlocks[${i}]`, issues),
       );
     }
   }

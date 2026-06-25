@@ -289,6 +289,40 @@ test('multimodal contentParts round-trip: valid parts pass, malformed parts fail
   assert.ok(validateRunCheckpoint(notArray).some((i) => i.path === 'messages[0].contentParts'));
 });
 
+test('multimodal contentBlocks round-trip: valid blocks pass, malformed blocks fail', () => {
+  const good = makeCheckpoint({
+    messages: [
+      {
+        role: 'user',
+        content: 'see attached',
+        contentBlocks: [
+          { type: 'text', text: 'see attached' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          { type: 'image', source: { type: 'url', url: 'https://example.com/shot.png' } },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(validateRunCheckpoint(good), []);
+
+  const badType = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentBlocks: [{ type: 'video', src: 'v' }] }],
+  });
+  assert.ok(
+    validateRunCheckpoint(badType).some((i) => i.path === 'messages[0].contentBlocks[0].type'),
+  );
+  const badImage = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentBlocks: [{ type: 'image' }] }],
+  });
+  assert.ok(
+    validateRunCheckpoint(badImage).some((i) => i.path === 'messages[0].contentBlocks[0].source'),
+  );
+  const notArray = makeCheckpoint({
+    messages: [{ role: 'user', content: 'x', contentBlocks: 'nope' }],
+  });
+  assert.ok(validateRunCheckpoint(notArray).some((i) => i.path === 'messages[0].contentBlocks'));
+});
+
 test('benign unknown extras pass (additive evolution stays cheap)', () => {
   const cp = makeCheckpoint({ futureField: { anything: true } });
   assert.deepEqual(validateRunCheckpoint(cp), []);

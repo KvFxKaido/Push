@@ -113,6 +113,7 @@ function toCoderLoopMessage(msg: RunCheckpointMessage, index: number): CoderLoop
     // turns flagged `isToolResult`, the same wire shape the web loop uses.
     role: msg.role === 'tool' ? 'user' : msg.role,
     content: msg.content,
+    ...(msg.contentBlocks ? { contentBlocks: msg.contentBlocks } : {}),
     ...(msg.contentParts ? { contentParts: msg.contentParts } : {}),
     ...(msg.reasoningBlocks ? { reasoningBlocks: msg.reasoningBlocks } : {}),
     ...(msg.toolUses ? { toolUses: msg.toolUses } : {}),
@@ -215,6 +216,7 @@ function toRunCheckpointMessage(msg: CoderLoopMessage): RunCheckpointMessage {
   return {
     role: msg.role,
     content: msg.content,
+    ...(msg.contentBlocks ? { contentBlocks: msg.contentBlocks } : {}),
     ...(msg.contentParts ? { contentParts: msg.contentParts } : {}),
     ...(msg.reasoningBlocks ? { reasoningBlocks: msg.reasoningBlocks } : {}),
     ...(msg.toolUses ? { toolUses: msg.toolUses } : {}),

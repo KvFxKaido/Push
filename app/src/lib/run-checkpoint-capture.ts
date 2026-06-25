@@ -25,7 +25,7 @@ import {
 import type { ApprovalMode } from '@push/lib/approval-gates';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
 import type { ChatMessage, CoderWorkingMemory, LoopPhase } from '@/types';
-import { buildAttachmentContentParts } from './attachment-content-parts';
+import { buildAttachmentContentBlocks } from './attachment-content-parts';
 import { saveCheckpointV1 } from './checkpoint-store';
 import { publishRunCheckpointToHost } from './run-host-transport';
 
@@ -61,9 +61,9 @@ export interface RunCheckpointV1Snapshot {
  *
  * - `visibleToModel: false` messages never cross the LLM boundary again
  *   (aborted partials), so they don't enter the checkpoint either.
- * - Attachments become `contentParts` exactly as the wire builder converts
- *   them (image → image_url block, code/document → fenced text block), so an
- *   adopted run resumes image-bearing turns with the pixels intact.
+ * - Attachments become `contentBlocks` exactly as the wire builder converts
+ *   them (image → Anthropic source block, code/document → fenced text block),
+ *   so an adopted run resumes image-bearing turns with the pixels intact.
  * - Reasoning blocks ride along on assistant turns for the Anthropic
  *   signed-thinking round-trip.
  */
@@ -80,16 +80,20 @@ export function toRunCheckpointMessages(
     };
 
     // Prefer the kernel's pre-converted `contentParts` (its image turns carry
-    // pixels only there, not in `attachments`); fall back to rebuilding from
-    // `attachments` for Orchestrator-loop messages. Capturing only the
-    // attachment-rebuilt form would make an adopted/resumed inline image turn
-    // text-only (Codex P2, #937).
+    // pixels only there, not in `attachments`); fall back to rebuilding
+    // `contentBlocks` from `attachments` for Orchestrator-loop messages.
+    // Capturing only the attachment-rebuilt form would make an adopted/resumed
+    // inline image turn text-only (Codex P2, #937).
     const contentParts =
-      msg.contentParts && msg.contentParts.length > 0
-        ? msg.contentParts
-        : buildAttachmentContentParts(msg.content, msg.attachments);
+      msg.contentParts && msg.contentParts.length > 0 ? msg.contentParts : undefined;
     if (contentParts) {
       entry.contentParts = contentParts;
+    }
+    const contentBlocks = contentParts
+      ? undefined
+      : buildAttachmentContentBlocks(msg.content, msg.attachments);
+    if (contentBlocks) {
+      entry.contentBlocks = contentBlocks;
     }
 
     if (msg.role === 'assistant' && msg.reasoningBlocks && msg.reasoningBlocks.length > 0) {

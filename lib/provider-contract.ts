@@ -126,9 +126,9 @@ export interface LlmMessage {
    * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
    * Additive and optional, with the same precedence pattern as `contentParts`:
    * a serializer that understands blocks prefers `contentBlocks` when present,
-   * else `contentParts`, else the `content` text. No production path emits this
-   * yet — it is wired adapter-by-adapter ahead of the producer flip (the final
-   * slice), exactly as `reasoningBlocks` was introduced before its producer.
+   * else `contentParts`, else the `content` text. Production paths emit this
+   * incrementally as producers migrate off legacy `contentParts`, exactly as
+   * `reasoningBlocks` was introduced before its producer.
    * Adapters that don't read it are unaffected.
    */
   contentBlocks?: LlmContentBlock[];
