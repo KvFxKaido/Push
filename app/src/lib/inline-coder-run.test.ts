@@ -193,6 +193,12 @@ describe('delegated-arc option parity (runCoderAgent → lib kernel)', () => {
         'checkpointCadenceRounds',
         'detectAllToolCalls',
         'detectAnyToolCall',
+        // Parity decision: native tool-call dispatch is wired on BOTH arcs —
+        // the web inline lead (`detectNativeToolCalls` with the parallel-explorer
+        // cap) and the CLI lead (`wrapCliDetectNativeToolCalls`). The delegated
+        // sub-Coder stays text-dispatch on both (native schemas are lead-surface
+        // only), so the slot is present here in lockstep. See #1162.
+        'detectNativeToolCalls',
         'evaluateAfterModel',
         // Parity decision: the delegated arc threads `extraToolProtocols:
         // undefined` (the inline lane sets it; the delegated Coder keeps its
