@@ -88,6 +88,27 @@ describe('createToolDispatcher — missing-fence tolerance (the bug)', () => {
   });
 });
 
+describe('createToolDispatcher — detectNativeToolCalls (Gemini thoughtSignature)', () => {
+  const dispatcher = createToolDispatcher([PASS_THROUGH_CLI_SOURCE]);
+
+  it('carries thoughtSignature onto the matched call so it round-trips into the sidecar', () => {
+    const result = dispatcher.detectNativeToolCalls([
+      { name: 'read_file', args: { path: 'a.ts' }, thoughtSignature: 'AgQKAsig==' },
+    ]);
+    expect(result.calls).toEqual([
+      { tool: 'read_file', args: { path: 'a.ts' }, thoughtSignature: 'AgQKAsig==' },
+    ]);
+    expect(result.malformed).toEqual([]);
+  });
+
+  it('omits thoughtSignature when the native call carries none', () => {
+    const result = dispatcher.detectNativeToolCalls([
+      { name: 'read_file', args: { path: 'b.ts' } },
+    ]);
+    expect(result.calls).toEqual([{ tool: 'read_file', args: { path: 'b.ts' } }]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Codex P1 regressions: textual-order preservation and constrained
 // bare-object fallback. These tests codify the review feedback from PR #303.

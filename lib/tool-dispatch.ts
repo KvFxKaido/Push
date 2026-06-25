@@ -253,6 +253,15 @@ export function createToolDispatcher<TCall>(
 
         const detected = detectParsedCandidate(shaped.value, sample);
         if (detected.ok) {
+          // Carry Gemini's `thoughtSignature` onto the matched call so it
+          // survives into the stored tool_use sidecar and replays next turn.
+          // The web kernel attaches it at the call top-level; here the matched
+          // call is the inner shape (re-wrapped by the CLI binding), so the
+          // coder kernel reads both positions. See `getKernelToolCallFields`.
+          if (nativeCall.thoughtSignature) {
+            (detected.call as { thoughtSignature?: string }).thoughtSignature =
+              nativeCall.thoughtSignature;
+          }
           calls.push(detected.call);
           // Native calls are ordered by stream position, not text position.
           // Preserve that order for callers that still sort by callOffsets.

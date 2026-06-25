@@ -199,11 +199,30 @@ export interface CoderLoopMessage extends LlmMessage {
   toolResults?: LlmToolResultBlock[];
 }
 
-function getKernelToolCallFields(call: unknown): { tool: string; args?: unknown } {
-  const raw = (call as { call?: { tool?: unknown; args?: unknown } } | null)?.call;
+function getKernelToolCallFields(call: unknown): {
+  tool: string;
+  args?: unknown;
+  thoughtSignature?: string;
+} {
+  const source = call as {
+    call?: { tool?: unknown; args?: unknown; thoughtSignature?: unknown };
+    thoughtSignature?: unknown;
+  } | null;
+  const raw = source?.call;
+  // `thoughtSignature` sits top-level on the web call shape (AnyToolCall) but
+  // nested under `.call` on the CLI shape (CliKernelCall, re-wrapped from the
+  // shared dispatcher's inner call). Read both so Gemini signatures round-trip
+  // on either surface.
+  const thoughtSignature =
+    typeof source?.thoughtSignature === 'string'
+      ? source.thoughtSignature
+      : typeof raw?.thoughtSignature === 'string'
+        ? raw.thoughtSignature
+        : undefined;
   return {
     tool: typeof raw?.tool === 'string' ? raw.tool : 'unknown',
     args: raw?.args,
+    thoughtSignature,
   };
 }
 
@@ -213,10 +232,10 @@ function createToolUseSidecars<TCall>(calls: readonly TCall[]): {
 } {
   const toolUseIdByCall = new Map<TCall, string>();
   const toolUses = calls.map((call) => {
-    const { tool, args } = getKernelToolCallFields(call);
+    const { tool, args, thoughtSignature } = getKernelToolCallFields(call);
     const id = createToolUseBlockId(createId());
     toolUseIdByCall.set(call, id);
-    return buildToolUseBlock({ id, name: tool, input: args });
+    return buildToolUseBlock({ id, name: tool, input: args, thoughtSignature });
   });
   return { toolUses, toolUseIdByCall };
 }
