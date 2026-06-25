@@ -1,6 +1,25 @@
-# Provider Contract — Anthropic-Conceptual Neutral Hub
+# Push Protocol V1 (PMP) — Anthropic-Conceptual Neutral Provider Contract
 
-Status: **Current**, added 2026-06-24, producer flips landed 2026-06-25. The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and `lib/content-blocks.ts` materializes `contentBlocks` for multimodal turns plus complete, adjacent tool exchanges in production. Plain-text turns and degraded tool exchanges (legacy, malformed, split, or non-adjacent) keep their `content` string / `reasoningBlocks` sidecar; that text fallback is still live by design.
+Status: **Current**, added 2026-06-24, producer flips landed 2026-06-25, native tool-call dispatch landed 2026-06-25 (#1162/#1163). The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and `lib/content-blocks.ts` materializes `contentBlocks` for multimodal turns plus complete, adjacent tool exchanges in production. Plain-text turns and degraded tool exchanges (legacy, malformed, split, or non-adjacent) keep their `content` string / `reasoningBlocks` sidecar; that text fallback is still live by design.
+
+## Push Protocol V1 (PMP) — the named thesis
+
+What the migration below has been building, said plainly so it can be committed to as a thing, not a vibe:
+
+> **Push normalizes every model interaction into one Push-owned, Anthropic-*shaped* canonical protocol — typed content blocks, `tool_use` / `tool_result` blocks, and a provider-neutral event stream. Anthropic is the design muse and closest existing dialect; it is not the constitution. `anthropic.messages.create` is a downcast target like any other, not the contract.**
+
+The protocol is the types in `lib/provider-contract.ts` (`LlmMessage`, `LlmContentBlock`, `LlmToolUseBlock`, `LlmToolResultBlock`, `PushStreamEvent`, `NativeToolCall`). Provider APIs are **border crossings**: a provider's native shape does not exist past its adapter. `toPush()` is the stream translators (`anthropicEventStream` / `geminiEventStream` / `openAISSEPump` → `PushStreamEvent`); `fromPush()` is the three serializers. The litmus: the same normalized transcript replays through Anthropic, OpenAI, and Gemini without the rest of Push knowing who produced it — which it now largely does, with capability-dependent forks (a native-tool model gets `tool_use` blocks; a text-dispatch model gets fenced text), not a single byte-identical wire.
+
+### Load-bearing principles (the parts that are easy to get wrong)
+
+1. **Two protocols, not one — keep them separate.** PMP is the **model wire**: what crosses a provider border (`LlmMessage` / `contentBlocks` / `PushStreamEvent`). It is *not* the **work ledger**: `ChatMessage` + cards + role-display phases + the file-awareness / working-memory state, which is what the UI and runtime track. `toLLMMessages` is the seam between them. Push's genuinely-Push concepts — phases, file refs with freshness, diff/commit/diagnostic artifacts — are the secret sauce, but they live in the **ledger**, never as content blocks on the provider request. The moment a `phase` or `artifact` block rides the wire, every adapter has to learn to ignore it and a UI concern has leaked into model I/O. Resist merging the two unions.
+2. **Capability profiles decide degradation, not scattered provider-name checks.** This is the contract's clean intent; it is **not yet fully realized**. Today there are still model-set / per-transport gates (`ZEN_NATIVE_TOOL_CALLING_MODELS`, per-transport `emitContentBlocks`, `routesThroughAnthropicBridge`). Consolidating these into one capability profile is the highest-value unfinished work — tracked separately.
+3. **The text-dispatch tier is permanent, not transitional.** "Everything capable becomes blocks; everything else stays text." Non-cooperating models emit fenced JSON in `content` and Push parses it forever (`lib/tool-call-parsing.ts` + recovery). Degraded/malformed/non-adjacent tool exchanges deliberately fall back to text. PMP is capability-tiered by design, not a single shape.
+4. **Provider features get *promoted*, not quarantined.** A `providerMeta` / `native` escape hatch is right for diagnostics and replay, but history says interesting affordances do not stay quarantined — signed thinking (`reasoning_block`), `pause_turn`, server-tool web search, and native tool calls all got promoted into the core contract as first-class. Budget for that as the ongoing maintenance tax of being the customs office, not a rare event.
+
+### What's left (the unbuilt 20%)
+
+The protocol exists and is live; two seams still carry the pre-migration OpenAI shape or scattered gating. Tracked in a follow-up issue: (a) collapse the capability gates into one `PushCapabilityProfile`; (b) flip the residual OpenAI-shaped request sub-types — the `response_format`-as-forced-tool path and the OpenAI `image_url` shape in `LlmContentPart` (see Context below). This doc is the constitution; the issue is the punch-list.
 
 ## Context
 
@@ -58,6 +77,6 @@ Each slice shipped independently, behind the additive-field pattern already used
 ## Intentionally out of scope (not part of this migration)
 
 - **Plain-text / fallback tool turns stay on `content` / `reasoningBlocks`.** Routing plain strings through blocks would array-ify a string the legacy path emits verbatim, with no benefit. Malformed, split, legacy, and non-adjacent tool exchanges also deliberately degrade to text, because native tool blocks require stricter pairing/adjacency than the text-dispatch boundary.
-- **Native dispatch convergence is still separate.** Anthropic/OpenAI native tool-call responses are still converged back to fenced text for the shared dispatcher; structured sidecars are produced from the round loop's parsed execution, not by forking the model-facing parser boundary.
+- ✅ **Native dispatch convergence — shipped (#1162/#1163).** Native-tool providers now surface a structured `native_tool_call` event and dispatch via `detectNativeToolCalls`, skipping the fenced-text round-trip. The text-dispatch boundary is untouched and stays the path for non-cooperating models (additive, gated on native calls arriving).
 - ✅ **`cache_control` → neutral marker — shipped (#1154 §2).** The inline `{ type: 'ephemeral' }` literal is centralized as the `CacheControl` type + `EPHEMERAL_CACHE_CONTROL` value in `provider-contract.ts`; every contract type and serializer references the single source (pinned by `provider-contract.test.ts`). No behavior change.
 - **Full text-path deletion.** The serializer cleanup removed duplicate `contentParts` branches, but the plain-`content` fallback is permanent for text-only and degraded exchanges.
