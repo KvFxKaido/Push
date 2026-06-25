@@ -1,8 +1,10 @@
 # Structured Tool-Call Sourcing
 
 Date: 2026-06-24
-Status: **Current** — Slice 2 maps producer sidecars to
-`LlmMessage.contentBlocks`; bridge thinning remains Slice 3 / #1154 §3.
+Status: **Current** — Slices 0-3 shipped. Producer sidecars map to
+`LlmMessage.contentBlocks` for complete adjacent tool exchanges; Slice 3 removed
+the duplicate serializer-local `contentParts` arms while keeping the permanent
+plain-text fallback.
 Slice 0 storage shape shipped in #1157; Slice 1 producer sidecars shipped in
 #1158. Slice 2 is the producer flip: new complete tool exchanges reach
 block-aware serializers as `contentBlocks`, while legacy/split exchanges keep
@@ -13,9 +15,10 @@ The next slice of the Anthropic-conceptual contract arc (see [`Provider Contract
 That migration flipped the producer so multimodal turns travel as structured
 `contentBlocks`; it **deferred tool calls** because they round-trip as fenced
 JSON *text* in `content`. This doc decides how to make tool calls structured **at
-the source** so the richest provider (Anthropic) stops re-parsing text back into
-`tool_use` / `tool_result`. Completing it unlocks the bridge-thinning payoff
-(#1154 §3) — the legacy serializer arms become dead code.
+the source** while preserving that text-dispatch boundary. The final cleanup
+(#1154 §3) removes duplicate rich-content serializer arms now that
+`withRequestContentBlocks` owns request-level materialization; the generic text
+fallback remains live.
 
 ## The thesis (and why it isn't "rip out the text path")
 
@@ -34,8 +37,8 @@ the round loop already **parses that text into structure to execute it** and
 already **has the result** — then throws the structure away and persists *text*.
 The migration is to **persist the structure it already computed** (a `tool_use`
 block from the parsed call, a `tool_result` block from the outcome), carry it
-through to the provider serializers (which already read it), and let the Anthropic
-bridge stop reconstructing what the round loop knew all along.
+through to the provider serializers (which already read it), and stop replaying
+complete new tool exchanges as display-only text on block-aware routes.
 
 ## Current state (verified in code, 2026-06-25)
 
@@ -43,7 +46,8 @@ Tool calls remain **text at the model-facing boundary**. The structured target
 types exist, transcript storage has additive `toolUses` / `toolResults`
 sidecars, Slice 1 writes those sidecars from the parsed call + outcome, and
 Slice 2 maps paired sidecars to `LlmMessage.contentBlocks` at request
-materialization.
+materialization, and Slice 3 removes duplicate serializer-local `contentParts`
+arms so rich-content normalization has one owner.
 
 **Emit → parse.** Models emit fenced/bare JSON in `content`;
 `detectToolFromText` / the `lib/tool-dispatch.ts` kernel scan **content only**
@@ -75,11 +79,11 @@ materializer via `lib/content-blocks.ts`.
 
 **Serializer block path.** `LlmToolUseBlock` / `LlmToolResultBlock` +
 `LlmMessage.contentBlocks` exist
-(`lib/provider-contract.ts:79-101`), and all three serializers already **read**
-them: `llmContentBlocksToAnthropic` (bridge), `flattenToolBearingBlocks`
-(`openai-chat-serializer.ts:212`), and the Gemini bridge. Slice 2 now maps the
-transcript sidecars (`toolUses` / `toolResults`) into `contentBlocks` for paired
-exchanges.
+(`lib/provider-contract.ts`), and all three serializers already **read** them:
+`llmContentBlocksToAnthropic` (bridge), `flattenToolBearingBlocks`
+(`openai-chat-serializer.ts`), and the Gemini bridge. Slice 2 maps transcript
+sidecars (`toolUses` / `toolResults`) into `contentBlocks` for paired exchanges;
+Slice 3 deletes the now-dead per-serializer `contentParts` alternatives.
 
 **Correction — the request path never reconstructed tool blocks (verified
 2026-06-24, Slice 2 review).** Earlier framing in this doc described the bridge
@@ -122,8 +126,8 @@ already established. The model-facing text path is untouched.
    path mirrors it.
 
 3. **The serializers already prefer blocks** when present (verified). So once the
-   producer fills them, Anthropic stops re-parsing — the structured arm carries
-   the turn. OpenAI/Gemini downcast from the same blocks.
+   producer fills them, the structured arm carries complete new exchanges.
+   OpenAI/Gemini downcast from the same blocks.
 
 4. **Back-compat = per-exchange fallback, under one invariant.** Old transcripts
    (text-only) have no blocks → serializers take the legacy text arm, unchanged;
@@ -132,15 +136,13 @@ already established. The model-facing text path is untouched.
    exchange invariant** (Codex). See below — this is the load-bearing correctness
    point, not a footnote.
 
-5. **Then thin (#1154 §3) — provider-specific reparsing, not the text path.** The
-   payoff is deleting the Anthropic bridge's *reconstruction* of `tool_use` /
-   `tool_result` from fenced text, gated on **observed coverage**: add temporary
-   logging (block-path vs text-fallback vs mismatch) and only thin once production
-   shows new tool turns travel blocks. The **generic text fallback survives** —
-   malformed turns, JSON repair, the Kimi reasoning-channel recovery, and
-   pre-migration transcripts will always emit text (Codex). So §3 thins the
-   bridge's tool-block reconstruction toward near-identity; it does not remove the
-   text arm.
+5. **Then thin (#1154 §3) — remove duplicate rich-content branches, not the text
+   path.** Once `withRequestContentBlocks` owns request-level materialization, the
+   serializers no longer need local `contentParts` arms. The **generic text
+   fallback survives** — malformed turns, JSON repair, the Kimi reasoning-channel
+   recovery, pre-migration transcripts, and non-adjacent exchanges will always
+   emit text (Codex). So §3 removes dead branch duplication; it does not remove
+   the text arm.
 
 ## Back-compat correctness — the exchange invariant (Codex review)
 
@@ -153,8 +155,8 @@ dual-read is sound **only** under these rules:
   together in one round-loop iteration, so they share a migration state naturally.
   But the producer must enforce it: emit the structured block for a `tool_result`
   **only if** the matching `tool_use` is also a block. If either half lacks a
-  block, **both** fall to the text arm (the bridge re-parses the pair consistently,
-  same as today). Never half a pair. This keeps every exchange internally
+  block, **both** fall to the text arm (the provider sees the display/model text
+  consistently, same as today). Never half a pair. This keeps every exchange internally
   id-consistent, so mixed exchanges in one request each validate independently.
 - **Resume-across-deploy edge.** A run interrupted mid-exchange and resumed after
   this ships could pair a pre-flip `tool_use` (text) with a post-flip
@@ -207,8 +209,10 @@ delete shape:
   serializers, so Anthropic now uses the structured arm for new turns; old turns
   fall back. **This is the producer flip** — request tests pin that tool turns
   avoid duplication and split/orphan exchanges stay on the text path.
-- **Slice 3 — bridge thinning (#1154 §3).** Delete the legacy reconstruction arms
-  once the cutover criteria hold. The reward, not separable work.
+- ✅ **Slice 3 — serializer cleanup (#1154 §3).** Delete the duplicate
+  serializer-local `contentParts` arms now that request-level materialization
+  routes rich multimodal/tool turns through `contentBlocks`. Keep the plain
+  `content` fallback for text-only and degraded exchanges.
 
 ## Hard problems + decisions
 
@@ -247,7 +251,7 @@ delete shape:
   a new drift pin for the structured fields; Slice 2 adds request golden tests
   for block-path emission, no duplicated tool calls, and split/orphan fallback.
 - **CLI/web parity.** Both round loops must produce the sidecar (the CLI session
-  store + `cli/engine.ts`), or the CLI regresses to text-only re-parsing on the
+  store + `cli/engine.ts`), or the CLI regresses to text-only replay on the
   Anthropic path. Slice 1 covers both surfaces in the same PR (per the
   "one source of truth per vocabulary" checklist in CLAUDE.md).
 
@@ -259,9 +263,10 @@ delete shape:
   is a producer bug, not a design hazard.
 - **Transcript growth.** The structured sidecar duplicates the tool-call payload
   (small — `{ id, name, args }`). Acceptable; the result text dominates either way.
-- **Thinning is gated, not free.** §3 can't delete the text arm while malformed /
-  pre-migration / non-cooperating turns travel it — so the payoff is "the bridge
-  reconstructs far less," not "the text path is gone." State that honestly.
+- **Thinning is narrow, not a text-path deletion.** §3 can't delete the text arm
+  while malformed / pre-migration / non-cooperating turns travel it — so the
+  payoff is "the serializers own fewer rich-content branches," not "the text path
+  is gone." State that honestly.
 
 ## Out of scope
 
@@ -275,8 +280,7 @@ delete shape:
 
 ## Status flip plan
 
-Promoted to **Current** with Slice 2: producer sidecars fill `contentBlocks`, the
-Anthropic bridge uses the structured arm for complete new tool turns, and golden
-request tests pin the no-duplication / text-fallback behavior. Flip the
-`Provider Contract` doc's §3 note and #1154 §1 when Slice 3 lands the bridge
-thinning.
+Promoted to **Current** with Slice 3: producer sidecars fill `contentBlocks`, the
+block-aware serializers use the structured arm for complete adjacent tool turns,
+golden request tests pin the no-duplication / text-fallback behavior, and the
+serializers keep only `contentBlocks` plus the permanent plain-text fallback.

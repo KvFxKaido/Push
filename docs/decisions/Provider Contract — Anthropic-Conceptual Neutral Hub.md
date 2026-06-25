@@ -1,6 +1,6 @@
 # Provider Contract — Anthropic-Conceptual Neutral Hub
 
-Status: **Current**, added 2026-06-24, producer flip landed 2026-06-25. The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and the producer materializes `contentBlocks` for multimodal turns in production (`lib/content-blocks.ts`), so the block path is live. Intentionally scoped: plain-text and fenced-tool-call turns keep their `content` string / `reasoningBlocks` sidecar — routing those through blocks would array-ify a string the legacy path emits verbatim, with no benefit. Sourcing tool calls as structured `tool_use`/`tool_result` blocks (rather than fenced text) is a separate, larger feature, tracked below — not part of this migration.
+Status: **Current**, added 2026-06-24, producer flips landed 2026-06-25. The Anthropic-conceptual block model is defined, all three serializers (OpenAI / Anthropic / Gemini) consume it, and `lib/content-blocks.ts` materializes `contentBlocks` for multimodal turns plus complete, adjacent tool exchanges in production. Plain-text turns and degraded tool exchanges (legacy, malformed, split, or non-adjacent) keep their `content` string / `reasoningBlocks` sidecar; that text fallback is still live by design.
 
 ## Context
 
@@ -10,11 +10,11 @@ The neutral provider contract (`lib/provider-contract.ts` — `PushStreamRequest
 - `LlmContentPart` uses OpenAI's `image_url: { url }` image shape.
 - Structured output is modeled on OpenAI `response_format`.
 
-Because OpenAI is the canonical shape, the OpenAI-compatible serializer (`toOpenAIChat`) is a near-identity passthrough, and the **Anthropic / Gemini bridges translate** — but the Anthropic bridge in particular has to **upcast**: it reconstructs richer concepts the contract can't natively express. The tells:
+Before this migration, OpenAI was the canonical shape: the OpenAI-compatible serializer (`toOpenAIChat`) was close to a passthrough, and the **Anthropic / Gemini bridges translated** — but the Anthropic bridge in particular had to **upcast** richer concepts the contract couldn't natively express. The tells:
 
 - Structured output on Anthropic is **faked** as a forced tool (`STRUCTURED_OUTPUT_TOOL_NAME`) because the contract has no native JSON-constraint Anthropic understands.
 - Signed reasoning (`reasoning_block`) and `pause_turn` were **bolted onto** an OpenAI-shaped envelope as the contract discovered it was conceptually poorer than the richest provider it serves.
-- `toAnthropicMessages` is ~1.4k lines, much of it reconstructing structure (content blocks, `tool_use`/`tool_result`, signed thinking) from a flat OpenAI-shaped source.
+- `toAnthropicMessages` carried the request and response translation burden for content blocks, signed thinking, structured output, pause turns, and native Anthropic tool-use responses.
 
 Upcasting (inventing a richer capability from a poorer shape) is fragile; downcasting (dropping/flattening from a richer shape) is safe. The contract currently makes the **richest** provider upcast.
 
@@ -47,15 +47,17 @@ Each slice shipped independently, behind the additive-field pattern already used
 1. ✅ **Block vocabulary + additive field** (#1147) — `LlmContentBlock` (`text`, `image` Anthropic-canonical) + `contentBlocks?` on `LlmMessage`; `toOpenAIChat` downcast.
 2. ✅ **`thinking` block** (#1148) — reused `ReasoningBlock` verbatim; OpenAI drops it.
 3. ✅ **`tool_use` / `tool_result` blocks + OpenAI flatten** (#1149) — the boss fight: one neutral message → `content` + `tool_calls[]` + `role: tool`.
-4. ✅ **Anthropic bridge reads blocks** (#1150) — the near-identity direction; `is_error` preserved.
+4. ✅ **Anthropic bridge reads blocks** (#1150) — the native block direction; `is_error` preserved.
 5. ✅ **Gemini bridge reads blocks** (#1151, #1152) — text/image/thinking, then `functionCall`/`functionResponse` with id correlation.
 6. ✅ **Producer flip** — `lib/content-blocks.ts` (`deriveContentBlocks` / `withContentBlocks`) materializes `contentBlocks` for multimodal turns at the three serializer front-doors, so the block path is **live in production** (byte-identical to the legacy `contentParts` path).
+7. ✅ **Structured tool-call sourcing** (#1154 §1, #1157-#1159) — round loops persist parsed tool calls/results as sidecars; complete adjacent exchanges materialize as native `tool_use` / `tool_result` blocks on neutral/block-aware requests.
+8. ✅ **Serializer cleanup** (#1154 §3) — after request-level materialization became the single rich-content producer, the serializers dropped their duplicate local `contentParts` branches and kept only `contentBlocks` plus the permanent plain-text fallback.
 
 > Note: slice "native structured output" from the original plan was dropped — `ResponseFormatSpec` is already neutral and Anthropic's forced-tool is idiomatic, not a fake.
 
 ## Intentionally out of scope (not part of this migration)
 
-- **Plain-text / fenced-tool-call turns stay on `content` / `reasoningBlocks`.** Routing them through blocks would array-ify a string the legacy path emits verbatim, with no benefit — so the flip is scoped to multimodal turns. The serializers keep their legacy string path for these (not dead code).
-- **Structured tool-call sourcing.** Tool calls round-trip as fenced JSON *text* in `content` today (the tool protocol). Emitting them as structured `tool_use`/`tool_result` blocks — which is what would let the Anthropic bridge shed its tool reconstruction — is a separate feature touching the round loop and transcript storage, not this contract refactor.
+- **Plain-text / fallback tool turns stay on `content` / `reasoningBlocks`.** Routing plain strings through blocks would array-ify a string the legacy path emits verbatim, with no benefit. Malformed, split, legacy, and non-adjacent tool exchanges also deliberately degrade to text, because native tool blocks require stricter pairing/adjacency than the text-dispatch boundary.
+- **Native dispatch convergence is still separate.** Anthropic/OpenAI native tool-call responses are still converged back to fenced text for the shared dispatcher; structured sidecars are produced from the round loop's parsed execution, not by forking the model-facing parser boundary.
 - ✅ **`cache_control` → neutral marker — shipped (#1154 §2).** The inline `{ type: 'ephemeral' }` literal is centralized as the `CacheControl` type + `EPHEMERAL_CACHE_CONTROL` value in `provider-contract.ts`; every contract type and serializer references the single source (pinned by `provider-contract.test.ts`). No behavior change.
-- **Full bridge thinning** (deleting the legacy `contentParts` / plain-`content` branches) — still a follow-up, hard-gated on the structured-tool-call work above (those turns still legitimately travel the legacy arms).
+- **Full text-path deletion.** The serializer cleanup removed duplicate `contentParts` branches, but the plain-`content` fallback is permanent for text-only and degraded exchanges.

@@ -1,7 +1,6 @@
 import type { OpenAIChatRequest, OpenAIContentPart } from './openai-chat-types.ts';
 import type {
   LlmContentBlock,
-  LlmContentPart,
   LlmMessage,
   PushStreamEvent,
   PushStreamRequest,
@@ -302,47 +301,6 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
   return body;
 }
 
-/** Convert an `image_url.url` to a Gemini inline part. Gemini inline image
- *  content requires a base64 `data:` URL; an http(s) URL (which Gemini would
- *  only accept as `fileData` with a Google-hosted URI, not arbitrary http)
- *  throws so an attached image is never silently dropped — the loud-failure
- *  posture of the neutral path. */
-function geminiInlineImageFromUrl(url: string): Record<string, unknown> {
-  const inline = dataUrlToGeminiInlinePart(url);
-  if (inline) return inline;
-  throw new Error(
-    `toGeminiGenerateContent: cannot represent image (Gemini inline parts require a data:image base64 URL): ${url.slice(0, 48)}`,
-  );
-}
-
-/** Strict multimodal converter for the neutral `LlmMessage.contentParts` path —
- *  preserves text + image parts and THROWS on an unsupported/malformed part,
- *  rather than silently dropping it the way `convertOpenAIContentToGeminiParts`
- *  does on the OpenAI-shape path. */
-function llmContentPartsToGemini(parts: readonly LlmContentPart[]): Array<Record<string, unknown>> {
-  const out: Array<Record<string, unknown>> = [];
-  for (const rawPart of parts) {
-    const part = rawPart as { type?: unknown; text?: unknown; image_url?: unknown };
-    if (part.type === 'text' && typeof part.text === 'string') {
-      out.push({ text: part.text });
-      continue;
-    }
-    if (
-      part.type === 'image_url' &&
-      part.image_url &&
-      typeof part.image_url === 'object' &&
-      typeof (part.image_url as { url?: unknown }).url === 'string'
-    ) {
-      out.push(geminiInlineImageFromUrl((part.image_url as { url: string }).url));
-      continue;
-    }
-    throw new Error(
-      `toGeminiGenerateContent: unsupported or malformed content part (type: ${JSON.stringify(part.type)})`,
-    );
-  }
-  return out.length > 0 ? out : [{ text: '' }];
-}
-
 /**
  * Build a `tool_use_id` → function-name map across all of a request's
  * `contentBlocks`. Gemini's `functionResponse` is keyed by the function NAME,
@@ -379,7 +337,7 @@ function buildToolNameById(messages: readonly LlmMessage[]): Map<string, string>
  * `functionResponse` part. Unlike OpenAI, Gemini keeps these inline in the
  * turn's `parts` array (no message splitting) — closer to Anthropic. A base64
  * image `source` maps to `inline_data`; a remote `url` source throws — Gemini
- * inline parts can't carry a URL (mirrors {@link geminiInlineImageFromUrl}).
+ * inline parts can't carry a URL.
  *
  * Both tool parts also carry an `id` (`tool_use.id` / `tool_result.tool_use_id`)
  * — Gemini 3 correlates a `functionResponse` to its `functionCall` by id, which
@@ -389,7 +347,7 @@ function buildToolNameById(messages: readonly LlmMessage[]): Map<string, string>
  * emit an invalid response. The result is wrapped as `{ output: <content> }`;
  * Gemini has no typed `is_error` slot but its `response` is free-form, so the
  * flag is preserved there structurally when set. THROWS on unsupported/malformed
- * blocks, mirroring {@link llmContentPartsToGemini}.
+ * blocks.
  */
 function llmContentBlocksToGemini(
   blocks: readonly LlmContentBlock[],
@@ -419,8 +377,8 @@ function llmContentBlocksToGemini(
         continue;
       }
       if (s.type === 'url' && typeof s.url === 'string') {
-        // Gemini inline parts can't carry a remote URL (mirrors
-        // geminiInlineImageFromUrl) — fail loudly rather than drop the image.
+        // Gemini inline parts can't carry a remote URL — fail loudly rather
+        // than drop the image.
         throw new Error(
           `toGeminiGenerateContent: cannot represent image (Gemini inline parts require a data:image base64 URL): ${s.url.slice(0, 48)}`,
         );
@@ -527,22 +485,13 @@ export function toGeminiGenerateContent(
 
   for (const m of messages) {
     if (m.role === 'system') {
-      // Gemini's systemInstruction is text-only. The web's google materializer
-      // emits a plain-string system message (google isn't cacheable, so unlike
-      // the anthropic/openrouter path it never arrays the system content). Still,
-      // honor `contentParts`/`contentBlocks` defensively — if a system message
-      // ever arrives in a rich form (the wire validator lands array content
-      // there with an empty `content`), reading `content` alone would silently
-      // drop the whole system prompt, mirroring the bug fixed in
-      // `toAnthropicMessages`. Non-text parts are skipped (systemInstruction is
-      // text-only).
+      // Gemini's systemInstruction is text-only. The request materializer
+      // normalizes rich system prompts onto `contentBlocks`; plain-string system
+      // messages still flow through `content`. Non-text parts are skipped
+      // (systemInstruction is text-only).
       if (m.contentBlocks && m.contentBlocks.length > 0) {
         for (const part of llmContentBlocksToGemini(m.contentBlocks, toolNameById)) {
           if (typeof part.text === 'string' && part.text.length > 0) pushSystemText(part.text);
-        }
-      } else if (m.contentParts && m.contentParts.length > 0) {
-        for (const part of m.contentParts) {
-          if (part.type === 'text' && part.text.length > 0) pushSystemText(part.text);
         }
       } else {
         pushSystemText(m.content);
@@ -550,13 +499,12 @@ export function toGeminiGenerateContent(
       continue;
     }
     // Prefer the Anthropic-conceptual `contentBlocks` when present, else the
-    // rich `contentParts`, else the `content` text.
+    // permanent `content` text fallback. `contentParts` are normalized into
+    // blocks by `withRequestContentBlocks` before this loop.
     const parts =
       m.contentBlocks && m.contentBlocks.length > 0
         ? llmContentBlocksToGemini(m.contentBlocks, toolNameById)
-        : m.contentParts && m.contentParts.length > 0
-          ? llmContentPartsToGemini(m.contentParts)
-          : [{ text: m.content }];
+        : [{ text: m.content }];
     contents.push({ role: m.role === 'assistant' ? 'model' : 'user', parts });
   }
 
