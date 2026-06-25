@@ -38,19 +38,51 @@ export type LlmImageSource =
  * `content` / `contentParts` representation (see the decision doc:
  * `docs/decisions/Provider Contract — Anthropic-Conceptual Neutral Hub.md`).
  *
- * Carries `text`, `image`, and the signed `thinking` / `redacted_thinking`
- * blocks (the {@link ReasoningBlock} variants, reused verbatim so the thinking
- * representation is unified — slice 2 begins folding the sidecar
- * {@link LlmMessage.reasoningBlocks} into this block stream). Later slices add
- * `tool_use` and `tool_result` so the rich provider concepts the Anthropic
- * bridge currently reconstructs become first-class here and every serializer
- * downcasts from them. Additive and optional: see
- * {@link LlmMessage.contentBlocks}.
+ * Carries `text`, `image`, the signed `thinking` / `redacted_thinking` blocks
+ * (the {@link ReasoningBlock} variants, reused verbatim so the thinking
+ * representation is unified — slice 2 began folding the sidecar
+ * {@link LlmMessage.reasoningBlocks} into this block stream), and the
+ * `tool_use` / `tool_result` blocks (slice 3) in their Anthropic-canonical
+ * shapes — the rich provider concepts the Anthropic bridge currently
+ * reconstructs, now first-class so every serializer downcasts from them.
+ * Additive and optional: see {@link LlmMessage.contentBlocks}.
  */
 export type LlmContentBlock =
   | { type: 'text'; text: string; cache_control?: { type: 'ephemeral' } }
   | { type: 'image'; source: LlmImageSource; cache_control?: { type: 'ephemeral' } }
-  | ReasoningBlock;
+  | ReasoningBlock
+  | LlmToolUseBlock
+  | LlmToolResultBlock;
+
+/**
+ * An assistant tool call in Anthropic-canonical shape: a flat `{ id, name,
+ * input }` (input is the parsed argument object). The OpenAI downcast flattens
+ * this onto the assistant message's `tool_calls[]` (stringifying `input` into
+ * `function.arguments`); the Anthropic serializer emits it ~verbatim.
+ */
+export interface LlmToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  cache_control?: { type: 'ephemeral' };
+}
+
+/**
+ * A tool result in Anthropic-canonical shape: `tool_use_id` ties it back to the
+ * call, `content` is the result text, `is_error` flags a failed call. The
+ * OpenAI downcast emits this as a standalone `{ role: 'tool', tool_call_id,
+ * content }` message (OpenAI has no `is_error` slot, so the flag is conveyed
+ * only via the content text there). `content` is modeled as a string — the
+ * common case; richer block content is a future extension.
+ */
+export interface LlmToolResultBlock {
+  type: 'tool_result';
+  tool_use_id: string;
+  content: string;
+  is_error?: boolean;
+  cache_control?: { type: 'ephemeral' };
+}
 
 /**
  * Minimum portable message shape understood by all lib/-side agent roles.

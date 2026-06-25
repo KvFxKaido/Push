@@ -8,9 +8,14 @@
  * OpenAI, and the OpenAI-compat transports of Vertex / Zen-Go), so this is what
  * those neutral paths serialize to instead of hand-rolling the body inline.
  *
- * Unlike the Anthropic/Gemini serializers there's little translation to do:
- * `LlmMessage` roles map 1:1 to OpenAI roles, and `LlmContentPart` is already
- * the OpenAI `image_url` content-part shape. The notable choices:
+ * For the legacy `content` / `contentParts` path there's little translation to
+ * do: `LlmMessage` roles map 1:1 to OpenAI roles, and `LlmContentPart` is
+ * already the OpenAI `image_url` content-part shape. The Anthropic-conceptual
+ * `contentBlocks` path (the contract migration) does real downcasting — most
+ * notably the tool-block flatten, where one neutral message carrying
+ * `tool_use` / `tool_result` blocks expands into several OpenAI messages
+ * (`content` + `tool_calls[]` + standalone `role: 'tool'` results). The notable
+ * choices:
  *
  *   - `reasoningBlocks` are NOT emitted. The Push-private `reasoning_blocks`
  *     sidecar is an unknown parameter to strict OpenAI-compat endpoints (they
@@ -30,6 +35,7 @@ import type {
   OpenAIContentPart,
   OpenAIJsonSchemaResponseFormat,
   OpenAIMessage,
+  OpenAIToolCall,
 } from './openai-chat-types.ts';
 import type {
   LlmContentBlock,
@@ -185,6 +191,98 @@ function llmContentBlocksToOpenAI(
   return out.length > 0 ? out : [{ type: 'text', text: '' }];
 }
 
+/**
+ * Flatten a tool-bearing `LlmContentBlock[]` (one neutral message carrying
+ * `tool_use` / `tool_result` blocks) into the OpenAI representation — the "boss
+ * fight" downcast of the contract migration (see the decision doc). OpenAI
+ * splits what Anthropic models as one interleaved content array across several
+ * messages: assistant `tool_use` blocks become the message's `tool_calls[]`
+ * (the parsed `input` object → a stringified `function.arguments`), and each
+ * `tool_result` block becomes a standalone `{ role: 'tool', tool_call_id,
+ * content }` message. `text`/`image` blocks stay on the main message's content;
+ * `thinking` is dropped (as in {@link llmContentBlocksToOpenAI}).
+ *
+ * Returns the ordered messages to splice in: tool-result messages first, then
+ * the main (visible content + tool_calls) message when it carries anything.
+ * THROWS on a malformed tool block, mirroring the strict text/image handling.
+ */
+function flattenToolBearingBlocks(
+  role: string,
+  blocks: readonly LlmContentBlock[],
+  keepCacheControl: boolean,
+): OpenAIMessage[] {
+  const messages: OpenAIMessage[] = [];
+
+  // Walk blocks IN ORDER, accumulating visible content + tool calls into a
+  // pending main message and flushing it before each tool result. This
+  // preserves the call→result ordering OpenAI requires: a `role: 'tool'`
+  // message must follow the assistant message that declares its `tool_calls`
+  // entry, so we can't simply hoist all results to the front.
+  let pendingVisible: LlmContentBlock[] = [];
+  let pendingToolCalls: OpenAIToolCall[] = [];
+  const flushMain = () => {
+    if (pendingVisible.length === 0 && pendingToolCalls.length === 0) return;
+    const message: OpenAIMessage = {
+      role,
+      content:
+        pendingVisible.length > 0
+          ? llmContentBlocksToOpenAI(pendingVisible, keepCacheControl)
+          : null,
+    };
+    if (pendingToolCalls.length > 0) message.tool_calls = pendingToolCalls;
+    messages.push(message);
+    pendingVisible = [];
+    pendingToolCalls = [];
+  };
+
+  for (const block of blocks) {
+    if (block.type === 'tool_use') {
+      if (
+        typeof block.id !== 'string' ||
+        typeof block.name !== 'string' ||
+        block.input === null ||
+        typeof block.input !== 'object'
+      ) {
+        throw new Error(
+          `toOpenAIChat: malformed tool_use block (id: ${JSON.stringify(
+            (block as { id?: unknown }).id,
+          )})`,
+        );
+      }
+      // Anthropic carries `input` as a parsed object; OpenAI wants a JSON string.
+      pendingToolCalls.push({
+        id: block.id,
+        type: 'function',
+        function: { name: block.name, arguments: JSON.stringify(block.input) },
+      });
+    } else if (block.type === 'tool_result') {
+      if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string') {
+        throw new Error(
+          `toOpenAIChat: malformed tool_result block (tool_use_id: ${JSON.stringify(
+            (block as { tool_use_id?: unknown }).tool_use_id,
+          )})`,
+        );
+      }
+      // Emit any assistant message accumulated so far (declaring the calls this
+      // result may answer) before the standalone `role: 'tool'` message. OpenAI
+      // has no `is_error` slot, so a failed call is conveyed only via `content`.
+      flushMain();
+      messages.push({ role: 'tool', tool_call_id: block.tool_use_id, content: block.content });
+    } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+      // Intentionally dropped (not thrown): signed reasoning has no OpenAI
+      // content-part representation and the Push-private sidecar would be
+      // rejected by strict OpenAI-compat endpoints — same rule as the non-tool
+      // path in llmContentBlocksToOpenAI and the legacy `reasoningBlocks`, which
+      // are never emitted here. Unknown block types still throw (below / there).
+    } else {
+      pendingVisible.push(block);
+    }
+  }
+  flushMain();
+
+  return messages;
+}
+
 /** Tag a message's content with `cache_control: ephemeral` — promoting a
  *  bare-string content to a single text part, or tagging the last text part of
  *  a multimodal message. Mirrors the wire-tagging the CLI/orchestrator apply. */
@@ -251,30 +349,51 @@ export function toOpenAIChat(
   if (hasOverride) {
     messages.push({ role: 'system', content: req.systemPromptOverride as string });
   }
+  // Wire index of the LAST OpenAI message each request message produced. The
+  // tool-block flatten can expand one request message into several wire
+  // messages, so cache-breakpoint tagging below resolves the wire target
+  // through this map rather than assuming a 1:1 `reqIndex + offset` mapping.
+  // Every request message produces at least one wire message (the empty-content
+  // fallback covers the degenerate cases), so each entry is always valid.
+  const reqIndexToWireIndex: number[] = [];
   for (const m of reqMessages) {
     // Precedence mirrors the additive-field pattern: the rich block
     // representation wins when present, else the legacy `contentParts`, else
     // the `content` text fallback. No production path emits `contentBlocks`
-    // yet (slice 1 — see the decision doc), so existing traffic is unaffected.
-    let content: OpenAIMessage['content'];
+    // yet (see the decision doc), so existing traffic is unaffected.
     if (m.contentBlocks && m.contentBlocks.length > 0) {
-      content = llmContentBlocksToOpenAI(m.contentBlocks, tagCache);
+      const hasToolBlocks = m.contentBlocks.some(
+        (b) => b.type === 'tool_use' || b.type === 'tool_result',
+      );
+      if (hasToolBlocks) {
+        // Boss-fight flatten: one neutral message can map to several OpenAI
+        // messages (standalone tool-result messages + the content/tool_calls
+        // message), so push the expansion rather than a single message.
+        messages.push(...flattenToolBearingBlocks(m.role, m.contentBlocks, tagCache));
+      } else {
+        messages.push({
+          role: m.role,
+          content: llmContentBlocksToOpenAI(m.contentBlocks, tagCache),
+        });
+      }
     } else if (m.contentParts && m.contentParts.length > 0) {
-      content = llmContentPartsToOpenAI(m.contentParts, tagCache);
+      messages.push({ role: m.role, content: llmContentPartsToOpenAI(m.contentParts, tagCache) });
     } else {
-      content = m.content;
+      messages.push({ role: m.role, content: m.content });
     }
-    messages.push({ role: m.role, content });
+    reqIndexToWireIndex.push(messages.length - 1);
   }
 
   const rawBreakpoints = req.cacheBreakpointIndices;
   if (tagCache && Array.isArray(rawBreakpoints) && rawBreakpoints.length > 0) {
-    const offset = hasOverride ? 1 : 0;
     if (messages[0]?.role === 'system') {
       tagMessageCacheControl(messages[0]);
     }
     for (const reqIndex of rawBreakpoints.slice(-MAX_ROLLING_CACHE_BREAKPOINTS)) {
-      const wireIndex = reqIndex + offset;
+      // Resolve through the flatten-aware map: a request message that expanded
+      // into several wire messages tags its LAST one (the prefix boundary).
+      const wireIndex = reqIndexToWireIndex[reqIndex];
+      if (wireIndex === undefined) continue;
       const target = messages[wireIndex];
       if (!target) continue;
       // The leading system was tagged above; don't double-tag it.

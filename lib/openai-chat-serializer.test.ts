@@ -285,7 +285,9 @@ describe('toOpenAIChat', () => {
       toOpenAIChat(
         reqWith([
           llm('1', 'user', 'fallback', {
-            contentBlocks: [{ type: 'tool_use' }] as unknown as LlmMessage['contentBlocks'],
+            // A genuinely unknown block type (not text/image/thinking/tool_*)
+            // takes the non-tool path and hits its strict throw.
+            contentBlocks: [{ type: 'video' }] as unknown as LlmMessage['contentBlocks'],
           }),
         ]),
       ),
@@ -357,6 +359,193 @@ describe('toOpenAIChat', () => {
       ]),
     );
     expect(body.messages?.[0].content).toEqual([{ type: 'text', text: '' }]);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Tool blocks — slice 3 "boss fight": flatten Anthropic-style tool_use /
+  // tool_result blocks into OpenAI's split content + tool_calls + role:tool.
+  // ---------------------------------------------------------------------------
+
+  it('flattens text + tool_use into one assistant message with content and tool_calls', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'text', text: 'let me check' },
+            {
+              type: 'tool_use',
+              id: 'call_1',
+              name: 'sandbox_read_file',
+              input: { path: 'a.ts' },
+            },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'let me check' }],
+        tool_calls: [
+          {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it('emits content: null when an assistant turn is tool_use only, and stringifies multiple calls', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'tool_use', id: 'c1', name: 'foo', input: { a: 1 } },
+            { type: 'tool_use', id: 'c2', name: 'bar', input: {} },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages?.[0]).toEqual({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        { id: 'c1', type: 'function', function: { name: 'foo', arguments: '{"a":1}' } },
+        { id: 'c2', type: 'function', function: { name: 'bar', arguments: '{}' } },
+      ],
+    });
+  });
+
+  it('expands tool_result blocks into standalone role:tool messages (no spurious main message)', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'fallback', {
+          contentBlocks: [
+            { type: 'tool_result', tool_use_id: 'c1', content: 'file contents' },
+            { type: 'tool_result', tool_use_id: 'c2', content: 'boom', is_error: true },
+          ],
+        }),
+      ]),
+    );
+    // Two tool messages, and NO trailing empty user message.
+    expect(body.messages).toEqual([
+      { role: 'tool', tool_call_id: 'c1', content: 'file contents' },
+      // is_error has no OpenAI slot; the failure rides in `content`.
+      { role: 'tool', tool_call_id: 'c2', content: 'boom' },
+    ]);
+  });
+
+  it('orders tool-result messages before the main content/tool_calls message; drops thinking', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'thinking', text: 'hmm', signature: 's' },
+            { type: 'tool_result', tool_use_id: 'prev', content: 'ok' },
+            { type: 'text', text: 'now calling' },
+            { type: 'tool_use', id: 'c3', name: 'baz', input: { x: true } },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages).toEqual([
+      { role: 'tool', tool_call_id: 'prev', content: 'ok' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'now calling' }],
+        tool_calls: [
+          { id: 'c3', type: 'function', function: { name: 'baz', arguments: '{"x":true}' } },
+        ],
+      },
+    ]);
+  });
+
+  it('throws on a malformed tool_use block (missing id) and tool_result block (missing tool_use_id)', () => {
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'assistant', 'x', {
+            contentBlocks: [
+              { type: 'tool_use', name: 'foo', input: {} },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/malformed tool_use block/);
+    expect(() =>
+      toOpenAIChat(
+        reqWith([
+          llm('1', 'user', 'x', {
+            contentBlocks: [
+              { type: 'tool_result', content: 'r' },
+            ] as unknown as LlmMessage['contentBlocks'],
+          }),
+        ]),
+      ),
+    ).toThrow(/malformed tool_result block/);
+  });
+
+  it('preserves call→result order: a tool_result after a tool_use flushes the assistant call first', () => {
+    // Interleaved within one turn: the assistant message declaring the call must
+    // come BEFORE the role:tool result, not after (OpenAI rejects a tool message
+    // that precedes its assistant call).
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            { type: 'tool_use', id: 'c1', name: 'foo', input: { a: 1 } },
+            { type: 'tool_result', tool_use_id: 'c1', content: 'done' },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          { id: 'c1', type: 'function', function: { name: 'foo', arguments: '{"a":1}' } },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: 'done' },
+    ]);
+  });
+
+  it('maps cache breakpoints to the right wire message even when an earlier message flattens to several', () => {
+    const body = toOpenAIChat(
+      reqWith(
+        [
+          // req-index 0 expands to TWO wire messages (assistant call + tool result).
+          llm('1', 'assistant', 'fallback', {
+            contentBlocks: [
+              { type: 'tool_use', id: 'c1', name: 'foo', input: {} },
+              { type: 'tool_result', tool_use_id: 'c1', content: 'res' },
+            ],
+          }),
+          // req-index 1 — the breakpoint targets this one.
+          llm('2', 'user', 'hi'),
+        ],
+        { cacheBreakpointIndices: [1] },
+      ),
+      { tagCacheBreakpoints: true },
+    );
+    // The breakpoint at req-index 1 must tag the 'hi' user message (wire index 2),
+    // not collide with req-index 0's expansion. With the old reqIndex+offset
+    // mapping it would have wrongly tagged the tool-result message at wire index 1.
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{ id: 'c1', type: 'function', function: { name: 'foo', arguments: '{}' } }],
+      },
+      { role: 'tool', tool_call_id: 'c1', content: 'res' },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'hi', cache_control: { type: 'ephemeral' } }],
+      },
+    ]);
   });
 });
 

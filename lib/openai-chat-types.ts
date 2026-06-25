@@ -40,10 +40,27 @@ export type OpenAIReasoningBlock =
   | { type: 'thinking'; text: string; signature: string }
   | { type: 'redacted_thinking'; data: string };
 
+/** OpenAI assistant tool call. `function.arguments` is a JSON-encoded string
+ *  (OpenAI's wire shape), unlike the parsed object an Anthropic `tool_use`
+ *  block carries — the serializer stringifies on the way out. */
+export interface OpenAIToolCall {
+  id: string;
+  type: 'function';
+  function: { name: string; arguments: string };
+}
+
 export type OpenAIMessage = {
   role?: string;
   content?: string | OpenAIContentPart[] | null;
   reasoning_blocks?: OpenAIReasoningBlock[];
+  /** Assistant tool calls (OpenAI native function calling). Set by the
+   *  `toOpenAIChat` downcast when a message's `contentBlocks` carry `tool_use`
+   *  blocks. */
+  tool_calls?: OpenAIToolCall[];
+  /** Links a `role: 'tool'` result message back to the assistant `tool_calls[]`
+   *  entry it answers. Set on the standalone tool-result messages the downcast
+   *  emits from `tool_result` blocks. */
+  tool_call_id?: string;
   /**
    * Push-private sidecar for replaying an Anthropic `pause_turn`
    * continuation. When set on an assistant message, the Anthropic bridge
