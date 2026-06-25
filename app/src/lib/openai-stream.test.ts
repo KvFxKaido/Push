@@ -241,7 +241,7 @@ describe('openaiStream', () => {
     expect(caught!.message).toMatch(/Invalid API key/);
   });
 
-  it('forwards max_tokens / temperature / top_p into the request body', async () => {
+  it('forwards max_completion_tokens / temperature / top_p into the request body', async () => {
     installStreamFetch(fetchMock);
     const { openaiStream } = await import('./openai-stream');
     const iter = openaiStream({ ...baseRequest, maxTokens: 4096, temperature: 0.5, topP: 0.95 });
@@ -252,7 +252,8 @@ describe('openaiStream', () => {
 
     const init = fetchMock.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string);
-    expect(body.max_tokens).toBe(4096);
+    expect(body.max_completion_tokens).toBe(4096);
+    expect(body.max_tokens).toBeUndefined();
     expect(body.temperature).toBe(0.5);
     expect(body.top_p).toBe(0.95);
   });

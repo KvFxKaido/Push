@@ -1399,6 +1399,62 @@ describe('streamCompletion', () => {
       assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hi' }]);
     });
 
+    it('keeps max_tokens for generic OpenAI-compatible CLI providers', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createCliProviderStream(testConfig, 'key');
+      for await (const _ of stream({
+        provider: 'openrouter',
+        model: 'model',
+        messages: [{ id: 'm0', role: 'user', content: 'hi', timestamp: 0 }],
+        maxTokens: 1234,
+      })) {
+        // drain
+      }
+
+      assert.equal(capturedBody.max_tokens, 1234);
+      assert.equal(capturedBody.max_completion_tokens, undefined);
+    });
+
+    it('uses max_completion_tokens for the direct OpenAI CLI provider', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createCliProviderStream({ ...testConfig, id: 'openai' }, 'key');
+      for await (const _ of stream({
+        provider: 'openai',
+        model: 'gpt-5.4',
+        messages: [{ id: 'm0', role: 'user', content: 'hi', timestamp: 0 }],
+        maxTokens: 1234,
+      })) {
+        // drain
+      }
+
+      assert.equal(capturedBody.max_completion_tokens, 1234);
+      assert.equal(capturedBody.max_tokens, undefined);
+    });
+
     it('sets Authorization header when apiKey is provided', async () => {
       let capturedHeaders;
       globalThis.fetch = async (_url, opts) => {
