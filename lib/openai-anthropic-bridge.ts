@@ -792,8 +792,13 @@ export function toAnthropicMessages(
       // honor `contentParts` here — reading `content` alone would silently drop
       // the entire system prompt (and its cache_control). Mirrors the legacy
       // `buildAnthropicMessagesRequest` system handling. Plain-string system
-      // messages (CLI, override) still flow through `content`.
-      if (m.contentParts && m.contentParts.length > 0) {
+      // messages (CLI, override) still flow through `content`. The same
+      // precedence applies to `contentBlocks` (so the producer flip doesn't drop
+      // a system prompt materialized as blocks); `pushSystemBlocks` keeps only
+      // text parts, which is all Anthropic's text-only `system` field accepts.
+      if (m.contentBlocks && m.contentBlocks.length > 0) {
+        pushSystemBlocks(llmContentBlocksToAnthropic(m.contentBlocks, tagged));
+      } else if (m.contentParts && m.contentParts.length > 0) {
         pushSystemBlocks(contentPartsToAnthropic(m.contentParts, tagged));
       } else {
         pushSystem(m.content, tagged);

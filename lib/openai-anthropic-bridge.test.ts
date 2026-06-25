@@ -543,6 +543,17 @@ describe('toAnthropicMessages — contentBlocks (near-identity downcast)', () =>
       ),
     ).toThrow(/unsupported or malformed content block/);
   });
+
+  it('honors contentBlocks on a system turn (serialized to body.system, not dropped)', () => {
+    const body = toAnthropicMessages(
+      req({ role: 'system', content: '', contentBlocks: [{ type: 'text', text: 'be terse' }] }),
+    );
+    // The system prompt reaches body.system via the contentBlocks precedence,
+    // even though `content` is the empty-string fallback the producer leaves.
+    // (toAnthropicMessages injects a placeholder user turn since Anthropic
+    // requires a non-empty `messages`, so we assert on `system` specifically.)
+    expect(body.system).toBe('be terse');
+  });
 });
 
 describe('Anthropic structured outputs (forced tool)', () => {
