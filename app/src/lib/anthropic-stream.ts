@@ -31,11 +31,13 @@ import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
+import { resolvePushCapabilityProfile } from './model-catalog';
 
 export async function* anthropicStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
+  const capabilityProfile = resolvePushCapabilityProfile('anthropic', req.model);
   const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
     hasSandbox: req.hasSandbox,
@@ -51,7 +53,7 @@ export async function* anthropicStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
-    emitContentBlocks: true,
+    emitContentBlocks: capabilityProfile.contentBlocks,
   });
 
   // Per-request flag wins; otherwise the Web Search menu's mode decides.

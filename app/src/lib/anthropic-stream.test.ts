@@ -19,6 +19,18 @@ vi.mock('./providers', () => ({
   },
 }));
 
+vi.mock('./model-catalog', () => ({
+  resolvePushCapabilityProfile: () => ({
+    toolCalling: 'native',
+    streamingTools: true,
+    multimodal: true,
+    structuredOutput: 'strict',
+    contentBlocks: true,
+    reasoningBlocks: true,
+    context: 'medium',
+  }),
+}));
+
 vi.mock('./orchestrator', () => ({
   toLLMMessages: (messages: ChatMessage[]) =>
     messages.map((m) => ({ role: m.role, content: m.content })),

@@ -24,10 +24,9 @@ import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
 import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
-import { getZenGoTransport } from './zen-go';
-import { getVertexModelTransport } from './vertex-provider';
 import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
 import { getVertexModelName } from '@/hooks/useVertexConfig';
+import { resolvePushCapabilityProfile } from './model-catalog';
 import {
   getCloudflareModelName,
   getOllamaModelName,
@@ -139,10 +138,7 @@ export function routesThroughAnthropicBridge(
   model: string | undefined,
 ): boolean {
   if (!provider || !model) return false;
-  if (provider === 'anthropic') return true;
-  if (provider === 'zen') return getZenGoTransport(model) === 'anthropic';
-  if (provider === 'vertex') return getVertexModelTransport(model) === 'anthropic';
-  return false;
+  return resolvePushCapabilityProfile(provider, model).reasoningBlocks;
 }
 
 function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {

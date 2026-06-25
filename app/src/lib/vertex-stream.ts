@@ -47,11 +47,15 @@ import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
+import { resolvePushCapabilityProfile } from './model-catalog';
 
 export async function* vertexStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const mode = getVertexMode();
+  const capabilityProfile = resolvePushCapabilityProfile('vertex', req.model, {
+    requestWire: mode === 'native' ? 'neutral' : 'openai',
+  });
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
@@ -70,7 +74,7 @@ export async function* vertexStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
-    emitContentBlocks: mode === 'native',
+    emitContentBlocks: capabilityProfile.contentBlocks,
   });
 
   // 2. Native web search splits by transport. Vertex carries both Claude and

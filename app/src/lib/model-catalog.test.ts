@@ -17,6 +17,7 @@ import {
   parseOpenRouterCatalog,
   providerModelSupportsNativeToolCalling,
   providerModelSupportsStructuredOutput,
+  resolvePushCapabilityProfile,
 } from './model-catalog';
 import { cliProviderModelSupportsNativeToolCalling } from '../../../cli/native-tool-gate';
 import {
@@ -1235,6 +1236,58 @@ describe('filterModelByContext', () => {
 });
 
 describe('providerModelSupportsStructuredOutput', () => {
+  it('resolves the Push capability profile for direct neutral providers', () => {
+    stubWindow();
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-sonnet-4-6')).toMatchObject({
+      toolCalling: 'native',
+      streamingTools: true,
+      structuredOutput: 'strict',
+      contentBlocks: true,
+      reasoningBlocks: true,
+      multimodal: true,
+    });
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.5-flash')).toMatchObject({
+      toolCalling: 'native',
+      contentBlocks: true,
+      reasoningBlocks: false,
+      multimodal: true,
+    });
+  });
+
+  it('lets transport mode decide content-block emission inside the profile', () => {
+    stubWindow();
+    expect(
+      resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514', {
+        requestWire: 'openai',
+      }),
+    ).toMatchObject({
+      toolCalling: 'native',
+      contentBlocks: false,
+      reasoningBlocks: true,
+    });
+    expect(
+      resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514', {
+        requestWire: 'neutral',
+      }),
+    ).toMatchObject({
+      toolCalling: 'native',
+      contentBlocks: true,
+      reasoningBlocks: true,
+    });
+    expect(
+      resolvePushCapabilityProfile('zen', 'kimi-k2.6', { requestWire: 'openai' }),
+    ).toMatchObject({
+      contentBlocks: false,
+      reasoningBlocks: false,
+    });
+    expect(
+      resolvePushCapabilityProfile('zen', 'minimax-m3', { requestWire: 'neutral' }),
+    ).toMatchObject({
+      contentBlocks: true,
+      reasoningBlocks: true,
+    });
+  });
+
   it('returns false for providers whose adapter does not serialize response_format', () => {
     stubWindow();
     // Gemini / Vertex native serializers ignore `response_format` by contract;
