@@ -334,6 +334,32 @@ describe('handleZenGoChat', () => {
     const body = JSON.parse(captured!.init.body as string);
     expect(body.model).toBe('minimax-m3');
   });
+
+  it('proxies the legacy Anthropic-transport upstream SSE raw (background path)', async () => {
+    // The legacy (OpenAI-shape body) caller is the background coder / PR-review
+    // job, whose stream adapter now parses Anthropic SSE natively too — so the
+    // Worker proxies the upstream raw on this contract kind as well.
+    const anthropicFrame =
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(anthropicFrame, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      ),
+    );
+    const response = await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('"type":"content_block_delta"');
+    expect(text).not.toContain('"choices"');
+  });
 });
 
 describe('handleZenGoChat — neutral wire (dual-accept)', () => {
@@ -563,6 +589,32 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     const response = await handleZenGoChat(req, makeEnv({ ZEN_API_KEY: 'zen-key' }));
     expect(response.status).toBe(400);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('proxies the Anthropic-transport upstream SSE raw (no OpenAI-SSE translation)', async () => {
+    // The neutral-wire (foreground zenStream) client now parses Anthropic SSE
+    // natively, so the Worker must pass the upstream body through untouched. The
+    // retired path would have rewritten this into an OpenAI `choices` chunk.
+    const anthropicFrame =
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(anthropicFrame, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      ),
+    );
+    const response = await handleZenGoChat(
+      makeNeutralRequest({ model: 'minimax-m3', messages: [{ role: 'user', content: 'hi' }] }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('"type":"content_block_delta"');
+    expect(text).not.toContain('"choices"');
   });
 });
 

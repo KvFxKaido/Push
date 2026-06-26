@@ -1184,12 +1184,15 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(req.url).toBe('https://push.example.test/api/zen/chat');
   });
 
-  it('routes an Anthropic-transport Go model through the Go handler (it translates to OpenAI SSE)', async () => {
-    // handleZenGoChat detects anthropic-transport models (minimax-*) and wraps
-    // the upstream in createAnthropicTranslatedStream, so the stream reaching
-    // the pump is already OpenAI-shaped — the adapter must not block them.
+  it('parses an Anthropic-transport Go model as native Anthropic SSE', async () => {
+    // handleZenGoChat now proxies raw Anthropic Messages SSE for anthropic-transport
+    // models (minimax-* / qwen-*) — no OpenAI-SSE translator. The adapter must parse
+    // those `content_block_delta` frames natively via `anthropicEventStream`, not the
+    // OpenAI-shaped `pumpSseBody`.
     providerHandlerMocks.handleZenGoChat.mockResolvedValue(
-      sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']),
+      sseResponse([
+        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
+      ]),
     );
     const stream = createWebStreamAdapter({
       env: env(),
@@ -1200,6 +1203,26 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       zenGo: true,
     });
     const { tokens, errors } = await drainAs(stream, 'zen', 'minimax-m2.7');
+    expect(errors).toEqual([]);
+    expect(tokens.join('')).toBe('ok');
+    expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps an OpenAI-transport Go model on the OpenAI-shaped pump', async () => {
+    // Counterpart to the native-Anthropic case: a non-anthropic-transport Go model
+    // (e.g. kimi-k2.6) still streams OpenAI-shaped SSE and must parse via pumpSseBody.
+    providerHandlerMocks.handleZenGoChat.mockResolvedValue(
+      sseResponse(['data: {"choices":[{"delta":{"content":"ok"}}]}\n\n', 'data: [DONE]\n\n']),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'zen',
+      modelId: 'kimi-k2.6',
+      jobId: 'job-zen-go-openai',
+      zenGo: true,
+    });
+    const { tokens, errors } = await drainAs(stream, 'zen', 'kimi-k2.6');
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);

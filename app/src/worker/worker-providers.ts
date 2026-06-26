@@ -1008,23 +1008,14 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       );
     }
 
-    if (transport === 'anthropic') {
-      // Multiplexed route: this handler's web client (`vertex-stream` /
-      // `zen-stream`) still parses with `openAISSEPump`, so the Anthropic-native
-      // upstream must be translated to OpenAI-SSE here. Direct Anthropic/Gemini
-      // routes proxy raw (their clients use the native event streams); migrating
-      // these multiplexed clients to native is tracked separately.
-      return new Response(createAnthropicTranslatedStream(upstream, model), {
-        status: 200,
-        headers: {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          [REQUEST_ID_HEADER]: requestId,
-        },
-      });
-    }
-
+    // Both transports proxy the raw upstream SSE straight through. The
+    // Anthropic-transport models (MiniMax / Qwen on `/v1/messages`) emit standard
+    // Anthropic Messages SSE; every Zen-Go client now parses it natively — the
+    // foreground `zenStream` via `anthropicEventStream`, the background coder /
+    // PR-review job via the stream adapter's native branch — so there's no
+    // OpenAI-SSE translator left on this route (parity with the direct Anthropic
+    // path). `createAnthropicTranslatedStream` survives only for the Vertex-Claude
+    // route below, whose `vertexStream` legacy wire still parses OpenAI SSE.
     return new Response(upstream.body, {
       status: 200,
       headers: {

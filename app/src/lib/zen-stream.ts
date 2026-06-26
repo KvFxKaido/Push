@@ -11,6 +11,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
@@ -19,6 +20,7 @@ import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { PROVIDER_URLS, ZEN_GO_URLS, getZenGoMode } from './providers';
+import { getZenGoTransport } from './zen-go';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
@@ -68,8 +70,8 @@ export async function* zenStream(
   //  Native FC is additive either way — `openAISSEPump` emits complete native
   //  `tool_calls` as structured `native_tool_call` events. Anthropic-transport Go
   //  models (minimax/qwen) translate `tools` to Anthropic's custom-tool shape via
-  //  `toAnthropicMessages`, and their `tool_use` responses round-trip through
-  //  `createAnthropicTranslatedStream` — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
+  //  `toAnthropicMessages`, and their `tool_use` responses are parsed natively by
+  //  `anthropicEventStream` below — see model-catalog's ZEN_NATIVE_TOOL_CALLING_MODELS.
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
   const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body = goMode
@@ -136,6 +138,30 @@ export async function* zenStream(
 
   if (!response.body) {
     throw new Error('OpenCode Zen response had no body');
+  }
+
+  // Dual response pump (mirrors the Worker's dual request serialization). In Go
+  // mode the Anthropic-transport models (MiniMax / Qwen on `/v1/messages`) now
+  // stream raw Anthropic Messages SSE — the Worker no longer translates it to
+  // OpenAI SSE — so parse those natively via `anthropicEventStream`, exactly like
+  // the direct Anthropic route. Everything else (standard Zen + OpenAI-transport
+  // Go models) stays on `openAISSEPump`.
+  if (goMode && getZenGoTransport(req.model) === 'anthropic') {
+    // These models don't use Anthropic's server-side `web_search` tool, so no
+    // `pause_turn` continuation arises on this route (the request never enables
+    // it). Drain any `pause_turn` defensively rather than replaying it, and
+    // guarantee a terminal `done` so a pause-without-done can't leave the round
+    // loop hanging.
+    let sawDone = false;
+    for await (const event of anthropicEventStream(response, req.signal, (name) =>
+      KNOWN_TOOL_NAMES.has(name),
+    )) {
+      if (event.type === 'pause_turn') continue;
+      if (event.type === 'done') sawDone = true;
+      yield event;
+    }
+    if (!sawDone) yield { type: 'done', finishReason: 'stop' };
+    return;
   }
 
   yield* openAISSEPump({
