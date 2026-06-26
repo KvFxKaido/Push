@@ -112,6 +112,23 @@ export async function* zenStream(
   };
   injectTraceHeaders(headers);
 
+  // TEMP DEBUG (#1193): a client build marker + a CLIENT-SIDE count of assistant
+  // wire messages that carry `reasoning_content`, echoed by the Worker's 400
+  // debug. Lets us tell a stale cached bundle (marker absent in the echo) from a
+  // genuinely-empty capture (marker present, rc=0) — the client/PWA cache has
+  // been the recurring confound. REMOVE with the rest of the #1193 debug.
+  if (goMode && /deepseek/i.test(req.model)) {
+    const bodyMessages = (body as unknown as { messages?: unknown }).messages;
+    const wireMessages: Array<Record<string, unknown>> = Array.isArray(bodyMessages)
+      ? (bodyMessages as Array<Record<string, unknown>>)
+      : [];
+    const rcCount = wireMessages.filter(
+      (m) => m.role === 'assistant' && typeof m.reasoning_content === 'string',
+    ).length;
+    headers['x-push-debug-build'] = 'dsfix2';
+    headers['x-push-debug-rc'] = String(rcCount);
+  }
+
   const url = goMode ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat;
 
   // 4. POST + stream response.

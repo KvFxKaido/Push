@@ -1072,9 +1072,19 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
             .map((a) => `${a.hasRC ? 'R' : 'r'}${a.rcLen}U${a.toolUses}`)
             .join(',')}] `
         : '';
+      // Client build marker + client-side reasoning_content count (#1193 debug).
+      // `build=` absent → the browser is running a STALE cached bundle (old code
+      // doesn't send the header). `build=dsfix2 rc=0` → fresh bundle, but the
+      // client built the wire with zero reasoning_content (capture is empty).
+      const clientBuild = request.headers.get('x-push-debug-build') ?? '';
+      const clientRc = request.headers.get('x-push-debug-rc') ?? '';
+      const buildTag =
+        transport !== 'anthropic' && /deepseek/i.test(model)
+          ? `[build=${clientBuild} rc=${clientRc}] `
+          : '';
       return Response.json(
         {
-          error: `${debugTag}${neutralTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          error: `${buildTag}${debugTag}${neutralTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
