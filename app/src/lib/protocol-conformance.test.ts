@@ -23,10 +23,11 @@ import { resolvePushCapabilityProfile } from './model-catalog';
  * serializer/parser actually delivers it. Two structural invariants make the
  * harness self-enforcing rather than decorative:
  *
- *   1. Drift gate — every capability column MUST register a conformance suite,
- *      so a new column can't ship without a parity assertion. Adding a key to
- *      `PushCapabilityProfile` without a `conformanceColumn(...)` call below
- *      fails CI (see the drift-gate test at the bottom).
+ *   1. Drift gate — every capability column must be EITHER executably covered
+ *      (`conformanceColumn(...)` with real assertions) OR on the explicit
+ *      `PENDING_COLUMNS` backlog. A new column with neither fails CI, and a
+ *      TODO placeholder can't masquerade as covered (Vitest treats `it.todo` as
+ *      non-failing) — see the drift-gate test at the bottom.
  *
  *   2. Model axis — columns whose resolution varies by model *within* a provider
  *      (structuredOutput is the live example: opus-4-7 → native `output_config`,
@@ -39,19 +40,47 @@ import { resolvePushCapabilityProfile } from './model-catalog';
  * for that column. The profile is the contract; the serializer is the proof.
  *
  * Status: skeleton + two exemplar columns (`toolCalling`, `structuredOutput`).
- * The remaining columns are registered as `it.todo` placeholders so the drift
- * gate stays green while the per-column fill-in is tracked on #1169.
+ * The remaining columns sit on the explicit `PENDING_COLUMNS` backlog (visible
+ * `it.todo`s, not counted as covered) until their fill-in lands; tracked on #1169.
  */
 
 // --- drift-gate registration -------------------------------------------------
 type ConformanceColumn = keyof PushCapabilityProfile;
-const REGISTERED_COLUMNS = new Set<ConformanceColumn>();
 
-/** Register and define a conformance suite for one capability column. The
- *  registration is what the drift gate checks; the body holds the assertions. */
+// Columns backed by *executable* parity assertions. Only these count as covered.
+// `it.todo` placeholders deliberately do NOT land here (see PENDING_COLUMNS), so
+// a column can't masquerade as covered with zero assertions — Vitest treats
+// `it.todo` as non-failing, which would otherwise hollow out the gate.
+const EXECUTABLE_COLUMNS = new Set<ConformanceColumn>();
+
+/** Register a column backed by executable parity assertions. */
 function conformanceColumn(column: ConformanceColumn, define: () => void): void {
-  REGISTERED_COLUMNS.add(column);
+  EXECUTABLE_COLUMNS.add(column);
   describe(`conformance · ${column}`, define);
+}
+
+/**
+ * Explicit, reviewable backlog: capability columns with no parity assertion yet.
+ * The drift gate requires every profile column to be EITHER executable OR listed
+ * here, and the two to be disjoint. Consequence: adding a column with only a
+ * TODO forces a deliberate edit to this list — it can't silently ride in as
+ * "covered" — and filling a column forces moving it out of here into executable
+ * coverage (the overlap check fails otherwise). Addresses the #1186 P2.
+ */
+const PENDING_COLUMNS = new Set<ConformanceColumn>([
+  'streamingTools',
+  'multimodal',
+  'contentBlocks',
+  'reasoningBlocks',
+  'context',
+]);
+
+/** Render a pending column's owed assertion as a visible `it.todo`. Does NOT
+ *  register executable coverage — the gate accounts for it via PENDING_COLUMNS. */
+function pendingColumn(column: ConformanceColumn, owedAssertion: string): void {
+  describe(`conformance · ${column} (pending)`, () => {
+    it.todo(owedAssertion);
+  });
 }
 
 // --- window stub: `resolvePushCapabilityProfile` resolves through the model
@@ -162,44 +191,59 @@ conformanceColumn('structuredOutput', () => {
   });
 });
 
-// === remaining columns: registered placeholders ==============================
-// Registered so the drift gate stays green; the `it.todo` text is the parity
-// assertion each column owes. Filling these is the #1169 follow-up work — most
-// have existing coverage in the bridge tests to port in, not write fresh.
-conformanceColumn('streamingTools', () => {
-  it.todo(
-    'native tool-call fragments accumulate incrementally + flush per route that advertises it',
-  );
-});
-conformanceColumn('multimodal', () => {
-  it.todo(
-    'image blocks reach multimodal routes (Gemini inline_data / Anthropic image source); text-only routes degrade clearly',
-  );
-});
-conformanceColumn('contentBlocks', () => {
-  it.todo(
-    'contentBlocks:true routes consume LlmMessage.contentBlocks; legacy/text routes preserve the text fallback',
-  );
-});
-conformanceColumn('reasoningBlocks', () => {
-  it.todo(
-    'signed reasoning round-trips verbatim: Anthropic thinking.signature + Gemini part.thoughtSignature, captured→stored→replayed',
-  );
-});
-conformanceColumn('context', () => {
-  it.todo(
-    'context tier resolves stably (small/medium/large) from the catalog limit for UI + degradation decisions',
-  );
-});
+// === remaining columns: explicit pending placeholders ========================
+// Visible `it.todo` backlog. These do NOT count as covered — the gate accounts
+// for them via PENDING_COLUMNS, so they can't masquerade as parity assertions.
+// Filling a column means real `conformanceColumn(...)` assertions AND removing
+// it from PENDING_COLUMNS. Most have existing bridge-test coverage to port in.
+pendingColumn(
+  'streamingTools',
+  'native tool-call fragments accumulate incrementally + flush per route that advertises it',
+);
+pendingColumn(
+  'multimodal',
+  'image blocks reach multimodal routes (Gemini inline_data / Anthropic image source); text-only routes degrade clearly',
+);
+pendingColumn(
+  'contentBlocks',
+  'contentBlocks:true routes consume LlmMessage.contentBlocks; legacy/text routes preserve the text fallback',
+);
+pendingColumn(
+  'reasoningBlocks',
+  'signed reasoning round-trips verbatim: Anthropic thinking.signature + Gemini part.thoughtSignature, captured→stored→replayed',
+);
+pendingColumn(
+  'context',
+  'context tier resolves stably (small/medium/large) from the catalog limit for UI + degradation decisions',
+);
 
 // === the keystone: drift gate ================================================
 describe('protocol conformance · drift gate', () => {
-  it('every PushCapabilityProfile column has a registered conformance suite', () => {
+  it('every column is executably covered or explicitly pending (and the two are disjoint)', () => {
     const columns = Object.keys(DEFAULT_PUSH_CAPABILITY_PROFILE) as ConformanceColumn[];
-    const missing = columns.filter((column) => !REGISTERED_COLUMNS.has(column));
+
+    // A column can't be both proven and pending — filling one means moving it.
+    const overlap = [...EXECUTABLE_COLUMNS].filter((column) => PENDING_COLUMNS.has(column));
+    expect(
+      overlap,
+      `columns both executable and pending: ${overlap.join(', ') || '(none)'}`,
+    ).toEqual([]);
+
+    // Self-enforcement: every profile column must be accounted for. A new column
+    // with neither executable assertions nor an explicit pending entry fails here.
+    const accounted = new Set<ConformanceColumn>([...EXECUTABLE_COLUMNS, ...PENDING_COLUMNS]);
+    const missing = columns.filter((column) => !accounted.has(column));
     expect(
       missing,
-      `capability columns missing a conformance suite: ${missing.join(', ') || '(none)'}`,
+      `columns with no executable suite and no pending entry: ${missing.join(', ') || '(none)'}`,
+    ).toEqual([]);
+
+    // No stale pending entries (a filled or removed column left behind).
+    const realColumns = new Set<string>(columns);
+    const stalePending = [...PENDING_COLUMNS].filter((column) => !realColumns.has(column));
+    expect(
+      stalePending,
+      `PENDING_COLUMNS entries that are not real profile columns: ${stalePending.join(', ') || '(none)'}`,
     ).toEqual([]);
   });
 });
