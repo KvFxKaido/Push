@@ -450,6 +450,7 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'cloudflare',
   'anthropic',
   'vertex',
+  'google',
 ]);
 
 /**
@@ -563,6 +564,14 @@ function resolveStructuredOutputMode(
   }
   if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
     return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
+  }
+  // Gemini constrains generation natively via `responseSchema` + JSON mime type
+  // (`toGeminiGenerateContent`). Gated on the same curated set as native tool
+  // calling so the two `google` gates stay consistent (no cross-column drift, the
+  // failure mode the #1169 harness flagged for opus-4-8). `strict` because Gemini
+  // enforces the schema structurally, not as a hint.
+  if (provider === 'google') {
+    return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId) ? 'strict' : 'none';
   }
   return getModelCapabilities(provider, modelId).structuredOutput ? 'strict' : 'none';
 }

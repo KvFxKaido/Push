@@ -807,6 +807,78 @@ async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<Pu
 
 const frame = (obj: unknown): string => `data: ${JSON.stringify(obj)}\n\n`;
 
+describe('toGeminiGenerateContent — structured output', () => {
+  const schema = {
+    type: 'object',
+    properties: { verdict: { type: 'string' } },
+    required: ['verdict'],
+    additionalProperties: false,
+  };
+  const req = (extra: Partial<PushStreamRequest<LlmMessage>>): PushStreamRequest<LlmMessage> =>
+    ({
+      provider: 'google',
+      model: 'gemini-3.1-pro-preview',
+      messages: [{ id: '1', role: 'user', content: 'audit', timestamp: 0 } as LlmMessage],
+      ...extra,
+    }) as PushStreamRequest<LlmMessage>;
+
+  it('emits responseMimeType + responseSchema (Gemini OpenAPI subset) for a responseFormat', () => {
+    const body = toGeminiGenerateContent(req({ responseFormat: { name: 'verdict', schema } })) as {
+      generationConfig?: {
+        responseMimeType?: string;
+        responseSchema?: { type?: string; properties?: Record<string, { type?: string }> };
+      };
+    };
+    expect(body.generationConfig?.responseMimeType).toBe('application/json');
+    // Converted to Gemini's uppercase OpenAPI-subset shape via the same path tool
+    // params use; `additionalProperties` (unsupported by Gemini) is dropped.
+    expect(body.generationConfig?.responseSchema?.type).toBe('OBJECT');
+    expect(body.generationConfig?.responseSchema?.properties?.verdict?.type).toBe('STRING');
+  });
+
+  it('skips responseSchema when function tools are present (Gemini rejects the combo)', () => {
+    const readFileTool: ToolFunctionSchema = {
+      name: 'sandbox_read_file',
+      description: 'Read a file',
+      input_schema: {
+        type: 'object',
+        properties: { path: { type: 'string' } },
+        required: ['path'],
+        additionalProperties: false,
+      },
+    };
+    const body = toGeminiGenerateContent(
+      req({ responseFormat: { name: 'verdict', schema }, tools: [readFileTool] }),
+    ) as {
+      generationConfig?: { responseSchema?: unknown };
+      tools?: Array<{ functionDeclarations?: unknown }>;
+    };
+    expect(body.generationConfig?.responseSchema).toBeUndefined();
+    expect(body.tools?.[0]?.functionDeclarations).toBeDefined();
+  });
+
+  it('suppresses googleSearch grounding when structured output is requested', () => {
+    // Grounding is default-on on web/CLI; Gemini rejects responseSchema + any
+    // tool (incl. googleSearch), so a verdict turn must not ship both. (#1192 P2.)
+    const body = toGeminiGenerateContent(
+      req({ responseFormat: { name: 'verdict', schema }, googleSearchGrounding: true }),
+    ) as {
+      generationConfig?: { responseSchema?: { type?: string } };
+      tools?: unknown;
+    };
+    expect(body.generationConfig?.responseSchema?.type).toBe('OBJECT');
+    expect(body.tools).toBeUndefined();
+  });
+
+  it('omits structured-output fields when no responseFormat is set', () => {
+    const body = toGeminiGenerateContent(req({})) as {
+      generationConfig?: { responseMimeType?: string; responseSchema?: unknown };
+    };
+    expect(body.generationConfig?.responseMimeType).toBeUndefined();
+    expect(body.generationConfig?.responseSchema).toBeUndefined();
+  });
+});
+
 describe('geminiEventStream — Gemini SSE -> neutral events', () => {
   const corpus: Array<{ name: string; frames: string[]; expected: PushStreamEvent[] }> = [
     {

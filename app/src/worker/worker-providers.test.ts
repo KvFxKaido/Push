@@ -2606,6 +2606,30 @@ describe('handleGoogleChat — neutral wire (dual-accept)', () => {
     expect('messages' in body).toBe(false);
   });
 
+  it('serializes neutral responseFormat as native generationConfig.responseSchema', async () => {
+    const get = captureUpstream();
+    const schema = {
+      type: 'object',
+      properties: { verdict: { type: 'string' } },
+      required: ['verdict'],
+      additionalProperties: false,
+    };
+    await handleGoogleChat(
+      makeNeutralGoogleRequest({
+        model: 'gemini-3.1-pro-preview',
+        messages: [{ role: 'user', content: 'audit' }],
+        responseFormat: { name: 'verdict', schema },
+      }),
+      makeEnv({ GOOGLE_API_KEY: 'AIza' }),
+    );
+    const body = JSON.parse(get()!.init.body as string);
+    expect(body.generationConfig.responseMimeType).toBe('application/json');
+    // Converted to Gemini's uppercase OpenAPI subset; no tools, no tool_choice.
+    expect(body.generationConfig.responseSchema.type).toBe('OBJECT');
+    expect(body.generationConfig.responseSchema.properties.verdict.type).toBe('STRING');
+    expect(body).not.toHaveProperty('tools');
+  });
+
   it('preserves an array-content system prompt onto systemInstruction (defensive)', async () => {
     // google isn't cacheable so its web system message is a plain string today,
     // but if array-content system ever reaches the neutral path the validator

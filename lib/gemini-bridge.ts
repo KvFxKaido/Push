@@ -4,6 +4,7 @@ import type {
   LlmMessage,
   PushStreamEvent,
   PushStreamRequest,
+  ResponseFormatSpec,
   StreamUsage,
   ToolFunctionSchema,
 } from './provider-contract.ts';
@@ -223,6 +224,13 @@ export function buildGeminiGenerateContentRequest(
     // accidentally enable grounding.
     enableGoogleSearch: request.google_search_grounding === true,
     tools: request.tools?.map(openAIToolToFlatTool),
+    responseFormat: request.response_format?.json_schema
+      ? {
+          name: request.response_format.json_schema.name,
+          schema: request.response_format.json_schema.schema,
+          strict: request.response_format.json_schema.strict,
+        }
+      : undefined,
   });
 }
 
@@ -243,6 +251,10 @@ interface GeminiBodyAssembly {
   topP?: number;
   enableGoogleSearch: boolean;
   tools?: ToolFunctionSchema[];
+  /** Native structured-output constraint. Emitted as `generationConfig`'s
+   *  `responseMimeType: 'application/json'` + `responseSchema` (Gemini's OpenAPI
+   *  subset). Skipped when function tools are present (Gemini rejects the combo). */
+  responseFormat?: ResponseFormatSpec;
 }
 
 function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> {
@@ -266,6 +278,19 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
   }
   if (typeof parts.topP === 'number') {
     generationConfig.topP = parts.topP;
+  }
+  // Structured output: Gemini constrains generation natively via
+  // `responseMimeType: 'application/json'` + `responseSchema` (its OpenAPI-3.0
+  // subset — the same shape `openAIJsonSchemaToGeminiSchema` builds for tool
+  // params). The JSON then streams back as ordinary text content, so callers
+  // `JSON.parse` it exactly as they do Anthropic `output_config` / OpenAI
+  // `response_format`. Skipped when function tools are present: Gemini rejects
+  // `responseSchema` combined with `functionDeclarations`, and the structured
+  // paths (Auditor/Reviewer verdicts) never set both — tools win, mirroring the
+  // grounding drop below.
+  if (parts.responseFormat && (parts.tools ?? []).length === 0) {
+    generationConfig.responseMimeType = 'application/json';
+    generationConfig.responseSchema = openAIJsonSchemaToGeminiSchema(parts.responseFormat.schema);
   }
 
   const body: Record<string, unknown> = { contents };
@@ -292,8 +317,14 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
   // function tools are attached we drop grounding to keep function calling
   // working uniformly across the catalog rather than 400 on the 2.5 models.
   // Grounding-only turns (no function schemas attached) are unaffected.
+  //
+  // Structured output also suppresses grounding: Gemini rejects `responseSchema`
+  // combined with ANY tool (functionDeclarations OR googleSearch), and grounding
+  // is default-on on web/CLI — so an Auditor/Reviewer verdict turn would ship
+  // schema + googleSearch and 400. A verdict shouldn't web-search anyway, so
+  // structured output wins over grounding here.
   // Ref: https://ai.google.dev/gemini-api/docs/tool-combination
-  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0) {
+  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0 && !parts.responseFormat) {
     tools.push({ googleSearch: {} });
   }
   if (tools.length > 0) {
@@ -530,6 +561,7 @@ export function toGeminiGenerateContent(
     topP: typeof req.topP === 'number' ? req.topP : undefined,
     enableGoogleSearch: options?.enableGoogleSearch ?? req.googleSearchGrounding === true,
     tools: req.tools,
+    responseFormat: req.responseFormat,
   });
 }
 
