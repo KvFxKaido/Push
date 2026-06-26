@@ -81,9 +81,13 @@ Ranked by leverage.
 ### 1. Provider file references (`uploadFile` shape) — token savings
 Push re-sends file content on every multi-step model call. A provider-side file
 handle (Anthropic Files API / equivalent) reused across a coder run would cut
-input tokens materially on long edit loops. This is a real efficiency win, not
-just ergonomics. Scope: a `lib/` file-reference cache keyed by content hash,
-threaded through the coder kernel. Smallest concrete adoption.
+input tokens materially on long edit loops. To order-of-magnitude it: a long
+coder run that re-reads a ~200-line file (~2K tokens) each turn over ~50 turns
+re-sends on the order of 100K tokens that a content-hash-keyed reference would
+send once — and that's one file, before counting the larger context a real edit
+loop carries. This is a real efficiency win, not just ergonomics. Scope: a
+`lib/` file-reference cache keyed by content hash, threaded through the coder
+kernel. Smallest concrete adoption.
 
 ### 2. A named, typed SDK facade — the missing front door
 **This is the highest-leverage item and the reason the branch is called
