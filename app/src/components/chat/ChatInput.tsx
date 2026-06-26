@@ -194,6 +194,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
+  deepseek: 'DeepSeek',
   vertex: 'Google Vertex',
   anthropic: 'Anthropic',
   openai: 'OpenAI',

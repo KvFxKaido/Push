@@ -138,6 +138,7 @@ export function useDaemonSettingsBundles({
     const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
     const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
     const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
+    const isDeepSeekModelLocked = isModelLocked && lockedProvider === 'deepseek';
 
     const settingsAI: SettingsAIProps = {
       activeProviderLabel: catalog.activeProviderLabel,
@@ -271,6 +272,21 @@ export function useDaemonSettingsBundles({
           setKeyInput: catalog.openadapter.setKeyInput,
           setKey: catalog.openadapter.setKey,
           clearKey: catalog.openadapter.clearKey,
+        },
+        deepseek: {
+          hasKey: catalog.deepseek.hasKey,
+          model: catalog.deepseek.model,
+          setModel: catalog.deepseek.setModel,
+          modelOptions: catalog.deepseekModelOptions,
+          modelsLoading: catalog.deepseekModels.loading,
+          modelsError: catalog.deepseekModels.error,
+          modelsUpdatedAt: catalog.deepseekModels.updatedAt,
+          isModelLocked: isDeepSeekModelLocked,
+          refreshModels: catalog.refreshDeepSeekModels,
+          keyInput: catalog.deepseek.keyInput,
+          setKeyInput: catalog.deepseek.setKeyInput,
+          setKey: catalog.deepseek.setKey,
+          clearKey: catalog.deepseek.clearKey,
         },
         anthropic: {
           hasKey: catalog.anthropic.hasKey,

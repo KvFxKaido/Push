@@ -103,6 +103,17 @@ const CAPABILITY_RULES: CapabilityRule[] = [
       streaming: 'supported',
     },
   },
+  {
+    // DeepSeek V4 is OpenAI-compatible with native tool calling, JSON mode, and
+    // streaming. Vision is left unverified (the direct API is text-only today).
+    providers: ['deepseek'],
+    match: /.*/,
+    capabilities: {
+      toolCalls: 'supported',
+      jsonMode: 'supported',
+      streaming: 'supported',
+    },
+  },
 ];
 
 function mergeCapabilities(
@@ -203,6 +214,8 @@ function formatProviderLabel(provider: AIProviderType): string {
       return 'Kilo Code';
     case 'fireworks':
       return 'Fireworks AI';
+    case 'deepseek':
+      return 'DeepSeek';
     case 'azure':
       return 'Azure OpenAI';
     case 'bedrock':

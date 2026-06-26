@@ -46,6 +46,7 @@ import {
   handleAnthropicChat,
   handleBlackboxChat,
   handleCloudflareChat,
+  handleDeepSeekChat,
   handleFireworksChat,
   handleGoogleChat,
   handleKiloCodeChat,
@@ -111,6 +112,8 @@ export function resolveProviderHandler(
       return handleFireworksChat as unknown as ProviderHandler;
     case 'openadapter':
       return handleOpenAdapterChat as unknown as ProviderHandler;
+    case 'deepseek':
+      return handleDeepSeekChat as unknown as ProviderHandler;
     case 'anthropic':
       return handleAnthropicChat as unknown as ProviderHandler;
     case 'openai':
@@ -199,7 +202,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, fireworks, openadapter, anthropic, openai, google.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, fireworks, openadapter, deepseek, anthropic, openai, google.`,
         );
       }
 

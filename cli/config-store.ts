@@ -72,6 +72,7 @@ export interface PushConfig {
   fireworks?: ProviderConfig;
   blackbox?: ProviderConfig;
   openadapter?: ProviderConfig;
+  deepseek?: ProviderConfig;
   openai?: ProviderConfig;
   anthropic?: ProviderConfig;
   google?: ProviderConfig;
@@ -190,6 +191,7 @@ const PROVIDER_CONFIG_KEYS = [
   'fireworks',
   'blackbox',
   'openadapter',
+  'deepseek',
   'openai',
   'anthropic',
   'google',

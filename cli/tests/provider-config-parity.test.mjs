@@ -81,6 +81,7 @@ describe('provider config parity', () => {
     fireworks: 'FIREWORKS_DEFAULT_MODEL',
     blackbox: 'BLACKBOX_DEFAULT_MODEL',
     openadapter: 'OPENADAPTER_DEFAULT_MODEL',
+    deepseek: 'DEEPSEEK_DEFAULT_MODEL',
     openai: 'OPENAI_DEFAULT_MODEL',
     anthropic: 'ANTHROPIC_DEFAULT_MODEL',
     google: 'GOOGLE_DEFAULT_MODEL',

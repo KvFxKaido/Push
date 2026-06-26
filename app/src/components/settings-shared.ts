@@ -21,6 +21,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
+  deepseek: 'DeepSeek',
 };
 
 export type BuiltInSettingsProviderId = Extract<
@@ -33,6 +34,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'kilocode'
   | 'fireworks'
   | 'openadapter'
+  | 'deepseek'
   | 'anthropic'
   | 'openai'
   | 'google'
@@ -54,6 +56,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'anthropic',
   'openai',
   'google',
+  'deepseek',
   'nvidia',
   'zen',
   'blackbox',
@@ -136,6 +139,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Google key',
     hint: 'Google Gemini API key from aistudio.google.com. Direct generativelanguage.googleapis.com — distinct from Vertex.',
     labelTransform: (model) => formatModelDisplayName('google', model),
+  },
+  deepseek: {
+    placeholder: 'DeepSeek API key',
+    saveLabel: 'Save DeepSeek key',
+    hint: 'DeepSeek API key from platform.deepseek.com. Direct api.deepseek.com — OpenAI-compatible with V4 reasoning models.',
+    labelTransform: (model) => formatModelDisplayName('deepseek', model),
   },
 };
 
