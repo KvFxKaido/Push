@@ -182,8 +182,18 @@ export function createBranchCarriedMessage(input: CreateBranchCarriedMessageInpu
 /** Compaction count at/above which the UI surfaces the "multiple compactions can
  *  blur older context — consider a fresh branch" degradation nudge. The first
  *  compaction is routine; the second is when "multiple compactions" becomes true
- *  (mirrors Codex's post-compaction warning). */
+ *  (mirrors the same post-compaction warning Codex emits). */
 export const COMPACTION_DEGRADATION_THRESHOLD = 2;
+
+/** 1-based ordinal of the NEXT compaction marker for a conversation: counts every
+ *  prior `kind:'compaction'` marker (they persist `visibleToModel:false`, so they
+ *  stay in the message list). Shared by BOTH marker sites — the pre-turn LLM
+ *  handoff (`chat-compaction.ts`) and the in-turn heuristic drain
+ *  (`chat-stream-round.ts`) — so the degradation nudge counts every compaction,
+ *  regardless of which path trimmed the window. */
+export function nextCompactionCount(messages: readonly ChatMessage[]): number {
+  return messages.filter((m) => m.kind === 'compaction').length + 1;
+}
 
 interface CreateCompactionMessageInput extends CompactionMeta {
   /** Branch active when the compaction happened, stamped for attribution. */
