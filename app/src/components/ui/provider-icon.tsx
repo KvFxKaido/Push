@@ -21,6 +21,7 @@ const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
   kilocode: 'https://kilo.ai/favicon.ico',
   fireworks: 'https://fireworks.ai/favicon.ico',
   openadapter: 'https://openadapter.dev/favicon.ico',
+  deepseek: 'https://models.dev/logos/deepseek.svg',
   demo: demoIcon,
 };
 
@@ -40,6 +41,7 @@ const PROVIDER_ALT: Record<AIProviderType, string> = {
   kilocode: 'Kilo Code logo',
   fireworks: 'Fireworks AI logo',
   openadapter: 'OpenAdapter logo',
+  deepseek: 'DeepSeek logo',
   demo: 'Push logo',
 };
 
@@ -63,6 +65,7 @@ const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
   kilocode: 'K',
   fireworks: 'FW',
   openadapter: 'OA',
+  deepseek: 'DS',
   demo: 'P',
 };
 

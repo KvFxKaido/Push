@@ -836,6 +836,39 @@ export const handleOpenAdapterModels = createJsonProxyHandler({
   timeoutError: 'OpenAdapter model list timed out after 30 seconds',
 });
 
+// --- DeepSeek (direct OpenAI-compatible API) ---
+
+export const handleDeepSeekChat = createStreamProxyHandler({
+  name: 'DeepSeek API',
+  logTag: 'api/deepseek/chat',
+  upstreamUrl: 'https://api.deepseek.com/chat/completions',
+  timeoutMs: 120_000,
+  maxOutputTokens: 8_192,
+  buildAuth: standardAuth('DEEPSEEK_API_KEY'),
+  keyMissingError:
+    'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
+  timeoutError: 'DeepSeek request timed out after 120 seconds',
+  // Classify DeepSeek's structured upstream errors (notably 429 quota / rate
+  // limit) the same way the other OpenAI-compat providers do, instead of the
+  // default opaque "API error <status>" passthrough.
+  formatUpstreamError: (status, bodyText) => ({
+    error: `DeepSeek ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export const handleDeepSeekModels = createJsonProxyHandler({
+  name: 'DeepSeek API',
+  logTag: 'api/deepseek/models',
+  upstreamUrl: 'https://api.deepseek.com/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('DEEPSEEK_API_KEY'),
+  keyMissingError:
+    'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
+  timeoutError: 'DeepSeek model list timed out after 30 seconds',
+});
+
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
 
 export function getZenGoAuthHeaders(

@@ -75,6 +75,7 @@
     "import.meta.env.VITE_BEDROCK_BASE_URL": "\"\"",
     "import.meta.env.VITE_BEDROCK_MODEL": "\"\"",
     "import.meta.env.VITE_BLACKBOX_API_KEY": "\"\"",
+    "import.meta.env.VITE_DEEPSEEK_API_KEY": "\"\"",
     "import.meta.env.VITE_GITHUB_APP_REDIRECT_URI": "\"\"",
     "import.meta.env.VITE_GITHUB_CLIENT_ID": "\"\"",
     "import.meta.env.VITE_GITHUB_OAUTH_PROXY": "\"\"",

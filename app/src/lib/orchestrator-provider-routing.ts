@@ -17,6 +17,7 @@ import { fireworksStream } from './fireworks-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
+import { deepseekStream } from './deepseek-stream';
 import { azureStream } from './azure-stream';
 import { bedrockStream } from './bedrock-stream';
 import { vertexStream } from './vertex-stream';
@@ -37,6 +38,7 @@ import {
   getKiloCodeModelName,
   getFireworksModelName,
   getOpenAdapterModelName,
+  getDeepSeekModelName,
   getAnthropicModelName,
   getOpenAIModelName,
   getGoogleModelName,
@@ -94,6 +96,7 @@ const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   kilocode: 'openai-compat',
   fireworks: 'openai-compat',
   openadapter: 'openai-compat',
+  deepseek: 'openai-compat',
   azure: 'openai-compat',
   bedrock: 'openai-compat',
   openai: 'openai-responses',
@@ -119,6 +122,7 @@ const FAILOVER_PROVIDER_ORDER: Exclude<ActiveProvider, 'demo'>[] = [
   'kilocode',
   'fireworks',
   'openadapter',
+  'deepseek',
   'azure',
   'bedrock',
   'vertex',
@@ -244,6 +248,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'openadapter':
       stream = (req) => normalizeReasoning(openadapterStream(req));
       break;
+    case 'deepseek':
+      stream = (req) => normalizeReasoning(deepseekStream(req));
+      break;
     case 'nvidia':
       stream = (req) => normalizeReasoning(nvidiaStream(req));
       break;
@@ -331,6 +338,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
+  deepseek: 'DeepSeek',
   azure: 'Azure',
   bedrock: 'Bedrock',
   vertex: 'Google Vertex',
@@ -355,6 +363,7 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'kilocode',
   'fireworks',
   'openadapter',
+  'deepseek',
   'nvidia',
   'blackbox',
   'azure',
@@ -403,6 +412,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getFireworksModelName();
     case 'openadapter':
       return getOpenAdapterModelName();
+    case 'deepseek':
+      return getDeepSeekModelName();
     case 'azure':
       return getAzureModelName();
     case 'bedrock':

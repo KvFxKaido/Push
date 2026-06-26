@@ -6,6 +6,7 @@ import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
+import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
@@ -1844,6 +1845,43 @@ export async function fetchOpenAdapterModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchDeepSeekModels(): Promise<string[]> {
+  const key = getDeepSeekKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.deepseek.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`DeepSeek model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('deepseek', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `DeepSeek model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

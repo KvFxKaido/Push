@@ -127,6 +127,7 @@ describe('catalog parity', () => {
       fireworks: extractExportedStringConstant(providerModelsSource, 'FIREWORKS_DEFAULT_MODEL'),
       blackbox: extractExportedStringConstant(providerModelsSource, 'BLACKBOX_DEFAULT_MODEL'),
       openadapter: extractExportedStringConstant(providerModelsSource, 'OPENADAPTER_DEFAULT_MODEL'),
+      deepseek: extractExportedStringConstant(providerModelsSource, 'DEEPSEEK_DEFAULT_MODEL'),
       openai: extractExportedStringConstant(providerModelsSource, 'OPENAI_DEFAULT_MODEL'),
       anthropic: extractExportedStringConstant(providerModelsSource, 'ANTHROPIC_DEFAULT_MODEL'),
       google: extractExportedStringConstant(providerModelsSource, 'GOOGLE_DEFAULT_MODEL'),
@@ -146,6 +147,7 @@ describe('DEFAULT_MODELS', () => {
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
     blackbox: 'claude-haiku-4-5-20251001',
     openadapter: 'deepseek/deepseek-v3',
+    deepseek: 'deepseek-v4-pro',
     openai: 'gpt-5.4',
     anthropic: 'claude-sonnet-4-6',
     google: 'gemini-3.5-flash',
@@ -161,6 +163,7 @@ describe('DEFAULT_MODELS', () => {
     assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), [
       'anthropic',
       'blackbox',
+      'deepseek',
       'fireworks',
       'google',
       'kilocode',

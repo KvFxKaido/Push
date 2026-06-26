@@ -13,6 +13,8 @@ export {
   BLACKBOX_MODELS,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  DEEPSEEK_DEFAULT_MODEL,
+  DEEPSEEK_MODELS,
   FIREWORKS_DEFAULT_MODEL,
   FIREWORKS_MODELS,
   GOOGLE_DEFAULT_MODEL,
@@ -35,6 +37,7 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
+  DEEPSEEK_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
@@ -106,6 +109,10 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   openadapter: {
     chat: providerUrl('/api/openadapter/chat', '/api/openadapter/chat'),
     models: providerUrl('/api/openadapter/models', '/api/openadapter/models'),
+  },
+  deepseek: {
+    chat: providerUrl('/api/deepseek/chat', '/api/deepseek/chat'),
+    models: providerUrl('/api/deepseek/models', '/api/deepseek/models'),
   },
   anthropic: {
     chat: providerUrl('/api/anthropic/chat', '/api/anthropic/chat'),
@@ -403,6 +410,15 @@ export const PROVIDERS: AIProviderConfig[] = [
     models: makeRoleModels(OPENADAPTER_DEFAULT_MODEL, 'OpenAdapter', 'openadapter', 131_072),
   },
   {
+    type: 'deepseek',
+    name: 'DeepSeek',
+    description:
+      'DeepSeek direct — OpenAI-compatible api.deepseek.com with V4 reasoning models and thinking mode',
+    envKey: 'VITE_DEEPSEEK_API_KEY',
+    envUrl: 'https://api.deepseek.com',
+    models: makeRoleModels(DEEPSEEK_DEFAULT_MODEL, 'DeepSeek', 'deepseek', 1_000_000),
+  },
+  {
     type: 'azure',
     name: 'Azure OpenAI',
     description:
@@ -583,6 +599,10 @@ const googleModel = createModelNameStorage('google_model', GOOGLE_DEFAULT_MODEL)
 export const getGoogleModelName = googleModel.get;
 export const setGoogleModelName = googleModel.set;
 
+const deepseekModel = createModelNameStorage('deepseek_model', DEEPSEEK_DEFAULT_MODEL);
+export const getDeepSeekModelName = deepseekModel.get;
+export const setDeepSeekModelName = deepseekModel.set;
+
 /** Runtime model-name getters for providers where the user can override the default. */
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
@@ -600,6 +620,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,
   google: getGoogleModelName,
+  deepseek: getDeepSeekModelName,
 };
 
 /** Return the current runtime model name for a provider, or undefined if unknown. */
@@ -642,6 +663,7 @@ export type PreferredProvider =
   | 'kilocode'
   | 'fireworks'
   | 'openadapter'
+  | 'deepseek'
   | 'anthropic'
   | 'openai'
   | 'google';
@@ -661,6 +683,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'kilocode' ||
     stored === 'fireworks' ||
     stored === 'openadapter' ||
+    stored === 'deepseek' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
     stored === 'google'
@@ -699,6 +722,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'kilocode' ||
     stored === 'fireworks' ||
     stored === 'openadapter' ||
+    stored === 'deepseek' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
     stored === 'google'

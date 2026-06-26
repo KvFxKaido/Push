@@ -18,6 +18,7 @@ import {
   FIREWORKS_DEFAULT_MODEL,
   FIREWORKS_MODELS,
   OPENADAPTER_MODELS,
+  DEEPSEEK_MODELS,
   normalizeKilocodeModelName,
   normalizeFireworksModelName,
   type PreferredProvider,
@@ -34,6 +35,7 @@ import {
   fetchKilocodeModels,
   fetchFireworksModels,
   fetchOpenAdapterModels,
+  fetchDeepSeekModels,
   fetchGoogleModels,
   fetchOpenAIModels,
 } from '@/lib/model-catalog';
@@ -49,6 +51,7 @@ import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useOpenAdapterConfig } from '@/hooks/useOpenAdapterConfig';
+import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
@@ -161,6 +164,7 @@ export interface ModelCatalog {
   kilocode: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   openadapter: ProviderKeyConfig;
+  deepseek: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
   vertex: VertexProviderConfig;
@@ -187,6 +191,7 @@ export interface ModelCatalog {
   kilocodeModels: ProviderModelState;
   fireworksModels: ProviderModelState;
   openAdapterModels: ProviderModelState;
+  deepseekModels: ProviderModelState;
   googleModels: ProviderModelState;
   openaiModels: ProviderModelState;
 
@@ -200,6 +205,7 @@ export interface ModelCatalog {
   kilocodeModelOptions: string[];
   fireworksModelOptions: string[];
   openAdapterModelOptions: string[];
+  deepseekModelOptions: string[];
   anthropicModelOptions: string[];
   openaiModelOptions: string[];
   googleModelOptions: string[];
@@ -218,6 +224,7 @@ export interface ModelCatalog {
   refreshKilocodeModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
   refreshOpenAdapterModels: () => Promise<void>;
+  refreshDeepSeekModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
   refreshOpenAIModels: () => Promise<void>;
 }
@@ -506,6 +513,7 @@ export function useModelCatalog(): ModelCatalog {
   const kilocodeCfg = useKilocodeConfig();
   const fireworksCfg = useFireworksConfig();
   const openAdapterCfg = useOpenAdapterConfig();
+  const deepseekCfg = useDeepSeekConfig();
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
   const googleCfg = useGoogleConfig();
@@ -523,6 +531,7 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
+  const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
@@ -607,6 +616,7 @@ export function useModelCatalog(): ModelCatalog {
       ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
       ['fireworks', 'Fireworks AI', fireworksCfg.hasKey],
       ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
+      ['deepseek', 'DeepSeek', deepseekCfg.hasKey],
       ['azure', 'Azure OpenAI', azureCfg.isConfigured],
       ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
       ['vertex', 'Google Vertex', vertexCfg.isConfigured],
@@ -627,6 +637,7 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
+  const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
   const [openaiModelList, setOpenaiModelList] = useState<string[]>([]);
 
@@ -639,6 +650,7 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
   const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
+  const [deepseekLoading, setDeepseekLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [openaiLoading, setOpenaiLoading] = useState(false);
 
@@ -651,6 +663,7 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
+  const [deepseekError, setDeepseekError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [openaiError, setOpenaiError] = useState<string | null>(null);
 
@@ -663,6 +676,7 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
+  const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
 
@@ -907,6 +921,20 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load Fireworks AI models.',
     });
   }, [fireworksCfg.hasKey, fireworksLoading, refreshModels]);
+
+  const refreshDeepSeekModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: deepseekCfg.hasKey,
+      isLoading: deepseekLoading,
+      setLoading: setDeepseekLoading,
+      setError: setDeepseekError,
+      setModels: setDeepseekModelList,
+      setUpdatedAt: setDeepseekUpdatedAt,
+      fetchModels: fetchDeepSeekModels,
+      emptyMessage: 'No models returned by DeepSeek.',
+      failureMessage: 'Failed to load DeepSeek models.',
+    });
+  }, [deepseekCfg.hasKey, deepseekLoading, refreshModels]);
 
   const refreshOpenAdapterModels = useCallback(async () => {
     await refreshModels({
@@ -1153,6 +1181,29 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
+          hasKey: deepseekCfg.hasKey,
+          modelCount: deepseekModelList.length,
+          loading: deepseekLoading,
+          error: deepseekError,
+        }),
+        activeProviderLabel === 'deepseek',
+        () => {
+          void refreshDeepSeekModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      deepseekCfg.hasKey,
+      deepseekError,
+      deepseekLoading,
+      deepseekModelList.length,
+      refreshDeepSeekModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
           hasKey: openAdapterCfg.hasKey,
           modelCount: openAdapterModelList.length,
           loading: openAdapterLoading,
@@ -1303,6 +1354,16 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [fireworksCfg.hasKey]);
   useEffect(() => {
+    if (!deepseekCfg.hasKey) {
+      const id = setTimeout(() => {
+        setDeepseekModelList([]);
+        setDeepseekError(null);
+        setDeepseekUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [deepseekCfg.hasKey]);
+  useEffect(() => {
     if (!openAdapterCfg.hasKey) {
       const id = setTimeout(() => {
         setOpenAdapterModelList([]);
@@ -1435,6 +1496,14 @@ export function useModelCatalog(): ModelCatalog {
         blackboxCfg.model,
       ),
     [blackboxModelList, blackboxCfg.model],
+  );
+  const deepseekModelOptions = useMemo(
+    () =>
+      includeSelectedModel(
+        deepseekModelList.length > 0 ? deepseekModelList : DEEPSEEK_MODELS,
+        deepseekCfg.model,
+      ),
+    [deepseekModelList, deepseekCfg.model],
   );
   const kilocodeModelOptions = useMemo(() => {
     const selectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
@@ -1574,6 +1643,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: openAdapterCfg.setModel,
       keyInput: openAdapterKeyInput,
       setKeyInput: setOpenAdapterKeyInput,
+    },
+    deepseek: {
+      setKey: deepseekCfg.setKey,
+      clearKey: deepseekCfg.clearKey,
+      hasKey: deepseekCfg.hasKey,
+      model: deepseekCfg.model,
+      setModel: deepseekCfg.setModel,
+      keyInput: deepseekKeyInput,
+      setKeyInput: setDeepseekKeyInput,
     },
     azure: {
       keyInput: azureKeyInput,
@@ -1748,6 +1826,12 @@ export function useModelCatalog(): ModelCatalog {
       error: openAdapterError,
       updatedAt: openAdapterUpdatedAt,
     },
+    deepseekModels: {
+      models: deepseekModelList,
+      loading: deepseekLoading,
+      error: deepseekError,
+      updatedAt: deepseekUpdatedAt,
+    },
     googleModels: {
       models: googleModelList,
       loading: googleLoading,
@@ -1770,6 +1854,7 @@ export function useModelCatalog(): ModelCatalog {
     kilocodeModelOptions,
     fireworksModelOptions,
     openAdapterModelOptions,
+    deepseekModelOptions,
     anthropicModelOptions,
     openaiModelOptions,
     googleModelOptions,
@@ -1786,6 +1871,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshKilocodeModels,
     refreshFireworksModels,
     refreshOpenAdapterModels,
+    refreshDeepSeekModels,
     refreshGoogleModels,
     refreshOpenAIModels,
   };

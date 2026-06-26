@@ -2,6 +2,7 @@ import process from 'node:process';
 import {
   ANTHROPIC_DEFAULT_MODEL,
   BLACKBOX_DEFAULT_MODEL,
+  DEEPSEEK_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
@@ -227,6 +228,21 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
       return process.env.PUSH_OPENADAPTER_MODEL || OPENADAPTER_DEFAULT_MODEL;
     },
     apiKeyEnv: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
+    requiresKey: true,
+  },
+  deepseek: {
+    id: 'deepseek',
+    // Direct DeepSeek API — OpenAI-compatible Chat Completions. Reasoning models
+    // (thinking mode) stream `reasoning_content`, which the shared OpenAI SSE pump
+    // already handles; unlike the Zen Go gateway, the direct API rejects
+    // `reasoning_content` echoed back on input, so it is never replayed.
+    get url() {
+      return process.env.PUSH_DEEPSEEK_URL || 'https://api.deepseek.com/chat/completions';
+    },
+    get defaultModel() {
+      return process.env.PUSH_DEEPSEEK_MODEL || DEEPSEEK_DEFAULT_MODEL;
+    },
+    apiKeyEnv: ['PUSH_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'VITE_DEEPSEEK_API_KEY'],
     requiresKey: true,
   },
   openai: {

@@ -29,6 +29,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   kilocode: '',
   fireworks: '',
   openadapter: '',
+  deepseek: '',
 };
 
 function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> | undefined {
@@ -52,6 +53,7 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     fireworks:
       typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
     openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
+    deepseek: typeof parsed.deepseek === 'string' ? parsed.deepseek.trim() : '',
   };
 }
 
@@ -128,6 +130,7 @@ export function useWorkspaceComposerState({
       anthropic: catalog.anthropic.model,
       openai: catalog.openai.model,
       google: catalog.google.model,
+      deepseek: catalog.deepseek.model,
     }),
     [
       catalog.anthropic.model,
@@ -145,6 +148,7 @@ export function useWorkspaceComposerState({
       catalog.openRouter.model,
       catalog.vertex.model,
       catalog.zen.model,
+      catalog.deepseek.model,
     ],
   );
 
@@ -247,6 +251,10 @@ export function useWorkspaceComposerState({
           draft?.models?.openadapter?.trim() ||
           rememberedChatModels.openadapter ||
           defaultChatModels.openadapter,
+        deepseek:
+          draft?.models?.deepseek?.trim() ||
+          rememberedChatModels.deepseek ||
+          defaultChatModels.deepseek,
       };
 
       let provider = draft?.provider ?? defaultChatProvider;

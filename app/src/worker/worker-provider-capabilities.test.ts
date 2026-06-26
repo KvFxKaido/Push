@@ -59,6 +59,7 @@ describe('isProviderEngineCapable', () => {
       KILOCODE_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',
       OPENADAPTER_API_KEY: 'k',
+      DEEPSEEK_API_KEY: 'k',
       ANTHROPIC_API_KEY: 'k',
       OPENAI_API_KEY: 'k',
       GOOGLE_API_KEY: 'k',

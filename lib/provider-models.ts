@@ -21,6 +21,7 @@ export type SharedProviderModelId =
   | 'fireworks'
   | 'blackbox'
   | 'openadapter'
+  | 'deepseek'
   | 'openai'
   | 'anthropic'
   | 'google';
@@ -43,6 +44,13 @@ export const FIREWORKS_DEFAULT_MODEL = 'accounts/fireworks/models/deepseek-v4-pr
 // default 400'd on every send. This bare id is the accepted haiku-tier model.
 export const BLACKBOX_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
+// Direct DeepSeek API (api.deepseek.com) — OpenAI-compatible. `deepseek-v4-pro`
+// is DeepSeek's flagship (frontier reasoning + thinking mode, up to 1M context);
+// `deepseek-v4-flash` is the faster, cheaper sibling. The legacy `deepseek-chat`
+// / `deepseek-reasoner` aliases (non-thinking / thinking mode of v4-flash) are
+// deprecated 2026-07-24, so they're left out of the curated list — free-text
+// entry still resolves them until then.
+export const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-pro';
 
 // Direct-provider defaults — populated by the scaffolding PR; the streaming /
 // auth / system-prompt wiring lands per-provider in follow-up PRs that consume
@@ -268,6 +276,8 @@ export const OPENADAPTER_MODELS: string[] = [
   'z-ai/glm-5',
 ];
 
+export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-v4-flash'];
+
 // Curated direct-provider model lists. Free-text entry is still permitted at
 // the UI layer; the curated list seeds dropdowns. Refresh against each
 // provider's `/v1/models` endpoint once the per-provider PRs land.
@@ -322,6 +332,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   fireworks: FIREWORKS_MODELS,
   blackbox: BLACKBOX_MODELS,
   openadapter: OPENADAPTER_MODELS,
+  deepseek: DEEPSEEK_MODELS,
   openai: OPENAI_MODELS,
   anthropic: ANTHROPIC_MODELS,
   google: GOOGLE_MODELS,
@@ -336,6 +347,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   fireworks: FIREWORKS_DEFAULT_MODEL,
   blackbox: BLACKBOX_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
+  deepseek: DEEPSEEK_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,

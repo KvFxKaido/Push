@@ -180,6 +180,7 @@ export type AIProviderType =
   | 'openadapter'
   | 'bedrock'
   | 'vertex'
+  | 'deepseek'
   | 'anthropic'
   | 'openai'
   | 'google'
@@ -203,6 +204,7 @@ export const ALL_PROVIDERS = [
   'openadapter',
   'bedrock',
   'vertex',
+  'deepseek',
   'anthropic',
   'openai',
   'google',

@@ -137,6 +137,7 @@ function extractReadmeProviderRows(source) {
         '`fireworks`',
         '`blackbox`',
         '`openadapter`',
+        '`deepseek`',
         '`openai`',
         '`anthropic`',
         '`google`',
