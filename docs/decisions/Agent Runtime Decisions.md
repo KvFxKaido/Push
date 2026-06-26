@@ -407,7 +407,7 @@ until a repo actually needs custom rules.
 
 ### 14. Context-window compaction is always-on, runtime-owned, visible, and LLM-summarized
 
-Status: **Current** (shipped 2026-06-21, web). **Threshold model revised 2026-06-26** — see *Revision* at the end of this section; the tier-spine consolidation is in progress in the same change.
+Status: **Current** (shipped 2026-06-21, web). **Threshold model revised 2026-06-26** — see *Revision* at the end of this section; the dead parallel compaction ladders were retired in the same change.
 
 Two prior gaps: compaction was (a) silently applied — it fired `context.compaction`
 run events that only surfaced in the Hub console, so a user never saw the window
@@ -507,19 +507,26 @@ The constants are **telemetry-tunable, not settled.** Prompt-cache token capture
 `context.compaction` events picks `HANDOFF_RATIO` and `HANDOFF_CEILING`. Recorded
 here as the operating direction — measured before any hard-tuning.
 
-**Consolidation onto one tier spine.** `lib/message-context-manager.ts` (the
-hand-rolled Phase 1/2/3 ladder behind `manageContext`) and `lib/compaction-tiers.ts`
-(the identical cheap→expensive ladder, written as a reusable primitive "without
-replacing the existing concrete managers") are two implementations of one idea.
-This change finishes the primitive's adoption: `manageContext` delegates to
-`applyTiers` (`drop-old-tool-outputs → semantic-compact → drop-oldest-pairs`),
-with the `[CONTEXT DIGEST]` insertion kept as a wrapper around the hard-fallback
-tier so the digest/PreCompact/metric-phase surface is byte-for-byte preserved.
-One ladder, one set of tier names in the telemetry trace, surface-tuned only by
-tier configuration. CLI `cli/context-manager.ts`'s manual `/compact` adopts the
-same spine. The async LLM handoff (`lib/llm-compaction.ts`) stays a distinct
-pre-turn pass — already Codex-aligned and well-factored — now keyed off
-`handoffTokens`.
+**Consolidation: retire the two dead parallel ladders.** A closer reading found
+the "three implementations" weren't peers. The two *live* compaction paths are
+`manageContext` (web, via `createContextManager`'s dependency-injection seam —
+the web binds `compactChatMessage` / digest factory / metrics) and `distillContext`
+(CLI, bound into `lib/context-transformer.ts`), each legitimately surface-tuned.
+The other two were dead weight: `lib/compaction-tiers.ts` — a speculative
+single-budget cheap→expensive composer written "for new sites and future
+migrations" but adopted by **nobody** (zero non-test callers) — and
+`cli/context-manager.ts`'s `trimContext`, a vestigial port of the web's
+two-budget ladder that never got wired into a live path (referenced only by its
+own tests; the CLI's real automatic trimming goes through `distillContext` +
+`lead-compaction`). Both were **deleted** with their tests. That is the honest
+"reduce the overlap" — remove the unadopted/vestigial parallel attempts, not
+contort a per-turn hot path onto the unadopted one: the spine is single-budget
+cheap→expensive, the live managers are two-budget summarize-then-drop-with-digest,
+and forcing one onto the other would make the primitive leaky and risk the live
+path (its #283/#285 regressions pin message-level behavior). A future site needing
+tiered compaction should extend the adopted `createContextManager` seam, not
+resurrect a speculative parallel. The async LLM handoff (`lib/llm-compaction.ts`)
+is structurally unchanged — now keyed off `handoffTokens` (above).
 
 ## Active Runtime Work
 
