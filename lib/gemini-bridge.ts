@@ -317,8 +317,14 @@ function assembleGeminiBody(parts: GeminiBodyAssembly): Record<string, unknown> 
   // function tools are attached we drop grounding to keep function calling
   // working uniformly across the catalog rather than 400 on the 2.5 models.
   // Grounding-only turns (no function schemas attached) are unaffected.
+  //
+  // Structured output also suppresses grounding: Gemini rejects `responseSchema`
+  // combined with ANY tool (functionDeclarations OR googleSearch), and grounding
+  // is default-on on web/CLI — so an Auditor/Reviewer verdict turn would ship
+  // schema + googleSearch and 400. A verdict shouldn't web-search anyway, so
+  // structured output wins over grounding here.
   // Ref: https://ai.google.dev/gemini-api/docs/tool-combination
-  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0) {
+  if (parts.enableGoogleSearch && nativeFunctionTools.length === 0 && !parts.responseFormat) {
     tools.push({ googleSearch: {} });
   }
   if (tools.length > 0) {
