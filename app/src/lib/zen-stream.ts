@@ -125,8 +125,21 @@ export async function* zenStream(
     const rcCount = wireMessages.filter(
       (m) => m.role === 'assistant' && typeof m.reasoning_content === 'string',
     ).length;
-    headers['x-push-debug-build'] = 'dsfix2';
+    // INPUT (pre-toLLMMessages) ChatMessage shape: how many assistant turns
+    // carry non-empty `.thinking` (mt) and `.toolUses` (tu). mt=0 → the message
+    // reaching the stream has no thinking (construction/capture bug); mt>=1 but
+    // rc=0 → toLLMMessages dropped it (orchestrator emit/gate bug).
+    const inputAssistants = req.messages.filter((m) => m.role === 'assistant');
+    const mtCount = inputAssistants.filter(
+      (m) => typeof m.thinking === 'string' && m.thinking.length > 0,
+    ).length;
+    const tuCount = inputAssistants.filter(
+      (m) => Array.isArray(m.toolUses) && m.toolUses.length > 0,
+    ).length;
+    headers['x-push-debug-build'] = 'dsfix3';
     headers['x-push-debug-rc'] = String(rcCount);
+    headers['x-push-debug-mt'] = String(mtCount);
+    headers['x-push-debug-tu'] = String(tuCount);
   }
 
   const url = goMode ? ZEN_GO_URLS.chat : PROVIDER_URLS.zen.chat;

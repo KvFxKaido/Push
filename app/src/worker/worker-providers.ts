@@ -1078,9 +1078,11 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       // client built the wire with zero reasoning_content (capture is empty).
       const clientBuild = request.headers.get('x-push-debug-build') ?? '';
       const clientRc = request.headers.get('x-push-debug-rc') ?? '';
+      const clientMt = request.headers.get('x-push-debug-mt') ?? '';
+      const clientTu = request.headers.get('x-push-debug-tu') ?? '';
       const buildTag =
         transport !== 'anthropic' && /deepseek/i.test(model)
-          ? `[build=${clientBuild} rc=${clientRc}] `
+          ? `[build=${clientBuild} rc=${clientRc} mt=${clientMt} tu=${clientTu}] `
           : '';
       return Response.json(
         {
