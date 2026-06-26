@@ -9,9 +9,10 @@
  *   - **Native mode** — the client sent `X-Push-Vertex-Service-Account`
  *     and `X-Push-Vertex-Region`. The Worker exchanges the service
  *     account for a Google access token and calls Vertex directly.
- *     Anthropic-transport models (`claude-*` IDs) are wrapped through
- *     `createAnthropicTranslatedStream` server-side, so the wire shape
- *     coming back is plain OpenAI SSE for the client either way.
+ *     Anthropic-transport models (`claude-*` IDs) stream raw Anthropic
+ *     Messages SSE straight through, parsed here by `anthropicEventStream`
+ *     (signed thinking + `pause_turn` native, no translator); Gemini
+ *     models ride Vertex's OpenAI-compat endpoint, parsed by `openAISSEPump`.
  *   - **Legacy mode** — the client sent `X-Push-Upstream-Base`. The
  *     Worker falls through to `handleLegacyVertexChat` which proxies
  *     OpenAI-compatible upstreams the same way Azure / Bedrock do.
@@ -29,6 +30,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
 import { flatToolToOpenAITool } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
@@ -90,6 +92,12 @@ export async function* vertexStream(
   //        into `tools: [{ googleSearch: {} }]`.
   const isAnthropicTransport =
     typeof req.model === 'string' && req.model.trim().toLowerCase().startsWith('claude-');
+  // Native mode + Claude → the Worker proxies raw Anthropic Messages SSE, parsed
+  // by `anthropicEventStream` (signed thinking + `pause_turn` surface natively, no
+  // OpenAI-SSE translator). Legacy mode routes claude-* through the user's
+  // OpenAI-compat proxy (`handleLegacyVertexChat`), which speaks OpenAI SSE, so it
+  // stays on `openAISSEPump`. Gemini transport is OpenAI-compat either way.
+  const useNativeAnthropic = mode === 'native' && isAnthropicTransport;
   const anthropicWebSearch =
     isAnthropicTransport &&
     (req.anthropicWebSearch ?? isNativeWebSearchEnabled('vertex', req.model));
@@ -239,11 +247,18 @@ export async function* vertexStream(
     }
 
     let paused: Array<Record<string, unknown>> | null = null;
-    for await (const event of openAISSEPump({
-      body: response.body,
-      signal: req.signal,
-      isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-    })) {
+    // Dual response pump by transport (mirrors the Worker's dual request
+    // serialization). The `pause_turn` continuation handling is identical for
+    // both — `anthropicEventStream` and `openAISSEPump` each surface `pause_turn`
+    // with the paused `assistantBlocks` — so the replay loop is unchanged.
+    const events = useNativeAnthropic
+      ? anthropicEventStream(response, req.signal, (name) => KNOWN_TOOL_NAMES.has(name))
+      : openAISSEPump({
+          body: response.body,
+          signal: req.signal,
+          isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
+        });
+    for await (const event of events) {
       if (event.type === 'pause_turn') {
         paused = event.assistantBlocks;
         continue;

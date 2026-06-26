@@ -8,12 +8,10 @@ import {
   anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
-  createAnthropicTranslatedStream,
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
 import { anthropicModelSupportsNativeStructuredOutput } from './anthropic-structured-output.ts';
-import { openAISSEPump } from './openai-sse-pump.ts';
 import type { PushStreamEvent } from './provider-contract.ts';
 
 function createEventStreamResponse(lines: string[]): Response {
@@ -724,205 +722,6 @@ describe('Anthropic structured outputs', () => {
   });
 });
 
-describe('createAnthropicTranslatedStream', () => {
-  it('translates Anthropic SSE events into OpenAI-style SSE chunks', async () => {
-    const upstream = createEventStreamResponse([
-      'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}',
-      'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
-      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":11,"output_tokens":5}}}',
-    ]);
-
-    const translated = createAnthropicTranslatedStream(upstream, 'minimax-m2.5');
-    const text = await new Response(translated).text();
-    const payloads = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: '))
-      .map((line) => line.slice(6));
-
-    expect(payloads.at(-1)).toBe('[DONE]');
-    const jsonPayloads = payloads
-      .filter((line) => line !== '[DONE]')
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            choices: Array<{ delta?: { content?: string }; finish_reason?: string | null }>;
-            usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
-          },
-      );
-
-    expect(jsonPayloads.some((payload) => payload.choices[0]?.delta?.content === 'Hello')).toBe(
-      true,
-    );
-    expect(jsonPayloads.some((payload) => payload.choices[0]?.finish_reason === 'stop')).toBe(true);
-    expect(jsonPayloads.some((payload) => payload.usage?.total_tokens === 16)).toBe(true);
-  });
-
-  it('captures signed thinking + signature deltas as a single reasoning_block chunk', async () => {
-    // Anthropic streams thinking in three frames: content_block_start
-    // declares the block, content_block_delta carries `thinking_delta`
-    // text and a `signature_delta` separately, content_block_stop closes
-    // it. The translator must accumulate text + signature and emit one
-    // structured `delta.reasoning_block` so the OpenAI pump can persist
-    // a complete signed block on the assistant message.
-    const upstream = createEventStreamResponse([
-      'data: {"type":"message_start","message":{"usage":{"input_tokens":4,"output_tokens":0}}}',
-      'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Hmm "}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think."}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig-zzz"}}',
-      'data: {"type":"content_block_stop","index":0}',
-      'data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}',
-      'data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Done."}}',
-      'data: {"type":"content_block_stop","index":1}',
-      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":3}}}',
-    ]);
-
-    const translated = createAnthropicTranslatedStream(upstream, 'claude-opus-4-7');
-    const text = await new Response(translated).text();
-    const jsonPayloads = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
-      .map((line) => line.slice(6))
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            choices: Array<{
-              delta?: {
-                content?: string;
-                reasoning_block?: {
-                  type: string;
-                  text?: string;
-                  signature?: string;
-                  data?: string;
-                };
-              };
-            }>;
-          },
-      );
-
-    const reasoningBlocks = jsonPayloads
-      .map((p) => p.choices[0]?.delta?.reasoning_block)
-      .filter((b): b is NonNullable<typeof b> => Boolean(b));
-    expect(reasoningBlocks).toHaveLength(1);
-    expect(reasoningBlocks[0]).toEqual({
-      type: 'thinking',
-      text: 'Hmm let me think.',
-      signature: 'sig-zzz',
-    });
-
-    const textChunks = jsonPayloads
-      .map((p) => p.choices[0]?.delta?.content)
-      .filter((c): c is string => typeof c === 'string');
-    expect(textChunks.join('')).toBe('Done.');
-  });
-
-  it('emits redacted_thinking blocks verbatim', async () => {
-    const upstream = createEventStreamResponse([
-      'data: {"type":"message_start","message":{}}',
-      'data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"enc-payload-xyz"}}',
-      'data: {"type":"content_block_stop","index":0}',
-      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
-    ]);
-
-    const translated = createAnthropicTranslatedStream(upstream, 'claude-opus-4-7');
-    const text = await new Response(translated).text();
-    const blocks = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
-      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
-      .map(
-        (p) =>
-          (p as { choices?: Array<{ delta?: { reasoning_block?: unknown } }> }).choices?.[0]?.delta
-            ?.reasoning_block,
-      )
-      .filter((b): b is { type: string; data: string } => Boolean(b)) as Array<{
-      type: string;
-      data: string;
-    }>;
-
-    expect(blocks).toEqual([{ type: 'redacted_thinking', data: 'enc-payload-xyz' }]);
-  });
-
-  it('captures assistant content blocks and emits pause_turn finish_reason on stop_reason=pause_turn', async () => {
-    // Web search server-tool turns can pause when Anthropic hits its
-    // internal sampling-loop cap. The translator must capture the full
-    // assistant content[] (text + server_tool_use + web_search_tool_result)
-    // and emit `finish_reason: pause_turn` with the blocks as a sidecar so
-    // the stream adapter can replay them in a continuation request.
-    const upstream = createEventStreamResponse([
-      'data: {"type":"message_start","message":{"usage":{"input_tokens":11,"output_tokens":0}}}',
-      'data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Looking up "}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"the answer."}}',
-      'data: {"type":"content_block_stop","index":0}',
-      'data: {"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"su_01","name":"web_search","input":{}}}',
-      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\\"query\\":"}}',
-      'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"tc39 stage 4\\"}"}}',
-      'data: {"type":"content_block_stop","index":1}',
-      'data: {"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"su_01","content":[{"type":"web_search_result","url":"https://example.com","title":"TC39"}]}}',
-      'data: {"type":"content_block_stop","index":2}',
-      'data: {"type":"message_delta","delta":{"stop_reason":"pause_turn","usage":{"input_tokens":11,"output_tokens":12}}}',
-    ]);
-
-    const translated = createAnthropicTranslatedStream(upstream, 'claude-opus-4-7');
-    const text = await new Response(translated).text();
-    const payloads = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
-      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>);
-
-    type Chunk = {
-      choices?: Array<{
-        delta?: { content?: string; assistant_content_blocks?: Array<Record<string, unknown>> };
-        finish_reason?: string;
-      }>;
-    };
-    const final = payloads.at(-1) as Chunk;
-    expect(final.choices?.[0]?.finish_reason).toBe('pause_turn');
-    const blocks = final.choices?.[0]?.delta?.assistant_content_blocks;
-    expect(Array.isArray(blocks)).toBe(true);
-    expect(blocks).toHaveLength(3);
-    expect(blocks?.[0]).toMatchObject({ type: 'text', text: 'Looking up the answer.' });
-    expect(blocks?.[1]).toMatchObject({
-      type: 'server_tool_use',
-      id: 'su_01',
-      name: 'web_search',
-      input: { query: 'tc39 stage 4' },
-    });
-    expect(blocks?.[2]).toMatchObject({
-      type: 'web_search_tool_result',
-      tool_use_id: 'su_01',
-    });
-
-    // Text deltas still flow through normally on the way to the pause — the
-    // user sees the partial response in the UI while the adapter sets up
-    // the continuation request.
-    const textContent = payloads
-      .map((p) => (p as Chunk).choices?.[0]?.delta?.content ?? '')
-      .join('');
-    expect(textContent).toBe('Looking up the answer.');
-  });
-
-  it('drops thinking blocks that arrive without a signature rather than emitting a poison block', async () => {
-    // A thinking block without signature can't round-trip — Anthropic
-    // would 400 the next request. Drop it on the floor; the text channel
-    // already covers display.
-    const upstream = createEventStreamResponse([
-      'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"orphan"}}',
-      'data: {"type":"content_block_stop","index":0}',
-      'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
-    ]);
-    const translated = createAnthropicTranslatedStream(upstream, 'claude-opus-4-7');
-    const text = await new Response(translated).text();
-    const reasoningEmitted = text
-      .split('\n')
-      .filter((line) => line.startsWith('data: ') && !line.endsWith('[DONE]'))
-      .some((line) => line.includes('reasoning_block'));
-    expect(reasoningEmitted).toBe(false);
-  });
-});
-
 // ---------------------------------------------------------------------------
 // Phase 2: direct neutral -> Anthropic serializer (toAnthropicMessages)
 //
@@ -1254,9 +1053,12 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
 
 // ---------------------------------------------------------------------------
 // Phase 3a: anthropicEventStream — Anthropic SSE parsed directly into neutral
-// PushStreamEvents. Pinned byte-for-byte (at the event level) against the
-// legacy createAnthropicTranslatedStream -> openAISSEPump round-trip that the
-// CLI used before, and that the web Worker still uses for its response wire.
+// PushStreamEvents. This is the production response path for every
+// Anthropic-Messages route (CLI, direct web Anthropic, and the multiplexed
+// Vertex-Claude / Zen-Go routes, whose Workers proxy the raw upstream SSE).
+// Expected sequences below were pinned from the now-removed
+// createAnthropicTranslatedStream -> openAISSEPump detour the CLI used before,
+// so the native pump stays event-for-event identical to that baseline.
 // ---------------------------------------------------------------------------
 
 async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<PushStreamEvent[]> {
@@ -1265,14 +1067,8 @@ async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<Pu
   return out;
 }
 
-/** The legacy path: translate Anthropic SSE -> OpenAI SSE, then pump it. */
-function legacyEvents(lines: string[]): Promise<PushStreamEvent[]> {
-  const translated = createAnthropicTranslatedStream(createEventStreamResponse(lines), 'claude-x');
-  return collectEvents(openAISSEPump({ body: translated }));
-}
-
-describe('anthropicEventStream — drift vs translate->pump', () => {
-  const corpus: Array<{ name: string; lines: string[] }> = [
+describe('anthropicEventStream — Anthropic SSE -> neutral events', () => {
+  const corpus: Array<{ name: string; lines: string[]; expected: PushStreamEvent[] }> = [
     {
       name: 'text deltas + end_turn + usage',
       lines: [
@@ -1280,6 +1076,15 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello"}}',
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":" world"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":11,"output_tokens":5}}}',
+      ],
+      expected: [
+        { type: 'text_delta', text: 'Hello' },
+        { type: 'text_delta', text: ' world' },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 11, outputTokens: 5, totalTokens: 16 },
+        },
       ],
     },
     {
@@ -1296,6 +1101,18 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_stop","index":1}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":3}}}',
       ],
+      expected: [
+        {
+          type: 'reasoning_block',
+          block: { type: 'thinking', text: 'Hmm let me think.', signature: 'sig-zzz' },
+        },
+        { type: 'text_delta', text: 'Done.' },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
+        },
+      ],
     },
     {
       name: 'redacted_thinking block',
@@ -1304,6 +1121,10 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"enc-payload-xyz"}}',
         'data: {"type":"content_block_stop","index":0}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
+      ],
+      expected: [
+        { type: 'reasoning_block', block: { type: 'redacted_thinking', data: 'enc-payload-xyz' } },
+        { type: 'done', finishReason: 'stop' },
       ],
     },
     {
@@ -1314,6 +1135,7 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_stop","index":0}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
       ],
+      expected: [{ type: 'done', finishReason: 'stop' }],
     },
     {
       name: 'max_tokens -> length',
@@ -1321,12 +1143,20 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"cut"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"max_tokens"}}',
       ],
+      expected: [
+        { type: 'text_delta', text: 'cut' },
+        { type: 'done', finishReason: 'length' },
+      ],
     },
     {
       name: 'tool_use -> tool_calls',
       lines: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"calling"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      ],
+      expected: [
+        { type: 'text_delta', text: 'calling' },
+        { type: 'done', finishReason: 'tool_calls' },
       ],
     },
     {
@@ -1340,6 +1170,11 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\\"SAFE\\"}"}}',
         'data: {"type":"content_block_stop","index":0}',
         'data: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}',
+      ],
+      expected: [
+        { type: 'text_delta', text: '{"verdict":' },
+        { type: 'text_delta', text: '"SAFE"}' },
+        { type: 'done', finishReason: 'tool_calls' },
       ],
     },
     {
@@ -1356,6 +1191,21 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"\\"a.ts\\"}"}}',
         'data: {"type":"content_block_stop","index":1}',
         'data: {"type":"message_delta","delta":{"stop_reason":"tool_use","usage":{"input_tokens":9,"output_tokens":7}}}',
+      ],
+      expected: [
+        { type: 'text_delta', text: 'Let me check.' },
+        { type: 'tool_call_delta' },
+        { type: 'tool_call_delta' },
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: { id: 'toolu_01', name: 'sandbox_read_file', args: { path: 'a.ts' } },
+        },
+        {
+          type: 'done',
+          finishReason: 'tool_calls',
+          usage: { inputTokens: 9, outputTokens: 7, totalTokens: 16 },
+        },
       ],
     },
     {
@@ -1374,11 +1224,36 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_stop","index":2}',
         'data: {"type":"message_delta","delta":{"stop_reason":"pause_turn","usage":{"input_tokens":11,"output_tokens":12}}}',
       ],
+      expected: [
+        { type: 'text_delta', text: 'Looking up ' },
+        { type: 'text_delta', text: 'the answer.' },
+        {
+          type: 'pause_turn',
+          assistantBlocks: [
+            { type: 'text', text: 'Looking up the answer.' },
+            {
+              type: 'server_tool_use',
+              id: 'su_01',
+              name: 'web_search',
+              input: { query: 'tc39 stage 4' },
+            },
+            {
+              type: 'web_search_tool_result',
+              tool_use_id: 'su_01',
+              content: [{ type: 'web_search_result', url: 'https://example.com', title: 'TC39' }],
+            },
+          ],
+        },
+      ],
     },
     {
       name: 'clean close without message_stop',
       lines: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"trailing"}}',
+      ],
+      expected: [
+        { type: 'text_delta', text: 'trailing' },
+        { type: 'done', finishReason: 'stop' },
       ],
     },
     {
@@ -1386,6 +1261,10 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
       lines: [
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"x"}}',
         'data: [DONE]',
+      ],
+      expected: [
+        { type: 'text_delta', text: 'x' },
+        { type: 'done', finishReason: 'stop' },
       ],
     },
     {
@@ -1396,6 +1275,10 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hi<|im_end|>"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
       ],
+      expected: [
+        { type: 'text_delta', text: 'hi' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       // A delta that is entirely control tokens strips to '' — neither path
@@ -1405,14 +1288,14 @@ describe('anthropicEventStream — drift vs translate->pump', () => {
         'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"<|im_end|>"}}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
       ],
+      expected: [{ type: 'done', finishReason: 'stop' }],
     },
   ];
 
-  for (const { name, lines } of corpus) {
-    it(`matches the legacy round-trip: ${name}`, async () => {
+  for (const { name, lines, expected } of corpus) {
+    it(`parses: ${name}`, async () => {
       const direct = await collectEvents(anthropicEventStream(createEventStreamResponse(lines)));
-      const legacy = await legacyEvents(lines);
-      expect(direct).toEqual(legacy);
+      expect(direct).toEqual(expected);
     });
   }
 

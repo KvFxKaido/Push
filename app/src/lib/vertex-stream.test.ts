@@ -106,12 +106,15 @@ function installStreamFetch(fetchMock: ReturnType<typeof vi.fn>): ControllableSt
   return stream;
 }
 
-function contentFrame(text: string): string {
-  return JSON.stringify({ choices: [{ delta: { content: text } }] });
+// Native-mode Claude on Vertex streams raw Anthropic Messages SSE (the Worker
+// proxies it through unchanged), parsed by `anthropicEventStream` — not the
+// OpenAI `choices` shape. These helpers build that wire for the native path.
+function anthropicTextFrame(text: string): string {
+  return JSON.stringify({ type: 'content_block_delta', delta: { type: 'text_delta', text } });
 }
 
-function finishFrame(reason: string): string {
-  return JSON.stringify({ choices: [{ finish_reason: reason, delta: {} }] });
+function anthropicStopFrame(stopReason: string): string {
+  return JSON.stringify({ type: 'message_delta', delta: { stop_reason: stopReason } });
 }
 
 const baseRequest: PushStreamRequest<ChatMessage> = {
@@ -162,18 +165,20 @@ describe('vertexStream', () => {
     vi.restoreAllMocks();
   });
 
-  it('parses text_delta frames and closes on [DONE] (native mode)', async () => {
+  it('parses native Anthropic content frames for Claude (native mode)', async () => {
+    // baseRequest is a claude-* model in native mode → the Worker proxies raw
+    // Anthropic SSE, parsed by `anthropicEventStream` (not the OpenAI pump).
     const { push, finish } = installStreamFetch(fetchMock);
     const { vertexStream } = await import('./vertex-stream');
     const events = collect(vertexStream(baseRequest));
 
-    push(contentFrame('hello'));
+    push(anthropicTextFrame('hello'));
     finish();
 
     const out = await events;
     expect(out).toEqual([
       { type: 'text_delta', text: 'hello' },
-      { type: 'done', finishReason: 'stop', usage: undefined },
+      { type: 'done', finishReason: 'stop' },
     ]);
   });
 
@@ -249,7 +254,7 @@ describe('vertexStream', () => {
       }
     })();
 
-    push(contentFrame('hi'));
+    push(anthropicTextFrame('hi'));
     await new Promise((r) => setTimeout(r, 0));
     controller.abort();
     await task;
@@ -277,29 +282,40 @@ describe('vertexStream', () => {
 
     await new Promise((r) => setTimeout(r, 0));
     const first = responses[0];
-    first.push(JSON.stringify({ choices: [{ delta: { content: 'Searching' } }] }));
+    // Anthropic Messages SSE: a text block + a server_tool_use block, then a
+    // pause_turn message_delta. anthropicEventStream reconstructs the captured
+    // assistant content[] from these frames (no OpenAI translator in between).
     first.push(
       JSON.stringify({
-        choices: [
-          {
-            finish_reason: 'pause_turn',
-            delta: {
-              assistant_content_blocks: [
-                { type: 'text', text: 'Searching' },
-                { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
-              ],
-            },
-          },
-        ],
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
       }),
     );
+    first.push(
+      JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'Searching' },
+      }),
+    );
+    first.push(JSON.stringify({ type: 'content_block_stop', index: 0 }));
+    first.push(
+      JSON.stringify({
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+      }),
+    );
+    first.push(JSON.stringify({ type: 'content_block_stop', index: 1 }));
+    first.push(anthropicStopFrame('pause_turn'));
     first.finish();
 
     await new Promise((r) => setTimeout(r, 5));
     const second = responses[1];
     expect(second).toBeDefined();
-    second.push(JSON.stringify({ choices: [{ delta: { content: ' done.' } }] }));
-    second.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+    second.push(anthropicTextFrame(' done.'));
+    second.push(anthropicStopFrame('end_turn'));
     second.finish();
 
     const out = await events;
@@ -415,14 +431,14 @@ describe('vertexStream', () => {
     const { vertexStream } = await import('./vertex-stream');
     const events = collect(vertexStream(baseRequest));
 
-    push(contentFrame('partial'));
-    push(finishFrame('length'));
+    push(anthropicTextFrame('partial'));
+    push(anthropicStopFrame('max_tokens'));
     finish();
 
     const out = await events;
     expect(out).toEqual([
       { type: 'text_delta', text: 'partial' },
-      { type: 'done', finishReason: 'length', usage: undefined },
+      { type: 'done', finishReason: 'length' },
     ]);
   });
 
@@ -434,7 +450,7 @@ describe('vertexStream', () => {
     const composed = normalizeReasoning(vertexStream(baseRequest));
     const events = collect(composed);
 
-    push(contentFrame('<think>pondering</think>answer'));
+    push(anthropicTextFrame('<think>pondering</think>answer'));
     finish();
 
     const out = await events;
