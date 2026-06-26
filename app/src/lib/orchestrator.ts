@@ -776,12 +776,22 @@ export function toLLMMessages(
       msg.reasoningBlocks.length > 0
         ? msg.reasoningBlocks
         : undefined;
-    const reasoningContent =
-      emitReasoningContent &&
-      msg.role === 'assistant' &&
-      typeof msg.thinking === 'string' &&
-      msg.thinking.length > 0
+    // Reasoning replay (DeepSeek `reasoning_content`). The orchestrator lane carries
+    // the round's plain reasoning on ChatMessage `.thinking`; the inline/CLI kernel
+    // lane hands its own `LlmMessage`s to the provider stream through the documented
+    // `PushStream<LlmMessage>` cast seam (chat-send-inline.ts), and those carry it on
+    // `reasoningContent`. Read either — a kernel tool-call turn that replays bare 400s
+    // DeepSeek thinking mode ("the `reasoning_content` ... must be passed back").
+    const kernelReasoning = (msg as { reasoningContent?: unknown }).reasoningContent;
+    const reasoningReplay =
+      typeof msg.thinking === 'string' && msg.thinking.length > 0
         ? msg.thinking
+        : typeof kernelReasoning === 'string' && kernelReasoning.length > 0
+          ? kernelReasoning
+          : '';
+    const reasoningContent =
+      emitReasoningContent && msg.role === 'assistant' && reasoningReplay.length > 0
+        ? reasoningReplay
         : undefined;
 
     // Prefer pre-converted `contentParts` (the Coder kernel's surface-agnostic

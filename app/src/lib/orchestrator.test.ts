@@ -283,6 +283,46 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     expect(assistant?.reasoning_content).toBe('thinking before a tool');
   });
 
+  it('replays reasoning_content from a kernel LlmMessage `reasoningContent` field (cast seam)', () => {
+    // The inline/CLI kernel lane hands its own LlmMessages to the provider stream
+    // through the `PushStream<LlmMessage>` cast seam (chat-send-inline.ts) — they
+    // carry reasoning on `reasoningContent`, NOT ChatMessage `.thinking`.
+    // toLLMMessages must still emit reasoning_content, else a kernel tool-call turn
+    // replays bare and DeepSeek thinking mode 400s the continuation.
+    const messages = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      {
+        ...makeMessage({ id: 'a1', role: 'assistant', content: '' }),
+        reasoningContent: 'kernel reasoning before the tool call',
+      } as ChatMessage,
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const assistant = buildLlm(messages, 'zen', 'deepseek-v4-pro').find(
+      (m) => m.role === 'assistant',
+    );
+    expect(assistant?.reasoning_content).toBe('kernel reasoning before the tool call');
+  });
+
+  it('prefers ChatMessage `.thinking` over `reasoningContent` when both are present', () => {
+    const messages = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      {
+        ...makeMessage({
+          id: 'a1',
+          role: 'assistant',
+          content: 'a',
+          thinking: 'orchestrator thinking',
+        }),
+        reasoningContent: 'kernel reasoning',
+      } as ChatMessage,
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const assistant = buildLlm(messages, 'zen', 'deepseek-v4-pro').find(
+      (m) => m.role === 'assistant',
+    );
+    expect(assistant?.reasoning_content).toBe('orchestrator thinking');
+  });
+
   it('does NOT replay reasoning_content for non-DeepSeek OpenAI-compatible routes', () => {
     const messages: ChatMessage[] = [
       makeMessage({ id: 'u1', role: 'user', content: 'q' }),
