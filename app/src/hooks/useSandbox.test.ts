@@ -463,7 +463,11 @@ describe('useSandbox.refresh', () => {
     expect(sandboxSession.clearSandboxSessionByStorageKey).toHaveBeenCalled();
   });
 
-  it('keeps the session on transient errors (does not clear)', async () => {
+  it('keeps a SILENT transient probe at ready (single strike does not flip the chip)', async () => {
+    // The 60s health check is a silent probe. A single transient blip (overloaded
+    // exit -1: timeout / owner-token KV-lag / hiccup) on a live container must NOT
+    // flip to 'error' — that hard-errored a healthy sandbox and stopped the
+    // health-check loop (the "dies after ~2 min idle" report). Session is kept too.
     sandboxClient.createSandbox.mockResolvedValue({
       status: 'ready',
       sandboxId: 'sb-1',
@@ -480,7 +484,76 @@ describe('useSandbox.refresh', () => {
     const ok = await hook.refresh({ silent: true });
     expect(ok).toBe(false);
     expect(sandboxSession.clearSandboxSessionByStorageKey).not.toHaveBeenCalled();
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('escalates a SILENT probe to error only after 3 consecutive transient strikes', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'command timed out',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    await hook.refresh({ silent: true }); // strike 1
+    expect(reactState.cells[1].value).toBe('ready');
+    await hook.refresh({ silent: true }); // strike 2
+    expect(reactState.cells[1].value).toBe('ready');
+    await hook.refresh({ silent: true }); // strike 3 → surface
     expect(reactState.cells[1].value).toBe('error');
+    // Session is still kept — only the UI surface escalated, not a teardown.
+    expect(sandboxSession.clearSandboxSessionByStorageKey).not.toHaveBeenCalled();
+  });
+
+  it('a successful probe resets the transient strike counter', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+    await hook.refresh({ silent: true }); // strike 1
+    await hook.refresh({ silent: true }); // strike 2
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    await hook.refresh({ silent: true }); // success → resets counter
+    expect(reactState.cells[1].value).toBe('ready');
+    // Counter reset: two fresh transient strikes still hold at ready (would be
+    // 'error' at strike >= 3 if the success hadn't reset it).
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+    await hook.refresh({ silent: true }); // strike 1 (post-reset)
+    await hook.refresh({ silent: true }); // strike 2 (post-reset)
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('a user-initiated (non-silent) transient refresh surfaces error immediately', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'command timed out',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+    sandboxSession.clearSandboxSessionByStorageKey.mockReset();
+    const ok = await hook.refresh(); // non-silent: the user asked, so don't swallow
+    expect(ok).toBe(false);
+    expect(reactState.cells[1].value).toBe('error');
+    // Still transient → session kept, not torn down.
+    expect(sandboxSession.clearSandboxSessionByStorageKey).not.toHaveBeenCalled();
   });
 });
 

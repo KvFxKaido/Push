@@ -103,6 +103,15 @@ const SANDBOX_ACTIVITY_STALENESS_GRACE_MS = IDLE_CHECK_INTERVAL_MS;
 // auto-healing a container that's genuinely on its way back.
 const RECONNECT_RETRY_BACKOFF_MS = 30 * 1000; // 30s between transient-failure re-probes
 const MAX_RECONNECT_ATTEMPTS = 2; // initial probe + 1 backoff retry, then wait for a real trigger
+// Consecutive transient failures a SILENT health-check probe (`refresh({ silent: true })`,
+// fired every 60s) tolerates before surfacing 'error'. exit -1 is overloaded — it covers
+// genuine "gone" AND transient blips (command timeout, owner-token KV/PoP propagation lag,
+// container hiccup); `isDefinitivelyGoneMessage` catches the gone case immediately, so this
+// only buffers the false negatives. A single blip used to flip a live sandbox to a hard
+// 'error', which then stopped the health-check loop (gated on status === 'ready') — the
+// "sandbox dies after ~2 min idle" report. 3 strikes ≈ 3 min before a wedged-but-not-gone
+// container still surfaces. User-initiated (non-silent) refresh escalates immediately.
+const SILENT_REFRESH_TRANSIENT_STRIKES = 3;
 
 function getGitHubAppCommitIdentity(): GitCommitIdentity | undefined {
   const appToken = safeStorageGet(APP_TOKEN_STORAGE_KEY);
@@ -164,6 +173,11 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   // shift the index-synced refs above (0=sandboxIdRef, 2=statusRef).
   const lastReconnectAttemptRef = useRef<ReconnectAttempt | null>(null);
   const reconnectRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Consecutive transient failures from `refresh`. A SILENT health-check probe
+  // tolerates up to SILENT_REFRESH_TRANSIENT_STRIKES of these before flipping
+  // the chip to 'error' (see refresh below). Reset on any success. Declared in
+  // the "last" zone so it can't shift the index-synced refs above.
+  const transientStrikesRef = useRef(0);
   const activeSessionStorageKey = useMemo(
     () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
     [activeRepoFullName, activeBranch],
@@ -917,6 +931,31 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       return true;
     };
 
+    // A transient (NOT definitively-gone) probe failure. Surface 'error' only
+    // when the user asked (`!silent`) or a SILENT probe has now failed
+    // SILENT_REFRESH_TRANSIENT_STRIKES times in a row — a single silent blip on
+    // a live container must not flip the chip to a hard 'error' that then stops
+    // the 60s health-check loop (gated on status === 'ready'). The tracked
+    // session is always kept; only the UI surface is gated.
+    const handleTransient = (reason: string, where: string): void => {
+      transientStrikesRef.current += 1;
+      const escalate =
+        !opts?.silent || transientStrikesRef.current >= SILENT_REFRESH_TRANSIENT_STRIKES;
+      if (escalate) {
+        setStatus('error');
+        setError(reason);
+        console.debug(
+          `[useSandbox] Refresh: ${where} for ${id}: ${reason} — surfaced as error (strike ${transientStrikesRef.current})`,
+        );
+      } else {
+        // Keep the prior status (a live health check leaves it 'ready') and the
+        // prior error. The next 60s tick re-probes and resets on success.
+        console.debug(
+          `[useSandbox] Refresh: ${where} for ${id}: ${reason} — transient, keeping session (strike ${transientStrikesRef.current}/${SILENT_REFRESH_TRANSIENT_STRIKES})`,
+        );
+      }
+    };
+
     if (!opts?.silent) setStatus('creating'); // reuse 'creating' as a "checking" state (shows spinner)
 
     try {
@@ -926,6 +965,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       if (sandboxIdRef.current !== id) return false;
 
       if (result.exitCode === 0) {
+        transientStrikesRef.current = 0;
         setStatus('ready');
         console.debug(`[useSandbox] Refresh success for ${id}`);
         return true;
@@ -937,29 +977,29 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       // container errors (which are all transient). So we gate teardown on
       // the accompanying error text, not the numeric exit code alone.
       const reason = result.error || 'Sandbox is no longer reachable';
-      setStatus('error');
-      setError(reason);
       if (isDefinitivelyGoneMessage(reason)) {
+        transientStrikesRef.current = 0;
+        setStatus('error');
+        setError(reason);
         console.debug(`[useSandbox] Refresh: container gone for ${id}: ${reason}`);
         clearTrackedSession(sessionStorageKeyRef.current, id);
         retireDeadIdOnNative();
       } else {
-        console.debug(
-          `[useSandbox] Refresh: transient failure for ${id} (exit ${result.exitCode}): ${reason} — keeping session`,
-        );
+        handleTransient(reason, `transient failure (exit ${result.exitCode})`);
       }
       return false;
     } catch (err) {
       if (sandboxIdRef.current !== id) return false;
       const msg = err instanceof Error ? err.message : String(err);
-      setStatus('error');
-      setError(msg);
       if (isDefinitivelyGoneError(err)) {
+        transientStrikesRef.current = 0;
+        setStatus('error');
+        setError(msg);
         console.debug(`[useSandbox] Refresh: container gone for ${id}: ${msg}`);
         clearTrackedSession(sessionStorageKeyRef.current, id);
         retireDeadIdOnNative();
       } else {
-        console.debug(`[useSandbox] Refresh: transient error for ${id}: ${msg} — keeping session`);
+        handleTransient(msg, 'transient error');
       }
       return false;
     }
