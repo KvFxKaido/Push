@@ -9,11 +9,9 @@ import type {
 } from './provider-contract.ts';
 import {
   buildGeminiGenerateContentRequest,
-  createGeminiTranslatedStream,
   geminiEventStream,
   toGeminiGenerateContent,
 } from './openai-gemini-bridge.ts';
-import { openAISSEPump } from './openai-sse-pump.ts';
 import { flatToolToOpenAITool } from './openai-chat-serializer.ts';
 import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 
@@ -29,19 +27,6 @@ function createEventStreamResponse(chunks: string[]): Response {
       },
     }),
   );
-}
-
-async function collectChunks(stream: ReadableStream<Uint8Array>): Promise<string> {
-  const reader = stream.getReader();
-  const decoder = new TextDecoder();
-  let out = '';
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    out += decoder.decode(value, { stream: true });
-  }
-  out += decoder.decode();
-  return out;
 }
 
 const readFileTool: ToolFunctionSchema = {
@@ -356,168 +341,6 @@ describe('Gemini functionDeclaration schema translation (empty-OBJECT guards)', 
     };
     walk(body.tools, 'tools');
     expect(offenders).toEqual([]);
-  });
-});
-
-describe('createGeminiTranslatedStream', () => {
-  it('forwards candidate text as OpenAI-shaped content deltas', async () => {
-    const frames = [
-      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'Hello' }] } }] })}\n\n`,
-      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: ', world' }] } }] })}\n\n`,
-      `data: ${JSON.stringify({
-        candidates: [{ content: { parts: [{ text: '!' }] }, finishReason: 'STOP' }],
-        usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 3, totalTokenCount: 7 },
-      })}\n\n`,
-    ];
-
-    const translated = createGeminiTranslatedStream(
-      createEventStreamResponse(frames),
-      'gemini-3.1-pro-preview',
-    );
-    const out = await collectChunks(translated);
-
-    // Three content deltas + one terminal frame with finish_reason + usage,
-    // then the OpenAI [DONE] sentinel.
-    expect(out).toContain('"content":"Hello"');
-    expect(out).toContain('"content":", world"');
-    expect(out).toContain('"content":"!"');
-    expect(out).toContain('"finish_reason":"stop"');
-    expect(out).toContain('"prompt_tokens":4');
-    expect(out).toContain('"completion_tokens":3');
-    expect(out).toContain('"total_tokens":7');
-    expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
-  });
-
-  it('maps Gemini MAX_TOKENS to OpenAI length finish reason', async () => {
-    const frame = `data: ${JSON.stringify({
-      candidates: [{ content: { parts: [{ text: 'cut' }] }, finishReason: 'MAX_TOKENS' }],
-    })}\n\n`;
-
-    const out = await collectChunks(
-      createGeminiTranslatedStream(createEventStreamResponse([frame]), 'gemini-3.1-pro-preview'),
-    );
-
-    expect(out).toContain('"finish_reason":"length"');
-  });
-
-  it('ignores malformed JSON frames without breaking the stream', async () => {
-    const frames = [
-      `data: { not valid json\n\n`,
-      `data: ${JSON.stringify({
-        candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
-      })}\n\n`,
-    ];
-
-    const out = await collectChunks(
-      createGeminiTranslatedStream(createEventStreamResponse(frames), 'gemini-3.1-pro-preview'),
-    );
-
-    expect(out).toContain('"content":"ok"');
-    expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
-  });
-
-  it('closes cleanly when upstream has no body', async () => {
-    const empty = new Response(null);
-    const out = await collectChunks(createGeminiTranslatedStream(empty, 'gemini-2.5-flash'));
-    expect(out).toContain('"finish_reason":"stop"');
-    expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
-  });
-
-  it('parses CRLF-framed SSE upstreams without buffering', async () => {
-    // SSE permits `\r\n\r\n` event boundaries. Google's edge or an
-    // intermediary can emit that form; without CRLF normalization the
-    // boundary scan never matches, the whole stream buffers, and only the
-    // synthesized terminal frame is emitted.
-    const frames = [
-      `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'crlf' }] } }] })}\r\n\r\n`,
-      `data: ${JSON.stringify({
-        candidates: [{ content: { parts: [{ text: ' frames' }] }, finishReason: 'STOP' }],
-      })}\r\n\r\n`,
-    ];
-
-    const out = await collectChunks(
-      createGeminiTranslatedStream(createEventStreamResponse(frames), 'gemini-3.1-pro-preview'),
-    );
-
-    expect(out).toContain('"content":"crlf"');
-    expect(out).toContain('"content":" frames"');
-    expect(out).toContain('"finish_reason":"stop"');
-    expect(out.endsWith('data: [DONE]\n\n')).toBe(true);
-  });
-
-  it('translates Gemini functionCall parts into OpenAI tool_call deltas', async () => {
-    const frames = [
-      `data: ${JSON.stringify({
-        candidates: [
-          {
-            content: {
-              parts: [{ functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } }],
-            },
-            finishReason: 'STOP',
-          },
-        ],
-      })}\n\n`,
-    ];
-
-    const translated = createGeminiTranslatedStream(
-      createEventStreamResponse(frames),
-      'gemini-3.1-pro-preview',
-    );
-    const events = await collectEvents(
-      openAISSEPump({
-        body: translated,
-        isKnownToolName: (name) => name === 'sandbox_read_file',
-      }),
-    );
-
-    expect(events[0]).toEqual({ type: 'tool_call_delta' });
-    expect(events[1]).toEqual({
-      type: 'native_tool_call',
-      call: { name: 'sandbox_read_file', args: { path: 'README.md' } },
-    });
-    expect(events[2]).toMatchObject({ type: 'done', finishReason: 'tool_calls' });
-  });
-
-  it("lifts a Gemini part's thoughtSignature onto the neutral native_tool_call", async () => {
-    // Gemini 3.x attaches a `thoughtSignature` as a sibling of `functionCall` on
-    // the part. It must survive the Gemini -> OpenAI-SSE -> pump path so it can
-    // be stored and replayed; without round-tripping it the next turn 400s.
-    const frames = [
-      `data: ${JSON.stringify({
-        candidates: [
-          {
-            content: {
-              parts: [
-                {
-                  functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } },
-                  thoughtSignature: 'AgQKAabc123==',
-                },
-              ],
-            },
-            finishReason: 'STOP',
-          },
-        ],
-      })}\n\n`,
-    ];
-
-    const events = await collectEvents(
-      openAISSEPump({
-        body: createGeminiTranslatedStream(
-          createEventStreamResponse(frames),
-          'gemini-3.1-pro-preview',
-        ),
-        isKnownToolName: (name) => name === 'sandbox_read_file',
-      }),
-    );
-
-    expect(events[1]).toEqual({
-      type: 'native_tool_call',
-      call: {
-        name: 'sandbox_read_file',
-        args: { path: 'README.md' },
-        thoughtSignature: 'AgQKAabc123==',
-      },
-    });
   });
 });
 
@@ -969,9 +792,11 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
 
 // ---------------------------------------------------------------------------
 // Phase 3a (Gemini): geminiEventStream — Gemini SSE parsed directly into neutral
-// PushStreamEvents. Pinned event-for-event against the legacy
-// createGeminiTranslatedStream -> openAISSEPump round-trip the CLI used before
-// (and the web Worker still uses for its response wire).
+// PushStreamEvents. This is the production response path for both the CLI and
+// the direct web Gemini route (the worker proxies Gemini's raw upstream SSE
+// straight through). Expected sequences below were pinned from the now-removed
+// createGeminiTranslatedStream -> openAISSEPump detour the CLI used before, so
+// the native pump's behavior stays event-for-event identical to that baseline.
 // ---------------------------------------------------------------------------
 
 async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<PushStreamEvent[]> {
@@ -980,15 +805,10 @@ async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<Pu
   return out;
 }
 
-function legacyGeminiEvents(frames: string[]): Promise<PushStreamEvent[]> {
-  const translated = createGeminiTranslatedStream(createEventStreamResponse(frames), 'gemini-x');
-  return collectEvents(openAISSEPump({ body: translated }));
-}
-
 const frame = (obj: unknown): string => `data: ${JSON.stringify(obj)}\n\n`;
 
-describe('geminiEventStream — drift vs translate->pump', () => {
-  const corpus: Array<{ name: string; frames: string[] }> = [
+describe('geminiEventStream — Gemini SSE -> neutral events', () => {
+  const corpus: Array<{ name: string; frames: string[]; expected: PushStreamEvent[] }> = [
     {
       name: 'multi-frame text + STOP + usage',
       frames: [
@@ -999,6 +819,16 @@ describe('geminiEventStream — drift vs translate->pump', () => {
           usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 3, totalTokenCount: 7 },
         }),
       ],
+      expected: [
+        { type: 'text_delta', text: 'Hello' },
+        { type: 'text_delta', text: ', world' },
+        { type: 'text_delta', text: '!' },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 4, outputTokens: 3, totalTokens: 7 },
+        },
+      ],
     },
     {
       name: 'MAX_TOKENS -> length',
@@ -1006,6 +836,10 @@ describe('geminiEventStream — drift vs translate->pump', () => {
         frame({
           candidates: [{ content: { parts: [{ text: 'cut' }] }, finishReason: 'MAX_TOKENS' }],
         }),
+      ],
+      expected: [
+        { type: 'text_delta', text: 'cut' },
+        { type: 'done', finishReason: 'length' },
       ],
     },
     {
@@ -1015,6 +849,10 @@ describe('geminiEventStream — drift vs translate->pump', () => {
           candidates: [{ content: { parts: [{ text: 'hi<|im_end|>' }] }, finishReason: 'STOP' }],
         }),
       ],
+      expected: [
+        { type: 'text_delta', text: 'hi' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       name: 'malformed JSON frame is ignored',
@@ -1022,11 +860,19 @@ describe('geminiEventStream — drift vs translate->pump', () => {
         'data: { not valid json\n\n',
         frame({ candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }),
       ],
+      expected: [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       name: 'no usageMetadata -> done without usage',
       frames: [
         frame({ candidates: [{ content: { parts: [{ text: 'plain' }] }, finishReason: 'STOP' }] }),
+      ],
+      expected: [
+        { type: 'text_delta', text: 'plain' },
+        { type: 'done', finishReason: 'stop' },
       ],
     },
     {
@@ -1034,10 +880,18 @@ describe('geminiEventStream — drift vs translate->pump', () => {
       frames: [
         `${JSON.stringify({ candidates: [{ content: { parts: [{ text: 'bare' }] }, finishReason: 'STOP' }] })}\n\n`,
       ],
+      expected: [
+        { type: 'text_delta', text: 'bare' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       name: 'stream ends without a finishReason frame (clean close -> stop)',
       frames: [frame({ candidates: [{ content: { parts: [{ text: 'tail' }] } }] })],
+      expected: [
+        { type: 'text_delta', text: 'tail' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       name: 'functionCall part flushes as dispatcher JSON',
@@ -1055,6 +909,14 @@ describe('geminiEventStream — drift vs translate->pump', () => {
           ],
         }),
       ],
+      expected: [
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: { name: 'sandbox_read_file', args: { path: 'README.md' } },
+        },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
     },
     {
       name: 'functionCall part with clean close still finishes as tool_calls',
@@ -1071,14 +933,21 @@ describe('geminiEventStream — drift vs translate->pump', () => {
           ],
         }),
       ],
+      expected: [
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: { name: 'sandbox_read_file', args: { path: 'README.md' } },
+        },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
     },
   ];
 
-  for (const { name, frames } of corpus) {
-    it(`matches the legacy round-trip: ${name}`, async () => {
+  for (const { name, frames, expected } of corpus) {
+    it(`parses: ${name}`, async () => {
       const direct = await collectEvents(geminiEventStream(createEventStreamResponse(frames)));
-      const legacy = await legacyGeminiEvents(frames);
-      expect(direct).toEqual(legacy);
+      expect(direct).toEqual(expected);
     });
   }
 

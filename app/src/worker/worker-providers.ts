@@ -33,7 +33,6 @@ import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
-  createGeminiTranslatedStream,
   toGeminiGenerateContent,
 } from '@push/lib/openai-gemini-bridge';
 import {
@@ -1010,6 +1009,11 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     }
 
     if (transport === 'anthropic') {
+      // Multiplexed route: this handler's web client (`vertex-stream` /
+      // `zen-stream`) still parses with `openAISSEPump`, so the Anthropic-native
+      // upstream must be translated to OpenAI-SSE here. Direct Anthropic/Gemini
+      // routes proxy raw (their clients use the native event streams); migrating
+      // these multiplexed clients to native is tracked separately.
       return new Response(createAnthropicTranslatedStream(upstream, model), {
         status: 200,
         headers: {
@@ -1421,6 +1425,11 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
     }
 
     if (transport === 'anthropic') {
+      // Multiplexed route: this handler's web client (`vertex-stream` /
+      // `zen-stream`) still parses with `openAISSEPump`, so the Anthropic-native
+      // upstream must be translated to OpenAI-SSE here. Direct Anthropic/Gemini
+      // routes proxy raw (their clients use the native event streams); migrating
+      // these multiplexed clients to native is tracked separately.
       return new Response(createAnthropicTranslatedStream(upstream, model), {
         status: 200,
         headers: {
@@ -1819,8 +1828,9 @@ function resolveDirectProviderKey(serverKey: string | undefined, request: Reques
 // Modeled on handleVertexChat's native-Anthropic transport path. Difference:
 // auth is a flat `x-api-key` header instead of OAuth, no project/region path
 // segments, and no `anthropic_version` in the body — the version goes in the
-// header. Reuses `buildAnthropicMessagesRequest` and `createAnthropicTranslatedStream`
-// from the bridge so the response surfaces to the client as OpenAI-shaped SSE.
+// header. Reuses `buildAnthropicMessagesRequest` from the bridge; the raw
+// Anthropic SSE is proxied straight to the client, which parses it with the
+// native `anthropicEventStream` (no OpenAI-shaped intermediate).
 
 const ANTHROPIC_API_VERSION = '2023-06-01';
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
@@ -1958,7 +1968,7 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
       );
     }
 
-    return new Response(createAnthropicTranslatedStream(upstream, model), {
+    return new Response(upstream.body, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',
@@ -2002,9 +2012,9 @@ export async function handleAnthropicModels(request: Request, env: Env): Promise
 //
 // Modeled on handleAnthropicChat: the Worker accepts OpenAI-shaped JSON,
 // translates the body via `buildGeminiGenerateContentRequest`, sends to
-// Google's Generative Language API with `x-goog-api-key`, then pipes the
-// upstream SSE through `createGeminiTranslatedStream` so the client sees the
-// familiar OpenAI SSE shape.
+// Google's Generative Language API with `x-goog-api-key`, then proxies the raw
+// upstream SSE straight to the client, which parses it with the native
+// `geminiEventStream` (no OpenAI-shaped intermediate).
 //
 // Gemini's API is distinct from Vertex's Gemini OpenAPI endpoint: this is the
 // public `generativelanguage.googleapis.com` host that takes a plain API key
@@ -2139,7 +2149,7 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
       );
     }
 
-    return new Response(createGeminiTranslatedStream(upstream, model), {
+    return new Response(upstream.body, {
       status: 200,
       headers: {
         'Content-Type': 'text/event-stream',

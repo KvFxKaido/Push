@@ -109,8 +109,14 @@ function installStreamFetch(fetchMock: ReturnType<typeof vi.fn>): ControllableSt
   return stream;
 }
 
+// The Worker now proxies Anthropic's raw SSE, so the client parses native
+// `content_block_delta` frames with `anthropicEventStream` (not OpenAI-shaped).
 function contentFrame(text: string): string {
-  return JSON.stringify({ choices: [{ delta: { content: text } }] });
+  return JSON.stringify({
+    type: 'content_block_delta',
+    index: 0,
+    delta: { type: 'text_delta', text },
+  });
 }
 
 const baseRequest: PushStreamRequest<ChatMessage> = {
@@ -150,9 +156,9 @@ describe('anthropicStream', () => {
     vi.restoreAllMocks();
   });
 
-  it('parses content frames returned through the Worker bridge and closes on [DONE]', async () => {
-    // The Worker translates Anthropic SSE → OpenAI SSE shape via the bridge, so
-    // from the client's perspective the response stream is OpenAI-shaped.
+  it('parses native Anthropic content frames proxied through the Worker', async () => {
+    // The Worker proxies Anthropic's raw SSE; the client parses it with the
+    // native `anthropicEventStream`.
     const { push, finish } = installStreamFetch(fetchMock);
     const { anthropicStream } = await import('./anthropic-stream');
     const events = collect(anthropicStream(baseRequest));
@@ -332,22 +338,31 @@ describe('anthropicStream', () => {
     // Wait for first request to fire, then push partial text + pause_turn.
     await new Promise((r) => setTimeout(r, 0));
     const first = responses[0];
-    first.push(JSON.stringify({ choices: [{ delta: { content: 'Searching' } }] }));
+    // Native Anthropic SSE: the pump reconstructs the assistant content[] from
+    // the content_block_start/delta events (not a terminal
+    // `assistant_content_blocks` field), then surfaces them on `pause_turn`.
     first.push(
       JSON.stringify({
-        choices: [
-          {
-            finish_reason: 'pause_turn',
-            delta: {
-              assistant_content_blocks: [
-                { type: 'text', text: 'Searching' },
-                { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
-              ],
-            },
-          },
-        ],
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'text', text: '' },
       }),
     );
+    first.push(
+      JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'Searching' },
+      }),
+    );
+    first.push(
+      JSON.stringify({
+        type: 'content_block_start',
+        index: 1,
+        content_block: { type: 'server_tool_use', id: 'su_01', name: 'web_search', input: {} },
+      }),
+    );
+    first.push(JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'pause_turn' } }));
     first.finish();
 
     // Adapter should issue a second request — wait for it, then deliver the
@@ -355,8 +370,14 @@ describe('anthropicStream', () => {
     await new Promise((r) => setTimeout(r, 5));
     const second = responses[1];
     expect(second).toBeDefined();
-    second.push(JSON.stringify({ choices: [{ delta: { content: ' done.' } }] }));
-    second.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+    second.push(
+      JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: ' done.' },
+      }),
+    );
+    second.push(JSON.stringify({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }));
     second.finish();
 
     const out = await events;

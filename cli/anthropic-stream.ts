@@ -6,9 +6,10 @@
  * via `toAnthropicMessages` (no OpenAI Chat-Completions intermediate — see
  * `docs/runbooks/Provider Request Normalization.md`), then parses the upstream
  * Anthropic SSE directly into neutral `PushStreamEvent`s via
- * `anthropicEventStream` (Phase 3a — no OpenAI-SSE serialize/reparse round-trip;
- * the web Worker still uses `createAnthropicTranslatedStream` for its response
- * wire until the response-contract migration).
+ * `anthropicEventStream` (no OpenAI-SSE serialize/reparse round-trip). The direct
+ * web Anthropic path now uses this same native pump too; `createAnthropicTranslatedStream`
+ * survives only for the multiplexed Vertex-Claude / Zen-Go routes, whose web
+ * clients still parse OpenAI-shaped SSE.
  *
  * Shape mirrors the Worker's `handleAnthropicChat`: build body, POST,
  * translate response, yield events. Difference vs the Worker version: the CLI

@@ -55,10 +55,11 @@ interface ControllableStream {
   finish(): void;
 }
 
-// The Worker translates Gemini frames back into OpenAI SSE before the client
-// adapter sees anything, so this fake stream emits OpenAI-shaped frames — the
-// `geminiStream` adapter just consumes `openAISSEPump` like every other
-// adapter and shouldn't carry any Gemini-specific shape internally.
+// The Worker now proxies Gemini's raw SSE, so this fake stream emits native
+// Gemini frames (`candidates[].content.parts[]`) that the `geminiStream` adapter
+// parses with `geminiEventStream`. Gemini has no `[DONE]` sentinel on the wire;
+// the pump emits its terminal `done` on stream close (the fake sends a harmless
+// `[DONE]` that the pump ignores).
 function makeControllableStream(status = 200): ControllableStream {
   const encoder = new TextEncoder();
   let controller!: ReadableStreamDefaultController<Uint8Array>;
@@ -141,6 +142,50 @@ describe('geminiStream', () => {
 
     const [url] = fetchMock.mock.calls[0];
     expect(url).toBe('https://app.example/api/google/chat');
+  });
+
+  it('parses native Gemini frames and carries thoughtSignature on the tool call', async () => {
+    // Proves the web path now uses the native `geminiEventStream` (not the
+    // OpenAI-SSE detour) and that Gemini's `thoughtSignature` rides through as a
+    // first-class field on the neutral tool call — the round-trip #1174 needed.
+    const { push, finish } = installStreamFetch(fetchMock);
+    const { geminiStream } = await import('./gemini-stream');
+    const events = collect(geminiStream(baseRequest));
+
+    push(
+      JSON.stringify({
+        candidates: [
+          {
+            content: {
+              parts: [
+                { text: 'Reading the file.' },
+                {
+                  functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } },
+                  thoughtSignature: 'AgQKAabc123==',
+                },
+              ],
+            },
+            finishReason: 'STOP',
+          },
+        ],
+      }),
+    );
+    finish();
+
+    const out = await events;
+    expect(out).toEqual([
+      { type: 'text_delta', text: 'Reading the file.' },
+      { type: 'tool_call_delta' },
+      {
+        type: 'native_tool_call',
+        call: {
+          name: 'sandbox_read_file',
+          args: { path: 'README.md' },
+          thoughtSignature: 'AgQKAabc123==',
+        },
+      },
+      { type: 'done', finishReason: 'tool_calls', usage: undefined },
+    ]);
   });
 
   it('sends Bearer token from the client-side key', async () => {
