@@ -50,6 +50,8 @@ describe('getContextBudget', () => {
       maxTokens: 100_000,
       targetTokens: 88_000,
       summarizeTokens: 88_000,
+      // Unknown-model default: clamp pins handoff to the 88K floor (no window).
+      handoffTokens: 88_000,
     });
   });
 
@@ -58,6 +60,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(1_000_000 * 0.92),
       targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      handoffTokens: 400_000,
     };
     expect(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro')).toEqual(expected);
     expect(getContextBudget('vertex', 'google/gemini-2.5-pro')).toEqual(expected);
@@ -68,6 +72,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(1_000_000 * 0.92),
       targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      handoffTokens: 400_000,
     });
   });
 
@@ -76,6 +82,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(200_000 * 0.92),
       targetTokens: Math.floor(200_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·200K=140K, 88K, min(170K, 400K)) = 140K.
+      handoffTokens: 140_000,
     });
   });
 
@@ -84,6 +92,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(1_000_000 * 0.92),
       targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      handoffTokens: 400_000,
     };
     expect(getContextBudget('openrouter', 'openai/gpt-5.4-pro')).toEqual(expected);
     expect(getContextBudget('openrouter', 'openai/gpt-5.4')).toEqual(expected);
@@ -94,6 +104,9 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(2_000_000 * 0.92),
       targetTokens: Math.floor(2_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·2M, 88K, min(target, 400K ceiling)) = 400K ceiling
+      // (the middle-ground guard — a 2M window doesn't carry 1.4M of diluted context).
+      handoffTokens: 400_000,
     });
   });
 
@@ -104,6 +117,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(262_144 * 0.92),
       targetTokens: Math.floor(262_144 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·262144=183500, 88K, min(222822, 400K)) = 183500.
+      handoffTokens: 183_500,
     });
   });
 
@@ -115,6 +130,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(1_000_000 * 0.92),
       targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      handoffTokens: 400_000,
     };
     expect(getContextBudget('ollama', 'deepseek-v4-pro')).toEqual(expected);
     expect(getContextBudget('ollama', 'deepseek-v4-flash')).toEqual(expected);
@@ -127,6 +144,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(128_000 * 0.92),
       targetTokens: Math.floor(128_000 * 0.85),
       summarizeTokens: 88_000,
+      // handoff = clamp(0.7·128K=89600, 88K, min(108800, 400K)) = 89600.
+      handoffTokens: 89_600,
     });
   });
 

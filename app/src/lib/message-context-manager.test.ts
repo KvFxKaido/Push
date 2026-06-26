@@ -19,6 +19,8 @@ describe('lib/message-context-manager (generic)', () => {
     maxTokens: 100,
     targetTokens: 50,
     summarizeTokens: 40,
+    // manageContext reads only summarizeTokens; handoff is unexercised here.
+    handoffTokens: 50,
   };
 
   const makeDeps = () => ({
@@ -183,6 +185,7 @@ describe('lib/message-context-manager (generic)', () => {
         maxTokens: 25,
         targetTokens: 20,
         summarizeTokens: 30,
+        handoffTokens: 20,
       };
 
       return {
@@ -312,6 +315,7 @@ describe('lib/message-context-manager (generic)', () => {
         maxTokens: 35,
         targetTokens: 30,
         summarizeTokens: 30,
+        handoffTokens: 30,
       };
 
       return { mgr, messages, budget, pinnedUserId: PINNED_USER_ID };

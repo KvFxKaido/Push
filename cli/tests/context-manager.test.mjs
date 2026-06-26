@@ -123,6 +123,8 @@ describe('getContextBudget', () => {
       maxTokens: Math.floor(1_000_000 * 0.92),
       targetTokens: Math.floor(1_000_000 * 0.85),
       summarizeTokens: 88_000,
+      // Patient handoff trigger: clamp(0.7·1M, 88K, 400K ceiling) = 400K (§14).
+      handoffTokens: 400_000,
     };
     assert.deepEqual(getContextBudget('ollama', 'gemini-3-flash-preview'), expected);
     assert.deepEqual(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview'), expected);

@@ -97,7 +97,10 @@ export async function maybeCompactLeadHistory(
 
   const messages = (Array.isArray(state.messages) ? state.messages : []) as Message[];
   const budget = getContextBudget(providerConfig.id as AIProviderType, model);
-  const triggerTokens = budget.summarizeTokens;
+  // Patient, window-aware handoff trigger — split from the eager, lossless
+  // `summarizeTokens` compression knob (Agent Runtime Decisions §14). The LLM
+  // collapse busts the prompt cache, so we fill the window before paying for it.
+  const triggerTokens = budget.handoffTokens;
 
   const totalTokens = estimateContextTokens(messages);
   if (!shouldRunLlmCompaction(totalTokens, { triggerTokens })) return false;

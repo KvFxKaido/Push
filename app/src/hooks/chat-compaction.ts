@@ -85,7 +85,10 @@ export async function maybeCompactBeforeTurn(
   if (ctx.abortRef.current) return apiMessages;
 
   const budget = getContextBudget(provider, model);
-  const triggerTokens = budget.summarizeTokens;
+  // Patient, window-aware handoff trigger — split from the eager, lossless
+  // `summarizeTokens` compression knob (Agent Runtime Decisions §14). The LLM
+  // collapse busts the prompt cache, so we fill the window before paying for it.
+  const triggerTokens = budget.handoffTokens;
 
   // Partition (and all downstream token math) runs over ONLY the model-visible
   // subset. A prior compaction's folded span is still in `apiMessages` with

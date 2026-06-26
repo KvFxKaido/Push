@@ -407,7 +407,7 @@ until a repo actually needs custom rules.
 
 ### 14. Context-window compaction is always-on, runtime-owned, visible, and LLM-summarized
 
-Status: **Current** — shipped 2026-06-21 (web).
+Status: **Current** (shipped 2026-06-21, web). **Threshold model revised 2026-06-26** — see *Revision* at the end of this section; the tier-spine consolidation is in progress in the same change.
 
 Two prior gaps: compaction was (a) silently applied — it fired `context.compaction`
 run events that only surfaced in the Hub console, so a user never saw the window
@@ -457,6 +457,69 @@ losslessness is already covered by the verbatim log. Surfaced via the existing
 `context_compacted` session event + `cli_llm_compaction_*` structured logs.
 
 Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting.md>).
+
+**Revision (2026-06-26) — split the compaction knob; fill the window by default; consolidate onto one tier spine.**
+
+The original design drove *both* mechanisms off a single threshold,
+`summarizeTokens = min(88k, 0.85·window)`: the heuristic Phase-1 tool-output
+compression **and** the visible LLM handoff both fired at it
+(`triggerTokens = budget.summarizeTokens` in both coordinators —
+`app/src/hooks/chat-compaction.ts`, `cli/lead-compaction.ts`). On a 1M-window
+model that collapses the conversation to `[first user turn] + handoff + ~35k
+tail` (PRESERVE_TAIL_RATIO 0.4) at **~9% of the window** — a quality- and
+cache-cost paid on a model with 900k of unused room. Three decisions correct it.
+
+1. **Split the knob.** The two mechanisms have opposite cost profiles, so they
+   get separate thresholds:
+   - *Tool-output compression* (heuristic Phase 1) is **lossless** — the raw
+     bytes survive in the verbatim log (§13) and `memory_expand` recalls them —
+     so it stays **eager**: threshold `compressionTokens`, unchanged from today's
+     `min(88k, 0.85·window)`. Compressing early loses no working context (the
+     reason it's exempt from the "fill the window" pull below); it only keeps the
+     active prompt's signal density high.
+   - The *LLM handoff collapse* is a model round-trip, **busts the prompt cache**
+     (it rewrites the prefix), and is lossy in practice (the model rarely knows
+     to recall). So it becomes **patient and window-aware**: new field
+     `handoffTokens = clamp(HANDOFF_RATIO·window, 88k, HANDOFF_CEILING)`. The
+     coordinators repoint `triggerTokens` from `summarizeTokens` to
+     `handoffTokens`; nothing else in the handoff path changes.
+
+2. **Fill the window by default.** Prefer context retention + cache stability
+   over a lean working set; when the right threshold is genuinely ambiguous,
+   default to carrying *more* context, not less. `HANDOFF_RATIO = 0.70` sits
+   below the `targetTokens` (0.85) drop-backstop, so the lossless quality handoff
+   always fires before the lossy heuristic drop ever would. A 128k model lands
+   ≈ today's 88k (continuity for the small-window majority — Kimi/GLM/gpt-oss/
+   qwen); a 1M model fills to the ceiling before paying for a collapse.
+   `HANDOFF_CEILING = 400k` is the deliberate **middle-ground guard** — it caps
+   the genuinely-degrading tail so a 2M-window model (Grok) never carries 1.4M of
+   diluted context. It starts generous and rises only on telemetry evidence.
+
+3. **Prefix-aware scoping (Codex `BodyAfterPrefix`).** Both thresholds measure
+   *conversation growth*, not fixed overhead: the cached system + project-
+   instructions prefix is subtracted before the comparison, so a large prefix
+   never pulls compaction forward. Strictly-good and independent of where the
+   thresholds land. (The orchestrator safety-net already threads
+   `fixedOverheadTokens`; the coordinators gain the same.)
+
+The constants are **telemetry-tunable, not settled.** Prompt-cache token capture
+(provider observability) already lands the data; cache-hit-rate sampled around
+`context.compaction` events picks `HANDOFF_RATIO` and `HANDOFF_CEILING`. Recorded
+here as the operating direction — measured before any hard-tuning.
+
+**Consolidation onto one tier spine.** `lib/message-context-manager.ts` (the
+hand-rolled Phase 1/2/3 ladder behind `manageContext`) and `lib/compaction-tiers.ts`
+(the identical cheap→expensive ladder, written as a reusable primitive "without
+replacing the existing concrete managers") are two implementations of one idea.
+This change finishes the primitive's adoption: `manageContext` delegates to
+`applyTiers` (`drop-old-tool-outputs → semantic-compact → drop-oldest-pairs`),
+with the `[CONTEXT DIGEST]` insertion kept as a wrapper around the hard-fallback
+tier so the digest/PreCompact/metric-phase surface is byte-for-byte preserved.
+One ladder, one set of tier names in the telemetry trace, surface-tuned only by
+tier configuration. CLI `cli/context-manager.ts`'s manual `/compact` adopts the
+same spine. The async LLM handoff (`lib/llm-compaction.ts`) stays a distinct
+pre-turn pass — already Codex-aligned and well-factored — now keyed off
+`handoffTokens`.
 
 ## Active Runtime Work
 

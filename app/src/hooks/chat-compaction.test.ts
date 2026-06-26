@@ -21,7 +21,14 @@ vi.mock('@/lib/orchestrator-context', () => ({
   estimateContextTokens: (msgs: { content: string }[]) =>
     msgs.reduce((s, m) => s + (m.content?.length ?? 0), 0),
   estimateMessageTokens: (m: { content: string }) => m.content?.length ?? 0,
-  getContextBudget: () => ({ maxTokens: 12000, targetTokens: 10000, summarizeTokens: 5000 }),
+  // handoffTokens is the live trigger now (split from summarizeTokens); pin it to
+  // the prior 5000 so this suite's trigger point is unchanged.
+  getContextBudget: () => ({
+    maxTokens: 12000,
+    targetTokens: 10000,
+    summarizeTokens: 5000,
+    handoffTokens: 5000,
+  }),
 }));
 
 import { maybeCompactBeforeTurn } from './chat-compaction';
