@@ -1035,17 +1035,18 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       // TEMP DEBUG (#1193): fold a compact per-assistant shape into the toast-
       // visible error string (`rT` = no reasoning_content but has tool_calls = the
       // DeepSeek 400 culprit) and ride the structured shape + fuller upstream body
-      // in the JSON for the network tab. REMOVE with the debug block above.
+      // in the JSON for the network tab. Lead the string with the tag so toast
+      // truncation can't eat it. REMOVE with the debug block above.
       const debugTag = deepseekDebugAssistants
-        ? ` [debug a=${deepseekDebugAssistants
+        ? `[ds cul=${deepseekDebugAssistants.filter((a) => a.hasToolCalls && !a.hasReasoning).length} a=${deepseekDebugAssistants
             .map(
               (a) => `${a.hasReasoning ? 'R' : 'r'}${a.reasoningLen}${a.hasToolCalls ? 'T' : 't'}`,
             )
-            .join(',')}]`
+            .join(',')}] `
         : '';
       return Response.json(
         {
-          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}${debugTag}`,
+          error: `${debugTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
