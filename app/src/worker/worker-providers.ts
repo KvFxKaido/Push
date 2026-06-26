@@ -21,8 +21,10 @@ import {
 } from '../lib/chat-request-guardrails';
 import {
   buildAnthropicMessagesRequest,
+  createAnthropicTranslatedStream,
   toAnthropicMessages,
 } from '@push/lib/openai-anthropic-bridge';
+import { hasPushNativeSseCapability } from '@push/lib/native-sse-capability';
 import {
   flatToolToOpenAITool,
   toOpenAIChat,
@@ -63,6 +65,43 @@ import { KNOWN_TOOL_NAMES } from '@push/lib/tool-call-diagnosis';
 
 const CLOUDFLARE_WORKERS_AI_NOT_CONFIGURED_ERROR =
   'Cloudflare Workers AI is not configured on this Worker. Add an `ai` binding in `wrangler.jsonc` and redeploy.';
+
+function createAnthropicMessagesSseResponse(options: {
+  request: Request;
+  upstream: Response;
+  model: string;
+  requestId: string;
+  route: string;
+  status?: number;
+  headers: Record<string, string>;
+  logContext?: Record<string, unknown>;
+}): Response {
+  const nativeSse = hasPushNativeSseCapability(options.request.headers);
+  const mode = nativeSse ? 'native_proxy' : 'translated_fallback';
+  wlog('info', 'anthropic_sse_response_mode', {
+    requestId: options.requestId,
+    route: options.route,
+    model: options.model,
+    mode,
+    nativeSse,
+    ...(options.logContext ?? {}),
+  });
+
+  return new Response(
+    nativeSse
+      ? options.upstream.body
+      : createAnthropicTranslatedStream(options.upstream, options.model),
+    {
+      status: options.status ?? 200,
+      headers: {
+        ...options.headers,
+        'Content-Type': nativeSse
+          ? (options.headers['Content-Type'] ?? 'text/event-stream')
+          : 'text/event-stream',
+      },
+    },
+  );
+}
 
 function isCloudflareTextGenerationModel(model: AiModelsSearchObject): boolean {
   const taskId = model.task?.id?.toLowerCase() ?? '';
@@ -1007,13 +1046,22 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       );
     }
 
-    // Both transports proxy the raw upstream SSE straight through. The
-    // Anthropic-transport models (MiniMax / Qwen on `/v1/messages`) emit standard
-    // Anthropic Messages SSE; every Zen-Go client now parses it natively — the
-    // foreground `zenStream` via `anthropicEventStream`, the background coder /
-    // PR-review job via the stream adapter's native branch — so there's no
-    // OpenAI-SSE translator left on this route (parity with the direct Anthropic
-    // and Vertex-Claude routes).
+    if (transport === 'anthropic') {
+      return createAnthropicMessagesSseResponse({
+        request,
+        upstream,
+        model,
+        requestId,
+        route: 'api/zen/go/chat',
+        headers: {
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        logContext: { transport, contract: dual.contractKind },
+      });
+    }
+
     return new Response(upstream.body, {
       status: 200,
       headers: {
@@ -1413,11 +1461,31 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
       );
     }
 
-    // Both transports proxy the raw upstream SSE. Vertex-Claude (anthropic
-    // transport) emits standard Anthropic Messages SSE, parsed natively by
-    // `vertexStream`'s `anthropicEventStream`; Gemini rides Vertex's OpenAI-compat
-    // endpoint. No OpenAI-SSE translator on this route anymore (parity with the
-    // direct Anthropic + Zen-Go routes).
+    if (transport === 'anthropic') {
+      return createAnthropicMessagesSseResponse({
+        request,
+        upstream,
+        model,
+        requestId,
+        route: 'api/vertex/chat',
+        status: upstream.status,
+        headers: {
+          'Content-Type':
+            upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          [REQUEST_ID_HEADER]: requestId,
+          'X-Accel-Buffering': 'no',
+        },
+        logContext: {
+          vertexMode: 'native',
+          transport,
+          contract: dual.contractKind,
+          region: nativeConfig.config.region,
+        },
+      });
+    }
+
     return new Response(upstream.body, {
       status: upstream.status,
       headers: {
@@ -1805,9 +1873,10 @@ function resolveDirectProviderKey(serverKey: string | undefined, request: Reques
 // Modeled on handleVertexChat's native-Anthropic transport path. Difference:
 // auth is a flat `x-api-key` header instead of OAuth, no project/region path
 // segments, and no `anthropic_version` in the body — the version goes in the
-// header. Reuses `buildAnthropicMessagesRequest` from the bridge; the raw
-// Anthropic SSE is proxied straight to the client, which parses it with the
-// native `anthropicEventStream` (no OpenAI-shaped intermediate).
+// header. Reuses `buildAnthropicMessagesRequest` from the bridge; clients that
+// advertise `X-Push-Native-SSE: 1` get raw Anthropic SSE for
+// `anthropicEventStream`, while old unsignaled clients get the temporary
+// OpenAI-SSE translation shim.
 
 const ANTHROPIC_API_VERSION = '2023-06-01';
 const ANTHROPIC_MESSAGES_URL = 'https://api.anthropic.com/v1/messages';
@@ -1945,14 +2014,18 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
       );
     }
 
-    return new Response(upstream.body, {
-      status: 200,
+    return createAnthropicMessagesSseResponse({
+      request,
+      upstream,
+      model,
+      requestId,
+      route: 'api/anthropic/chat',
       headers: {
-        'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
         [REQUEST_ID_HEADER]: requestId,
       },
+      logContext: { contract: dual.contractKind },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
+import {
+  PUSH_NATIVE_SSE_HEADER,
+  PUSH_NATIVE_SSE_HEADER_VALUE,
+} from '@push/lib/native-sse-capability';
 
 // Module-level mocks so the stream's runtime dependencies don't hit real
 // storage or network. Each test reimports the module to pick these up.
@@ -797,6 +801,9 @@ describe('zenStream', () => {
     const out = await events;
     expect(out[0]).toEqual({ type: 'text_delta', text: 'ok' });
     expect(out[out.length - 1]).toMatchObject({ type: 'done', finishReason: 'stop' });
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers[PUSH_NATIVE_SSE_HEADER]).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
   });
 
   it('surfaces an anthropic-transport tool_use as a native_tool_call', async () => {
@@ -852,5 +859,8 @@ describe('zenStream', () => {
       { type: 'text_delta', text: 'ok' },
       { type: 'done', finishReason: 'stop', usage: undefined },
     ]);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    expect(headers[PUSH_NATIVE_SSE_HEADER]).toBeUndefined();
   });
 });

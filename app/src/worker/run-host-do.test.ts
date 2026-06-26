@@ -8,6 +8,10 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  PUSH_NATIVE_SSE_HEADER,
+  PUSH_NATIVE_SSE_HEADER_VALUE,
+} from '@push/lib/native-sse-capability';
 
 const mocks = vi.hoisted(() => ({
   resolveProviderHandler: vi.fn(),
@@ -160,9 +164,8 @@ describe('POST /spike/server-turn', () => {
   });
 
   it('counts Anthropic content_block_delta text/thinking (Zen-Go MiniMax/Qwen raw SSE)', async () => {
-    // The Zen-Go anthropic transport now proxies raw Anthropic Messages SSE
-    // (no OpenAI-SSE translation), so the spike scanner must read text/thinking
-    // from content_block_delta or it records zero for those models (Codex P2, #1181).
+    // The spike advertises native SSE for Zen-Go Anthropic transport, so the
+    // scanner must read text/thinking from content_block_delta.
     const anthropicBody = [
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm "}}',
       '',
@@ -241,6 +244,23 @@ describe('POST /spike/relay', () => {
     });
     await makeHost().fetch(spikeRequest('/spike/relay', { ...VALID_BODY, zenGo: true }));
     expect(seenUrl).toBe('https://push.test/api/zen/go/chat');
+  });
+
+  it('advertises native SSE for Zen-Go Anthropic transport provider requests', async () => {
+    let seenHeader: string | null = null;
+    mocks.resolveProviderHandler.mockReturnValue(async (req: Request) => {
+      seenHeader = req.headers.get(PUSH_NATIVE_SSE_HEADER);
+      return sseResponse();
+    });
+    await makeHost().fetch(
+      spikeRequest('/spike/relay', {
+        provider: 'zen',
+        model: 'minimax-m2.7',
+        prompt: 'ping',
+        zenGo: true,
+      }),
+    );
+    expect(seenHeader).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
   });
 });
 

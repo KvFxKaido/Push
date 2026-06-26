@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
+import {
+  PUSH_NATIVE_SSE_HEADER,
+  PUSH_NATIVE_SSE_HEADER_VALUE,
+} from '@push/lib/native-sse-capability';
 
 const VALID_SERVICE_ACCOUNT_JSON = JSON.stringify({
   type: 'service_account',
@@ -208,6 +212,7 @@ describe('vertexStream', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers['X-Push-Vertex-Service-Account']).toBeTruthy();
     expect(headers['X-Push-Vertex-Region']).toBe('us-central1');
+    expect(headers[PUSH_NATIVE_SSE_HEADER]).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
     // Native mode never sends Authorization — the Worker uses the encoded
     // service account to mint a Google access token internally.
     expect(headers.Authorization).toBeUndefined();

@@ -162,11 +162,16 @@ function bodyFor(mode, spec) {
   return { provider: spec.provider, zenGo: spec.zenGo, model: spec.model, maxTokens: spec.maxTokens, prompt: PROMPT };
 }
 
+function nativeSseHeaders(spec) {
+  const zenGoAnthropic = spec.zenGo && ['minimax-m2.7', 'minimax-m3', 'qwen3.6-plus', 'qwen3.7-max', 'qwen3.7-plus'].includes(spec.model);
+  return spec.provider === 'anthropic' || zenGoAnthropic ? { 'X-Push-Native-SSE': '1' } : {};
+}
+
 async function measureSseArm(url, spec, mode) {
   const t0 = performance.now();
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...nativeSseHeaders(spec) },
     body: JSON.stringify(bodyFor(mode, spec)),
   });
   if (!res.ok || !res.body) throw new Error(url + ' -> HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
