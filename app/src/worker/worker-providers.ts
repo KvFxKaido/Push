@@ -956,6 +956,34 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     bytes: upstreamBody.length,
   });
 
+  // TEMP DEBUG (#1193): DeepSeek thinking mode requires `reasoning_content` to be
+  // present on EVERY assistant message once any has it. This dumps the per-
+  // assistant shape of the actual outgoing body so we can see whether the failure
+  // is inconsistency (some have it, some don't), stripping (none do), or all-
+  // present (a different cause). Searchable in Observability as
+  // `zen_deepseek_reasoning_debug`. REMOVE once the multi-turn replay is verified.
+  if (transport !== 'anthropic' && /deepseek/i.test(model)) {
+    try {
+      const parsedBody = JSON.parse(upstreamBody) as {
+        messages?: Array<Record<string, unknown>>;
+      };
+      wlog('info', 'zen_deepseek_reasoning_debug', {
+        requestId,
+        model,
+        assistants: (parsedBody.messages ?? [])
+          .filter((m) => m.role === 'assistant')
+          .map((m) => ({
+            hasReasoning: typeof m.reasoning_content === 'string',
+            reasoningLen: typeof m.reasoning_content === 'string' ? m.reasoning_content.length : 0,
+            hasToolCalls: Array.isArray(m.tool_calls),
+            contentLen: typeof m.content === 'string' ? m.content.length : -1,
+          })),
+      });
+    } catch {
+      /* debug-only; ignore parse failures */
+    }
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120_000);
