@@ -1666,7 +1666,7 @@ describe('detectAllToolCalls — argument-type drift', () => {
       { name: 'sandbox_read_file', args: { path: 'README.md', start_line: '5', end_line: '20' } },
     ]);
     expect(detected.readOnly).toHaveLength(1);
-    const args = detected.readOnly[0].call.args as Record<string, unknown>;
+    const args = (detected.readOnly[0].call as { args: Record<string, unknown> }).args;
     expect(args.start_line).toBe(5);
     expect(args.end_line).toBe(20);
     expect(detected.droppedCandidates).toHaveLength(0);

@@ -612,9 +612,10 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
   }
 
   // Enforce argument-type contracts: a call whose args still carry a
-  // non-coercible mismatch after normalization is diverted to
+  // non-coercible `type_mismatch` after normalization is diverted to
   // `droppedCandidates` (→ `validation_failed` feedback) rather than executed
-  // with an unusable arg.
+  // with an unusable arg. Only `type_mismatch` blocks; `missing_required` and
+  // `enum_violation` stay advisory (see `divertArgTypeMismatches`).
   const validatedCalls = divertArgTypeMismatches(allCalls, droppedCandidates);
   if (validatedCalls.length === 0) return { ...empty, droppedCandidates };
   return { ...classifyDetectedCalls(validatedCalls, opts), droppedCandidates };

@@ -116,6 +116,17 @@ describe('normalizeToolArgs — coercion policy', () => {
     expect(r.mismatches[0]).toMatchObject({ param: 'start_line', reason: 'type_mismatch' });
     expect(r.args.start_line).toBe('5.5');
   });
+
+  it('treats a whitespace-only string as a mismatch, not a coercion (intent)', () => {
+    // After trim the string is empty, so there is no integer to parse — it must
+    // report a mismatch rather than silently coerce to 0 or NaN.
+    const r = normalizeToolArgs('repo_read', { repo: 'o/r', path: 'a.ts', start_line: '   ' });
+    expect(r.changed).toBe(false);
+    expect(r.args.start_line).toBe('   ');
+    expect(r.mismatches).toEqual([
+      { param: 'start_line', reason: 'type_mismatch', expected: 'integer', actualType: 'string' },
+    ]);
+  });
 });
 
 interface DriftRow {

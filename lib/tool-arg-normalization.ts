@@ -102,7 +102,12 @@ function runtimeType(value: unknown): RuntimeType {
 /** Try to coerce `value` to the schema-declared `type`. Returns the coerced
  *  value when a SAFE, lossless conversion exists, otherwise `undefined` to
  *  signal "leave it, report a mismatch". A value already of the right type is
- *  returned as a no-op (caller compares identity to detect a real change). */
+ *  returned as a no-op (caller compares identity to detect a real change).
+ *
+ *  `undefined` is unambiguous as the "no coercion" sentinel here because the
+ *  caller (`normalizeToolArgs`) gates on `present` first — an absent or
+ *  `undefined` arg never reaches this function, so a `value` of `undefined`
+ *  can't collide with the sentinel. */
 function coerceScalar(value: unknown, type: JsonSchemaType): unknown {
   switch (type) {
     case 'integer': {
