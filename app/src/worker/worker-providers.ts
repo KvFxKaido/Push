@@ -995,6 +995,26 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     }
   }
 
+  // TEMP DEBUG (#1193): inspect the NEUTRAL request the worker RECEIVED, before
+  // serialization, to split client-drop from serializer-drop. `reasoningContent`
+  // (camelCase) is what the wire validator maps `reasoning_content` onto and what
+  // `toOpenAIChat` reads. If neutral assistants carry it but the serialized body
+  // is r0T → serializer drops it; if neutral already lacks it → the client never
+  // sent it (orchestrator gate / missing thinking / wire). REMOVE with the rest.
+  let deepseekDebugNeutral: Array<{ hasRC: boolean; rcLen: number; toolUses: number }> | undefined;
+  if (dual.contractKind === 'neutral' && transport !== 'anthropic' && /deepseek/i.test(model)) {
+    deepseekDebugNeutral = (Array.isArray(dual.request.messages) ? dual.request.messages : [])
+      .filter((m) => m.role === 'assistant')
+      .map((m) => {
+        const blocks = Array.isArray(m.contentBlocks) ? m.contentBlocks : [];
+        return {
+          hasRC: typeof m.reasoningContent === 'string',
+          rcLen: typeof m.reasoningContent === 'string' ? m.reasoningContent.length : 0,
+          toolUses: blocks.filter((b) => (b as { type?: unknown }).type === 'tool_use').length,
+        };
+      });
+  }
+
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120_000);
@@ -1044,15 +1064,24 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
             )
             .join(',')}] `
         : '';
+      // Neutral (pre-serialization) shape: `n=R<rcLen>U<toolUseBlocks>`. If the
+      // `n=` entries show R<non-zero> but the `a=` entries are r0 → serializer
+      // drop; if `n=` is r0 too → client never delivered reasoningContent.
+      const neutralTag = deepseekDebugNeutral
+        ? `[n=${deepseekDebugNeutral
+            .map((a) => `${a.hasRC ? 'R' : 'r'}${a.rcLen}U${a.toolUses}`)
+            .join(',')}] `
+        : '';
       return Response.json(
         {
-          error: `${debugTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          error: `${debugTag}${neutralTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
           ...(deepseekDebugAssistants
             ? {
                 debugAssistants: deepseekDebugAssistants,
+                debugNeutral: deepseekDebugNeutral,
                 debugUpstreamBody: errBody.slice(0, 2000),
               }
             : {}),
