@@ -1,7 +1,10 @@
 # Push as an Agent SDK — AI SDK Feature Map
 
 Status: Reference (research snapshot, 2026-06-26)
-Source: Vercel AI SDK (`@aisdk`) feature announcements + Push's `lib/` runtime contracts.
+Source: Vercel **AI SDK 7** (`@aisdk`) feature announcements + Push's `lib/`
+runtime contracts. API names verified against the AI SDK docs / Vercel
+changelog (vercel/ai `content/docs`, `vercel.com/blog/ai-sdk-7`,
+`vercel.com/changelog/program-agent-harnesses-with-ai-sdk`).
 
 ## Why this doc exists
 
@@ -34,7 +37,7 @@ primitive that already covers it (or the gap if none does).
 | AI SDK feature | Push equivalent | State |
 |---|---|---|
 | **`reasoning: 'high'`** — one standard reasoning knob across providers | `lib/reasoning-models.ts`, `lib/reasoning-tokens.ts`, normalized through `lib/provider-contract.ts` | ✅ Have it. Provider-neutral by design — the neutral hub *is* the normalization layer. |
-| **`ToolLoopAgent` + `toolApproval`** — agent loop with automatic or human-in-the-loop tool approval | The round loop (`cli/engine.ts`, `app/src/hooks/chat-*`) + `lib/approval-gates.ts` (`supervised` / `autonomous` / `full-auto`) + the Auditor gate + per-turn side-effect budget | ✅ Have it, **deeper**. AI SDK approval is per-tool boolean; Push gates on *capability category* (`destructive_sandbox`, `git_override`, `remote_side_effect`) with fail-closed required gates. |
+| **`ToolLoopAgent` + `toolApproval`** — agent loop with automatic or human-in-the-loop tool approval (per-tool values like `'user-approval'`, plus a policy path via `@ai-sdk/policy-opa` / Open Policy Agent) | The round loop (`cli/engine.ts`, `app/src/hooks/chat-*`) + `lib/approval-gates.ts` (`supervised` / `autonomous` / `full-auto`) + the Auditor gate + per-turn side-effect budget | ✅ Have it. Both ship a policy-style approval engine now — Push's edge is *integration*: approval is wired to the capability ledger and the fail-closed **delivery** gates (Gate-at-Push, Protect Main), not a standalone policy module. |
 | **Typed private tool context** — tools get context the model never sees | `lib/role-context.ts`, `lib/tool-execution-runtime.ts`, `ToolHookContext` (`lib/tool-hooks.ts`) | ✅ Have it. Context is threaded through the execution runtime, not the prompt. |
 | **`runtimeContext` + `prepareStep`** — typed state shared across steps/approvals/telemetry | `lib/working-memory.ts`, `lib/context-memory*` (store/retrieval/packing/invalidation), `lib/correlation-context.ts`, `lib/delegation-brief.ts` | ✅ Have it, **scattered**. The state exists and is typed; it just isn't presented as one `runtimeContext` object. (See gap #2.) |
 | **`uploadFile` → provider file references** — upload once, reuse the reference across multi-step calls | Partial: `lib/artifacts/`, `lib/scratchpad-tools.ts` | ⚠️ **Gap.** Push re-sends file content per call. Provider-side file handles would cut tokens on multi-step coder runs. (See gap #1.) |
@@ -55,7 +58,8 @@ structurally can't have:
 
 - **Capability ledger** (`lib/capabilities.ts`) — tools declare capabilities,
   roles grant them, runtime tracks declared-vs-used for audit and approval UI.
-  AI SDK approvals are per-call booleans with no capability model.
+  AI SDK 7 has a policy engine (OPA) for *whether* a call is allowed, but no
+  capability model tying approvals to roles and a declared-vs-used audit trail.
 - **Gate-at-Push** + **Auditor gate** + **Protect Main** — delivery is gated on
   the cumulative push diff, fail-closed. No SDK ships a release gate.
 - **Per-turn side-effect budget** — read-only calls parallel (cap 6), mutations
