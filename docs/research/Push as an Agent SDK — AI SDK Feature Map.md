@@ -151,6 +151,62 @@ a pile of modules that happen to be one). If we're embracing "I'm building my
 own SDK," the facade in gap #2 is the thing to build; everything else is already
 yours.
 
+## Counter-read (second opinion, 2026-06-26)
+
+A reviewing pass from the provider-contract / conformance work. Agreement on the
+diagnosis — Push *is* the governed runtime, and "engine with no labeled
+dashboard" is the right insight. The divergence is on **emphasis and
+sequencing**, kept as a counter-section rather than a rewrite: the map above is a
+sound snapshot; this is where a second set of hands would weight it differently.
+
+1. **The facade (gap #2) is oversold as strategy — its real payload is
+   internal.** A `lib/index.ts` public surface only earns its keep with *external
+   consumers* building agents on Push. For a single-operator product ("a repo you
+   run by chatting"), "what is Push's agent API?" is low-urgency — you know the
+   modules. What the facade genuinely buys is *forcing the `runtimeContext`
+   consolidation* (the "✅ have it, scattered" row), which is a real smell worth
+   fixing on its own. Reframe: **the consolidation is the win; the facade is just
+   the pressure.** Shipping a facade as "we're an SDK now" without a consumer is
+   tidiness in a strategy costume — and it implicitly signs a maintenance contract
+   for external callers.
+
+2. **Gap #1's token estimate assumes static re-reads; a coder loop edits files.**
+   A content-hash-keyed file handle only caches files that *don't change*
+   across turns. The high-churn files in an edit loop are the edit *targets* —
+   cache miss every turn. The win is real but it's for the *context* files
+   (read, not modified), not the headline "200-line file × 50 turns." Two omissions
+   compound it: (a) provider file APIs have **no clean neutral shape** (Anthropic
+   Files beta, Gemini, OpenAI all differ) — direct tension with the
+   Anthropic-conceptual neutral hub this doc otherwise venerates; (b) that makes
+   it a *new per-provider capability dimension*, i.e. exactly what the #1169
+   conformance harness now exists to pin. The gap and the harness reinforce each
+   other; the doc doesn't connect them.
+
+3. **For a visibility-first operator, OTel (gap #3) outranks the facade.** It's
+   cheap, unambiguous, maps onto the symmetric-structured-log discipline already
+   in `CLAUDE.md`, and points Push at any observability stack. That's more aligned
+   with how this product is actually run than a public API for hypothetical
+   external callers. On personal-fit grounds the ranking flips: **OTel +
+   consolidation before the facade.**
+
+4. **The unasked fork: should Push be an SDK at all?** The doc opens with "if
+   we're embracing 'I'm building my own SDK'" and then maps features without
+   interrogating it. Product-vs-library pull opposite ways — the product thesis
+   says polish the single conversational lead; the SDK thesis says expose the
+   primitives for others to assemble. Best read: "I'm building my own SDK" is
+   shorthand for "I want my runtime *coherent and observable*" — which is the
+   consolidation + OTel, not a published package. Name the fork before anyone
+   ships `lib/index.ts`.
+
+Minor: the "11 of 13" box-score is generous (counting "HarnessAgent — inverse
+framing" and "MCP apps — deliberately bounded" as ✅ is *we chose differently*,
+not *we have it*). The "governance divergence" framing is stronger than the count.
+
+**Revised "what I'd build first":** the `runtimeContext` consolidation (real
+smell, the facade's actual payload) and the OTel exporter (cheap, fits how the
+product is run). Hold the public facade until a concrete external consumer
+justifies the maintenance contract.
+
 ## Pointers
 
 - [`CLAUDE.md`](../../CLAUDE.md) — fold-in-vs-outsource, capability sourcing, governance
