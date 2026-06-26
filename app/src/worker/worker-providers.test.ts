@@ -1899,6 +1899,34 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
   });
 
+  it('proxies the Vertex-Claude upstream SSE raw (no OpenAI-SSE translation)', async () => {
+    // vertexStream now parses Anthropic SSE natively, so the Worker must pass the
+    // raw upstream through untouched — the retired path rewrote it to OpenAI SSE.
+    const anthropicFrame =
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(anthropicFrame, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          }),
+      ),
+    );
+    const response = await handleVertexChat(
+      makeNeutralRequest({
+        model: 'claude-sonnet-4-6',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+      makeEnv(),
+    );
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    expect(text).toContain('"type":"content_block_delta"');
+    expect(text).not.toContain('"choices"');
+  });
+
   it('routes a non-claude model through toOpenAIChat (model in body, openapi endpoint)', async () => {
     const get = captureUpstream();
     await handleVertexChat(
