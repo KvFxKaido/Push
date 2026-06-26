@@ -776,11 +776,17 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
       <div ref={rowRef} className="flex justify-end px-4 py-1.5 group/user animate-fade-in-up">
-        {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row. */}
+        {/* Hover (pointer) or long-press (touch, `actionsRevealed`) reveals the row.
+            Base opacity/pointer-events are mutually exclusive on `actionsRevealed`,
+            NOT appended: Tailwind v4 emits `.pointer-events-none` AFTER
+            `.pointer-events-auto`, so an appended `pointer-events-auto` LOSES to a
+            base `pointer-events-none` — the revealed row showed (opacity-100 wins)
+            but every button was dead. The `group-hover` variant still overrides the
+            resting `-none` on pointer devices (variants are emitted last). */}
         <div
-          className={`opacity-0 pointer-events-none group-hover/user:opacity-100 group-hover/user:pointer-events-auto ${
-            actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
-          } transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5`}
+          className={`${
+            actionsRevealed ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+          } group-hover/user:opacity-100 group-hover/user:pointer-events-auto transition-opacity duration-200 flex items-start gap-0.5 pt-2 mr-1.5`}
         >
           <CopyButton text={displayContentText} />
           {onEdit && (
@@ -872,9 +878,12 @@ export const MessageBubble = memo(function MessageBubble({
           // Copy/Regenerate/Pin — touch has no real :hover, so the long-press is
           // the reveal gesture (app-wide idiom, matching the branch-picker Delete).
           <div
-            className={`opacity-0 pointer-events-none group-hover/assistant:opacity-100 group-hover/assistant:pointer-events-auto ${
-              actionsRevealed ? 'opacity-100 pointer-events-auto' : ''
-            } transition-opacity duration-200 mt-1.5 flex items-center gap-0.5`}
+            // Mutually exclusive base (not appended) — Tailwind v4 emits
+            // `.pointer-events-none` after `.pointer-events-auto`, so appending
+            // `-auto` loses and the revealed row's buttons go dead. See the user row.
+            className={`${
+              actionsRevealed ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
+            } group-hover/assistant:opacity-100 group-hover/assistant:pointer-events-auto transition-opacity duration-200 mt-1.5 flex items-center gap-0.5`}
           >
             <CopyButton text={displayContentText} />
             {canRegenerate && onRegenerate && (

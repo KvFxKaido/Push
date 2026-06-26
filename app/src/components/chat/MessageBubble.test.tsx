@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatCard, ChatMessage } from '@/types';
 import { MessageBubble } from './MessageBubble';
+import { createMessageViewStateStore, MessageViewStateContext } from '@/hooks/useMessageViewState';
 
 function assistantMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -160,5 +161,39 @@ describe('MessageBubble', () => {
     const html = renderToStaticMarkup(<MessageBubble message={message} onEdit={() => {}} />);
     expect(html).toContain('pointer-events-none');
     expect(html).toContain('group-hover/user:pointer-events-auto');
+  });
+
+  // Revealed (touch long-press): the action row must be INTERACTIVE, i.e. carry
+  // `pointer-events-auto` and NOT a co-present `pointer-events-none`. Tailwind v4
+  // emits `.pointer-events-none` after `.pointer-events-auto`, so when both were
+  // applied the resting `-none` won — the row showed (opacity-100 wins) but every
+  // button was dead. These pin the mutually-exclusive class swap.
+  function renderRevealed(message: ChatMessage) {
+    const store = createMessageViewStateStore();
+    store.set(message.id, { actionsRevealed: true });
+    return renderToStaticMarkup(
+      <MessageViewStateContext.Provider value={store}>
+        <MessageBubble message={message} onPin={() => {}} onEdit={() => {}} />
+      </MessageViewStateContext.Provider>,
+    );
+  }
+
+  it('makes the revealed assistant action row interactive (no resting pointer-events-none)', () => {
+    const html = renderRevealed(assistantMessage({ id: 'assistant-rev', content: 'hello' }));
+    expect(html).toContain('pointer-events-auto group-hover/assistant');
+    expect(html).not.toContain('pointer-events-none group-hover/assistant');
+  });
+
+  it('makes the revealed user action row interactive (no resting pointer-events-none)', () => {
+    const message: ChatMessage = {
+      id: 'user-rev',
+      role: 'user',
+      content: 'hi',
+      timestamp: 1,
+      status: 'done',
+    };
+    const html = renderRevealed(message);
+    expect(html).toContain('pointer-events-auto group-hover/user');
+    expect(html).not.toContain('pointer-events-none group-hover/user');
   });
 });
