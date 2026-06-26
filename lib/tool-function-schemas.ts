@@ -47,7 +47,12 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   start_line: 'integer',
   end_line: 'integer',
   limit: 'integer',
-  expected_version: 'integer',
+  // `expected_version` is the hashline version token — runtime-typed `string`
+  // (`lib/sandbox-provider.ts`), NOT a number, even though it often *looks*
+  // numeric. It defaults to `string` here, but is listed explicitly so it
+  // isn't mistakenly re-added as `integer`: that would make the normalizer
+  // coerce a valid `"42"` to `42` and hard-reject a non-numeric version token.
+  expected_version: 'string',
   // booleans
   stat: 'boolean',
   private: 'boolean',
@@ -55,8 +60,10 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   multiSelect: 'boolean',
   dryRun: 'boolean',
   diagnostics: 'boolean',
-  checks: 'boolean',
   rollbackOnFailure: 'boolean',
+  // arrays — `checks` on `patch` is an array of `{command, exitCode?,
+  // timeoutMs?}` objects (`sandbox-tool-detection.ts`), NOT a boolean flag.
+  checks: 'array',
   // arrays
   tasks: 'array',
   files: 'array',
@@ -76,7 +83,7 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
 };
 
 /** Array params whose elements are objects (vs strings). */
-const OBJECT_ARRAY_PARAMS = new Set(['tasks', 'todos', 'edits']);
+const OBJECT_ARRAY_PARAMS = new Set(['tasks', 'todos', 'edits', 'checks']);
 
 /** Parse `name(a, b?, c)` → ordered params with required derived from `?`. */
 function parseSignatureParams(signature: string): Array<{ name: string; required: boolean }> {

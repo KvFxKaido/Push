@@ -36,6 +36,7 @@ import {
 import { recoverNamespacedToolCalls } from './tool-call-namespaced-recovery.js';
 import { recoverTokenDelimitedToolCalls } from './tool-call-token-recovery.js';
 import { recoverXmlToolCalls } from './tool-call-xml-recovery.js';
+import { logToolArgOutcome, normalizeToolArgs } from './tool-arg-normalization.js';
 import type { NativeToolCall } from './provider-contract.js';
 
 /**
@@ -209,7 +210,20 @@ export function createToolDispatcher<TCall>(
     parsed: ParsedToolObject,
     sample: string,
   ): { ok: true; call: TCall } | { ok: false; report: ToolMalformedReport } => {
-    const matched = matchSources(sources, parsed);
+    // Reconcile cross-provider argument-type drift against the tool's derived
+    // schema before the source builds the executable call: a model that quotes
+    // an integer (`start_line: "5"`) or a boolean (`stat: "true"`) emits valid
+    // JSON of the wrong contract, which would otherwise reach the executor
+    // untouched. Coercions are safe + lossless; non-coercible mismatches are
+    // logged (not rejected) so behavior stays lenient and ops gains visibility.
+    const normalized = normalizeToolArgs(parsed.tool, parsed.args);
+    if (normalized.coercions.length > 0 || normalized.mismatches.length > 0) {
+      logToolArgOutcome(parsed.tool, normalized);
+    }
+    const effective: ParsedToolObject = normalized.changed
+      ? { tool: parsed.tool, args: normalized.args, raw: parsed.raw }
+      : parsed;
+    const matched = matchSources(sources, effective);
     if (matched.ok) {
       return { ok: true, call: matched.call };
     }

@@ -1644,3 +1644,117 @@ describe('detectAllToolCalls — textual-order merging', () => {
     expect(allTools).not.toContain('write_file');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Cross-provider argument-type drift: the web dispatcher coerces the safe
+// drift (string-quoted numbers/booleans) and enforces the non-coercible
+// remainder by diverting it to `droppedCandidates` (→ validation_failed).
+// Folds the web surface onto the shared `tool-arg-normalization` primitive.
+// ---------------------------------------------------------------------------
+
+describe('detectAllToolCalls — argument-type drift', () => {
+  it('coerces a quoted integer on the text path (fetch_pr)', () => {
+    const detected = detectAllToolCalls('{"tool":"fetch_pr","args":{"repo":"o/r","pr":"105"}}');
+    const call = [...detected.readOnly, ...(detected.mutating ? [detected.mutating] : [])][0];
+    expect(call?.call.tool).toBe('fetch_pr');
+    expect((call?.call as { args: Record<string, unknown> }).args.pr).toBe(105);
+    expect(detected.droppedCandidates).toHaveLength(0);
+  });
+
+  it('coerces a quoted integer on the native path (Kimi/GLM)', () => {
+    const detected = detectNativeToolCalls([
+      { name: 'sandbox_read_file', args: { path: 'README.md', start_line: '5', end_line: '20' } },
+    ]);
+    expect(detected.readOnly).toHaveLength(1);
+    const args = (detected.readOnly[0].call as { args: Record<string, unknown> }).args;
+    expect(args.start_line).toBe(5);
+    expect(args.end_line).toBe(20);
+    expect(detected.droppedCandidates).toHaveLength(0);
+  });
+
+  it('diverts a non-coercible type mismatch to droppedCandidates (text path)', () => {
+    const detected = detectAllToolCalls(
+      '{"tool":"fetch_pr","args":{"repo":"o/r","pr":"not-a-number"}}',
+    );
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.mutating).toBeNull();
+    expect(detected.droppedCandidates).toHaveLength(1);
+    expect(detected.droppedCandidates[0]).toMatchObject({ resolvedToolName: 'fetch_pr' });
+    // The github detector coerces the unparseable string to NaN before the
+    // enforcement pass, so the value is a (non-integer) number by then — the
+    // block still fires; assert on the stable part of the message.
+    expect(detected.droppedCandidates[0].sample).toContain('pr: expected integer');
+  });
+
+  it('diverts a non-coercible type mismatch to droppedCandidates (native path)', () => {
+    const detected = detectNativeToolCalls([
+      { name: 'sandbox_read_file', args: { path: 'README.md', start_line: 'abc' } },
+    ]);
+    expect(detected.readOnly).toHaveLength(0);
+    expect(detected.droppedCandidates).toHaveLength(1);
+    expect(detected.droppedCandidates[0]).toMatchObject({ resolvedToolName: 'sandbox_read_file' });
+  });
+
+  it('keeps a correctly-typed call untouched', () => {
+    const detected = detectNativeToolCalls([
+      { name: 'sandbox_read_file', args: { path: 'README.md', start_line: 5 } },
+    ]);
+    expect(detected.readOnly).toHaveLength(1);
+    expect(detected.droppedCandidates).toHaveLength(0);
+  });
+
+  // Regression (Codex P1 #1185): a valid guarded edit carries a string
+  // `expected_version`; the derived schema used to mistype it `integer`, which
+  // coerced/blocked valid calls. It must pass through untouched now.
+  it('does not corrupt or reject a string expected_version', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_edit_range',
+        args: {
+          path: '/workspace/a.ts',
+          start_line: 10,
+          end_line: 12,
+          content: 'x',
+          expected_version: 'abc123',
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    const call = detected.fileMutations[0] ?? detected.mutating;
+    expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('abc123');
+  });
+
+  it('does not coerce a numeric-looking expected_version to a number', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_edit_range',
+        args: {
+          path: '/workspace/a.ts',
+          start_line: 10,
+          end_line: 12,
+          content: 'x',
+          expected_version: '42',
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    const call = detected.fileMutations[0] ?? detected.mutating;
+    expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('42');
+  });
+
+  // Regression (Codex P1 #1185): `checks` on patch is an object array, not a
+  // boolean — a valid patch with post-write checks must not be diverted.
+  it('does not reject a valid patch with a checks array', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_apply_patchset',
+        args: {
+          edits: [{ path: '/workspace/a.ts', start_line: 1, end_line: 1, content: 'x' }],
+          checks: [{ command: 'npm test' }],
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    expect(detected.fileMutations.length + (detected.mutating ? 1 : 0)).toBe(1);
+  });
+});

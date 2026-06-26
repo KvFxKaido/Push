@@ -34,10 +34,12 @@ import { asRecord, detectToolFromText, extractBareToolJsonObjects } from './util
 import {
   getToolCanonicalNames,
   getRecognizedToolNames,
+  getToolPublicName,
   isFileMutationToolName,
   isReadOnlyToolName,
   resolveToolName,
 } from './tool-registry';
+import { logToolArgOutcome, normalizeToolArgs } from '@push/lib/tool-arg-normalization';
 import {
   extractAllBareJsonObjects,
   getToolSource,
@@ -609,8 +611,14 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
   }
 
-  if (allCalls.length === 0) return { ...empty, droppedCandidates };
-  return { ...classifyDetectedCalls(allCalls, opts), droppedCandidates };
+  // Enforce argument-type contracts: a call whose args still carry a
+  // non-coercible `type_mismatch` after normalization is diverted to
+  // `droppedCandidates` (→ `validation_failed` feedback) rather than executed
+  // with an unusable arg. Only `type_mismatch` blocks; `missing_required` and
+  // `enum_violation` stay advisory (see `divertArgTypeMismatches`).
+  const validatedCalls = divertArgTypeMismatches(allCalls, droppedCandidates);
+  if (validatedCalls.length === 0) return { ...empty, droppedCandidates };
+  return { ...classifyDetectedCalls(validatedCalls, opts), droppedCandidates };
 }
 
 export function detectNativeToolCalls(
@@ -638,6 +646,12 @@ export function detectNativeToolCalls(
     if (seen.has(key)) continue;
     seen.add(key);
 
+    // Native function-calls bypass the shared kernel (which logs the text
+    // path), so log this surface's coercion/mismatch outcome here. The actual
+    // coercion happens inside `detectStructuredToolCall`; this is the one log
+    // for the native path. (Kimi/GLM — the providers most prone to type drift.)
+    logToolArgOutcome(rawToolName, normalizeToolArgs(rawToolName, args));
+
     const call = detectStructuredToolCall(rawToolName, args);
     if (call) {
       // Carry the Gemini signed-reasoning token (when present) onto the detected
@@ -657,7 +671,8 @@ export function detectNativeToolCalls(
     });
   }
 
-  if (allCalls.length === 0) {
+  const validatedCalls = divertArgTypeMismatches(allCalls, droppedCandidates);
+  if (validatedCalls.length === 0) {
     return {
       readOnly: [],
       parallelDelegations: [],
@@ -668,7 +683,7 @@ export function detectNativeToolCalls(
       droppedCandidates,
     };
   }
-  return { ...classifyDetectedCalls(allCalls, opts), droppedCandidates };
+  return { ...classifyDetectedCalls(validatedCalls, opts), droppedCandidates };
 }
 
 /**
@@ -759,6 +774,97 @@ function splitOverlappingFileMutations(fileMutations: AnyToolCall[]): {
  */
 export function isParallelDelegationToolCall(toolCall: AnyToolCall): boolean {
   return toolCall.source === 'delegate' && toolCall.call.tool === 'delegate_explorer';
+}
+
+/**
+ * Enforcement pass for the web surface: divert any call carrying a
+ * non-coercible argument-type mismatch into `droppedCandidates`, where
+ * `handleDroppedCandidatesError` turns it into a `validation_failed`
+ * `[TOOL_CALL_PARSE_ERROR]` with the tool's schema + example
+ * (`buildValidationFailedHint`). Returns the calls that passed.
+ *
+ * Scope — only `type_mismatch`, only when BOTH sides are scalar, only on web:
+ *   - By the time a call reaches here its args have already been coerced
+ *     (`detectStructuredToolCall`), so every *recoverable* drift is gone. A
+ *     surviving scalar `type_mismatch` (a non-numeric string for an integer, a
+ *     non-boolean string for a flag) is an unusable value — blocking it is
+ *     strictly better than passing it downstream.
+ *   - Blocking is gated to scalar expected/actual types on purpose. The derived
+ *     schema (`tool-function-schemas.ts`) is best-effort and global-by-param-
+ *     name, so it's least reliable exactly where a name carries different
+ *     *structure* across tools — `checks` was a boolean in one place and an
+ *     object array in another. A structural mismatch is therefore far more
+ *     likely a schema gap than a real model error, so it stays advisory (logged)
+ *     rather than hard-rejecting an already-validated call (Codex P1 on #1185).
+ *   - `missing_required` and `enum_violation` also stay advisory: required-field
+ *     gaps overlap with the executors' own checks, and the only enum today is
+ *     the active-repo pin, which the dispatcher doesn't bind here.
+ *   - The CLI deliberately drops the kernel's `malformed` channel
+ *     (`wrapCliDetectAllToolCalls`) and enforces arg types in its executor
+ *     instead, so the equivalent enforcement there is downstream, not at parse
+ *     time. Diverting at the shared kernel would silently drop the call on the
+ *     CLI with no feedback — hence this lives on the web dispatcher only.
+ */
+function divertArgTypeMismatches(
+  allCalls: AnyToolCall[],
+  droppedCandidates: DroppedToolCallCandidate[],
+): AnyToolCall[] {
+  const kept: AnyToolCall[] = [];
+  for (const toolCall of allCalls) {
+    const dropped = validateCallArgTypes(toolCall);
+    if (dropped) {
+      droppedCandidates.push(dropped);
+      continue;
+    }
+    kept.push(toolCall);
+  }
+  return kept;
+}
+
+/**
+ * Return a `DroppedToolCallCandidate` describing a blocking arg-type mismatch on
+ * `toolCall`, or null when the call's args satisfy the schema (or carry no
+ * validatable args object, e.g. scratchpad flat-form). Emits a structured log on
+ * the blocking branch so the diversion is visible to ops.
+ */
+function validateCallArgTypes(toolCall: AnyToolCall): DroppedToolCallCandidate | null {
+  if (!('args' in toolCall.call)) return null;
+  const args = (toolCall.call as { args?: unknown }).args;
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null;
+
+  const toolName = toolCall.call.tool;
+  const { mismatches } = normalizeToolArgs(toolName, args as Record<string, unknown>);
+  // Block only scalar-vs-scalar mismatches; structural mismatches are where the
+  // best-effort schema is least trustworthy, so they stay advisory (see above).
+  const SCALAR_EXPECTED = new Set(['integer', 'number', 'boolean']);
+  const SCALAR_ACTUAL = new Set(['string', 'number', 'boolean']);
+  const blocking = mismatches.filter(
+    (m) =>
+      m.reason === 'type_mismatch' &&
+      !!m.expected &&
+      SCALAR_EXPECTED.has(m.expected) &&
+      !!m.actualType &&
+      SCALAR_ACTUAL.has(m.actualType),
+  );
+  if (blocking.length === 0) return null;
+
+  const detail = blocking
+    .map((m) => `${m.param}: expected ${m.expected}, got ${m.actualType}`)
+    .join('; ');
+  console.warn(
+    JSON.stringify({
+      level: 'warn',
+      event: 'tool_arg_validation_blocked',
+      tool: toolName,
+      mismatches: blocking,
+    }),
+  );
+  const publicName = getToolPublicName(toolName);
+  return {
+    rawToolName: publicName,
+    resolvedToolName: toolName,
+    sample: `{"tool":"${publicName}", ...} — argument type mismatch (${detail})`,
+  };
 }
 
 function classifyDetectedCalls(
@@ -987,7 +1093,16 @@ function detectStructuredToolCall(
   toolName: string,
   args: Record<string, unknown>,
 ): AnyToolCall | null {
-  const text = JSON.stringify({ tool: toolName, args });
+  // Coerce cross-provider argument-type drift against the tool's derived schema
+  // before the per-source detectors build the typed call. This is the web
+  // chokepoint every structured path funnels through — the kernel `ToolSource`
+  // adapter (text path), native function-calls, and namespaced/XML recovery —
+  // so all three inherit the same normalization the shared kernel applies to the
+  // CLI. Silent (no log) on purpose: the kernel already logs the text path it
+  // coerced, and the native entry point logs its own outcome; coercion is
+  // idempotent, so re-running it here on already-coerced args is a safe no-op.
+  const { args: normalizedArgs } = normalizeToolArgs(toolName, args);
+  const text = JSON.stringify({ tool: toolName, args: normalizedArgs });
 
   const delegateMatch = detectDelegationTool(text);
   if (delegateMatch) return delegateMatch;
