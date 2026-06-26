@@ -253,6 +253,72 @@ function llmContentBlocksToAnthropic(
   return out.length > 0 ? out : [{ type: 'text', text: '' }];
 }
 
+function buildOpenAISseChunk(params: {
+  model: string;
+  content?: string;
+  reasoningBlock?: OpenAIReasoningBlock;
+  /**
+   * Emit an OpenAI streaming `tool_calls` delta (translated from an Anthropic
+   * `tool_use` block). The first fragment of a call carries `id` + `name`;
+   * subsequent fragments carry only an `arguments` slice. `openai-sse-pump`
+   * accumulates these by `index` and flushes the call as fenced JSON.
+   */
+  toolCall?: { index: number; id?: string; name?: string; arguments?: string };
+  finishReason?: string | null;
+  /**
+   * Push-private sidecar: when finishReason is `'pause_turn'`, this carries
+   * the full assistant `content[]` array from the paused upstream so the
+   * pump can surface it to the stream adapter for a continuation request.
+   */
+  assistantBlocks?: Array<Record<string, unknown>>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
+}): string {
+  const delta: Record<string, unknown> = {};
+  if (params.content) delta.content = params.content;
+  if (params.reasoningBlock) delta.reasoning_block = params.reasoningBlock;
+  if (params.assistantBlocks) delta.assistant_content_blocks = params.assistantBlocks;
+  if (params.toolCall) {
+    const fn: Record<string, unknown> = {};
+    if (params.toolCall.name !== undefined) fn.name = params.toolCall.name;
+    if (params.toolCall.arguments !== undefined) fn.arguments = params.toolCall.arguments;
+    delta.tool_calls = [
+      {
+        index: params.toolCall.index,
+        ...(params.toolCall.id ? { id: params.toolCall.id, type: 'function' } : {}),
+        function: fn,
+      },
+    ];
+  }
+
+  const payload: Record<string, unknown> = {
+    id: `chatcmpl-${crypto.randomUUID()}`,
+    object: 'chat.completion.chunk',
+    created: Math.floor(Date.now() / 1000),
+    model: params.model,
+    choices: [
+      {
+        index: 0,
+        delta,
+        finish_reason: params.finishReason ?? null,
+      },
+    ],
+  };
+
+  if (params.usage) {
+    payload.usage = {
+      prompt_tokens: params.usage.prompt_tokens ?? 0,
+      completion_tokens: params.usage.completion_tokens ?? 0,
+      total_tokens: params.usage.total_tokens ?? 0,
+    };
+  }
+
+  return `data: ${JSON.stringify(payload)}\n\n`;
+}
+
 function mapAnthropicStopReason(stopReason: string | null | undefined): string {
   switch (stopReason) {
     case 'max_tokens':
@@ -753,18 +819,302 @@ export function toAnthropicMessages(
   });
 }
 
+export function createAnthropicTranslatedStream(
+  upstream: Response,
+  model: string,
+): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = upstream.body?.getReader();
+      if (!reader) {
+        controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop' })));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+        return;
+      }
+
+      let buffer = '';
+      let usage:
+        | { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+        | undefined;
+
+      type ThinkingState = {
+        kind: 'thinking';
+        text: string;
+        signature: string;
+      };
+      type RedactedState = { kind: 'redacted_thinking'; data: string };
+      const openBlocks = new Map<number, ThinkingState | RedactedState>();
+      const capturedBlocks = new Map<number, Record<string, unknown>>();
+      const inputJsonBuffers = new Map<number, string>();
+      const toolUseBlocks = new Map<number, { id: string; name: string }>();
+      const structuredOutputBlocks = new Set<number>();
+
+      const processSseLine = (rawLine: string): boolean => {
+        const line = rawLine.trim();
+        if (!line.startsWith('data:')) return false;
+        const jsonStr = line[5] === ' ' ? line.slice(6) : line.slice(5);
+        if (jsonStr === '[DONE]') {
+          controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+          controller.close();
+          return true;
+        }
+
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(jsonStr) as Record<string, unknown>;
+        } catch {
+          return false;
+        }
+
+        const eventType = typeof parsed.type === 'string' ? parsed.type : '';
+
+        if (eventType === 'content_block_start') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+          const block = parsed.content_block as Record<string, unknown> | undefined;
+          if (idx >= 0 && block) {
+            if (block.type === 'thinking') {
+              openBlocks.set(idx, {
+                kind: 'thinking',
+                text: typeof block.thinking === 'string' ? block.thinking : '',
+                signature: typeof block.signature === 'string' ? block.signature : '',
+              });
+            } else if (block.type === 'redacted_thinking') {
+              openBlocks.set(idx, {
+                kind: 'redacted_thinking',
+                data: typeof block.data === 'string' ? block.data : '',
+              });
+            } else if (block.type === 'tool_use') {
+              const id = typeof block.id === 'string' ? block.id : '';
+              const name = typeof block.name === 'string' ? block.name : '';
+              if (name === STRUCTURED_OUTPUT_TOOL_NAME) {
+                structuredOutputBlocks.add(idx);
+              } else {
+                toolUseBlocks.set(idx, { id, name });
+                controller.enqueue(
+                  encoder.encode(
+                    buildOpenAISseChunk({
+                      model,
+                      toolCall: { index: idx, id, name, arguments: '' },
+                    }),
+                  ),
+                );
+              }
+            }
+            capturedBlocks.set(idx, { ...block });
+          }
+          return false;
+        }
+
+        if (eventType === 'content_block_stop') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+          const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+          if (state) {
+            openBlocks.delete(idx);
+            if (state.kind === 'thinking') {
+              if (state.signature) {
+                controller.enqueue(
+                  encoder.encode(
+                    buildOpenAISseChunk({
+                      model,
+                      reasoningBlock: {
+                        type: 'thinking',
+                        text: state.text,
+                        signature: state.signature,
+                      },
+                    }),
+                  ),
+                );
+              }
+            } else if (state.data) {
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    reasoningBlock: { type: 'redacted_thinking', data: state.data },
+                  }),
+                ),
+              );
+            }
+          }
+          if (idx >= 0) {
+            const captured = capturedBlocks.get(idx);
+            if (captured) {
+              if (captured.type === 'thinking' && state?.kind === 'thinking') {
+                captured.thinking = state.text;
+                captured.signature = state.signature;
+              } else if (
+                captured.type === 'redacted_thinking' &&
+                state?.kind === 'redacted_thinking'
+              ) {
+                captured.data = state.data;
+              }
+              const pendingJson = inputJsonBuffers.get(idx);
+              if (pendingJson !== undefined) {
+                inputJsonBuffers.delete(idx);
+                if (pendingJson.length > 0) {
+                  try {
+                    captured.input = JSON.parse(pendingJson);
+                  } catch {
+                    // Keep the `content_block_start` shape if upstream closes mid-token.
+                  }
+                }
+              }
+            }
+          }
+          return false;
+        }
+
+        if (eventType === 'content_block_delta') {
+          const idx = typeof parsed.index === 'number' ? parsed.index : -1;
+          const delta = parsed.delta as Record<string, unknown> | undefined;
+          if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
+            controller.enqueue(encoder.encode(buildOpenAISseChunk({ model, content: delta.text })));
+            const captured = idx >= 0 ? capturedBlocks.get(idx) : undefined;
+            if (captured && captured.type === 'text') {
+              captured.text = (typeof captured.text === 'string' ? captured.text : '') + delta.text;
+            }
+            return false;
+          }
+
+          const state = idx >= 0 ? openBlocks.get(idx) : undefined;
+          if (state?.kind === 'thinking') {
+            if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+              state.text += delta.thinking;
+            } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
+              state.signature += delta.signature;
+            }
+          }
+
+          if (
+            delta?.type === 'input_json_delta' &&
+            typeof delta.partial_json === 'string' &&
+            idx >= 0
+          ) {
+            inputJsonBuffers.set(idx, (inputJsonBuffers.get(idx) ?? '') + delta.partial_json);
+            if (structuredOutputBlocks.has(idx)) {
+              controller.enqueue(
+                encoder.encode(buildOpenAISseChunk({ model, content: delta.partial_json })),
+              );
+            } else if (toolUseBlocks.has(idx)) {
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    toolCall: { index: idx, arguments: delta.partial_json },
+                  }),
+                ),
+              );
+            }
+          }
+          return false;
+        }
+
+        if (
+          eventType === 'message_start' ||
+          eventType === 'message_delta' ||
+          eventType === 'message_stop'
+        ) {
+          const message = parsed.message as Record<string, unknown> | undefined;
+          const delta = parsed.delta as Record<string, unknown> | undefined;
+          const usageRec =
+            (parsed.usage as Record<string, unknown> | undefined) ||
+            (message?.usage as Record<string, unknown> | undefined) ||
+            (delta?.usage as Record<string, unknown> | undefined);
+          if (usageRec) {
+            const promptTokens =
+              typeof usageRec.input_tokens === 'number'
+                ? usageRec.input_tokens
+                : (usage?.prompt_tokens ?? 0);
+            const completionTokens =
+              typeof usageRec.output_tokens === 'number'
+                ? usageRec.output_tokens
+                : (usage?.completion_tokens ?? 0);
+            usage = {
+              prompt_tokens: promptTokens,
+              completion_tokens: completionTokens,
+              total_tokens: promptTokens + completionTokens,
+            };
+          }
+
+          if (eventType === 'message_delta' || eventType === 'message_stop') {
+            const stopReason =
+              typeof delta?.stop_reason === 'string'
+                ? delta.stop_reason
+                : typeof message?.stop_reason === 'string'
+                  ? message.stop_reason
+                  : null;
+            if (stopReason || eventType === 'message_stop') {
+              const mappedFinish = mapAnthropicStopReason(stopReason);
+              const assistantBlocks =
+                mappedFinish === 'pause_turn'
+                  ? Array.from(capturedBlocks.entries())
+                      .sort(([a], [b]) => a - b)
+                      .map(([, block]) => block)
+                  : undefined;
+              controller.enqueue(
+                encoder.encode(
+                  buildOpenAISseChunk({
+                    model,
+                    finishReason: mappedFinish,
+                    ...(assistantBlocks ? { assistantBlocks } : {}),
+                    usage,
+                  }),
+                ),
+              );
+              controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+              controller.close();
+              return true;
+            }
+          }
+        }
+
+        return false;
+      };
+
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const rawLine of lines) {
+            if (processSseLine(rawLine)) return;
+          }
+        }
+
+        if (buffer.trim()) {
+          if (processSseLine(buffer)) return;
+        }
+
+        controller.enqueue(
+          encoder.encode(buildOpenAISseChunk({ model, finishReason: 'stop', usage })),
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+}
+
 /**
  * Phase 3a (see `docs/runbooks/Provider Request Normalization.md`): parse the
  * Anthropic Messages-API SSE stream **directly into neutral `PushStreamEvent`s**,
  * with no OpenAI Chat-Completions SSE intermediate.
  *
- * This is the production response path for every Anthropic-Messages route — the
+ * This is the primary response path for native Anthropic-Messages clients — the
  * CLI, the direct web Anthropic provider, and the multiplexed Vertex-Claude /
- * Zen-Go routes (their Workers proxy the raw upstream SSE straight through). The
- * old OpenAI-SSE-serialize-then-reparse detour (`createAnthropicTranslatedStream
- * → openAISSEPump`) has been removed entirely; the test corpus in
- * `openai-anthropic-bridge.test.ts` pins this pump to the event sequence that
- * detour produced.
+ * Zen-Go routes. The Worker still keeps `createAnthropicTranslatedStream` as a
+ * deploy-skew compatibility shim for unsignaled old browser tabs, and the test
+ * corpus in `openai-anthropic-bridge.test.ts` pins both paths to the same
+ * neutral event sequence.
  *
  * Behavior: text deltas → `text_delta`; a signed
  * `thinking` / `redacted_thinking` block, accumulated across its

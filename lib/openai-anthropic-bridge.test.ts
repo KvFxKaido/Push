@@ -8,10 +8,12 @@ import {
   anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
   buildAnthropicMessagesRequest,
+  createAnthropicTranslatedStream,
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
 } from './openai-anthropic-bridge.ts';
 import { anthropicModelSupportsNativeStructuredOutput } from './anthropic-structured-output.ts';
+import { openAISSEPump } from './openai-sse-pump.ts';
 import type { PushStreamEvent } from './provider-contract.ts';
 
 function createEventStreamResponse(lines: string[]): Response {
@@ -1053,18 +1055,20 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
 
 // ---------------------------------------------------------------------------
 // Phase 3a: anthropicEventStream — Anthropic SSE parsed directly into neutral
-// PushStreamEvents. This is the production response path for every
-// Anthropic-Messages route (CLI, direct web Anthropic, and the multiplexed
-// Vertex-Claude / Zen-Go routes, whose Workers proxy the raw upstream SSE).
-// Expected sequences below were pinned from the now-removed
-// createAnthropicTranslatedStream -> openAISSEPump detour the CLI used before,
-// so the native pump stays event-for-event identical to that baseline.
+// PushStreamEvents. createAnthropicTranslatedStream remains as the deploy-skew
+// fallback for unsignaled old web clients; both paths are pinned to the same
+// neutral event sequence.
 // ---------------------------------------------------------------------------
 
 async function collectEvents(stream: AsyncIterable<PushStreamEvent>): Promise<PushStreamEvent[]> {
   const out: PushStreamEvent[] = [];
   for await (const e of stream) out.push(e);
   return out;
+}
+
+function translatedEvents(lines: string[]): Promise<PushStreamEvent[]> {
+  const translated = createAnthropicTranslatedStream(createEventStreamResponse(lines), 'claude-x');
+  return collectEvents(openAISSEPump({ body: translated }));
 }
 
 describe('anthropicEventStream — Anthropic SSE -> neutral events', () => {
@@ -1296,6 +1300,8 @@ describe('anthropicEventStream — Anthropic SSE -> neutral events', () => {
     it(`parses: ${name}`, async () => {
       const direct = await collectEvents(anthropicEventStream(createEventStreamResponse(lines)));
       expect(direct).toEqual(expected);
+      const translated = await translatedEvents(lines);
+      expect(translated).toEqual(expected);
     });
   }
 

@@ -18,6 +18,15 @@
  * are valid even though absolute numbers differ slightly from the real app.
  */
 
+import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+
+// Derived from the canonical Zen-Go transport map so the page's native-SSE
+// capability advertisement can't drift from `getZenGoTransport` when the catalog
+// changes. Interpolated into the served script below.
+const ZEN_GO_ANTHROPIC_MODEL_IDS = ZEN_GO_MODELS.filter(
+  (id) => getZenGoTransport(id) === 'anthropic',
+);
+
 export const SPIKE_PAGE_HTML = /* html */ `<!doctype html>
 <html lang="en">
 <head>
@@ -162,11 +171,16 @@ function bodyFor(mode, spec) {
   return { provider: spec.provider, zenGo: spec.zenGo, model: spec.model, maxTokens: spec.maxTokens, prompt: PROMPT };
 }
 
+function nativeSseHeaders(spec) {
+  const zenGoAnthropic = spec.zenGo && ${JSON.stringify(ZEN_GO_ANTHROPIC_MODEL_IDS)}.includes(spec.model);
+  return spec.provider === 'anthropic' || zenGoAnthropic ? { 'X-Push-Native-SSE': '1' } : {};
+}
+
 async function measureSseArm(url, spec, mode) {
   const t0 = performance.now();
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...nativeSseHeaders(spec) },
     body: JSON.stringify(bodyFor(mode, spec)),
   });
   if (!res.ok || !res.body) throw new Error(url + ' -> HTTP ' + res.status + ' ' + (await res.text().catch(() => '')).slice(0, 120));
