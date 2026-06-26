@@ -597,20 +597,24 @@ export async function streamAssistantRound(
   // cancelled reasoning-only turn would surface partial reasoning as if it were
   // the final answer.
   //
-  // Native tool calls already flush into content (so empty content implies no
-  // native call), but a *text-form* `{"tool": ...}` call placed in the reasoning
-  // channel does NOT flush — promoting it would feed it to `detectAnyToolCall`
-  // downstream and execute an untrusted reasoning-channel call. The
-  // `reasoningHasToolCall` guard in `promoteReasoningAnswer` excludes that case;
-  // it instead falls through to the buried-call recovery, which re-prompts the
-  // model to re-emit the call in content. Shares the helper with the kernel
-  // salvage in `lib/coder-agent.ts`.
+  // Don't promote when the turn carried a tool call — empty visible content then
+  // means "the call is elsewhere", not "the answer is stranded in reasoning":
+  //   - native tool calls flush to `nativeToolCalls`, NOT `content` (a DeepSeek
+  //     thinking turn + a native call emits reasoning and no prose). Promoting
+  //     would mislabel the reasoning as the answer AND clear `thinking`, which
+  //     drops the `reasoning_content` DeepSeek requires on the next tool-result
+  //     turn → 400 (Codex P1, #1193).
+  //   - a *text-form* `{"tool": ...}` call in the reasoning channel does NOT
+  //     flush either; promoting it would feed it to `detectAnyToolCall`
+  //     downstream and execute an untrusted reasoning-channel call.
+  // Both fall through to the buried-call recovery. Mirrors the kernel guard in
+  // `lib/coder-agent.ts`, which already includes `nativeToolCalls`.
   const promotedReasoning =
     !error && !abortRef.current
       ? promoteReasoningAnswer(
           accumulated,
           thinkingAccumulated,
-          Boolean(detectAnyToolCall(thinkingAccumulated)),
+          Boolean(detectAnyToolCall(thinkingAccumulated)) || nativeToolCalls.length > 0,
         )
       : null;
   if (promotedReasoning !== null) {
