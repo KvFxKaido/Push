@@ -179,6 +179,12 @@ export function createBranchCarriedMessage(input: CreateBranchCarriedMessageInpu
   };
 }
 
+/** Compaction count at/above which the UI surfaces the "multiple compactions can
+ *  blur older context — consider a fresh branch" degradation nudge. The first
+ *  compaction is routine; the second is when "multiple compactions" becomes true
+ *  (mirrors Codex's post-compaction warning). */
+export const COMPACTION_DEGRADATION_THRESHOLD = 2;
+
 interface CreateCompactionMessageInput extends CompactionMeta {
   /** Branch active when the compaction happened, stamped for attribution. */
   branch?: string;
@@ -197,6 +203,7 @@ export function createCompactionMessage(input: CreateCompactionMessageInput): Ch
     afterTokens: input.afterTokens,
     phase: input.phase,
     messagesDropped: input.messagesDropped,
+    ...(input.compactionCount !== undefined ? { compactionCount: input.compactionCount } : {}),
   };
   return {
     id: input.id ?? createMessageId(),

@@ -515,6 +515,11 @@ export interface CompactionMeta {
   phase: 'summarization' | 'digest_drop' | 'hard_trim';
   /** Number of whole messages dropped (0 when only summarization ran). */
   messagesDropped: number;
+  /** 1-based ordinal of this compaction within the conversation. Drives the
+   *  "multiple compactions can blur older context" degradation nudge in the UI
+   *  once it crosses `COMPACTION_DEGRADATION_THRESHOLD`. Optional for back-compat
+   *  with markers persisted before this field existed. */
+  compactionCount?: number;
 }
 
 // Discriminated union for rich inline cards

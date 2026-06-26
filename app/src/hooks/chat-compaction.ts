@@ -173,11 +173,16 @@ export async function maybeCompactBeforeTurn(
   const afterTokens =
     beforeTokens - partition.summarizeTokens + estimateMessageTokens(handoffMessage);
 
+  // Ordinal of this compaction in the conversation (prior `compaction` markers
+  // persist with `visibleToModel: false`, so they're still in `apiMessages`).
+  // Drives the degradation nudge once "multiple compactions" becomes true.
+  const compactionCount = apiMessages.filter((m) => m.kind === 'compaction').length + 1;
   const marker = createCompactionMessage({
     beforeTokens,
     afterTokens,
     phase: 'summarization',
     messagesDropped: spanMsgs.length,
+    compactionCount,
   });
 
   // Build the transform once and apply it to both the durable transcript and
