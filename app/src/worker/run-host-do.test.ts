@@ -159,6 +159,34 @@ describe('POST /spike/server-turn', () => {
     expect(typeof body.serverFirstTokenMs).toBe('number');
   });
 
+  it('counts Anthropic content_block_delta text/thinking (Zen-Go MiniMax/Qwen raw SSE)', async () => {
+    // The Zen-Go anthropic transport now proxies raw Anthropic Messages SSE
+    // (no OpenAI-SSE translation), so the spike scanner must read text/thinking
+    // from content_block_delta or it records zero for those models (Codex P2, #1181).
+    const anthropicBody = [
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm "}}',
+      '',
+      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+      '',
+      'data: {"type":"message_stop"}',
+      '',
+      '',
+    ].join('\n');
+    mocks.resolveProviderHandler.mockReturnValue(async () => sseResponse(anthropicBody));
+    const res = await makeHost().fetch(
+      spikeRequest('/spike/server-turn', {
+        provider: 'zen',
+        model: 'minimax-m3',
+        prompt: 'ping',
+        zenGo: true,
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.contentChars).toBe('hmm ok'.length);
+    expect(typeof body.serverFirstTokenMs).toBe('number');
+  });
+
   it('rejects a body without provider/model', async () => {
     const res = await makeHost().fetch(spikeRequest('/spike/server-turn', { model: 'x' }));
     expect(res.status).toBe(400);

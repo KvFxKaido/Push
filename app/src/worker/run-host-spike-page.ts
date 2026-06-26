@@ -130,10 +130,19 @@ function makeSseScanner() {
         try {
           // First token of ANY kind — reasoning models stream
           // reasoning_content before (or instead of) content.
-          const d = JSON.parse(data).choices?.[0]?.delta;
-          const delta = (typeof d?.content === 'string' && d.content.length) ? d.content
+          const parsed = JSON.parse(data);
+          const d = parsed.choices?.[0]?.delta;
+          let delta = (typeof d?.content === 'string' && d.content.length) ? d.content
             : (typeof d?.reasoning_content === 'string' && d.reasoning_content.length) ? d.reasoning_content
             : null;
+          // Anthropic Messages SSE (Zen-Go MiniMax/Qwen now proxy raw): text /
+          // thinking arrive as content_block_delta, not under choices (Codex P2, #1181).
+          if (delta === null && parsed.type === 'content_block_delta') {
+            const ad = parsed.delta;
+            delta = (typeof ad?.text === 'string' && ad.text.length) ? ad.text
+              : (typeof ad?.thinking === 'string' && ad.thinking.length) ? ad.thinking
+              : null;
+          }
           if (delta !== null) { out.gotDelta = true; out.deltaChars += delta.length; }
         } catch {}
       }
