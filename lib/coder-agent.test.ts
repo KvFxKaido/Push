@@ -713,7 +713,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
       round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
     const checkpointMessages: CoderLoopMessage[][] = [];
 
-    await runCoderAgent(
+    const result = await runCoderAgent(
       {
         ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
         toolExec,
@@ -759,6 +759,66 @@ describe('runCoderAgent (PushStream consumer)', () => {
         content: 'contents:b.ts',
       },
     ]);
+  });
+
+  it('carries the round reasoning onto the tool-call turn as reasoningContent (DeepSeek replay)', async () => {
+    // DeepSeek thinking mode 400s the tool-result continuation unless the
+    // assistant tool-call turn echoes its `reasoning_content`. The kernel
+    // accumulates the round's plain reasoning from `reasoning_delta`; it must land
+    // on the committed `coder-response` message — which `markLatestAssistantToolUse`
+    // spreads into the tool-call turn — so the wire serializer emits
+    // `reasoning_content` on replay. Regression for the live web-inline + CLI 400.
+    const reasoning = 'I should list the recent commits before answering.';
+    const { stream } = makePushStream([
+      [
+        { type: 'reasoning_delta' as const, text: reasoning },
+        { type: 'reasoning_end' as const },
+        { type: 'text_delta' as const, text: 'Checking the commit history.' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ],
+      [
+        { type: 'text_delta' as const, text: 'All set.' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ],
+    ]);
+    // Two read-only calls so round 0 runs the parallel-batch path (which marks the
+    // assistant tool-call turn) and advances to a checkpointed round 1.
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'list_commits', args: {} } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'a.ts' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async () => ({ kind: 'executed' as const, resultText: 'ok' });
+    // Halt after round 1; only round 0 emits reasoning_delta.
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
+    const checkpointMessages: CoderLoopMessage[][] = [];
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
+        toolExec,
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: () => {},
+        onCheckpoint: async (state) => {
+          checkpointMessages.push(state.messages.map((m) => ({ ...m })));
+        },
+      },
+    );
+
+    // The first checkpoint snapshots round 0, including the assistant tool-call
+    // turn that the next round replays to DeepSeek.
+    const toolCallTurn = (checkpointMessages[0] ?? []).find((m) => m.isToolCall);
+    expect(toolCallTurn?.toolUses?.length).toBeGreaterThan(0);
+    // The round's reasoning rides onto that turn → serializes to reasoning_content.
+    expect(toolCallTurn?.reasoningContent).toBe(reasoning);
   });
 
   it('round-trips Gemini thoughtSignature through delegated Coder tool_use sidecars', async () => {

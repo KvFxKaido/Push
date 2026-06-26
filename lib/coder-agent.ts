@@ -1667,11 +1667,20 @@ export async function runCoderAgent<TCall, TCard>(
       );
     }
 
-    // Add Coder response to messages
+    // Add Coder response to messages. Carry the round's plain reasoning as
+    // `reasoningContent` so it survives onto the tool-call turn — `markLatestAssistantToolUse`
+    // spreads this message — and serializes to `reasoning_content` on the wire.
+    // DeepSeek thinking mode 400s the tool-result continuation otherwise ("the
+    // `reasoning_content` in the thinking mode must be passed back to the API"). The
+    // orchestrator lane carries this via `.thinking` on `markLastAssistantToolCall`; the
+    // kernel lane (web-inline default + CLI) had no equivalent. DeepSeek's reasoning is
+    // unsigned, so it lands in `reasoningText`, not `reasoningBlocks` — hence this can't
+    // be recovered downstream. Guarded so a no-reasoning round emits no empty field.
     messages.push({
       id: `coder-response-${round}`,
       role: 'assistant',
       content: accumulated,
+      ...(reasoningText.trim().length > 0 ? { reasoningContent: reasoningText } : {}),
       timestamp: Date.now(),
     });
 
