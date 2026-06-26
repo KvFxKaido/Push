@@ -482,8 +482,19 @@ cache-cost paid on a model with 900k of unused room. Three decisions correct it.
      (it rewrites the prefix), and is lossy in practice (the model rarely knows
      to recall). So it becomes **patient and window-aware**: new field
      `handoffTokens = clamp(HANDOFF_RATIO·window, 88k, HANDOFF_CEILING)`. The
-     coordinators repoint `triggerTokens` from `summarizeTokens` to
-     `handoffTokens`; nothing else in the handoff path changes.
+     **web** coordinator (`chat-compaction.ts`) repoints `triggerTokens` from
+     `summarizeTokens` to `handoffTokens`; nothing else in the handoff path changes.
+
+   **The CLI lead coordinator (`cli/lead-compaction.ts`) deliberately does NOT
+   adopt `handoffTokens` — it stays eager on `summarizeTokens`.** The split's
+   patience is safe only for the web, which sends the model its *full* message
+   array (the handoff merely shrinks what's already visible). The CLI lead feeds
+   a *bounded* preamble (`buildLeadTurnPreamble` — last `PRIOR_TURNS_MAX` turns),
+   so the `[CONTEXT HANDOFF]` summary is the **only** carrier of older context.
+   Deferring it to a window-aware 400k would let a long session (esp. on 1M-window
+   DeepSeek/Gemini/Claude) drop every turn beyond the preamble with no summary —
+   a memory regression for exactly the sessions compaction protects (Codex P1 on
+   PR #1194). A bounded preamble can't be patient; collapse eagerly or lose context.
 
 2. **Fill the window by default.** Prefer context retention + cache stability
    over a lean working set; when the right threshold is genuinely ambiguous,
