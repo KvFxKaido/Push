@@ -18,6 +18,15 @@
  * are valid even though absolute numbers differ slightly from the real app.
  */
 
+import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
+
+// Derived from the canonical Zen-Go transport map so the page's native-SSE
+// capability advertisement can't drift from `getZenGoTransport` when the catalog
+// changes. Interpolated into the served script below.
+const ZEN_GO_ANTHROPIC_MODEL_IDS = ZEN_GO_MODELS.filter(
+  (id) => getZenGoTransport(id) === 'anthropic',
+);
+
 export const SPIKE_PAGE_HTML = /* html */ `<!doctype html>
 <html lang="en">
 <head>
@@ -163,7 +172,7 @@ function bodyFor(mode, spec) {
 }
 
 function nativeSseHeaders(spec) {
-  const zenGoAnthropic = spec.zenGo && ['minimax-m2.7', 'minimax-m3', 'qwen3.6-plus', 'qwen3.7-max', 'qwen3.7-plus'].includes(spec.model);
+  const zenGoAnthropic = spec.zenGo && ${JSON.stringify(ZEN_GO_ANTHROPIC_MODEL_IDS)}.includes(spec.model);
   return spec.provider === 'anthropic' || zenGoAnthropic ? { 'X-Push-Native-SSE': '1' } : {};
 }
 
