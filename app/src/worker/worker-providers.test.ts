@@ -10,10 +10,6 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
-import {
   handleAnthropicChat,
   handleAnthropicModels,
   handleCloudflareChat,
@@ -277,13 +273,12 @@ describe('handleZenChat', () => {
 });
 
 describe('handleZenGoChat', () => {
-  function makeZenGoRequest(model: string, nativeSse = false): Request {
+  function makeZenGoRequest(model: string): Request {
     return new Request('https://push.example.test/api/zen/go/chat', {
       method: 'POST',
       headers: {
         Origin: 'https://push.example.test',
         'Content-Type': 'application/json',
-        ...(nativeSse ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE } : {}),
       },
       body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] }),
     });
@@ -340,7 +335,10 @@ describe('handleZenGoChat', () => {
     expect(body.model).toBe('minimax-m3');
   });
 
-  it('translates legacy Anthropic-transport upstream SSE without the native response signal', async () => {
+  it('proxies the legacy Anthropic-transport upstream SSE raw (background path)', async () => {
+    // The legacy (OpenAI-shape body) caller is the background coder / PR-review
+    // job, whose stream adapter now parses Anthropic SSE natively too — so the
+    // Worker proxies the upstream raw on this contract kind as well.
     const anthropicFrame =
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
     vi.stubGlobal(
@@ -359,43 +357,16 @@ describe('handleZenGoChat', () => {
     );
     expect(response.status).toBe(200);
     const text = await response.text();
-    expect(text).toContain('"choices"');
-    expect(text).not.toContain('"type":"content_block_delta"');
-  });
-
-  it('proxies the legacy Anthropic-transport upstream SSE raw with the native response signal', async () => {
-    const anthropicFrame =
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(anthropicFrame, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
-    );
-    const response = await handleZenGoChat(
-      makeZenGoRequest('minimax-m3', true),
-      makeEnv({ ZEN_API_KEY: 'zen-key' }),
-    );
-    expect(response.status).toBe(200);
-    const text = await response.text();
     expect(text).toContain('"type":"content_block_delta"');
     expect(text).not.toContain('"choices"');
   });
 });
 
 describe('handleZenGoChat — neutral wire (dual-accept)', () => {
-  function makeNeutralRequest(payload: Record<string, unknown>, nativeSse = false): Request {
+  function makeNeutralRequest(payload: Record<string, unknown>): Request {
     return new Request('https://push.example.test/api/zen/go/chat', {
       method: 'POST',
-      headers: {
-        Origin: 'https://push.example.test',
-        'Content-Type': 'application/json',
-        ...(nativeSse ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE } : {}),
-      },
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ contract: 'push.stream.v1', ...payload }),
     });
   }
@@ -620,7 +591,10 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('translates Anthropic-transport upstream SSE for a neutral caller without native response signal', async () => {
+  it('proxies the Anthropic-transport upstream SSE raw (no OpenAI-SSE translation)', async () => {
+    // The neutral-wire (foreground zenStream) client now parses Anthropic SSE
+    // natively, so the Worker must pass the upstream body through untouched. The
+    // retired path would have rewritten this into an OpenAI `choices` chunk.
     const anthropicFrame =
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
     vi.stubGlobal(
@@ -635,32 +609,6 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
     );
     const response = await handleZenGoChat(
       makeNeutralRequest({ model: 'minimax-m3', messages: [{ role: 'user', content: 'hi' }] }),
-      makeEnv({ ZEN_API_KEY: 'zen-key' }),
-    );
-    expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).toContain('"choices"');
-    expect(text).not.toContain('"type":"content_block_delta"');
-  });
-
-  it('proxies the Anthropic-transport upstream SSE raw with the native response signal', async () => {
-    const anthropicFrame =
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(anthropicFrame, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
-    );
-    const response = await handleZenGoChat(
-      makeNeutralRequest(
-        { model: 'minimax-m3', messages: [{ role: 'user', content: 'hi' }] },
-        true,
-      ),
       makeEnv({ ZEN_API_KEY: 'zen-key' }),
     );
     expect(response.status).toBe(200);
@@ -1891,11 +1839,7 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     }),
   );
 
-  function makeNeutralRequest(
-    payload: Record<string, unknown>,
-    legacy = false,
-    nativeSse = false,
-  ): Request {
+  function makeNeutralRequest(payload: Record<string, unknown>, legacy = false): Request {
     return new Request('https://push.example.test/api/vertex/chat', {
       method: 'POST',
       headers: {
@@ -1903,7 +1847,6 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
         'Content-Type': 'application/json',
         'X-Push-Vertex-Service-Account': SERVICE_ACCOUNT_HEADER,
         'X-Push-Vertex-Region': 'us-east5',
-        ...(nativeSse ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE } : {}),
       },
       body: JSON.stringify(legacy ? payload : { contract: 'push.stream.v1', ...payload }),
     });
@@ -1956,7 +1899,9 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
     expect(body.messages).toEqual([{ role: 'user', content: [{ type: 'text', text: 'hi' }] }]);
   });
 
-  it('translates Vertex-Claude upstream SSE without the native response signal', async () => {
+  it('proxies the Vertex-Claude upstream SSE raw (no OpenAI-SSE translation)', async () => {
+    // vertexStream now parses Anthropic SSE natively, so the Worker must pass the
+    // raw upstream through untouched — the retired path rewrote it to OpenAI SSE.
     const anthropicFrame =
       'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
     vi.stubGlobal(
@@ -1974,36 +1919,6 @@ describe('handleVertexChat — neutral wire (dual-accept)', () => {
         model: 'claude-sonnet-4-6',
         messages: [{ role: 'user', content: 'hi' }],
       }),
-      makeEnv(),
-    );
-    expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).toContain('"choices"');
-    expect(text).not.toContain('"type":"content_block_delta"');
-  });
-
-  it('proxies the Vertex-Claude upstream SSE raw with the native response signal', async () => {
-    const anthropicFrame =
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(anthropicFrame, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
-    );
-    const response = await handleVertexChat(
-      makeNeutralRequest(
-        {
-          model: 'claude-sonnet-4-6',
-          messages: [{ role: 'user', content: 'hi' }],
-        },
-        false,
-        true,
-      ),
       makeEnv(),
     );
     expect(response.status).toBe(200);
@@ -2394,14 +2309,10 @@ describe('handleGoogleSearch', () => {
 });
 
 describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
-  function makeNeutralRequest(payload: Record<string, unknown>, nativeSse = false): Request {
+  function makeNeutralRequest(payload: Record<string, unknown>): Request {
     return new Request('https://push.example.test/api/anthropic/chat', {
       method: 'POST',
-      headers: {
-        Origin: 'https://push.example.test',
-        'Content-Type': 'application/json',
-        ...(nativeSse ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE } : {}),
-      },
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
       body: JSON.stringify({ contract: 'push.stream.v1', ...payload }),
     });
   }
@@ -2588,58 +2499,6 @@ describe('handleAnthropicChat — neutral wire (dual-accept)', () => {
         ],
       },
     ]);
-  });
-
-  it('translates upstream Anthropic SSE without the native response signal', async () => {
-    const anthropicFrame =
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(anthropicFrame, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
-    );
-    const response = await handleAnthropicChat(
-      makeNeutralRequest({
-        model: 'claude-sonnet-4-6',
-        messages: [{ role: 'user', content: 'hi' }],
-      }),
-      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
-    );
-    expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).toContain('"choices"');
-    expect(text).not.toContain('"type":"content_block_delta"');
-  });
-
-  it('proxies upstream Anthropic SSE raw with the native response signal', async () => {
-    const anthropicFrame =
-      'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n';
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(
-        async () =>
-          new Response(anthropicFrame, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
-    );
-    const response = await handleAnthropicChat(
-      makeNeutralRequest(
-        { model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'hi' }] },
-        true,
-      ),
-      makeEnv({ ANTHROPIC_API_KEY: 'sk-ant' }),
-    );
-    expect(response.status).toBe(200);
-    const text = await response.text();
-    expect(text).toContain('"type":"content_block_delta"');
-    expect(text).not.toContain('"choices"');
   });
 
   it('returns 400 (not 502) when a neutral content part has an unrepresentable image URL', async () => {

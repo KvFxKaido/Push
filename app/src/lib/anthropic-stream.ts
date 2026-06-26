@@ -5,9 +5,8 @@
  * neutral `push.stream.v1` wire body (`toPushStreamWire`) — materialized
  * messages plus neutral scalars, tagged with `contract: "push.stream.v1"`. The
  * Worker (`handleAnthropicChat`) dual-accepts: a `contract` field routes to the
- * neutral branch, which serializes to Anthropic via `toAnthropicMessages`,
- * POSTs to `api.anthropic.com/v1/messages`, and proxies raw Anthropic SSE back
- * when this client advertises `X-Push-Native-SSE: 1`.
+ * neutral branch, which serializes to Anthropic via `toAnthropicMessages`, POSTs
+ * to `api.anthropic.com/v1/messages`, and proxies the raw Anthropic SSE back.
  *
  * Prompt materialization (`toLLMMessages`) stays client-side, so the wire carries
  * already-materialized `messages` and `systemPromptOverride` is baked in. The
@@ -22,10 +21,6 @@
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
 import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
@@ -102,7 +97,6 @@ export async function* anthropicStream(
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE,
     [REQUEST_ID_HEADER]: requestId,
     ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
   };
@@ -159,10 +153,9 @@ export async function* anthropicStream(
     let paused: Array<Record<string, unknown>> | null = null;
     // Native Anthropic event stream — parses Anthropic's `content_block_*` /
     // `message_delta` SSE directly into PushStreamEvent (no OpenAI-SSE
-    // round-trip). This client advertises `X-Push-Native-SSE: 1`, so the Worker
-    // proxies Anthropic's raw upstream body instead of the deploy-skew fallback.
-    // Signed thinking blocks and `pause_turn` continuation surface identically to
-    // the pump path, so the loop below is unchanged. Matches the CLI path.
+    // round-trip). The Worker now proxies Anthropic's raw upstream body. Signed
+    // thinking blocks and `pause_turn` continuation surface identically to the
+    // pump path, so the loop below is unchanged. Matches the CLI path.
     for await (const event of anthropicEventStream(response, req.signal, (name) =>
       KNOWN_TOOL_NAMES.has(name),
     )) {

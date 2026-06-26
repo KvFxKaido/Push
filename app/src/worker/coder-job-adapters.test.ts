@@ -11,10 +11,6 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
 
 vi.mock('@cloudflare/sandbox', () => ({
   getSandbox: vi.fn(),
@@ -35,7 +31,6 @@ const providerHandlerMocks = vi.hoisted(() => ({
   handleKiloCodeChat: vi.fn(),
   handleFireworksChat: vi.fn(),
   handleOpenAdapterChat: vi.fn(),
-  handleAnthropicChat: vi.fn(),
 }));
 vi.mock('./worker-providers', () => providerHandlerMocks);
 
@@ -1190,9 +1185,10 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
   });
 
   it('parses an Anthropic-transport Go model as native Anthropic SSE', async () => {
-    // The adapter advertises the native response capability for these models, so
-    // handleZenGoChat proxies raw Anthropic Messages SSE and the adapter must parse
-    // `content_block_delta` frames via `anthropicEventStream`, not `pumpSseBody`.
+    // handleZenGoChat now proxies raw Anthropic Messages SSE for anthropic-transport
+    // models (minimax-* / qwen-*) — no OpenAI-SSE translator. The adapter must parse
+    // those `content_block_delta` frames natively via `anthropicEventStream`, not the
+    // OpenAI-shaped `pumpSseBody`.
     providerHandlerMocks.handleZenGoChat.mockResolvedValue(
       sseResponse([
         'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
@@ -1210,8 +1206,6 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
-    const req = providerHandlerMocks.handleZenGoChat.mock.calls[0]![0] as Request;
-    expect(req.headers.get(PUSH_NATIVE_SSE_HEADER)).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
   });
 
   it('keeps an OpenAI-transport Go model on the OpenAI-shaped pump', async () => {
@@ -1232,29 +1226,6 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(errors).toEqual([]);
     expect(tokens.join('')).toBe('ok');
     expect(providerHandlerMocks.handleZenGoChat).toHaveBeenCalledTimes(1);
-    const req = providerHandlerMocks.handleZenGoChat.mock.calls[0]![0] as Request;
-    expect(req.headers.get(PUSH_NATIVE_SSE_HEADER)).toBeNull();
-  });
-
-  it('parses direct Anthropic as native Anthropic SSE and advertises the response capability', async () => {
-    providerHandlerMocks.handleAnthropicChat.mockResolvedValue(
-      sseResponse([
-        'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}\n\n',
-      ]),
-    );
-    const stream = createWebStreamAdapter({
-      env: env(),
-      origin: 'https://push.example.test',
-      provider: 'anthropic',
-      modelId: 'claude-sonnet-4-6',
-      jobId: 'job-anthropic',
-    });
-    const { tokens, errors } = await drainAs(stream, 'anthropic', 'claude-sonnet-4-6');
-    expect(errors).toEqual([]);
-    expect(tokens.join('')).toBe('ok');
-    expect(providerHandlerMocks.handleAnthropicChat).toHaveBeenCalledTimes(1);
-    const req = providerHandlerMocks.handleAnthropicChat.mock.calls[0]![0] as Request;
-    expect(req.headers.get(PUSH_NATIVE_SSE_HEADER)).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
   });
 });
 

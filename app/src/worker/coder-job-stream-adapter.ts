@@ -22,8 +22,9 @@
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
  *   Two exceptions: `openai` uses the Responses-API pump, and the
- *   Anthropic-Messages routes this adapter opts into with `X-Push-Native-SSE`
- *   stream raw Anthropic SSE, parsed via `anthropicEventStream`.
+ *   Anthropic-transport Zen-Go models (MiniMax / Qwen on `/v1/messages`)
+ *   now stream raw Anthropic Messages SSE — the Worker stopped translating
+ *   that route to OpenAI SSE — so they parse via `anthropicEventStream`.
  */
 
 import type {
@@ -37,10 +38,6 @@ import type {
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
-import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
 import type { ChatMessage } from '@/types';
 import { getZenGoTransport } from '../lib/zen-go';
 import { getUserProviderKey } from './user-secrets';
@@ -249,9 +246,6 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // in job state). `standardAuth` still prefers the Worker env secret,
       // so this only matters for providers without one.
       const userKey = await getUserProviderKey(args.env, args.ownerUserId, args.provider);
-      const isNativeAnthropicResponse =
-        args.provider === 'anthropic' ||
-        (zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic');
 
       const request = new Request(
         `${origin}/api/${zenGo ? 'zen/go' : providerSlug(args.provider)}/chat`,
@@ -265,9 +259,6 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
             // synthetic internal Request and all background jobs share one
             // bucket — a single burst can 429 every other running job.
             'X-Forwarded-For': `job:${args.jobId}`,
-            ...(isNativeAnthropicResponse
-              ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE }
-              : {}),
             ...(userKey ? { Authorization: `Bearer ${userKey}` } : {}),
           },
           body,
@@ -295,17 +286,20 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // only — this is the live lane for background/inline turns, so the log
       // lands in Worker logs, never CLI stdout.
       let usageLogged = false;
-      // Anthropic-Messages routes stream raw SSE when the adapter advertises the
-      // native response capability. Everything else stays OpenAI-shaped (`openai`
-      // via the Responses pump, the rest via `pumpSseBody`).
+      // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
+      // Messages SSE now that the Worker no longer translates that route to
+      // OpenAI SSE; parse them natively. Everything else stays OpenAI-shaped
+      // (`openai` via the Responses pump, the rest via `pumpSseBody`).
+      const isZenGoAnthropic =
+        zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
       const events =
         args.provider === 'openai'
           ? openAIResponsesSSEPump({
               body: response.body as unknown as ReadableStream<Uint8Array>,
               signal,
             })
-          : isNativeAnthropicResponse
-            ? nativeAnthropicEvents(response as unknown as Response, signal)
+          : isZenGoAnthropic
+            ? zenGoAnthropicEvents(response as unknown as Response, signal)
             : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
       for await (const event of events) {
         if (event.type === 'done' && !usageLogged) {
@@ -341,14 +335,16 @@ function providerSlug(provider: AIProviderType): string {
 }
 
 // ---------------------------------------------------------------------------
-// Native Anthropic event stream. Background coder jobs use text-dispatch tool
-// calling (no native tool schemas are sent), so no `isKnownToolName` filter is
-// needed and `tool_use` blocks aren't expected. Server-side `pause_turn` is not
-// replayed by this adapter; drain it defensively and ensure a terminal `done` so
-// a pause-without-done can't leave the job loop hanging.
+// Native Anthropic event stream — used only for the Anthropic-transport Zen-Go
+// models (MiniMax / Qwen), whose Worker route now proxies raw Anthropic SSE.
+// Background coder jobs use text-dispatch tool calling (no native tool schemas
+// are sent), so no `isKnownToolName` filter is needed and `tool_use` blocks
+// aren't expected. These models don't enable Anthropic's server-side
+// `web_search`, so `pause_turn` never arises — drain it defensively and ensure
+// a terminal `done` so a pause-without-done can't leave the job loop hanging.
 // ---------------------------------------------------------------------------
 
-async function* nativeAnthropicEvents(
+async function* zenGoAnthropicEvents(
   upstream: Response,
   signal?: AbortSignal,
 ): AsyncIterable<PushStreamEvent> {

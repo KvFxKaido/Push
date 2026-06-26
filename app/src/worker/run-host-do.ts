@@ -46,10 +46,6 @@
 import type { DurableObjectState, WebSocket as CfWebSocket } from '@cloudflare/workers-types';
 import type { AIProviderType } from '@push/lib/provider-contract';
 import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
-import {
   type RunHostRecord,
   type RunHostResolvedApproval,
   type RunHostScope,
@@ -73,7 +69,6 @@ import {
 } from '@push/lib/run-checkpoint';
 import type { ApprovalMode } from '@push/lib/approval-gates';
 import { resolveProviderHandler } from './coder-job-stream-adapter';
-import { getZenGoTransport } from '../lib/zen-go';
 import { provisionAdoption, runAdoptedLoop } from './run-host-adoption-runner';
 import type { Env } from './worker-middleware';
 
@@ -110,15 +105,6 @@ const DEFAULT_PROMPT =
   'Count from 1 to 30 as words (one, two, three, ...), comma-separated, no other text.';
 const DEFAULT_MAX_TOKENS = 256;
 const SPIKE_TURN_TIMEOUT_MS = 60_000;
-
-function usesNativeAnthropicSse(spec: SpikeChatRequest): boolean {
-  return (
-    spec.provider === 'anthropic' ||
-    (spec.provider === 'zen' &&
-      spec.zenGo === true &&
-      getZenGoTransport(spec.model) === 'anthropic')
-  );
-}
 
 function parseSpikeBody(raw: unknown): SpikeChatRequest | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
@@ -169,9 +155,6 @@ function buildProviderRequest(
       'content-type': 'application/json',
       Origin: origin,
       'X-Forwarded-For': 'spike:run-host',
-      ...(usesNativeAnthropicSse(spec)
-        ? { [PUSH_NATIVE_SSE_HEADER]: PUSH_NATIVE_SSE_HEADER_VALUE }
-        : {}),
     },
     body,
     signal,
@@ -230,9 +213,10 @@ function scanSseChunk(state: SseScanState, chunk: string): string[] {
       try {
         const parsed = JSON.parse(data) as {
           choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
-          // Anthropic Messages SSE: when the spike request advertises native SSE,
-          // text/thinking arrive as `content_block_delta`, not under `choices`.
-          // Without this arm the spike records zero deltas for those models.
+          // Anthropic Messages SSE: the Zen-Go MiniMax/Qwen route now proxies raw
+          // Anthropic frames (no OpenAI-SSE translation), so text/thinking arrive
+          // as `content_block_delta`, not under `choices`. Without this arm the
+          // spike records zero deltas for those models (Codex P2, #1181).
           type?: string;
           delta?: { type?: string; text?: string; thinking?: string };
         };

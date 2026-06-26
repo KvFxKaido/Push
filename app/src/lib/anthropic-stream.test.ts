@@ -5,10 +5,6 @@ import type {
   PushStreamRequest,
   ToolFunctionSchema,
 } from '@push/lib/provider-contract';
-import {
-  PUSH_NATIVE_SSE_HEADER,
-  PUSH_NATIVE_SSE_HEADER_VALUE,
-} from '@push/lib/native-sse-capability';
 
 vi.mock('@/hooks/useAnthropicConfig', () => ({
   getAnthropicKey: () => 'test-key',
@@ -113,8 +109,8 @@ function installStreamFetch(fetchMock: ReturnType<typeof vi.fn>): ControllableSt
   return stream;
 }
 
-// This client advertises native SSE, so the Worker proxies raw Anthropic frames
-// and the client parses `content_block_delta` via `anthropicEventStream`.
+// The Worker now proxies Anthropic's raw SSE, so the client parses native
+// `content_block_delta` frames with `anthropicEventStream` (not OpenAI-shaped).
 function contentFrame(text: string): string {
   return JSON.stringify({
     type: 'content_block_delta',
@@ -205,7 +201,6 @@ describe('anthropicStream', () => {
     // buildAnthropicAuth strips the prefix server-side before forwarding as
     // x-api-key to api.anthropic.com — that flip lives in the Worker tests.
     expect(headers.Authorization).toBe('Bearer test-key');
-    expect(headers[PUSH_NATIVE_SSE_HEADER]).toBe(PUSH_NATIVE_SSE_HEADER_VALUE);
   });
 
   it('omits Authorization when the client key is empty', async () => {
