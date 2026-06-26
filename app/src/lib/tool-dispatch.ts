@@ -783,16 +783,22 @@ export function isParallelDelegationToolCall(toolCall: AnyToolCall): boolean {
  * `[TOOL_CALL_PARSE_ERROR]` with the tool's schema + example
  * (`buildValidationFailedHint`). Returns the calls that passed.
  *
- * Why only `type_mismatch`, and why only on web:
+ * Scope — only `type_mismatch`, only when BOTH sides are scalar, only on web:
  *   - By the time a call reaches here its args have already been coerced
  *     (`detectStructuredToolCall`), so every *recoverable* drift is gone. A
- *     surviving `type_mismatch` is a present-but-wrong-type value no executor
- *     can use (a non-numeric string for an integer, an object for a scalar) —
- *     blocking it is strictly better than passing an unusable arg downstream.
- *   - `missing_required` and `enum_violation` stay advisory (the coercion pass
- *     logs them): required-field gaps overlap with the executors' own checks,
- *     and the only enum today is the active-repo pin, which the dispatcher
- *     doesn't bind here.
+ *     surviving scalar `type_mismatch` (a non-numeric string for an integer, a
+ *     non-boolean string for a flag) is an unusable value — blocking it is
+ *     strictly better than passing it downstream.
+ *   - Blocking is gated to scalar expected/actual types on purpose. The derived
+ *     schema (`tool-function-schemas.ts`) is best-effort and global-by-param-
+ *     name, so it's least reliable exactly where a name carries different
+ *     *structure* across tools — `checks` was a boolean in one place and an
+ *     object array in another. A structural mismatch is therefore far more
+ *     likely a schema gap than a real model error, so it stays advisory (logged)
+ *     rather than hard-rejecting an already-validated call (Codex P1 on #1185).
+ *   - `missing_required` and `enum_violation` also stay advisory: required-field
+ *     gaps overlap with the executors' own checks, and the only enum today is
+ *     the active-repo pin, which the dispatcher doesn't bind here.
  *   - The CLI deliberately drops the kernel's `malformed` channel
  *     (`wrapCliDetectAllToolCalls`) and enforces arg types in its executor
  *     instead, so the equivalent enforcement there is downstream, not at parse
@@ -828,7 +834,18 @@ function validateCallArgTypes(toolCall: AnyToolCall): DroppedToolCallCandidate |
 
   const toolName = toolCall.call.tool;
   const { mismatches } = normalizeToolArgs(toolName, args as Record<string, unknown>);
-  const blocking = mismatches.filter((m) => m.reason === 'type_mismatch');
+  // Block only scalar-vs-scalar mismatches; structural mismatches are where the
+  // best-effort schema is least trustworthy, so they stay advisory (see above).
+  const SCALAR_EXPECTED = new Set(['integer', 'number', 'boolean']);
+  const SCALAR_ACTUAL = new Set(['string', 'number', 'boolean']);
+  const blocking = mismatches.filter(
+    (m) =>
+      m.reason === 'type_mismatch' &&
+      !!m.expected &&
+      SCALAR_EXPECTED.has(m.expected) &&
+      !!m.actualType &&
+      SCALAR_ACTUAL.has(m.actualType),
+  );
   if (blocking.length === 0) return null;
 
   const detail = blocking

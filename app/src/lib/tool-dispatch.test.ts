@@ -1702,4 +1702,59 @@ describe('detectAllToolCalls — argument-type drift', () => {
     expect(detected.readOnly).toHaveLength(1);
     expect(detected.droppedCandidates).toHaveLength(0);
   });
+
+  // Regression (Codex P1 #1185): a valid guarded edit carries a string
+  // `expected_version`; the derived schema used to mistype it `integer`, which
+  // coerced/blocked valid calls. It must pass through untouched now.
+  it('does not corrupt or reject a string expected_version', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_edit_range',
+        args: {
+          path: '/workspace/a.ts',
+          start_line: 10,
+          end_line: 12,
+          content: 'x',
+          expected_version: 'abc123',
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    const call = detected.fileMutations[0] ?? detected.mutating;
+    expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('abc123');
+  });
+
+  it('does not coerce a numeric-looking expected_version to a number', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_edit_range',
+        args: {
+          path: '/workspace/a.ts',
+          start_line: 10,
+          end_line: 12,
+          content: 'x',
+          expected_version: '42',
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    const call = detected.fileMutations[0] ?? detected.mutating;
+    expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('42');
+  });
+
+  // Regression (Codex P1 #1185): `checks` on patch is an object array, not a
+  // boolean — a valid patch with post-write checks must not be diverted.
+  it('does not reject a valid patch with a checks array', () => {
+    const detected = detectNativeToolCalls([
+      {
+        name: 'sandbox_apply_patchset',
+        args: {
+          edits: [{ path: '/workspace/a.ts', start_line: 1, end_line: 1, content: 'x' }],
+          checks: [{ command: 'npm test' }],
+        },
+      },
+    ]);
+    expect(detected.droppedCandidates).toHaveLength(0);
+    expect(detected.fileMutations.length + (detected.mutating ? 1 : 0)).toBe(1);
+  });
 });

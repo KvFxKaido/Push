@@ -117,6 +117,43 @@ describe('normalizeToolArgs — coercion policy', () => {
     expect(r.args.start_line).toBe('5.5');
   });
 
+  it('leaves a string expected_version untouched — it is a version token, not an int', () => {
+    // Regression (Codex P1 #1185): the hashline `expected_version` is runtime-
+    // typed `string`. A non-numeric token must not be reported as a mismatch...
+    const r = normalizeToolArgs('edit_range', {
+      path: '/w/a.ts',
+      start_line: 10,
+      end_line: 12,
+      content: 'x',
+      expected_version: 'abc123',
+    });
+    expect(r.changed).toBe(false);
+    expect(r.args.expected_version).toBe('abc123');
+    expect(r.mismatches).toEqual([]);
+  });
+
+  it('does not coerce a numeric-looking expected_version to a number', () => {
+    // ...and a numeric-looking token must stay a string, not become `42`.
+    const r = normalizeToolArgs('edit_range', {
+      path: '/w/a.ts',
+      start_line: 10,
+      end_line: 12,
+      content: 'x',
+      expected_version: '42',
+    });
+    expect(r.args.expected_version).toBe('42');
+    expect(r.mismatches).toEqual([]);
+  });
+
+  it('accepts a patch `checks` array — it is an object array, not a boolean', () => {
+    // Regression (Codex P1 #1185): `checks` is an array of command objects.
+    const r = normalizeToolArgs('patch', {
+      edits: [{ path: '/w/a.ts', start_line: 1, end_line: 1, content: 'x' }],
+      checks: [{ command: 'npm test' }],
+    });
+    expect(r.mismatches).toEqual([]);
+  });
+
   it('treats a whitespace-only string as a mismatch, not a coercion (intent)', () => {
     // After trim the string is empty, so there is no integer to parse — it must
     // report a mismatch rather than silently coerce to 0 or NaN.
