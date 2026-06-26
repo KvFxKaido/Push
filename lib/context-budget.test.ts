@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { estimateMessageTokens, getContextBudget, guessWindowFromName } from './context-budget.js';
+import {
+  estimateMessageTokens,
+  getContextBudget,
+  guessWindowFromName,
+  HANDOFF_CEILING_TOKENS,
+  handoffTokensFor,
+} from './context-budget.js';
 
 describe('estimateMessageTokens — contentParts (#937)', () => {
   it('adds the vision estimate for image contentParts without double-counting text', () => {
@@ -112,5 +118,52 @@ describe('getContextBudget (shared)', () => {
     const budget = getContextBudget(undefined, 'totally-unknown-model');
     expect(budget.maxTokens).toBe(100_000);
     expect(budget.targetTokens).toBe(88_000);
+    // No window for the unknown-model fallback → handoff pins to the floor,
+    // i.e. today's single-threshold behavior (handoff === summarize).
+    expect(budget.handoffTokens).toBe(88_000);
+  });
+});
+
+describe('handoffTokensFor — the patient, window-aware handoff trigger (§14)', () => {
+  // The split: tool-output compression stays eager (lossless), the LLM handoff
+  // collapse fills the window before paying the cache-busting round-trip.
+
+  it('fills large windows up to the quality-guard ceiling, not 88K', () => {
+    // The whole point of the split — a 1M model collapsed at ~9% of its window
+    // was the bug. Now it fills to the ceiling.
+    const summarize = 88_000;
+    const target = Math.floor(1_000_000 * 0.85);
+    expect(handoffTokensFor(1_000_000, summarize, target)).toBe(HANDOFF_CEILING_TOKENS);
+    // A 2M window is also ceiling-capped (the middle-ground guard).
+    expect(handoffTokensFor(2_000_000, summarize, Math.floor(2_000_000 * 0.85))).toBe(
+      HANDOFF_CEILING_TOKENS,
+    );
+  });
+
+  it('lets mid-size windows breathe between the floor and the ceiling', () => {
+    // 256K: 0.7·262144 = 183500, under both the target and the 400K ceiling.
+    expect(handoffTokensFor(262_144, 88_000, Math.floor(262_144 * 0.85))).toBe(183_500);
+    // 200K Haiku: 0.7·200K = 140K.
+    expect(handoffTokensFor(200_000, 88_000, Math.floor(200_000 * 0.85))).toBe(140_000);
+  });
+
+  it('collapses back onto the target for sub-~100K windows (no room to be patient)', () => {
+    // A 64K window: target (54400) is below the 88K floor, so summarize === target
+    // and the clamp pins handoff to target — a single effective threshold.
+    const target = Math.floor(64_000 * 0.85); // 54400
+    const summarize = Math.min(88_000, target); // 54400
+    expect(handoffTokensFor(64_000, summarize, target)).toBe(target);
+  });
+
+  it('never undercuts the eager compression floor nor overshoots the drop-backstop', () => {
+    for (const window of [64_000, 128_000, 200_000, 262_144, 512_000, 1_000_000, 2_000_000]) {
+      const target = Math.floor(window * 0.85);
+      const summarize = Math.min(88_000, target);
+      const handoff = handoffTokensFor(window, summarize, target);
+      // summarize (compress) ≤ handoff (collapse) ≤ target (drop) — the ladder order.
+      expect(handoff).toBeGreaterThanOrEqual(summarize);
+      expect(handoff).toBeLessThanOrEqual(target);
+      expect(handoff).toBeLessThanOrEqual(HANDOFF_CEILING_TOKENS);
+    }
   });
 });

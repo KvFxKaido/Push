@@ -78,6 +78,32 @@ describe('maybeCompactLeadHistory', () => {
     assert.ok(evt.payload.afterTokens < evt.payload.beforeTokens);
   });
 
+  it('triggers on the eager summarizeTokens, not the patient handoffTokens (bounded-preamble guard)', async () => {
+    // The CLI lead feeds a bounded preamble, so the [CONTEXT HANDOFF] is the only
+    // carrier of older context and must fire eagerly. On a 1M-window model the
+    // patient handoffTokens is ~400k while the eager summarizeTokens is 88k.
+    // bigHistory (~245k) sits between them: compaction MUST still fire. A revert
+    // to handoffTokens would skip it (245k < 400k) and silently drop every turn
+    // beyond the preamble (Codex P1, PR #1194).
+    const state = createSessionState({
+      provider: 'ollama',
+      model: 'deepseek-v4-pro', // 1M window → summarizeTokens 88k, handoffTokens 400k
+      cwd: process.cwd(),
+      messages: bigHistory(),
+    });
+    const beforeTokens = estimateContextTokens(state.messages);
+    assert.ok(
+      beforeTokens > 88_000 && beforeTokens < 400_000,
+      `fixture must sit between the eager and patient triggers; got ${beforeTokens}`,
+    );
+    const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
+      streamFactory: fakeStreamFactory(summaryEvents),
+      persistEvent: () => {},
+    });
+    assert.equal(compacted, true);
+    assert.equal(state.messages.filter((m) => isHandoffBlock(m.content)).length, 1);
+  });
+
   it('is a no-op when the history is under budget', async () => {
     const state = makeState([
       { role: 'user', content: 'hello' },

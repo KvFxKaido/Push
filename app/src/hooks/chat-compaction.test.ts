@@ -21,7 +21,16 @@ vi.mock('@/lib/orchestrator-context', () => ({
   estimateContextTokens: (msgs: { content: string }[]) =>
     msgs.reduce((s, m) => s + (m.content?.length ?? 0), 0),
   estimateMessageTokens: (m: { content: string }) => m.content?.length ?? 0,
-  getContextBudget: () => ({ maxTokens: 12000, targetTokens: 10000, summarizeTokens: 5000 }),
+  // handoffTokens is the live trigger now (split from summarizeTokens). Keep the
+  // two DIFFERENT so this suite pins that the coordinator reads handoffTokens, not
+  // summarizeTokens: the conversation totals ~11.4k tokens, so a regression back to
+  // summarizeTokens (50k, above the total) would stop triggering and fail the suite.
+  getContextBudget: () => ({
+    maxTokens: 12000,
+    targetTokens: 10000,
+    summarizeTokens: 50_000,
+    handoffTokens: 5000,
+  }),
 }));
 
 import { maybeCompactBeforeTurn } from './chat-compaction';

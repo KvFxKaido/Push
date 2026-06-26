@@ -97,6 +97,15 @@ export async function maybeCompactLeadHistory(
 
   const messages = (Array.isArray(state.messages) ? state.messages : []) as Message[];
   const budget = getContextBudget(providerConfig.id as AIProviderType, model);
+  // CLI lead stays on the EAGER `summarizeTokens` trigger — NOT the patient
+  // `handoffTokens` the web uses (Agent Runtime Decisions §14). The web sends the
+  // model its full message array, so deferring the handoff only delays a shrink
+  // the model never needed yet. The CLI lead instead feeds a bounded preamble
+  // (`buildLeadTurnPreamble` — last PRIOR_TURNS_MAX turns), so the `[CONTEXT
+  // HANDOFF]` summary is the ONLY thing carrying older context forward. Deferring
+  // it to a window-aware 400k would let a long session (esp. 1M-window DeepSeek/
+  // Gemini/Claude) drop every turn beyond the preamble with no summary. The
+  // bounded preamble can't be patient — collapse eagerly or lose context.
   const triggerTokens = budget.summarizeTokens;
 
   const totalTokens = estimateContextTokens(messages);

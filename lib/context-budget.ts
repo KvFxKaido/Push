@@ -15,11 +15,20 @@
 export interface ContextBudget {
   maxTokens: number;
   targetTokens: number;
-  /** Threshold at which old tool results get summarized. Capped at the
-   *  default 88K so smaller-window models don't summarize past their target,
-   *  and so large-window models don't accumulate excessive tool noise before
-   *  the first summarization pass. */
+  /** Eager, lossless tool-output compression trigger (heuristic Phase 1, plus
+   *  the manual `/compact`). Capped at the default 88K so smaller-window models
+   *  don't summarize past their target and large-window models don't accumulate
+   *  excessive tool noise before the first compression pass. Eager is cheap here:
+   *  the raw bytes survive in the verbatim log (§13) and `memory_expand` recalls
+   *  them, so compressing early loses no working context. */
   summarizeTokens: number;
+  /** Patient, window-aware trigger for the expensive LLM "handoff" collapse
+   *  (`lib/llm-compaction.ts`). Unlike `summarizeTokens`, the handoff busts the
+   *  prompt cache (it rewrites the prefix) and is lossy in practice, so it fires
+   *  late: `HANDOFF_RATIO` of the window, clamped to `[summarizeTokens,
+   *  min(targetTokens, HANDOFF_CEILING)]`. Fill-the-window by default; the
+   *  ceiling is the middle-ground quality guard. See Agent Runtime Decisions §14. */
+  handoffTokens: number;
 }
 
 // Rolling window config — token-based context management
@@ -33,10 +42,38 @@ const DEFAULT_CONTEXT_TARGET_TOKENS = 88_000; // Soft target leaves room for sys
 export const MAX_RATIO = 0.92;
 export const TARGET_RATIO = 0.85;
 
+// LLM-handoff collapse — fill the window before paying the cache-busting model
+// round-trip. `HANDOFF_RATIO` of the window, never below the eager compression
+// floor (`summarizeTokens`) and never above the quality-guard ceiling or the
+// lossy drop-backstop (`targetTokens`). Constants are telemetry-tunable (cache-
+// hit-rate around compaction events, Agent Runtime Decisions §14) — start generous.
+export const HANDOFF_RATIO = 0.7;
+export const HANDOFF_CEILING_TOKENS = 400_000;
+
+/**
+ * The handoff-collapse trigger for a given window: patient and window-aware.
+ * Clamped so it never undercuts the eager compression floor (`summarizeTokens`)
+ * nor overshoots the quality ceiling or the lossy drop-backstop (`targetTokens`).
+ * For sub-~100K windows the clamp collapses it back onto `targetTokens` (no room
+ * to be patient); for ≥256K windows it lets the model fill the window first.
+ */
+export function handoffTokensFor(
+  windowTokens: number,
+  summarizeTokens: number,
+  targetTokens: number,
+): number {
+  const patient = Math.floor(windowTokens * HANDOFF_RATIO);
+  const high = Math.min(targetTokens, HANDOFF_CEILING_TOKENS);
+  return Math.min(high, Math.max(summarizeTokens, patient));
+}
+
 export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
   maxTokens: DEFAULT_CONTEXT_MAX_TOKENS,
   targetTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
   summarizeTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
+  // No real window for the unknown-model fallback; the clamp pins the handoff to
+  // the 88K floor (= summarize = target here) — today's single-threshold behavior.
+  handoffTokens: DEFAULT_CONTEXT_TARGET_TOKENS,
 };
 
 /**
@@ -48,10 +85,12 @@ export const DEFAULT_CONTEXT_BUDGET: ContextBudget = {
 export function budgetFromWindow(windowTokens: number): ContextBudget {
   const maxTokens = Math.floor(windowTokens * MAX_RATIO);
   const targetTokens = Math.floor(windowTokens * TARGET_RATIO);
+  const summarizeTokens = Math.min(DEFAULT_CONTEXT_TARGET_TOKENS, targetTokens);
   return {
     maxTokens,
     targetTokens,
-    summarizeTokens: Math.min(DEFAULT_CONTEXT_TARGET_TOKENS, targetTokens),
+    summarizeTokens,
+    handoffTokens: handoffTokensFor(windowTokens, summarizeTokens, targetTokens),
   };
 }
 

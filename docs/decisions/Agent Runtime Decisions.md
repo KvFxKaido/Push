@@ -407,7 +407,7 @@ until a repo actually needs custom rules.
 
 ### 14. Context-window compaction is always-on, runtime-owned, visible, and LLM-summarized
 
-Status: **Current** — shipped 2026-06-21 (web).
+Status: **Current** (shipped 2026-06-21, web). **Threshold model revised 2026-06-26** — see *Revision* at the end of this section; the dead parallel compaction ladders were retired in the same change.
 
 Two prior gaps: compaction was (a) silently applied — it fired `context.compaction`
 run events that only surfaced in the Hub console, so a user never saw the window
@@ -457,6 +457,94 @@ losslessness is already covered by the verbatim log. Surfaced via the existing
 `context_compacted` session event + `cli_llm_compaction_*` structured logs.
 
 Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting.md>).
+
+**Revision (2026-06-26) — split the compaction knob; fill the window by default; consolidate onto one tier spine.**
+
+The original design drove *both* mechanisms off a single threshold,
+`summarizeTokens = min(88k, 0.85·window)`: the heuristic Phase-1 tool-output
+compression **and** the visible LLM handoff both fired at it
+(`triggerTokens = budget.summarizeTokens` in both coordinators —
+`app/src/hooks/chat-compaction.ts`, `cli/lead-compaction.ts`). On a 1M-window
+model that collapses the conversation to `[first user turn] + handoff + ~24k
+tail` (PRESERVE_TAIL_RATIO 0.4 of the 88k trigger = 35k, capped at
+`PRESERVE_TAIL_CAP` = 24k) at **~9% of the window** — a quality- and
+cache-cost paid on a model with 900k of unused room. Three decisions correct it.
+
+1. **Split the knob.** The two mechanisms have opposite cost profiles, so they
+   get separate thresholds:
+   - *Tool-output compression* (heuristic Phase 1) is **lossless** — the raw
+     bytes survive in the verbatim log (§13) and `memory_expand` recalls them —
+     so it stays **eager**: threshold `compressionTokens`, unchanged from today's
+     `min(88k, 0.85·window)`. Compressing early loses no working context (the
+     reason it's exempt from the "fill the window" pull below); it only keeps the
+     active prompt's signal density high.
+   - The *LLM handoff collapse* is a model round-trip, **busts the prompt cache**
+     (it rewrites the prefix), and is lossy in practice (the model rarely knows
+     to recall). So it becomes **patient and window-aware**: new field
+     `handoffTokens = clamp(HANDOFF_RATIO·window, 88k, HANDOFF_CEILING)`. The
+     **web** coordinator (`chat-compaction.ts`) repoints `triggerTokens` from
+     `summarizeTokens` to `handoffTokens`; nothing else in the handoff path changes.
+
+   **The CLI lead coordinator (`cli/lead-compaction.ts`) deliberately does NOT
+   adopt `handoffTokens` — it stays eager on `summarizeTokens`.** The split's
+   patience is safe only for the web, which sends the model its *full* message
+   array (the handoff merely shrinks what's already visible). The CLI lead feeds
+   a *bounded* preamble (`buildLeadTurnPreamble` — last `PRIOR_TURNS_MAX` turns),
+   so the `[CONTEXT HANDOFF]` summary is the **only** carrier of older context.
+   Deferring it to a window-aware 400k would let a long session (esp. on 1M-window
+   DeepSeek/Gemini/Claude) drop every turn beyond the preamble with no summary —
+   a memory regression for exactly the sessions compaction protects (Codex P1 on
+   PR #1194). A bounded preamble can't be patient; collapse eagerly or lose context.
+
+2. **Fill the window by default.** Prefer context retention + cache stability
+   over a lean working set; when the right threshold is genuinely ambiguous,
+   default to carrying *more* context, not less. `HANDOFF_RATIO = 0.70` sits
+   below the `targetTokens` (0.85) drop-backstop, so the lossless quality handoff
+   always fires before the lossy heuristic drop ever would. A 128k model lands
+   ≈ today's 88k (continuity for the small-window majority — Kimi/GLM/gpt-oss/
+   qwen); a 1M model fills to the ceiling before paying for a collapse.
+   `HANDOFF_CEILING = 400k` is the deliberate **middle-ground guard** — it caps
+   the genuinely-degrading tail so a 2M-window model (Grok) never carries 1.4M of
+   diluted context. It starts generous and rises only on telemetry evidence.
+
+3. **Prefix-aware scoping (Codex `BodyAfterPrefix`) — DEFERRED, needs its own
+   design pass.** The intent: measure *conversation growth*, not fixed overhead,
+   so a large cached prefix never pulls compaction forward. But this maps less
+   cleanly to Push than to Codex and was **not** shipped with #1/#2 above: the
+   LLM-compaction coordinators already measure conversation-only tokens
+   (`estimateContextTokens(visible)` over the message array — the system prompt
+   lives at the wire layer, not in the array), so there is no flat prefix to
+   subtract. The real open question is where the *cached* boundary sits (system
+   prompt + project instructions + pinned first-user task + any stable head
+   turns) and whether the heuristic estimator can locate it reliably. Tracked as
+   follow-up; the orchestrator safety-net's existing `fixedOverheadTokens` thread
+   is the nearest prior art to build on.
+
+The constants are **telemetry-tunable, not settled.** Prompt-cache token capture
+(provider observability) already lands the data; cache-hit-rate sampled around
+`context.compaction` events picks `HANDOFF_RATIO` and `HANDOFF_CEILING`. Recorded
+here as the operating direction — measured before any hard-tuning.
+
+**Consolidation: retire the two dead parallel ladders.** A closer reading found
+the "three implementations" weren't peers. The two *live* compaction paths are
+`manageContext` (web, via `createContextManager`'s dependency-injection seam —
+the web binds `compactChatMessage` / digest factory / metrics) and `distillContext`
+(CLI, bound into `lib/context-transformer.ts`), each legitimately surface-tuned.
+The other two were dead weight: `lib/compaction-tiers.ts` — a speculative
+single-budget cheap→expensive composer written "for new sites and future
+migrations" but adopted by **nobody** (zero non-test callers) — and
+`cli/context-manager.ts`'s `trimContext`, a vestigial port of the web's
+two-budget ladder that never got wired into a live path (referenced only by its
+own tests; the CLI's real automatic trimming goes through `distillContext` +
+`lead-compaction`). Both were **deleted** with their tests. That is the honest
+"reduce the overlap" — remove the unadopted/vestigial parallel attempts, not
+contort a per-turn hot path onto the unadopted one: the spine is single-budget
+cheap→expensive, the live managers are two-budget summarize-then-drop-with-digest,
+and forcing one onto the other would make the primitive leaky and risk the live
+path (its #283/#285 regressions pin message-level behavior). A future site needing
+tiered compaction should extend the adopted `createContextManager` seam, not
+resurrect a speculative parallel. The async LLM handoff (`lib/llm-compaction.ts`)
+is structurally unchanged — now keyed off `handoffTokens` (above).
 
 ## Active Runtime Work
 
