@@ -66,6 +66,13 @@ function normalizeReasoningBlocks(raw: unknown): OpenAIReasoningBlock[] | undefi
   return out.length > 0 ? out : undefined;
 }
 
+function normalizeReasoningContent(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  if (raw.length === 0) return undefined;
+  if (raw.length > MAX_REASONING_BLOCK_TEXT_LENGTH) return undefined;
+  return raw;
+}
+
 const MAX_ASSISTANT_CONTENT_BLOCKS = 256;
 
 /** Validate the Push-private `assistant_content_blocks` sidecar used for
@@ -191,6 +198,8 @@ export function validateAndNormalizeChatRequest(
 
     const reasoningBlocks =
       role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoning_blocks) : undefined;
+    const reasoningContent =
+      role === 'assistant' ? normalizeReasoningContent(messageRecord.reasoning_content) : undefined;
     const assistantContentBlocks =
       role === 'assistant'
         ? normalizeAssistantContentBlocks(messageRecord.assistant_content_blocks)
@@ -210,6 +219,7 @@ export function validateAndNormalizeChatRequest(
           : {}),
         role,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
         ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
       });
       continue;
@@ -282,6 +292,7 @@ export function validateAndNormalizeChatRequest(
       role,
       content: normalizedParts,
       ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+      ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
     });
   }
@@ -679,9 +690,12 @@ export function validateAndNormalizeWireRequest(
       );
     }
     // Only assistant turns may carry signed reasoning blocks — same posture as
-    // the legacy validator.
+    // the legacy validator. DeepSeek's plain reasoning_content follows the same
+    // role restriction, but remains a distinct unsigned text replay field.
     const reasoningBlocks =
       role === 'assistant' ? normalizeReasoningBlocks(messageRecord.reasoningBlocks) : undefined;
+    const reasoningContent =
+      role === 'assistant' ? normalizeReasoningContent(messageRecord.reasoning_content) : undefined;
     let contentBlocks: LlmContentBlock[] | undefined;
     if (messageRecord.contentBlocks !== undefined) {
       if (!Array.isArray(messageRecord.contentBlocks) || messageRecord.contentBlocks.length === 0) {
@@ -736,6 +750,7 @@ export function validateAndNormalizeWireRequest(
       ...(contentBlocks ? { contentBlocks } : {}),
       timestamp: 0,
       ...(reasoningBlocks ? { reasoningBlocks } : {}),
+      ...(reasoningContent ? { reasoningContent } : {}),
     });
   }
 

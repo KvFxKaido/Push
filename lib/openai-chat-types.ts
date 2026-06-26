@@ -67,6 +67,10 @@ export type OpenAIMessage = {
   role?: string;
   content?: string | OpenAIContentPart[] | null;
   reasoning_blocks?: OpenAIReasoningBlock[];
+  /** OpenAI-compatible DeepSeek thinking-mode replay field. Unlike
+   *  `reasoning_blocks`, this is an upstream field for routes that explicitly
+   *  require plain unsigned reasoning text to be echoed verbatim. */
+  reasoning_content?: string;
   /** Assistant tool calls (OpenAI native function calling). Set by the
    *  `toOpenAIChat` downcast when a message's `contentBlocks` carry `tool_use`
    *  blocks. */

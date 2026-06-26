@@ -362,6 +362,47 @@ describe('chat-send', () => {
     expect(lastAccumulated.thinking).toBe('');
   });
 
+  it('does NOT promote reasoning when the turn carried a native tool call (preserves thinking)', async () => {
+    // DeepSeek thinking + a native tool call emits reasoning and NO prose, so
+    // `accumulated` is empty — but that's "the call is in nativeToolCalls", not
+    // "the answer is stranded in reasoning". Promoting here would mislabel the
+    // reasoning as the answer AND clear `thinking`, dropping the reasoning_content
+    // DeepSeek requires on the next tool-result turn → 400. (Codex P1, #1193.)
+    const conversationsRef = { current: makeConversation([makeMessage()]) };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef);
+
+    const reasoning = 'I should read the file before answering.';
+    mockStreamChat.mockImplementation((...args: unknown[]) => {
+      const onDone = args[2] as (usage?: unknown) => void;
+      const onThinkingToken = args[4] as ((t: string | null) => void) | undefined;
+      const onNativeToolCall = args.at(-1) as
+        | ((call: { id: string; name: string; args: Record<string, unknown> }) => void)
+        | undefined;
+      onThinkingToken?.(reasoning);
+      onNativeToolCall?.({ id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } });
+      onDone({ inputTokens: 5, outputTokens: 2 });
+    });
+
+    const result = await streamAssistantRound(
+      0,
+      [makeMessage({ id: 'user-1', role: 'user', content: 'Read README', status: 'done' })],
+      ctx,
+      ['Thinking…'],
+    );
+
+    // Reasoning stays in thinking (not promoted to content) so it's available to
+    // replay as reasoning_content on the next turn.
+    expect(result.accumulated).toBe('');
+    expect(result.thinkingAccumulated).toBe(reasoning);
+    expect(result.nativeToolCalls).toEqual([
+      { id: 'call_1', name: 'sandbox_read_file', args: { path: 'README.md' } },
+    ]);
+    expect(conversationsRef.current['chat-1'].messages.at(-1)).toMatchObject({
+      thinking: reasoning,
+    });
+  });
+
   it('does not promote reasoning to content when the turn was aborted', async () => {
     const conversationsRef = {
       current: makeConversation([makeMessage()]),

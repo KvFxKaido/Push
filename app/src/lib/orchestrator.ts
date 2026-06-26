@@ -38,12 +38,14 @@ import {
 } from '@push/lib/project-instructions';
 import { isSyntheticDigestMessage, parseSessionDigest } from '@push/lib/session-digest';
 import { buildAttachmentContentBlocks } from './attachment-content-parts';
-// Whether a `(provider, model)` route lands on the Anthropic Messages API via
-// the Worker bridge. Shared with the failover candidate resolver — only routes
-// that pass through the bridge can consume the Push-private `reasoning_blocks`
-// sidecar, so both the emission gate here and failover isolation there must
-// agree. One source of truth in orchestrator-provider-routing.ts.
-import { routesThroughAnthropicBridge } from './orchestrator-provider-routing';
+// Whether a `(provider, model)` route needs reasoning replay sidecars. Shared
+// with the failover candidate resolver for signed Anthropic blocks; plain
+// DeepSeek reasoning_content stays route-gated separately because other
+// OpenAI-compatible models reject it.
+import {
+  routeReplaysReasoningContent,
+  routesThroughAnthropicBridge,
+} from './orchestrator-provider-routing';
 // --- Re-exports from orchestrator-streaming (break circular dependency) ---
 export {
   createChunkedEmitter,
@@ -216,6 +218,7 @@ interface LLMMessage {
   contentBlocks?: LlmContentBlock[];
   intentHint?: string | null;
   reasoning_blocks?: LLMReasoningBlock[];
+  reasoning_content?: string;
 }
 
 /** djb2 over the goal-anchor content keeps the synthetic id stable across
@@ -758,6 +761,7 @@ export function toLLMMessages(
   // stay on the ChatMessage either way — when the user later switches
   // back to an Anthropic-bridge route, future turns pick them up again.
   const emitReasoningBlocks = routesThroughAnthropicBridge(providerType, providerModel);
+  const emitReasoningContent = routeReplaysReasoningContent(providerType, providerModel);
 
   for (const msg of materializedMessages) {
     // Anthropic requires signed thinking blocks to be re-sent verbatim on
@@ -771,6 +775,13 @@ export function toLLMMessages(
       msg.reasoningBlocks &&
       msg.reasoningBlocks.length > 0
         ? msg.reasoningBlocks
+        : undefined;
+    const reasoningContent =
+      emitReasoningContent &&
+      msg.role === 'assistant' &&
+      typeof msg.thinking === 'string' &&
+      msg.thinking.length > 0
+        ? msg.thinking
         : undefined;
 
     // Prefer pre-converted `contentParts` (the Coder kernel's surface-agnostic
@@ -794,12 +805,14 @@ export function toLLMMessages(
         content: contentParts ?? msg.content,
         contentBlocks,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       });
     } else if (contentParts) {
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: contentParts,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       });
     } else {
       // Simple text message (existing behavior)
@@ -809,13 +822,19 @@ export function toLLMMessages(
       // reasoning blocks is legitimate (Anthropic returns this when the
       // model thinks then immediately tool_uses) — keep it so the next
       // turn's request can echo the signature back.
-      if (msg.role === 'assistant' && !msg.content.trim() && !reasoningBlocks) {
+      if (
+        msg.role === 'assistant' &&
+        !msg.content.trim() &&
+        !reasoningBlocks &&
+        !reasoningContent
+      ) {
         continue;
       }
       llmMessages.push({
         role: msg.role === 'user' ? 'user' : 'assistant',
         content: msg.content,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
+        ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       });
     }
   }
@@ -830,9 +849,8 @@ export function toLLMMessages(
   //
   // Why this re-walks the wire array instead of consuming
   // `transformed.cacheBreakpointIndices` directly: the web wire-build loop
-  // above drops empty-content assistant turns mid-iteration (the
-  // `msg.role === 'assistant' && !msg.content.trim() && !reasoningBlocks`
-  // continue), so the wire `llmMessages` array is NOT 1:1 with
+  // above drops empty-content assistant turns mid-iteration (unless they carry
+  // replayable reasoning), so the wire `llmMessages` array is NOT 1:1 with
   // `windowedMessages`. The transformer's indices are into `windowedMessages`
   // and can't be safely translated into wire indices without re-running the
   // same drop predicate. A backward walk on the already-built wire array
@@ -860,13 +878,14 @@ export function toLLMMessages(
   }
 
   // Final sanitize pass: never send empty assistant messages — except
-  // assistant turns that carry signed reasoning blocks (the bridge will
-  // emit them as the upstream `content[]`, so the message is not actually
-  // empty on the wire).
+  // assistant turns that carry replayable reasoning sidecars (signed blocks
+  // become Anthropic `content[]`; DeepSeek plain text becomes OpenAI
+  // `reasoning_content`, so the message is not actually empty on the wire).
   return llmMessages.filter((msg) => {
     if (msg.role !== 'assistant') return true;
     if (msg.contentBlocks && msg.contentBlocks.length > 0) return true;
     if (msg.reasoning_blocks && msg.reasoning_blocks.length > 0) return true;
+    if (msg.reasoning_content && msg.reasoning_content.length > 0) return true;
     return isNonEmptyContent(msg.content);
   });
 }

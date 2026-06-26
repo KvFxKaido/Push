@@ -154,6 +154,13 @@ export interface LlmMessage {
    *  chained turns. Without this, Anthropic + extended-thinking + tool-use
    *  combinations break with `invalid_request_error` on the second turn. */
   reasoningBlocks?: ReasoningBlock[];
+  /** Plain unsigned reasoning text captured on a prior assistant turn.
+   *  Some OpenAI-compatible reasoning models (DeepSeek thinking mode through
+   *  Zen Go) require this to be replayed verbatim as `reasoning_content` on
+   *  that assistant message in the next request. Distinct from
+   *  `reasoningBlocks`: this has no provider signature and is only emitted by
+   *  route-gated OpenAI-compatible serializers that explicitly support it. */
+  reasoningContent?: string;
 }
 
 // ---------------------------------------------------------------------------

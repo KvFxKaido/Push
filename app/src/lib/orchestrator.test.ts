@@ -248,6 +248,57 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant?.reasoning_blocks).toBeUndefined();
   });
+
+  it('replays plain reasoning_content for Zen DeepSeek thinking-mode models', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'a',
+        thinking: 'plain reasoning\n  preserved spacing  ',
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const llm = buildLlm(messages, 'zen', 'deepseek-v4-pro');
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_content).toBe('plain reasoning\n  preserved spacing  ');
+  });
+
+  it('keeps a Zen DeepSeek assistant turn whose only payload is reasoning_content', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: '',
+        thinking: 'thinking before a tool',
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const llm = buildLlm(messages, 'zen', 'deepseek-v4-flash');
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant).toBeDefined();
+    expect(assistant?.content).toBe('');
+    expect(assistant?.reasoning_content).toBe('thinking before a tool');
+  });
+
+  it('does NOT replay reasoning_content for non-DeepSeek OpenAI-compatible routes', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'a',
+        thinking: 'should stay display-only',
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const zenAssistant = buildLlm(messages, 'zen', 'glm-5.1').find((m) => m.role === 'assistant');
+    const azureAssistant = buildLlm(messages, 'azure', 'gpt-5').find((m) => m.role === 'assistant');
+    expect(zenAssistant?.reasoning_content).toBeUndefined();
+    expect(azureAssistant?.reasoning_content).toBeUndefined();
+  });
 });
 
 describe('toLLMMessages attachment content blocks', () => {
