@@ -42,7 +42,11 @@ import {
   getContextBudget,
 } from '@/lib/orchestrator-context';
 import { getProviderPushStream } from '@/lib/orchestrator';
-import { createCompactionMessage, filterModelVisibleMessages } from '@/lib/chat-message';
+import {
+  createCompactionMessage,
+  filterModelVisibleMessages,
+  nextCompactionCount,
+} from '@/lib/chat-message';
 import type { SendLoopContext } from './chat-send-types';
 
 export interface MaybeCompactArgs {
@@ -173,11 +177,16 @@ export async function maybeCompactBeforeTurn(
   const afterTokens =
     beforeTokens - partition.summarizeTokens + estimateMessageTokens(handoffMessage);
 
+  // Ordinal of this compaction in the conversation; drives the degradation nudge
+  // once "multiple compactions" becomes true. Shared with the heuristic drain in
+  // chat-stream-round.ts so both paths count toward the same running total.
+  const compactionCount = nextCompactionCount(apiMessages);
   const marker = createCompactionMessage({
     beforeTokens,
     afterTokens,
     phase: 'summarization',
     messagesDropped: spanMsgs.length,
+    compactionCount,
   });
 
   // Build the transform once and apply it to both the durable transcript and

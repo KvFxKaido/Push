@@ -22,8 +22,10 @@ import {
   RefreshCw,
   ExternalLink,
   Minimize2,
+  AlertTriangle,
 } from 'lucide-react';
 import type { ChatMessage, CardAction, AttachmentData, UrlCitation } from '@/types';
+import { COMPACTION_DEGRADATION_THRESHOLD } from '@/lib/chat-message';
 import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
@@ -725,10 +727,14 @@ export const MessageBubble = memo(function MessageBubble({
   // so it never reaches the prompt; this special case keeps it from drawing an
   // empty assistant row.
   if (message.kind === 'compaction' && message.compactionMeta) {
-    const { beforeTokens, afterTokens, messagesDropped } = message.compactionMeta;
+    const { beforeTokens, afterTokens, messagesDropped, compactionCount } = message.compactionMeta;
     const fmt = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+    // After multiple compactions the older thread has been lossily summarized
+    // more than once — surface that in the transcript (honest-surfaces) so the
+    // user can choose a fresh branch before accuracy slips further.
+    const degraded = (compactionCount ?? 0) >= COMPACTION_DEGRADATION_THRESHOLD;
     return (
-      <div className="my-3 flex items-center justify-center px-4">
+      <div className="my-3 flex flex-col items-center gap-1.5 px-4">
         <div className="flex items-center gap-2 rounded-full border border-push-border bg-push-surface px-3 py-1 text-push-2xs text-push-fg-dim">
           <Minimize2 className="h-3 w-3" />
           <span>
@@ -744,6 +750,15 @@ export const MessageBubble = memo(function MessageBubble({
             ) : null}
           </span>
         </div>
+        {degraded ? (
+          <div className="flex max-w-md items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-push-2xs text-amber-200/90">
+            <AlertTriangle className="h-3 w-3 shrink-0" />
+            <span>
+              Compacted {compactionCount}× — older context is getting lossy. A fresh branch keeps it
+              sharp.
+            </span>
+          </div>
+        ) : null}
       </div>
     );
   }

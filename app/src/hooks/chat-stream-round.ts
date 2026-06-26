@@ -15,7 +15,7 @@
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { emitPromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
-import { createCompactionMessage } from '@/lib/chat-message';
+import { createCompactionMessage, nextCompactionCount } from '@/lib/chat-message';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import {
   buildLinkedLibraryContext,
@@ -558,16 +558,20 @@ export async function streamAssistantRound(
     const first = compactionMetrics[0];
     const last = compactionMetrics[compactionMetrics.length - 1];
     const messagesDropped = compactionMetrics.reduce((sum, m) => sum + (m.messagesDropped ?? 0), 0);
-    const marker = createCompactionMessage({
-      beforeTokens: first.beforeTokens,
-      afterTokens: last.afterTokens,
-      phase: last.phase,
-      messagesDropped,
-    });
     setConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;
       const msgs = [...conv.messages];
+      // Stamp the ordinal from the live conversation so this heuristic path feeds
+      // the same running compaction count as the pre-turn LLM handoff — a thread
+      // trimmed only by hard-trim/digest still surfaces the degradation nudge.
+      const marker = createCompactionMessage({
+        beforeTokens: first.beforeTokens,
+        afterTokens: last.afterTokens,
+        phase: last.phase,
+        messagesDropped,
+        compactionCount: nextCompactionCount(msgs),
+      });
       // Compaction logically happened before this turn's response was
       // generated, so the marker belongs just before the trailing assistant
       // message. Inserting *before* (not after) it also keeps the assistant

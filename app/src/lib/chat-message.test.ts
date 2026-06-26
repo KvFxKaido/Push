@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import type { ChatMessage } from '@/types';
 import {
   createBranchCarriedMessage,
   createBranchForkedMessage,
@@ -6,6 +7,7 @@ import {
   createMessage,
   effectiveMessageBranch,
   filterModelVisibleMessages,
+  nextCompactionCount,
 } from './chat-message';
 
 describe('createMessage', () => {
@@ -156,6 +158,36 @@ describe('createCompactionMessage', () => {
     const messages = [{ id: 'a', visibleToModel: true }, marker, { id: 'b', visibleToModel: true }];
     const out = filterModelVisibleMessages(messages);
     expect(out.map((m) => (m as { id?: string }).id)).toEqual(['a', 'b']);
+  });
+
+  it('stores compactionCount when provided (drives the degradation nudge)', () => {
+    const msg = createCompactionMessage({
+      beforeTokens: 100,
+      afterTokens: 50,
+      phase: 'summarization',
+      messagesDropped: 0,
+      compactionCount: 3,
+    });
+    expect(msg.compactionMeta?.compactionCount).toBe(3);
+  });
+});
+
+describe('nextCompactionCount', () => {
+  it('returns the next 1-based ordinal across all prior compaction markers', () => {
+    const plain = { id: 'p', role: 'user', content: '', timestamp: 0 } as ChatMessage;
+    const mark = (): ChatMessage =>
+      createCompactionMessage({
+        beforeTokens: 1,
+        afterTokens: 1,
+        phase: 'summarization',
+        messagesDropped: 0,
+      });
+    // Counts every `kind:'compaction'` marker regardless of which path created it,
+    // so the LLM-handoff and heuristic-drain paths share one running total.
+    expect(nextCompactionCount([])).toBe(1);
+    expect(nextCompactionCount([plain, plain])).toBe(1);
+    expect(nextCompactionCount([plain, mark(), plain])).toBe(2);
+    expect(nextCompactionCount([mark(), plain, mark()])).toBe(3);
   });
 });
 

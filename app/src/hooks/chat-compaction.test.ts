@@ -35,6 +35,7 @@ vi.mock('@/lib/orchestrator-context', () => ({
 
 import { maybeCompactBeforeTurn } from './chat-compaction';
 import { isHandoffBlock } from '@push/lib/llm-compaction';
+import { COMPACTION_DEGRADATION_THRESHOLD } from '@/lib/chat-message';
 
 const m = (
   id: string,
@@ -125,8 +126,11 @@ describe('maybeCompactBeforeTurn', () => {
     expect(handoff?.visibleToModel).toBe(true);
     expect(handoff?.content).toContain('Did A and B');
 
-    // A UI compaction divider was inserted.
-    expect(out.some((x) => x.kind === 'compaction')).toBe(true);
+    // A UI compaction divider was inserted, stamped as the 1st compaction (no
+    // degradation nudge yet — that needs "multiple compactions").
+    const marker = out.find((x) => x.kind === 'compaction');
+    expect(marker).toBeDefined();
+    expect(marker?.compactionMeta?.compactionCount).toBe(1);
 
     // The durable transcript was mutated identically and a run event fired.
     expect(state.conversations.c1.messages.some((x) => x.kind === 'compaction')).toBe(true);
@@ -137,6 +141,45 @@ describe('maybeCompactBeforeTurn', () => {
     // The goal and the recent tail survive verbatim and model-visible.
     expect(out.find((x) => x.id === 'u0')?.visibleToModel).not.toBe(false);
     expect(out.find((x) => x.id === 't1')?.visibleToModel).not.toBe(false);
+  });
+
+  it('stamps an increasing compaction ordinal so the UI surfaces the degradation nudge', async () => {
+    // A prior compaction already happened: its `compaction` marker persists
+    // (visibleToModel:false), so a real second compaction finds it in apiMessages.
+    const { ctx } = makeCtx();
+    const priorMarker = m('prev-marker', 'assistant', '', {
+      kind: 'compaction',
+      visibleToModel: false,
+      compactionMeta: {
+        beforeTokens: 90,
+        afterTokens: 40,
+        phase: 'summarization',
+        messagesDropped: 3,
+        compactionCount: 1,
+      },
+    });
+    const apiMessages = [
+      m('u0', 'user', 'GOAL: build the thing'),
+      priorMarker,
+      ...bigSpan(),
+      m('t1', 'user', 'recent question that must survive'),
+    ];
+
+    const out = await maybeCompactBeforeTurn(ctx, {
+      apiMessages,
+      provider: 'anthropic',
+      model: 'claude-x',
+    });
+
+    // The new marker is the 2nd compaction → crosses the degradation threshold,
+    // so MessageBubble renders the "multiple compactions / fresh branch" nudge.
+    const markers = out.filter((x) => x.kind === 'compaction');
+    expect(markers.length).toBe(2);
+    const fresh = markers.find((x) => x.id !== 'prev-marker');
+    expect(fresh?.compactionMeta?.compactionCount).toBe(2);
+    expect(fresh?.compactionMeta?.compactionCount).toBeGreaterThanOrEqual(
+      COMPACTION_DEGRADATION_THRESHOLD,
+    );
   });
 
   it('partitions over only the model-visible subset on a second compaction', async () => {
