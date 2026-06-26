@@ -144,7 +144,7 @@ export interface LlmMessage {
   timestamp: number;
   /** Signed reasoning blocks captured on prior assistant turns.
    *  Forwarded verbatim to providers that consume them (currently Anthropic
-   *  via `lib/openai-anthropic-bridge`); other adapters ignore the field
+   *  via `lib/anthropic-bridge`); other adapters ignore the field
    *  because their upstreams would reject the Push-private parameter.
    *
    *  The OpenAI-compat CLI adapter (`cli/openai-stream.ts`) deliberately

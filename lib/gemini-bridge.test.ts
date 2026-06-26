@@ -11,7 +11,7 @@ import {
   buildGeminiGenerateContentRequest,
   geminiEventStream,
   toGeminiGenerateContent,
-} from './openai-gemini-bridge.ts';
+} from './gemini-bridge.ts';
 import { flatToolToOpenAITool } from './openai-chat-serializer.ts';
 import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 

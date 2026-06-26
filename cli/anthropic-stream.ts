@@ -40,7 +40,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
-import { anthropicEventStream, toAnthropicMessages } from '../lib/openai-anthropic-bridge.ts';
+import { anthropicEventStream, toAnthropicMessages } from '../lib/anthropic-bridge.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 

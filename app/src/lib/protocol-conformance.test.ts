@@ -8,11 +8,8 @@ import type {
   PushStreamRequest,
   ToolFunctionSchema,
 } from '@push/lib/provider-contract';
-import {
-  STRUCTURED_OUTPUT_TOOL_NAME,
-  toAnthropicMessages,
-} from '@push/lib/openai-anthropic-bridge';
-import { toGeminiGenerateContent } from '@push/lib/openai-gemini-bridge';
+import { STRUCTURED_OUTPUT_TOOL_NAME, toAnthropicMessages } from '@push/lib/anthropic-bridge';
+import { toGeminiGenerateContent } from '@push/lib/gemini-bridge';
 import { resolvePushCapabilityProfile } from './model-catalog';
 
 /**

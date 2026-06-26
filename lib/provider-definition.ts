@@ -36,7 +36,7 @@ import {
  * - `openai-responses`: OpenAI Responses schema; consume via
  *   `lib/openai-responses-sse-pump.ts`. Direct OpenAI only.
  * - `anthropic`: Anthropic Messages API (`/v1/messages`); translate via
- *   `lib/openai-anthropic-bridge.ts` (shared across web Worker and CLI).
+ *   `lib/anthropic-bridge.ts` (shared across web Worker and CLI).
  *   Reasoning blocks must round-trip with signatures intact when extended
  *   thinking is used.
  * - `gemini`: Google Generative Language API

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PUSH_STREAM_WIRE_CONTRACT, toPushStreamWire } from '@push/lib/provider-wire';
-import { toGeminiGenerateContent } from '@push/lib/openai-gemini-bridge';
+import { toGeminiGenerateContent } from '@push/lib/gemini-bridge';
 import {
   parseDualAcceptRequest,
   validateAndNormalizeChatRequest,

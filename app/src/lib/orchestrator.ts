@@ -596,7 +596,7 @@ export function toLLMMessages(
   // Prompt caching: wrap the system message as a content-array with cache_control
   // for providers that support it. OpenRouter passes the field through to its
   // upstream Anthropic models verbatim; direct Anthropic consumes it natively
-  // via the openai-anthropic-bridge. Other providers harmlessly ignore it.
+  // via the anthropic-bridge. Other providers harmlessly ignore it.
   //
   // Place the breakpoint at the stable/volatile boundary, not around the whole
   // prompt: the stable block (identity/tools/delegation/guidelines) becomes a
@@ -763,7 +763,7 @@ export function toLLMMessages(
     // Anthropic requires signed thinking blocks to be re-sent verbatim on
     // the assistant turn that produced them, ahead of any text/tool_use.
     // The wire field rides as a sidecar on the assistant LLMMessage; the
-    // bridge layer (worker → openai-anthropic-bridge.ts) prepends them to
+    // bridge layer (worker → anthropic-bridge.ts) prepends them to
     // the upstream `content[]`.
     const reasoningBlocks =
       emitReasoningBlocks &&

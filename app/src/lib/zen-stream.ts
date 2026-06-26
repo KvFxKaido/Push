@@ -11,7 +11,7 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
+import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';

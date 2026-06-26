@@ -20,7 +20,7 @@
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { geminiEventStream } from '@push/lib/openai-gemini-bridge';
+import { geminiEventStream } from '@push/lib/gemini-bridge';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';

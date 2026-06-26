@@ -21,7 +21,7 @@
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
+import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';

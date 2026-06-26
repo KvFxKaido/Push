@@ -333,5 +333,5 @@ Mapped to the recurring defect classes in `CLAUDE.md` → PR self-review:
 - `app/src/lib/anthropic-stream.ts` — web client adapter (the shaping seam)
 - `app/src/worker/worker-providers.ts` — `handleAnthropicChat` + Vertex/Zen-Go siblings
 - `app/src/lib/chat-request-guardrails.ts` — `validateAndNormalizeChatRequest` (token clamp, validation)
-- `lib/openai-anthropic-bridge.ts` — `toAnthropicMessages` (Phase 2 serializer the Worker will call), `buildAnthropicMessagesRequest` (legacy branch)
+- `lib/anthropic-bridge.ts` — `toAnthropicMessages` (Phase 2 serializer the Worker will call), `buildAnthropicMessagesRequest` (legacy branch)
 - `lib/provider-contract.ts` — `PushStreamRequest` / `PushStreamEvent`

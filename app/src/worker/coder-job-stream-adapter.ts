@@ -37,7 +37,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
-import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
+import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import type { ChatMessage } from '@/types';
 import { getZenGoTransport } from '../lib/zen-go';
 import { getUserProviderKey } from './user-secrets';

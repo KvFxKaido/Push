@@ -19,10 +19,7 @@ import {
   parseDualAcceptRequest,
   validateAndNormalizeChatRequest,
 } from '../lib/chat-request-guardrails';
-import {
-  buildAnthropicMessagesRequest,
-  toAnthropicMessages,
-} from '@push/lib/openai-anthropic-bridge';
+import { buildAnthropicMessagesRequest, toAnthropicMessages } from '@push/lib/anthropic-bridge';
 import {
   flatToolToOpenAITool,
   toOpenAIChat,
@@ -33,7 +30,7 @@ import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provid
 import {
   buildGeminiGenerateContentRequest,
   toGeminiGenerateContent,
-} from '@push/lib/openai-gemini-bridge';
+} from '@push/lib/gemini-bridge';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
@@ -1206,7 +1203,7 @@ export const handleLegacyVertexModels = createExperimentalModelsHandler(
  * When the client opts into grounding via the Push-private
  * `google_search_grounding: true` flag, this helper rewrites the body to
  * inject `tools: [{ googleSearch: {} }]` and strip the Push-private flag
- * before forwarding. Mirrors `lib/openai-gemini-bridge.ts` for direct
+ * before forwarding. Mirrors `lib/gemini-bridge.ts` for direct
  * Gemini — kept here so the Vertex Gemini path stays a thin pass-through
  * without invoking the bridge's full OpenAI→Gemini-native shape rewrite.
  *

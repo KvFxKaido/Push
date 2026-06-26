@@ -49,7 +49,7 @@ first-class fields, `buildAnthropicMessagesRequest` forwarded them blindly with
 no model guard:
 
 - **Web / Worker** (`buildAnthropicMessagesRequest` at
-  `lib/openai-anthropic-bridge.ts`): forwarded whatever the caller set.
+  `lib/anthropic-bridge.ts`): forwarded whatever the caller set.
 - **CLI** (`cli/anthropic-stream.ts`): set `temperature: req.temperature ?? 0.1`
   on *every* request, so selecting `claude-opus-4-7` on the CLI 400s on every
   turn — a live failure, not a latent one.
@@ -104,10 +104,10 @@ Add a shared `anthropicModelRejectsSamplingParams(model)` predicate and gate
 the CLI, Vertex, Zen-Go, and Worker-direct paths all build their wire body
 through this function, the single fix covers every surface. Emit a structured
 log on the strip (`anthropic_sampling_params_stripped`) so ops can see the guard
-fire. Pin with a unit test in `lib/openai-anthropic-bridge.test.ts`. **✅ Shipped.**
+fire. Pin with a unit test in `lib/anthropic-bridge.test.ts`. **✅ Shipped.**
 
 **Phase 2 — direct Anthropic serializer. ✅ Shipped.**
-`toAnthropicMessages(PushStreamRequest)` (in `lib/openai-anthropic-bridge.ts`)
+`toAnthropicMessages(PushStreamRequest)` (in `lib/anthropic-bridge.ts`)
 builds the Anthropic body straight from the neutral request — system hoist,
 message conversion, cache-control tagging, and request-field assembly in one
 pass, with no OpenAI Chat Completions intermediate. The request-field tail
@@ -118,7 +118,7 @@ message conversion. `cli/anthropic-stream.ts` now calls it directly (the CLI is
 in-process, so adopting it there carries no client↔Worker contract risk; the
 web client still POSTs OpenAI shape to the Worker — that's a Phase 3 contract
 change). Equivalence with the old two-step path is pinned byte-for-byte by a
-drift-test corpus in `lib/openai-anthropic-bridge.test.ts`, and the CLI adapter's
+drift-test corpus in `lib/anthropic-bridge.test.ts`, and the CLI adapter's
 body-capture suite (`cli/tests/anthropic-stream.test.mjs`) is the independent
 oracle for the cache-tagging edges.
 
@@ -141,7 +141,7 @@ it, the Worker request-contract migration (below) would have dropped images.
   atomically-deployed Worker — so it has its own plan:
   [`Anthropic Worker Contract Migration.md`](<Anthropic Worker Contract Migration.md>).
 - *Response contract (SSE). ✅ Phase 3a shipped (CLI).* `anthropicEventStream`
-  (in `lib/openai-anthropic-bridge.ts`) parses Anthropic SSE **directly** into
+  (in `lib/anthropic-bridge.ts`) parses Anthropic SSE **directly** into
   `PushStreamEvent`s — no OpenAI-SSE intermediate. `cli/anthropic-stream.ts` now
   consumes it, dropping the old `createAnthropicTranslatedStream → openAISSEPump`
   serialize-then-reparse round-trip. A drift-test corpus pins it event-for-event
@@ -159,7 +159,7 @@ explicit peer serializer.
 
 ## Gemini parity — Phases 2 + 3a ✅ shipped (Phase 1 N/A)
 
-`toGeminiGenerateContent(PushStreamRequest)` (in `lib/openai-gemini-bridge.ts`)
+`toGeminiGenerateContent(PushStreamRequest)` (in `lib/gemini-bridge.ts`)
 builds the `:generateContent` body straight from the neutral request —
 `systemInstruction` hoist, `user`/`model` role rename, multimodal `contentParts`
 (text + base64 image, **failing loudly** on a part it can't represent), and the
@@ -228,8 +228,8 @@ upstream dispatch fails on every anthropic-transport model.
 ## References
 
 - `lib/provider-contract.ts` — `PushStreamRequest`, `PushStreamEvent` (the neutral types)
-- `lib/openai-anthropic-bridge.ts` — the current Anthropic translator (request + SSE)
-- `lib/openai-gemini-bridge.ts` — the current Gemini translator
+- `lib/anthropic-bridge.ts` — the current Anthropic translator (request + SSE)
+- `lib/gemini-bridge.ts` — the current Gemini translator
 - `lib/openai-sse-pump.ts` — the shared OpenAI SSE reader
 - `cli/anthropic-stream.ts` — CLI native-Anthropic adapter
 - `app/src/worker/worker-providers.ts` — Worker proxy + Vertex/Zen-Go call sites
