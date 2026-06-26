@@ -956,65 +956,6 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     bytes: upstreamBody.length,
   });
 
-  // TEMP DEBUG (#1193): DeepSeek thinking mode requires `reasoning_content` on
-  // every assistant turn that carries `tool_calls`. We need the per-assistant
-  // shape of the actual outgoing body to see whether a tool-call turn is shipping
-  // WITHOUT reasoning_content (the 400 trigger). Worker Observability is capturing
-  // traces, not console.logs, for this Worker, so the `wlog` below never surfaces
-  // — we therefore also stash the shape and attach it to the 400 response body
-  // (client-visible) at the upstream-error path. Lengths/booleans only, never the
-  // reasoning text. REMOVE once the multi-turn replay is verified.
-  let deepseekDebugAssistants:
-    | Array<{
-        hasReasoning: boolean;
-        reasoningLen: number;
-        hasToolCalls: boolean;
-        contentLen: number;
-      }>
-    | undefined;
-  if (transport !== 'anthropic' && /deepseek/i.test(model)) {
-    try {
-      const parsedBody = JSON.parse(upstreamBody) as {
-        messages?: Array<Record<string, unknown>>;
-      };
-      deepseekDebugAssistants = (parsedBody.messages ?? [])
-        .filter((m) => m.role === 'assistant')
-        .map((m) => ({
-          hasReasoning: typeof m.reasoning_content === 'string',
-          reasoningLen: typeof m.reasoning_content === 'string' ? m.reasoning_content.length : 0,
-          hasToolCalls: Array.isArray(m.tool_calls),
-          contentLen: typeof m.content === 'string' ? m.content.length : -1,
-        }));
-      wlog('info', 'zen_deepseek_reasoning_debug', {
-        requestId,
-        model,
-        assistants: deepseekDebugAssistants,
-      });
-    } catch {
-      /* debug-only; ignore parse failures */
-    }
-  }
-
-  // TEMP DEBUG (#1193): inspect the NEUTRAL request the worker RECEIVED, before
-  // serialization, to split client-drop from serializer-drop. `reasoningContent`
-  // (camelCase) is what the wire validator maps `reasoning_content` onto and what
-  // `toOpenAIChat` reads. If neutral assistants carry it but the serialized body
-  // is r0T → serializer drops it; if neutral already lacks it → the client never
-  // sent it (orchestrator gate / missing thinking / wire). REMOVE with the rest.
-  let deepseekDebugNeutral: Array<{ hasRC: boolean; rcLen: number; toolUses: number }> | undefined;
-  if (dual.contractKind === 'neutral' && transport !== 'anthropic' && /deepseek/i.test(model)) {
-    deepseekDebugNeutral = (Array.isArray(dual.request.messages) ? dual.request.messages : [])
-      .filter((m) => m.role === 'assistant')
-      .map((m) => {
-        const blocks = Array.isArray(m.contentBlocks) ? m.contentBlocks : [];
-        return {
-          hasRC: typeof m.reasoningContent === 'string',
-          rcLen: typeof m.reasoningContent === 'string' ? m.reasoningContent.length : 0,
-          toolUses: blocks.filter((b) => (b as { type?: unknown }).type === 'tool_use').length,
-        };
-      });
-  }
-
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 120_000);
@@ -1052,51 +993,12 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       const errDetail = isHtml
         ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
         : errBody.slice(0, 200);
-      // TEMP DEBUG (#1193): fold a compact per-assistant shape into the toast-
-      // visible error string (`rT` = no reasoning_content but has tool_calls = the
-      // DeepSeek 400 culprit) and ride the structured shape + fuller upstream body
-      // in the JSON for the network tab. Lead the string with the tag so toast
-      // truncation can't eat it. REMOVE with the debug block above.
-      const debugTag = deepseekDebugAssistants
-        ? `[ds cul=${deepseekDebugAssistants.filter((a) => a.hasToolCalls && !a.hasReasoning).length} a=${deepseekDebugAssistants
-            .map(
-              (a) => `${a.hasReasoning ? 'R' : 'r'}${a.reasoningLen}${a.hasToolCalls ? 'T' : 't'}`,
-            )
-            .join(',')}] `
-        : '';
-      // Neutral (pre-serialization) shape: `n=R<rcLen>U<toolUseBlocks>`. If the
-      // `n=` entries show R<non-zero> but the `a=` entries are r0 → serializer
-      // drop; if `n=` is r0 too → client never delivered reasoningContent.
-      const neutralTag = deepseekDebugNeutral
-        ? `[n=${deepseekDebugNeutral
-            .map((a) => `${a.hasRC ? 'R' : 'r'}${a.rcLen}U${a.toolUses}`)
-            .join(',')}] `
-        : '';
-      // Client build marker + client-side reasoning_content count (#1193 debug).
-      // `build=` absent → the browser is running a STALE cached bundle (old code
-      // doesn't send the header). `build=dsfix2 rc=0` → fresh bundle, but the
-      // client built the wire with zero reasoning_content (capture is empty).
-      const clientBuild = request.headers.get('x-push-debug-build') ?? '';
-      const clientRc = request.headers.get('x-push-debug-rc') ?? '';
-      const clientMt = request.headers.get('x-push-debug-mt') ?? '';
-      const clientTu = request.headers.get('x-push-debug-tu') ?? '';
-      const buildTag =
-        transport !== 'anthropic' && /deepseek/i.test(model)
-          ? `[build=${clientBuild} rc=${clientRc} mt=${clientMt} tu=${clientTu}] `
-          : '';
       return Response.json(
         {
-          error: `${buildTag}${debugTag}${neutralTag}OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-          ...(deepseekDebugAssistants
-            ? {
-                debugAssistants: deepseekDebugAssistants,
-                debugNeutral: deepseekDebugNeutral,
-                debugUpstreamBody: errBody.slice(0, 2000),
-              }
-            : {}),
         },
         { status: upstream.status },
       );
