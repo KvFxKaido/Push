@@ -141,6 +141,21 @@ export function routesThroughAnthropicBridge(
   return resolvePushCapabilityProfile(provider, model).reasoningBlocks;
 }
 
+/**
+ * Whether a provider+model pair requires plain unsigned reasoning text to be
+ * replayed on prior assistant turns. DeepSeek thinking mode through Zen Go's
+ * OpenAI-compatible transport rejects round 2 unless the exact
+ * `reasoning_content` string is echoed back; other Zen OpenAI-transport models
+ * reject the field, so this stays DeepSeek-specific.
+ */
+export function routeReplaysReasoningContent(
+  provider: Exclude<ActiveProvider, 'demo'> | undefined,
+  model: string | undefined,
+): boolean {
+  if (!provider || !model) return false;
+  return provider === 'zen' && /deepseek/i.test(model);
+}
+
 function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {
   if (routesThroughAnthropicBridge(provider, resolveChatDefaultModel(provider))) {
     return 'anthropic';

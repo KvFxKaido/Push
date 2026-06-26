@@ -16,9 +16,12 @@
  * (`content` + `tool_calls[]` + standalone `role: 'tool'` results). The notable
  * choices:
  *
- *   - `reasoningBlocks` are NOT emitted. The Push-private `reasoning_blocks`
- *     sidecar is an unknown parameter to strict OpenAI-compat endpoints (they
- *     may reject it); it only round-trips on the Anthropic-bridge surface.
+ *   - Signed `reasoningBlocks` are NOT emitted. The Push-private
+ *     `reasoning_blocks` sidecar is an unknown parameter to strict
+ *     OpenAI-compat endpoints (they may reject it); it only round-trips on the
+ *     Anthropic-bridge surface. Plain `reasoningContent` is different: when a
+ *     route-gated caller sets it, it is emitted as the upstream
+ *     `reasoning_content` field for DeepSeek thinking-mode replay.
  *   - Image content passes through as `image_url` — OpenAI accepts both `data:`
  *     base64 and `http(s)` URLs natively, so (unlike Gemini) there's no
  *     loud-fail on the URL scheme; only a genuinely malformed/unknown part type
@@ -98,8 +101,10 @@ export function openAIToolToFlatTool(tool: OpenAIFunctionTool): ToolFunctionSche
  * Handles `text` and `image` (the Anthropic-canonical image `source` collapses
  * to OpenAI's `image_url`: base64 → a `data:` URL, remote → the URL verbatim),
  * and DROPS `thinking` / `redacted_thinking` blocks — OpenAI-compat endpoints
- * reject the Push-private signed-reasoning sidecar, exactly as `reasoningBlocks`
- * are never emitted here (slice 2). THROWS on an unsupported/malformed block
+ * reject the Push-private signed-reasoning sidecar, exactly as signed
+ * `reasoningBlocks` are never emitted here (slice 2). Plain `reasoningContent`
+ * is carried on the assistant message, not as a content block. THROWS on an
+ * unsupported/malformed block
  * rather than dropping it, and
  * `keepCacheControl` gates the per-part marker the same way. Later slices add
  * `tool_use`/`tool_result`; those become their own OpenAI-shape targets then
@@ -150,8 +155,9 @@ function llmContentBlocksToOpenAI(
       // Malformed image source — fall through to the loud throw below.
     }
     // Signed reasoning has no OpenAI content-part representation and the
-    // Push-private sidecar would be rejected by strict OpenAI-compat endpoints —
-    // drop it, mirroring how `reasoningBlocks` are never emitted here.
+    // Push-private sidecar would be rejected by strict OpenAI-compat endpoints.
+    // Drop it; plain DeepSeek reasoning replay is emitted separately as
+    // assistant `reasoning_content` when the route-gated caller sets it.
     if (block.type === 'thinking' || block.type === 'redacted_thinking') {
       continue;
     }
@@ -171,7 +177,9 @@ function llmContentBlocksToOpenAI(
  * (the parsed `input` object → a stringified `function.arguments`), and each
  * `tool_result` block becomes a standalone `{ role: 'tool', tool_call_id,
  * content }` message. `text`/`image` blocks stay on the main message's content;
- * `thinking` is dropped (as in {@link llmContentBlocksToOpenAI}).
+ * signed `thinking` is dropped (as in {@link llmContentBlocksToOpenAI});
+ * plain `reasoningContent`, when present, is attached to the first flushed
+ * assistant message as `reasoning_content`.
  *
  * Returns the ordered messages to splice in: tool-result messages first, then
  * the main (visible content + tool_calls) message when it carries anything.
@@ -181,6 +189,7 @@ function flattenToolBearingBlocks(
   role: string,
   blocks: readonly LlmContentBlock[],
   keepCacheControl: boolean,
+  reasoningContent?: string,
 ): OpenAIMessage[] {
   const messages: OpenAIMessage[] = [];
 
@@ -191,6 +200,7 @@ function flattenToolBearingBlocks(
   // entry, so we can't simply hoist all results to the front.
   let pendingVisible: LlmContentBlock[] = [];
   let pendingToolCalls: OpenAIToolCall[] = [];
+  let reasoningContentAttached = false;
   const flushMain = () => {
     if (pendingVisible.length === 0 && pendingToolCalls.length === 0) return;
     const message: OpenAIMessage = {
@@ -201,6 +211,15 @@ function flattenToolBearingBlocks(
           : null,
     };
     if (pendingToolCalls.length > 0) message.tool_calls = pendingToolCalls;
+    if (
+      role === 'assistant' &&
+      !reasoningContentAttached &&
+      typeof reasoningContent === 'string' &&
+      reasoningContent.length > 0
+    ) {
+      message.reasoning_content = reasoningContent;
+      reasoningContentAttached = true;
+    }
     messages.push(message);
     pendingVisible = [];
     pendingToolCalls = [];
@@ -242,9 +261,9 @@ function flattenToolBearingBlocks(
     } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
       // Intentionally dropped (not thrown): signed reasoning has no OpenAI
       // content-part representation and the Push-private sidecar would be
-      // rejected by strict OpenAI-compat endpoints — same rule as the non-tool
-      // path in llmContentBlocksToOpenAI and the legacy `reasoningBlocks`, which
-      // are never emitted here. Unknown block types still throw (below / there).
+      // rejected by strict OpenAI-compat endpoints. Plain DeepSeek reasoning
+      // replay is emitted separately as assistant `reasoning_content`. Unknown
+      // block types still throw (below / there).
     } else {
       pendingVisible.push(block);
     }
@@ -273,6 +292,20 @@ function tagMessageCacheControl(message: OpenAIMessage): void {
       }
     }
   }
+}
+
+function withReasoningContent(
+  message: OpenAIMessage,
+  reasoningContent: string | undefined,
+): OpenAIMessage {
+  if (
+    message.role === 'assistant' &&
+    typeof reasoningContent === 'string' &&
+    reasoningContent.length > 0
+  ) {
+    return { ...message, reasoning_content: reasoningContent };
+  }
+  return message;
 }
 
 /** Options for the neutral `PushStreamRequest` → OpenAI Chat serializer. */
@@ -309,8 +342,9 @@ export interface ToOpenAIChatOptions {
  * Build an OpenAI Chat Completions request body directly from the neutral
  * `PushStreamRequest`. `systemPromptOverride` is prepended as a `system`
  * message; `messages` map 1:1, with content resolved by precedence
- * (`contentBlocks` → `content` text); `reasoningBlocks` are dropped
- * (OpenAI-compat-unsafe). `contentParts` are normalized into `contentBlocks` by
+ * (`contentBlocks` → `content` text); signed `reasoningBlocks` are dropped
+ * (OpenAI-compat-unsafe), while route-gated plain `reasoningContent` is emitted
+ * as `reasoning_content`. `contentParts` are normalized into `contentBlocks` by
  * `withRequestContentBlocks` before this loop.
  */
 export function toOpenAIChat(
@@ -348,15 +382,22 @@ export function toOpenAIChat(
         // Boss-fight flatten: one neutral message can map to several OpenAI
         // messages (standalone tool-result messages + the content/tool_calls
         // message), so push the expansion rather than a single message.
-        messages.push(...flattenToolBearingBlocks(m.role, m.contentBlocks, tagCache));
+        messages.push(
+          ...flattenToolBearingBlocks(m.role, m.contentBlocks, tagCache, m.reasoningContent),
+        );
       } else {
-        messages.push({
-          role: m.role,
-          content: llmContentBlocksToOpenAI(m.contentBlocks, tagCache),
-        });
+        messages.push(
+          withReasoningContent(
+            {
+              role: m.role,
+              content: llmContentBlocksToOpenAI(m.contentBlocks, tagCache),
+            },
+            m.reasoningContent,
+          ),
+        );
       }
     } else {
-      messages.push({ role: m.role, content: m.content });
+      messages.push(withReasoningContent({ role: m.role, content: m.content }, m.reasoningContent));
     }
     reqIndexToWireIndex.push(messages.length - 1);
   }

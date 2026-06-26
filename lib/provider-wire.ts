@@ -16,7 +16,8 @@
  *
  * Naming is the neutral camelCase convention (`maxTokens`, `topP`,
  * `cacheBreakpointIndices`, `anthropicWebSearch`, `reasoningBlocks`) — not the
- * OpenAI snake_case sidecar shape. Deliberately excluded vs `PushStreamRequest`:
+ * OpenAI snake_case sidecar shape, except for upstream-native fields such as
+ * DeepSeek's `reasoning_content`. Deliberately excluded vs `PushStreamRequest`:
  * `signal`, the callbacks (`onPreCompact`, `onSessionDigestEmitted`), and the
  * opaque `workspaceContext` — none are serializable, and prompt materialization
  * (`toLLMMessages`) stays client-side, so `messages` arrive already materialized
@@ -51,6 +52,8 @@ export interface PushStreamWireMessage {
   contentBlocks?: LlmContentBlock[];
   /** Signed reasoning blocks from a prior assistant turn (round-tripped to Anthropic). */
   reasoningBlocks?: ReasoningBlock[];
+  /** Plain unsigned reasoning text from a prior assistant turn (DeepSeek replay). */
+  reasoning_content?: string;
 }
 
 /** The `push.stream.v1` request body. */
@@ -96,16 +99,21 @@ export interface PushStreamRequestWire {
 /**
  * The materialized-message shape {@link toPushStreamWire} reads. Matches the
  * web `toLLMMessages` output: `content` is plain text or an ordered content-part
- * array, and reasoning rides as snake_case `reasoning_blocks` (the materializer's
- * OpenAI-ish convention). The serializer renames it to the wire's camelCase
- * `reasoningBlocks`. `id` / `timestamp` (present on the CLI's `LlmMessage`) are
- * not required — they never cross the wire.
+ * array, signed reasoning rides as snake_case `reasoning_blocks` (the
+ * materializer's OpenAI-ish convention), and plain DeepSeek reasoning may ride
+ * as either neutral `reasoningContent` or OpenAI-native `reasoning_content`.
+ * The serializer renames signed blocks to the wire's camelCase
+ * `reasoningBlocks` and keeps DeepSeek's upstream-native field snake_case.
+ * `id` / `timestamp` (present on the CLI's `LlmMessage`) are not required —
+ * they never cross the wire.
  */
 export interface WireSerializableMessage {
   role: 'system' | 'user' | 'assistant';
   content: string | LlmContentPart[];
   contentBlocks?: LlmContentBlock[];
   reasoning_blocks?: ReasoningBlock[];
+  reasoningContent?: string;
+  reasoning_content?: string;
 }
 
 /** Fields a caller supplies to {@link toPushStreamWire} alongside the already
@@ -144,16 +152,23 @@ export function toPushStreamWire(
   messages: readonly WireSerializableMessage[],
   options: ToPushStreamWireOptions,
 ): PushStreamRequestWire {
-  const wireMessages: PushStreamWireMessage[] = messages.map((m) => ({
-    role: m.role,
-    content: m.content,
-    ...(m.contentBlocks && m.contentBlocks.length > 0 ? { contentBlocks: m.contentBlocks } : {}),
-    // Only assistant turns carry signed reasoning blocks (validator posture);
-    // rename the materializer's snake_case field to the wire's camelCase.
-    ...(m.role === 'assistant' && m.reasoning_blocks && m.reasoning_blocks.length > 0
-      ? { reasoningBlocks: m.reasoning_blocks }
-      : {}),
-  }));
+  const wireMessages: PushStreamWireMessage[] = messages.map((m) => {
+    const reasoningContent =
+      m.role === 'assistant' ? (m.reasoningContent ?? m.reasoning_content) : undefined;
+    return {
+      role: m.role,
+      content: m.content,
+      ...(m.contentBlocks && m.contentBlocks.length > 0 ? { contentBlocks: m.contentBlocks } : {}),
+      // Only assistant turns carry signed reasoning blocks (validator posture);
+      // rename the materializer's snake_case field to the wire's camelCase.
+      ...(m.role === 'assistant' && m.reasoning_blocks && m.reasoning_blocks.length > 0
+        ? { reasoningBlocks: m.reasoning_blocks }
+        : {}),
+      ...(typeof reasoningContent === 'string' && reasoningContent.length > 0
+        ? { reasoning_content: reasoningContent }
+        : {}),
+    };
+  });
 
   return {
     contract: PUSH_STREAM_WIRE_CONTRACT,

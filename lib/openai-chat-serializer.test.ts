@@ -181,6 +181,36 @@ describe('toOpenAIChat', () => {
     expect('reasoning_blocks' in assistant).toBe(false);
   });
 
+  it('emits plain reasoningContent as reasoning_content on assistant messages', () => {
+    const reasoning = 'line one\n  line two with spaces  ';
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'why?'),
+        llm('2', 'assistant', 'because', {
+          reasoningContent: reasoning,
+        }),
+      ]),
+    );
+    expect(body.messages?.[1]).toEqual({
+      role: 'assistant',
+      content: 'because',
+      reasoning_content: reasoning,
+    });
+  });
+
+  it('does not emit reasoning_content when reasoningContent is absent or on a non-assistant turn', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'user', 'why?', {
+          reasoningContent: 'not allowed',
+        }),
+        llm('2', 'assistant', 'because'),
+      ]),
+    );
+    expect(body.messages?.[0]).toEqual({ role: 'user', content: 'why?' });
+    expect(body.messages?.[1]).toEqual({ role: 'assistant', content: 'because' });
+  });
+
   it('tags cache_control on system + tail when tagCacheBreakpoints is set', () => {
     const body = toOpenAIChat(
       reqWith([llm('1', 'user', 'a'), llm('2', 'assistant', 'b'), llm('3', 'user', 'c')], {
@@ -451,6 +481,33 @@ describe('toOpenAIChat', () => {
             type: 'function',
             function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
           },
+        ],
+      },
+    ]);
+  });
+
+  it('attaches reasoning_content to the first flushed assistant message when flattening tool blocks', () => {
+    const reasoning = 'tool-bearing thought\n  exact spacing';
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          reasoningContent: reasoning,
+          contentBlocks: [
+            { type: 'tool_result', tool_use_id: 'prev', content: 'ok' },
+            { type: 'text', text: 'now calling' },
+            { type: 'tool_use', id: 'c3', name: 'baz', input: { x: true } },
+          ],
+        }),
+      ]),
+    );
+    expect(body.messages).toEqual([
+      { role: 'tool', tool_call_id: 'prev', content: 'ok' },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'now calling' }],
+        reasoning_content: reasoning,
+        tool_calls: [
+          { id: 'c3', type: 'function', function: { name: 'baz', arguments: '{"x":true}' } },
         ],
       },
     ]);

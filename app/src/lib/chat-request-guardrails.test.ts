@@ -151,6 +151,49 @@ describe('validateAndNormalizeChatRequest', () => {
     });
   });
 
+  describe('reasoning_content normalization', () => {
+    it('keeps assistant reasoning_content verbatim on parsed and bodyText', () => {
+      const reasoning = 'line one\n  line two with spaces  ';
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'deepseek-v4-pro',
+          messages: [
+            {
+              role: 'assistant',
+              content: 'ok',
+              reasoning_content: reasoning,
+            },
+          ],
+        }),
+        { routeLabel: 'Zen Go', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const msg = result.value.parsed.messages?.[0] as { reasoning_content?: unknown };
+      expect(msg.reasoning_content).toBe(reasoning);
+      expect(JSON.parse(result.value.bodyText).messages[0].reasoning_content).toBe(reasoning);
+    });
+
+    it('drops reasoning_content on non-assistant or malformed messages', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'deepseek-v4-pro',
+          messages: [
+            { role: 'user', content: 'hi', reasoning_content: 'not allowed' },
+            { role: 'assistant', content: 'ok', reasoning_content: 123 },
+          ],
+        }),
+        { routeLabel: 'Zen Go', maxOutputTokens: 8192 },
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.value.parsed.messages?.[0]).not.toHaveProperty('reasoning_content');
+      expect(result.value.parsed.messages?.[1]).not.toHaveProperty('reasoning_content');
+    });
+  });
+
   // The orchestrator attaches `cache_control: { type: 'ephemeral' }` markers
   // to system + up to 3 rolling-tail messages (Hermes `system_and_3` strategy
   // for Anthropic prompt caching). Before 2026-05-16 the guardrails layer
@@ -658,6 +701,7 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
           role: 'assistant',
           content: 'hi there',
           reasoning_blocks: [{ type: 'thinking', text: 't', signature: 's' }],
+          reasoningContent: 'plain reasoning\nwith spacing',
         },
       ],
       {
@@ -674,6 +718,7 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
     expect(wire.messages[1].reasoningBlocks).toEqual([
       { type: 'thinking', text: 't', signature: 's' },
     ]);
+    expect(wire.messages[1].reasoning_content).toBe('plain reasoning\nwith spacing');
 
     const result = validateAndNormalizeWireRequest(JSON.stringify(wire), POLICY);
     expect(result.ok).toBe(true);
@@ -688,6 +733,7 @@ describe('toPushStreamWire ↔ validateAndNormalizeWireRequest round-trip', () =
     expect(req.messages[1].reasoningBlocks).toEqual([
       { type: 'thinking', text: 't', signature: 's' },
     ]);
+    expect(req.messages[1].reasoningContent).toBe('plain reasoning\nwith spacing');
   });
 
   it('round-trips tool contentBlocks onto LlmMessage.contentBlocks', () => {

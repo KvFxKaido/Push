@@ -10,7 +10,9 @@ import type {
 } from '@push/lib/provider-contract';
 import { STRUCTURED_OUTPUT_TOOL_NAME, toAnthropicMessages } from '@push/lib/anthropic-bridge';
 import { toGeminiGenerateContent } from '@push/lib/gemini-bridge';
+import { toOpenAIChat } from '@push/lib/openai-chat-serializer';
 import { resolvePushCapabilityProfile } from './model-catalog';
+import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
 
 /**
  * Provider-native conformance harness — issue #1169.
@@ -68,7 +70,6 @@ const PENDING_COLUMNS = new Set<ConformanceColumn>([
   'streamingTools',
   'multimodal',
   'contentBlocks',
-  'reasoningBlocks',
   'context',
 ]);
 
@@ -199,6 +200,61 @@ conformanceColumn('structuredOutput', () => {
   });
 });
 
+// === reasoningBlocks / reasoning replay ====================================
+// Signed reasoning blocks remain Anthropic-transport only. DeepSeek thinking
+// mode is a separate plain-text replay contract (`reasoning_content`) that is
+// route-gated above the shared OpenAI serializer.
+conformanceColumn('reasoningBlocks', () => {
+  it('signed tier (Anthropic) prepends reasoning blocks before visible text', () => {
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-opus-4-7').reasoningBlocks).toBe(true);
+    const body = toAnthropicMessages(
+      req('anthropic', 'claude-opus-4-7', {
+        messages: [
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'visible answer',
+            timestamp: 0,
+            reasoningBlocks: [{ type: 'thinking', text: 'signed thought', signature: 'sig' }],
+          },
+        ],
+      }),
+    ) as { messages: Array<{ role?: string; content?: Array<Record<string, unknown>> }> };
+
+    expect(body.messages[0]?.content?.[0]).toEqual({
+      type: 'thinking',
+      thinking: 'signed thought',
+      signature: 'sig',
+    });
+    expect(body.messages[0]?.content?.[1]).toEqual({ type: 'text', text: 'visible answer' });
+  });
+
+  it('DeepSeek on Zen Go uses plain reasoning_content replay, not signed reasoningBlocks', () => {
+    const model = 'deepseek-v4-pro';
+    expect(resolvePushCapabilityProfile('zen', model).reasoningBlocks).toBe(false);
+    expect(routeReplaysReasoningContent('zen', model)).toBe(true);
+    const body = toOpenAIChat(
+      req('zen', model, {
+        messages: [
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'visible answer',
+            timestamp: 0,
+            reasoningContent: 'plain DeepSeek thought',
+          },
+        ],
+      }),
+    );
+
+    expect(body.messages?.[0]).toEqual({
+      role: 'assistant',
+      content: 'visible answer',
+      reasoning_content: 'plain DeepSeek thought',
+    });
+  });
+});
+
 // === remaining columns: explicit pending placeholders ========================
 // Visible `it.todo` backlog. These do NOT count as covered — the gate accounts
 // for them via PENDING_COLUMNS, so they can't masquerade as parity assertions.
@@ -215,10 +271,6 @@ pendingColumn(
 pendingColumn(
   'contentBlocks',
   'contentBlocks:true routes consume LlmMessage.contentBlocks; legacy/text routes preserve the text fallback',
-);
-pendingColumn(
-  'reasoningBlocks',
-  'signed reasoning round-trips verbatim: Anthropic thinking.signature + Gemini part.thoughtSignature, captured→stored→replayed',
 );
 pendingColumn(
   'context',

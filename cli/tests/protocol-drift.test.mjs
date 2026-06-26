@@ -1131,6 +1131,7 @@ describe('push.stream.v1 wire contract', () => {
           role: 'assistant',
           content: 'ok',
           reasoning_blocks: [{ type: 'thinking', text: 't', signature: 'sig' }],
+          reasoningContent: 'plain DeepSeek reasoning',
         },
       ],
       {
@@ -1166,10 +1167,16 @@ describe('push.stream.v1 wire contract', () => {
 
     // Message-level vocabulary: bare turns carry role+content only; assistant
     // turns with signed reasoning gain camelCase `reasoningBlocks` (renamed
-    // from the materializer's snake_case `reasoning_blocks`).
+    // from the materializer's snake_case `reasoning_blocks`) and DeepSeek plain
+    // reasoning rides as upstream-native `reasoning_content`.
     assert.deepEqual(Object.keys(wire.messages[0]).sort(), ['content', 'role']);
     assert.deepEqual(Object.keys(wire.messages[1]).sort(), ['content', 'role']);
-    assert.deepEqual(Object.keys(wire.messages[2]).sort(), ['content', 'reasoningBlocks', 'role']);
+    assert.deepEqual(Object.keys(wire.messages[2]).sort(), [
+      'content',
+      'reasoningBlocks',
+      'reasoning_content',
+      'role',
+    ]);
   });
 
   it('omits unset optional scalars so minimal bodies stay minimal', () => {

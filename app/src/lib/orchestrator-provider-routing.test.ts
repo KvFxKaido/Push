@@ -233,6 +233,18 @@ describe('routesThroughAnthropicBridge', () => {
   });
 });
 
+describe('routeReplaysReasoningContent', () => {
+  it('is true only for Zen DeepSeek models', async () => {
+    mockFailoverState();
+    const { routeReplaysReasoningContent } = await import('./orchestrator-provider-routing');
+    expect(routeReplaysReasoningContent('zen', 'deepseek-v4-pro')).toBe(true);
+    expect(routeReplaysReasoningContent('zen', 'deepseek-v4-flash')).toBe(true);
+    expect(routeReplaysReasoningContent('zen', 'glm-5.1')).toBe(false);
+    expect(routeReplaysReasoningContent('openrouter', 'deepseek/deepseek-v4-pro')).toBe(false);
+    expect(routeReplaysReasoningContent('zen', undefined)).toBe(false);
+  });
+});
+
 describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)', () => {
   it('never fails over from the direct anthropic provider', async () => {
     mockFailoverState();
