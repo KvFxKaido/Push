@@ -465,8 +465,9 @@ The original design drove *both* mechanisms off a single threshold,
 compression **and** the visible LLM handoff both fired at it
 (`triggerTokens = budget.summarizeTokens` in both coordinators —
 `app/src/hooks/chat-compaction.ts`, `cli/lead-compaction.ts`). On a 1M-window
-model that collapses the conversation to `[first user turn] + handoff + ~35k
-tail` (PRESERVE_TAIL_RATIO 0.4) at **~9% of the window** — a quality- and
+model that collapses the conversation to `[first user turn] + handoff + ~24k
+tail` (PRESERVE_TAIL_RATIO 0.4 of the 88k trigger = 35k, capped at
+`PRESERVE_TAIL_CAP` = 24k) at **~9% of the window** — a quality- and
 cache-cost paid on a model with 900k of unused room. Three decisions correct it.
 
 1. **Split the knob.** The two mechanisms have opposite cost profiles, so they

@@ -184,8 +184,11 @@ describe('lib/message-context-manager (generic)', () => {
       const budget: ContextBudget = {
         maxTokens: 25,
         targetTokens: 20,
+        // Deliberately tight/degenerate (summarizeTokens > targetTokens) to force
+        // Phase 2 drop + Phase 3 hard-trim. manageContext ignores handoffTokens;
+        // set it = summarizeTokens so it doesn't read as undercutting the floor.
         summarizeTokens: 30,
-        handoffTokens: 20,
+        handoffTokens: 30,
       };
 
       return {

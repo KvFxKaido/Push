@@ -1,15 +1,19 @@
 /**
- * Context trimming for CLI sessions.
+ * Context helpers for CLI sessions (operates on the CLI's `{ role, content }`
+ * message shape with `[TOOL_RESULT]` markers).
  *
- * Ports the web app's multi-phase strategy (orchestrator.ts) for the CLI's
- * simpler message format ({ role, content } with [TOOL_RESULT] markers).
+ * - `compactContext` — the user-triggered `/compact [turns]`: keep the last N
+ *   turns verbatim, condense the rest into a `[CONTEXT DIGEST]` block.
+ * - `distillContext` — keep a head + recent tail, drop the middle; bound into
+ *   the shared pre-LLM transform (`lib/context-transformer.ts`) as the CLI's
+ *   live automatic-trim stage.
+ * - Budget + token-estimation re-exports from the shared `lib/context-budget`
+ *   runtime so the CLI stays in lockstep with web.
  *
- * Three phases:
- *   1. Summarize — compress old tool results and verbose messages
- *   2. Remove pairs — drop oldest assistant + tool-result pairs, insert digest
- *   3. Hard fallback — splice from index 1 until under maxTokens
- *
- * The input array is never mutated; trimContext returns a fresh copy.
+ * The automatic two-budget summarize→drop→hard-trim ladder once lived here as
+ * `trimContext` but was a vestigial port (never wired into a live path) and was
+ * removed; the live automatic path is `distillContext` + `lead-compaction`. See
+ * Agent Runtime Decisions §14. Inputs are never mutated — callers get fresh arrays.
  */
 
 // ---------------------------------------------------------------------------
