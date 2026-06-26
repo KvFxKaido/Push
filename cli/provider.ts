@@ -40,9 +40,9 @@ const RETRY_BASE_DELAY_MS: number = 1_000;
  *  - `openai-responses`: OpenAI Responses schema; consume via
  *    `cli/openai-responses-stream.ts`. Direct OpenAI only.
  *  - `anthropic`: Anthropic Messages API; consume via
- *    `cli/anthropic-stream.ts` (translates via `lib/openai-anthropic-bridge`).
+ *    `cli/anthropic-stream.ts` (translates via `lib/anthropic-bridge`).
  *  - `gemini`: Google Generative Language API; consume via
- *    `cli/gemini-stream.ts` (translates via `lib/openai-gemini-bridge`).
+ *    `cli/gemini-stream.ts` (translates via `lib/gemini-bridge`).
  */
 export type CliProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthropic' | 'gemini';
 
@@ -246,7 +246,7 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
   anthropic: {
     id: 'anthropic',
     // Direct Anthropic Messages API. The CLI adapter translates the
-    // OpenAI-shaped body via `lib/openai-anthropic-bridge` and pipes the
+    // OpenAI-shaped body via `lib/anthropic-bridge` and pipes the
     // response back through the same OpenAI SSE pump every other CLI
     // provider uses, so consumers see one event surface.
     get url() {

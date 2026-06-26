@@ -7,7 +7,7 @@ import {
   type CoderAgentOptions,
   type CoderLoopMessage,
 } from './coder-agent.js';
-import { toGeminiGenerateContent } from './openai-gemini-bridge.js';
+import { toGeminiGenerateContent } from './gemini-bridge.js';
 import type { LlmContentPart, PushStream, PushStreamEvent } from './provider-contract.js';
 
 type Call = { call: { tool: string; args: Record<string, unknown> }; thoughtSignature?: string };

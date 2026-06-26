@@ -3,7 +3,7 @@
  *
  * Lives in `lib/` so both the Worker's request validator
  * (`app/src/lib/chat-request-guardrails.ts`) and the cross-surface bridges
- * (`openai-anthropic-bridge`, `openai-gemini-bridge`) can consume one
+ * (`anthropic-bridge`, `gemini-bridge`) can consume one
  * definition. Without this, promoting either bridge from `app/src/lib/` →
  * `lib/` (so the CLI can consume it too) would either drag the entire
  * guardrails module along or duplicate the types.

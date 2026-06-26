@@ -27,7 +27,7 @@ import type {
   PushStreamEvent,
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
-import { geminiEventStream, toGeminiGenerateContent } from '../lib/openai-gemini-bridge.ts';
+import { geminiEventStream, toGeminiGenerateContent } from '../lib/gemini-bridge.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 

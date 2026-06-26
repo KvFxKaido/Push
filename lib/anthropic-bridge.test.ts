@@ -10,7 +10,7 @@ import {
   buildAnthropicMessagesRequest,
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
-} from './openai-anthropic-bridge.ts';
+} from './anthropic-bridge.ts';
 import { anthropicModelSupportsNativeStructuredOutput } from './anthropic-structured-output.ts';
 import type { PushStreamEvent } from './provider-contract.ts';
 

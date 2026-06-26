@@ -367,7 +367,7 @@ export function buildAnthropicMessagesRequest(
  * (`toAnthropicMessages`). Keeping the request-field logic (max_tokens,
  * stream, system flatten/array, sampling-capability gate, web search) in one
  * place means the two paths can only drift on message conversion, which the
- * drift test in `openai-anthropic-bridge.test.ts` pins.
+ * drift test in `anthropic-bridge.test.ts` pins.
  */
 interface AnthropicBodyAssembly {
   anthropicMessages: Array<Record<string, unknown>>;
@@ -593,7 +593,7 @@ export interface ToAnthropicMessagesOptions {
  * (neutral → OpenAI shape, then `buildAnthropicMessagesRequest`) into one pass.
  *
  * Behavior is pinned byte-for-byte against the old two-step path by the drift
- * test in `openai-anthropic-bridge.test.ts` and by the CLI adapter's
+ * test in `anthropic-bridge.test.ts` and by the CLI adapter's
  * body-capture suite (`cli/tests/anthropic-stream.test.mjs`).
  */
 export function toAnthropicMessages(
@@ -763,7 +763,7 @@ export function toAnthropicMessages(
  * Zen-Go routes (their Workers proxy the raw upstream SSE straight through). The
  * old OpenAI-SSE-serialize-then-reparse detour (`createAnthropicTranslatedStream
  * → openAISSEPump`) has been removed entirely; the test corpus in
- * `openai-anthropic-bridge.test.ts` pins this pump to the event sequence that
+ * `anthropic-bridge.test.ts` pins this pump to the event sequence that
  * detour produced.
  *
  * Behavior: text deltas → `text_delta`; a signed
