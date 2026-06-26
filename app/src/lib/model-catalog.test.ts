@@ -1338,6 +1338,22 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
   });
 
+  it('gates direct Gemini structured outputs (native responseSchema) on the catalog set', () => {
+    stubWindow();
+    // Gemini constrains generation natively via responseSchema; gated on the same
+    // curated set as native tool calling so the two google gates stay consistent.
+    expect(providerModelSupportsStructuredOutput('google', 'gemini-3.1-pro-preview')).toBe(true);
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.1-pro-preview')).toMatchObject({
+      structuredOutput: 'strict',
+    });
+    // Same set as tool calling → no cross-column drift (the opus-4-8 failure mode).
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.1-pro-preview').toolCalling).toBe(
+      'native',
+    );
+    // Off-catalog google id → none (and tool calling agrees).
+    expect(providerModelSupportsStructuredOutput('google', 'gemini-not-a-real-model')).toBe(false);
+  });
+
   it('keeps legacy-mode Vertex prompt-only (the OpenAI-proxy wire never serializes the constraint)', () => {
     stubWindow();
     // The legacy (OpenAI-proxy) Vertex wire drops `responseFormat` and targets an

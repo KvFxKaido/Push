@@ -186,6 +186,17 @@ conformanceColumn('structuredOutput', () => {
     expect(body.output_config).toBeUndefined();
     expect(body.tools?.[0]?.name).toBe(STRUCTURED_OUTPUT_TOOL_NAME);
   });
+
+  it('strict tier (Gemini) → native responseSchema + JSON mime type', () => {
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.1-pro-preview').structuredOutput).toBe(
+      'strict',
+    );
+    const body = toGeminiGenerateContent(withFormat('google', 'gemini-3.1-pro-preview')) as {
+      generationConfig?: { responseMimeType?: string; responseSchema?: { type?: string } };
+    };
+    expect(body.generationConfig?.responseMimeType).toBe('application/json');
+    expect(body.generationConfig?.responseSchema?.type).toBe('OBJECT');
+  });
 });
 
 // === remaining columns: explicit pending placeholders ========================

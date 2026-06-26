@@ -73,6 +73,10 @@ export async function* geminiStream(
     topP: req.topP,
     ...(grounding ? { googleSearchGrounding: true } : {}),
     ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
+    // Native structured output: the Worker's `toGeminiGenerateContent` turns this
+    // into `generationConfig.responseSchema` + JSON mime type. Gated upstream by
+    // `providerModelSupportsStructuredOutput('google', model)`.
+    ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
   });
 
   // The Worker prefers its own server-side GOOGLE_API_KEY when set and ignores
