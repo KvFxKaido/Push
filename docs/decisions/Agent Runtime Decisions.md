@@ -495,12 +495,18 @@ cache-cost paid on a model with 900k of unused room. Three decisions correct it.
    the genuinely-degrading tail so a 2M-window model (Grok) never carries 1.4M of
    diluted context. It starts generous and rises only on telemetry evidence.
 
-3. **Prefix-aware scoping (Codex `BodyAfterPrefix`).** Both thresholds measure
-   *conversation growth*, not fixed overhead: the cached system + project-
-   instructions prefix is subtracted before the comparison, so a large prefix
-   never pulls compaction forward. Strictly-good and independent of where the
-   thresholds land. (The orchestrator safety-net already threads
-   `fixedOverheadTokens`; the coordinators gain the same.)
+3. **Prefix-aware scoping (Codex `BodyAfterPrefix`) — DEFERRED, needs its own
+   design pass.** The intent: measure *conversation growth*, not fixed overhead,
+   so a large cached prefix never pulls compaction forward. But this maps less
+   cleanly to Push than to Codex and was **not** shipped with #1/#2 above: the
+   LLM-compaction coordinators already measure conversation-only tokens
+   (`estimateContextTokens(visible)` over the message array — the system prompt
+   lives at the wire layer, not in the array), so there is no flat prefix to
+   subtract. The real open question is where the *cached* boundary sits (system
+   prompt + project instructions + pinned first-user task + any stable head
+   turns) and whether the heuristic estimator can locate it reliably. Tracked as
+   follow-up; the orchestrator safety-net's existing `fixedOverheadTokens` thread
+   is the nearest prior art to build on.
 
 The constants are **telemetry-tunable, not settled.** Prompt-cache token capture
 (provider observability) already lands the data; cache-hit-rate sampled around
