@@ -58,6 +58,7 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   fireworks: 'FIREWORKS_API_KEY',
   openadapter: 'OPENADAPTER_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
+  sakana: 'SAKANA_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
   google: 'GOOGLE_API_KEY',

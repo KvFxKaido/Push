@@ -188,7 +188,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`, `openai`, `anthropic`, `google`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -216,6 +216,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_DEEPSEEK_URL` | DeepSeek endpoint (default: `https://api.deepseek.com/chat/completions`) |
 | `PUSH_DEEPSEEK_API_KEY` | DeepSeek API key |
 | `PUSH_DEEPSEEK_MODEL` | DeepSeek model (default: `deepseek-v4-pro`) |
+| `PUSH_SAKANA_URL` | Sakana AI endpoint (default: `https://api.sakana.ai/v1/responses`) |
+| `PUSH_SAKANA_API_KEY` | Sakana AI API key |
+| `PUSH_SAKANA_MODEL` | Sakana AI model (default: `fugu`) |
 | `PUSH_OPENAI_URL` | OpenAI Responses endpoint (default: `https://api.openai.com/v1/responses`) |
 | `PUSH_OPENAI_API_KEY` | OpenAI API key |
 | `PUSH_OPENAI_MODEL` | OpenAI model (default: `gpt-5.4`) |
@@ -242,7 +245,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships twelve providers. Nine (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` uses the Responses API (`/v1/responses`). `anthropic` and `google` carry the upstream's native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships thirteen providers. Nine (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `google` carry the upstream's native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -255,6 +258,7 @@ The CLI ships twelve providers. Nine (`ollama`, `openrouter`, `zen`, `nvidia`, `
 | `blackbox` | `claude-haiku-4-5-20251001` | Yes |
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
 | `deepseek` | `deepseek-v4-pro` | Yes |
+| `sakana` | `fugu` | Yes |
 | `openai` | `gpt-5.4` | Yes |
 | `anthropic` | `claude-sonnet-4-6` | Yes |
 | `google` | `gemini-3.5-flash` | Yes |
@@ -461,7 +465,7 @@ TUI Remote flow:
   /remote pair                      Mint a fresh phone bundle for this TUI session
 
 Options:
-  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | blackbox | openadapter | deepseek | openai | anthropic | google (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | blackbox | openadapter | deepseek | sakana | openai | anthropic | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

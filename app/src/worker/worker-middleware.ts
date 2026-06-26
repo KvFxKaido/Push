@@ -43,6 +43,7 @@ export interface Env {
   FIREWORKS_API_KEY?: string;
   OPENADAPTER_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
+  SAKANA_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;

@@ -20,6 +20,7 @@ export const PROVIDER_LABELS: Record<AIProviderType, string> = {
   demo: 'Demo',
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
+  sakana: 'Sakana AI',
   openadapter: 'OpenAdapter',
   deepseek: 'DeepSeek',
 };
@@ -33,6 +34,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'blackbox'
   | 'kilocode'
   | 'fireworks'
+  | 'sakana'
   | 'openadapter'
   | 'deepseek'
   | 'anthropic'
@@ -62,6 +64,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
   'blackbox',
   'kilocode',
   'fireworks',
+  'sakana',
   'openadapter',
 ];
 
@@ -115,6 +118,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     saveLabel: 'Save Fireworks AI key',
     hint: 'Fireworks AI API key from fireworks.ai.',
     labelTransform: (model) => formatModelDisplayName('fireworks', model),
+  },
+  sakana: {
+    placeholder: 'Sakana AI API key',
+    saveLabel: 'Save Sakana AI key',
+    hint: 'Sakana AI API key from console.sakana.ai. Fugu multi-agent orchestration.',
+    labelTransform: (model) => formatModelDisplayName('sakana', model),
   },
   openadapter: {
     placeholder: 'OpenAdapter API key',

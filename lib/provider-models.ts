@@ -22,6 +22,7 @@ export type SharedProviderModelId =
   | 'blackbox'
   | 'openadapter'
   | 'deepseek'
+  | 'sakana'
   | 'openai'
   | 'anthropic'
   | 'google';
@@ -51,6 +52,11 @@ export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 // deprecated 2026-07-24, so they're left out of the curated list — free-text
 // entry still resolves them until then.
 export const DEEPSEEK_DEFAULT_MODEL = 'deepseek-v4-pro';
+// Sakana AI's Fugu is a multi-agent orchestration router over frontier LLMs,
+// exposed as one OpenAI-compatible endpoint (launched 2026-06-22). `fugu` is the
+// low-latency everyday default; `fugu-ultra` coordinates a deeper agent pool
+// (1M context, tool calling, prompt caching).
+export const SAKANA_DEFAULT_MODEL = 'fugu';
 
 // Direct-provider defaults — populated by the scaffolding PR; the streaming /
 // auth / system-prompt wiring lands per-provider in follow-up PRs that consume
@@ -277,6 +283,9 @@ export const OPENADAPTER_MODELS: string[] = [
 ];
 
 export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-v4-flash'];
+// Sakana Fugu orchestration tiers. The model field also accepts any free-text
+// slug; these two are the curated suggestions.
+export const SAKANA_MODELS: string[] = [SAKANA_DEFAULT_MODEL, 'fugu-ultra'];
 
 // Curated direct-provider model lists. Free-text entry is still permitted at
 // the UI layer; the curated list seeds dropdowns. Refresh against each
@@ -333,6 +342,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   blackbox: BLACKBOX_MODELS,
   openadapter: OPENADAPTER_MODELS,
   deepseek: DEEPSEEK_MODELS,
+  sakana: SAKANA_MODELS,
   openai: OPENAI_MODELS,
   anthropic: ANTHROPIC_MODELS,
   google: GOOGLE_MODELS,
@@ -348,6 +358,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   blackbox: BLACKBOX_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
+  sakana: SAKANA_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,

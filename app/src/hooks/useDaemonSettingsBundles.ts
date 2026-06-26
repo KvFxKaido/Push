@@ -137,6 +137,7 @@ export function useDaemonSettingsBundles({
     const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
     const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
     const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
+    const isSakanaModelLocked = isModelLocked && lockedProvider === 'sakana';
     const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
     const isDeepSeekModelLocked = isModelLocked && lockedProvider === 'deepseek';
 
@@ -257,6 +258,21 @@ export function useDaemonSettingsBundles({
           setKeyInput: catalog.fireworks.setKeyInput,
           setKey: catalog.fireworks.setKey,
           clearKey: catalog.fireworks.clearKey,
+        },
+        sakana: {
+          hasKey: catalog.sakana.hasKey,
+          model: catalog.sakana.model,
+          setModel: catalog.sakana.setModel,
+          modelOptions: catalog.sakanaModelOptions,
+          modelsLoading: catalog.sakanaModels.loading,
+          modelsError: catalog.sakanaModels.error,
+          modelsUpdatedAt: catalog.sakanaModels.updatedAt,
+          isModelLocked: isSakanaModelLocked,
+          refreshModels: catalog.refreshSakanaModels,
+          keyInput: catalog.sakana.keyInput,
+          setKeyInput: catalog.sakana.setKeyInput,
+          setKey: catalog.sakana.setKey,
+          clearKey: catalog.sakana.clearKey,
         },
         openadapter: {
           hasKey: catalog.openadapter.hasKey,

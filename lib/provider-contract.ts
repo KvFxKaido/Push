@@ -178,6 +178,7 @@ export type AIProviderType =
   | 'kilocode'
   | 'fireworks'
   | 'openadapter'
+  | 'sakana'
   | 'bedrock'
   | 'vertex'
   | 'deepseek'
@@ -202,6 +203,7 @@ export const ALL_PROVIDERS = [
   'kilocode',
   'fireworks',
   'openadapter',
+  'sakana',
   'bedrock',
   'vertex',
   'deepseek',

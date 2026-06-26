@@ -8,6 +8,7 @@ import {
   OLLAMA_MODELS,
   OPENADAPTER_MODELS,
   OPENROUTER_MODELS,
+  SAKANA_MODELS,
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
@@ -34,6 +35,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   ollama: new Set(OLLAMA_MODELS),
   openadapter: new Set(OPENADAPTER_MODELS),
   openrouter: new Set(OPENROUTER_MODELS),
+  sakana: new Set(SAKANA_MODELS),
   zen: new Set(ZEN_MODELS),
 };
 

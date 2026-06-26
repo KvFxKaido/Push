@@ -869,6 +869,24 @@ export const handleDeepSeekModels = createJsonProxyHandler({
   timeoutError: 'DeepSeek model list timed out after 30 seconds',
 });
 
+// --- Sakana AI (Fugu orchestration) ---
+//
+// Sakana Fugu speaks the OpenAI Responses API, so `handleSakanaChat` lives in
+// the shared Responses section below (next to direct OpenAI). Only the model
+// list proxy stays here.
+
+export const handleSakanaModels = createJsonProxyHandler({
+  name: 'Sakana AI API',
+  logTag: 'api/sakana/models',
+  upstreamUrl: 'https://api.sakana.ai/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('SAKANA_API_KEY'),
+  keyMissingError:
+    'Sakana AI API key not configured. Add it in Settings or set SAKANA_API_KEY on the Worker.',
+  timeoutError: 'Sakana AI model list timed out after 30 seconds',
+});
+
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
 
 export function getZenGoAuthHeaders(
@@ -1498,19 +1516,25 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
   });
 }
 
-// --- OpenAI (direct /v1/responses) ---
+// --- OpenAI + Sakana (direct /v1/responses) ---
 //
-// Direct OpenAI is now a Responses-native adapter. Do not route it through the
-// generic Chat proxy: that factory validates and normalizes Chat Completions
-// fields (`messages`, `response_format`, `max_completion_tokens`), while this
-// path must preserve Responses fields (`input`, `text.format`,
-// `max_output_tokens`) for the provider-native contract.
+// Both direct OpenAI and Sakana Fugu are Responses-native adapters sharing one
+// proxy (`handleResponsesProxy`), parameterized only by upstream URL, env
+// secret, and error labels. Do not route either through the generic Chat proxy:
+// that factory validates and normalizes Chat Completions fields (`messages`,
+// `response_format`, `max_completion_tokens`), while this path must preserve
+// Responses fields (`input`, `text.format`, `max_output_tokens`) for the
+// provider-native contract.
 
 const OPENAI_RESPONSES_UPSTREAM_URL = 'https://api.openai.com/v1/responses';
-const OPENAI_RESPONSES_TIMEOUT_MS = 120_000;
-const OPENAI_RESPONSES_MAX_OUTPUT_TOKENS = 12_288;
+const SAKANA_RESPONSES_UPSTREAM_URL = 'https://api.sakana.ai/v1/responses';
+const RESPONSES_TIMEOUT_MS = 120_000;
+const RESPONSES_MAX_OUTPUT_TOKENS = 12_288;
 
-function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
+function validateAndNormalizeResponsesRequest(
+  bodyText: string,
+  providerLabel: string,
+):
   | { ok: true; bodyText: string; model: string; adjustments: string[] }
   | {
       ok: false;
@@ -1521,10 +1545,14 @@ function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
   try {
     parsed = JSON.parse(bodyText);
   } catch {
-    return { ok: false, status: 400, error: 'OpenAI request body must be valid JSON.' };
+    return { ok: false, status: 400, error: `${providerLabel} request body must be valid JSON.` };
   }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, status: 400, error: 'OpenAI request body must be a JSON object.' };
+    return {
+      ok: false,
+      status: 400,
+      error: `${providerLabel} request body must be a JSON object.`,
+    };
   }
   const body = { ...(parsed as Record<string, unknown>) };
   const model = typeof body.model === 'string' && body.model.trim() ? body.model : 'unknown';
@@ -1532,11 +1560,15 @@ function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
     return {
       ok: false,
       status: 400,
-      error: 'OpenAI Responses request field "input" must be a string or item array.',
+      error: `${providerLabel} Responses request field "input" must be a string or item array.`,
     };
   }
   if (body.stream !== undefined && typeof body.stream !== 'boolean') {
-    return { ok: false, status: 400, error: 'OpenAI request field "stream" must be a boolean.' };
+    return {
+      ok: false,
+      status: 400,
+      error: `${providerLabel} request field "stream" must be a boolean.`,
+    };
   }
   const adjustments: string[] = [];
   if (body.stream !== true) {
@@ -1556,11 +1588,11 @@ function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
       return {
         ok: false,
         status: 400,
-        error: 'OpenAI request field "max_output_tokens" must be a positive integer.',
+        error: `${providerLabel} request field "max_output_tokens" must be a positive integer.`,
       };
     }
-    if (body.max_output_tokens > OPENAI_RESPONSES_MAX_OUTPUT_TOKENS) {
-      body.max_output_tokens = OPENAI_RESPONSES_MAX_OUTPUT_TOKENS;
+    if (body.max_output_tokens > RESPONSES_MAX_OUTPUT_TOKENS) {
+      body.max_output_tokens = RESPONSES_MAX_OUTPUT_TOKENS;
       adjustments.push('max_output_tokens_clamped');
     }
   }
@@ -1569,46 +1601,69 @@ function validateAndNormalizeOpenAIResponsesRequest(bodyText: string):
       body[field] !== undefined &&
       (typeof body[field] !== 'number' || !Number.isFinite(body[field]))
     ) {
-      return { ok: false, status: 400, error: `OpenAI request field "${field}" must be a number.` };
+      return {
+        ok: false,
+        status: 400,
+        error: `${providerLabel} request field "${field}" must be a number.`,
+      };
     }
   }
   return { ok: true, bodyText: JSON.stringify(body), model, adjustments };
 }
 
-export async function handleOpenAIChat(request: Request, env: Env): Promise<Response> {
+interface ResponsesProxyOptions {
+  providerLabel: string;
+  authSecret: 'OPENAI_API_KEY' | 'SAKANA_API_KEY';
+  keyMissingError: string;
+  upstreamUrl: string;
+  route: string;
+  timeoutError: string;
+}
+
+/**
+ * Shared `/v1/responses` reverse proxy for the Responses-native providers
+ * (direct OpenAI, Sakana Fugu). Runs the standard preamble (origin check +
+ * rate-limit + auth), normalizes the Responses body (forces `stream:true` /
+ * `store:false`, clamps `max_output_tokens`, type-checks numerics), then pipes
+ * the typed Responses SSE stream back unchanged.
+ */
+async function handleResponsesProxy(
+  request: Request,
+  env: Env,
+  opts: ResponsesProxyOptions,
+): Promise<Response> {
   const preamble = await runPreamble(request, env, {
-    buildAuth: standardAuth('OPENAI_API_KEY'),
-    keyMissingError:
-      'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
+    buildAuth: standardAuth(opts.authSecret),
+    keyMissingError: opts.keyMissingError,
     needsBody: true,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader, bodyText, requestId, spanCtx } = preamble;
-  const normalized = validateAndNormalizeOpenAIResponsesRequest(bodyText);
+  const normalized = validateAndNormalizeResponsesRequest(bodyText, opts.providerLabel);
   if (!normalized.ok) {
     return Response.json({ error: normalized.error }, { status: normalized.status });
   }
   if (normalized.adjustments.length > 0) {
     wlog('warn', 'responses_request_adjusted', {
       requestId,
-      route: 'api/openai/chat',
+      route: opts.route,
       adjustments: normalized.adjustments,
     });
   }
 
   wlog('info', 'request', {
     requestId,
-    route: 'api/openai/chat',
+    route: opts.route,
     bytes: normalized.bodyText.length,
     model: normalized.model,
   });
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), OPENAI_RESPONSES_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), RESPONSES_TIMEOUT_MS);
   const upstreamCtx = createChildContext(spanCtx);
   let upstream: Response;
   try {
-    upstream = await fetch(OPENAI_RESPONSES_UPSTREAM_URL, {
+    upstream = await fetch(opts.upstreamUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1624,12 +1679,12 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
     const message = err instanceof Error ? err.message : String(err);
     wlog('error', 'unhandled', {
       requestId,
-      route: 'api/openai/chat',
+      route: opts.route,
       message,
       timeout: isTimeout,
     });
     return Response.json(
-      { error: isTimeout ? 'OpenAI request timed out after 120 seconds' : message },
+      { error: isTimeout ? opts.timeoutError : message },
       { status: isTimeout ? 504 : 502 },
     );
   } finally {
@@ -1638,7 +1693,7 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
 
   wlog('info', 'upstream_ok', {
     requestId,
-    route: 'api/openai/chat',
+    route: opts.route,
     status: upstream.status,
     trace_id: spanCtx.traceId,
   });
@@ -1647,13 +1702,13 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
     const errBody = await upstream.text().catch(() => '');
     wlog('error', 'upstream_error', {
       requestId,
-      route: 'api/openai/chat',
+      route: opts.route,
       status: upstream.status,
       body: errBody.slice(0, 500),
     });
     return Response.json(
       {
-        error: `OpenAI ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+        error: `${opts.providerLabel} ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
         code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
       },
       { status: upstream.status },
@@ -1671,6 +1726,30 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
       'X-Push-Span-Id': spanCtx.spanId,
       'X-Accel-Buffering': 'no',
     },
+  });
+}
+
+export async function handleOpenAIChat(request: Request, env: Env): Promise<Response> {
+  return handleResponsesProxy(request, env, {
+    providerLabel: 'OpenAI',
+    authSecret: 'OPENAI_API_KEY',
+    keyMissingError:
+      'OpenAI API key not configured. Add it in Settings or set OPENAI_API_KEY on the Worker.',
+    upstreamUrl: OPENAI_RESPONSES_UPSTREAM_URL,
+    route: 'api/openai/chat',
+    timeoutError: 'OpenAI request timed out after 120 seconds',
+  });
+}
+
+export async function handleSakanaChat(request: Request, env: Env): Promise<Response> {
+  return handleResponsesProxy(request, env, {
+    providerLabel: 'Sakana AI',
+    authSecret: 'SAKANA_API_KEY',
+    keyMissingError:
+      'Sakana AI API key not configured. Add it in Settings or set SAKANA_API_KEY on the Worker.',
+    upstreamUrl: SAKANA_RESPONSES_UPSTREAM_URL,
+    route: 'api/sakana/chat',
+    timeoutError: 'Sakana AI request timed out after 120 seconds',
   });
 }
 

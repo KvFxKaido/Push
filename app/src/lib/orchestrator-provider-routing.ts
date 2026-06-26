@@ -14,6 +14,7 @@ import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
 import { fireworksStream } from './fireworks-stream';
+import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
@@ -39,6 +40,7 @@ import {
   getFireworksModelName,
   getOpenAdapterModelName,
   getDeepSeekModelName,
+  getSakanaModelName,
   getAnthropicModelName,
   getOpenAIModelName,
   getGoogleModelName,
@@ -97,6 +99,7 @@ const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   fireworks: 'openai-compat',
   openadapter: 'openai-compat',
   deepseek: 'openai-compat',
+  sakana: 'openai-responses',
   azure: 'openai-compat',
   bedrock: 'openai-compat',
   openai: 'openai-responses',
@@ -123,6 +126,7 @@ const FAILOVER_PROVIDER_ORDER: Exclude<ActiveProvider, 'demo'>[] = [
   'fireworks',
   'openadapter',
   'deepseek',
+  'sakana',
   'azure',
   'bedrock',
   'vertex',
@@ -245,6 +249,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'fireworks':
       stream = (req) => normalizeReasoning(fireworksStream(req));
       break;
+    case 'sakana':
+      stream = (req) => normalizeReasoning(sakanaStream(req));
+      break;
     case 'openadapter':
       stream = (req) => normalizeReasoning(openadapterStream(req));
       break;
@@ -339,6 +346,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
   fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
   deepseek: 'DeepSeek',
+  sakana: 'Sakana AI',
   azure: 'Azure',
   bedrock: 'Bedrock',
   vertex: 'Google Vertex',
@@ -364,6 +372,7 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'fireworks',
   'openadapter',
   'deepseek',
+  'sakana',
   'nvidia',
   'blackbox',
   'azure',
@@ -410,6 +419,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getKiloCodeModelName();
     case 'fireworks':
       return getFireworksModelName();
+    case 'sakana':
+      return getSakanaModelName();
     case 'openadapter':
       return getOpenAdapterModelName();
     case 'deepseek':
