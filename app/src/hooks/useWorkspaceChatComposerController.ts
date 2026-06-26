@@ -53,6 +53,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
   | 'handleSelectOpenAdapterModelFromChat'
+  | 'handleSelectDeepSeekModelFromChat'
   | 'handleSelectAzureModelFromChat'
   | 'handleSelectBedrockModelFromChat'
   | 'handleSelectVertexModelFromChat'
@@ -87,6 +88,7 @@ export function useWorkspaceChatComposerController({
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
   handleSelectOpenAdapterModelFromChat,
+  handleSelectDeepSeekModelFromChat,
   handleSelectAzureModelFromChat,
   handleSelectBedrockModelFromChat,
   handleSelectVertexModelFromChat,
@@ -260,6 +262,7 @@ export function useWorkspaceChatComposerController({
   const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
   const isSakanaModelLocked = isModelLocked && lockedProvider === 'sakana';
   const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
+  const isDeepSeekModelLocked = isModelLocked && lockedProvider === 'deepseek';
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
   const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
@@ -363,6 +366,14 @@ export function useWorkspaceChatComposerController({
       isOpenAdapterModelLocked,
       refreshOpenAdapterModels: catalog.refreshOpenAdapterModels,
       onSelectOpenAdapterModel: handleSelectOpenAdapterModelFromChat,
+      deepseekModel: selectedChatModels.deepseek,
+      deepseekModelOptions: catalog.deepseekModelOptions,
+      deepseekModelsLoading: catalog.deepseekModels.loading,
+      deepseekModelsError: catalog.deepseekModels.error,
+      deepseekModelsUpdatedAt: catalog.deepseekModels.updatedAt,
+      isDeepSeekModelLocked,
+      refreshDeepSeekModels: catalog.refreshDeepSeekModels,
+      onSelectDeepSeekModel: handleSelectDeepSeekModelFromChat,
       azureModel: selectedChatModels.azure,
       azureDeployments: catalog.azure.deployments,
       azureActiveDeploymentId: catalog.azure.activeDeploymentId,
