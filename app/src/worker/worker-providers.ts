@@ -956,28 +956,39 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     bytes: upstreamBody.length,
   });
 
-  // TEMP DEBUG (#1193): DeepSeek thinking mode requires `reasoning_content` to be
-  // present on EVERY assistant message once any has it. This dumps the per-
-  // assistant shape of the actual outgoing body so we can see whether the failure
-  // is inconsistency (some have it, some don't), stripping (none do), or all-
-  // present (a different cause). Searchable in Observability as
-  // `zen_deepseek_reasoning_debug`. REMOVE once the multi-turn replay is verified.
+  // TEMP DEBUG (#1193): DeepSeek thinking mode requires `reasoning_content` on
+  // every assistant turn that carries `tool_calls`. We need the per-assistant
+  // shape of the actual outgoing body to see whether a tool-call turn is shipping
+  // WITHOUT reasoning_content (the 400 trigger). Worker Observability is capturing
+  // traces, not console.logs, for this Worker, so the `wlog` below never surfaces
+  // — we therefore also stash the shape and attach it to the 400 response body
+  // (client-visible) at the upstream-error path. Lengths/booleans only, never the
+  // reasoning text. REMOVE once the multi-turn replay is verified.
+  let deepseekDebugAssistants:
+    | Array<{
+        hasReasoning: boolean;
+        reasoningLen: number;
+        hasToolCalls: boolean;
+        contentLen: number;
+      }>
+    | undefined;
   if (transport !== 'anthropic' && /deepseek/i.test(model)) {
     try {
       const parsedBody = JSON.parse(upstreamBody) as {
         messages?: Array<Record<string, unknown>>;
       };
+      deepseekDebugAssistants = (parsedBody.messages ?? [])
+        .filter((m) => m.role === 'assistant')
+        .map((m) => ({
+          hasReasoning: typeof m.reasoning_content === 'string',
+          reasoningLen: typeof m.reasoning_content === 'string' ? m.reasoning_content.length : 0,
+          hasToolCalls: Array.isArray(m.tool_calls),
+          contentLen: typeof m.content === 'string' ? m.content.length : -1,
+        }));
       wlog('info', 'zen_deepseek_reasoning_debug', {
         requestId,
         model,
-        assistants: (parsedBody.messages ?? [])
-          .filter((m) => m.role === 'assistant')
-          .map((m) => ({
-            hasReasoning: typeof m.reasoning_content === 'string',
-            reasoningLen: typeof m.reasoning_content === 'string' ? m.reasoning_content.length : 0,
-            hasToolCalls: Array.isArray(m.tool_calls),
-            contentLen: typeof m.content === 'string' ? m.content.length : -1,
-          })),
+        assistants: deepseekDebugAssistants,
       });
     } catch {
       /* debug-only; ignore parse failures */
@@ -1021,12 +1032,29 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
       const errDetail = isHtml
         ? `HTTP ${upstream.status} (the server returned an HTML error page instead of JSON)`
         : errBody.slice(0, 200);
+      // TEMP DEBUG (#1193): fold a compact per-assistant shape into the toast-
+      // visible error string (`rT` = no reasoning_content but has tool_calls = the
+      // DeepSeek 400 culprit) and ride the structured shape + fuller upstream body
+      // in the JSON for the network tab. REMOVE with the debug block above.
+      const debugTag = deepseekDebugAssistants
+        ? ` [debug a=${deepseekDebugAssistants
+            .map(
+              (a) => `${a.hasReasoning ? 'R' : 'r'}${a.reasoningLen}${a.hasToolCalls ? 'T' : 't'}`,
+            )
+            .join(',')}]`
+        : '';
       return Response.json(
         {
-          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}`,
+          error: `OpenCode Zen Go API error ${upstream.status}: ${errDetail}${debugTag}`,
           // Tag 429s like the native providers so a Go-tier quota / rate limit
           // is classified the same way everywhere (see handleZenChat above).
           code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+          ...(deepseekDebugAssistants
+            ? {
+                debugAssistants: deepseekDebugAssistants,
+                debugUpstreamBody: errBody.slice(0, 2000),
+              }
+            : {}),
         },
         { status: upstream.status },
       );
