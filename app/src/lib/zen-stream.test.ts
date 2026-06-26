@@ -756,4 +756,101 @@ describe('zenStream', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBeUndefined();
   });
+
+  // -------------------------------------------------------------------------
+  // Go-mode dual response pump — anthropic-transport models (minimax / qwen)
+  // parse raw Anthropic Messages SSE natively; openai-transport models stay on
+  // openAISSEPump. `getZenGoTransport` is the real implementation here (not
+  // mocked), so the model id alone selects the pump.
+  // -------------------------------------------------------------------------
+
+  function goModeProvidersMock() {
+    vi.doMock('./providers', () => ({
+      getZenGoMode: () => true,
+      PROVIDER_URLS: {
+        zen: {
+          chat: 'https://zen.example/v1/chat/completions',
+          models: 'https://zen.example/v1/models',
+        },
+      },
+      ZEN_GO_URLS: { chat: 'https://zen-go.example/v1/chat/completions' },
+    }));
+  }
+
+  it('parses native Anthropic SSE for an anthropic-transport Go model (minimax)', async () => {
+    goModeProvidersMock();
+    const { push, close } = installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream({ ...baseRequest, model: 'minimax-m2.7' }));
+
+    // Anthropic Messages SSE — a content_block_delta, not an OpenAI `choices`
+    // chunk. The OpenAI pump would yield nothing from this frame.
+    push(
+      JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'text_delta', text: 'ok' },
+      }),
+    );
+    close();
+
+    const out = await events;
+    expect(out[0]).toEqual({ type: 'text_delta', text: 'ok' });
+    expect(out[out.length - 1]).toMatchObject({ type: 'done', finishReason: 'stop' });
+  });
+
+  it('surfaces an anthropic-transport tool_use as a native_tool_call', async () => {
+    goModeProvidersMock();
+    const { pushRaw, close } = installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    const events = collect(zenStream({ ...baseRequest, model: 'qwen3.7-max' }));
+
+    // tool_use block: start (name + id) → input_json_delta (args) → stop.
+    pushRaw(
+      `data: ${JSON.stringify({
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'tool_use', id: 'tu_1', name: 'sandbox_read_file', input: {} },
+      })}\n\n`,
+    );
+    pushRaw(
+      `data: ${JSON.stringify({
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'input_json_delta', partial_json: '{"path":"README.md"}' },
+      })}\n\n`,
+    );
+    pushRaw(`data: ${JSON.stringify({ type: 'content_block_stop', index: 0 })}\n\n`);
+    close();
+
+    const out = await events;
+    const toolEvents = out.filter(
+      (e): e is { type: 'native_tool_call'; call: { name: string; args: unknown } } =>
+        e.type === 'native_tool_call',
+    );
+    expect(toolEvents).toHaveLength(1);
+    expect(toolEvents[0].call).toMatchObject({
+      name: 'sandbox_read_file',
+      args: { path: 'README.md' },
+    });
+  });
+
+  it('keeps an openai-transport Go model on the OpenAI-shaped pump', async () => {
+    goModeProvidersMock();
+    const { push, finish } = installStreamFetch(fetchMock);
+    const { zenStream } = await import('./zen-stream');
+    // kimi-k2.6 is an openai-transport Go model — the OpenAI pump must terminate
+    // on [DONE]. If it had wrongly used anthropicEventStream, this OpenAI-shaped
+    // `choices` frame would yield no text.
+    const events = collect(zenStream({ ...baseRequest, model: 'kimi-k2.6' }));
+
+    push(contentFrame('ok'));
+    finish();
+
+    const out = await events;
+    expect(out).toEqual([
+      { type: 'text_delta', text: 'ok' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
 });

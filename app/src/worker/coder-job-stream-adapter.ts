@@ -15,12 +15,16 @@
  *   explicit diagnostic and fail fast instead of silently hanging.
  *
  * SSE parsing:
- *   Providers proxy OpenAI-compatible SSE. We normalize CRLF to LF so
+ *   Most providers proxy OpenAI-compatible SSE. We normalize CRLF to LF so
  *   providers that frame events with `\r\n\r\n` still split on the
  *   blank-line delimiter, parse `data: {...}` events, and yield
  *   `text_delta` events for `choices[0].delta.content`. Malformed chunks
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
+ *   Two exceptions: `openai` uses the Responses-API pump, and the
+ *   Anthropic-transport Zen-Go models (MiniMax / Qwen on `/v1/messages`)
+ *   now stream raw Anthropic Messages SSE — the Worker stopped translating
+ *   that route to OpenAI SSE — so they parse via `anthropicEventStream`.
  */
 
 import type {
@@ -33,7 +37,9 @@ import type {
 } from '@push/lib/provider-contract';
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
+import { anthropicEventStream } from '@push/lib/openai-anthropic-bridge';
 import type { ChatMessage } from '@/types';
+import { getZenGoTransport } from '../lib/zen-go';
 import { getUserProviderKey } from './user-secrets';
 import type { Env } from './worker-middleware';
 import {
@@ -280,13 +286,21 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // only — this is the live lane for background/inline turns, so the log
       // lands in Worker logs, never CLI stdout.
       let usageLogged = false;
+      // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
+      // Messages SSE now that the Worker no longer translates that route to
+      // OpenAI SSE; parse them natively. Everything else stays OpenAI-shaped
+      // (`openai` via the Responses pump, the rest via `pumpSseBody`).
+      const isZenGoAnthropic =
+        zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
       const events =
         args.provider === 'openai'
           ? openAIResponsesSSEPump({
               body: response.body as unknown as ReadableStream<Uint8Array>,
               signal,
             })
-          : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+          : isZenGoAnthropic
+            ? zenGoAnthropicEvents(response as unknown as Response, signal)
+            : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
       for await (const event of events) {
         if (event.type === 'done' && !usageLogged) {
           usageLogged = true;
@@ -318,6 +332,29 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
 // handler does the actual routing once called.
 function providerSlug(provider: AIProviderType): string {
   return provider;
+}
+
+// ---------------------------------------------------------------------------
+// Native Anthropic event stream — used only for the Anthropic-transport Zen-Go
+// models (MiniMax / Qwen), whose Worker route now proxies raw Anthropic SSE.
+// Background coder jobs use text-dispatch tool calling (no native tool schemas
+// are sent), so no `isKnownToolName` filter is needed and `tool_use` blocks
+// aren't expected. These models don't enable Anthropic's server-side
+// `web_search`, so `pause_turn` never arises — drain it defensively and ensure
+// a terminal `done` so a pause-without-done can't leave the job loop hanging.
+// ---------------------------------------------------------------------------
+
+async function* zenGoAnthropicEvents(
+  upstream: Response,
+  signal?: AbortSignal,
+): AsyncIterable<PushStreamEvent> {
+  let sawDone = false;
+  for await (const event of anthropicEventStream(upstream, signal)) {
+    if (event.type === 'pause_turn') continue;
+    if (event.type === 'done') sawDone = true;
+    yield event;
+  }
+  if (!sawDone) yield { type: 'done', finishReason: 'stop' };
 }
 
 // ---------------------------------------------------------------------------

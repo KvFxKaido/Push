@@ -597,9 +597,10 @@ export function providerModelSupportsStructuredOutput(
  * The Anthropic-transport Go models (`minimax-m3`, `qwen3.7-max`, `qwen3.7-plus`,
  * and the Go routing of `minimax-m2.7` / `qwen3.6-plus`) are also covered: their
  * Go requests serialize through `toAnthropicMessages`, which translates the OpenAI
- * tool schemas to Anthropic's custom-tool shape, and `createAnthropicTranslatedStream`
- * turns the model's `tool_use` blocks back into the fenced JSON the dispatcher
- * consumes (Phase 2 of the Zen Go migration).
+ * tool schemas to Anthropic's custom-tool shape, and the model's `tool_use` blocks
+ * are parsed natively into `native_tool_call` events by `anthropicEventStream` —
+ * the foreground `zenStream` and the background coder-job adapter both parse the
+ * raw Anthropic SSE directly, no OpenAI-SSE translator in between.
  */
 const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
   ...ZEN_MODELS,

@@ -213,6 +213,12 @@ function scanSseChunk(state: SseScanState, chunk: string): string[] {
       try {
         const parsed = JSON.parse(data) as {
           choices?: Array<{ delta?: { content?: string; reasoning_content?: string } }>;
+          // Anthropic Messages SSE: the Zen-Go MiniMax/Qwen route now proxies raw
+          // Anthropic frames (no OpenAI-SSE translation), so text/thinking arrive
+          // as `content_block_delta`, not under `choices`. Without this arm the
+          // spike records zero deltas for those models (Codex P2, #1181).
+          type?: string;
+          delta?: { type?: string; text?: string; thinking?: string };
         };
         // A latency instrument clocks the first streamed token of ANY
         // kind: reasoning models (glm-5.1) emit reasoning_content long
@@ -220,12 +226,21 @@ function scanSseChunk(state: SseScanState, chunk: string): string[] {
         // content. Counting only `content` left TTFT empty across the
         // whole 2026-06-10 phone measurement run.
         const d = parsed.choices?.[0]?.delta;
-        const delta =
+        let delta =
           typeof d?.content === 'string' && d.content.length > 0
             ? d.content
             : typeof d?.reasoning_content === 'string' && d.reasoning_content.length > 0
               ? d.reasoning_content
               : null;
+        if (delta === null && parsed.type === 'content_block_delta') {
+          const ad = parsed.delta;
+          delta =
+            typeof ad?.text === 'string' && ad.text.length > 0
+              ? ad.text
+              : typeof ad?.thinking === 'string' && ad.thinking.length > 0
+                ? ad.thinking
+                : null;
+        }
         if (delta !== null) deltas.push(delta);
       } catch {
         // Heartbeats / non-JSON control frames — skip quietly.
