@@ -286,6 +286,13 @@ export async function executeBatchedToolCalls(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      // Carry the turn's plain reasoning onto the wire copy (not just the
+      // displayed message), same as the single-call path. DeepSeek thinking
+      // mode 400s the continuation request unless the tool-call assistant turn
+      // echoes its `reasoning_content`, which the orchestrator emits from
+      // `thinking` on the route-gated DeepSeek path. Sibling of the signed
+      // `reasoningBlocks` sidecar, which was already carried (#1193).
+      ...(thinkingAccumulated ? { thinking: thinkingAccumulated } : {}),
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       ...(toolUses.length > 0 ? { toolUses } : {}),
     },

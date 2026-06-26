@@ -391,6 +391,14 @@ export async function executeSingleToolCall(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      // Carry the turn's plain reasoning text onto the wire copy, not just the
+      // displayed message. DeepSeek thinking mode rejects the tool-result
+      // continuation request unless the assistant turn that made the call
+      // echoes its `reasoning_content` (orchestrator emits it from `thinking`
+      // on the route-gated DeepSeek path; without this it arrives empty → the
+      // `reasoning_content must be passed back` 400). Sibling of the signed
+      // `reasoningBlocks` sidecar below, which was already carried (#1193).
+      ...(thinkingAccumulated ? { thinking: thinkingAccumulated } : {}),
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       toolUses: [toolUseBlock],
     },

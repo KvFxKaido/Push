@@ -784,6 +784,48 @@ describe('chat-send', () => {
     expect(conversationsRef.current['chat-1'].messages.at(-1)).toEqual(injectMessage);
   });
 
+  it('carries the turn thinking onto the wire assistant tool-call message (DeepSeek reasoning_content replay)', async () => {
+    // DeepSeek thinking mode 400s the tool-result continuation request unless
+    // the assistant turn that made the call echoes its `reasoning_content`. The
+    // orchestrator emits that from `msg.thinking` on the route-gated DeepSeek
+    // path — so the tool-call message pushed into nextApiMessages must carry
+    // `thinking`, not just the displayed copy. It previously carried only the
+    // signed `reasoningBlocks` sidecar, dropping plain reasoning → the wire
+    // turn was `tool_calls` without `reasoning_content` (the 400 culprit).
+    const conversationsRef = {
+      current: makeConversation([makeMessage({ content: 'streaming...' })]),
+    };
+    const dirtyRef = { current: new Set<string>() };
+    const ctx = makeLoopContext(conversationsRef, dirtyRef, {
+      executeDelegateCall: vi.fn().mockResolvedValue({
+        text: '[Tool Result — delegate_explorer]\nFound the relevant files.',
+      }),
+    });
+
+    const reasoning = 'Let me inspect the recent commits before answering.';
+    const result = await processAssistantTurn(
+      0,
+      '```json\n{"tool":"delegate_explorer","args":{"task":"trace the auth flow"}}\n```',
+      reasoning,
+      [],
+      [
+        makeMessage({
+          id: 'user-1',
+          role: 'user',
+          content: 'What changed recently?',
+          status: 'done',
+        }),
+      ],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+    );
+
+    const wireAssistant = result.nextApiMessages.find(
+      (m) => m.role === 'assistant' && (m.toolUses?.length ?? 0) > 0,
+    );
+    expect(wireAssistant?.thinking).toBe(reasoning);
+  });
+
   it('turns post-tool halts into runtime follow-up messages for the next round', async () => {
     const conversationsRef = {
       current: makeConversation([makeMessage({ content: 'streaming...' })]),
