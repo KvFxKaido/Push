@@ -1014,6 +1014,101 @@ describe('geminiEventStream — Gemini SSE -> neutral events', () => {
         { type: 'done', finishReason: 'tool_calls' },
       ],
     },
+    {
+      name: 'thoughtSignature on the functionCall part rides onto the native call',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } },
+                    thoughtSignature: 'SIG_ON_CALL==',
+                  },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ],
+      expected: [
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: {
+            name: 'sandbox_read_file',
+            args: { path: 'README.md' },
+            thoughtSignature: 'SIG_ON_CALL==',
+          },
+        },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
+    },
+    {
+      // Gemini 3.x thinking: the turn signature can ride a `thought` part, not the
+      // functionCall part. Without the fallback the call replayed bare → Gemini 400
+      // ("Function call is missing a thought_signature in functionCall parts").
+      name: 'thoughtSignature on a preceding thought part falls back onto the call',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { thought: true, thoughtSignature: 'SIG_ON_THOUGHT==' },
+                  { functionCall: { name: 'sandbox_read_file', args: { path: 'README.md' } } },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ],
+      expected: [
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: {
+            name: 'sandbox_read_file',
+            args: { path: 'README.md' },
+            thoughtSignature: 'SIG_ON_THOUGHT==',
+          },
+        },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
+    },
+    {
+      // Parallel calls: Gemini puts the turn signature on the FIRST call only, so
+      // the thought-part fallback fills just the first — the second stays bare.
+      name: 'thought-part signature fills only the first of parallel calls',
+      frames: [
+        frame({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  { thought: true, thoughtSignature: 'SIG==' },
+                  { functionCall: { name: 'read_a', args: {} } },
+                  { functionCall: { name: 'read_b', args: {} } },
+                ],
+              },
+              finishReason: 'STOP',
+            },
+          ],
+        }),
+      ],
+      expected: [
+        { type: 'tool_call_delta' },
+        {
+          type: 'native_tool_call',
+          call: { name: 'read_a', args: {}, thoughtSignature: 'SIG==' },
+        },
+        { type: 'native_tool_call', call: { name: 'read_b', args: {} } },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
+    },
   ];
 
   for (const { name, frames, expected } of corpus) {

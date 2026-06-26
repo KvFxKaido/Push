@@ -639,19 +639,40 @@ function extractFunctionCallsFromCandidate(
 ): Array<{ name: string; argsJson: string; thoughtSignature?: string }> {
   const parts = candidate?.content?.parts;
   if (!Array.isArray(parts)) return [];
+  // Gemini 3.x thinking models don't always put the turn's `thoughtSignature` on
+  // the `functionCall` part — it can ride on a preceding `thought`/text part (the
+  // signature is tied to the thinking step). We only kept signatures that were
+  // siblings of a `functionCall`, so a turn whose signature sat on a thought part
+  // replayed its call bare → Gemini 400 ("Function call is missing a
+  // thought_signature in functionCall parts"). Capture the first non-call part
+  // signature as a fallback. Per Gemini's parallel-call rule the turn signature
+  // rides the FIRST call, so the fallback only fills the first call that lacks
+  // its own — it never overwrites a call's own signature or back-fills the rest.
+  let fallbackSignature: string | undefined;
+  for (const part of parts) {
+    const sig = part?.thoughtSignature;
+    if (typeof sig === 'string' && sig && !asRecord(part?.functionCall)) {
+      fallbackSignature = sig;
+      break;
+    }
+  }
   const out: Array<{ name: string; argsJson: string; thoughtSignature?: string }> = [];
   for (const part of parts) {
     const call = asRecord(part?.functionCall);
     if (!call) continue;
     const rawName = call?.name;
     if (typeof rawName !== 'string' || rawName.trim().length === 0) continue;
-    // The signature rides on the part, not on `functionCall`. Carry it through
-    // so it survives the OpenAI-SSE intermediate and reaches the stored block.
-    const sig = part?.thoughtSignature;
+    const ownSig = part?.thoughtSignature;
+    const sig =
+      typeof ownSig === 'string' && ownSig
+        ? ownSig
+        : out.length === 0 // first call only
+          ? fallbackSignature
+          : undefined;
     out.push({
       name: rawName.trim(),
       argsJson: stringifyGeminiFunctionCallArgs(call.args),
-      ...(typeof sig === 'string' && sig ? { thoughtSignature: sig } : {}),
+      ...(sig ? { thoughtSignature: sig } : {}),
     });
   }
   return out;
