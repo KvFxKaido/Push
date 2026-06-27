@@ -372,6 +372,63 @@ const READ_FILE_RANGE_CHAR_LIMIT = 30_000;
 const READ_FILE_FULL_CHAR_LIMIT = 15_000;
 const utf8Encoder = new TextEncoder();
 
+// Branch-accurate code search. GitHub's /search/code API only indexes a repo's
+// DEFAULT branch and its index lags recent pushes, so a `ref`/branch qualifier
+// is silently ignored — searching a freshly-pushed feature branch returns stale
+// main-branch hits. When a caller pins a branch we instead scan that branch's
+// live git tree (Trees API → blob fetch → grep), which is current and lets us
+// report honestly whether the scan was exhaustive (so "zero references" can be
+// trusted). Bounds keep the blob-fetch fan-out finite.
+const BRANCH_SEARCH_MAX_FILES = 400;
+const BRANCH_SEARCH_RESULT_CAP = 25;
+const BRANCH_SEARCH_MAX_BLOB_BYTES = 512 * 1024;
+const BRANCH_SEARCH_CONCURRENCY = 8;
+const BRANCH_SEARCH_MAX_LINES_PER_FILE = 5;
+const BRANCH_SEARCH_BINARY_EXTENSIONS = new Set([
+  'png',
+  'jpg',
+  'jpeg',
+  'gif',
+  'bmp',
+  'ico',
+  'webp',
+  'svg',
+  'avif',
+  'pdf',
+  'zip',
+  'gz',
+  'tar',
+  'tgz',
+  'bz2',
+  '7z',
+  'rar',
+  'xz',
+  'mp3',
+  'mp4',
+  'mov',
+  'avi',
+  'wav',
+  'ogg',
+  'webm',
+  'flac',
+  'm4a',
+  'woff',
+  'woff2',
+  'ttf',
+  'otf',
+  'eot',
+  'jar',
+  'class',
+  'wasm',
+  'exe',
+  'dll',
+  'so',
+  'dylib',
+  'bin',
+  'o',
+  'a',
+]);
+
 interface RepoBranchApi {
   name?: string;
   protected?: boolean;
@@ -396,6 +453,23 @@ interface RepoFileContentApi {
   type?: string;
   size?: number;
   content?: string;
+}
+
+interface GitTreeEntryApi {
+  path?: string;
+  type?: string;
+  sha?: string;
+  size?: number;
+}
+
+interface GitTreeApi {
+  tree?: GitTreeEntryApi[];
+  truncated?: boolean;
+}
+
+interface GitBlobApi {
+  content?: string;
+  encoding?: string;
 }
 
 interface PullRequestListApi {
@@ -2279,6 +2353,263 @@ export async function executeFindExistingPRTool(
   };
 }
 
+/**
+ * Build a case-insensitive LITERAL substring line matcher. repo_search is
+ * advertised as code/text search, not regex — compiling the query as a regex
+ * would silently change its meaning (`$schema`, `obj[key]`, `foo?` are valid
+ * regexes that match something other than the literal text), which would let a
+ * present reference be reported as an exhaustive zero-match. Literal matching
+ * keeps the exhaustiveness guarantee honest and the two search paths aligned.
+ */
+function buildSearchLineMatcher(query: string): (line: string) => boolean {
+  const needle = query.toLowerCase();
+  return (line: string) => line.toLowerCase().includes(needle);
+}
+
+/**
+ * Branch-accurate repo search: walk the branch's live git tree and grep blob
+ * contents, instead of GitHub's default-branch-only code-search index. This is
+ * the path used whenever a caller pins a branch (notably the reviewer, which
+ * always reviews a feature branch). Bounded by BRANCH_SEARCH_MAX_FILES; reports
+ * explicitly whether the scan was exhaustive so callers can trust a zero-match
+ * result instead of mistaking a stale/partial scan for "no references".
+ */
+async function executeBranchTreeSearch(
+  runtime: GitHubCoreRuntime,
+  repo: string,
+  query: string,
+  branch: string,
+  path?: string,
+): Promise<GitHubCoreToolResult> {
+  const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
+  const treeRes = await runtime.githubFetch(
+    buildGitHubApiUrl(
+      runtime,
+      `/repos/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+    ),
+    { headers },
+  );
+  if (!treeRes.ok) {
+    throw new Error(formatGitHubError(treeRes.status, `branch tree for ${repo}`, branch));
+  }
+
+  const treeData = (await treeRes.json()) as GitTreeApi;
+  const treeTruncated = treeData.truncated === true;
+  const normalizedPath = path ? path.replace(/^\/+|\/+$/g, '') : '';
+
+  let hiddenResults = 0;
+  let oversizedSkipped = 0;
+  const candidates: Array<{ path: string; sha: string }> = [];
+  for (const entry of treeData.tree || []) {
+    if (entry.type !== 'blob' || typeof entry.path !== 'string' || typeof entry.sha !== 'string') {
+      continue;
+    }
+    if (normalizedPath && !entry.path.startsWith(normalizedPath)) continue;
+    if (runtime.isSensitivePath(entry.path)) {
+      hiddenResults += 1;
+      continue;
+    }
+    const ext = entry.path.split('.').pop()?.toLowerCase() || '';
+    if (BRANCH_SEARCH_BINARY_EXTENSIONS.has(ext)) continue;
+    if (typeof entry.size === 'number' && entry.size > BRANCH_SEARCH_MAX_BLOB_BYTES) {
+      // A non-binary file too large to fetch is content we did NOT scan — it
+      // must defeat the exhaustiveness claim, or a reference hiding in a large
+      // file would be reported as "zero references".
+      oversizedSkipped += 1;
+      continue;
+    }
+    candidates.push({ path: entry.path, sha: entry.sha });
+  }
+
+  const capHit = candidates.length > BRANCH_SEARCH_MAX_FILES;
+  const scanLimit = Math.min(candidates.length, BRANCH_SEARCH_MAX_FILES);
+  const matcher = buildSearchLineMatcher(query);
+
+  const fileMatches = new Map<string, GitHubCoreFileSearchMatch[]>();
+  let redactedResults = false;
+  let scannedCount = 0;
+  let fetchFailures = 0;
+  let resultCapHit = false;
+  let nextIndex = 0;
+
+  // Bounded-concurrency blob fetch. JS is single-threaded between awaits, so the
+  // `nextIndex` claim and the shared counters mutate safely without a lock.
+  const worker = async (): Promise<void> => {
+    while (!resultCapHit) {
+      const i = nextIndex;
+      nextIndex += 1;
+      if (i >= scanLimit) return;
+      const cand = candidates[i];
+
+      let blobRes: Response;
+      try {
+        blobRes = await runtime.githubFetch(
+          buildGitHubApiUrl(runtime, `/repos/${repo}/git/blobs/${cand.sha}`),
+          { headers },
+        );
+      } catch {
+        fetchFailures += 1;
+        continue;
+      }
+      scannedCount += 1;
+      if (!blobRes.ok) {
+        fetchFailures += 1;
+        continue;
+      }
+
+      const blob = (await blobRes.json()) as GitBlobApi;
+      if (blob.encoding !== 'base64' || typeof blob.content !== 'string') continue;
+      let decoded: string;
+      try {
+        decoded = runtime.decodeBase64(blob.content.replace(/\n/g, ''));
+      } catch {
+        continue;
+      }
+      if (decoded.includes('\u0000')) continue; // binary blob with a text extension
+
+      const safe = runtime.redactSensitiveText(decoded);
+      redactedResults ||= safe.redacted;
+      const lines = safe.text.split('\n');
+      const lineMatches: GitHubCoreFileSearchMatch[] = [];
+      for (let ln = 0; ln < lines.length; ln += 1) {
+        if (matcher(lines[ln])) {
+          lineMatches.push({
+            path: cand.path,
+            line: ln + 1,
+            content: lines[ln].trim().slice(0, 300),
+          });
+          if (lineMatches.length >= BRANCH_SEARCH_MAX_LINES_PER_FILE) break;
+        }
+      }
+      if (lineMatches.length > 0) {
+        fileMatches.set(cand.path, lineMatches);
+        if (fileMatches.size >= BRANCH_SEARCH_RESULT_CAP) resultCapHit = true;
+      }
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(BRANCH_SEARCH_CONCURRENCY, scanLimit)) }, () =>
+      worker(),
+    ),
+  );
+
+  const exhaustive =
+    !treeTruncated && !capHit && !resultCapHit && fetchFailures === 0 && oversizedSkipped === 0;
+  // Shared lib also runs on the CLI, where stdout is reserved for user output —
+  // structured logs go to stderr. Paired event names: completed ↔ partial.
+  console.error(
+    JSON.stringify({
+      level: 'info',
+      event: exhaustive ? 'branch_search_completed' : 'branch_search_partial',
+      repo,
+      branch,
+      candidates: candidates.length,
+      scanned: scannedCount,
+      matchedFiles: fileMatches.size,
+      exhaustive,
+      treeTruncated,
+      capHit,
+      resultCapHit,
+      oversizedSkipped,
+      fetchFailures,
+    }),
+  );
+
+  const oversizedKiB = Math.floor(BRANCH_SEARCH_MAX_BLOB_BYTES / 1024);
+  const incompleteReasons: string[] = [];
+  if (treeTruncated) {
+    incompleteReasons.push('the branch file tree was too large for GitHub to return in full');
+  }
+  if (capHit) {
+    incompleteReasons.push(
+      `scanned the first ${scannedCount} of ${candidates.length} candidate files (cap ${BRANCH_SEARCH_MAX_FILES}) — add a path filter to cover the rest`,
+    );
+  }
+  if (resultCapHit) {
+    incompleteReasons.push(
+      `stopped after the first ${BRANCH_SEARCH_RESULT_CAP} matching files — more matches may exist`,
+    );
+  }
+  if (oversizedSkipped > 0) {
+    incompleteReasons.push(
+      `${oversizedSkipped} file(s) larger than ${oversizedKiB} KiB were not scanned`,
+    );
+  }
+  if (fetchFailures > 0) {
+    incompleteReasons.push(`${fetchFailures} file(s) could not be fetched`);
+  }
+
+  const scopeLabel = `branch "${branch}"${normalizedPath ? ` under ${normalizedPath}` : ''}`;
+  const lines: string[] = [`[Tool Result — search_files]`];
+
+  if (fileMatches.size === 0) {
+    lines.push(`No matches for "${query}" on ${scopeLabel}.`);
+    lines.push('');
+    if (exhaustive) {
+      lines.push(
+        `Scanned all ${scannedCount} text file(s) on this branch — this result is exhaustive (zero references).`,
+      );
+    } else {
+      lines.push('This search was NOT exhaustive — do not conclude zero references:');
+      for (const reason of incompleteReasons) lines.push(`- ${reason}`);
+    }
+    if (hiddenResults > 0) {
+      lines.push(`(${hiddenResults} sensitive path${hiddenResults === 1 ? '' : 's'} skipped)`);
+    }
+    return {
+      text: lines.join('\n'),
+      card: {
+        type: 'file-search',
+        data: {
+          repo,
+          query,
+          path: normalizedPath || undefined,
+          matches: [],
+          totalCount: 0,
+          truncated: !exhaustive,
+        },
+      },
+    };
+  }
+
+  lines.push(
+    `Found matches in ${fileMatches.size}${resultCapHit ? '+' : ''} file(s) for "${query}" on ${scopeLabel}.`,
+  );
+  if (!exhaustive && incompleteReasons.length > 0) {
+    lines.push(`(search not exhaustive: ${incompleteReasons.join('; ')})`);
+  }
+  if (redactedResults) lines.push('Redactions: secret-like values hidden.');
+  if (hiddenResults > 0) {
+    lines.push(`(${hiddenResults} sensitive path${hiddenResults === 1 ? '' : 's'} skipped)`);
+  }
+  lines.push('');
+
+  const flatMatches: GitHubCoreFileSearchMatch[] = [];
+  for (const [filePath, matchesForFile] of fileMatches) {
+    lines.push(`FILE ${filePath}`);
+    for (const match of matchesForFile) {
+      lines.push(`    ${match.line}: ${match.content}`);
+      flatMatches.push(match);
+    }
+  }
+
+  return {
+    text: lines.join('\n'),
+    card: {
+      type: 'file-search',
+      data: {
+        repo,
+        query,
+        path: normalizedPath || undefined,
+        matches: flatMatches,
+        totalCount: fileMatches.size,
+        truncated: resultCapHit || !exhaustive,
+      },
+    },
+  };
+}
+
 export async function executeSearchFilesTool(
   runtime: GitHubCoreRuntime,
   repo: string,
@@ -2290,15 +2621,20 @@ export async function executeSearchFilesTool(
     return { text: runtime.formatSensitivePathToolError(path) };
   }
 
-  const headers = runtime.buildHeaders(SEARCH_ACCEPT);
-  let searchQuery = `${query} repo:${repo}`;
-  if (path) searchQuery += ` path:${path}`;
+  // A pinned branch can't be served by GitHub's default-branch-only code-search
+  // index; scan the branch's live tree instead so results reflect the code
+  // actually under review (this is the reviewer's path).
+  if (branch) {
+    return executeBranchTreeSearch(runtime, repo, query, branch, path);
+  }
 
-  let searchUrl = buildGitHubApiUrl(
+  const headers = runtime.buildHeaders(SEARCH_ACCEPT);
+  const searchQuery = `${query} repo:${repo}${path ? ` path:${path}` : ''}`;
+
+  const searchUrl = buildGitHubApiUrl(
     runtime,
     `/search/code?q=${encodeURIComponent(searchQuery)}&per_page=25`,
   );
-  if (branch) searchUrl += `&ref=${encodeURIComponent(branch)}`;
 
   const res = await runtime.githubFetch(searchUrl, { headers });
   if (!res.ok) {
@@ -2348,11 +2684,12 @@ export async function executeSearchFilesTool(
     if (path) {
       hints.push(`Path is scoped to "${path}". Try without a path filter to search the full repo.`);
     }
-    if (branch) {
-      hints.push(
-        `GitHub code search primarily indexes the default branch. Results for branch "${branch}" may be incomplete.`,
-      );
-    }
+    // This path runs only without a pinned branch (code search indexes the
+    // default branch). Branch-scoped searches route to executeBranchTreeSearch
+    // above, which reports its own exhaustiveness caveats.
+    hints.push(
+      'This searches the default branch only. Pass a branch to scan a specific branch end-to-end.',
+    );
     if (hints.length === 0) {
       hints.push('Try a shorter or more generic search term — partial words work well.');
     }

@@ -602,4 +602,191 @@ describe('github-tool-core shared core', () => {
     expect(result.text).toContain('Found existing PR #91 on owner/repo.');
     expect(result.text).toContain('Author: ishaw');
   });
+
+  describe('branch-scoped search', () => {
+    // A small live-tree repo: two text blobs plus a binary one that must be
+    // skipped. Blob content is keyed by sha so the runtime can return it.
+    function createTreeRuntime(
+      tree: Array<{ path: string; sha: string; size?: number; type?: string }>,
+      blobs: Record<string, string>,
+      opts: { truncated?: boolean } = {},
+    ): GitHubCoreRuntime {
+      return createRuntime(async (url) => {
+        if (url.includes('/git/trees/')) {
+          expect(url).toContain('recursive=1');
+          return Response.json({
+            truncated: opts.truncated ?? false,
+            tree: tree.map((t) => ({ type: t.type ?? 'blob', ...t })),
+          });
+        }
+        const blobMatch = url.match(/\/git\/blobs\/([^/?]+)/);
+        if (blobMatch) {
+          const content = blobs[blobMatch[1]] ?? '';
+          return Response.json({ encoding: 'base64', content: btoa(content) });
+        }
+        if (url.includes('/search/code')) {
+          throw new Error(`branch search must not hit code search index: ${url}`);
+        }
+        throw new Error(`unexpected url: ${url}`);
+      });
+    }
+
+    it('scans the live branch tree instead of the code-search index', async () => {
+      const runtime = createTreeRuntime(
+        [
+          { path: 'src/app.ts', sha: 'a1' },
+          { path: 'src/util.ts', sha: 'b2' },
+        ],
+        {
+          a1: 'const x = 1;\ncallBlackbox();\n',
+          b2: 'export const y = 2;\n',
+        },
+      );
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('on branch "feature/x"');
+      expect(result.text).toContain('FILE src/app.ts');
+      expect(result.text).toContain('2: callBlackbox();');
+      expect(result.text).not.toContain('FILE src/util.ts');
+    });
+
+    it('reports an exhaustive zero-match result so callers can trust it', async () => {
+      const runtime = createTreeRuntime([{ path: 'src/app.ts', sha: 'a1' }], {
+        a1: 'const x = 1;\n',
+      });
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('No matches');
+      expect(result.text).toContain('exhaustive (zero references)');
+      expect(result.card?.type).toBe('file-search');
+      if (result.card?.type === 'file-search') {
+        expect(result.card.data.truncated).toBe(false);
+      }
+    });
+
+    it('flags a non-exhaustive scan when the tree is truncated', async () => {
+      const runtime = createTreeRuntime(
+        [{ path: 'src/app.ts', sha: 'a1' }],
+        { a1: 'const x = 1;\n' },
+        { truncated: true },
+      );
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('NOT exhaustive');
+      expect(result.text).toContain('do not conclude zero references');
+    });
+
+    it('skips binary blobs and sensitive paths', async () => {
+      const runtime = createTreeRuntime(
+        [
+          { path: 'logo.png', sha: 'img' },
+          { path: '.env', sha: 'secret' },
+          { path: 'src/app.ts', sha: 'a1' },
+        ],
+        { img: 'binary', secret: 'TOKEN=Blackbox', a1: 'const x = 1;\n' },
+      );
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      // The sensitive .env and the binary .png never get grepped, so the
+      // Blackbox token in .env is not reported.
+      expect(result.text).toContain('No matches');
+      expect(result.text).toContain('1 sensitive path skipped');
+    });
+
+    it('still uses the code-search index when no branch is pinned', async () => {
+      let hitCodeSearch = false;
+      const runtime = createRuntime(async (url) => {
+        if (url.includes('/search/code')) {
+          hitCodeSearch = true;
+          return Response.json({ total_count: 0, items: [] });
+        }
+        throw new Error(`unexpected url: ${url}`);
+      });
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox' },
+      });
+
+      expect(hitCodeSearch).toBe(true);
+      expect(result.text).toContain('default branch only');
+    });
+
+    it('matches the query literally, not as a regex', async () => {
+      // `$schema` is a valid regex (`$` anchors end-of-line) that would never
+      // match the literal text — a regex matcher would wrongly report zero refs.
+      const runtime = createTreeRuntime([{ path: 'config.json', sha: 'a1' }], {
+        a1: '{\n  "$schema": "https://example.test/schema.json"\n}\n',
+      });
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: '$schema', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('FILE config.json');
+      expect(result.text).toContain('"$schema"');
+    });
+
+    it('treats a skipped oversized text file as non-exhaustive', async () => {
+      const runtime = createTreeRuntime(
+        [
+          { path: 'src/small.ts', sha: 'a1' },
+          { path: 'src/huge.ts', sha: 'big', size: 2 * 1024 * 1024 },
+        ],
+        { a1: 'const x = 1;\n' },
+      );
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      // The huge file was never scanned, so zero-match must NOT claim exhaustive.
+      expect(result.text).toContain('No matches');
+      expect(result.text).toContain('NOT exhaustive');
+      expect(result.text).toContain('larger than');
+      expect(result.text).not.toContain('exhaustive (zero references)');
+      if (result.card?.type === 'file-search') {
+        expect(result.card.data.truncated).toBe(true);
+      }
+    });
+
+    it('reports a non-empty caveat when the result cap is the only limiter', async () => {
+      // 26 matching files trips the 25-file result cap.
+      const tree = Array.from({ length: 26 }, (_, i) => ({
+        path: `src/file${i}.ts`,
+        sha: `s${i}`,
+      }));
+      const blobs: Record<string, string> = {};
+      for (let i = 0; i < 26; i += 1) blobs[`s${i}`] = 'callBlackbox();\n';
+      const runtime = createTreeRuntime(tree, blobs);
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('search not exhaustive:');
+      expect(result.text).toContain('stopped after the first');
+      // No dangling empty caveat.
+      expect(result.text).not.toContain('search not exhaustive: )');
+    });
+  });
 });

@@ -111,7 +111,8 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     readOnly: true,
     statusLabel: 'Fetching from GitHub...',
     protocolSignature: 'repo_search(repo, query, path?, branch?)',
-    protocolDescription: 'Search code/text across the GitHub repo',
+    protocolDescription:
+      'Search literal code/text across the GitHub repo (case-insensitive, not regex). Without branch: GitHub code search (default branch only, index lags pushes). With branch: scans that branch’s live files and reports whether the scan was exhaustive.',
     exampleJson: '{"tool": "repo_search", "args": {"repo": "owner/repo", "query": "buildPrompt"}}',
   },
   {
