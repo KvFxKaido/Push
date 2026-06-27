@@ -45,6 +45,10 @@ import {
   looksLikeOpenAIToolCallingModel,
   VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '@push/lib/native-tool-gate';
+import {
+  providerCarriesReasoningBlocksByDefault,
+  providerConsumesContentBlocksByDefault,
+} from '@push/lib/provider-definition';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
@@ -511,16 +515,12 @@ function routeConsumesContentBlocks(
 ): boolean {
   if (options?.requestWire === 'neutral') return true;
   if (options?.requestWire === 'openai') return false;
-  // `deepseek` rides the Anthropic Messages transport (api.deepseek.com/anthropic).
-  return provider === 'anthropic' || provider === 'google' || provider === 'deepseek';
+  return providerConsumesContentBlocksByDefault(provider);
 }
 
 function routeCarriesReasoningBlocks(provider: string, modelId: string | undefined): boolean {
   if (!modelId) return false;
-  if (provider === 'anthropic') return true;
-  // DeepSeek runs on its Anthropic-compatible endpoint and emits signed
-  // `thinking` blocks that round-trip across turns.
-  if (provider === 'deepseek') return true;
+  if (providerCarriesReasoningBlocksByDefault(provider)) return true;
   if (provider === 'zen') return getZenGoTransport(modelId) === 'anthropic';
   if (provider === 'vertex') return getVertexModelTransport(modelId) === 'anthropic';
   return false;

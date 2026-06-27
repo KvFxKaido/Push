@@ -276,8 +276,8 @@ describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)
 
 describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #2)', () => {
   it('returns same-shape configured providers incl. azure, excluding the locked one', async () => {
-    // azure is omitted from PROVIDER_FALLBACK_ORDER but must be a failover
-    // target; ordering follows FAILOVER_PROVIDER_ORDER.
+    // azure is omitted from the initial fallback order but must be a failover
+    // target; ordering follows the provider-definition failover policy.
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([

@@ -3,9 +3,20 @@ import assert from 'node:assert/strict';
 
 import {
   PROVIDER_DEFINITIONS,
+  REAL_PROVIDERS,
   findProviderDefinition,
+  getAdapterRoutedProviderIds,
+  getFailoverProviderOrder,
+  getInitialFallbackProviderOrder,
+  getProviderDisplayName,
   getProviderDefinition,
+  getProviderStreamShape,
+  getProviderTimeoutDisplayName,
+  providerCarriesReasoningBlocksByDefault,
+  providerConsumesContentBlocksByDefault,
+  providerDefinitionsCoverCanonicalIds,
 } from '../../lib/provider-definition.ts';
+import { ALL_PROVIDERS } from '../../lib/provider-contract.ts';
 import {
   SHARED_PROVIDER_DEFAULT_MODELS,
   SHARED_PROVIDER_MODEL_CATALOG,
@@ -14,13 +25,56 @@ import {
 const VALID_STREAM_SHAPES = new Set(['openai-compat', 'openai-responses', 'anthropic', 'gemini']);
 const KEBAB_ID = /^[a-z][a-z0-9-]*$/;
 
-// Drift-detector: internal consistency of every ProviderDefinition entry.
-// Cross-registry assertions (CLI PROVIDER_CONFIGS, web PROVIDER_URLS, Worker
-// dispatch, Settings UI) get added per-provider as each follow-up PR lands —
-// they would fail today because no direct provider is wired end-to-end yet.
+const EXPECTED_INITIAL_FALLBACK_ORDER = [
+  'ollama',
+  'openrouter',
+  'cloudflare',
+  'zen',
+  'nvidia',
+  'blackbox',
+  'kilocode',
+  'fireworks',
+  'openadapter',
+  'deepseek',
+  'sakana',
+  'anthropic',
+  'openai',
+  'google',
+];
+
+const EXPECTED_FAILOVER_ORDER = [
+  'ollama',
+  'openrouter',
+  'cloudflare',
+  'zen',
+  'nvidia',
+  'blackbox',
+  'kilocode',
+  'fireworks',
+  'openadapter',
+  'deepseek',
+  'sakana',
+  'azure',
+  'bedrock',
+  'vertex',
+  'anthropic',
+  'openai',
+  'google',
+];
+
+// Drift-detector: internal consistency of every ProviderDefinition entry and
+// coverage of every real provider id. Stream factories and per-model transport
+// hooks remain runtime-owned exceptions, but provider-keyed metadata should not
+// be re-declared by hand.
 describe('ProviderDefinition', () => {
   it('has at least one entry', () => {
     assert.ok(PROVIDER_DEFINITIONS.length > 0);
+  });
+
+  it('covers every canonical real provider id exactly once', () => {
+    const realProviderIds = ALL_PROVIDERS.filter((provider) => provider !== 'demo');
+    assert.deepEqual([...REAL_PROVIDERS].sort(), [...realProviderIds].sort());
+    assert.equal(providerDefinitionsCoverCanonicalIds(), true);
   });
 
   it('ids are unique', () => {
@@ -29,12 +83,51 @@ describe('ProviderDefinition', () => {
   });
 
   it('webProxyPaths are unique', () => {
-    const paths = PROVIDER_DEFINITIONS.map((def) => def.webProxyPath);
+    const paths = PROVIDER_DEFINITIONS.map((def) => def.webProxyPath).filter(Boolean);
     assert.equal(
       new Set(paths).size,
       paths.length,
       `duplicate webProxyPaths in ${paths.join(', ')}`,
     );
+  });
+
+  it('modelsProxyPaths are unique', () => {
+    const paths = PROVIDER_DEFINITIONS.map((def) => def.modelsProxyPath).filter(Boolean);
+    assert.equal(
+      new Set(paths).size,
+      paths.length,
+      `duplicate modelsProxyPaths in ${paths.join(', ')}`,
+    );
+  });
+
+  it('preserves initial provider fallback order', () => {
+    assert.deepEqual([...getInitialFallbackProviderOrder()], EXPECTED_INITIAL_FALLBACK_ORDER);
+  });
+
+  it('preserves same-shape failover order and includes private connectors', () => {
+    assert.deepEqual([...getFailoverProviderOrder()], EXPECTED_FAILOVER_ORDER);
+  });
+
+  it('marks every real provider as adapter-routed', () => {
+    assert.deepEqual([...getAdapterRoutedProviderIds()].sort(), [...REAL_PROVIDERS].sort());
+  });
+
+  it('exposes display names and legacy timeout names from the registry', () => {
+    assert.equal(getProviderDisplayName('openrouter'), 'OpenRouter');
+    assert.equal(getProviderDisplayName('demo'), 'Demo');
+    assert.equal(getProviderTimeoutDisplayName('ollama'), 'Ollama Cloud');
+    assert.equal(getProviderTimeoutDisplayName('azure'), 'Azure');
+    assert.equal(getProviderTimeoutDisplayName('openai'), 'OpenAI');
+  });
+
+  it('exposes provider route defaults from the registry', () => {
+    assert.equal(getProviderStreamShape('deepseek'), 'anthropic');
+    assert.equal(getProviderStreamShape('openai'), 'openai-responses');
+    assert.equal(providerConsumesContentBlocksByDefault('anthropic'), true);
+    assert.equal(providerConsumesContentBlocksByDefault('google'), true);
+    assert.equal(providerConsumesContentBlocksByDefault('openrouter'), false);
+    assert.equal(providerCarriesReasoningBlocksByDefault('deepseek'), true);
+    assert.equal(providerCarriesReasoningBlocksByDefault('zen'), false);
   });
 
   for (const def of PROVIDER_DEFINITIONS) {
@@ -47,13 +140,20 @@ describe('ProviderDefinition', () => {
         assert.ok(def.displayName.trim().length > 0);
       });
 
-      it('baseUrl parses as https URL', () => {
+      it('baseUrl parses as https URL when declared', () => {
+        if (!def.baseUrl) return;
         const url = new URL(def.baseUrl);
         assert.equal(url.protocol, 'https:');
       });
 
-      it('webProxyPath starts with /api/', () => {
+      it('webProxyPath starts with /api/ when declared', () => {
+        if (!def.webProxyPath) return;
         assert.ok(def.webProxyPath.startsWith('/api/'), `got "${def.webProxyPath}"`);
+      });
+
+      it('modelsProxyPath starts with /api/ when declared', () => {
+        if (!def.modelsProxyPath) return;
+        assert.ok(def.modelsProxyPath.startsWith('/api/'), `got "${def.modelsProxyPath}"`);
       });
 
       it('streamShape is valid', () => {
@@ -63,35 +163,44 @@ describe('ProviderDefinition', () => {
         );
       });
 
-      it('models is non-empty', () => {
+      it('fallback policy booleans are explicit', () => {
+        assert.equal(typeof def.initialFallbackEligible, 'boolean');
+        assert.equal(typeof def.failoverEligible, 'boolean');
+        assert.equal(typeof def.adapterRouted, 'boolean');
+      });
+
+      it('models is non-empty when declared', () => {
+        if (!def.models) return;
         assert.ok(def.models.length > 0);
       });
 
-      it('defaultModel appears in models', () => {
+      it('defaultModel appears in models when both are declared', () => {
+        if (!def.defaultModel || !def.models) return;
         assert.ok(
           def.models.includes(def.defaultModel),
           `defaultModel "${def.defaultModel}" not in models [${def.models.join(', ')}]`,
         );
       });
 
-      it('apiKeyEnvVars is non-empty', () => {
+      it('apiKeyEnvVars is non-empty when declared', () => {
+        if (!def.apiKeyEnvVars) return;
         assert.ok(def.apiKeyEnvVars.length > 0);
       });
 
-      it('apiKeyEnvVars are all SCREAMING_SNAKE_CASE', () => {
-        for (const name of def.apiKeyEnvVars) {
+      it('apiKeyEnvVars are all SCREAMING_SNAKE_CASE when declared', () => {
+        for (const name of def.apiKeyEnvVars ?? []) {
           assert.match(name, /^[A-Z][A-Z0-9_]*$/, `env var "${name}" is not SCREAMING_SNAKE_CASE`);
         }
       });
 
-      it('matches lib/provider-models.ts catalog entry', () => {
+      it('matches lib/provider-models.ts catalog entry when shared', () => {
         // ProviderDefinition is the canonical source; provider-models.ts is
-        // its data backing. If these drift the curated lists in dropdowns
-        // would disagree with the lists the runtime sees.
+        // its data backing for providers with a shared web+CLI static catalog.
         const catalogModels = SHARED_PROVIDER_MODEL_CATALOG[def.id];
         const catalogDefault = SHARED_PROVIDER_DEFAULT_MODELS[def.id];
-        assert.ok(catalogModels, `no SHARED_PROVIDER_MODEL_CATALOG entry for "${def.id}"`);
-        assert.ok(catalogDefault, `no SHARED_PROVIDER_DEFAULT_MODELS entry for "${def.id}"`);
+        if (!catalogModels && !catalogDefault) return;
+        assert.ok(def.models, `ProviderDefinition "${def.id}" omitted models`);
+        assert.ok(def.defaultModel, `ProviderDefinition "${def.id}" omitted defaultModel`);
         assert.equal(def.defaultModel, catalogDefault);
         assert.deepEqual([...def.models], [...catalogModels]);
       });
