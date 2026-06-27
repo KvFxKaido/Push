@@ -213,7 +213,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
-| `PUSH_DEEPSEEK_URL` | DeepSeek endpoint (default: `https://api.deepseek.com/chat/completions`) |
+| `PUSH_DEEPSEEK_URL` | DeepSeek endpoint (default: `https://api.deepseek.com/anthropic/v1/messages`) |
 | `PUSH_DEEPSEEK_API_KEY` | DeepSeek API key |
 | `PUSH_DEEPSEEK_MODEL` | DeepSeek model (default: `deepseek-v4-pro`) |
 | `PUSH_SAKANA_URL` | Sakana AI endpoint (default: `https://api.sakana.ai/v1/responses`) |
@@ -245,7 +245,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships thirteen providers. Nine (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `google` carry the upstream's native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships thirteen providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|

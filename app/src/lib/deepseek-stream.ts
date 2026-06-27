@@ -1,24 +1,25 @@
 /**
- * DeepSeek PushStream implementation.
+ * DeepSeek PushStream — Anthropic Messages transport.
  *
- * Hits the direct DeepSeek chat endpoint (api.deepseek.com, OpenAI-compatible),
- * then delegates SSE parsing to the shared `openAISSEPump` in `lib/`.
- *
- * DeepSeek's reasoning models (thinking mode) stream their chain-of-thought as
- * `reasoning_content` deltas, which `openAISSEPump` already splits into the
- * reasoning channel. Unlike the Zen Go gateway, the direct DeepSeek API rejects
- * `reasoning_content` echoed back on input, so prior CoT is intentionally NOT
- * replayed (the chat lock keeps `routeReplaysReasoningContent` zen-only).
+ * DeepSeek exposes an Anthropic-compatible endpoint (`api.deepseek.com/anthropic`);
+ * we route through it rather than OpenAI Chat Completions so thinking returns as
+ * signed reasoning blocks that round-trip across turns (the OpenAI endpoint's
+ * `reasoning_content` can't be replayed). The client posts the neutral
+ * `push.stream.v1` wire to the Worker proxy `/api/deepseek/chat`, which serializes
+ * to Anthropic via `toAnthropicMessages` and proxies the raw Anthropic SSE back;
+ * we parse it natively with `anthropicEventStream` — same shape as the direct
+ * Anthropic / Vertex-Claude / Zen-Go routes. DeepSeek's automatic prompt caching
+ * still applies on this endpoint (verified); only the explicit `cache_control`
+ * directive is ignored, which this path never sends.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
  */
 
-import type { ChatMessage } from '@/types';
+import type { ChatMessage, WorkspaceContext } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
-import type { WorkspaceContext } from '@/types';
+import { anthropicEventStream } from '@push/lib/anthropic-bridge';
+import { toPushStreamWire } from '@push/lib/provider-wire';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -27,13 +28,13 @@ import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
+import { resolvePushCapabilityProfile } from './model-catalog';
 
 export async function* deepseekStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
-  // 1. Compose messages via the shared prompt builder. Runtime context flows
-  //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
+  const capabilityProfile = resolvePushCapabilityProfile('deepseek', req.model);
   const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
     hasSandbox: req.hasSandbox,
@@ -49,34 +50,26 @@ export async function* deepseekStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: capabilityProfile.contentBlocks,
   });
 
-  // 2. Plain OpenAI-compatible request body — no DeepSeek-specific fields.
-  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
-  const openAITools = nativeTools?.map(flatToolToOpenAITool);
-  const body: Record<string, unknown> = {
+  // Neutral `push.stream.v1` wire body — the Worker's dual-accept neutral branch
+  // serializes it to Anthropic Messages via `toAnthropicMessages`. No
+  // `anthropicWebSearch` flag: DeepSeek's Anthropic endpoint has no server-side
+  // web_search tool.
+  const body = toPushStreamWire(llmMessages, {
+    provider: 'deepseek',
     model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    // Native function calling: forward the caller's tool schemas (gated on model
-    // support upstream) so the OpenAI-compatible endpoint can answer through its
-    // constrained tool-calling path. Additive to text-dispatch — `openAISSEPump`
-    // emits native `tool_calls` as structured events. `tool_choice: 'auto'` keeps
-    // prose answers available when no tool is needed.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
-    // Native structured outputs: forward the caller's JSON-Schema constraint so
-    // the OpenAI-compatible endpoint constrains generation server-side.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
-  };
+    maxTokens: req.maxTokens,
+    temperature: req.temperature,
+    topP: req.topP,
+    ...(req.tools && req.tools.length > 0 ? { tools: req.tools } : {}),
+    ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
+  });
 
-  // 3. Headers. Bearer auth, single endpoint. Omit the header entirely when no
-  //    client key is configured — `standardAuth` treats any non-empty client
-  //    `Authorization` as "key supplied" and skips the Worker's
-  //    `keyMissingError` 401, so sending `Bearer ` would bypass the configured
-  //    fallback and forward an empty bearer upstream.
+  // The Worker prefers its own DEEPSEEK_API_KEY; the client Bearer is the
+  // dev / unconfigured-Worker fallback. Omit on empty key so the Worker's
+  // keyMissingError 401 fires.
   const apiKey = (getDeepSeekKey() ?? '').trim();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
@@ -86,7 +79,6 @@ export async function* deepseekStream(
   };
   injectTraceHeaders(headers);
 
-  // 4. POST + stream response.
   const response = await fetch(PROVIDER_URLS.deepseek.chat, {
     method: 'POST',
     headers,
@@ -103,18 +95,28 @@ export async function* deepseekStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new ProviderStreamError(`DeepSeek ${response.status}: ${detail}`, {
-      status: response.status,
-    });
+    // The Worker already prefixes its JSON error with `DeepSeek ${status}:` —
+    // don't double-prefix when the marker is present.
+    const message = detail.startsWith('DeepSeek ')
+      ? detail
+      : `DeepSeek ${response.status}: ${detail}`;
+    throw new ProviderStreamError(message, { status: response.status });
   }
 
   if (!response.body) {
     throw new Error('DeepSeek response had no body');
   }
 
-  yield* openAISSEPump({
-    body: response.body,
-    signal: req.signal,
-    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
-  });
+  // DeepSeek's Anthropic endpoint never enables server-side web_search, so
+  // `pause_turn` can't arise; drain it defensively and guarantee a terminal
+  // `done` so a stream that ends without one can't hang the round loop.
+  let sawDone = false;
+  for await (const event of anthropicEventStream(response, req.signal, (name) =>
+    KNOWN_TOOL_NAMES.has(name),
+  )) {
+    if (event.type === 'pause_turn') continue;
+    if (event.type === 'done') sawDone = true;
+    yield event;
+  }
+  if (!sawDone) yield { type: 'done', finishReason: 'stop' };
 }
