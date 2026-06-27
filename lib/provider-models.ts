@@ -39,10 +39,13 @@ export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
 // DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
 // against /api/fireworks/models if it 404s.
 export const FIREWORKS_DEFAULT_MODEL = 'accounts/fireworks/models/deepseek-v4-pro';
-// NOTE: the old default `blackboxai/anthropic/claude-haiku-4.5` is REJECTED by
-// the chat endpoint ("Invalid model name … for your key", probed 2026-06-09) —
-// it isn't in the live catalog and isn't an accepted alias, so the Blackbox
-// default 400'd on every send. This bare id is the accepted haiku-tier model.
+// The bare dated id is the catalog-canonical haiku-tier slug Blackbox serves
+// natively for Anthropic (probed 200 OK 2026-06-27). Historically (2026-06-09)
+// the routed `blackboxai/anthropic/...` aliases 400'd with "Invalid model name
+// … for your key"; that quirk has since resolved (routed Anthropic re-probed
+// 200 OK 2026-06-27), but the bare dated id stays the default as the most
+// specific, stable form. The dedup in app/src/lib/model-catalog.ts still
+// prefers bare over routed for the Anthropic tier for the same reason.
 export const BLACKBOX_DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 // Direct DeepSeek API (api.deepseek.com) — OpenAI-compatible. `deepseek-v4-pro`
@@ -244,13 +247,16 @@ export const FIREWORKS_MODELS: string[] = [
 // happens fairly often because the Blackbox gateway returns transient
 // `InternalServerError`/`Connection error` responses (that flakiness is what
 // trips the fetch into this fallback in the first place). Every id below is in
-// the live `/models` catalog and is a real, accepted chat model — verified
-// 2026-06-09 by chat/completions probes that distinguish a genuine
-// "Invalid model name" rejection from transient gateway errors. Removed from the
-// prior list: `z-ai/glm-5` and `moonshotai/kimi-k2.6`, both of which return
-// "Invalid model name" (Blackbox does not serve them). Valid ids are
-// `blackboxai/<vendor>/<model>` or bare dated Anthropic ids; free-text entry is
-// still permitted at the UI layer.
+// the live `/models` catalog and is a real, accepted chat model — re-verified
+// 2026-06-27 by chat/completions probes that distinguish a genuine
+// "Invalid model name" rejection from transient gateway errors. Removed
+// 2026-06-27: `blackboxai/google/gemini-3.1-pro-preview`, which 400'd with
+// "Invalid model name" (not in the live catalog) — replaced with the live
+// `blackboxai/google/gemini-3.1-flash-lite`. Still kept OUT: `z-ai/glm-5.2`
+// (listed by `/models` but 404s on send) and the earlier `z-ai/glm-5` /
+// `moonshotai/kimi-k2.6`. Valid ids are `blackboxai/<vendor>/<model>` (routed
+// Anthropic now resolves too, though we keep the bare dated form below) or bare
+// dated Anthropic ids; free-text entry is still permitted at the UI layer.
 export const BLACKBOX_MODELS: string[] = [
   BLACKBOX_DEFAULT_MODEL,
   'blackboxai/anthropic/claude-opus-4.8',
@@ -258,7 +264,7 @@ export const BLACKBOX_MODELS: string[] = [
   'blackboxai/anthropic/claude-sonnet-4.6',
   'blackboxai/openai/gpt-5.5',
   'blackboxai/openai/gpt-5.3-codex',
-  'blackboxai/google/gemini-3.1-pro-preview',
+  'blackboxai/google/gemini-3.1-flash-lite',
   'blackboxai/x-ai/grok-4.3',
   'blackboxai/x-ai/grok-code-fast-1:free',
   'blackboxai/deepseek/deepseek-v4-flash',
