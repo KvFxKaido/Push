@@ -6,7 +6,7 @@
 
 ## What this is
 
-Aggregate observability for **every** provider call in the Worker — gatewayed or not. Backed by Workers Analytics Engine, exposed at `GET /api/_stats`. Covers the providers Cloudflare AI Gateway can't see (Ollama Cloud, OpenCode Zen, Kilo Code, OpenAdapter, Nvidia NIM, Blackbox AI) alongside the gatewayed ones, in a single dashboard surface.
+Aggregate observability for **every** provider call in the Worker — gatewayed or not. Backed by Workers Analytics Engine, exposed at `GET /api/_stats`. Covers the providers Cloudflare AI Gateway can't see (Ollama Cloud, OpenCode Zen, Kilo Code, Nvidia NIM) alongside the gatewayed ones, in a single dashboard surface.
 
 ## Mental model
 

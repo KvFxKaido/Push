@@ -83,7 +83,7 @@ Recon of `app/src` persistence, 2026-06-07.
 
 ### Secrets tier — SHIPPED 2026-06-11 (gate verified enforced)
 
-~13 provider keys via the `use*Config` hooks: `{ollama,openrouter,zen,nvidia,kilocode,blackbox,openadapter,openai,anthropic,google}_api_key`, `tavily_api_key`, and Vertex (`vertex_api_key`, `vertex_service_account`, region/model).
+~11 provider keys via the `use*Config` hooks: `{ollama,openrouter,zen,nvidia,kilocode,openai,anthropic,google}_api_key`, `tavily_api_key`, and Vertex (`vertex_api_key`, `vertex_service_account`, region/model).
 
 The gating precondition is met: prod returns 401 `SESSION_AUTH_REQUIRED` on
 sessionless `/api/*` requests (verified live 2026-06-11), so server-held keys
