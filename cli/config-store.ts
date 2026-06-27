@@ -73,6 +73,7 @@ export interface PushConfig {
   blackbox?: ProviderConfig;
   openadapter?: ProviderConfig;
   deepseek?: ProviderConfig;
+  sakana?: ProviderConfig;
   openai?: ProviderConfig;
   anthropic?: ProviderConfig;
   google?: ProviderConfig;
@@ -192,6 +193,7 @@ const PROVIDER_CONFIG_KEYS = [
   'blackbox',
   'openadapter',
   'deepseek',
+  'sakana',
   'openai',
   'anthropic',
   'google',

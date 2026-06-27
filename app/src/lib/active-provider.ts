@@ -7,6 +7,7 @@ import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
+import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
@@ -48,6 +49,7 @@ export type ActiveProvider =
   | 'kilocode'
   | 'fireworks'
   | 'openadapter'
+  | 'sakana'
   | 'bedrock'
   | 'vertex'
   | 'deepseek'
@@ -67,6 +69,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   fireworks: () => Boolean(getFireworksKey()),
   openadapter: () => Boolean(getOpenAdapterKey()),
   deepseek: () => Boolean(getDeepSeekKey()),
+  sakana: () => Boolean(getSakanaKey()),
   azure: () =>
     Boolean(
       getAzureKey() &&
@@ -112,6 +115,7 @@ const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
   'fireworks',
   'openadapter',
   'deepseek',
+  'sakana',
   'anthropic',
   'openai',
   'google',

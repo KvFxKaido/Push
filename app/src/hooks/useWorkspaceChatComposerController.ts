@@ -22,6 +22,7 @@ const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
   bedrock: 'AWS Bedrock',
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
+  sakana: 'Sakana AI',
   openadapter: 'OpenAdapter',
   deepseek: 'DeepSeek',
   vertex: 'Google Vertex',
@@ -50,6 +51,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectBlackboxModelFromChat'
   | 'handleSelectKilocodeModelFromChat'
   | 'handleSelectFireworksModelFromChat'
+  | 'handleSelectSakanaModelFromChat'
   | 'handleSelectOpenAdapterModelFromChat'
   | 'handleSelectAzureModelFromChat'
   | 'handleSelectBedrockModelFromChat'
@@ -83,6 +85,7 @@ export function useWorkspaceChatComposerController({
   handleSelectBlackboxModelFromChat,
   handleSelectKilocodeModelFromChat,
   handleSelectFireworksModelFromChat,
+  handleSelectSakanaModelFromChat,
   handleSelectOpenAdapterModelFromChat,
   handleSelectAzureModelFromChat,
   handleSelectBedrockModelFromChat,
@@ -123,6 +126,7 @@ export function useWorkspaceChatComposerController({
     if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
     if (selectedComposerProvider === 'kilocode') return selectedChatModels.kilocode;
     if (selectedComposerProvider === 'fireworks') return selectedChatModels.fireworks;
+    if (selectedComposerProvider === 'sakana') return selectedChatModels.sakana;
     if (selectedComposerProvider === 'openadapter') return selectedChatModels.openadapter;
     if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
     if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
@@ -254,6 +258,7 @@ export function useWorkspaceChatComposerController({
   const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
   const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
   const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
+  const isSakanaModelLocked = isModelLocked && lockedProvider === 'sakana';
   const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
   const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
   const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
@@ -342,6 +347,14 @@ export function useWorkspaceChatComposerController({
       isFireworksModelLocked,
       refreshFireworksModels: catalog.refreshFireworksModels,
       onSelectFireworksModel: handleSelectFireworksModelFromChat,
+      sakanaModel: selectedChatModels.sakana,
+      sakanaModelOptions: catalog.sakanaModelOptions,
+      sakanaModelsLoading: catalog.sakanaModels.loading,
+      sakanaModelsError: catalog.sakanaModels.error,
+      sakanaModelsUpdatedAt: catalog.sakanaModels.updatedAt,
+      isSakanaModelLocked,
+      refreshSakanaModels: catalog.refreshSakanaModels,
+      onSelectSakanaModel: handleSelectSakanaModelFromChat,
       openadapterModel: selectedChatModels.openadapter,
       openadapterModelOptions: catalog.openAdapterModelOptions,
       openadapterModelsLoading: catalog.openAdapterModels.loading,

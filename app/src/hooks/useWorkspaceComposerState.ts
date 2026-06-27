@@ -4,6 +4,7 @@ import { useSetting } from '@/hooks/useSetting';
 import {
   normalizeFireworksModelName,
   normalizeKilocodeModelName,
+  normalizeSakanaModelName,
   type PreferredProvider,
 } from '@/lib/providers';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -28,6 +29,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   google: '',
   kilocode: '',
   fireworks: '',
+  sakana: '',
   openadapter: '',
   deepseek: '',
 };
@@ -52,6 +54,7 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
       typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
     fireworks:
       typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
+    sakana: typeof parsed.sakana === 'string' ? normalizeSakanaModelName(parsed.sakana) : '',
     openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
     deepseek: typeof parsed.deepseek === 'string' ? parsed.deepseek.trim() : '',
   };
@@ -123,6 +126,7 @@ export function useWorkspaceComposerState({
       blackbox: catalog.blackbox.model,
       kilocode: catalog.kilocode.model,
       fireworks: catalog.fireworks.model,
+      sakana: catalog.sakana.model,
       openadapter: catalog.openadapter.model,
       azure: catalog.azure.model,
       bedrock: catalog.bedrock.model,
@@ -141,6 +145,7 @@ export function useWorkspaceComposerState({
       catalog.blackbox.model,
       catalog.cloudflare.model,
       catalog.fireworks.model,
+      catalog.sakana.model,
       catalog.kilocode.model,
       catalog.nvidia.model,
       catalog.ollama.model,
@@ -190,7 +195,9 @@ export function useWorkspaceComposerState({
             ? normalizeKilocodeModelName(model)
             : provider === 'fireworks'
               ? normalizeFireworksModelName(model)
-              : model.trim()
+              : provider === 'sakana'
+                ? normalizeSakanaModelName(model)
+                : model.trim()
           : '';
       if (!trimmed) return;
       // Read fresh from the store rather than a possibly-stale closure value.
@@ -247,6 +254,9 @@ export function useWorkspaceComposerState({
             rememberedChatModels.fireworks ||
             defaultChatModels.fireworks,
         ),
+        sakana: normalizeSakanaModelName(
+          draft?.models?.sakana?.trim() || rememberedChatModels.sakana || defaultChatModels.sakana,
+        ),
         openadapter:
           draft?.models?.openadapter?.trim() ||
           rememberedChatModels.openadapter ||
@@ -291,7 +301,9 @@ export function useWorkspaceComposerState({
         ? normalizeKilocodeModelName(activeConversation.model)
         : activeConversation?.provider === 'fireworks' && activeConversation.model
           ? normalizeFireworksModelName(activeConversation.model)
-          : activeConversation?.model;
+          : activeConversation?.provider === 'sakana' && activeConversation.model
+            ? normalizeSakanaModelName(activeConversation.model)
+            : activeConversation?.model;
 
     if (activeConversation?.provider && activeConversation.provider !== 'demo') {
       return normalizeChatDraft({
@@ -449,6 +461,16 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectSakanaModelFromChat = useCallback(
+    (model: string) => {
+      const normalizedModel = normalizeSakanaModelName(model);
+      rememberChatModel('sakana', normalizedModel);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { sakana: normalizedModel } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectOpenAdapterModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('openadapter', model);
@@ -533,6 +555,7 @@ export function useWorkspaceComposerState({
     handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat,
     handleSelectFireworksModelFromChat,
+    handleSelectSakanaModelFromChat,
     handleSelectOpenAdapterModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,

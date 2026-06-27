@@ -170,6 +170,10 @@ export function guessWindowFromName(model: string): number {
   // bucketed with the older window.
   if (m.includes('deepseek-v4')) return 1_000_000;
   if (m.includes('deepseek')) return 128_000;
+  // Sakana Fugu orchestration tiers (`fugu`, `fugu-ultra`) advertise a 1M
+  // window. Neither models.dev nor the catalog probe knows Fugu yet, so without
+  // this both web and CLI fall back to the 100K default and compact ~88K early.
+  if (m.includes('fugu')) return 1_000_000;
   return 0;
 }
 

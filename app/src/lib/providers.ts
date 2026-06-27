@@ -30,6 +30,8 @@ export {
   OPENAI_MODELS,
   OPENROUTER_DEFAULT_MODEL,
   OPENROUTER_MODELS,
+  SAKANA_DEFAULT_MODEL,
+  SAKANA_MODELS,
   ZEN_DEFAULT_MODEL,
   ZEN_MODELS,
 } from '@push/lib/provider-models';
@@ -46,6 +48,7 @@ import {
   OPENADAPTER_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
+  SAKANA_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '@push/lib/provider-models';
 
@@ -113,6 +116,10 @@ export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: strin
   deepseek: {
     chat: providerUrl('/api/deepseek/chat', '/api/deepseek/chat'),
     models: providerUrl('/api/deepseek/models', '/api/deepseek/models'),
+  },
+  sakana: {
+    chat: providerUrl('/api/sakana/chat', '/api/sakana/chat'),
+    models: providerUrl('/api/sakana/models', '/api/sakana/models'),
   },
   anthropic: {
     chat: providerUrl('/api/anthropic/chat', '/api/anthropic/chat'),
@@ -195,6 +202,13 @@ export function normalizeFireworksModelName(model: string): string {
     return FIREWORKS_DEFAULT_MODEL;
   }
 
+  return trimmed;
+}
+
+export function normalizeSakanaModelName(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return SAKANA_DEFAULT_MODEL;
+  if (/\s/.test(trimmed)) return SAKANA_DEFAULT_MODEL;
   return trimmed;
 }
 
@@ -419,6 +433,15 @@ export const PROVIDERS: AIProviderConfig[] = [
     models: makeRoleModels(DEEPSEEK_DEFAULT_MODEL, 'DeepSeek', 'deepseek', 1_000_000),
   },
   {
+    type: 'sakana',
+    name: 'Sakana AI',
+    description:
+      'Sakana AI — Fugu multi-agent orchestration over frontier models (OpenAI-compatible)',
+    envKey: 'VITE_SAKANA_API_KEY',
+    envUrl: 'https://api.sakana.ai/v1',
+    models: makeRoleModels(SAKANA_DEFAULT_MODEL, 'Sakana AI', 'sakana', 1_000_000),
+  },
+  {
     type: 'azure',
     name: 'Azure OpenAI',
     description:
@@ -587,6 +610,15 @@ const fireworksModel = createModelNameStorage(
 export const getFireworksModelName = fireworksModel.get;
 export const setFireworksModelName = fireworksModel.set;
 
+const sakanaModel = createModelNameStorage(
+  'sakana_model',
+  SAKANA_DEFAULT_MODEL,
+  undefined,
+  normalizeSakanaModelName,
+);
+export const getSakanaModelName = sakanaModel.get;
+export const setSakanaModelName = sakanaModel.set;
+
 const anthropicModel = createModelNameStorage('anthropic_model', ANTHROPIC_DEFAULT_MODEL);
 export const getAnthropicModelName = anthropicModel.get;
 export const setAnthropicModelName = anthropicModel.set;
@@ -617,6 +649,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   kilocode: getKiloCodeModelName,
   fireworks: getFireworksModelName,
   openadapter: getOpenAdapterModelName,
+  sakana: getSakanaModelName,
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,
   google: getGoogleModelName,
@@ -664,6 +697,7 @@ export type PreferredProvider =
   | 'fireworks'
   | 'openadapter'
   | 'deepseek'
+  | 'sakana'
   | 'anthropic'
   | 'openai'
   | 'google';
@@ -684,6 +718,7 @@ export function getPreferredProvider(): PreferredProvider | null {
     stored === 'fireworks' ||
     stored === 'openadapter' ||
     stored === 'deepseek' ||
+    stored === 'sakana' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
     stored === 'google'
@@ -723,6 +758,7 @@ export function getLastUsedProvider(): PreferredProvider | null {
     stored === 'fireworks' ||
     stored === 'openadapter' ||
     stored === 'deepseek' ||
+    stored === 'sakana' ||
     stored === 'anthropic' ||
     stored === 'openai' ||
     stored === 'google'

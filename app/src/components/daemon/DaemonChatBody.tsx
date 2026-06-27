@@ -474,6 +474,7 @@ export function DaemonChatBody({
     handleSelectBlackboxModelFromChat: composerState.handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat: composerState.handleSelectKilocodeModelFromChat,
     handleSelectFireworksModelFromChat: composerState.handleSelectFireworksModelFromChat,
+    handleSelectSakanaModelFromChat: composerState.handleSelectSakanaModelFromChat,
     handleSelectOpenAdapterModelFromChat: composerState.handleSelectOpenAdapterModelFromChat,
     handleSelectAzureModelFromChat: composerState.handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat: composerState.handleSelectBedrockModelFromChat,

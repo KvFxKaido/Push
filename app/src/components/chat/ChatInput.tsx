@@ -136,6 +136,14 @@ interface ChatInputProps {
     isFireworksModelLocked: boolean;
     refreshFireworksModels: () => void;
     onSelectFireworksModel: (model: string) => void;
+    sakanaModel: string;
+    sakanaModelOptions: string[];
+    sakanaModelsLoading: boolean;
+    sakanaModelsError: string | null;
+    sakanaModelsUpdatedAt: number | null;
+    isSakanaModelLocked: boolean;
+    refreshSakanaModels: () => void;
+    onSelectSakanaModel: (model: string) => void;
     openadapterModel: string;
     openadapterModelOptions: string[];
     openadapterModelsLoading: boolean;
@@ -193,6 +201,7 @@ const PROVIDER_LABELS: Record<AIProviderType, string> = {
   bedrock: 'AWS Bedrock',
   kilocode: 'Kilo Code',
   fireworks: 'Fireworks AI',
+  sakana: 'Sakana AI',
   openadapter: 'OpenAdapter',
   deepseek: 'DeepSeek',
   vertex: 'Google Vertex',
@@ -487,6 +496,7 @@ export function ChatInput({
     if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModel;
     if (selectedProvider === 'fireworks') return providerControls.fireworksModel;
+    if (selectedProvider === 'sakana') return providerControls.sakanaModel;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
@@ -513,6 +523,7 @@ export function ChatInput({
     if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
     if (selectedProvider === 'kilocode') return providerControls.kilocodeModelsLoading;
     if (selectedProvider === 'fireworks') return providerControls.fireworksModelsLoading;
+    if (selectedProvider === 'sakana') return providerControls.sakanaModelsLoading;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModelsLoading;
     return false;
   })();
@@ -530,6 +541,7 @@ export function ChatInput({
       return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
     if (selectedProvider === 'fireworks')
       return formatTimeAgo(providerControls.fireworksModelsUpdatedAt);
+    if (selectedProvider === 'sakana') return formatTimeAgo(providerControls.sakanaModelsUpdatedAt);
     if (selectedProvider === 'openadapter')
       return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
     return null;
@@ -543,6 +555,7 @@ export function ChatInput({
     selectedProvider === 'blackbox' ||
     selectedProvider === 'kilocode' ||
     selectedProvider === 'fireworks' ||
+    selectedProvider === 'sakana' ||
     selectedProvider === 'openadapter';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
@@ -553,6 +566,7 @@ export function ChatInput({
     if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
     if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
     if (selectedProvider === 'fireworks') providerControls.refreshFireworksModels();
+    if (selectedProvider === 'sakana') providerControls.refreshSakanaModels();
     if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
   };
   // Reasoning effort (per-provider, only for models that support it)
@@ -1216,6 +1230,46 @@ export function ChatInput({
                             </p>
                           )}
                           {providerControls.isFireworksModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'sakana' && (
+                        <>
+                          <ModelPicker
+                            provider="sakana"
+                            value={providerControls.sakanaModel}
+                            options={providerControls.sakanaModelOptions}
+                            onChange={providerControls.onSelectSakanaModel}
+                            disabled={!canChangeModel || providerControls.sakanaModelsLoading}
+                            ariaLabel="Select Sakana AI model"
+                          />
+                          {providerControls.sakanaModelsLoading && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Loading Sakana AI models...
+                            </p>
+                          )}
+                          {!providerControls.sakanaModelsLoading &&
+                            providerControls.sakanaModelOptions.length === 0 &&
+                            !providerControls.sakanaModelsError && (
+                              <p className="px-1 text-push-2xs text-push-fg-faint">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
+                          {providerControls.sakanaModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.sakanaModelsError}
+                            </p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
+                          )}
+                          {providerControls.isSakanaModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>

@@ -9,7 +9,7 @@
  * Scope note (Phase 1):
  *   PR #3a wires the direct Worker handlers currently validated for
  *   background jobs: openrouter, ollama, cloudflare, zen, nvidia,
- *   blackbox, kilocode, fireworks, and openadapter. Providers that still require
+ *   blackbox, kilocode, fireworks, openadapter, openai, and sakana. Providers that still require
  *   extra runtime setup or are intentionally unsupported here return
  *   `null` from `resolveProviderHandler` so the caller can surface an
  *   explicit diagnostic and fail fast instead of silently hanging.
@@ -21,7 +21,7 @@
  *   `text_delta` events for `choices[0].delta.content`. Malformed chunks
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
- *   Two exceptions: `openai` uses the Responses-API pump, and the
+ *   Two exceptions: `openai` and `sakana` use the Responses-API pump, and the
  *   Anthropic-transport Zen-Go models (MiniMax / Qwen on `/v1/messages`)
  *   now stream raw Anthropic Messages SSE — the Worker stopped translating
  *   that route to OpenAI SSE — so they parse via `anthropicEventStream`.
@@ -55,6 +55,7 @@ import {
   handleOpenAdapterChat,
   handleOpenAIChat,
   handleOpenRouterChat,
+  handleSakanaChat,
   handleZenChat,
   handleZenGoChat,
 } from './worker-providers';
@@ -118,6 +119,8 @@ export function resolveProviderHandler(
       return handleAnthropicChat as unknown as ProviderHandler;
     case 'openai':
       return handleOpenAIChat as unknown as ProviderHandler;
+    case 'sakana':
+      return handleSakanaChat as unknown as ProviderHandler;
     case 'google':
       return handleGoogleChat as unknown as ProviderHandler;
     case 'demo':
@@ -202,7 +205,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, fireworks, openadapter, deepseek, anthropic, openai, google.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, blackbox, kilocode, fireworks, openadapter, deepseek, anthropic, openai, sakana, google.`,
         );
       }
 
@@ -211,38 +214,41 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error('Stream aborted before provider dispatch');
       }
 
-      const body =
-        args.provider === 'openai'
-          ? JSON.stringify(
-              toOpenAIResponses({
-                provider: 'openai',
-                model: req.model || args.modelId || '',
-                messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
-                signal: req.signal,
-              }),
-            )
-          : (() => {
-              // Build an OpenAI-compatible chat payload. The Worker's
-              // createStreamProxyHandler validates and normalizes this body
-              // before forwarding upstream, so we only need the portable shape.
-              const payloadMessages = toCoderJobPayloadMessages(req.messages);
-              const systemPromptOverride = req.systemPromptOverride;
-              if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
-                payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
-              }
+      // OpenAI and Sakana Fugu both speak the Responses API — build the typed
+      // `input`-item body for either; everything else gets the Chat Completions
+      // payload below.
+      const isResponsesProvider = args.provider === 'openai' || args.provider === 'sakana';
+      const body = isResponsesProvider
+        ? JSON.stringify(
+            toOpenAIResponses({
+              provider: args.provider,
+              model: req.model || args.modelId || '',
+              messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
+              signal: req.signal,
+            }),
+          )
+        : (() => {
+            // Build an OpenAI-compatible chat payload. The Worker's
+            // createStreamProxyHandler validates and normalizes this body
+            // before forwarding upstream, so we only need the portable shape.
+            const payloadMessages = toCoderJobPayloadMessages(req.messages);
+            const systemPromptOverride = req.systemPromptOverride;
+            if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
+              payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
+            }
 
-              return JSON.stringify({
-                model: req.model || args.modelId,
-                messages: payloadMessages,
-                stream: true,
-                // Ask OpenAI-compatible upstreams to emit a final usage chunk
-                // (`choices: []` + `usage`). Providers that don't support it ignore
-                // the field; the Anthropic-transport bridge rebuilds the body and
-                // emits usage natively. `validateAndNormalizeChatRequest` spreads the
-                // original body, so this survives normalization to the upstream.
-                stream_options: { include_usage: true },
-              });
-            })();
+            return JSON.stringify({
+              model: req.model || args.modelId,
+              messages: payloadMessages,
+              stream: true,
+              // Ask OpenAI-compatible upstreams to emit a final usage chunk
+              // (`choices: []` + `usage`). Providers that don't support it ignore
+              // the field; the Anthropic-transport bridge rebuilds the body and
+              // emits usage natively. `validateAndNormalizeChatRequest` spreads the
+              // original body, so this survives normalization to the upstream.
+              stream_options: { include_usage: true },
+            });
+          })();
 
       // Owner's stored key, resolved fresh per dispatch (key rotation or
       // deletion mid-job takes effect on the next round; nothing is cached
@@ -295,15 +301,14 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // (`openai` via the Responses pump, the rest via `pumpSseBody`).
       const isZenGoAnthropic =
         zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
-      const events =
-        args.provider === 'openai'
-          ? openAIResponsesSSEPump({
-              body: response.body as unknown as ReadableStream<Uint8Array>,
-              signal,
-            })
-          : isZenGoAnthropic
-            ? zenGoAnthropicEvents(response as unknown as Response, signal)
-            : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+      const events = isResponsesProvider
+        ? openAIResponsesSSEPump({
+            body: response.body as unknown as ReadableStream<Uint8Array>,
+            signal,
+          })
+        : isZenGoAnthropic
+          ? zenGoAnthropicEvents(response as unknown as Response, signal)
+          : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
       for await (const event of events) {
         if (event.type === 'done' && !usageLogged) {
           usageLogged = true;

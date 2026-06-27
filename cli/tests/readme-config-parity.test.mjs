@@ -138,6 +138,7 @@ function extractReadmeProviderRows(source) {
         '`blackbox`',
         '`openadapter`',
         '`deepseek`',
+        '`sakana`',
         '`openai`',
         '`anthropic`',
         '`google`',

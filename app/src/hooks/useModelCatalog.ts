@@ -17,10 +17,13 @@ import {
   KILOCODE_MODELS,
   FIREWORKS_DEFAULT_MODEL,
   FIREWORKS_MODELS,
+  SAKANA_DEFAULT_MODEL,
+  SAKANA_MODELS,
   OPENADAPTER_MODELS,
   DEEPSEEK_MODELS,
   normalizeKilocodeModelName,
   normalizeFireworksModelName,
+  normalizeSakanaModelName,
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/active-provider';
@@ -34,6 +37,7 @@ import {
   fetchBlackboxModels,
   fetchKilocodeModels,
   fetchFireworksModels,
+  fetchSakanaModels,
   fetchOpenAdapterModels,
   fetchDeepSeekModels,
   fetchGoogleModels,
@@ -50,6 +54,7 @@ import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
+import { useSakanaConfig } from '@/hooks/useSakanaConfig';
 import { useOpenAdapterConfig } from '@/hooks/useOpenAdapterConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
@@ -163,6 +168,7 @@ export interface ModelCatalog {
   blackbox: ProviderKeyConfig;
   kilocode: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
+  sakana: ProviderKeyConfig;
   openadapter: ProviderKeyConfig;
   deepseek: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
@@ -190,6 +196,7 @@ export interface ModelCatalog {
   blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
   fireworksModels: ProviderModelState;
+  sakanaModels: ProviderModelState;
   openAdapterModels: ProviderModelState;
   deepseekModels: ProviderModelState;
   googleModels: ProviderModelState;
@@ -204,6 +211,7 @@ export interface ModelCatalog {
   blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
   fireworksModelOptions: string[];
+  sakanaModelOptions: string[];
   openAdapterModelOptions: string[];
   deepseekModelOptions: string[];
   anthropicModelOptions: string[];
@@ -223,6 +231,7 @@ export interface ModelCatalog {
   refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
+  refreshSakanaModels: () => Promise<void>;
   refreshOpenAdapterModels: () => Promise<void>;
   refreshDeepSeekModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
@@ -402,6 +411,20 @@ export function buildModelControl(
         error: catalog.fireworksModels.error,
         onRefresh: catalog.refreshFireworksModels,
       };
+    case 'sakana':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Sakana AI'),
+        value: lockedModel ?? catalog.sakana.model,
+        options: includeSelectedModel(
+          catalog.sakanaModelOptions,
+          lockedModel ?? catalog.sakana.model,
+        ),
+        onChange: catalog.sakana.setModel,
+        loading: catalog.sakanaModels.loading,
+        error: catalog.sakanaModels.error,
+        onRefresh: catalog.refreshSakanaModels,
+      };
     case 'openadapter':
       return {
         provider,
@@ -512,6 +535,7 @@ export function useModelCatalog(): ModelCatalog {
   const blackboxCfg = useBlackboxConfig();
   const kilocodeCfg = useKilocodeConfig();
   const fireworksCfg = useFireworksConfig();
+  const sakanaCfg = useSakanaConfig();
   const openAdapterCfg = useOpenAdapterConfig();
   const deepseekCfg = useDeepSeekConfig();
   const anthropicCfg = useAnthropicConfig();
@@ -530,6 +554,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
+  const [sakanaKeyInput, setSakanaKeyInput] = useState('');
   const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
@@ -615,6 +640,7 @@ export function useModelCatalog(): ModelCatalog {
       ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
       ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
       ['fireworks', 'Fireworks AI', fireworksCfg.hasKey],
+      ['sakana', 'Sakana AI', sakanaCfg.hasKey],
       ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
       ['deepseek', 'DeepSeek', deepseekCfg.hasKey],
       ['azure', 'Azure OpenAI', azureCfg.isConfigured],
@@ -636,6 +662,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
+  const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
   const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
@@ -649,6 +676,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxLoading, setBlackboxLoading] = useState(false);
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
+  const [sakanaLoading, setSakanaLoading] = useState(false);
   const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
   const [deepseekLoading, setDeepseekLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
@@ -662,6 +690,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxError, setBlackboxError] = useState<string | null>(null);
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
+  const [sakanaError, setSakanaError] = useState<string | null>(null);
   const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
   const [deepseekError, setDeepseekError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
@@ -675,6 +704,7 @@ export function useModelCatalog(): ModelCatalog {
   const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
+  const [sakanaUpdatedAt, setSakanaUpdatedAt] = useState<number | null>(null);
   const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
   const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
@@ -935,6 +965,20 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load DeepSeek models.',
     });
   }, [deepseekCfg.hasKey, deepseekLoading, refreshModels]);
+
+  const refreshSakanaModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: sakanaCfg.hasKey,
+      isLoading: sakanaLoading,
+      setLoading: setSakanaLoading,
+      setError: setSakanaError,
+      setModels: setSakanaModelList,
+      setUpdatedAt: setSakanaUpdatedAt,
+      fetchModels: fetchSakanaModels,
+      emptyMessage: 'No models returned by Sakana AI.',
+      failureMessage: 'Failed to load Sakana AI models.',
+    });
+  }, [sakanaCfg.hasKey, sakanaLoading, refreshModels]);
 
   const refreshOpenAdapterModels = useCallback(async () => {
     await refreshModels({
@@ -1204,6 +1248,29 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
+          hasKey: sakanaCfg.hasKey,
+          modelCount: sakanaModelList.length,
+          loading: sakanaLoading,
+          error: sakanaError,
+        }),
+        activeProviderLabel === 'sakana',
+        () => {
+          void refreshSakanaModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      sakanaCfg.hasKey,
+      sakanaError,
+      sakanaLoading,
+      sakanaModelList.length,
+      refreshSakanaModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
           hasKey: openAdapterCfg.hasKey,
           modelCount: openAdapterModelList.length,
           loading: openAdapterLoading,
@@ -1364,6 +1431,16 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [deepseekCfg.hasKey]);
   useEffect(() => {
+    if (!sakanaCfg.hasKey) {
+      const id = setTimeout(() => {
+        setSakanaModelList([]);
+        setSakanaError(null);
+        setSakanaUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [sakanaCfg.hasKey]);
+  useEffect(() => {
     if (!openAdapterCfg.hasKey) {
       const id = setTimeout(() => {
         setOpenAdapterModelList([]);
@@ -1398,6 +1475,8 @@ export function useModelCatalog(): ModelCatalog {
   const setKilocodeModel = kilocodeCfg.setModel;
   const fireworksSelectedModel = fireworksCfg.model;
   const setFireworksModel = fireworksCfg.setModel;
+  const sakanaSelectedModel = sakanaCfg.model;
+  const setSakanaModel = sakanaCfg.setModel;
 
   useEffect(() => {
     const normalizedSelectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
@@ -1443,6 +1522,32 @@ export function useModelCatalog(): ModelCatalog {
       setFireworksModel(fallbackModel);
     }
   }, [fireworksModelList, fireworksSelectedModel, setFireworksModel]);
+
+  useEffect(() => {
+    const normalizedSelectedModel = normalizeSakanaModelName(sakanaSelectedModel);
+    if (normalizedSelectedModel !== sakanaSelectedModel) {
+      setSakanaModel(normalizedSelectedModel);
+      return;
+    }
+
+    // Treat curated serverless models as valid even when absent from the account-scoped live
+    // /v1/models — they're callable by slug and `sakanaModelOptions` unions them in. Only a
+    // model in neither the live list nor the curated catalog is reset to a known-good default.
+    if (
+      sakanaModelList.length === 0 ||
+      sakanaModelList.includes(normalizedSelectedModel) ||
+      SAKANA_MODELS.includes(normalizedSelectedModel)
+    ) {
+      return;
+    }
+
+    const fallbackModel = sakanaModelList.includes(SAKANA_DEFAULT_MODEL)
+      ? SAKANA_DEFAULT_MODEL
+      : sakanaModelList[0];
+    if (fallbackModel && fallbackModel !== sakanaSelectedModel) {
+      setSakanaModel(fallbackModel);
+    }
+  }, [sakanaModelList, sakanaSelectedModel, setSakanaModel]);
 
   const activeZenModelList = useMemo(
     () => (zenCfg.goMode ? [] : zenModelList),
@@ -1522,6 +1627,14 @@ export function useModelCatalog(): ModelCatalog {
     const union = [...new Set([...FIREWORKS_MODELS, ...fireworksModelList])];
     return includeSelectedModel(union, selectedModel);
   }, [fireworksModelList, fireworksSelectedModel]);
+  const sakanaModelOptions = useMemo(() => {
+    const selectedModel = normalizeSakanaModelName(sakanaSelectedModel);
+    // Sakana /v1/models is account-scoped (a narrow subset), so union the curated catalog with
+    // the live list (curated first, deduped) rather than replacing — unlike providers whose live
+    // /models already returns the full catalog. Every curated slug is callable by slug.
+    const union = [...new Set([...SAKANA_MODELS, ...sakanaModelList])];
+    return includeSelectedModel(union, selectedModel);
+  }, [sakanaModelList, sakanaSelectedModel]);
   const openAdapterModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1634,6 +1747,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: fireworksCfg.setModel,
       keyInput: fireworksKeyInput,
       setKeyInput: setFireworksKeyInput,
+    },
+    sakana: {
+      setKey: sakanaCfg.setKey,
+      clearKey: sakanaCfg.clearKey,
+      hasKey: sakanaCfg.hasKey,
+      model: sakanaCfg.model,
+      setModel: sakanaCfg.setModel,
+      keyInput: sakanaKeyInput,
+      setKeyInput: setSakanaKeyInput,
     },
     openadapter: {
       setKey: openAdapterCfg.setKey,
@@ -1820,6 +1942,12 @@ export function useModelCatalog(): ModelCatalog {
       error: fireworksError,
       updatedAt: fireworksUpdatedAt,
     },
+    sakanaModels: {
+      models: sakanaModelList,
+      loading: sakanaLoading,
+      error: sakanaError,
+      updatedAt: sakanaUpdatedAt,
+    },
     openAdapterModels: {
       models: openAdapterModelList,
       loading: openAdapterLoading,
@@ -1853,6 +1981,7 @@ export function useModelCatalog(): ModelCatalog {
     blackboxModelOptions,
     kilocodeModelOptions,
     fireworksModelOptions,
+    sakanaModelOptions,
     openAdapterModelOptions,
     deepseekModelOptions,
     anthropicModelOptions,
@@ -1870,6 +1999,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshBlackboxModels,
     refreshKilocodeModels,
     refreshFireworksModels,
+    refreshSakanaModels,
     refreshOpenAdapterModels,
     refreshDeepSeekModels,
     refreshGoogleModels,

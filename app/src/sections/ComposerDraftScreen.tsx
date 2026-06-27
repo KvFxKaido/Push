@@ -92,6 +92,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.kilocodeModelOptions;
     case 'fireworks':
       return catalog.fireworksModelOptions;
+    case 'sakana':
+      return catalog.sakanaModelOptions;
     case 'openadapter':
       return catalog.openAdapterModelOptions;
     case 'anthropic':
@@ -133,6 +135,8 @@ function defaultModelForProvider(
       return catalog.kilocode.model || null;
     case 'fireworks':
       return catalog.fireworks.model || null;
+    case 'sakana':
+      return catalog.sakana.model || null;
     case 'openadapter':
       return catalog.openadapter.model || null;
     case 'azure':
@@ -314,6 +318,8 @@ export function ComposerDraftScreen({
         void catalog.refreshKilocodeModels();
       if (provider === 'fireworks' && catalog.fireworksModelOptions.length === 0)
         void catalog.refreshFireworksModels();
+      if (provider === 'sakana' && catalog.sakanaModelOptions.length === 0)
+        void catalog.refreshSakanaModels();
       if (provider === 'openadapter' && catalog.openAdapterModelOptions.length === 0)
         void catalog.refreshOpenAdapterModels();
     }

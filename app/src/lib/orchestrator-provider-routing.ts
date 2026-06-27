@@ -14,6 +14,7 @@ import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
 import { kilocodeStream } from './kilocode-stream';
 import { fireworksStream } from './fireworks-stream';
+import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
@@ -39,6 +40,7 @@ import {
   getFireworksModelName,
   getOpenAdapterModelName,
   getDeepSeekModelName,
+  getSakanaModelName,
   getAnthropicModelName,
   getOpenAIModelName,
   getGoogleModelName,
@@ -60,6 +62,16 @@ const STANDARD_TIMEOUTS = {
   eventTimeoutMs: 60_000,
   contentTimeoutMs: 60_000,
   totalTimeoutMs: 180_000,
+} as const;
+
+// Sakana Fugu is a multi-agent orchestration router — `fugu-ultra` coordinates a
+// deeper agent pool and can run silent for long stretches before emitting, so the
+// standard 60s no-event / 60s no-content / 180s total bucket aborts valid
+// long-running turns mid-flight. Give the Sakana route a wider window.
+const SAKANA_TIMEOUTS = {
+  eventTimeoutMs: 180_000,
+  contentTimeoutMs: 180_000,
+  totalTimeoutMs: 600_000,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -97,6 +109,7 @@ const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   fireworks: 'openai-compat',
   openadapter: 'openai-compat',
   deepseek: 'openai-compat',
+  sakana: 'openai-responses',
   azure: 'openai-compat',
   bedrock: 'openai-compat',
   openai: 'openai-responses',
@@ -123,6 +136,7 @@ const FAILOVER_PROVIDER_ORDER: Exclude<ActiveProvider, 'demo'>[] = [
   'fireworks',
   'openadapter',
   'deepseek',
+  'sakana',
   'azure',
   'bedrock',
   'vertex',
@@ -245,6 +259,9 @@ export function getProviderPushStream(provider: ActiveProvider): PushStream<Chat
     case 'fireworks':
       stream = (req) => normalizeReasoning(fireworksStream(req));
       break;
+    case 'sakana':
+      stream = (req) => normalizeReasoning(sakanaStream(req));
+      break;
     case 'openadapter':
       stream = (req) => normalizeReasoning(openadapterStream(req));
       break;
@@ -339,6 +356,7 @@ const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
   fireworks: 'Fireworks AI',
   openadapter: 'OpenAdapter',
   deepseek: 'DeepSeek',
+  sakana: 'Sakana AI',
   azure: 'Azure',
   bedrock: 'Bedrock',
   vertex: 'Google Vertex',
@@ -364,6 +382,7 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
   'fireworks',
   'openadapter',
   'deepseek',
+  'sakana',
   'nvidia',
   'blackbox',
   'azure',
@@ -377,8 +396,9 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
 function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
   if (!ADAPTER_ROUTED_PROVIDERS.has(provider)) return undefined;
   const name = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  const timeouts = provider === 'sakana' ? SAKANA_TIMEOUTS : STANDARD_TIMEOUTS;
   return {
-    ...STANDARD_TIMEOUTS,
+    ...timeouts,
     errorMessages: {
       event: (s) => `${name} API stream stalled — no data for ${s}s.`,
       content: (s) =>
@@ -410,6 +430,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getKiloCodeModelName();
     case 'fireworks':
       return getFireworksModelName();
+    case 'sakana':
+      return getSakanaModelName();
     case 'openadapter':
       return getOpenAdapterModelName();
     case 'deepseek':

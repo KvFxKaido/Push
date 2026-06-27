@@ -39,6 +39,7 @@ import {
   VERTEX_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
+  SAKANA_DEFAULT_MODEL,
   OPENADAPTER_DEFAULT_MODEL,
   DEEPSEEK_DEFAULT_MODEL,
   getModelForRole,
@@ -160,6 +161,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   google: 'push:review:model:google',
   kilocode: 'push:review:model:kilocode',
   fireworks: 'push:review:model:fireworks',
+  sakana: 'push:review:model:sakana',
   openadapter: 'push:review:model:openadapter',
   deepseek: 'push:review:model:deepseek',
 };
@@ -179,6 +181,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   google: GOOGLE_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
+  sakana: SAKANA_DEFAULT_MODEL,
   openadapter: OPENADAPTER_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
 };
@@ -209,7 +212,8 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'kilocode' ||
     value === 'fireworks' ||
     value === 'openadapter' ||
-    value === 'deepseek'
+    value === 'deepseek' ||
+    value === 'sakana'
   );
 }
 
@@ -234,6 +238,7 @@ function readReviewModels(): Record<PreferredProvider, string> {
     blackbox: pick('blackbox'),
     kilocode: pick('kilocode'),
     fireworks: pick('fireworks'),
+    sakana: pick('sakana'),
     openadapter: pick('openadapter'),
     deepseek: pick('deepseek'),
     azure: pick('azure'),

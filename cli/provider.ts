@@ -11,6 +11,7 @@ import {
   OPENADAPTER_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
+  SAKANA_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '../lib/provider-models.ts';
 import type {
@@ -244,6 +245,20 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
     },
     apiKeyEnv: ['PUSH_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'VITE_DEEPSEEK_API_KEY'],
     requiresKey: true,
+  },
+  sakana: {
+    id: 'sakana',
+    // Sakana Fugu speaks the provider-native Responses API (`/v1/responses`),
+    // like direct OpenAI — not Chat Completions.
+    get url() {
+      return process.env.PUSH_SAKANA_URL || 'https://api.sakana.ai/v1/responses';
+    },
+    get defaultModel() {
+      return process.env.PUSH_SAKANA_MODEL || SAKANA_DEFAULT_MODEL;
+    },
+    apiKeyEnv: ['PUSH_SAKANA_API_KEY', 'SAKANA_API_KEY', 'VITE_SAKANA_API_KEY'],
+    requiresKey: true,
+    streamShape: 'openai-responses',
   },
   openai: {
     id: 'openai',
