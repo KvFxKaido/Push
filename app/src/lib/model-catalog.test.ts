@@ -668,10 +668,11 @@ describe('buildCuratedBlackboxModelList', () => {
     expect(curated).not.toContain('blackboxai/nomic/nomic-embed-text');
   });
 
-  it('prefers chat-accepted bare Anthropic ids over the rejected routed aliases', () => {
-    // Blackbox rejects the routed `blackboxai/anthropic/...` alias at the chat
-    // endpoint and only accepts the bare dated id, so the dedup must surface the
-    // bare form for the Anthropic tier (see BLACKBOX_DEFAULT_MODEL).
+  it('prefers the bare dated Anthropic ids over the routed aliases', () => {
+    // Both the bare dated id and the routed `blackboxai/anthropic/...` alias now
+    // resolve at the chat endpoint (re-probed 2026-06-27), but the dedup keeps
+    // surfacing the bare, catalog-canonical form for the Anthropic tier as the
+    // more specific, stable choice (see BLACKBOX_DEFAULT_MODEL).
     const curated = buildCuratedBlackboxModelList(
       [
         'claude-3-5-haiku-20241022',
@@ -714,6 +715,27 @@ describe('buildCuratedBlackboxModelList', () => {
     expect(curated).not.toContain('blackboxai/meta/llama-3.2-3b-instruct');
     expect(curated).not.toContain('blackboxai/qwen/qwen2.5-coder-7b-instruct');
     expect(curated).not.toContain('blackboxai/openai/gpt-5.4-nano');
+  });
+
+  it('keeps large MoE models whose active-param suffix reads below the size floor', () => {
+    // `<total>b-a<active>b` MoE naming: the `a12b`/`a4b` active-param token must
+    // not be read as the model size, or large MoE models get dropped. Probed
+    // live 2026-06-27: nemotron-3-super-120b-a12b sends 200 OK.
+    const curated = buildCuratedBlackboxModelList(
+      [
+        'blackboxai/nvidia/nemotron-3-super-120b-a12b:free',
+        'blackboxai/google/gemma-4-26b-a4b-it',
+        'blackboxai/qwen/qwen3.5-397b-a17b',
+        'blackboxai/meta/llama-3.2-3b-a1b',
+      ],
+      {},
+    );
+
+    expect(curated).toContain('blackboxai/nvidia/nemotron-3-super-120b-a12b:free');
+    expect(curated).toContain('blackboxai/google/gemma-4-26b-a4b-it');
+    expect(curated).toContain('blackboxai/qwen/qwen3.5-397b-a17b');
+    // The genuine total size still governs: a 3B-total MoE stays filtered.
+    expect(curated).not.toContain('blackboxai/meta/llama-3.2-3b-a1b');
   });
 
   it('excludes obvious image, video, and edit families from the Blackbox catalog', () => {

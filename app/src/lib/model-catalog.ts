@@ -1371,7 +1371,16 @@ function isExplicitlySmallBlackboxModel(id: string): boolean {
   // Avoid misclassifying MoE names like 8x22b as "22b" single-size models.
   if (/\d+x\d+(?:\.\d+)?b\b/.test(normalized)) return false;
 
-  const sizeMatches = normalized.matchAll(/(\d+(?:\.\d+)?)b\b/g);
+  // Strip the MoE active-parameter token (`-a12b`, `-a4b`, …) before reading
+  // sizes: it names how many params are *active per token*, not the model's
+  // total size, so counting it as the size hides large MoE models. e.g.
+  // `nemotron-3-super-120b-a12b` is a 120B model whose `a12b` would otherwise
+  // read as "12B" and trip the <16B floor (probed live 2026-06-27: it sends
+  // 200 OK but the picker dropped it). The 8x22b guard above covers the
+  // mixtral-style notation; this covers the `<total>b-a<active>b` notation.
+  const sizeScan = normalized.replace(/(?:^|[-_/:.])a\d+(?:\.\d+)?b(?=$|[-_/:.])/g, '');
+
+  const sizeMatches = sizeScan.matchAll(/(\d+(?:\.\d+)?)b\b/g);
   for (const match of sizeMatches) {
     const sizeInBillions = Number(match[1]);
     if (Number.isFinite(sizeInBillions) && sizeInBillions < BLACKBOX_MIN_PARAMETER_BILLIONS) {
