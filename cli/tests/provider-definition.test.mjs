@@ -105,12 +105,13 @@ describe('ProviderDefinition', () => {
 // the OpenAI / Google PRs in this track) doesn't fail the suite prematurely.
 describe('anthropic cross-registry wiring', () => {
   it('appears in AIProviderType', async () => {
-    // The union is types-only at runtime, but provider-contract.ts is the
-    // single declaration site — a regex match catches accidental removals.
+    // `AIProviderType` derives from the `ALL_PROVIDERS` const array (the single
+    // id-vocabulary source); a regex match on the array entry catches accidental
+    // removals.
     const fs = await import('node:fs');
     const url = new URL('../../lib/provider-contract.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /\|\s*'anthropic'/);
+    assert.match(source, /^\s+'anthropic',$/m);
   });
 
   it('has a worker proxy route declared in app/worker.ts', async () => {
@@ -144,7 +145,7 @@ describe('openai cross-registry wiring', () => {
     const fs = await import('node:fs');
     const url = new URL('../../lib/provider-contract.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /\|\s*'openai'/);
+    assert.match(source, /^\s+'openai',$/m);
   });
 
   it('has worker proxy routes declared in app/worker.ts', async () => {
@@ -180,7 +181,7 @@ describe('google cross-registry wiring', () => {
     const fs = await import('node:fs');
     const url = new URL('../../lib/provider-contract.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /\|\s*'google'/);
+    assert.match(source, /^\s+'google',$/m);
   });
 
   it('has worker proxy routes declared in app/worker.ts', async () => {

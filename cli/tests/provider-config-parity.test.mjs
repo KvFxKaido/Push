@@ -11,6 +11,10 @@ const sharedProviderModelSource = readFileSync(
   new URL('../../lib/provider-models.ts', import.meta.url),
   'utf8',
 );
+const providerContractSource = readFileSync(
+  new URL('../../lib/provider-contract.ts', import.meta.url),
+  'utf8',
+);
 
 function extractExportedStringConstant(source, exportName) {
   const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
@@ -18,9 +22,9 @@ function extractExportedStringConstant(source, exportName) {
   return match[1];
 }
 
-function extractUnionMembers(source, typeName) {
-  const match = source.match(new RegExp(`export type ${typeName}\\s*=\\s*([^;]+);`));
-  assert.ok(match, `Expected to find union type ${typeName}`);
+function extractConstArrayMembers(source, constName) {
+  const match = source.match(new RegExp(`export const ${constName}\\s*=\\s*\\[([\\s\\S]*?)\\]`));
+  assert.ok(match, `Expected to find const array ${constName}`);
   return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
 }
 
@@ -65,7 +69,12 @@ function extractWebProviderEnvKey(source, providerId) {
 }
 
 describe('provider config parity', () => {
-  const allWebProviderIds = extractUnionMembers(webProviderSource, 'PreferredProvider');
+  // `PreferredProvider` now derives from `ALL_PROVIDERS` (the single id-vocabulary
+  // source) as `Exclude<AIProviderType, 'demo'>`, so read the roster from there.
+  const allWebProviderIds = extractConstArrayMembers(
+    providerContractSource,
+    'ALL_PROVIDERS',
+  ).filter((id) => id !== 'demo');
   // CLI only implements built-in providers that ship with the binary.
   // `azure` / `bedrock` / `vertex` are advanced connectors deferred per the
   // Web-CLI Parity Plan; `cloudflare` is bound to the Worker's `env.AI`

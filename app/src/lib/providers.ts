@@ -683,24 +683,10 @@ export function getModelForRole(type: AIProviderType, role: AgentRole): AIModel 
 
 const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 
-export type PreferredProvider =
-  | 'ollama'
-  | 'openrouter'
-  | 'cloudflare'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'bedrock'
-  | 'vertex'
-  | 'kilocode'
-  | 'fireworks'
-  | 'openadapter'
-  | 'deepseek'
-  | 'sakana'
-  | 'anthropic'
-  | 'openai'
-  | 'google';
+// A user-selectable provider is any real provider — every `AIProviderType`
+// except `demo` (the no-key fallback, never an explicit pick). Derived so the id
+// vocabulary stays single-sourced in `ALL_PROVIDERS` (provider-contract.ts).
+export type PreferredProvider = Exclude<AIProviderType, 'demo'>;
 
 export function getPreferredProvider(): PreferredProvider | null {
   const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
