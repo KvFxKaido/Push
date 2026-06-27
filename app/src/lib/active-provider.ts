@@ -38,6 +38,7 @@ import {
 import { normalizeExperimentalBaseUrl } from './experimental-providers';
 import { normalizeVertexRegion } from './vertex-provider';
 import type { AIProviderType } from '@/types';
+import { getInitialFallbackProviderOrder } from '@push/lib/provider-definition';
 
 // The set of providers that can be active is exactly `AIProviderType` (every
 // provider id, including `demo`). Aliased rather than re-listed so the id
@@ -90,22 +91,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
  * Fallback order when no preference or last-used provider is available.
  * Neutral ordering — no provider is favoured.
  */
-const PROVIDER_FALLBACK_ORDER: PreferredProvider[] = [
-  'ollama',
-  'openrouter',
-  'cloudflare',
-  'zen',
-  'nvidia',
-  'blackbox',
-  'kilocode',
-  'fireworks',
-  'openadapter',
-  'deepseek',
-  'sakana',
-  'anthropic',
-  'openai',
-  'google',
-];
+const PROVIDER_FALLBACK_ORDER: readonly PreferredProvider[] = getInitialFallbackProviderOrder();
 
 /**
  * Check whether a provider is fully configured (has credentials / required fields).

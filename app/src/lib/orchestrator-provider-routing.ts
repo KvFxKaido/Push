@@ -8,6 +8,13 @@ import type {
   UrlCitation,
 } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import {
+  getAdapterRoutedProviderIds,
+  getFailoverProviderOrder,
+  getProviderStreamShape,
+  getProviderTimeoutDisplayName,
+  type ProviderStreamShape,
+} from '@push/lib/provider-definition';
 import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
@@ -79,71 +86,19 @@ const SAKANA_TIMEOUTS = {
 // ---------------------------------------------------------------------------
 
 /**
- * Native wire shape per provider. Drives same-shape failover candidate
- * selection so a round never fails over across an incompatible reasoning
- * contract. This is the *provider's* contract, not the client SSE parser —
- * every provider streams OpenAI-compatible SSE back to the browser (the
- * anthropic/gemini wire shapes are translated server-side), but the
- * reasoning-round-trip compatibility that matters for failover follows the
- * native contract.
+ * Native wire shape per provider lives in `lib/provider-definition.ts`. It
+ * drives same-shape failover candidate selection so a round never fails over
+ * across an incompatible reasoning contract. This is the *provider's* contract,
+ * not the client SSE parser — every provider streams OpenAI-compatible SSE back
+ * to the browser after server-side translation, but the reasoning round-trip
+ * compatibility that matters for failover follows the native contract.
  *
- * NOTE: this static table keys on provider id only. Some routes are
- * Anthropic-transport *per model* (Vertex Claude, Zen Go MiniMax/Qwen), which
- * this table can't express — those are handled by the
- * `routesThroughAnthropicBridge` guard in `resolveFailoverCandidates`, not
- * here. `anthropic` is alone in its bucket for the static case.
+ * Some routes are Anthropic-transport *per model* (Vertex Claude, Zen Go
+ * MiniMax/Qwen), which a provider-id registry cannot express. Those are
+ * handled by the `routesThroughAnthropicBridge` guard in
+ * `resolveFailoverCandidates`.
  */
-export type ProviderWireShape = 'anthropic' | 'gemini' | 'openai-compat' | 'openai-responses';
-
-const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
-  anthropic: 'anthropic',
-  google: 'gemini',
-  vertex: 'gemini',
-  ollama: 'openai-compat',
-  openrouter: 'openai-compat',
-  cloudflare: 'openai-compat',
-  zen: 'openai-compat',
-  nvidia: 'openai-compat',
-  blackbox: 'openai-compat',
-  kilocode: 'openai-compat',
-  fireworks: 'openai-compat',
-  openadapter: 'openai-compat',
-  deepseek: 'anthropic',
-  sakana: 'openai-responses',
-  azure: 'openai-compat',
-  bedrock: 'openai-compat',
-  openai: 'openai-responses',
-  // 'demo' has no wire shape; it can never be a failover source or target.
-  demo: 'openai-compat',
-};
-
-/**
- * Failover candidate ordering. Unlike `PROVIDER_FALLBACK_ORDER` (which picks the
- * *initial* provider and intentionally omits the experimental
- * azure/bedrock/vertex trio), failover must consider every real configured
- * provider as a backup — an OpenAI-locked chat whose only other key is Azure,
- * or a Google-locked chat that can fall back to Vertex, would otherwise get no
- * candidate. Neutral order; the actual pick is `decideStreamFailover`'s.
- */
-const FAILOVER_PROVIDER_ORDER: Exclude<ActiveProvider, 'demo'>[] = [
-  'ollama',
-  'openrouter',
-  'cloudflare',
-  'zen',
-  'nvidia',
-  'blackbox',
-  'kilocode',
-  'fireworks',
-  'openadapter',
-  'deepseek',
-  'sakana',
-  'azure',
-  'bedrock',
-  'vertex',
-  'anthropic',
-  'openai',
-  'google',
-];
+export type ProviderWireShape = ProviderStreamShape;
 
 /**
  * Whether a provider+model pair speaks the Anthropic Messages transport (and so
@@ -178,7 +133,7 @@ function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): Pr
   if (routesThroughAnthropicBridge(provider, resolveChatDefaultModel(provider))) {
     return 'anthropic';
   }
-  return PROVIDER_STREAM_SHAPE[provider];
+  return getProviderStreamShape(provider);
 }
 
 /**
@@ -204,8 +159,8 @@ export function resolveFailoverCandidates(
   // Isolate every Anthropic-transport route, including the model-dependent
   // ones the static shape table can't see.
   if (routesThroughAnthropicBridge(locked, model)) return [];
-  const shape = PROVIDER_STREAM_SHAPE[locked];
-  return FAILOVER_PROVIDER_ORDER.filter(
+  const shape = getProviderStreamShape(locked);
+  return getFailoverProviderOrder().filter(
     (p) => !tried.has(p) && isProviderAvailable(p) && getProviderFailoverShape(p) === shape,
   );
 }
@@ -340,62 +295,19 @@ Here's what I can help with:
 Connect your GitHub account in settings to get started, or just ask me anything about code.`;
 
 /**
- * Display name per provider — used to build per-provider timeout error
- * messages so a Worker / fetch error mentions "OpenRouter" rather than
- * "openrouter". Mirrors the names the legacy `streamXChat` exports passed
- * into `buildErrorMessages` before Phase 9b.
- */
-const PROVIDER_DISPLAY_NAMES: Record<ActiveProvider, string> = {
-  ollama: 'Ollama Cloud',
-  openrouter: 'OpenRouter',
-  cloudflare: 'Cloudflare Workers AI',
-  zen: 'OpenCode Zen',
-  nvidia: 'Nvidia NIM',
-  blackbox: 'Blackbox AI',
-  kilocode: 'Kilo Code',
-  fireworks: 'Fireworks AI',
-  openadapter: 'OpenAdapter',
-  deepseek: 'DeepSeek',
-  sakana: 'Sakana AI',
-  azure: 'Azure',
-  bedrock: 'Bedrock',
-  vertex: 'Google Vertex',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  google: 'Google Gemini',
-  demo: 'Demo',
-};
-
-/**
  * Adapter-routed providers (those on a native PushStream + the SSE pump)
  * get the full timer wrap at the iteration layer — same machinery the
  * deleted `createProviderStreamAdapter` applied per-call. After Phase 10c
  * every non-demo provider is on a native PushStream, so the set covers
  * every real provider and the only exclusion is `demo`.
  */
-const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>([
-  'ollama',
-  'cloudflare',
-  'openrouter',
-  'zen',
-  'kilocode',
-  'fireworks',
-  'openadapter',
-  'deepseek',
-  'sakana',
-  'nvidia',
-  'blackbox',
-  'azure',
-  'bedrock',
-  'vertex',
-  'anthropic',
-  'openai',
-  'google',
-]);
+const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProvider>(
+  getAdapterRoutedProviderIds(),
+);
 
 function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
   if (!ADAPTER_ROUTED_PROVIDERS.has(provider)) return undefined;
-  const name = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  const name = getProviderTimeoutDisplayName(provider);
   const timeouts = provider === 'sakana' ? SAKANA_TIMEOUTS : STANDARD_TIMEOUTS;
   return {
     ...timeouts,
