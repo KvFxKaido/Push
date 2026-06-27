@@ -1,20 +1,16 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 
 import { PROVIDER_CONFIGS } from '../provider.ts';
 import { getCliProviderDefinitions } from '../../lib/provider-definition.ts';
 
-const webProviderSource = readFileSync(
-  new URL('../../app/src/lib/providers.ts', import.meta.url),
-  'utf8',
-);
-
-function extractWebProviderEnvKey(source, providerId) {
-  const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = source.match(new RegExp(`type:\\s*'${escapedId}'[\\s\\S]*?envKey:\\s*'([^']+)'`));
-  assert.ok(match, `Expected to find web provider envKey for ${providerId}`);
-  return match[1];
+// The web surface's user-facing env key now derives from the shared registry
+// (`app/src/lib/providers.ts` builds it as `envKey: def.settings.envKey`), so
+// read it from the registry source of truth rather than scraping providers.ts.
+function webProviderEnvKey(def) {
+  const envKey = def.settings?.envKey;
+  assert.ok(envKey, `Expected to find web provider envKey for ${def.id}`);
+  return envKey;
 }
 
 function withClearedCliEnv(fn) {
@@ -76,7 +72,7 @@ describe('provider config parity', () => {
       assert.ok(cfg, `Expected PROVIDER_CONFIGS to include ${def.id}`);
       const expectedEnv = def.cli?.apiKeyEnvVars ?? def.apiKeyEnvVars;
       assert.deepEqual(cfg.apiKeyEnv, expectedEnv);
-      const webEnvKey = extractWebProviderEnvKey(webProviderSource, def.id);
+      const webEnvKey = webProviderEnvKey(def);
       assert.ok(
         cfg.apiKeyEnv.includes(webEnvKey),
         `Expected ${def.id} apiKeyEnv to include ${webEnvKey}`,
