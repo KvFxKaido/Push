@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { PROVIDER_DEFINITIONS, type RealProviderId } from '@push/lib/provider-definition';
 import {
   compareProviderModelIds,
   formatModelDisplayName,
@@ -6,7 +7,55 @@ import {
   getModelDisplayLeafName,
   normalizeFireworksModelName,
   normalizeKilocodeModelName,
+  PROVIDER_URLS,
 } from './providers';
+
+const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: string }>> = {
+  ollama: {
+    chat: '/ollama/v1/chat/completions',
+    models: '/ollama/v1/models',
+  },
+  openrouter: {
+    chat: '/openrouter/api/v1/chat/completions',
+    models: '/openrouter/api/v1/models',
+  },
+  zen: {
+    chat: '/opencode/zen/v1/chat/completions',
+    models: '/opencode/zen/v1/models',
+  },
+  nvidia: {
+    chat: '/nvidia/v1/chat/completions',
+    models: '/nvidia/v1/models',
+  },
+  blackbox: {
+    chat: '/blackbox/chat/completions',
+    models: '/blackbox/models',
+  },
+};
+
+describe('PROVIDER_URLS', () => {
+  it('uses ProviderDefinition proxy paths for providers without dev proxy overrides', () => {
+    for (const def of PROVIDER_DEFINITIONS) {
+      if (DEV_PROXY_PATHS[def.id]) continue;
+      expect(PROVIDER_URLS[def.id]).toEqual({
+        chat: def.webProxyPath,
+        models: def.modelsProxyPath,
+      });
+    }
+  });
+
+  it('preserves Vite dev proxy overrides for providers that need rewritten local paths', () => {
+    for (const [provider, paths] of Object.entries(DEV_PROXY_PATHS) as Array<
+      [RealProviderId, { chat: string; models: string }]
+    >) {
+      expect(PROVIDER_URLS[provider]).toEqual(paths);
+    }
+  });
+
+  it('keeps demo unrouted', () => {
+    expect(PROVIDER_URLS.demo).toEqual({ chat: '', models: '' });
+  });
+});
 
 describe('formatModelDisplayName', () => {
   it('normalizes routed Blackbox ids and uses provider shorthand labels', () => {
