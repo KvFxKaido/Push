@@ -558,6 +558,56 @@ describe('toAnthropicMessages — contentBlocks (multimodal near-identity; tool 
     ]);
   });
 
+  it('coalesces consecutive tool_result-only user messages after a batched tool_use turn', () => {
+    const readA = {
+      type: 'tool_use' as const,
+      id: 'toolu_a',
+      name: 'read_file',
+      input: { path: 'a.ts' },
+    };
+    const readB = {
+      type: 'tool_use' as const,
+      id: 'toolu_b',
+      name: 'read_file',
+      input: { path: 'b.ts' },
+    };
+    const resultA = { type: 'tool_result' as const, tool_use_id: readA.id, content: 'A' };
+    const resultB = { type: 'tool_result' as const, tool_use_id: readB.id, content: 'B' };
+
+    const body = toAnthropicMessages({
+      provider: 'deepseek',
+      model: 'deepseek-v4-pro',
+      messages: [
+        {
+          id: 'a1',
+          role: 'assistant',
+          content: 'fenced fallback',
+          timestamp: 0,
+          toolUses: [readA, readB],
+        } as LlmMessage & { toolUses: [typeof readA, typeof readB] },
+        {
+          id: 'r1',
+          role: 'user',
+          content: '[TOOL_RESULT] A [/TOOL_RESULT]',
+          timestamp: 0,
+          toolResults: [resultA],
+        } as LlmMessage & { toolResults: [typeof resultA] },
+        {
+          id: 'r2',
+          role: 'user',
+          content: '[TOOL_RESULT] B [/TOOL_RESULT]',
+          timestamp: 0,
+          toolResults: [resultB],
+        } as LlmMessage & { toolResults: [typeof resultB] },
+      ],
+    } as PushStreamRequest<LlmMessage>);
+
+    expect(msgs(body)).toEqual([
+      { role: 'assistant', content: [readA, readB] },
+      { role: 'user', content: [resultA, resultB] },
+    ]);
+  });
+
   it('carries an image block source verbatim (already Anthropic shape)', () => {
     const body = toAnthropicMessages(
       req({

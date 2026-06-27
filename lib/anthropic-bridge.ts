@@ -253,6 +253,23 @@ function llmContentBlocksToAnthropic(
   return out.length > 0 ? out : [{ type: 'text', text: '' }];
 }
 
+function isToolResultOnlyContent(content: Array<Record<string, unknown>>): boolean {
+  return content.length > 0 && content.every((part) => part.type === 'tool_result');
+}
+
+function mergeIntoPreviousToolResultUserMessage(
+  messages: Array<Record<string, unknown>>,
+  content: Array<Record<string, unknown>>,
+): boolean {
+  if (!isToolResultOnlyContent(content)) return false;
+  const previous = messages[messages.length - 1];
+  if (!previous || previous.role !== 'user' || !Array.isArray(previous.content)) return false;
+  const previousContent = previous.content as Array<Record<string, unknown>>;
+  if (!isToolResultOnlyContent(previousContent)) return false;
+  previous.content = [...previousContent, ...content];
+  return true;
+}
+
 function mapAnthropicStopReason(stopReason: string | null | undefined): string {
   switch (stopReason) {
     case 'max_tokens':
@@ -702,8 +719,21 @@ export function toAnthropicMessages(
         anthropicContent = base;
       }
     }
+    const anthropicRole = m.role === 'assistant' ? 'assistant' : 'user';
+    // Push's Coder transcript stores batched tool results as consecutive user
+    // turns, one `tool_result` each. First-party Anthropic coalesces those, but
+    // DeepSeek's Anthropic-compatible endpoint validates the raw `messages[]`
+    // shape and requires every result block to be in the single user message
+    // immediately after the assistant `tool_use` turn. Coalesce that narrow
+    // structured-result shape here; leave ordinary user text/messages alone.
+    if (
+      anthropicRole === 'user' &&
+      mergeIntoPreviousToolResultUserMessage(anthropicMessages, anthropicContent)
+    ) {
+      return;
+    }
     anthropicMessages.push({
-      role: m.role === 'assistant' ? 'assistant' : 'user',
+      role: anthropicRole,
       content: anthropicContent,
     });
   });
