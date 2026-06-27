@@ -1555,6 +1555,7 @@ export async function runCoderAgent<TCall, TCard>(
       error: streamError,
       text: rawModelText,
       reasoningText,
+      reasoningBlocks,
       nativeToolCalls,
       usage: roundUsage,
     } = await iteratePushStreamText(
@@ -1667,19 +1668,24 @@ export async function runCoderAgent<TCall, TCard>(
       );
     }
 
-    // Add Coder response to messages. Carry the round's plain reasoning as
-    // `reasoningContent` so it survives onto the tool-call turn — `markLatestAssistantToolUse`
-    // spreads this message — and serializes to `reasoning_content` on the wire.
-    // DeepSeek thinking mode 400s the tool-result continuation otherwise ("the
-    // `reasoning_content` in the thinking mode must be passed back to the API"). The
-    // orchestrator lane carries this via `.thinking` on `markLastAssistantToolCall`; the
-    // kernel lane (web-inline default + CLI) had no equivalent. DeepSeek's reasoning is
-    // unsigned, so it lands in `reasoningText`, not `reasoningBlocks` — hence this can't
-    // be recovered downstream. Guarded so a no-reasoning round emits no empty field.
+    // Add Coder response to messages, carrying the round's reasoning onto the
+    // tool-call turn (`markLatestAssistantToolUse` spreads this message) so the
+    // tool-result continuation replays it — DeepSeek thinking mode 400s otherwise
+    // ("the ... in the thinking mode must be passed back to the API").
+    //   - `reasoningBlocks`: signed `thinking` blocks from the Anthropic transport
+    //     (DeepSeek on api.deepseek.com/anthropic) — serialized to `content[].thinking`
+    //     when the route carries reasoning blocks (`emitReasoningBlocks`).
+    //   - `reasoningContent`: plain unsigned reasoning from OpenAI-compat thinking
+    //     routes (e.g. DeepSeek via Zen Go) — serialized to `reasoning_content`.
+    // Both are carried; `toLLMMessages` emits whichever the locked route requires.
+    // The orchestrator lane carries this via `markLastAssistantToolCall`; the kernel
+    // lane (web-inline default + CLI) had no equivalent until now. Guarded so a
+    // no-reasoning round emits no empty field.
     messages.push({
       id: `coder-response-${round}`,
       role: 'assistant',
       content: accumulated,
+      ...(reasoningBlocks.length > 0 ? { reasoningBlocks } : {}),
       ...(reasoningText.trim().length > 0 ? { reasoningContent: reasoningText } : {}),
       timestamp: Date.now(),
     });
