@@ -1102,6 +1102,11 @@ describe('anthropicEventStream — Anthropic SSE -> neutral events', () => {
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn","usage":{"input_tokens":4,"output_tokens":3}}}',
       ],
       expected: [
+        // Thinking streams live as reasoning_delta (resets the consumer's
+        // content timer + drives the thinking panel) while the whole signed
+        // block is still emitted at content_block_stop for replay.
+        { type: 'reasoning_delta', text: 'Hmm ' },
+        { type: 'reasoning_delta', text: 'let me think.' },
         {
           type: 'reasoning_block',
           block: { type: 'thinking', text: 'Hmm let me think.', signature: 'sig-zzz' },
@@ -1128,14 +1133,19 @@ describe('anthropicEventStream — Anthropic SSE -> neutral events', () => {
       ],
     },
     {
-      name: 'signature-less thinking is dropped',
+      name: 'signature-less thinking streams live but its block is dropped',
       lines: [
         'data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}',
         'data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"orphan"}}',
         'data: {"type":"content_block_stop","index":0}',
         'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}',
       ],
-      expected: [{ type: 'done', finishReason: 'stop' }],
+      // The live delta still streams for display; only the reasoning_block is
+      // dropped (signature-less thinking can't round-trip on replay).
+      expected: [
+        { type: 'reasoning_delta', text: 'orphan' },
+        { type: 'done', finishReason: 'stop' },
+      ],
     },
     {
       name: 'max_tokens -> length',

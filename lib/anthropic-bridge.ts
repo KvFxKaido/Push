@@ -920,6 +920,15 @@ export async function* anthropicEventStream(
       if (state?.kind === 'thinking') {
         if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
           state.text += delta.thinking;
+          // Emit live progress as thinking streams: the consumer
+          // (`iterate-chat-stream`) resets its no-content timer on
+          // `reasoning_delta` and streams the thinking panel. The whole signed
+          // block is still emitted at `content_block_stop` for replay. Without
+          // this, a model that thinks longer than the content timeout — notably
+          // DeepSeek on its Anthropic endpoint, which thinks by default — is
+          // aborted as "no data" mid-thought (`reasoning_block` alone neither
+          // displays nor resets the timer).
+          if (delta.thinking) yield { type: 'reasoning_delta', text: delta.thinking };
         } else if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') {
           state.signature += delta.signature;
         }
