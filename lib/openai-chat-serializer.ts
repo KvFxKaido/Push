@@ -449,3 +449,63 @@ export function toOpenAIChat(
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };
 }
+
+/**
+ * Expand the tool-bearing turns of an already-assembled `LlmMessage[]` into
+ * OpenAI wire messages: the assistant tool-call turn becomes a `tool_calls[]`
+ * message and each `tool_result` becomes a standalone
+ * `{ role: 'tool', tool_call_id }` message. Non-tool turns pass through by
+ * reference, untouched — so an adapter that already built its body keeps its
+ * existing per-message serialization for everything except tool history.
+ *
+ * This is the seam for legacy raw-forward OpenAI-compat adapters (e.g. Ollama
+ * Cloud's `/v1/chat/completions` proxy) that assemble their own body instead of
+ * going through {@link toOpenAIChat}, yet need native tool-history shape when
+ * function calling is active. Without it, tool results reach the model as
+ * `role: 'user'` `[TOOL_RESULT]` text, which a weaker model can read as
+ * untrusted user-injected data rather than its own tool output.
+ *
+ * Assumes tool sidecars were already materialized into `contentBlocks` upstream
+ * (`toLLMMessages` with `emitContentBlocks: true`, which runs the whole-request
+ * adjacency/pairing pass in `materializeToolContentBlocks`). A tool turn whose
+ * pair failed that pass carries no tool `contentBlocks` and falls through to its
+ * verbatim text form — the same graceful degradation {@link toOpenAIChat} uses.
+ * Cache tagging is off: these adapters never opt into breakpoint tagging and the
+ * upstream ignores `cache_control`.
+ */
+export interface ToolExpandableMessage {
+  role: string;
+  contentBlocks?: LlmContentBlock[];
+  /** Plain reasoning to replay on the flushed assistant turn. Both naming
+   *  conventions are read so the neutral `LlmMessage` (`reasoningContent`) and
+   *  the web adapter's wire-shaped message (`reasoning_content`) both satisfy
+   *  this without a cast. */
+  reasoningContent?: string;
+  reasoning_content?: string;
+}
+
+export function expandToolMessagesForOpenAICompat<T extends ToolExpandableMessage>(
+  messages: readonly T[],
+): Array<T | OpenAIMessage> {
+  const out: Array<T | OpenAIMessage> = [];
+  for (const m of messages) {
+    const blocks = m.contentBlocks;
+    const hasToolBlocks =
+      blocks !== undefined &&
+      blocks.length > 0 &&
+      blocks.some((b) => b.type === 'tool_use' || b.type === 'tool_result');
+    if (hasToolBlocks) {
+      out.push(
+        ...flattenToolBearingBlocks(
+          m.role,
+          blocks,
+          false,
+          m.reasoningContent ?? m.reasoning_content,
+        ),
+      );
+    } else {
+      out.push(m);
+    }
+  }
+  return out;
+}

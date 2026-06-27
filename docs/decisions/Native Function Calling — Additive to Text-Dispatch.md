@@ -161,3 +161,26 @@ Coder/Explorer, and scoped toolsets.
   surface: web lead uses source-scoped registry schemas; CLI lead uses the full
   CLI protocol plus conditional GitHub schemas; delegated Coder uses the full CLI
   protocol; delegated Explorer uses the read-only CLI protocol.
+
+## Addendum (2026-06-27) — native tool-result delivery on Ollama Cloud
+
+The original wiring made models *emit* calls natively but still fed prior tool
+**results** back as `role: 'user'` `[TOOL_RESULT]` text on the OpenAI-compat web
+adapters, which assemble their own body (via `toLLMMessages`) and forward it raw
+rather than routing through `toOpenAIChat`. A tool-capable model then sees its
+own results as untrusted user-injected data rather than tool output — the
+provenance-confusion failure mode (a weak model distrusting the envelope and
+fabricating reality instead).
+
+Fixed for **Ollama Cloud only** (the reported surface; OpenRouter shares the
+legacy raw-forward path and remains a candidate follow-up). When native FC is
+active, `ollama-stream.ts` passes `emitContentBlocks: true` to `toLLMMessages`
+(running the kernel's already-paired tool sidecars through the whole-request
+adjacency pass in `materializeToolContentBlocks`), then expands only the
+tool-bearing turns via the new `expandToolMessagesForOpenAICompat`
+(`lib/openai-chat-serializer.ts`) — reusing the same `flattenToolBearingBlocks`
+the neutral path uses. Assistant tool turns become `tool_calls[]`; each result
+becomes a standalone `{ role: 'tool', tool_call_id }`. Non-tool turns and
+unpaired/non-adjacent tool exchanges pass through verbatim (graceful degradation
+to the text arm), so the change is byte-identical to before when native FC is
+off.

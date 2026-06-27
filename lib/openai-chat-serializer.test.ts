@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
-import { toOpenAIChat, toOpenAIResponseFormat } from './openai-chat-serializer.ts';
+import {
+  expandToolMessagesForOpenAICompat,
+  toOpenAIChat,
+  toOpenAIResponseFormat,
+} from './openai-chat-serializer.ts';
 
 function llm(
   id: string,
@@ -680,5 +684,63 @@ describe('toOpenAIResponseFormat', () => {
       type: 'json_schema',
       json_schema: { name: 'v', strict: false, schema: { type: 'object' } },
     });
+  });
+});
+
+describe('expandToolMessagesForOpenAICompat', () => {
+  const toolUse = {
+    type: 'tool_use' as const,
+    id: 'toolu_read_1',
+    name: 'sandbox_read_file',
+    input: { path: 'a.ts' },
+  };
+  const toolResult = {
+    type: 'tool_result' as const,
+    tool_use_id: toolUse.id,
+    content: 'file body',
+  };
+
+  it('expands an assistant tool_use turn into a tool_calls message', () => {
+    expect(
+      expandToolMessagesForOpenAICompat([{ role: 'assistant', contentBlocks: [toolUse] }]),
+    ).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: toolUse.id,
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("expands a tool_result turn into a standalone role:'tool' message", () => {
+    expect(
+      expandToolMessagesForOpenAICompat([{ role: 'user', contentBlocks: [toolResult] }]),
+    ).toEqual([{ role: 'tool', tool_call_id: toolUse.id, content: 'file body' }]);
+  });
+
+  it('passes non-tool turns through by reference, untouched', () => {
+    // A plain string turn and a text-only contentBlocks turn are both NOT tool
+    // turns — the adapter keeps its own serialization for them.
+    const plain = { role: 'user' as const, content: 'hi' };
+    const textBlocks = {
+      role: 'assistant' as const,
+      contentBlocks: [{ type: 'text' as const, text: 'yo' }],
+    };
+    const out = expandToolMessagesForOpenAICompat([plain, textBlocks]);
+    expect(out[0]).toBe(plain);
+    expect(out[1]).toBe(textBlocks);
+  });
+
+  it('reads the web wire-shaped reasoning_content for the flushed assistant turn', () => {
+    const out = expandToolMessagesForOpenAICompat([
+      { role: 'assistant', reasoning_content: 'thought', contentBlocks: [toolUse] },
+    ]);
+    expect(out[0]).toMatchObject({ role: 'assistant', reasoning_content: 'thought' });
   });
 });
