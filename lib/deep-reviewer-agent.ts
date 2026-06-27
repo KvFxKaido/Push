@@ -616,6 +616,9 @@ export async function runDeepReviewer<TCall, TCard>(
   }
   if (branchContext) {
     systemPrompt += `\n\n[WORKSPACE CONTEXT]\nActive branch: ${branchContext.activeBranch}\nDefault branch: ${branchContext.defaultBranch}\nProtect main: ${branchContext.protectMain ? 'on' : 'off'}`;
+    if (branchContext.activeBranch && branchContext.activeBranch !== branchContext.defaultBranch) {
+      systemPrompt += `\nALWAYS pass "branch": "${branchContext.activeBranch}" to GitHub read/search tools (read_file, grep_file, search_files, list_directory). Omitting it searches the default branch ("${branchContext.defaultBranch}"), which does not reflect the code under review.`;
+    }
   }
   if (!sandboxId) {
     systemPrompt +=
