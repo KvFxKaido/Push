@@ -1264,6 +1264,12 @@ describe('providerModelSupportsStructuredOutput', () => {
       structuredOutput: 'strict',
       context: 'large',
     });
+
+    // PDF-only declared models accept file attachments but not image input, so
+    // declared metadata must not resolve them as vision-capable on a cold cache.
+    expect(getModelCapabilities('openrouter', 'mistralai/codestral-2508')).toMatchObject({
+      vision: false,
+    });
   });
 
   it('resolves the Push capability profile for direct neutral providers', () => {

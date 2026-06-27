@@ -386,7 +386,10 @@ function resolveFromDeclaredMetadata(meta: DeclaredModelMetadata): ResolvedModel
   return {
     reasoning: meta.reasoning,
     toolCall: meta.toolCall,
-    vision: meta.inputModalities.includes('image') || meta.attachment,
+    // Vision = image input only. Declared `attachment` also covers PDF/file input
+    // (it defaults to image||pdf), so a PDF-only model (TEXT_PDF) must not be
+    // marked image-capable — matching resolveFromOpenRouterMetadata above.
+    vision: meta.inputModalities.includes('image'),
     imageGen: meta.outputModalities.includes('image'),
     structuredOutput: meta.structuredOutput,
     contextLimit: meta.contextLimit,

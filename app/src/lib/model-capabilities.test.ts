@@ -34,6 +34,14 @@ describe('getModelCapabilities', () => {
     expect(deepseek.jsonMode).toBe('supported');
   });
 
+  it('does not mark PDF-only declared models as vision-capable', () => {
+    // codestral-2508 accepts text + PDF but no image input; PDF/file attachment
+    // support must not be reported as image vision.
+    expect(getModelCapabilities('openrouter', 'mistralai/codestral-2508').visionInput).toBe(
+      'unsupported',
+    );
+  });
+
   it('treats demo as unsupported for image input', () => {
     expect(getVisionCapabilityNotice('demo', 'demo').support).toBe('unsupported');
   });

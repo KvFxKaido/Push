@@ -146,7 +146,9 @@ function boolSupport(value: boolean | undefined): ModelCapabilitySupport {
 
 function declaredCapabilities(meta: DeclaredModelMetadata): ModelCapabilities {
   return {
-    visionInput: boolSupport(meta.inputModalities.includes('image') || meta.attachment),
+    // Vision = image input only; declared `attachment` also covers PDF/file
+    // input, so PDF-only models must not be reported as image-capable.
+    visionInput: boolSupport(meta.inputModalities.includes('image')),
     imageGeneration: boolSupport(meta.outputModalities.includes('image')),
     toolCalls: boolSupport(meta.toolCall),
     jsonMode: boolSupport(meta.structuredOutput),

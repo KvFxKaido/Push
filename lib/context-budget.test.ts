@@ -120,6 +120,15 @@ describe('getContextBudget (shared)', () => {
     expect(getContextBudget('zen', 'big-pickle')).toEqual(budgetFromWindow(200_000));
   });
 
+  it('keeps Cloudflare gateway-capped models on their cap-aware name fallback', () => {
+    // `@cf/zai-org/glm-5.2` is served by Workers AI at 256K, but declared
+    // `glm-5.2` is the native 1M. Cross-provider declared matches must not
+    // override the cap, or long Workers AI chats overrun the served window.
+    expect(getContextBudget('cloudflare', '@cf/zai-org/glm-5.2')).toEqual(
+      budgetFromWindow(262_144),
+    );
+  });
+
   it('falls back to the default budget when the name matches nothing', () => {
     const budget = getContextBudget(undefined, 'totally-unknown-model');
     expect(budget.maxTokens).toBe(100_000);

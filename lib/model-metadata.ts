@@ -301,6 +301,15 @@ export function lookupDeclaredModelMetadata(
     }
   }
 
+  // Cloudflare Workers AI re-serves third-party models under `@cf/...` ids with
+  // gateway-specific *capped* windows (e.g. `@cf/zai-org/glm-5.2` and the Kimi
+  // K2.x family are served at 256K, not their native 1M). The cross-provider
+  // sweep below leaf-strips `@cf/zai-org/glm-5.2` → `glm-5.2` and would borrow
+  // another provider's native-window metadata, overrunning the served window —
+  // so Cloudflare keeps its cap-aware name fallback in context-budget.ts instead
+  // of borrowing cross-provider declared metadata.
+  if (provider === 'cloudflare') return null;
+
   for (const metadata of Object.values(PROVIDER_MODEL_METADATA)) {
     if (metadata === providerMetadata) continue;
     for (const candidate of candidates) {
