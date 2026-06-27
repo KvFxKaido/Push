@@ -167,31 +167,17 @@ export interface LlmMessage {
 // Providers
 // ---------------------------------------------------------------------------
 
-export type AIProviderType =
-  | 'ollama'
-  | 'openrouter'
-  | 'cloudflare'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'kilocode'
-  | 'fireworks'
-  | 'openadapter'
-  | 'sakana'
-  | 'bedrock'
-  | 'vertex'
-  | 'deepseek'
-  | 'anthropic'
-  | 'openai'
-  | 'google'
-  | 'demo';
-
-/** Every member of `AIProviderType`, for runtime validation and exhaustive
- * map construction (the type alone erases at runtime). `satisfies` pins
- * membership (no stray entries); the `_AllProvidersCovered` assertion below
- * pins exhaustiveness (no missing entries) — adding a provider to the union
- * without listing it here is a compile error, not a silent omission. */
+/**
+ * The canonical provider-id vocabulary — the single source `AIProviderType`
+ * derives from. Add an id here and the union (plus every `Record<AIProviderType,
+ * …>` keyed off it) updates with it; the compiler then flags each site that
+ * still needs a value for the new provider. Doubles as the runtime list for
+ * validation and exhaustive-map construction (the type alone erases at runtime).
+ *
+ * Other provider unions derive from this too: `ActiveProvider` aliases
+ * `AIProviderType` and `PreferredProvider` is `Exclude<AIProviderType, 'demo'>`
+ * — so the id set lives in exactly one place.
+ */
 export const ALL_PROVIDERS = [
   'ollama',
   'openrouter',
@@ -211,16 +197,9 @@ export const ALL_PROVIDERS = [
   'openai',
   'google',
   'demo',
-] as const satisfies readonly AIProviderType[];
+] as const;
 
-// Compile-time exhaustiveness: `Exclude<...>` is `never` only when every
-// union member appears in ALL_PROVIDERS; a missing member fails the
-// `extends never` constraint with its name in the error. Exported solely so
-// noUnusedLocals doesn't reject the compile-time-only assertion.
-type AssertNever<T extends never> = T;
-export type _AllProvidersCovered = AssertNever<
-  Exclude<AIProviderType, (typeof ALL_PROVIDERS)[number]>
->;
+export type AIProviderType = (typeof ALL_PROVIDERS)[number];
 
 export function isKnownProvider(value: unknown): value is AIProviderType {
   return typeof value === 'string' && (ALL_PROVIDERS as readonly string[]).includes(value);

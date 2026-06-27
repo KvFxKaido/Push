@@ -37,26 +37,12 @@ import {
 } from './providers';
 import { normalizeExperimentalBaseUrl } from './experimental-providers';
 import { normalizeVertexRegion } from './vertex-provider';
+import type { AIProviderType } from '@/types';
 
-export type ActiveProvider =
-  | 'ollama'
-  | 'openrouter'
-  | 'cloudflare'
-  | 'zen'
-  | 'nvidia'
-  | 'blackbox'
-  | 'azure'
-  | 'kilocode'
-  | 'fireworks'
-  | 'openadapter'
-  | 'sakana'
-  | 'bedrock'
-  | 'vertex'
-  | 'deepseek'
-  | 'anthropic'
-  | 'openai'
-  | 'google'
-  | 'demo';
+// The set of providers that can be active is exactly `AIProviderType` (every
+// provider id, including `demo`). Aliased rather than re-listed so the id
+// vocabulary stays single-sourced in `ALL_PROVIDERS` (provider-contract.ts).
+export type ActiveProvider = AIProviderType;
 
 const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   ollama: () => Boolean(getOllamaKey()),
