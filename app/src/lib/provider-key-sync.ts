@@ -14,20 +14,17 @@
  * of "engine-capable" can't drift ahead of what the server actually holds.
  */
 
-import type { AIProviderType } from '@push/lib/provider-contract';
-import { isKnownProvider } from '@push/lib/provider-contract';
+import { providerForApiKeyStorageKey, type RealProviderId } from '@push/lib/provider-definition';
 import { invalidateEngineCapabilities } from './provider-engine-capability';
 
 /**
- * Storage keys follow `<provider>_api_key` for every provider the Worker
- * proxies (verified against the useApiKeyConfig call sites). Returns null
- * for non-provider keys (e.g. `tavily_api_key` — the Worker's Tavily proxy
- * is deliberately client-key-only) so callers can no-op.
+ * Storage keys come from the provider registry for every provider the Worker
+ * proxies with a user-entered API key. Returns null for non-provider keys
+ * (e.g. `tavily_api_key` — the Worker's Tavily proxy is deliberately
+ * client-key-only) so callers can no-op.
  */
-export function providerForStorageKey(storageKey: string): AIProviderType | null {
-  if (!storageKey.endsWith('_api_key')) return null;
-  const candidate = storageKey.slice(0, -'_api_key'.length);
-  return isKnownProvider(candidate) ? candidate : null;
+export function providerForStorageKey(storageKey: string): RealProviderId | null {
+  return providerForApiKeyStorageKey(storageKey);
 }
 
 function logSyncFailure(op: 'put' | 'delete', provider: string, detail: string): void {
@@ -55,7 +52,7 @@ function enqueue<T>(op: () => Promise<T>): Promise<T> {
  * promise is intentionally awaitable (callers that want UI feedback can
  * await it), but the default call sites fire-and-log.
  */
-export function syncProviderKeyToServer(provider: AIProviderType, key: string): Promise<boolean> {
+export function syncProviderKeyToServer(provider: RealProviderId, key: string): Promise<boolean> {
   return enqueue(async () => {
     try {
       const res = await fetch('/api/settings/provider-keys', {
@@ -77,7 +74,7 @@ export function syncProviderKeyToServer(provider: AIProviderType, key: string): 
 }
 
 /** Remove the server-stored key when the local one is cleared. */
-export function deleteProviderKeyFromServer(provider: AIProviderType): Promise<boolean> {
+export function deleteProviderKeyFromServer(provider: RealProviderId): Promise<boolean> {
   return enqueue(async () => {
     try {
       const res = await fetch('/api/settings/provider-keys', {

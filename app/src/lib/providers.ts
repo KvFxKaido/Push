@@ -8,6 +8,8 @@ import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-pr
 import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
 import {
   PROVIDER_DEFINITIONS,
+  getProviderModelStorageKey,
+  isRealProviderId,
   type ProviderDefinition,
   type RealProviderId,
 } from '@push/lib/provider-definition';
@@ -321,157 +323,26 @@ function makeRoleModels(
   }));
 }
 
-export const PROVIDERS: AIProviderConfig[] = [
-  {
-    type: 'ollama',
-    name: 'Ollama',
-    description: 'Ollama — run open models locally or on cloud GPUs (OpenAI-compatible)',
-    envKey: 'VITE_OLLAMA_API_KEY',
-    envUrl: 'http://localhost:11434',
-    models: makeRoleModels(OLLAMA_DEFAULT_MODEL, 'Ollama', 'ollama', 131_072),
-  },
-  {
-    type: 'openrouter',
-    name: 'OpenRouter',
-    description:
-      'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini, with optional BYOK routing via your OpenRouter account',
-    envKey: 'VITE_OPENROUTER_API_KEY',
-    envUrl: 'https://openrouter.ai',
-    models: makeRoleModels(OPENROUTER_DEFAULT_MODEL, 'OpenRouter', 'openrouter', 200_000),
-  },
-  {
-    type: 'cloudflare',
-    name: 'Cloudflare Workers AI',
-    description:
-      'Cloudflare Workers AI via native Worker binding (`env.AI`) with no browser API key',
-    envKey: 'CLOUDFLARE_WORKERS_AI_BINDING',
-    envUrl: 'Worker binding',
-    models: makeRoleModels(
-      CLOUDFLARE_DEFAULT_MODEL,
-      'Cloudflare Workers AI',
-      'cloudflare',
-      131_072,
-    ),
-  },
-  {
-    type: 'zen',
-    name: 'OpenCode Zen',
-    description: 'OpenCode Zen routing API (OpenAI-compatible)',
-    envKey: 'VITE_ZEN_API_KEY',
-    envUrl: 'https://opencode.ai/zen',
-    models: makeRoleModels(ZEN_DEFAULT_MODEL, 'OpenCode Zen', 'zen', 200_000),
-  },
-  {
-    type: 'nvidia',
-    name: 'Nvidia NIM',
-    description: 'Nvidia NIM inference microservices (OpenAI-compatible)',
-    envKey: 'VITE_NVIDIA_API_KEY',
-    envUrl: 'https://build.nvidia.com',
-    models: makeRoleModels(NVIDIA_DEFAULT_MODEL, 'Nvidia NIM', 'nvidia', 131_072),
-  },
-  {
-    type: 'blackbox',
-    name: 'Blackbox AI',
-    description: 'Blackbox AI — unified inference API with 300+ models (OpenAI-compatible)',
-    envKey: 'VITE_BLACKBOX_API_KEY',
-    envUrl: 'https://www.blackbox.ai',
-    models: makeRoleModels(BLACKBOX_DEFAULT_MODEL, 'Blackbox AI', 'blackbox', 200_000),
-  },
-  {
-    type: 'kilocode',
-    name: 'Kilo Code',
-    description: 'Kilo Code — Unified AI gateway with hundreds of models (OpenAI-compatible)',
-    envKey: 'VITE_KILOCODE_API_KEY',
-    envUrl: 'https://api.kilo.ai/api/gateway',
-    models: makeRoleModels(KILOCODE_DEFAULT_MODEL, 'Kilo Code', 'kilocode', 128_000),
-  },
-  {
-    type: 'fireworks',
-    name: 'Fireworks AI',
-    description: 'Fireworks AI — OpenAI-compatible serverless inference API',
-    envKey: 'VITE_FIREWORKS_API_KEY',
-    envUrl: 'https://api.fireworks.ai/inference/v1',
-    models: makeRoleModels(FIREWORKS_DEFAULT_MODEL, 'Fireworks AI', 'fireworks', 128_000),
-  },
-  {
-    type: 'openadapter',
-    name: 'OpenAdapter',
-    description: 'OpenAdapter — 69+ open-source models through one OpenAI-compatible gateway',
-    envKey: 'VITE_OPENADAPTER_API_KEY',
-    envUrl: 'https://openadapter.dev',
-    models: makeRoleModels(OPENADAPTER_DEFAULT_MODEL, 'OpenAdapter', 'openadapter', 131_072),
-  },
-  {
-    type: 'deepseek',
-    name: 'DeepSeek',
-    description:
-      'DeepSeek direct — OpenAI-compatible api.deepseek.com with V4 reasoning models and thinking mode',
-    envKey: 'VITE_DEEPSEEK_API_KEY',
-    envUrl: 'https://api.deepseek.com',
-    models: makeRoleModels(DEEPSEEK_DEFAULT_MODEL, 'DeepSeek', 'deepseek', 1_000_000),
-  },
-  {
-    type: 'sakana',
-    name: 'Sakana AI',
-    description:
-      'Sakana AI — Fugu multi-agent orchestration over frontier models (OpenAI-compatible)',
-    envKey: 'VITE_SAKANA_API_KEY',
-    envUrl: 'https://api.sakana.ai/v1',
-    models: makeRoleModels(SAKANA_DEFAULT_MODEL, 'Sakana AI', 'sakana', 1_000_000),
-  },
-  {
-    type: 'azure',
-    name: 'Azure OpenAI',
-    description:
-      'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
-    envKey: 'VITE_AZURE_OPENAI_API_KEY',
-    envUrl: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
-    models: makeRoleModels(AZURE_DEFAULT_MODEL, 'Azure OpenAI', 'azure', 200_000),
-  },
-  {
-    type: 'bedrock',
-    name: 'AWS Bedrock',
-    description: 'Experimental private connector for direct Bedrock OpenAI-compatible endpoints',
-    envKey: 'VITE_BEDROCK_API_KEY',
-    envUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
-    models: makeRoleModels(BEDROCK_DEFAULT_MODEL, 'AWS Bedrock', 'bedrock', 200_000),
-  },
-  {
-    type: 'vertex',
-    name: 'Google Vertex',
-    description:
-      'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
-    envKey: 'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
-    envUrl: 'global',
-    models: makeRoleModels(VERTEX_DEFAULT_MODEL, 'Google Vertex', 'vertex', 1_000_000),
-  },
-  {
-    type: 'anthropic',
-    name: 'Anthropic',
-    description:
-      'Anthropic Claude direct — native /v1/messages API with prompt caching and extended thinking',
-    envKey: 'VITE_ANTHROPIC_API_KEY',
-    envUrl: 'https://api.anthropic.com',
-    models: makeRoleModels(ANTHROPIC_DEFAULT_MODEL, 'Anthropic', 'anthropic', 200_000),
-  },
-  {
-    type: 'openai',
-    name: 'OpenAI',
-    description: 'OpenAI direct — GPT models with automatic prefix-based prompt caching',
-    envKey: 'VITE_OPENAI_API_KEY',
-    envUrl: 'https://api.openai.com',
-    models: makeRoleModels(OPENAI_DEFAULT_MODEL, 'OpenAI', 'openai', 200_000),
-  },
-  {
-    type: 'google',
-    name: 'Google Gemini',
-    description:
-      'Google Gemini direct — native generativelanguage.googleapis.com API with a plain API key (distinct from Vertex)',
-    envKey: 'VITE_GOOGLE_API_KEY',
-    envUrl: 'https://generativelanguage.googleapis.com',
-    models: makeRoleModels(GOOGLE_DEFAULT_MODEL, 'Google Gemini', 'google', 1_000_000),
-  },
-];
+function requireDefaultModel(def: ProviderDefinition): string {
+  if (!def.defaultModel) {
+    throw new Error(`Provider "${def.id}" is missing a default model`);
+  }
+  return def.defaultModel;
+}
+
+export const PROVIDERS: AIProviderConfig[] = PROVIDER_DEFINITIONS.map((def) => ({
+  type: def.id,
+  name: def.displayName,
+  description: def.settings.description,
+  envKey: def.settings.envKey,
+  envUrl: def.settings.envUrl,
+  models: makeRoleModels(
+    requireDefaultModel(def),
+    def.displayName,
+    def.id,
+    def.settings.modelContextWindow,
+  ),
+}));
 
 export function getProvider(type: AIProviderType): AIProviderConfig | undefined {
   return PROVIDERS.find((p) => p.type === type);
@@ -516,15 +387,29 @@ function createModelNameStorage(
   };
 }
 
-const ollamaModel = createModelNameStorage('ollama_model', OLLAMA_DEFAULT_MODEL);
+function requireModelStorageKey(provider: RealProviderId): string {
+  const key = getProviderModelStorageKey(provider);
+  if (!key) {
+    throw new Error(`Provider "${provider}" is missing a model storage key`);
+  }
+  return key;
+}
+
+const ollamaModel = createModelNameStorage(requireModelStorageKey('ollama'), OLLAMA_DEFAULT_MODEL);
 export const getOllamaModelName = ollamaModel.get;
 export const setOllamaModelName = ollamaModel.set;
 
-const openRouterModel = createModelNameStorage('openrouter_model', OPENROUTER_DEFAULT_MODEL);
+const openRouterModel = createModelNameStorage(
+  requireModelStorageKey('openrouter'),
+  OPENROUTER_DEFAULT_MODEL,
+);
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
 
-const cloudflareModel = createModelNameStorage('cloudflare_model', CLOUDFLARE_DEFAULT_MODEL);
+const cloudflareModel = createModelNameStorage(
+  requireModelStorageKey('cloudflare'),
+  CLOUDFLARE_DEFAULT_MODEL,
+);
 export const getCloudflareModelName = cloudflareModel.get;
 export const setCloudflareModelName = cloudflareModel.set;
 
@@ -536,7 +421,7 @@ export function setCloudflareWorkerConfigured(configured: boolean): void {
   safeStorageSet(CLOUDFLARE_WORKER_CONFIGURED_KEY, configured ? 'true' : 'false');
 }
 
-const zenModel = createModelNameStorage('zen_model', ZEN_DEFAULT_MODEL);
+const zenModel = createModelNameStorage(requireModelStorageKey('zen'), ZEN_DEFAULT_MODEL);
 export const getZenModelName = zenModel.get;
 export const setZenModelName = zenModel.set;
 
@@ -549,29 +434,38 @@ export function setZenGoMode(enabled: boolean): void {
   else safeStorageRemove(ZEN_GO_MODE_KEY);
 }
 
-const nvidiaModel = createModelNameStorage('nvidia_model', NVIDIA_DEFAULT_MODEL);
+const nvidiaModel = createModelNameStorage(requireModelStorageKey('nvidia'), NVIDIA_DEFAULT_MODEL);
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;
 
-const blackboxModel = createModelNameStorage('blackbox_model', BLACKBOX_DEFAULT_MODEL);
+const blackboxModel = createModelNameStorage(
+  requireModelStorageKey('blackbox'),
+  BLACKBOX_DEFAULT_MODEL,
+);
 export const getBlackboxModelName = blackboxModel.get;
 export const setBlackboxModelName = blackboxModel.set;
 
-const azureModel = createModelNameStorage('azure_model', AZURE_DEFAULT_MODEL);
+const azureModel = createModelNameStorage(requireModelStorageKey('azure'), AZURE_DEFAULT_MODEL);
 export const setAzureModelName = azureModel.set;
 
-const bedrockModel = createModelNameStorage('bedrock_model', BEDROCK_DEFAULT_MODEL);
+const bedrockModel = createModelNameStorage(
+  requireModelStorageKey('bedrock'),
+  BEDROCK_DEFAULT_MODEL,
+);
 export const setBedrockModelName = bedrockModel.set;
 
-const vertexModel = createModelNameStorage('vertex_model', VERTEX_DEFAULT_MODEL);
+const vertexModel = createModelNameStorage(requireModelStorageKey('vertex'), VERTEX_DEFAULT_MODEL);
 export const setVertexModelName = vertexModel.set;
 
-const openAdapterModel = createModelNameStorage('openadapter_model', OPENADAPTER_DEFAULT_MODEL);
+const openAdapterModel = createModelNameStorage(
+  requireModelStorageKey('openadapter'),
+  OPENADAPTER_DEFAULT_MODEL,
+);
 export const getOpenAdapterModelName = openAdapterModel.get;
 export const setOpenAdapterModelName = openAdapterModel.set;
 
 const kiloCodeModel = createModelNameStorage(
-  'kilocode_model',
+  requireModelStorageKey('kilocode'),
   KILOCODE_DEFAULT_MODEL,
   undefined,
   normalizeKilocodeModelName,
@@ -580,7 +474,7 @@ export const getKiloCodeModelName = kiloCodeModel.get;
 export const setKiloCodeModelName = kiloCodeModel.set;
 
 const fireworksModel = createModelNameStorage(
-  'fireworks_model',
+  requireModelStorageKey('fireworks'),
   FIREWORKS_DEFAULT_MODEL,
   undefined,
   normalizeFireworksModelName,
@@ -589,7 +483,7 @@ export const getFireworksModelName = fireworksModel.get;
 export const setFireworksModelName = fireworksModel.set;
 
 const sakanaModel = createModelNameStorage(
-  'sakana_model',
+  requireModelStorageKey('sakana'),
   SAKANA_DEFAULT_MODEL,
   undefined,
   normalizeSakanaModelName,
@@ -597,19 +491,25 @@ const sakanaModel = createModelNameStorage(
 export const getSakanaModelName = sakanaModel.get;
 export const setSakanaModelName = sakanaModel.set;
 
-const anthropicModel = createModelNameStorage('anthropic_model', ANTHROPIC_DEFAULT_MODEL);
+const anthropicModel = createModelNameStorage(
+  requireModelStorageKey('anthropic'),
+  ANTHROPIC_DEFAULT_MODEL,
+);
 export const getAnthropicModelName = anthropicModel.get;
 export const setAnthropicModelName = anthropicModel.set;
 
-const openaiModel = createModelNameStorage('openai_model', OPENAI_DEFAULT_MODEL);
+const openaiModel = createModelNameStorage(requireModelStorageKey('openai'), OPENAI_DEFAULT_MODEL);
 export const getOpenAIModelName = openaiModel.get;
 export const setOpenAIModelName = openaiModel.set;
 
-const googleModel = createModelNameStorage('google_model', GOOGLE_DEFAULT_MODEL);
+const googleModel = createModelNameStorage(requireModelStorageKey('google'), GOOGLE_DEFAULT_MODEL);
 export const getGoogleModelName = googleModel.get;
 export const setGoogleModelName = googleModel.set;
 
-const deepseekModel = createModelNameStorage('deepseek_model', DEEPSEEK_DEFAULT_MODEL);
+const deepseekModel = createModelNameStorage(
+  requireModelStorageKey('deepseek'),
+  DEEPSEEK_DEFAULT_MODEL,
+);
 export const getDeepSeekModelName = deepseekModel.get;
 export const setDeepSeekModelName = deepseekModel.set;
 
@@ -666,29 +566,13 @@ const PREFERRED_PROVIDER_KEY = 'preferred_provider';
 // vocabulary stays single-sourced in `ALL_PROVIDERS` (provider-contract.ts).
 export type PreferredProvider = Exclude<AIProviderType, 'demo'>;
 
+function readStoredProvider(storageKey: string): PreferredProvider | null {
+  const stored = safeStorageGet(storageKey);
+  return stored && isRealProviderId(stored) ? stored : null;
+}
+
 export function getPreferredProvider(): PreferredProvider | null {
-  const stored = safeStorageGet(PREFERRED_PROVIDER_KEY);
-  if (
-    stored === 'ollama' ||
-    stored === 'openrouter' ||
-    stored === 'cloudflare' ||
-    stored === 'zen' ||
-    stored === 'nvidia' ||
-    stored === 'blackbox' ||
-    stored === 'azure' ||
-    stored === 'bedrock' ||
-    stored === 'vertex' ||
-    stored === 'kilocode' ||
-    stored === 'fireworks' ||
-    stored === 'openadapter' ||
-    stored === 'deepseek' ||
-    stored === 'sakana' ||
-    stored === 'anthropic' ||
-    stored === 'openai' ||
-    stored === 'google'
-  )
-    return stored;
-  return null;
+  return readStoredProvider(PREFERRED_PROVIDER_KEY);
 }
 
 export function setPreferredProvider(provider: PreferredProvider): void {
@@ -707,28 +591,7 @@ export function clearPreferredProvider(): void {
 const LAST_USED_PROVIDER_KEY = 'last_used_provider';
 
 export function getLastUsedProvider(): PreferredProvider | null {
-  const stored = safeStorageGet(LAST_USED_PROVIDER_KEY);
-  if (
-    stored === 'ollama' ||
-    stored === 'openrouter' ||
-    stored === 'cloudflare' ||
-    stored === 'zen' ||
-    stored === 'nvidia' ||
-    stored === 'blackbox' ||
-    stored === 'azure' ||
-    stored === 'bedrock' ||
-    stored === 'vertex' ||
-    stored === 'kilocode' ||
-    stored === 'fireworks' ||
-    stored === 'openadapter' ||
-    stored === 'deepseek' ||
-    stored === 'sakana' ||
-    stored === 'anthropic' ||
-    stored === 'openai' ||
-    stored === 'google'
-  )
-    return stored;
-  return null;
+  return readStoredProvider(LAST_USED_PROVIDER_KEY);
 }
 
 export function setLastUsedProvider(provider: PreferredProvider): void {

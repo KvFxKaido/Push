@@ -44,6 +44,7 @@ const {
   useApiKeyWithModelConfig,
   createKeyOnlyProviderConfig,
   createModelProviderConfig,
+  createRegistryModelProviderConfig,
 } = await import('./useApiKeyConfig');
 
 beforeEach(() => {
@@ -230,5 +231,23 @@ describe('createModelProviderConfig', () => {
     const hookResult = config.useConfig();
     expect(hookResult.key).toBe('my-key');
     expect(hookResult.model).toBe('my-model');
+  });
+});
+
+describe('createRegistryModelProviderConfig', () => {
+  it('uses registry-owned API key and model storage keys', () => {
+    storage.get.mockImplementation((k) => {
+      if (k === 'deepseek_api_key') return 'deepseek-key';
+      if (k === 'deepseek_model') return 'deepseek-model';
+      return null;
+    });
+    const config = createRegistryModelProviderConfig('deepseek', {
+      envVar: undefined,
+      defaultModel: 'default',
+    });
+    expect(config.getKey()).toBe('deepseek-key');
+    const hookResult = config.useConfig();
+    expect(hookResult.key).toBe('deepseek-key');
+    expect(hookResult.model).toBe('deepseek-model');
   });
 });

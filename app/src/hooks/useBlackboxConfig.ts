@@ -1,12 +1,7 @@
 import { BLACKBOX_DEFAULT_MODEL } from '@/lib/providers';
-import { createModelProviderConfig } from './useApiKeyConfig';
+import { createRegistryModelProviderConfig } from './useApiKeyConfig';
 
-const KEY_STORAGE = 'blackbox_api_key';
-const MODEL_STORAGE = 'blackbox_model';
-
-const providerConfig = createModelProviderConfig({
-  storageKey: KEY_STORAGE,
-  modelStorageKey: MODEL_STORAGE,
+const providerConfig = createRegistryModelProviderConfig('blackbox', {
   envVar: import.meta.env.VITE_BLACKBOX_API_KEY,
   defaultModel: BLACKBOX_DEFAULT_MODEL,
 });

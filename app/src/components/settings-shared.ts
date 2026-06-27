@@ -3,27 +3,16 @@ import { AICoreIcon, WorkspaceTuneIcon, YouBadgeIcon } from '@/components/icons/
 import { formatModelDisplayName, type PreferredProvider } from '@/lib/providers';
 import type { ExperimentalProviderType } from '@/lib/experimental-providers';
 import type { AIProviderType } from '@/types';
+import {
+  REAL_PROVIDERS,
+  getBuiltInSettingsProviderDefinitions,
+  getProviderDisplayName,
+} from '@push/lib/provider-definition';
 
-export const PROVIDER_LABELS: Record<AIProviderType, string> = {
-  ollama: 'Ollama',
-  openrouter: 'OpenRouter',
-  cloudflare: 'Cloudflare Workers AI',
-  zen: 'OpenCode Zen',
-  nvidia: 'Nvidia NIM',
-  blackbox: 'Blackbox AI',
-  azure: 'Azure OpenAI',
-  bedrock: 'AWS Bedrock',
-  vertex: 'Google Vertex',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  google: 'Google Gemini',
-  demo: 'Demo',
-  kilocode: 'Kilo Code',
-  fireworks: 'Fireworks AI',
-  sakana: 'Sakana AI',
-  openadapter: 'OpenAdapter',
-  deepseek: 'DeepSeek',
-};
+export const PROVIDER_LABELS: Record<AIProviderType, string> = Object.fromEntries([
+  ...REAL_PROVIDERS.map((providerId) => [providerId, getProviderDisplayName(providerId)]),
+  ['demo', 'Demo'],
+]) as Record<AIProviderType, string>;
 
 export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
@@ -52,21 +41,10 @@ export const SETTINGS_SECTION_ICONS: Record<'you' | 'workspace' | 'ai', Settings
   ai: AICoreIcon,
 };
 
-export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] = [
-  'ollama',
-  'openrouter',
-  'anthropic',
-  'openai',
-  'google',
-  'deepseek',
-  'nvidia',
-  'zen',
-  'blackbox',
-  'kilocode',
-  'fireworks',
-  'sakana',
-  'openadapter',
-];
+const BUILT_IN_SETTINGS_PROVIDER_DEFINITIONS = getBuiltInSettingsProviderDefinitions();
+
+export const BUILT_IN_SETTINGS_PROVIDER_ORDER: BuiltInSettingsProviderId[] =
+  BUILT_IN_SETTINGS_PROVIDER_DEFINITIONS.map((def) => def.id as BuiltInSettingsProviderId);
 
 export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
   BuiltInSettingsProviderId,
@@ -76,86 +54,31 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     hint: string;
     labelTransform?: (model: string) => string;
   }
-> = {
-  ollama: {
-    placeholder: 'Ollama API key',
-    saveLabel: 'Save Ollama key',
-    hint: 'Ollama API key (local or cloud).',
-    labelTransform: (model) => formatModelDisplayName('ollama', model),
-  },
-  openrouter: {
-    placeholder: 'OpenRouter API key',
-    saveLabel: 'Save OpenRouter key',
-    hint: 'OpenRouter API key from openrouter.ai. BYOK works too: keep provider-native keys in your OpenRouter account, then use your OpenRouter key here.',
-    labelTransform: (model) => formatModelDisplayName('openrouter', model),
-  },
-  nvidia: {
-    placeholder: 'Nvidia API key',
-    saveLabel: 'Save Nvidia key',
-    hint: 'Nvidia NIM API key (OpenAI-compatible endpoint).',
-    labelTransform: (model) => formatModelDisplayName('nvidia', model),
-  },
-  zen: {
-    placeholder: 'Zen API key',
-    saveLabel: 'Save OpenCode Zen key',
-    hint: 'OpenCode Zen API key for https://opencode.ai/zen.',
-    labelTransform: (model) => formatModelDisplayName('zen', model),
-  },
-  blackbox: {
-    placeholder: 'Blackbox API key',
-    saveLabel: 'Save Blackbox key',
-    hint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
-    labelTransform: (model) => formatModelDisplayName('blackbox', model),
-  },
-  kilocode: {
-    placeholder: 'Kilo Code API key',
-    saveLabel: 'Save Kilo Code key',
-    hint: 'Kilo Code API key from kilo.ai. One key for hundreds of models.',
-    labelTransform: (model) => formatModelDisplayName('kilocode', model),
-  },
-  fireworks: {
-    placeholder: 'Fireworks AI API key',
-    saveLabel: 'Save Fireworks AI key',
-    hint: 'Fireworks AI API key from fireworks.ai.',
-    labelTransform: (model) => formatModelDisplayName('fireworks', model),
-  },
-  sakana: {
-    placeholder: 'Sakana AI API key',
-    saveLabel: 'Save Sakana AI key',
-    hint: 'Sakana AI API key from console.sakana.ai. Fugu multi-agent orchestration.',
-    labelTransform: (model) => formatModelDisplayName('sakana', model),
-  },
-  openadapter: {
-    placeholder: 'OpenAdapter API key',
-    saveLabel: 'Save OpenAdapter key',
-    hint: 'OpenAdapter API key from openadapter.dev. 69+ open-source models through one gateway.',
-    labelTransform: (model) => formatModelDisplayName('openadapter', model),
-  },
-  anthropic: {
-    placeholder: 'Anthropic API key (sk-ant-…)',
-    saveLabel: 'Save Anthropic key',
-    hint: 'Anthropic API key from console.anthropic.com. Direct /v1/messages with prompt caching and extended thinking.',
-    labelTransform: (model) => formatModelDisplayName('anthropic', model),
-  },
-  openai: {
-    placeholder: 'OpenAI API key (sk-…)',
-    saveLabel: 'Save OpenAI key',
-    hint: 'OpenAI API key from platform.openai.com. Direct /v1/responses with automatic prefix-based prompt caching.',
-    labelTransform: (model) => formatModelDisplayName('openai', model),
-  },
-  google: {
-    placeholder: 'Google Gemini API key',
-    saveLabel: 'Save Google key',
-    hint: 'Google Gemini API key from aistudio.google.com. Direct generativelanguage.googleapis.com — distinct from Vertex.',
-    labelTransform: (model) => formatModelDisplayName('google', model),
-  },
-  deepseek: {
-    placeholder: 'DeepSeek API key',
-    saveLabel: 'Save DeepSeek key',
-    hint: 'DeepSeek API key from platform.deepseek.com. Direct api.deepseek.com — OpenAI-compatible with V4 reasoning models.',
-    labelTransform: (model) => formatModelDisplayName('deepseek', model),
-  },
-};
+> = Object.fromEntries(
+  BUILT_IN_SETTINGS_PROVIDER_DEFINITIONS.map((def) => {
+    const { keyPlaceholder, keySaveLabel, keyHint } = def.settings;
+    if (!keyPlaceholder || !keySaveLabel || !keyHint) {
+      throw new Error(`Provider "${def.id}" is missing built-in settings key copy`);
+    }
+    return [
+      def.id,
+      {
+        placeholder: keyPlaceholder,
+        saveLabel: keySaveLabel,
+        hint: keyHint,
+        labelTransform: (model: string) => formatModelDisplayName(def.id, model),
+      },
+    ];
+  }),
+) as Record<
+  BuiltInSettingsProviderId,
+  {
+    placeholder: string;
+    saveLabel: string;
+    hint: string;
+    labelTransform?: (model: string) => string;
+  }
+>;
 
 export const EXPERIMENTAL_SETTINGS_PROVIDER_ORDER: ExperimentalSettingsProviderId[] = [
   'azure',

@@ -9,6 +9,10 @@ import {
   type ExperimentalProviderType,
 } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import {
+  getProviderApiKeyStorageKey,
+  getProviderModelStorageKey,
+} from '@push/lib/provider-definition';
 
 interface ExperimentalProviderEnv {
   key?: string;
@@ -52,9 +56,9 @@ function createExperimentalProviderConfig(
   env: ExperimentalProviderEnv,
 ): ExperimentalProviderConfigApi {
   const descriptor = getExperimentalProviderDescriptor(provider);
-  const keyStorageKey = `${provider}_api_key`;
+  const keyStorageKey = requireProviderApiKeyStorageKey(provider);
   const baseUrlStorageKey = `${provider}_base_url`;
-  const modelStorageKey = `${provider}_model`;
+  const modelStorageKey = requireProviderModelStorageKey(provider);
   const deploymentsStorageKey = `${provider}_deployments`;
   const activeDeploymentStorageKey = `${provider}_active_deployment`;
 
@@ -277,6 +281,22 @@ function createExperimentalProviderConfig(
       };
     },
   };
+}
+
+function requireProviderApiKeyStorageKey(provider: ExperimentalProviderType): string {
+  const key = getProviderApiKeyStorageKey(provider);
+  if (!key) {
+    throw new Error(`Provider "${provider}" is missing an API key storage key`);
+  }
+  return key;
+}
+
+function requireProviderModelStorageKey(provider: ExperimentalProviderType): string {
+  const key = getProviderModelStorageKey(provider);
+  if (!key) {
+    throw new Error(`Provider "${provider}" is missing a model storage key`);
+  }
+  return key;
 }
 
 const azureConfig = createExperimentalProviderConfig('azure', {

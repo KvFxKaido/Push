@@ -8,6 +8,7 @@ import {
   normalizeFireworksModelName,
   normalizeKilocodeModelName,
   PROVIDER_URLS,
+  PROVIDERS,
 } from './providers';
 
 const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: string }>> = {
@@ -54,6 +55,27 @@ describe('PROVIDER_URLS', () => {
 
   it('keeps demo unrouted', () => {
     expect(PROVIDER_URLS.demo).toEqual({ chat: '', models: '' });
+  });
+});
+
+describe('PROVIDERS', () => {
+  it('derives provider summaries from ProviderDefinition settings metadata', () => {
+    for (const def of PROVIDER_DEFINITIONS) {
+      const provider = PROVIDERS.find((entry) => entry.type === def.id);
+      expect(provider).toBeTruthy();
+      expect(provider).toMatchObject({
+        type: def.id,
+        name: def.displayName,
+        description: def.settings.description,
+        envKey: def.settings.envKey,
+        envUrl: def.settings.envUrl,
+      });
+      expect(provider?.models[0]).toMatchObject({
+        id: def.defaultModel,
+        provider: def.id,
+        context: def.settings.modelContextWindow,
+      });
+    }
   });
 });
 
