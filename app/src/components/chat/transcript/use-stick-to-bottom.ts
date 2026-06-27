@@ -1,6 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import type { ChatMessage } from '@/types';
-import { AUTO_SCROLL_THRESHOLD_PX, AT_BOTTOM_THRESHOLD_PX } from './constants';
+import {
+  AT_BOTTOM_THRESHOLD_PX,
+  AUTO_SCROLL_THRESHOLD_PX,
+  TURN_ANCHOR_TOP_GAP_PX,
+  turnSpacerHeight,
+} from './constants';
 
 function distanceFromBottom(el: HTMLElement): number {
   return el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -20,6 +25,13 @@ export interface StickToBottomController {
   isAtBottom: boolean;
   /** Imperatively scroll to the very bottom (past any footer). */
   scrollToBottom: (behavior?: ScrollBehavior) => void;
+  /**
+   * Height (px) of the bottom spacer the caller must render after its content so
+   * the anchored turn can reach the top of the viewport. Always 0 unless
+   * top-anchoring is active (a `contentRef` was passed) — the virtualized path
+   * leaves it 0 and ignores it.
+   */
+  bottomSpacerHeight: number;
 }
 
 /**
@@ -36,14 +48,39 @@ export interface StickToBottomController {
  * div, or Virtuoso's scroller — so the only difference is mount behavior:
  * `alignOnMount` bottom-aligns the virtualized list when it mounts fresh at the
  * threshold crossover, which the plain path deliberately does not do.
+ *
+ * Top-anchoring (shadcn points 4–5, 11) is opt-in via `contentRef` +
+ * `anchorMessageId`: when both are supplied (the plain path) the hook scrolls
+ * `anchorMessageId`'s element near the top of the viewport whenever it changes —
+ * on load (the last user message → "reopen where the reader left off") and on
+ * each new turn (the just-sent message → "start a new turn near the top") — and
+ * sizes `bottomSpacerHeight` so that turn can reach the top. The virtualized
+ * path omits both and keeps the pure stick-to-bottom behavior.
  */
 export function useStickToBottom(
   lastMessage: ChatMessage | null,
-  options: { alignOnMount?: boolean } = {},
+  options: {
+    alignOnMount?: boolean;
+    /** Message to anchor near the top when it changes (plain path: the last
+     *  user message). Requires `contentRef`; ignored without it. */
+    anchorMessageId?: string | null;
+    /** The inner content element (whose children carry `data-message-id`).
+     *  Presence switches on top-anchoring + the bottom spacer. */
+    contentRef?: RefObject<HTMLElement | null>;
+  } = {},
 ): StickToBottomController {
-  const { alignOnMount = false } = options;
+  const { alignOnMount = false, anchorMessageId = null, contentRef } = options;
   const elRef = useRef<HTMLElement | null>(null);
   const lastMessageIdRef = useRef<string | null>(null);
+  // Anchor target last applied — so the anchor effect fires only on a genuine
+  // change (new turn / chat load), not on every streaming token.
+  const anchorIdRef = useRef<string | null>(null);
+  // Suppresses the follow-resume in `syncBottomState` for the one programmatic
+  // scroll the anchor performs: a tiny fresh turn anchors to a position that is
+  // also "at the bottom", and without this guard that scroll's own trailing
+  // event would immediately re-arm follow and chase the answer off the top.
+  const ignoreScrollClearRef = useRef(false);
+  const [bottomSpacerHeight, setBottomSpacerHeight] = useState(0);
   // Whether the user was following (within the 150px grace band) when a scroller
   // element was last detached. Defaults true so a fresh mount aligns; carries
   // that intent across a scroller swap so we re-align a follower without yanking
@@ -66,8 +103,9 @@ export function useStickToBottom(
     const atBottom = distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX;
     // Reaching the bottom is the reader rejoining the live edge — resume
     // following. Only a real scroll reaches here, so a paused-at-bottom reader
-    // (e.g. selecting text) stays paused until they actually scroll.
-    if (atBottom) followPausedRef.current = false;
+    // (e.g. selecting text) stays paused until they actually scroll. The guard
+    // exempts the anchor's own programmatic scroll (see `ignoreScrollClearRef`).
+    if (atBottom && !ignoreScrollClearRef.current) followPausedRef.current = false;
     setIsAtBottom(atBottom);
   }, []);
 
@@ -99,6 +137,32 @@ export function useStickToBottom(
     const el = elRef.current;
     if (el) el.scrollTo({ top: el.scrollHeight, behavior });
   }, []);
+
+  // The DOM node for the current anchor target, looked up by `data-message-id`
+  // within the caller's content element. Null when anchoring is off, the id is
+  // absent, or the element isn't mounted yet.
+  const findAnchorEl = useCallback((): HTMLElement | null => {
+    const content = contentRef?.current;
+    if (!content || !anchorMessageId) return null;
+    const selector =
+      typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+        ? CSS.escape(anchorMessageId)
+        : anchorMessageId;
+    return content.querySelector<HTMLElement>(`[data-message-id="${selector}"]`);
+  }, [contentRef, anchorMessageId]);
+
+  // Spacer height needed for the anchor target to reach the top. `turnHeight` is
+  // the distance from the target's top to the bottom of the rendered content
+  // (the spacer is the content's sibling, so it never feeds back into this
+  // measurement). Scroll-independent: both rects shift together with scroll.
+  const measureSpacer = useCallback((): number => {
+    const el = elRef.current;
+    const content = contentRef?.current;
+    const target = findAnchorEl();
+    if (!el || !content || !target) return 0;
+    const turnHeight = content.getBoundingClientRect().bottom - target.getBoundingClientRect().top;
+    return turnSpacerHeight(el.clientHeight, turnHeight);
+  }, [contentRef, findAnchorEl]);
 
   // Public handle for the button (an event handler): optimistically marks
   // at-bottom so the button hides immediately, ahead of the scroll settling.
@@ -163,8 +227,11 @@ export function useStickToBottom(
     lastMessageIdRef.current = lastMessage?.id ?? null;
 
     if (isNewMessage && lastMessage.role === 'user') {
-      // The reader sent a turn — an unambiguous "follow again" signal that
-      // clears any prior pause and jumps to the new message.
+      // When top-anchoring is active, the dedicated anchor effect positions the
+      // new turn near the top and owns the follow state — don't also yank to the
+      // bottom. Without it (virtualized path), keep the original behavior: a new
+      // user turn is a "follow again" signal that jumps to the bottom.
+      if (contentRef) return;
       followPausedRef.current = false;
       scrollElementToBottom('smooth');
       return;
@@ -172,7 +239,7 @@ export function useStickToBottom(
     if (!followPausedRef.current && distanceFromBottom(el) < AUTO_SCROLL_THRESHOLD_PX) {
       scrollElementToBottom('smooth');
     }
-  }, [lastMessage, streamingContent, scrollElementToBottom]);
+  }, [lastMessage, streamingContent, scrollElementToBottom, contentRef]);
 
   // Follow the *animated* growth of a streaming message. The smooth-stream
   // reveal grows the DOM height across animation frames without changing
@@ -200,5 +267,57 @@ export function useStickToBottom(
     return () => cancelAnimationFrame(raf);
   }, [isStreamingTail]);
 
-  return { registerScroller, isAtBottom, scrollToBottom };
+  // Keep the bottom spacer sized while anchoring is active. A ResizeObserver on
+  // the content (grows as the answer streams) and the scroller (viewport resize)
+  // recomputes it; the spacer collapses to 0 once the turn fills the viewport,
+  // so a long answer leaves no trailing blank space. Guarded so redundant equal
+  // values don't churn renders. Gated on `contentRef` → plain path only.
+  useEffect(() => {
+    if (!contentRef) return;
+    const el = elRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    const update = () =>
+      setBottomSpacerHeight((prev) => {
+        const next = measureSpacer();
+        return next === prev ? prev : next;
+      });
+    update();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(update);
+    observer.observe(content);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [contentRef, measureSpacer]);
+
+  // Anchor the target near the top of the viewport whenever it changes — a new
+  // turn (the just-sent user message) or a chat load (the last user message).
+  // Size the spacer first so there's room, then scroll on the next frame once
+  // it's applied, and pause follow: the reader is now reading the turn from its
+  // top, not glued to the live edge (follow re-arms when they scroll back down).
+  useEffect(() => {
+    if (!contentRef) return;
+    const previous = anchorIdRef.current;
+    anchorIdRef.current = anchorMessageId;
+    if (!anchorMessageId || anchorMessageId === previous) return;
+    if (!elRef.current) return;
+    setBottomSpacerHeight(measureSpacer());
+    const raf = requestAnimationFrame(() => {
+      const scroller = elRef.current;
+      const target = findAnchorEl();
+      if (!scroller || !target) return;
+      const delta = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      ignoreScrollClearRef.current = true;
+      scroller.scrollTop += delta - TURN_ANCHOR_TOP_GAP_PX;
+      followPausedRef.current = true;
+      // Release the guard after the programmatic scroll's event has been
+      // dispatched (scroll events fire before the next animation frame).
+      requestAnimationFrame(() => {
+        ignoreScrollClearRef.current = false;
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [anchorMessageId, contentRef, measureSpacer, findAnchorEl]);
+
+  return { registerScroller, isAtBottom, scrollToBottom, bottomSpacerHeight };
 }

@@ -61,19 +61,26 @@ export const SegmentView = memo(
     if (segment.type === 'text') {
       const { message } = segment;
       const canRegenerate = message.id === handlers.regeneratableAssistantMessageId;
+      // `data-message-id` / `data-role` give the stick-to-bottom hook a stable
+      // DOM handle to scroll a specific turn to the top of the viewport (the
+      // last user message, on load and on each new turn). `data-role` is the
+      // raw transport role, not a display label, so it doesn't go through
+      // `role-display.ts`.
       return (
-        <MessageBubble
-          message={message}
-          onCardAction={handlers.onCardAction}
-          onPin={handlers.onPin}
-          onEdit={
-            message.role === 'user' && !message.isToolResult
-              ? handlers.onEditUserMessage
-              : undefined
-          }
-          canRegenerate={canRegenerate}
-          onRegenerate={canRegenerate ? handlers.onRegenerateLastResponse : undefined}
-        />
+        <div data-message-id={message.id} data-role={message.role}>
+          <MessageBubble
+            message={message}
+            onCardAction={handlers.onCardAction}
+            onPin={handlers.onPin}
+            onEdit={
+              message.role === 'user' && !message.isToolResult
+                ? handlers.onEditUserMessage
+                : undefined
+            }
+            canRegenerate={canRegenerate}
+            onRegenerate={canRegenerate ? handlers.onRegenerateLastResponse : undefined}
+          />
+        </div>
       );
     }
     return <ToolGroupSegment items={segment.items} handlers={handlers} />;

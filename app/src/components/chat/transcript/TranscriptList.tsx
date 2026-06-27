@@ -12,6 +12,9 @@ interface TranscriptListProps {
   agentStatus: AgentStatus;
   handlers: TranscriptHandlers;
   lastMessage: ChatMessage | null;
+  /** Id of the last real user message — anchored near the top by the plain
+   *  path on load and on each new turn. */
+  lastUserMessageId: string | null;
 }
 
 /**
@@ -28,6 +31,7 @@ export function TranscriptList({
   agentStatus,
   handlers,
   lastMessage,
+  lastUserMessageId,
 }: TranscriptListProps) {
   const virtualized = isVirtualizedTranscript(segments.length);
   const path = virtualized ? 'virtualized' : 'plain';
@@ -70,6 +74,7 @@ export function TranscriptList({
           agentStatus={agentStatus}
           handlers={handlers}
           lastMessage={lastMessage}
+          anchorMessageId={lastUserMessageId}
         />
       )}
 

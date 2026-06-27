@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatMessage } from '@/types';
 import { groupChatMessages } from '../tool-call-utils';
-import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
+import {
+  VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS,
+  isVirtualizedTranscript,
+  turnSpacerHeight,
+} from './constants';
 import { segmentKey, sameSegmentContent } from './segment-model';
 import { TranscriptList } from './TranscriptList';
 import { nextAnnouncement, type AnnouncerSnapshot } from './transcript-announce';
@@ -167,6 +171,23 @@ describe('nextAnnouncement (aria-live turn boundaries)', () => {
   });
 });
 
+describe('turnSpacerHeight (top-anchor room)', () => {
+  it('fills the slack so a short turn can reach the top, minus the gap', () => {
+    // viewport 800, a 200px turn, default gap 72 → 800 - 200 - 72 = 528.
+    expect(turnSpacerHeight(800, 200, 72)).toBe(528);
+  });
+
+  it('collapses to 0 once the turn is at least a viewport tall', () => {
+    expect(turnSpacerHeight(800, 800)).toBe(0);
+    expect(turnSpacerHeight(800, 2000)).toBe(0);
+  });
+
+  it('never returns negative (clamped at 0)', () => {
+    // Turn just shorter than the viewport but within the gap → still clamps.
+    expect(turnSpacerHeight(800, 760, 72)).toBe(0);
+  });
+});
+
 describe('TranscriptList path selection (dev badge)', () => {
   const handlers = { regeneratableAssistantMessageId: null };
 
@@ -178,6 +199,7 @@ describe('TranscriptList path selection (dev badge)', () => {
         agentStatus={{ active: false, phase: '' }}
         handlers={handlers}
         lastMessage={null}
+        lastUserMessageId={null}
       />,
     );
     // Dev badge reflects the active path + count, and real bubbles render.
@@ -193,6 +215,7 @@ describe('TranscriptList path selection (dev badge)', () => {
         agentStatus={{ active: false, phase: '' }}
         handlers={handlers}
         lastMessage={null}
+        lastUserMessageId={null}
       />,
     );
     expect(html).toContain(`virtualized · ${VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS}`);
