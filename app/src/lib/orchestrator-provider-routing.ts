@@ -13,6 +13,7 @@ import {
   getFailoverProviderOrder,
   getProviderStreamShape,
   getProviderTimeoutDisplayName,
+  type RealProviderId,
   type ProviderStreamShape,
 } from '@push/lib/provider-definition';
 import { ollamaStream } from './ollama-stream';
@@ -170,9 +171,8 @@ export function resolveFailoverCandidates(
  * gateway-to-consumer seam every agent role (Auditor / Reviewer / Planner /
  * Explorer / DeepReviewer / Coder) consumes via `iteratePushStreamText`.
  *
- * Every provider (ollama / cloudflare / openrouter / zen / kilocode /
- * fireworks / openadapter / nvidia / blackbox / azure / bedrock / vertex) returns the
- * native `<provider>Stream` composed with `normalizeReasoning` so inline
+ * Every real provider returns its native `<provider>Stream` composed with
+ * `normalizeReasoning` so inline
  * `<think>…</think>` tags split into the reasoning channel — same
  * composition the legacy `streamXChat` callback exports applied internally.
  *
@@ -189,90 +189,55 @@ export function resolveFailoverCandidates(
  * PushStream in a module-scoped map so repeated `getProviderPushStream(p)`
  * calls return the same object.
  */
+const PROVIDER_PUSH_STREAM_FACTORIES = {
+  ollama: ollamaStream,
+  cloudflare: cloudflareStream,
+  openrouter: openrouterStream,
+  zen: zenStream,
+  kilocode: kilocodeStream,
+  fireworks: fireworksStream,
+  sakana: sakanaStream,
+  openadapter: openadapterStream,
+  deepseek: deepseekStream,
+  nvidia: nvidiaStream,
+  blackbox: blackboxStream,
+  azure: azureStream,
+  bedrock: bedrockStream,
+  vertex: vertexStream,
+  anthropic: anthropicStream,
+  openai: openaiStream,
+  google: geminiStream,
+} satisfies Record<RealProviderId, PushStream<ChatMessage>>;
+
 const PROVIDER_PUSH_STREAM_CACHE = new Map<ActiveProvider, PushStream<ChatMessage>>();
 export function getProviderPushStream(provider: ActiveProvider): PushStream<ChatMessage> {
   const cached = PROVIDER_PUSH_STREAM_CACHE.get(provider);
   if (cached) return cached;
 
   let stream: PushStream<ChatMessage>;
-  switch (provider) {
-    case 'ollama':
-      stream = (req) => normalizeReasoning(ollamaStream(req));
-      break;
-    case 'cloudflare':
-      stream = (req) => normalizeReasoning(cloudflareStream(req));
-      break;
-    case 'openrouter':
-      stream = (req) => normalizeReasoning(openrouterStream(req));
-      break;
-    case 'zen':
-      stream = (req) => normalizeReasoning(zenStream(req));
-      break;
-    case 'kilocode':
-      stream = (req) => normalizeReasoning(kilocodeStream(req));
-      break;
-    case 'fireworks':
-      stream = (req) => normalizeReasoning(fireworksStream(req));
-      break;
-    case 'sakana':
-      stream = (req) => normalizeReasoning(sakanaStream(req));
-      break;
-    case 'openadapter':
-      stream = (req) => normalizeReasoning(openadapterStream(req));
-      break;
-    case 'deepseek':
-      stream = (req) => normalizeReasoning(deepseekStream(req));
-      break;
-    case 'nvidia':
-      stream = (req) => normalizeReasoning(nvidiaStream(req));
-      break;
-    case 'blackbox':
-      stream = (req) => normalizeReasoning(blackboxStream(req));
-      break;
-    case 'azure':
-      stream = (req) => normalizeReasoning(azureStream(req));
-      break;
-    case 'bedrock':
-      stream = (req) => normalizeReasoning(bedrockStream(req));
-      break;
-    case 'vertex':
-      stream = (req) => normalizeReasoning(vertexStream(req));
-      break;
-    case 'anthropic':
-      stream = (req) => normalizeReasoning(anthropicStream(req));
-      break;
-    case 'openai':
-      stream = (req) => normalizeReasoning(openaiStream(req));
-      break;
-    case 'google':
-      stream = (req) => normalizeReasoning(geminiStream(req));
-      break;
-    case 'demo': {
-      // Callers should guard demo before reaching here. If one slips through,
-      // surface an explicit error rather than falling back to ollama and
-      // emitting a confusing "Ollama API key not configured" message.
-      // Hand-rolled iterator (instead of `async function*` with a `throw`)
-      // sidesteps the `require-yield` lint rule for yield-less generators.
-      const thrower: AsyncIterable<PushStreamEvent> = {
-        [Symbol.asyncIterator]() {
-          return {
-            next(): Promise<IteratorResult<PushStreamEvent>> {
-              return Promise.reject(
-                new Error(
-                  'Demo provider has no PushStream — guard with a demo check before calling getProviderPushStream.',
-                ),
-              );
-            },
-          };
-        },
-      };
-      stream = () => thrower;
-      break;
-    }
-    default: {
-      const exhaustive: never = provider;
-      throw new Error(`Unhandled provider in getProviderPushStream: ${String(exhaustive)}`);
-    }
+  if (provider === 'demo') {
+    // Callers should guard demo before reaching here. If one slips through,
+    // surface an explicit error rather than falling back to ollama and
+    // emitting a confusing "Ollama API key not configured" message.
+    // Hand-rolled iterator (instead of `async function*` with a `throw`)
+    // sidesteps the `require-yield` lint rule for yield-less generators.
+    const thrower: AsyncIterable<PushStreamEvent> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next(): Promise<IteratorResult<PushStreamEvent>> {
+            return Promise.reject(
+              new Error(
+                'Demo provider has no PushStream — guard with a demo check before calling getProviderPushStream.',
+              ),
+            );
+          },
+        };
+      },
+    };
+    stream = () => thrower;
+  } else {
+    const factory = PROVIDER_PUSH_STREAM_FACTORIES[provider];
+    stream = (req) => normalizeReasoning(factory(req));
   }
 
   PROVIDER_PUSH_STREAM_CACHE.set(provider, stream);
