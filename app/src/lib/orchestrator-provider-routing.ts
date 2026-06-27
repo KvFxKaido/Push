@@ -64,6 +64,16 @@ const STANDARD_TIMEOUTS = {
   totalTimeoutMs: 180_000,
 } as const;
 
+// Sakana Fugu is a multi-agent orchestration router — `fugu-ultra` coordinates a
+// deeper agent pool and can run silent for long stretches before emitting, so the
+// standard 60s no-event / 60s no-content / 180s total bucket aborts valid
+// long-running turns mid-flight. Give the Sakana route a wider window.
+const SAKANA_TIMEOUTS = {
+  eventTimeoutMs: 180_000,
+  contentTimeoutMs: 180_000,
+  totalTimeoutMs: 600_000,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Provider failover candidate resolution
 // ---------------------------------------------------------------------------
@@ -386,8 +396,9 @@ const ADAPTER_ROUTED_PROVIDERS: ReadonlySet<ActiveProvider> = new Set<ActiveProv
 function buildChatTimeouts(provider: ActiveProvider): IterateChatStreamTimeouts | undefined {
   if (!ADAPTER_ROUTED_PROVIDERS.has(provider)) return undefined;
   const name = PROVIDER_DISPLAY_NAMES[provider] ?? provider;
+  const timeouts = provider === 'sakana' ? SAKANA_TIMEOUTS : STANDARD_TIMEOUTS;
   return {
-    ...STANDARD_TIMEOUTS,
+    ...timeouts,
     errorMessages: {
       event: (s) => `${name} API stream stalled — no data for ${s}s.`,
       content: (s) =>
