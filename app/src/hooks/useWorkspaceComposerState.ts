@@ -480,6 +480,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectDeepSeekModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('deepseek', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { deepseek: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectAzureModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('azure', model);
@@ -557,6 +566,7 @@ export function useWorkspaceComposerState({
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,
     handleSelectOpenAdapterModelFromChat,
+    handleSelectDeepSeekModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,
     handleSelectVertexModelFromChat,

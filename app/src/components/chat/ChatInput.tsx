@@ -152,6 +152,14 @@ interface ChatInputProps {
     isOpenAdapterModelLocked: boolean;
     refreshOpenAdapterModels: () => void;
     onSelectOpenAdapterModel: (model: string) => void;
+    deepseekModel: string;
+    deepseekModelOptions: string[];
+    deepseekModelsLoading: boolean;
+    deepseekModelsError: string | null;
+    deepseekModelsUpdatedAt: number | null;
+    isDeepSeekModelLocked: boolean;
+    refreshDeepSeekModels: () => void;
+    onSelectDeepSeekModel: (model: string) => void;
     azureModel: string;
     azureDeployments: ExperimentalDeployment[];
     azureActiveDeploymentId: string | null;
@@ -498,6 +506,7 @@ export function ChatInput({
     if (selectedProvider === 'fireworks') return providerControls.fireworksModel;
     if (selectedProvider === 'sakana') return providerControls.sakanaModel;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModel;
+    if (selectedProvider === 'deepseek') return providerControls.deepseekModel;
     if (selectedProvider === 'azure') return providerControls.azureModel;
     if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
     if (selectedProvider === 'vertex') return providerControls.vertexModel;
@@ -525,6 +534,7 @@ export function ChatInput({
     if (selectedProvider === 'fireworks') return providerControls.fireworksModelsLoading;
     if (selectedProvider === 'sakana') return providerControls.sakanaModelsLoading;
     if (selectedProvider === 'openadapter') return providerControls.openadapterModelsLoading;
+    if (selectedProvider === 'deepseek') return providerControls.deepseekModelsLoading;
     return false;
   })();
 
@@ -544,6 +554,8 @@ export function ChatInput({
     if (selectedProvider === 'sakana') return formatTimeAgo(providerControls.sakanaModelsUpdatedAt);
     if (selectedProvider === 'openadapter')
       return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
+    if (selectedProvider === 'deepseek')
+      return formatTimeAgo(providerControls.deepseekModelsUpdatedAt);
     return null;
   })();
 
@@ -556,7 +568,8 @@ export function ChatInput({
     selectedProvider === 'kilocode' ||
     selectedProvider === 'fireworks' ||
     selectedProvider === 'sakana' ||
-    selectedProvider === 'openadapter';
+    selectedProvider === 'openadapter' ||
+    selectedProvider === 'deepseek';
   const refreshSelectedModelList = () => {
     if (!providerControls) return;
     if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
@@ -568,6 +581,7 @@ export function ChatInput({
     if (selectedProvider === 'fireworks') providerControls.refreshFireworksModels();
     if (selectedProvider === 'sakana') providerControls.refreshSakanaModels();
     if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
+    if (selectedProvider === 'deepseek') providerControls.refreshDeepSeekModels();
   };
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -1310,6 +1324,46 @@ export function ChatInput({
                             </p>
                           )}
                           {providerControls.isOpenAdapterModelLocked && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              Current chat locked; choosing a model starts a new chat.
+                            </p>
+                          )}
+                        </>
+                      )}
+
+                      {selectedProvider === 'deepseek' && (
+                        <>
+                          <ModelPicker
+                            provider="deepseek"
+                            value={providerControls.deepseekModel}
+                            options={providerControls.deepseekModelOptions}
+                            onChange={providerControls.onSelectDeepSeekModel}
+                            disabled={!canChangeModel || providerControls.deepseekModelsLoading}
+                            ariaLabel="Select DeepSeek model"
+                          />
+                          {providerControls.deepseekModelsLoading && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Loading DeepSeek models...
+                            </p>
+                          )}
+                          {!providerControls.deepseekModelsLoading &&
+                            providerControls.deepseekModelOptions.length === 0 &&
+                            !providerControls.deepseekModelsError && (
+                              <p className="px-1 text-push-2xs text-push-fg-faint">
+                                No models returned. Try refresh.
+                              </p>
+                            )}
+                          {providerControls.deepseekModelsError && (
+                            <p className="px-1 text-push-2xs text-amber-400">
+                              {providerControls.deepseekModelsError}
+                            </p>
+                          )}
+                          {selectedModelUpdatedAgo && (
+                            <p className="px-1 text-push-2xs text-push-fg-faint">
+                              Updated {selectedModelUpdatedAgo}
+                            </p>
+                          )}
+                          {providerControls.isDeepSeekModelLocked && (
                             <p className="px-1 text-push-2xs text-amber-400">
                               Current chat locked; choosing a model starts a new chat.
                             </p>
