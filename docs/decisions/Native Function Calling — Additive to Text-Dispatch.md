@@ -4,11 +4,11 @@
 name-based), OpenRouter (capability-based), OpenCode Zen (name-based catalog
 allowlist; both the OpenAI and Anthropic Go transports), Fireworks AI
 (name-based catalog allowlist), and the validated OpenAI-compatible adapters:
-OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code / OpenAdapter
-(curated catalog allowlists), direct Anthropic (curated catalog allowlist),
+OpenAI / Azure OpenAI (OpenAI-family model ids), Kilo Code
+(curated catalog allowlist), direct Anthropic (curated catalog allowlist),
 Google/Gemini (name-based curated allowlist), Google Vertex AI (name-based
 curated allowlist), AWS Bedrock Claude ids (name-based), plus Ollama Cloud /
-Nvidia NIM / Blackbox AI (models.dev capability-gated). The CLI lead and
+Nvidia NIM (models.dev capability-gated). The CLI lead and
 daemon delegated Coder/Explorer now attach CLI-native scoped schemas behind a
 CLI-local provider/model gate. Tracked in #1082.
 
@@ -93,9 +93,9 @@ native tool call — both converge at one dispatch path. Consequences:
   (`ZEN_NATIVE_TOOL_CALLING_MODELS` = `ZEN_MODELS` ∪ `ZEN_GO_MODELS`): its default
   `big-pickle` is a proprietary id absent from models.dev and the `opencode`
   block's `tool_call` coverage is unverifiable, so capability-gating would
-  silently leave native FC off; the curated catalog is the allowlist. Fireworks,
-  Kilo Code, OpenAdapter, and Blackbox have similar curated allowlists where the
-  gateway catalog is hand-maintained; Ollama Cloud / Nvidia NIM / Blackbox also
+  silently leave native FC off; the curated catalog is the allowlist. Fireworks
+  and Kilo Code have similar curated allowlists where the
+  gateway catalog is hand-maintained; Ollama Cloud / Nvidia NIM also
   honor models.dev capability metadata when present. Direct OpenAI and Azure
   OpenAI enable native tools for OpenAI-family model ids (`gpt-4*` / `gpt-5*`).
   Google Vertex AI is enabled from `VERTEX_MODEL_OPTIONS`, and AWS Bedrock is

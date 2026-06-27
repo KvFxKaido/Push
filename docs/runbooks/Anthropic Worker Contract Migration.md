@@ -31,7 +31,7 @@ whenever a client flips or a handler changes regime.
 | Vertex `/api/vertex/chat` — native mode | neutral, both transports (#856) | dual-accept | OpenAI SSE | — |
 | Vertex — legacy upstream-base mode | OpenAI shape | `handleLegacyVertexChat`, no dual-accept | OpenAI SSE | — |
 | Zen-Go `/api/zen/go/chat` | **OpenAI shape — client flip pending** | dual-accept (#851, neutral branch dormant) | OpenAI SSE | — |
-| OpenAI, OpenRouter, Ollama, NVIDIA, Kilo, Blackbox, Azure, Bedrock, Zen, OpenAdapter | OpenAI shape | `createStreamProxyHandler`, no dual-accept | OpenAI SSE | CLI OpenAI-compat path builds via `toOpenAIChat` |
+| OpenAI, OpenRouter, Ollama, NVIDIA, Kilo, Azure, Bedrock, Zen | OpenAI shape | `createStreamProxyHandler`, no dual-accept | OpenAI SSE | CLI OpenAI-compat path builds via `toOpenAIChat` |
 
 The **response** column is uniformly OpenAI SSE on the web — the response-axis
 migration (Phase 3a for the web Worker) has not started; only the CLI parses

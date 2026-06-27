@@ -139,7 +139,7 @@ but isn't gated on yet.
 - **Provider coverage (web).** No longer OpenRouter-only. Every OpenAI-shaped
   web adapter now serializes `response_format` via the shared
   `toOpenAIResponseFormat` builder: `openrouter`, `openai`, `azure`, `nvidia`,
-  `blackbox`, `kilocode`, `openadapter`, `zen`, and `cloudflare`. The
+  `kilocode`, `zen`, and `cloudflare`. The
   `provider.require_parameters` routing guard stays **OpenRouter-only** — it's an
   OpenRouter-specific field. `bedrock`/`ollama` are left out (their
   `response_format` support is unconfirmed — Ollama Cloud does not honor
