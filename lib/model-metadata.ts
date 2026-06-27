@@ -291,6 +291,19 @@ export function lookupDeclaredModelMetadata(
 ): DeclaredModelMetadata | null {
   const normalizedModel = modelId?.trim();
   if (!normalizedModel) return null;
+
+  // Cloudflare Workers AI re-serves third-party models under `@cf/...` ids with
+  // gateway-specific *capped* windows (e.g. `@cf/zai-org/glm-5.2` and the Kimi
+  // K2.x family are served at 256K, not their native 1M). Leaf-stripping
+  // `@cf/zai-org/glm-5.2` → `glm-5.2` would otherwise borrow another provider's
+  // native-window metadata and overrun the served window. Reject `@cf/` ids up
+  // front, regardless of the provider argument — the web context probe
+  // (orchestrator-context.ts) retries the same id against sibling providers
+  // (zen/openrouter/…), so a `provider === 'cloudflare'` guard alone (or a guard
+  // placed after the provider-specific match) would be bypassed. These ids keep
+  // their cap-aware name fallback in context-budget.ts instead.
+  if (provider === 'cloudflare' || normalizedModel.startsWith('@cf/')) return null;
+
   const candidates = modelCandidates(provider, normalizedModel);
   const providerMetadata = provider ? PROVIDER_MODEL_METADATA[provider] : undefined;
 
@@ -300,15 +313,6 @@ export function lookupDeclaredModelMetadata(
       if (meta) return meta;
     }
   }
-
-  // Cloudflare Workers AI re-serves third-party models under `@cf/...` ids with
-  // gateway-specific *capped* windows (e.g. `@cf/zai-org/glm-5.2` and the Kimi
-  // K2.x family are served at 256K, not their native 1M). The cross-provider
-  // sweep below leaf-strips `@cf/zai-org/glm-5.2` → `glm-5.2` and would borrow
-  // another provider's native-window metadata, overrunning the served window —
-  // so Cloudflare keeps its cap-aware name fallback in context-budget.ts instead
-  // of borrowing cross-provider declared metadata.
-  if (provider === 'cloudflare') return null;
 
   for (const metadata of Object.values(PROVIDER_MODEL_METADATA)) {
     if (metadata === providerMetadata) continue;

@@ -122,6 +122,19 @@ describe('getContextBudget', () => {
     });
   });
 
+  it('keeps Cloudflare GLM on its 256K served cap, not the declared native 1M', () => {
+    // `glm-5.2` IS a declared key (native 1M), so the web context probe's
+    // sibling-provider sweep retries `@cf/zai-org/glm-5.2` against zen/openrouter
+    // and would leaf-match that 1M entry — overrunning the 262,144 window Workers
+    // AI actually serves. Declared metadata must reject `@cf/` ids on every path.
+    expect(getContextBudget('cloudflare', '@cf/zai-org/glm-5.2')).toEqual({
+      maxTokens: Math.floor(262_144 * 0.92),
+      targetTokens: Math.floor(262_144 * 0.85),
+      summarizeTokens: 88_000,
+      handoffTokens: 183_500,
+    });
+  });
+
   it('derives a 1M-class budget for DeepSeek v4 family on Ollama', () => {
     // Ollama Cloud's /v1/models response omits context_length, so v4
     // models with 1M windows would otherwise fall through to the 100K
