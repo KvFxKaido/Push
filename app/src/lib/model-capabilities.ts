@@ -5,6 +5,8 @@ import type {
   HarnessProfileSettings,
 } from '@/types';
 import { computeAdaptiveProfile, logAdaptiveProfile } from './harness-profiles';
+import { lookupDeclaredModelMetadata, type DeclaredModelMetadata } from '@push/lib/model-metadata';
+import { getProviderDisplayName } from '@push/lib/provider-definition';
 
 type CapabilityRule = {
   providers: AIProviderType[] | 'any';
@@ -136,12 +138,41 @@ function matchesProvider(
   return ruleProviders === 'any' || ruleProviders.includes(provider);
 }
 
+function boolSupport(value: boolean | undefined): ModelCapabilitySupport {
+  if (value === true) return 'supported';
+  if (value === false) return 'unsupported';
+  return 'unknown';
+}
+
+function declaredCapabilities(meta: DeclaredModelMetadata): ModelCapabilities {
+  return {
+    visionInput: boolSupport(meta.inputModalities.includes('image') || meta.attachment),
+    imageGeneration: boolSupport(meta.outputModalities.includes('image')),
+    toolCalls: boolSupport(meta.toolCall),
+    jsonMode: boolSupport(meta.structuredOutput),
+    streaming: 'supported',
+  };
+}
+
 export function getModelCapabilities(
   provider: AIProviderType,
   modelId: string | null | undefined,
 ): ModelCapabilities {
   const trimmedModelId = modelId?.trim();
   if (!trimmedModelId) return DEFAULT_MODEL_CAPABILITIES;
+
+  if (provider === 'demo') {
+    return mergeCapabilities(DEFAULT_MODEL_CAPABILITIES, {
+      visionInput: 'unsupported',
+      imageGeneration: 'unsupported',
+      toolCalls: 'unsupported',
+      jsonMode: 'unsupported',
+      streaming: 'unsupported',
+    });
+  }
+
+  const declared = lookupDeclaredModelMetadata(provider, trimmedModelId);
+  if (declared) return declaredCapabilities(declared);
 
   let capabilities = DEFAULT_MODEL_CAPABILITIES;
   for (const rule of CAPABILITY_RULES) {
@@ -196,41 +227,6 @@ function formatCapabilitySupportLabel(support: ModelCapabilitySupport): string {
   return 'unverified';
 }
 
-function formatProviderLabel(provider: AIProviderType): string {
-  switch (provider) {
-    case 'ollama':
-      return 'Ollama';
-    case 'openrouter':
-      return 'OpenRouter';
-    case 'cloudflare':
-      return 'Cloudflare Workers AI';
-    case 'zen':
-      return 'OpenCode Zen';
-    case 'nvidia':
-      return 'Nvidia NIM';
-    case 'blackbox':
-      return 'Blackbox AI';
-    case 'kilocode':
-      return 'Kilo Code';
-    case 'fireworks':
-      return 'Fireworks AI';
-    case 'deepseek':
-      return 'DeepSeek';
-    case 'sakana':
-      return 'Sakana AI';
-    case 'azure':
-      return 'Azure OpenAI';
-    case 'bedrock':
-      return 'AWS Bedrock';
-    case 'vertex':
-      return 'Google Vertex';
-    case 'demo':
-      return 'Demo';
-    default:
-      return provider;
-  }
-}
-
 export function buildModelCapabilityAwarenessBlock(
   provider: AIProviderType,
   modelId: string | null | undefined,
@@ -242,7 +238,7 @@ export function buildModelCapabilityAwarenessBlock(
   const capabilities = getModelCapabilities(provider, resolvedModel);
   const lines = [
     '## Current Model Capability Context',
-    `Provider: ${formatProviderLabel(provider)}`,
+    `Provider: ${getProviderDisplayName(provider)}`,
     `Model: ${resolvedModel}`,
     `Vision / image attachments: ${formatCapabilitySupportLabel(capabilities.visionInput)}`,
     `Native tool calling: ${formatCapabilitySupportLabel(capabilities.toolCalls)}`,

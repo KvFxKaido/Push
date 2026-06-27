@@ -46,7 +46,7 @@ describe('getContextBudget', () => {
   // the name-pattern fallback in lookupContextWindow.
 
   it('keeps the default budget for unknown models with no catalog hit', () => {
-    expect(getContextBudget('openrouter', 'mistralai/mistral-large-2512')).toEqual({
+    expect(getContextBudget('openrouter', 'totally-unknown-model')).toEqual({
       maxTokens: 100_000,
       targetTokens: 88_000,
       summarizeTokens: 88_000,
@@ -57,10 +57,10 @@ describe('getContextBudget', () => {
 
   it('derives a 1M-class budget for Gemini regardless of provider', () => {
     const expected = {
-      maxTokens: Math.floor(1_000_000 * 0.92),
-      targetTokens: Math.floor(1_000_000 * 0.85),
+      maxTokens: Math.floor(1_048_576 * 0.92),
+      targetTokens: Math.floor(1_048_576 * 0.85),
       summarizeTokens: 88_000,
-      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      // handoff = clamp(0.7·1,048,576, 88K, min(target, 400K ceiling)) = 400K ceiling.
       handoffTokens: 400_000,
     };
     expect(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro')).toEqual(expected);
@@ -89,10 +89,10 @@ describe('getContextBudget', () => {
 
   it('derives a 1M-class budget for GPT-5 models', () => {
     const expected = {
-      maxTokens: Math.floor(1_000_000 * 0.92),
-      targetTokens: Math.floor(1_000_000 * 0.85),
+      maxTokens: Math.floor(1_050_000 * 0.92),
+      targetTokens: Math.floor(1_050_000 * 0.85),
       summarizeTokens: 88_000,
-      // handoff = clamp(0.7·1M, 88K, min(target, 400K ceiling)) = 400K ceiling.
+      // handoff = clamp(0.7·1.05M, 88K, min(target, 400K ceiling)) = 400K ceiling.
       handoffTokens: 400_000,
     };
     expect(getContextBudget('openrouter', 'openai/gpt-5.4-pro')).toEqual(expected);

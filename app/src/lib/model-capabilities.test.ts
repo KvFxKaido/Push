@@ -19,7 +19,19 @@ describe('getModelCapabilities', () => {
   });
 
   it('leaves unknown models in the unknown state', () => {
-    expect(getModelCapabilities('zen', 'big-pickle').visionInput).toBe('unknown');
+    expect(getModelCapabilities('zen', 'totally-unknown-model').visionInput).toBe('unknown');
+  });
+
+  it('uses declared metadata before regex capability fallbacks', () => {
+    const mini = getModelCapabilities('openai', 'gpt-5.4-mini');
+    expect(mini.visionInput).toBe('supported');
+    expect(mini.toolCalls).toBe('supported');
+    expect(mini.jsonMode).toBe('supported');
+
+    const deepseek = getModelCapabilities('deepseek', 'deepseek-v4-pro');
+    expect(deepseek.visionInput).toBe('unsupported');
+    expect(deepseek.toolCalls).toBe('supported');
+    expect(deepseek.jsonMode).toBe('supported');
   });
 
   it('treats demo as unsupported for image input', () => {
@@ -55,7 +67,7 @@ describe('buildModelCapabilityAwarenessBlock', () => {
   });
 
   it('marks unknown image support as unverified', () => {
-    const block = buildModelCapabilityAwarenessBlock('zen', 'big-pickle', {
+    const block = buildModelCapabilityAwarenessBlock('zen', 'totally-unknown-model', {
       hasImageAttachments: true,
     });
 

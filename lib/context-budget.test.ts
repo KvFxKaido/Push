@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  budgetFromWindow,
   estimateMessageTokens,
   getContextBudget,
   guessWindowFromName,
@@ -112,6 +113,11 @@ describe('getContextBudget (shared)', () => {
     // summarizeTokens stays at or below the soft target — invariant from
     // budgetFromWindow that downstream context-trim relies on.
     expect(budget.summarizeTokens).toBeLessThanOrEqual(budget.targetTokens);
+  });
+
+  it('uses declared metadata before broad name-pattern fallbacks', () => {
+    expect(getContextBudget('openai', 'gpt-5.4-mini')).toEqual(budgetFromWindow(400_000));
+    expect(getContextBudget('zen', 'big-pickle')).toEqual(budgetFromWindow(200_000));
   });
 
   it('falls back to the default budget when the name matches nothing', () => {

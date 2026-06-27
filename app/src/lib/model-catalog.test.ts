@@ -18,6 +18,7 @@ import {
   providerModelSupportsNativeToolCalling,
   providerModelSupportsStructuredOutput,
   resolvePushCapabilityProfile,
+  getModelCapabilities,
 } from './model-catalog';
 import { cliProviderModelSupportsNativeToolCalling } from '../../../cli/native-tool-gate';
 import {
@@ -1248,6 +1249,23 @@ describe('filterModelByContext', () => {
 });
 
 describe('providerModelSupportsStructuredOutput', () => {
+  it('uses declared metadata on a cold cache before falling back to name guesses', () => {
+    vi.stubGlobal('window', undefined);
+
+    expect(getModelCapabilities('openai', 'gpt-5.4-mini')).toMatchObject({
+      reasoning: true,
+      toolCall: true,
+      structuredOutput: true,
+      vision: true,
+      contextLimit: 400_000,
+    });
+    expect(resolvePushCapabilityProfile('zen', 'big-pickle')).toMatchObject({
+      toolCalling: 'native',
+      structuredOutput: 'strict',
+      context: 'large',
+    });
+  });
+
   it('resolves the Push capability profile for direct neutral providers', () => {
     stubWindow();
     expect(resolvePushCapabilityProfile('anthropic', 'claude-sonnet-4-6')).toMatchObject({
@@ -1383,10 +1401,11 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(resolvePushCapabilityProfile('zen', 'minimax-m3')).toMatchObject({
       structuredOutput: 'best-effort',
     });
-    // OpenAI-transport zen models fall through to the capability probe — with no
-    // seeded opencode metadata here, that resolves false (response_format path).
+    // OpenAI-transport zen models fall through to the capability probe. Declared
+    // opencode metadata now makes the known structured-output Big Pickle path
+    // true, while Kimi K2.6 stays prompt-only.
     expect(providerModelSupportsStructuredOutput('zen', 'kimi-k2.6')).toBe(false);
-    expect(providerModelSupportsStructuredOutput('zen', 'big-pickle')).toBe(false);
+    expect(providerModelSupportsStructuredOutput('zen', 'big-pickle')).toBe(true);
   });
 
   it('gates Cloudflare Workers AI by model name on a cold catalog cache (Kimi / GLM only)', () => {

@@ -111,7 +111,7 @@ describe('getContextBudget', () => {
   // caps summarizeTokens at the 88K default target.
 
   it('returns default budget when no name pattern matches', () => {
-    const budget = getContextBudget('nvidia', 'nvidia/llama-3.1-nemotron-70b-instruct');
+    const budget = getContextBudget('nvidia', 'totally-unknown-model');
     assert.equal(budget.targetTokens, 88_000);
     assert.equal(budget.maxTokens, 100_000);
     assert.equal(budget.summarizeTokens, 88_000);
@@ -119,10 +119,10 @@ describe('getContextBudget', () => {
 
   it('derives a 1M-class budget for Gemini regardless of provider', () => {
     const expected = {
-      maxTokens: Math.floor(1_000_000 * 0.92),
-      targetTokens: Math.floor(1_000_000 * 0.85),
+      maxTokens: Math.floor(1_048_576 * 0.92),
+      targetTokens: Math.floor(1_048_576 * 0.85),
       summarizeTokens: 88_000,
-      // Patient handoff trigger: clamp(0.7·1M, 88K, 400K ceiling) = 400K (§14).
+      // Patient handoff trigger: clamp(0.7·1,048,576, 88K, 400K ceiling) = 400K (§14).
       handoffTokens: 400_000,
     };
     assert.deepEqual(getContextBudget('ollama', 'gemini-3-flash-preview'), expected);
@@ -144,12 +144,19 @@ describe('getContextBudget', () => {
 
   it('strips OpenRouter routing suffixes (:nitro, :free, :beta) before matching', () => {
     const budget = getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro');
-    assert.equal(budget.targetTokens, Math.floor(1_000_000 * 0.85));
+    assert.equal(budget.targetTokens, Math.floor(1_048_576 * 0.85));
   });
 
-  it('returns default budget for an unknown model name', () => {
+  it('uses declared metadata for provider-private ids that have no name fallback', () => {
     const budget = getContextBudget('zen', 'big-pickle');
-    assert.equal(budget.targetTokens, 88_000);
+    assert.equal(budget.targetTokens, Math.floor(200_000 * 0.85));
+    assert.equal(budget.maxTokens, Math.floor(200_000 * 0.92));
+  });
+
+  it('uses declared metadata before broad name-pattern fallbacks', () => {
+    const budget = getContextBudget('openai', 'gpt-5.4-mini');
+    assert.equal(budget.targetTokens, Math.floor(400_000 * 0.85));
+    assert.equal(budget.maxTokens, Math.floor(400_000 * 0.92));
   });
 
   it('returns default budget when model is undefined', () => {
@@ -185,8 +192,8 @@ describe('getContextBudget', () => {
 
   it('derives a 1M-class budget for GPT-5 models', () => {
     const budget = getContextBudget('openrouter', 'openai/gpt-5.4');
-    assert.equal(budget.targetTokens, Math.floor(1_000_000 * 0.85));
-    assert.equal(budget.maxTokens, Math.floor(1_000_000 * 0.92));
+    assert.equal(budget.targetTokens, Math.floor(1_050_000 * 0.85));
+    assert.equal(budget.maxTokens, Math.floor(1_050_000 * 0.92));
   });
 
   it('derives a 1M-class budget for DeepSeek v4 family', () => {
