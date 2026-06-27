@@ -727,5 +727,66 @@ describe('github-tool-core shared core', () => {
       expect(hitCodeSearch).toBe(true);
       expect(result.text).toContain('default branch only');
     });
+
+    it('matches the query literally, not as a regex', async () => {
+      // `$schema` is a valid regex (`$` anchors end-of-line) that would never
+      // match the literal text — a regex matcher would wrongly report zero refs.
+      const runtime = createTreeRuntime([{ path: 'config.json', sha: 'a1' }], {
+        a1: '{\n  "$schema": "https://example.test/schema.json"\n}\n',
+      });
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: '$schema', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('FILE config.json');
+      expect(result.text).toContain('"$schema"');
+    });
+
+    it('treats a skipped oversized text file as non-exhaustive', async () => {
+      const runtime = createTreeRuntime(
+        [
+          { path: 'src/small.ts', sha: 'a1' },
+          { path: 'src/huge.ts', sha: 'big', size: 2 * 1024 * 1024 },
+        ],
+        { a1: 'const x = 1;\n' },
+      );
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      // The huge file was never scanned, so zero-match must NOT claim exhaustive.
+      expect(result.text).toContain('No matches');
+      expect(result.text).toContain('NOT exhaustive');
+      expect(result.text).toContain('larger than');
+      expect(result.text).not.toContain('exhaustive (zero references)');
+      if (result.card?.type === 'file-search') {
+        expect(result.card.data.truncated).toBe(true);
+      }
+    });
+
+    it('reports a non-empty caveat when the result cap is the only limiter', async () => {
+      // 26 matching files trips the 25-file result cap.
+      const tree = Array.from({ length: 26 }, (_, i) => ({
+        path: `src/file${i}.ts`,
+        sha: `s${i}`,
+      }));
+      const blobs: Record<string, string> = {};
+      for (let i = 0; i < 26; i += 1) blobs[`s${i}`] = 'callBlackbox();\n';
+      const runtime = createTreeRuntime(tree, blobs);
+
+      const result = await executeGitHubCoreTool(runtime, {
+        tool: 'search_files',
+        args: { repo: 'owner/repo', query: 'Blackbox', branch: 'feature/x' },
+      });
+
+      expect(result.text).toContain('search not exhaustive:');
+      expect(result.text).toContain('stopped after the first');
+      // No dangling empty caveat.
+      expect(result.text).not.toContain('search not exhaustive: )');
+    });
   });
 });

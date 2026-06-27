@@ -2354,17 +2354,16 @@ export async function executeFindExistingPRTool(
 }
 
 /**
- * Build a case-insensitive line matcher mirroring grep_file: prefer the query
- * as a regex, fall back to a literal substring match when it isn't valid regex.
+ * Build a case-insensitive LITERAL substring line matcher. repo_search is
+ * advertised as code/text search, not regex — compiling the query as a regex
+ * would silently change its meaning (`$schema`, `obj[key]`, `foo?` are valid
+ * regexes that match something other than the literal text), which would let a
+ * present reference be reported as an exhaustive zero-match. Literal matching
+ * keeps the exhaustiveness guarantee honest and the two search paths aligned.
  */
 function buildSearchLineMatcher(query: string): (line: string) => boolean {
-  try {
-    const regex = new RegExp(query, 'i');
-    return (line: string) => regex.test(line);
-  } catch {
-    const lower = query.toLowerCase();
-    return (line: string) => line.toLowerCase().includes(lower);
-  }
+  const needle = query.toLowerCase();
+  return (line: string) => line.toLowerCase().includes(needle);
 }
 
 /**
@@ -2399,6 +2398,7 @@ async function executeBranchTreeSearch(
   const normalizedPath = path ? path.replace(/^\/+|\/+$/g, '') : '';
 
   let hiddenResults = 0;
+  let oversizedSkipped = 0;
   const candidates: Array<{ path: string; sha: string }> = [];
   for (const entry of treeData.tree || []) {
     if (entry.type !== 'blob' || typeof entry.path !== 'string' || typeof entry.sha !== 'string') {
@@ -2411,7 +2411,13 @@ async function executeBranchTreeSearch(
     }
     const ext = entry.path.split('.').pop()?.toLowerCase() || '';
     if (BRANCH_SEARCH_BINARY_EXTENSIONS.has(ext)) continue;
-    if (typeof entry.size === 'number' && entry.size > BRANCH_SEARCH_MAX_BLOB_BYTES) continue;
+    if (typeof entry.size === 'number' && entry.size > BRANCH_SEARCH_MAX_BLOB_BYTES) {
+      // A non-binary file too large to fetch is content we did NOT scan — it
+      // must defeat the exhaustiveness claim, or a reference hiding in a large
+      // file would be reported as "zero references".
+      oversizedSkipped += 1;
+      continue;
+    }
     candidates.push({ path: entry.path, sha: entry.sha });
   }
 
@@ -2488,7 +2494,8 @@ async function executeBranchTreeSearch(
     ),
   );
 
-  const exhaustive = !treeTruncated && !capHit && !resultCapHit && fetchFailures === 0;
+  const exhaustive =
+    !treeTruncated && !capHit && !resultCapHit && fetchFailures === 0 && oversizedSkipped === 0;
   // Shared lib also runs on the CLI, where stdout is reserved for user output —
   // structured logs go to stderr. Paired event names: completed ↔ partial.
   console.error(
@@ -2504,10 +2511,12 @@ async function executeBranchTreeSearch(
       treeTruncated,
       capHit,
       resultCapHit,
+      oversizedSkipped,
       fetchFailures,
     }),
   );
 
+  const oversizedKiB = Math.floor(BRANCH_SEARCH_MAX_BLOB_BYTES / 1024);
   const incompleteReasons: string[] = [];
   if (treeTruncated) {
     incompleteReasons.push('the branch file tree was too large for GitHub to return in full');
@@ -2515,6 +2524,16 @@ async function executeBranchTreeSearch(
   if (capHit) {
     incompleteReasons.push(
       `scanned the first ${scannedCount} of ${candidates.length} candidate files (cap ${BRANCH_SEARCH_MAX_FILES}) — add a path filter to cover the rest`,
+    );
+  }
+  if (resultCapHit) {
+    incompleteReasons.push(
+      `stopped after the first ${BRANCH_SEARCH_RESULT_CAP} matching files — more matches may exist`,
+    );
+  }
+  if (oversizedSkipped > 0) {
+    incompleteReasons.push(
+      `${oversizedSkipped} file(s) larger than ${oversizedKiB} KiB were not scanned`,
     );
   }
   if (fetchFailures > 0) {
@@ -2557,7 +2576,7 @@ async function executeBranchTreeSearch(
   lines.push(
     `Found matches in ${fileMatches.size}${resultCapHit ? '+' : ''} file(s) for "${query}" on ${scopeLabel}.`,
   );
-  if (!exhaustive) {
+  if (!exhaustive && incompleteReasons.length > 0) {
     lines.push(`(search not exhaustive: ${incompleteReasons.join('; ')})`);
   }
   if (redactedResults) lines.push('Redactions: secret-like values hidden.');
