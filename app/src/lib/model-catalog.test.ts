@@ -1771,4 +1771,44 @@ describe('providerModelSupportsStructuredOutput', () => {
       true,
     );
   });
+
+  it('does not treat a models.dev attachment flag as image vision', async () => {
+    // models.dev sets `attachment: true` for models that accept file attachments
+    // of any kind (often PDF/file, never image). Vision must key on the `image`
+    // input modality, not the attachment flag — else a PDF-only model is wrongly
+    // advertised as image-capable.
+    vi.resetModules();
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            nvidia: {
+              models: {
+                'mistral/pdf-only-model': {
+                  id: 'mistral/pdf-only-model',
+                  attachment: true,
+                  reasoning: false,
+                  tool_call: true,
+                  structured_output: true,
+                  modalities: { input: ['text', 'pdf'], output: ['text'] },
+                  limit: { context: 131_072 },
+                },
+              },
+            },
+          });
+        }
+        if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+          return jsonResponse({ data: [{ id: 'mistral/pdf-only-model' }] });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    const mc = await import('./model-catalog');
+    await mc.fetchNvidiaModels();
+    expect(mc.getModelCapabilities('nvidia', 'mistral/pdf-only-model').vision).toBe(false);
+  });
 });

@@ -375,7 +375,14 @@ function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedM
   return {
     reasoning: meta.reasoning,
     toolCall: meta.toolCall,
-    vision: meta.inputModalities.includes('image') || meta.attachment,
+    // Vision = image input only. models.dev's `attachment` flag means the model
+    // accepts file attachments of *some* kind (frequently PDF/file, sometimes
+    // audio) — it is not an image-vision signal. Across the full models.dev
+    // catalog, `modalities.input` is always populated when `attachment` is set
+    // (0 models have attachment + empty modalities), and 157 models set
+    // attachment without `image` (e.g. text-only `openai/gpt-4`, audio-only
+    // `whisper-large-v3`). OR-ing `attachment` in mismarked those as vision.
+    vision: meta.inputModalities.includes('image'),
     imageGen: meta.outputModalities.includes('image'),
     structuredOutput: meta.structuredOutput,
     contextLimit: meta.contextLimit,
