@@ -109,7 +109,11 @@ export function VirtualizedTranscript({
         increaseViewportBy={{ top: 600, bottom: 600 }}
       />
 
-      <ScrollToBottomButton visible={!isAtBottom} onClick={() => scrollToBottom('smooth')} />
+      <ScrollToBottomButton
+        visible={!isAtBottom}
+        streaming={lastMessage?.status === 'streaming'}
+        onClick={() => scrollToBottom('smooth')}
+      />
     </>
   );
 }

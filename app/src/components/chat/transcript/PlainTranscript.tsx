@@ -50,7 +50,19 @@ export function PlainTranscript({
 
   return (
     <>
-      <div ref={registerScroller} className="flex-1 overflow-y-auto overscroll-contain">
+      {/*
+        `overflow-anchor:auto` (the browser default, made explicit) keeps a
+        scrolled-away reader's place when content above the viewport changes
+        height — code blocks highlighting async, markdown expanding (shadcn point
+        12). It doesn't fight stick-to-bottom: while following we force the
+        bottom each frame, so anchoring only takes over once the reader has
+        scrolled up, which is exactly when we want it. Virtuoso owns its own
+        measurement-based restoration, so this lives on the plain path only.
+      */}
+      <div
+        ref={registerScroller}
+        className="flex-1 overflow-y-auto overscroll-contain [overflow-anchor:auto]"
+      >
         <div className="flex-1" />
         <div className="py-4 space-y-1.5">
           {segments.length > 0 && <SegmentList segments={segments} handlers={handlers} />}
@@ -62,7 +74,11 @@ export function PlainTranscript({
         </div>
       </div>
 
-      <ScrollToBottomButton visible={!isAtBottom} onClick={() => scrollToBottom('smooth')} />
+      <ScrollToBottomButton
+        visible={!isAtBottom}
+        streaming={lastMessage?.status === 'streaming'}
+        onClick={() => scrollToBottom('smooth')}
+      />
     </>
   );
 }

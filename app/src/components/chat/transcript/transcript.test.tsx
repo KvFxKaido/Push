@@ -5,6 +5,7 @@ import { groupChatMessages } from '../tool-call-utils';
 import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
 import { segmentKey, sameSegmentContent } from './segment-model';
 import { TranscriptList } from './TranscriptList';
+import { nextAnnouncement, type AnnouncerSnapshot } from './transcript-announce';
 
 function textMessage(id: string, role: ChatMessage['role'] = 'assistant'): ChatMessage {
   return { id, role, content: `msg-${id}`, timestamp: 1, status: 'done' };
@@ -129,6 +130,40 @@ describe('sameSegmentContent (settled-segment memoization)', () => {
       },
     ]);
     expect(sameSegmentContent(text, tool)).toBe(false);
+  });
+});
+
+describe('nextAnnouncement (aria-live turn boundaries)', () => {
+  const snap = (id: string, status: ChatMessage['status']): AnnouncerSnapshot => ({ id, status });
+  const msg = (
+    id: string,
+    status: ChatMessage['status'],
+    role: ChatMessage['role'] = 'assistant',
+  ) => ({ id, role, status }) as Pick<ChatMessage, 'id' | 'role' | 'status'>;
+
+  it('announces when an assistant turn starts streaming', () => {
+    expect(nextAnnouncement(null, msg('a', 'streaming'))).toBe('Responding…');
+    expect(nextAnnouncement(null, msg('a', 'sending'))).toBe('Responding…');
+  });
+
+  it('stays silent across streaming tokens of the same turn', () => {
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'streaming'))).toBeNull();
+  });
+
+  it('announces completion and failure once per turn', () => {
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'done'))).toBe('Response ready.');
+    expect(nextAnnouncement(snap('a', 'done'), msg('a', 'done'))).toBeNull();
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'error'))).toBe('Response failed.');
+  });
+
+  it('re-announces a new turn even with the same status (distinct id)', () => {
+    // A fresh assistant turn that begins streaming is a new boundary.
+    expect(nextAnnouncement(snap('a', 'done'), msg('b', 'streaming'))).toBe('Responding…');
+  });
+
+  it('ignores the reader own (user) messages', () => {
+    expect(nextAnnouncement(null, msg('u', 'done', 'user'))).toBeNull();
+    expect(nextAnnouncement(null, null)).toBeNull();
   });
 });
 

@@ -3,6 +3,7 @@ import type { ChatMessage, AgentStatus } from '@/types';
 import type { TranscriptSegment, TranscriptHandlers } from './segment-model';
 import { PlainTranscript } from './PlainTranscript';
 import { VirtualizedTranscript } from './VirtualizedTranscript';
+import { TranscriptAnnouncer } from './TranscriptAnnouncer';
 import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
 
 interface TranscriptListProps {
@@ -53,6 +54,7 @@ export function TranscriptList({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden relative">
+      <TranscriptAnnouncer lastMessage={lastMessage} />
       {virtualized ? (
         <VirtualizedTranscript
           segments={segments}
