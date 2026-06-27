@@ -821,6 +821,58 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(toolCallTurn?.reasoningContent).toBe(reasoning);
   });
 
+  it('carries signed reasoning blocks onto the tool-call turn for Anthropic replay', async () => {
+    const reasoningBlock = {
+      type: 'thinking' as const,
+      text: 'Need the file contents before editing.',
+      signature: 'sig-thinking-1',
+    };
+    const { stream } = makePushStream([
+      [
+        { type: 'reasoning_delta' as const, text: reasoningBlock.text },
+        { type: 'reasoning_block' as const, block: reasoningBlock },
+        { type: 'text_delta' as const, text: 'Reading the target files.' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ],
+      [
+        { type: 'text_delta' as const, text: 'Done.' },
+        { type: 'done' as const, finishReason: 'stop' as const },
+      ],
+    ]);
+    const detectAllToolCalls = () => ({
+      readOnly: [
+        { call: { tool: 'sandbox_read_file', args: { path: 'a.ts' } } },
+        { call: { tool: 'sandbox_read_file', args: { path: 'b.ts' } } },
+      ],
+      mutating: null,
+      fileMutations: [],
+      extraMutations: [],
+      droppedCandidates: [],
+    });
+    const toolExec = async () => ({ kind: 'executed' as const, resultText: 'ok' });
+    const evaluateAfterModel = async (_response: string, round: number) =>
+      round >= 1 ? ({ action: 'halt', summary: 'done' } as const) : null;
+    const checkpointMessages: CoderLoopMessage[][] = [];
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }),
+        toolExec,
+        checkpointCadenceRounds: 1,
+      },
+      {
+        onStatus: () => {},
+        onCheckpoint: async (state) => {
+          checkpointMessages.push(state.messages.map((m) => ({ ...m })));
+        },
+      },
+    );
+
+    const toolCallTurn = (checkpointMessages[0] ?? []).find((m) => m.isToolCall);
+    expect(toolCallTurn?.toolUses?.length).toBeGreaterThan(0);
+    expect(toolCallTurn?.reasoningBlocks).toEqual([reasoningBlock]);
+  });
+
   it('round-trips Gemini thoughtSignature through delegated Coder tool_use sidecars', async () => {
     const { stream } = makePushStream(
       Array.from({ length: 2 }, () => [

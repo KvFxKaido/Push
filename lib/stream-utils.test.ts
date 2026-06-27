@@ -100,6 +100,30 @@ describe('iteratePushStreamText', () => {
     expect(usage).toBeUndefined();
   });
 
+  it('returns signed reasoning blocks emitted by the stream', async () => {
+    const block = { type: 'thinking' as const, text: 'Need the repo shape.', signature: 'sig-1' };
+    const stream = makePushStream([
+      { type: 'reasoning_delta', text: block.text },
+      { type: 'reasoning_block', block },
+      { type: 'text_delta', text: 'reading files' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+
+    const promise = iteratePushStreamText(
+      stream,
+      { provider: 'anthropic', model: 'claude-opus-4-7', messages: [] },
+      100,
+      'timed out',
+    );
+    await vi.runAllTimersAsync();
+    const { error, reasoningText, reasoningBlocks, text } = await promise;
+
+    expect(error).toBeNull();
+    expect(reasoningText).toBe(block.text);
+    expect(reasoningBlocks).toEqual([block]);
+    expect(text).toBe('reading files');
+  });
+
   it('does NOT reset the activity timer on reasoning_delta — long-thinking streams time out', async () => {
     // 60ms gaps with a 50ms timeout. If reasoning_delta reset the timer,
     // the stream would reach text_delta successfully. With text-only reset
