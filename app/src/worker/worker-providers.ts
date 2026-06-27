@@ -53,6 +53,7 @@ import type {
   ResponseFormatSpec,
   ToolFunctionSchema,
 } from '@push/lib/provider-contract';
+import { PROVIDER_DEFINITIONS, type RealProviderId } from '@push/lib/provider-definition';
 import { parseNativeToolCallArgs } from '@push/lib/openai-sse-pump';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
 import { KNOWN_TOOL_NAMES } from '@push/lib/tool-call-diagnosis';
@@ -2852,3 +2853,49 @@ export async function handleGoogleSearch(request: Request, env: Env): Promise<Re
     );
   }
 }
+
+export type WorkerProviderHandler = (request: Request, env: Env) => Promise<Response>;
+
+export interface WorkerProviderHandlers {
+  readonly chat: WorkerProviderHandler;
+  readonly models: WorkerProviderHandler;
+}
+
+export interface WorkerProviderApiRoute {
+  readonly path: string;
+  readonly method: 'GET' | 'POST';
+  readonly handler: WorkerProviderHandler;
+}
+
+export const WORKER_PROVIDER_HANDLERS = {
+  ollama: { chat: handleOllamaChat, models: handleOllamaModels },
+  openrouter: { chat: handleOpenRouterChat, models: handleOpenRouterModels },
+  cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
+  zen: { chat: handleZenChat, models: handleZenModels },
+  nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },
+  blackbox: { chat: handleBlackboxChat, models: handleBlackboxModels },
+  kilocode: { chat: handleKiloCodeChat, models: handleKiloCodeModels },
+  fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
+  openadapter: { chat: handleOpenAdapterChat, models: handleOpenAdapterModels },
+  deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },
+  sakana: { chat: handleSakanaChat, models: handleSakanaModels },
+  azure: { chat: handleAzureChat, models: handleAzureModels },
+  bedrock: { chat: handleBedrockChat, models: handleBedrockModels },
+  vertex: { chat: handleVertexChat, models: handleVertexModels },
+  anthropic: { chat: handleAnthropicChat, models: handleAnthropicModels },
+  openai: { chat: handleOpenAIChat, models: handleOpenAIModels },
+  google: { chat: handleGoogleChat, models: handleGoogleModels },
+} satisfies Record<RealProviderId, WorkerProviderHandlers>;
+
+export const WORKER_PROVIDER_API_ROUTES: readonly WorkerProviderApiRoute[] =
+  PROVIDER_DEFINITIONS.flatMap((def) => {
+    const handlers = WORKER_PROVIDER_HANDLERS[def.id];
+    const routes: WorkerProviderApiRoute[] = [];
+    if (def.webProxyPath) {
+      routes.push({ path: def.webProxyPath, method: 'POST', handler: handlers.chat });
+    }
+    if (def.modelsProxyPath) {
+      routes.push({ path: def.modelsProxyPath, method: 'GET', handler: handlers.models });
+    }
+    return routes;
+  });

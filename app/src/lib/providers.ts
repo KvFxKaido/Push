@@ -6,6 +6,11 @@ import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
+import {
+  PROVIDER_DEFINITIONS,
+  type ProviderDefinition,
+  type RealProviderId,
+} from '@push/lib/provider-definition';
 export {
   ANTHROPIC_DEFAULT_MODEL,
   ANTHROPIC_MODELS,
@@ -63,82 +68,55 @@ function providerUrl(devPath: string, prodPath: string): string {
   return import.meta.env.DEV ? devPath : resolveApiUrl(prodPath);
 }
 
-export const PROVIDER_URLS: Record<AIProviderType, { chat: string; models: string }> = {
+type ProviderUrlPair = { chat: string; models: string };
+
+const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
   ollama: {
-    chat: providerUrl('/ollama/v1/chat/completions', '/api/ollama/chat'),
-    models: providerUrl('/ollama/v1/models', '/api/ollama/models'),
+    chat: '/ollama/v1/chat/completions',
+    models: '/ollama/v1/models',
   },
   openrouter: {
-    chat: providerUrl('/openrouter/api/v1/chat/completions', '/api/openrouter/chat'),
-    models: providerUrl('/openrouter/api/v1/models', '/api/openrouter/models'),
-  },
-  cloudflare: {
-    chat: providerUrl('/api/cloudflare/chat', '/api/cloudflare/chat'),
-    models: providerUrl('/api/cloudflare/models', '/api/cloudflare/models'),
+    chat: '/openrouter/api/v1/chat/completions',
+    models: '/openrouter/api/v1/models',
   },
   zen: {
-    chat: providerUrl('/opencode/zen/v1/chat/completions', '/api/zen/chat'),
-    models: providerUrl('/opencode/zen/v1/models', '/api/zen/models'),
+    chat: '/opencode/zen/v1/chat/completions',
+    models: '/opencode/zen/v1/models',
   },
   nvidia: {
-    chat: providerUrl('/nvidia/v1/chat/completions', '/api/nvidia/chat'),
-    models: providerUrl('/nvidia/v1/models', '/api/nvidia/models'),
+    chat: '/nvidia/v1/chat/completions',
+    models: '/nvidia/v1/models',
   },
   blackbox: {
-    chat: providerUrl('/blackbox/chat/completions', '/api/blackbox/chat'),
-    models: providerUrl('/blackbox/models', '/api/blackbox/models'),
+    chat: '/blackbox/chat/completions',
+    models: '/blackbox/models',
   },
-  azure: {
-    chat: providerUrl('/api/azure/chat', '/api/azure/chat'),
-    models: providerUrl('/api/azure/models', '/api/azure/models'),
-  },
-  bedrock: {
-    chat: providerUrl('/api/bedrock/chat', '/api/bedrock/chat'),
-    models: providerUrl('/api/bedrock/models', '/api/bedrock/models'),
-  },
-  vertex: {
-    chat: providerUrl('/api/vertex/chat', '/api/vertex/chat'),
-    models: providerUrl('/api/vertex/models', '/api/vertex/models'),
-  },
+};
+
+function requireProviderProxyPaths(def: ProviderDefinition): ProviderUrlPair {
+  if (!def.webProxyPath || !def.modelsProxyPath) {
+    throw new Error(`Provider "${def.id}" is missing web proxy paths`);
+  }
+  return { chat: def.webProxyPath, models: def.modelsProxyPath };
+}
+
+const REAL_PROVIDER_URLS = Object.fromEntries(
+  PROVIDER_DEFINITIONS.map((def) => {
+    const workerPaths = requireProviderProxyPaths(def);
+    const devPaths = DEV_PROXY_PATHS[def.id] ?? workerPaths;
+    return [
+      def.id,
+      {
+        chat: providerUrl(devPaths.chat, workerPaths.chat),
+        models: providerUrl(devPaths.models, workerPaths.models),
+      },
+    ];
+  }),
+) as Record<RealProviderId, ProviderUrlPair>;
+
+export const PROVIDER_URLS: Record<AIProviderType, ProviderUrlPair> = {
+  ...REAL_PROVIDER_URLS,
   demo: { chat: '', models: '' },
-  kilocode: {
-    chat: providerUrl('/api/kilocode/chat', '/api/kilocode/chat'),
-    models: providerUrl('/api/kilocode/models', '/api/kilocode/models'),
-  },
-  fireworks: {
-    chat: providerUrl('/api/fireworks/chat', '/api/fireworks/chat'),
-    models: providerUrl('/api/fireworks/models', '/api/fireworks/models'),
-  },
-  openadapter: {
-    chat: providerUrl('/api/openadapter/chat', '/api/openadapter/chat'),
-    models: providerUrl('/api/openadapter/models', '/api/openadapter/models'),
-  },
-  deepseek: {
-    chat: providerUrl('/api/deepseek/chat', '/api/deepseek/chat'),
-    models: providerUrl('/api/deepseek/models', '/api/deepseek/models'),
-  },
-  sakana: {
-    chat: providerUrl('/api/sakana/chat', '/api/sakana/chat'),
-    models: providerUrl('/api/sakana/models', '/api/sakana/models'),
-  },
-  anthropic: {
-    chat: providerUrl('/api/anthropic/chat', '/api/anthropic/chat'),
-    // Anthropic's /v1/models exists, but for MVP the curated ANTHROPIC_MODELS
-    // list seeds the dropdown; a Worker `/api/anthropic/models` proxy can land
-    // alongside live fetching in a follow-up.
-    models: providerUrl('/api/anthropic/models', '/api/anthropic/models'),
-  },
-  openai: {
-    chat: providerUrl('/api/openai/chat', '/api/openai/chat'),
-    models: providerUrl('/api/openai/models', '/api/openai/models'),
-  },
-  google: {
-    chat: providerUrl('/api/google/chat', '/api/google/chat'),
-    // Curated GOOGLE_MODELS seeds the dropdown for MVP. A Worker
-    // `/api/google/models` proxy could land alongside live fetching once we
-    // filter the upstream list to chat-capable models.
-    models: providerUrl('/api/google/models', '/api/google/models'),
-  },
 };
 
 // Experimental direct-deployment defaults — only used as placeholders before the user

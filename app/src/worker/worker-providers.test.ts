@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PROVIDER_DEFINITIONS } from '@push/lib/provider-definition';
 import {
   handleAnthropicChat,
   handleAnthropicModels,
@@ -28,6 +29,8 @@ import {
   handleZenGoChat,
   parseGeminiGroundingResponse,
   translateVertexOpenApiBody,
+  WORKER_PROVIDER_API_ROUTES,
+  WORKER_PROVIDER_HANDLERS,
 } from './worker-providers';
 import type { Env } from './worker-middleware';
 
@@ -99,6 +102,39 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+describe('WORKER_PROVIDER_API_ROUTES', () => {
+  it('derives provider proxy routes from ProviderDefinition paths', () => {
+    const expected = PROVIDER_DEFINITIONS.flatMap((def) => [
+      { path: def.webProxyPath, method: 'POST' },
+      { path: def.modelsProxyPath, method: 'GET' },
+    ]);
+
+    expect(WORKER_PROVIDER_API_ROUTES.map(({ path, method }) => ({ path, method }))).toEqual(
+      expected,
+    );
+  });
+
+  it('uses the handler registry for every generated provider route', () => {
+    for (const def of PROVIDER_DEFINITIONS) {
+      const chatRoute = WORKER_PROVIDER_API_ROUTES.find(
+        (route) => route.path === def.webProxyPath && route.method === 'POST',
+      );
+      const modelsRoute = WORKER_PROVIDER_API_ROUTES.find(
+        (route) => route.path === def.modelsProxyPath && route.method === 'GET',
+      );
+
+      expect(chatRoute?.handler).toBe(WORKER_PROVIDER_HANDLERS[def.id].chat);
+      expect(modelsRoute?.handler).toBe(WORKER_PROVIDER_HANDLERS[def.id].models);
+    }
+  });
+
+  it('keeps model-dependent Zen Go routes out of the provider-default registry', () => {
+    expect(WORKER_PROVIDER_API_ROUTES.some((route) => route.path.startsWith('/api/zen/go/'))).toBe(
+      false,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

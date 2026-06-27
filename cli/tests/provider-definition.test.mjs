@@ -263,12 +263,14 @@ describe('anthropic cross-registry wiring', () => {
     assert.match(source, /^\s+'anthropic',$/m);
   });
 
-  it('has a worker proxy route declared in app/worker.ts', async () => {
+  it('has worker provider handlers declared in worker-providers.ts', async () => {
     const fs = await import('node:fs');
-    const url = new URL('../../app/worker.ts', import.meta.url);
+    const url = new URL('../../app/src/worker/worker-providers.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /handler:\s*handleAnthropicChat/);
-    assert.match(source, /'\/api\/anthropic\/chat'/);
+    assert.match(
+      source,
+      /anthropic:\s*\{\s*chat:\s*handleAnthropicChat,\s*models:\s*handleAnthropicModels\s*\}/,
+    );
   });
 
   it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
@@ -297,14 +299,14 @@ describe('openai cross-registry wiring', () => {
     assert.match(source, /^\s+'openai',$/m);
   });
 
-  it('has worker proxy routes declared in app/worker.ts', async () => {
+  it('has worker provider handlers declared in worker-providers.ts', async () => {
     const fs = await import('node:fs');
-    const url = new URL('../../app/worker.ts', import.meta.url);
+    const url = new URL('../../app/src/worker/worker-providers.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /handler:\s*handleOpenAIChat/);
-    assert.match(source, /'\/api\/openai\/chat'/);
-    assert.match(source, /handler:\s*handleOpenAIModels/);
-    assert.match(source, /'\/api\/openai\/models'/);
+    assert.match(
+      source,
+      /openai:\s*\{\s*chat:\s*handleOpenAIChat,\s*models:\s*handleOpenAIModels\s*\}/,
+    );
   });
 
   it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
@@ -333,14 +335,14 @@ describe('google cross-registry wiring', () => {
     assert.match(source, /^\s+'google',$/m);
   });
 
-  it('has worker proxy routes declared in app/worker.ts', async () => {
+  it('has worker provider handlers declared in worker-providers.ts', async () => {
     const fs = await import('node:fs');
-    const url = new URL('../../app/worker.ts', import.meta.url);
+    const url = new URL('../../app/src/worker/worker-providers.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(source, /handler:\s*handleGoogleChat/);
-    assert.match(source, /'\/api\/google\/chat'/);
-    assert.match(source, /handler:\s*handleGoogleModels/);
-    assert.match(source, /'\/api\/google\/models'/);
+    assert.match(
+      source,
+      /google:\s*\{\s*chat:\s*handleGoogleChat,\s*models:\s*handleGoogleModels\s*\}/,
+    );
   });
 
   it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
