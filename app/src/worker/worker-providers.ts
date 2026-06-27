@@ -1260,32 +1260,6 @@ export const handleNvidiaModels = createJsonProxyHandler({
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
 });
 
-// --- Blackbox AI ---
-
-export const handleBlackboxChat = createStreamProxyHandler({
-  name: 'Blackbox AI API',
-  logTag: 'api/blackbox/chat',
-  upstreamUrl: 'https://api.blackbox.ai/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('BLACKBOX_API_KEY'),
-  keyMissingError:
-    'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
-  timeoutError: 'Blackbox AI request timed out after 120 seconds',
-});
-
-export const handleBlackboxModels = createJsonProxyHandler({
-  name: 'Blackbox AI API',
-  logTag: 'api/blackbox/models',
-  upstreamUrl: 'https://api.blackbox.ai/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('BLACKBOX_API_KEY'),
-  keyMissingError:
-    'Blackbox AI API key not configured. Add it in Settings or set BLACKBOX_API_KEY on the Worker.',
-  timeoutError: 'Blackbox AI model list timed out after 30 seconds',
-});
-
 // --- Experimental private connectors (OpenAI-compatible upstreams) ---
 
 export function createExperimentalStreamProxyHandler(
@@ -2873,7 +2847,6 @@ export const WORKER_PROVIDER_HANDLERS = {
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },
-  blackbox: { chat: handleBlackboxChat, models: handleBlackboxModels },
   kilocode: { chat: handleKiloCodeChat, models: handleKiloCodeModels },
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
   openadapter: { chat: handleOpenAdapterChat, models: handleOpenAdapterModels },

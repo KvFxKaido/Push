@@ -13,16 +13,16 @@
  *   - provider/model: read by the Durable Object immediately before model execution
  *
  * Enabled defaults to true when unset / unavailable (fail-open so fresh deploys
- * review by default). Provider/model default to the built-in Anthropic reviewer
- * unless overridden by the doc, the legacy flat keys, or the Worker env vars
- * (precedence: doc → legacy KV → env → built-in default).
+ * review by default). Provider/model default to the built-in Sakana Fugu
+ * reviewer unless overridden by the doc, the legacy flat keys, or the Worker env
+ * vars (precedence: doc → legacy KV → env → built-in default).
  */
 
 import type { AIProviderType } from '@push/lib/provider-contract';
 import {
-  ANTHROPIC_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  SAKANA_DEFAULT_MODEL,
   SHARED_PROVIDER_DEFAULT_MODELS,
   SHARED_PROVIDER_MODEL_CATALOG,
 } from '@push/lib/provider-models';
@@ -44,8 +44,8 @@ const LEGACY_ENABLED_KEY = 'config:pr-review-enabled';
 const LEGACY_PROVIDER_KEY = 'config:pr-review-provider';
 const LEGACY_MODEL_KEY = 'config:pr-review-model';
 
-export const DEFAULT_PR_REVIEW_PROVIDER: AIProviderType = 'anthropic';
-export const DEFAULT_PR_REVIEW_MODEL = ANTHROPIC_DEFAULT_MODEL;
+export const DEFAULT_PR_REVIEW_PROVIDER: AIProviderType = 'sakana';
+export const DEFAULT_PR_REVIEW_MODEL = SAKANA_DEFAULT_MODEL;
 
 const PR_REVIEW_MODEL_CATALOG: Partial<Record<AIProviderType, readonly string[]>> = {
   ...SHARED_PROVIDER_MODEL_CATALOG,
@@ -144,13 +144,46 @@ export async function getPrReviewRuntimeConfig(env: Env): Promise<PrReviewRuntim
   };
 }
 
+/**
+ * Coerce a resolved provider/model to a runnable pair. A persisted provider that
+ * is no longer in the catalog — e.g. a deployment still configured for the
+ * retired `blackbox` via the settings doc, the legacy `config:pr-review-provider`
+ * key, or `PR_REVIEW_PROVIDER` — must fall back to the built-in default reviewer
+ * (and its default model, since the stale model belonged to the removed
+ * provider) rather than letting the executor hard-fail every webhook review with
+ * "Configured review provider is unavailable". A model that is merely invalid for
+ * a *known* provider is left untouched so the caller's hard-fail policy can still
+ * surface a genuine misconfiguration. Logs the substitution so the silent
+ * fallback is visible to ops.
+ */
+export function coerceKnownPrReviewer(
+  provider: string,
+  model: string,
+): { provider: AIProviderType; model: string } {
+  if (isKnownPrReviewProvider(provider)) return { provider, model };
+  console.log(
+    JSON.stringify({
+      level: 'warn',
+      event: 'pr_review_provider_unavailable_fallback',
+      configuredProvider: provider,
+      fallbackProvider: DEFAULT_PR_REVIEW_PROVIDER,
+    }),
+  );
+  return {
+    provider: DEFAULT_PR_REVIEW_PROVIDER,
+    model: getDefaultPrReviewModel(DEFAULT_PR_REVIEW_PROVIDER) ?? DEFAULT_PR_REVIEW_MODEL,
+  };
+}
+
 export async function getPrReviewEffectiveConfig(env: Env): Promise<PrReviewEffectiveConfig> {
   const [enabled, runtime] = await Promise.all([
     isPrReviewEnabled(env),
     getPrReviewRuntimeConfig(env),
   ]);
-  const provider = runtime.provider ?? DEFAULT_PR_REVIEW_PROVIDER;
-  const model = runtime.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_PR_REVIEW_MODEL;
+  const resolvedProvider = runtime.provider ?? DEFAULT_PR_REVIEW_PROVIDER;
+  const resolvedModel =
+    runtime.model ?? getDefaultPrReviewModel(resolvedProvider) ?? DEFAULT_PR_REVIEW_MODEL;
+  const { provider, model } = coerceKnownPrReviewer(resolvedProvider, resolvedModel);
   return { enabled, provider, model };
 }
 

@@ -15,7 +15,7 @@ export type { ContextBudget };
 export { DEFAULT_CONTEXT_BUDGET };
 
 // Catalog metadata (models.dev) only loads for providers that fetch it:
-// openrouter, blackbox, nvidia, ollama, zen. Other providers (cloudflare,
+// openrouter, nvidia, ollama, zen. Other providers (cloudflare,
 // vertex, bedrock, azure, kilocode, fireworks, openadapter, sakana) hand us a model name with
 // no metadata, so we probe sibling catalogs by name and finally fall through
 // to the shared name-pattern table that captures the major model families'
@@ -25,7 +25,6 @@ const CATALOG_PROBE_PROVIDERS: readonly AIProviderType[] = [
   'zen',
   'ollama',
   'nvidia',
-  'blackbox',
 ];
 
 function probeWindow(provider: AIProviderType, model: string): number {

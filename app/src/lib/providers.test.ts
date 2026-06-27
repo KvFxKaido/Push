@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PROVIDER_DEFINITIONS, type RealProviderId } from '@push/lib/provider-definition';
 import {
-  compareProviderModelIds,
   formatModelDisplayName,
   getModelDisplayGroupKey,
   getModelDisplayLeafName,
@@ -27,10 +26,6 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: st
   nvidia: {
     chat: '/nvidia/v1/chat/completions',
     models: '/nvidia/v1/models',
-  },
-  blackbox: {
-    chat: '/blackbox/chat/completions',
-    models: '/blackbox/models',
   },
 };
 
@@ -80,15 +75,11 @@ describe('PROVIDERS', () => {
 });
 
 describe('formatModelDisplayName', () => {
-  it('normalizes routed Blackbox ids and uses provider shorthand labels', () => {
-    expect(formatModelDisplayName('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6')).toBe(
-      'Anthropic / claude-sonnet-4.6',
-    );
+  it('normalizes routed ids and uses provider shorthand labels', () => {
     expect(formatModelDisplayName('openrouter', 'openai/gpt-5.4')).toBe('OpenAI / gpt-5.4');
   });
 
-  it('groups Blackbox native ids while keeping Ollama native ids readable', () => {
-    expect(formatModelDisplayName('blackbox', 'blackbox-pro')).toBe('Blackbox / blackbox-pro');
+  it('keeps Ollama native ids readable', () => {
     expect(formatModelDisplayName('ollama', 'gemini-3-flash-preview')).toBe(
       'gemini-3-flash-preview',
     );
@@ -130,41 +121,6 @@ describe('normalizeFireworksModelName', () => {
     expect(normalizeFireworksModelName('accounts/fireworks/models/deepseek-v4-pro')).toBe(
       'accounts/fireworks/models/deepseek-v4-pro',
     );
-  });
-});
-
-describe('Blackbox display grouping', () => {
-  it('groups first-party Blackbox models under the Blackbox bucket', () => {
-    expect(getModelDisplayGroupKey('blackbox', 'blackbox-pro')).toBe('blackbox');
-    expect(getModelDisplayLeafName('blackbox', 'blackbox-pro')).toBe('blackbox-pro');
-  });
-
-  it('groups bare vendor ids with their routed siblings instead of the Blackbox bucket', () => {
-    // Blackbox serves Anthropic models as bare dated ids; infer the vendor so they
-    // land under "Anthropic" alongside any `blackboxai/anthropic/...` entries.
-    expect(getModelDisplayGroupKey('blackbox', 'claude-haiku-4-5-20251001')).toBe('anthropic');
-    expect(getModelDisplayLeafName('blackbox', 'claude-haiku-4-5-20251001')).toBe(
-      'claude-haiku-4-5-20251001',
-    );
-    expect(formatModelDisplayName('blackbox', 'claude-haiku-4-5-20251001')).toBe(
-      'Anthropic / claude-haiku-4-5-20251001',
-    );
-  });
-
-  it('sorts by provider bucket, then model name', () => {
-    const models = [
-      'blackboxai/qwen/qwen3-coder-32b-instruct',
-      'blackbox-pro',
-      'blackboxai/anthropic/claude-sonnet-4.6',
-    ];
-
-    expect(
-      [...models].sort((left, right) => compareProviderModelIds('blackbox', left, right)),
-    ).toEqual([
-      'blackboxai/anthropic/claude-sonnet-4.6',
-      'blackbox-pro',
-      'blackboxai/qwen/qwen3-coder-32b-instruct',
-    ]);
   });
 });
 

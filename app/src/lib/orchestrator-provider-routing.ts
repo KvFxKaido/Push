@@ -24,7 +24,6 @@ import { kilocodeStream } from './kilocode-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
-import { blackboxStream } from './blackbox-stream';
 import { openadapterStream } from './openadapter-stream';
 import { deepseekStream } from './deepseek-stream';
 import { azureStream } from './azure-stream';
@@ -43,7 +42,6 @@ import {
   getOpenRouterModelName,
   getZenModelName,
   getNvidiaModelName,
-  getBlackboxModelName,
   getKiloCodeModelName,
   getFireworksModelName,
   getOpenAdapterModelName,
@@ -200,7 +198,6 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   openadapter: openadapterStream,
   deepseek: deepseekStream,
   nvidia: nvidiaStream,
-  blackbox: blackboxStream,
   azure: azureStream,
   bedrock: bedrockStream,
   vertex: vertexStream,
@@ -301,8 +298,6 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getZenModelName();
     case 'nvidia':
       return getNvidiaModelName();
-    case 'blackbox':
-      return getBlackboxModelName();
     case 'kilocode':
       return getKiloCodeModelName();
     case 'fireworks':

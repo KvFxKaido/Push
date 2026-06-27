@@ -20,7 +20,6 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   cloudflare: '',
   zen: '',
   nvidia: '',
-  blackbox: '',
   azure: '',
   bedrock: '',
   vertex: '',
@@ -43,7 +42,6 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
     nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
-    blackbox: typeof parsed.blackbox === 'string' ? parsed.blackbox.trim() : '',
     azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
     bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
     vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
@@ -123,7 +121,6 @@ export function useWorkspaceComposerState({
       cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
       nvidia: catalog.nvidia.model,
-      blackbox: catalog.blackbox.model,
       kilocode: catalog.kilocode.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
@@ -142,7 +139,6 @@ export function useWorkspaceComposerState({
       catalog.google.model,
       catalog.azure.model,
       catalog.bedrock.model,
-      catalog.blackbox.model,
       catalog.cloudflare.model,
       catalog.fireworks.model,
       catalog.sakana.model,
@@ -224,10 +220,6 @@ export function useWorkspaceComposerState({
         zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
         nvidia:
           draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
-        blackbox:
-          draft?.models?.blackbox?.trim() ||
-          rememberedChatModels.blackbox ||
-          defaultChatModels.blackbox,
         azure:
           draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
         bedrock:
@@ -432,15 +424,6 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
-  const handleSelectBlackboxModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('blackbox', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { blackbox: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
   const handleSelectKilocodeModelFromChat = useCallback(
     (model: string) => {
       const normalizedModel = normalizeKilocodeModelName(model);
@@ -561,7 +544,6 @@ export function useWorkspaceComposerState({
     handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,
-    handleSelectBlackboxModelFromChat,
     handleSelectKilocodeModelFromChat,
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,

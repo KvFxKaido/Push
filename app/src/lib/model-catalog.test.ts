@@ -1,11 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildCuratedBlackboxModelList,
   buildCuratedNvidiaModelList,
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
-  fetchBlackboxModels,
   fetchGoogleModels,
   fetchKilocodeModels,
   fetchNvidiaModels,
@@ -610,167 +608,6 @@ describe('buildCuratedOllamaModelList', () => {
   });
 });
 
-describe('buildCuratedBlackboxModelList', () => {
-  it('normalizes routed IDs, keeps viable chat models, and excludes image-only or embedding models', () => {
-    const curated = buildCuratedBlackboxModelList(
-      [
-        'blackbox-pro',
-        'blackboxai/anthropic/claude-sonnet-4.6',
-        'blackboxai/qwen/qwen3-coder-32b-instruct',
-        'blackboxai/openai/gpt-image-1',
-        'blackboxai/nomic/nomic-embed-text',
-      ],
-      {
-        'anthropic/claude-sonnet-4.6': {
-          id: 'anthropic/claude-sonnet-4.6',
-          attachment: true,
-          reasoning: true,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image'],
-          outputModalities: ['text'],
-          contextLimit: 200_000,
-        },
-        'openai/gpt-image-1': {
-          id: 'openai/gpt-image-1',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: false,
-          inputModalities: ['text'],
-          outputModalities: ['image'],
-          contextLimit: 128_000,
-        },
-        'nomic/nomic-embed-text': {
-          id: 'nomic/nomic-embed-text',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: true,
-          inputModalities: ['text'],
-          outputModalities: ['embedding'],
-          contextLimit: 8_192,
-        },
-      },
-    );
-
-    expect(curated).toEqual([
-      'blackboxai/anthropic/claude-sonnet-4.6',
-      'blackbox-pro',
-      'blackboxai/qwen/qwen3-coder-32b-instruct',
-    ]);
-    expect(curated).toContain('blackboxai/anthropic/claude-sonnet-4.6');
-    expect(curated).toContain('blackboxai/qwen/qwen3-coder-32b-instruct');
-    expect(curated).not.toContain('blackboxai/openai/gpt-image-1');
-    expect(curated).not.toContain('blackboxai/nomic/nomic-embed-text');
-  });
-
-  it('prefers the bare dated Anthropic ids over the routed aliases', () => {
-    // Both the bare dated id and the routed `blackboxai/anthropic/...` alias now
-    // resolve at the chat endpoint (re-probed 2026-06-27), but the dedup keeps
-    // surfacing the bare, catalog-canonical form for the Anthropic tier as the
-    // more specific, stable choice (see BLACKBOX_DEFAULT_MODEL).
-    const curated = buildCuratedBlackboxModelList(
-      [
-        'claude-3-5-haiku-20241022',
-        'claude-haiku-4-5-20251001',
-        'blackboxai/anthropic/claude-3.5-haiku',
-        'blackboxai/anthropic/claude-haiku-4.5',
-        'blackbox-pro',
-      ],
-      {},
-    );
-
-    expect(curated).toEqual([
-      'claude-3-5-haiku-20241022',
-      'claude-haiku-4-5-20251001',
-      'blackbox-pro',
-    ]);
-    expect(curated).not.toContain('blackboxai/anthropic/claude-3.5-haiku');
-    expect(curated).not.toContain('blackboxai/anthropic/claude-haiku-4.5');
-  });
-
-  it('still prefers routed aliases over bare ids for non-Anthropic vendors', () => {
-    const curated = buildCuratedBlackboxModelList(['grok-4.3', 'blackboxai/x-ai/grok-4.3'], {});
-
-    expect(curated).toEqual(['blackboxai/x-ai/grok-4.3']);
-    expect(curated).not.toContain('grok-4.3');
-  });
-
-  it('excludes explicitly tiny Blackbox models even without metadata', () => {
-    const curated = buildCuratedBlackboxModelList(
-      [
-        'blackboxai/meta/llama-3.2-3b-instruct',
-        'blackboxai/qwen/qwen2.5-coder-7b-instruct',
-        'blackboxai/openai/gpt-5.4-nano',
-        'blackboxai/qwen/qwen3-coder-32b-instruct',
-      ],
-      {},
-    );
-
-    expect(curated).toContain('blackboxai/qwen/qwen3-coder-32b-instruct');
-    expect(curated).not.toContain('blackboxai/meta/llama-3.2-3b-instruct');
-    expect(curated).not.toContain('blackboxai/qwen/qwen2.5-coder-7b-instruct');
-    expect(curated).not.toContain('blackboxai/openai/gpt-5.4-nano');
-  });
-
-  it('keeps large MoE models whose active-param suffix reads below the size floor', () => {
-    // `<total>b-a<active>b` MoE naming: the `a12b`/`a4b` active-param token must
-    // not be read as the model size, or large MoE models get dropped. Probed
-    // live 2026-06-27: nemotron-3-super-120b-a12b sends 200 OK.
-    const curated = buildCuratedBlackboxModelList(
-      [
-        'blackboxai/nvidia/nemotron-3-super-120b-a12b:free',
-        'blackboxai/google/gemma-4-26b-a4b-it',
-        'blackboxai/qwen/qwen3.5-397b-a17b',
-        'blackboxai/meta/llama-3.2-3b-a1b',
-      ],
-      {},
-    );
-
-    expect(curated).toContain('blackboxai/nvidia/nemotron-3-super-120b-a12b:free');
-    expect(curated).toContain('blackboxai/google/gemma-4-26b-a4b-it');
-    expect(curated).toContain('blackboxai/qwen/qwen3.5-397b-a17b');
-    // The genuine total size still governs: a 3B-total MoE stays filtered.
-    expect(curated).not.toContain('blackboxai/meta/llama-3.2-3b-a1b');
-  });
-
-  it('excludes obvious image, video, and edit families from the Blackbox catalog', () => {
-    const curated = buildCuratedBlackboxModelList(
-      [
-        'fast-animatediff',
-        'fast-svd',
-        'fast-svd-lcm',
-        'gemini-flash-edit',
-        'hunyuan-video-lora',
-        'mochi-v1',
-        'blackboxai/qwen/qwen3-coder-32b-instruct',
-      ],
-      {},
-    );
-
-    expect(curated).toEqual(['blackboxai/qwen/qwen3-coder-32b-instruct']);
-    expect(curated).not.toContain('fast-animatediff');
-    expect(curated).not.toContain('fast-svd');
-    expect(curated).not.toContain('fast-svd-lcm');
-    expect(curated).not.toContain('gemini-flash-edit');
-    expect(curated).not.toContain('hunyuan-video-lora');
-    expect(curated).not.toContain('mochi-v1');
-  });
-
-  it('does not truncate the Blackbox catalog after sorting', () => {
-    const models = Array.from({ length: 60 }, (_, index) => `blackboxai/openai/gpt-5.${index}`);
-    const curated = buildCuratedBlackboxModelList(models, {});
-
-    expect(curated).toHaveLength(60);
-    expect(curated[0]).toBe('blackboxai/openai/gpt-5.0');
-    expect(curated.at(-1)).toBe('blackboxai/openai/gpt-5.59');
-  });
-});
-
 describe('buildCuratedOpencodeModelList', () => {
   it('prefers priority chat models and excludes image-output or embedding models', () => {
     const curated = buildCuratedOpencodeModelList(
@@ -1092,121 +929,6 @@ describe('fetchOpenAIModels', () => {
     );
 
     await expect(fetchOpenAIModels()).rejects.toThrow(/OpenAI model list failed \(401\)/);
-  });
-});
-
-describe('fetchBlackboxModels', () => {
-  it('returns a curated Blackbox chat-model list', async () => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('models.dev/api.json')) {
-          return jsonResponse({
-            anthropic: {
-              models: {
-                'anthropic/claude-sonnet-4.6': {
-                  id: 'anthropic/claude-sonnet-4.6',
-                  reasoning: true,
-                  tool_call: true,
-                  structured_output: true,
-                  modalities: { input: ['text', 'image'], output: ['text'] },
-                  limit: { context: 200_000 },
-                },
-              },
-            },
-            openai: {
-              models: {
-                'openai/gpt-image-1': {
-                  id: 'openai/gpt-image-1',
-                  modalities: { input: ['text'], output: ['image'] },
-                  limit: { context: 128_000 },
-                },
-              },
-            },
-          });
-        }
-        return jsonResponse({
-          data: [
-            { id: 'claude-3-5-haiku-20241022' },
-            { id: 'blackbox-pro' },
-            { id: 'blackboxai/anthropic/claude-3.5-haiku' },
-            { id: 'blackboxai/anthropic/claude-sonnet-4.6' },
-            { id: 'blackboxai/qwen/qwen3-coder-32b-instruct' },
-            { id: 'blackboxai/meta/llama-3.2-3b-instruct' },
-            { id: 'blackboxai/openai/gpt-image-1' },
-            { id: 'fast-animatediff' },
-          ],
-        });
-      }),
-    );
-
-    await expect(fetchBlackboxModels()).resolves.toEqual([
-      // The bare dated id wins the Anthropic dedup (chat-accepted form), and now
-      // groups under the Anthropic bucket alongside the routed sonnet id.
-      'claude-3-5-haiku-20241022',
-      'blackboxai/anthropic/claude-sonnet-4.6',
-      'blackbox-pro',
-      'blackboxai/qwen/qwen3-coder-32b-instruct',
-    ]);
-  });
-
-  it('throws on non-OK response', async () => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => ({
-        ok: false,
-        status: 401,
-        text: async () => 'Unauthorized',
-      })),
-    );
-
-    await expect(fetchBlackboxModels()).rejects.toThrow(/Blackbox AI model list failed \(401\)/);
-  });
-
-  it('throws on timeout', async () => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (_url: string, init?: { signal?: AbortSignal }) => {
-        init?.signal?.throwIfAborted();
-        const err = new DOMException('The operation was aborted.', 'AbortError');
-        throw err;
-      }),
-    );
-
-    await expect(fetchBlackboxModels()).rejects.toThrow(/timed out/);
-  });
-
-  it('does not fall back to the raw provider list when every model is filtered out', async () => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('models.dev/api.json')) {
-          return jsonResponse({
-            openai: {
-              models: {
-                'openai/gpt-image-1': {
-                  id: 'openai/gpt-image-1',
-                  modalities: { input: ['text'], output: ['image'] },
-                  limit: { context: 128_000 },
-                },
-              },
-            },
-          });
-        }
-        if (url.includes('/blackbox/')) {
-          return jsonResponse({ data: [{ id: 'blackboxai/openai/gpt-image-1' }] });
-        }
-        throw new Error(`Unexpected fetch: ${url}`);
-      }),
-    );
-
-    await expect(fetchBlackboxModels()).resolves.toEqual([]);
   });
 });
 
@@ -1676,9 +1398,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     );
     expect(providerModelSupportsNativeToolCalling('openadapter', 'unknown/model')).toBe(false);
 
-    expect(
-      providerModelSupportsNativeToolCalling('blackbox', 'blackboxai/anthropic/claude-sonnet-4.6'),
-    ).toBe(true);
     expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
       true,
     );
@@ -1712,7 +1431,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     stubWindow();
     // Name-based providers must decide identically across surfaces (single source
     // of truth via `lib/native-tool-gate` + `lib/provider-models`). Capability-based
-    // providers (openrouter / ollama / nvidia / blackbox) are intentionally
+    // providers (openrouter / ollama / nvidia) are intentionally
     // surface-specific — models.dev on web, curated fallback on CLI — and excluded.
     const nameBasedCases: Array<[string, string[]]> = [
       ['anthropic', ANTHROPIC_MODELS],

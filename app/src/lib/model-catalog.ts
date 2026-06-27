@@ -2,7 +2,6 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import { getBlackboxKey } from '@/hooks/useBlackboxConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
@@ -14,13 +13,10 @@ import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   ANTHROPIC_MODELS,
   CLOUDFLARE_MODELS,
-  BLACKBOX_MODELS,
   compareProviderModelIds,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
-  inferBlackboxAliasProvider,
   KILOCODE_MODELS,
-  normalizeBlackboxAliasLeaf,
   NVIDIA_MODELS,
   OPENADAPTER_MODELS,
   OPENROUTER_MODELS,
@@ -57,7 +53,6 @@ const MODELS_DEV_OPENROUTER_CACHE_KEY = 'push:models-dev:openrouter-models';
 const MODELS_DEV_NVIDIA_CACHE_KEY = 'push:models-dev:nvidia-models';
 const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
-const MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY = 'push:models-dev:all-provider-models';
 const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 // Cloudflare Workers AI catalog cache. Unlike the other providers, Cloudflare
 // has no models.dev metadata — the binding's own catalog (surfaced by
@@ -71,7 +66,6 @@ const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = 64000;
-const BLACKBOX_MIN_PARAMETER_BILLIONS = 16;
 // Use the shared curated list as the single source of truth for priority ordering.
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
@@ -413,31 +407,20 @@ function resolveDeclaredModelCapabilities(
 
 /**
  * Look up cached model capabilities from models.dev metadata.
- * Works for any provider — checks OpenRouter, Ollama, Nvidia, OpenCode, and
- * Blackbox-compatible routed IDs against cached metadata.
+ * Works for any provider — checks OpenRouter, Ollama, Nvidia, and OpenCode
+ * routed IDs against cached metadata.
  */
 export function getModelCapabilities(provider: string, modelId: string): ResolvedModelCapabilities {
   if (provider === 'openrouter') {
     const metadata = readCachedModelsDevOpenRouterMetadata();
     // OpenRouter ids carry routing suffixes (`:nitro`, `:free`, `:online`) but
     // models.dev keys metadata by the base id, so fall back to the
-    // suffix-stripped id — mirrors the blackbox base-id fallback below. Without
-    // this, every routed (`:nitro`/`:free`) model resolves to EMPTY_CAPABILITIES
-    // and silently loses reasoning / structured-output / native-tool gating.
+    // suffix-stripped id. Without this, every routed (`:nitro`/`:free`) model
+    // resolves to EMPTY_CAPABILITIES and silently loses reasoning /
+    // structured-output / native-tool gating.
     const meta = metadata?.[modelId] ?? metadata?.[openRouterBaseId(modelId)];
     return meta
       ? resolveFromOpenRouterMetadata(meta)
-      : resolveDeclaredModelCapabilities(provider, modelId);
-  }
-
-  if (provider === 'blackbox') {
-    const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(
-      MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY,
-    );
-    const baseId = blackboxBaseId(modelId);
-    const meta = metadata?.[modelId] ?? metadata?.[baseId];
-    return meta
-      ? resolveFromProviderMetadata(meta)
       : resolveDeclaredModelCapabilities(provider, modelId);
   }
 
@@ -485,7 +468,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openai',
   'azure',
   'nvidia',
-  'blackbox',
   'kilocode',
   'fireworks',
   'openadapter',
@@ -676,7 +658,6 @@ const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MO
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
-const BLACKBOX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(BLACKBOX_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
 // `looksLikeOpenAIToolCallingModel`, `looksLikeBedrockAnthropicToolCallingModel`,
 // and `VERTEX_NATIVE_TOOL_CALLING_MODELS` are shared with the CLI gate via
@@ -712,7 +693,7 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *   - **AWS Bedrock** — name-based for Claude 3+ / Claude 4-style Anthropic
  *     model ids routed through the OpenAI-compatible proxy (`tools` straight
  *     through).
- *   - **Ollama Cloud / Nvidia NIM / Blackbox AI** — capability-based, using the
+ *   - **Ollama Cloud / Nvidia NIM** — capability-based, using the
  *     existing models.dev metadata caches.
  *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
  *     curated OpenAI-compatible catalogs or OpenAI-family model ids. Free-text
@@ -736,12 +717,6 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
   if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
-  if (provider === 'blackbox') {
-    return (
-      getModelCapabilities('blackbox', modelId).toolCall ||
-      BLACKBOX_NATIVE_TOOL_CALLING_MODELS.has(modelId)
-    );
-  }
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
@@ -943,44 +918,6 @@ function extractModelsDevProviderMetadata(
   return entries;
 }
 
-function mergeProviderMetadata(
-  current: ModelsDevProviderMetadata | undefined,
-  incoming: ModelsDevProviderMetadata,
-): ModelsDevProviderMetadata {
-  if (!current) return incoming;
-
-  return {
-    id: current.id || incoming.id,
-    attachment: current.attachment || incoming.attachment,
-    reasoning: current.reasoning || incoming.reasoning,
-    toolCall: current.toolCall || incoming.toolCall,
-    structuredOutput: current.structuredOutput || incoming.structuredOutput,
-    openWeights: current.openWeights || incoming.openWeights,
-    inputModalities: Array.from(new Set([...current.inputModalities, ...incoming.inputModalities])),
-    outputModalities: Array.from(
-      new Set([...current.outputModalities, ...incoming.outputModalities]),
-    ),
-    contextLimit: Math.max(current.contextLimit, incoming.contextLimit),
-  };
-}
-
-function extractAllModelsDevProviderMetadata(
-  payload: unknown,
-): Record<string, ModelsDevProviderMetadata> {
-  const root = asRecord(payload);
-  if (!root) return {};
-
-  const entries: Record<string, ModelsDevProviderMetadata> = {};
-  for (const [providerKey] of Object.entries(root)) {
-    const providerEntries = extractModelsDevProviderMetadata(payload, providerKey);
-    for (const [id, metadata] of Object.entries(providerEntries)) {
-      entries[id] = mergeProviderMetadata(entries[id], metadata);
-    }
-  }
-
-  return entries;
-}
-
 async function fetchModelsDevProviderMetadata(
   providerKey: string,
   cacheKey: string,
@@ -1089,37 +1026,6 @@ async function fetchModelsDevOpencodeMetadata(
   forceRefresh = false,
 ): Promise<Record<string, ModelsDevProviderMetadata>> {
   return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY, forceRefresh);
-}
-
-async function fetchModelsDevGlobalProviderMetadata(
-  forceRefresh = false,
-): Promise<Record<string, ModelsDevProviderMetadata>> {
-  const cached = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(
-    MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY,
-  );
-  if (cached && !forceRefresh) return cached;
-
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(MODELS_DEV_OPENROUTER_URL, {
-      method: 'GET',
-      signal: controller.signal,
-      cache: forceRefresh ? 'reload' : 'force-cache',
-    });
-    if (!res.ok) throw new Error(`models.dev metadata failed (${res.status})`);
-    const payload = (await res.json()) as unknown;
-    const metadata = extractAllModelsDevProviderMetadata(payload);
-    if (Object.keys(metadata).length > 0) {
-      writeCachedModelsDevMetadata(MODELS_DEV_GLOBAL_PROVIDER_CACHE_KEY, metadata);
-    }
-    return metadata;
-  } catch {
-    return cached ?? {};
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
 }
 
 export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel[] {
@@ -1309,113 +1215,6 @@ export function buildCuratedOllamaModelList(
 function isOpencodeChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
   if (!isProviderTextChatModel(id, metadata)) return false;
   return true;
-}
-
-function blackboxBaseId(id: string): string {
-  return id.trim().replace(/^blackboxai\//i, '');
-}
-
-const BLACKBOX_NON_CHAT_FAMILY_REGEX =
-  /animatediff|(?:^|[-_/:.])svd(?:$|[-_/:.])|mochi(?:$|[-_/:.])|hunyuan(?:$|[-_/:.])|(?:^|[-_/:.])lora(?:$|[-_/:.])|gemini-flash-edit/i;
-
-function getBlackboxDedupKey(id: string): string {
-  const baseId = blackboxBaseId(id);
-  const slash = baseId.indexOf('/');
-  if (slash > 0) {
-    const provider = baseId.slice(0, slash).toLowerCase();
-    const leaf = baseId.slice(slash + 1);
-    return `${provider}/${normalizeBlackboxAliasLeaf(leaf)}`;
-  }
-
-  const normalizedLeaf = normalizeBlackboxAliasLeaf(baseId);
-  const inferredProvider = inferBlackboxAliasProvider(normalizedLeaf);
-  if (inferredProvider) return `${inferredProvider}/${normalizedLeaf}`;
-  return `blackbox/${normalizedLeaf}`;
-}
-
-function prefersBlackboxModelId(nextId: string, currentId: string): boolean {
-  const nextBase = blackboxBaseId(nextId);
-  const currentBase = blackboxBaseId(currentId);
-  const nextIsRouted = nextBase.includes('/');
-  const currentIsRouted = currentBase.includes('/');
-  if (nextIsRouted !== currentIsRouted) {
-    // The routed `blackboxai/<vendor>/...` form is normally the canonical,
-    // chat-accepted id, so prefer it. Anthropic is the documented exception:
-    // Blackbox rejects the routed `blackboxai/anthropic/...` alias and only
-    // accepts the bare dated id (see BLACKBOX_DEFAULT_MODEL in
-    // lib/provider-models.ts), so surface the bare form there instead — picking
-    // the routed alias would 400 the next send. Both ids share this dedup key,
-    // so either resolves the same vendor.
-    const prefersRouted = getBlackboxDedupKey(nextBase).split('/', 1)[0] !== 'anthropic';
-    return prefersRouted ? nextIsRouted : !nextIsRouted;
-  }
-
-  const nextLabel = normalizeBlackboxAliasLeaf(nextBase);
-  const currentLabel = normalizeBlackboxAliasLeaf(currentBase);
-  if (nextLabel !== currentLabel)
-    return (
-      nextLabel.localeCompare(currentLabel, undefined, { numeric: true, sensitivity: 'base' }) < 0
-    );
-
-  return nextBase.localeCompare(currentBase, undefined, { numeric: true, sensitivity: 'base' }) < 0;
-}
-
-function isClearlyNonPushBlackboxModel(id: string): boolean {
-  return BLACKBOX_NON_CHAT_FAMILY_REGEX.test(id.toLowerCase());
-}
-
-function isExplicitlySmallBlackboxModel(id: string): boolean {
-  const normalized = id.toLowerCase();
-  if (/(?:^|[-_/:.])(nano|tiny)(?:$|[-_/:.])/.test(normalized)) return true;
-
-  // Avoid misclassifying MoE names like 8x22b as "22b" single-size models.
-  if (/\d+x\d+(?:\.\d+)?b\b/.test(normalized)) return false;
-
-  // Strip the MoE active-parameter token (`-a12b`, `-a4b`, …) before reading
-  // sizes: it names how many params are *active per token*, not the model's
-  // total size, so counting it as the size hides large MoE models. e.g.
-  // `nemotron-3-super-120b-a12b` is a 120B model whose `a12b` would otherwise
-  // read as "12B" and trip the <16B floor (probed live 2026-06-27: it sends
-  // 200 OK but the picker dropped it). The 8x22b guard above covers the
-  // mixtral-style notation; this covers the `<total>b-a<active>b` notation.
-  const sizeScan = normalized.replace(/(?:^|[-_/:.])a\d+(?:\.\d+)?b(?=$|[-_/:.])/g, '');
-
-  const sizeMatches = sizeScan.matchAll(/(\d+(?:\.\d+)?)b\b/g);
-  for (const match of sizeMatches) {
-    const sizeInBillions = Number(match[1]);
-    if (Number.isFinite(sizeInBillions) && sizeInBillions < BLACKBOX_MIN_PARAMETER_BILLIONS) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-export function buildCuratedBlackboxModelList(
-  modelIds: string[],
-  metadataById: Record<string, ModelsDevProviderMetadata>,
-): string[] {
-  const deduped = new Map<string, string>();
-
-  for (const rawId of modelIds) {
-    const baseId = blackboxBaseId(rawId);
-    const metadata = metadataById[rawId] ?? metadataById[baseId];
-    if (!isProviderTextChatModel(baseId, metadata)) continue;
-    if (isClearlyNonPushBlackboxModel(baseId)) continue;
-    if (isExplicitlySmallBlackboxModel(baseId)) continue;
-
-    const dedupKey = getBlackboxDedupKey(baseId);
-    const existing = deduped.get(dedupKey);
-    if (!existing || prefersBlackboxModelId(rawId, existing)) {
-      deduped.set(dedupKey, rawId);
-    }
-  }
-
-  const candidates = Array.from(deduped.values());
-
-  if (candidates.length === 0) return [];
-
-  return [...candidates].sort((a, b) => compareProviderModelIds('blackbox', a, b));
 }
 
 export function buildCuratedOpencodeModelList(
@@ -1742,52 +1541,6 @@ export async function fetchNvidiaModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
-        { cause: err },
-      );
-    }
-    throw err;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-export async function fetchBlackboxModels(
-  opts: { forceMetadataRefresh?: boolean } = {},
-): Promise<string[]> {
-  const key = getBlackboxKey();
-  const headers: HeadersInit = {};
-  if (key) headers.Authorization = `Bearer ${key}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
-
-  try {
-    const [catalogRes, modelsDevMetadata] = await Promise.all([
-      fetch(PROVIDER_URLS.blackbox.models, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-        cache: 'no-store',
-      }),
-      fetchModelsDevGlobalProviderMetadata(opts.forceMetadataRefresh),
-    ]);
-
-    if (!catalogRes.ok) {
-      const detail = await catalogRes.text().catch(() => '');
-      throw new Error(
-        `Blackbox AI model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
-      );
-    }
-
-    const payload = (await catalogRes.json()) as unknown;
-    const liveModels = normalizeModelList(payload);
-    const curated = buildCuratedBlackboxModelList(liveModels, modelsDevMetadata);
-    // Keep Blackbox on a lightweight provider-specific filter: preserve good chat/code
-    // models from the live catalog while dropping obvious image/non-text/tiny variants.
-    return curated;
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(
-        `Blackbox AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

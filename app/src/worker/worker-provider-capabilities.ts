@@ -53,7 +53,6 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   openrouter: 'OPENROUTER_API_KEY',
   zen: 'ZEN_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
-  blackbox: 'BLACKBOX_API_KEY',
   kilocode: 'KILOCODE_API_KEY',
   fireworks: 'FIREWORKS_API_KEY',
   openadapter: 'OPENADAPTER_API_KEY',

@@ -1,6 +1,5 @@
 import {
   ANTHROPIC_MODELS,
-  BLACKBOX_MODELS,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
   KILOCODE_MODELS,
@@ -21,13 +20,12 @@ import {
 // surface, these are the SAME `lib/provider-models.ts` data the web gate builds
 // from, so the two stay in lockstep (pinned by the web↔CLI drift test in
 // `app/src/lib/model-catalog.test.ts`). The capability-based providers
-// (openrouter / ollama / nvidia / blackbox) are gated by models.dev metadata on
+// (openrouter / ollama / nvidia) are gated by models.dev metadata on
 // the web; the CLI has no models.dev cache, so it falls back to the curated
 // catalog here — an intentional, documented surface difference the drift test
 // excludes from its parity assertions.
 const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   anthropic: new Set(ANTHROPIC_MODELS),
-  blackbox: new Set(BLACKBOX_MODELS),
   fireworks: new Set(FIREWORKS_MODELS),
   google: new Set(GOOGLE_MODELS),
   kilocode: new Set(KILOCODE_MODELS),

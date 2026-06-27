@@ -34,7 +34,6 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectNvidiaModelFromChat'
-  | 'handleSelectBlackboxModelFromChat'
   | 'handleSelectKilocodeModelFromChat'
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
@@ -69,7 +68,6 @@ export function useWorkspaceChatComposerController({
   handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectNvidiaModelFromChat,
-  handleSelectBlackboxModelFromChat,
   handleSelectKilocodeModelFromChat,
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
@@ -290,16 +288,6 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshNvidiaModels,
       isLocked: isProviderModelLocked('nvidia'),
       ariaLabel: 'Select Nvidia NIM model',
-    }),
-    blackbox: buildPickerControl('blackbox', {
-      options: catalog.blackboxModelOptions,
-      onChange: handleSelectBlackboxModelFromChat,
-      loading: catalog.blackboxModels.loading,
-      error: catalog.blackboxModels.error,
-      updatedAt: catalog.blackboxModels.updatedAt,
-      refreshModels: catalog.refreshBlackboxModels,
-      isLocked: isProviderModelLocked('blackbox'),
-      ariaLabel: 'Select Blackbox AI model',
     }),
     azure: {
       kind: 'deployment',

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  coerceKnownPrReviewer,
   getPrReviewEffectiveConfig,
   getPrReviewRuntimeConfig,
   isPrReviewEnabled,
@@ -93,8 +94,35 @@ describe('pr-review-config', () => {
   it('defaults provider/model to the built-in automated reviewer', async () => {
     expect(await getPrReviewEffectiveConfig(kvEnv().env)).toEqual({
       enabled: true,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'sakana',
+      model: 'fugu',
+    });
+  });
+
+  it('falls back to the default reviewer when the persisted provider was removed from the catalog', async () => {
+    // A deployment previously configured for the retired `blackbox` provider:
+    // resolving must drop the now-unavailable id (and its stale model) and use
+    // the built-in default reviewer instead of hard-failing every review.
+    const { env } = kvEnv({
+      'config:pr-review-provider': 'blackbox',
+      'config:pr-review-model': 'blackboxai/x-ai/grok-code-fast-1:free',
+    });
+    expect(await getPrReviewEffectiveConfig(env)).toEqual({
+      enabled: true,
+      provider: 'sakana',
+      model: 'fugu',
+    });
+  });
+
+  it('coerceKnownPrReviewer passes a known pair through and remaps an unknown provider', () => {
+    expect(coerceKnownPrReviewer('openai', 'gpt-5.4')).toEqual({
+      provider: 'openai',
+      model: 'gpt-5.4',
+    });
+    // Removed provider -> default reviewer + its default model (stale model dropped).
+    expect(coerceKnownPrReviewer('blackbox', 'blackboxai/x-ai/grok-code-fast-1:free')).toEqual({
+      provider: 'sakana',
+      model: 'fugu',
     });
   });
 

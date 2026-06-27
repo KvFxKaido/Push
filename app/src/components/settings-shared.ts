@@ -20,7 +20,6 @@ export type BuiltInSettingsProviderId = Extract<
   | 'openrouter'
   | 'zen'
   | 'nvidia'
-  | 'blackbox'
   | 'kilocode'
   | 'fireworks'
   | 'sakana'

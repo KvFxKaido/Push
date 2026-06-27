@@ -6819,15 +6819,15 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
         {
           sessionId,
           attachToken,
-          patch: { provider: 'blackbox', model: 'blackboxai/anthropic/claude-haiku-4.5' },
+          patch: { provider: 'sakana', model: 'fugu' },
         },
         sessionId,
       ),
       () => {},
     );
     assert.equal(res.ok, true);
-    assert.equal(res.payload.provider, 'blackbox');
-    assert.equal(res.payload.model, 'blackboxai/anthropic/claude-haiku-4.5');
+    assert.equal(res.payload.provider, 'sakana');
+    assert.equal(res.payload.model, 'fugu');
   });
 
   it('snaps model to the new provider default when patch omits model', async () => {
@@ -6835,15 +6835,15 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
     const res = await handleRequest(
       makeRequest(
         'update_session',
-        { sessionId, attachToken, patch: { provider: 'blackbox' } },
+        { sessionId, attachToken, patch: { provider: 'sakana' } },
         sessionId,
       ),
       () => {},
     );
     assert.equal(res.ok, true);
-    assert.equal(res.payload.provider, 'blackbox');
+    assert.equal(res.payload.provider, 'sakana');
     // Old model would have been ollama-base; atomic-selection rule forbids
-    // stranding it on the new provider, so it snaps to blackbox's default.
+    // stranding it on the new provider, so it snaps to sakana's default.
     assert.notEqual(res.payload.model, 'ollama-base');
     assert.ok(typeof res.payload.model === 'string' && res.payload.model.length > 0);
   });
@@ -7061,7 +7061,7 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
     const res = await handleRequest(
       makeRequest(
         'configure_role_routing',
-        { sessionId, attachToken, routing: { coder: { provider: 'blackbox' } } },
+        { sessionId, attachToken, routing: { coder: { provider: 'sakana' } } },
         sessionId,
       ),
       emit,
@@ -7069,7 +7069,7 @@ describe('update_session (daemon as source of truth for session-scoped state)', 
     assert.equal(res.ok, true);
     const change = broadcasted.find((e) => e.type === 'session_state_changed');
     assert.ok(change, 'expected session_state_changed after configure_role_routing');
-    assert.equal(change.payload.roleRouting.coder.provider, 'blackbox');
+    assert.equal(change.payload.roleRouting.coder.provider, 'sakana');
   });
 });
 
