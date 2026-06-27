@@ -330,6 +330,20 @@ export function ChatContainer({
   // message refs that stay stable while only the tail changes.
   const segments = useMemo(() => groupChatMessages(settledMessages), [settledMessages]);
 
+  // The last *real* user turn (excluding synthetic tool-result messages). The
+  // plain transcript anchors this near the top of the viewport — on load, so a
+  // reopened chat lands on the last thing the reader said rather than the
+  // absolute bottom (shadcn point 11), and on each new turn, so the answer
+  // streams into the space below it (points 4–5). Its id only changes when a new
+  // user turn arrives or a different chat loads — never per streaming token.
+  const lastUserMessageId = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      const message = messages[index];
+      if (message.role === 'user' && !message.isToolResult) return message.id;
+    }
+    return null;
+  }, [messages]);
+
   const regeneratableAssistantMessageId = useMemo(() => {
     for (let index = messages.length - 1; index >= 0; index--) {
       const message = messages[index];
@@ -419,6 +433,7 @@ export function ChatContainer({
           agentStatus={agentStatus}
           handlers={handlers}
           lastMessage={lastMessage}
+          lastUserMessageId={lastUserMessageId}
         />
       </MessageViewStateProvider>
     </div>

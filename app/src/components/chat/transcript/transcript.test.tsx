@@ -2,9 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatMessage } from '@/types';
 import { groupChatMessages } from '../tool-call-utils';
-import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
+import {
+  VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS,
+  isVirtualizedTranscript,
+  turnSpacerHeight,
+} from './constants';
 import { segmentKey, sameSegmentContent } from './segment-model';
 import { TranscriptList } from './TranscriptList';
+import { nextAnnouncement, type AnnouncerSnapshot } from './transcript-announce';
 
 function textMessage(id: string, role: ChatMessage['role'] = 'assistant'): ChatMessage {
   return { id, role, content: `msg-${id}`, timestamp: 1, status: 'done' };
@@ -132,6 +137,57 @@ describe('sameSegmentContent (settled-segment memoization)', () => {
   });
 });
 
+describe('nextAnnouncement (aria-live turn boundaries)', () => {
+  const snap = (id: string, status: ChatMessage['status']): AnnouncerSnapshot => ({ id, status });
+  const msg = (
+    id: string,
+    status: ChatMessage['status'],
+    role: ChatMessage['role'] = 'assistant',
+  ) => ({ id, role, status }) as Pick<ChatMessage, 'id' | 'role' | 'status'>;
+
+  it('announces when an assistant turn starts streaming', () => {
+    expect(nextAnnouncement(null, msg('a', 'streaming'))).toBe('Responding…');
+    expect(nextAnnouncement(null, msg('a', 'sending'))).toBe('Responding…');
+  });
+
+  it('stays silent across streaming tokens of the same turn', () => {
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'streaming'))).toBeNull();
+  });
+
+  it('announces completion and failure once per turn', () => {
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'done'))).toBe('Response ready.');
+    expect(nextAnnouncement(snap('a', 'done'), msg('a', 'done'))).toBeNull();
+    expect(nextAnnouncement(snap('a', 'streaming'), msg('a', 'error'))).toBe('Response failed.');
+  });
+
+  it('re-announces a new turn even with the same status (distinct id)', () => {
+    // A fresh assistant turn that begins streaming is a new boundary.
+    expect(nextAnnouncement(snap('a', 'done'), msg('b', 'streaming'))).toBe('Responding…');
+  });
+
+  it('ignores the reader own (user) messages', () => {
+    expect(nextAnnouncement(null, msg('u', 'done', 'user'))).toBeNull();
+    expect(nextAnnouncement(null, null)).toBeNull();
+  });
+});
+
+describe('turnSpacerHeight (top-anchor room)', () => {
+  it('fills the slack so a short turn can reach the top, minus the gap', () => {
+    // viewport 800, a 200px turn, default gap 72 → 800 - 200 - 72 = 528.
+    expect(turnSpacerHeight(800, 200, 72)).toBe(528);
+  });
+
+  it('collapses to 0 once the turn is at least a viewport tall', () => {
+    expect(turnSpacerHeight(800, 800)).toBe(0);
+    expect(turnSpacerHeight(800, 2000)).toBe(0);
+  });
+
+  it('never returns negative (clamped at 0)', () => {
+    // Turn just shorter than the viewport but within the gap → still clamps.
+    expect(turnSpacerHeight(800, 760, 72)).toBe(0);
+  });
+});
+
 describe('TranscriptList path selection (dev badge)', () => {
   const handlers = { regeneratableAssistantMessageId: null };
 
@@ -143,6 +199,7 @@ describe('TranscriptList path selection (dev badge)', () => {
         agentStatus={{ active: false, phase: '' }}
         handlers={handlers}
         lastMessage={null}
+        lastUserMessageId={null}
       />,
     );
     // Dev badge reflects the active path + count, and real bubbles render.
@@ -158,6 +215,7 @@ describe('TranscriptList path selection (dev badge)', () => {
         agentStatus={{ active: false, phase: '' }}
         handlers={handlers}
         lastMessage={null}
+        lastUserMessageId={null}
       />,
     );
     expect(html).toContain(`virtualized · ${VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS}`);

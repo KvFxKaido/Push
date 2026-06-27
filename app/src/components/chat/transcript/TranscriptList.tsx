@@ -3,6 +3,7 @@ import type { ChatMessage, AgentStatus } from '@/types';
 import type { TranscriptSegment, TranscriptHandlers } from './segment-model';
 import { PlainTranscript } from './PlainTranscript';
 import { VirtualizedTranscript } from './VirtualizedTranscript';
+import { TranscriptAnnouncer } from './TranscriptAnnouncer';
 import { VIRTUALIZED_TRANSCRIPT_MIN_SEGMENTS, isVirtualizedTranscript } from './constants';
 
 interface TranscriptListProps {
@@ -11,6 +12,9 @@ interface TranscriptListProps {
   agentStatus: AgentStatus;
   handlers: TranscriptHandlers;
   lastMessage: ChatMessage | null;
+  /** Id of the last real user message — anchored near the top by the plain
+   *  path on load and on each new turn. */
+  lastUserMessageId: string | null;
 }
 
 /**
@@ -27,6 +31,7 @@ export function TranscriptList({
   agentStatus,
   handlers,
   lastMessage,
+  lastUserMessageId,
 }: TranscriptListProps) {
   const virtualized = isVirtualizedTranscript(segments.length);
   const path = virtualized ? 'virtualized' : 'plain';
@@ -53,6 +58,7 @@ export function TranscriptList({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden relative">
+      <TranscriptAnnouncer lastMessage={lastMessage} />
       {virtualized ? (
         <VirtualizedTranscript
           segments={segments}
@@ -68,6 +74,7 @@ export function TranscriptList({
           agentStatus={agentStatus}
           handlers={handlers}
           lastMessage={lastMessage}
+          anchorMessageId={lastUserMessageId}
         />
       )}
 

@@ -7,9 +7,17 @@ import { ArrowDown } from 'lucide-react';
  */
 export function ScrollToBottomButton({
   visible,
+  streaming = false,
   onClick,
 }: {
   visible: boolean;
+  /**
+   * True while a response is still streaming. When the reader has scrolled away
+   * (`visible`), a pulsing dot on the button surfaces that content is arriving
+   * out of view — shadcn point 8, "show what's happening out of view" — so the
+   * affordance reads as "new content below", not just "you can scroll down".
+   */
+  streaming?: boolean;
   onClick: () => void;
 }) {
   // Reveal uses the shared `.panel-reveal` primitive (Y-slide + fade +
@@ -37,9 +45,19 @@ export function ScrollToBottomButton({
         hover:border-push-edge-hover hover:text-push-fg hover:shadow-push-xl
         spring-press
       `}
-      aria-label="Scroll to bottom"
+      aria-label={streaming ? 'Jump to latest (still responding)' : 'Scroll to bottom'}
     >
       <ArrowDown size={18} />
+      {visible && streaming && (
+        // Ping ring + solid core, on the accent token. Gated on `visible` too so
+        // the `animate-ping` never churns offscreen while the button is hidden at
+        // the live edge. `aria-hidden` because the streaming state is already
+        // carried by the button's `aria-label`.
+        <span aria-hidden="true" className="absolute -right-0.5 -top-0.5 flex h-2.5 w-2.5">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-push-accent opacity-75" />
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-push-accent" />
+        </span>
+      )}
     </button>
   );
 }
