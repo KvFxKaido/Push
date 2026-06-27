@@ -200,7 +200,6 @@ function mockFailoverState(opts?: {
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
-  vi.doMock('@/hooks/useOpenAdapterConfig', () => ({ getOpenAdapterKey: () => '' }));
   vi.doMock('@/hooks/useAnthropicConfig', () => ({
     getAnthropicKey: () => '',
     getAnthropicModelName: () => '',

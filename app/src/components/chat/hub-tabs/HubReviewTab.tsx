@@ -39,7 +39,6 @@ import {
   KILOCODE_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
-  OPENADAPTER_DEFAULT_MODEL,
   DEEPSEEK_DEFAULT_MODEL,
   getModelForRole,
   type PreferredProvider,
@@ -160,7 +159,6 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   kilocode: 'push:review:model:kilocode',
   fireworks: 'push:review:model:fireworks',
   sakana: 'push:review:model:sakana',
-  openadapter: 'push:review:model:openadapter',
   deepseek: 'push:review:model:deepseek',
 };
 
@@ -179,7 +177,6 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   kilocode: KILOCODE_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,
-  openadapter: OPENADAPTER_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
 };
 
@@ -207,7 +204,6 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'google' ||
     value === 'kilocode' ||
     value === 'fireworks' ||
-    value === 'openadapter' ||
     value === 'deepseek' ||
     value === 'sakana'
   );
@@ -234,7 +230,6 @@ function readReviewModels(): Record<PreferredProvider, string> {
     kilocode: pick('kilocode'),
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),
-    openadapter: pick('openadapter'),
     deepseek: pick('deepseek'),
     azure: pick('azure'),
     bedrock: pick('bedrock'),

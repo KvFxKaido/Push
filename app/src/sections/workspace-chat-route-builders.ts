@@ -261,7 +261,6 @@ export function buildWorkspaceHubReviewModelOptions(
     kilocode: catalog.kilocodeModelOptions,
     fireworks: catalog.fireworksModelOptions,
     sakana: catalog.sakanaModelOptions,
-    openadapter: catalog.openAdapterModelOptions,
     deepseek: catalog.deepseekModelOptions,
     vertex: catalog.vertex.modelOptions,
     google: catalog.googleModelOptions,

@@ -5,7 +5,6 @@ import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
-import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
@@ -18,7 +17,6 @@ import {
   GOOGLE_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,
-  OPENADAPTER_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   SAKANA_MODELS,
@@ -470,7 +468,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'nvidia',
   'kilocode',
   'fireworks',
-  'openadapter',
   'sakana',
   'zen',
   'cloudflare',
@@ -657,7 +654,6 @@ const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWO
 const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MODELS);
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
-const OPENADAPTER_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENADAPTER_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
 // `looksLikeOpenAIToolCallingModel`, `looksLikeBedrockAnthropicToolCallingModel`,
 // and `VERTEX_NATIVE_TOOL_CALLING_MODELS` are shared with the CLI gate via
@@ -695,7 +691,7 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *     through).
  *   - **Ollama Cloud / Nvidia NIM** — capability-based, using the
  *     existing models.dev metadata caches.
- *   - **OpenAI / Azure OpenAI / Kilo Code / OpenAdapter** — name-based against
+ *   - **OpenAI / Azure OpenAI / Kilo Code** — name-based against
  *     curated OpenAI-compatible catalogs or OpenAI-family model ids. Free-text
  *     unknowns stay text-dispatch.
  *   - **Direct Anthropic** — name-based against the curated direct-provider
@@ -720,7 +716,6 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'openadapter') return OPENADAPTER_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
@@ -1652,43 +1647,6 @@ export async function fetchSakanaModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Sakana AI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
-        { cause: err },
-      );
-    }
-    throw err;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-export async function fetchOpenAdapterModels(): Promise<string[]> {
-  const key = getOpenAdapterKey();
-  const headers: HeadersInit = {};
-  if (key) headers.Authorization = `Bearer ${key}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(PROVIDER_URLS.openadapter.models, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`OpenAdapter model list failed (${res.status}): ${detail.slice(0, 200)}`);
-    }
-
-    const payload = (await res.json()) as unknown;
-    return normalizeModelList(payload).sort((left, right) =>
-      compareProviderModelIds('openadapter', left, right),
-    );
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(
-        `OpenAdapter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

@@ -92,8 +92,6 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.fireworksModelOptions;
     case 'sakana':
       return catalog.sakanaModelOptions;
-    case 'openadapter':
-      return catalog.openAdapterModelOptions;
     case 'anthropic':
       return catalog.anthropicModelOptions;
     case 'openai':
@@ -133,8 +131,6 @@ function defaultModelForProvider(
       return catalog.fireworks.model || null;
     case 'sakana':
       return catalog.sakana.model || null;
-    case 'openadapter':
-      return catalog.openadapter.model || null;
     case 'azure':
       return catalog.azure.model || null;
     case 'bedrock':
@@ -314,8 +310,6 @@ export function ComposerDraftScreen({
         void catalog.refreshFireworksModels();
       if (provider === 'sakana' && catalog.sakanaModelOptions.length === 0)
         void catalog.refreshSakanaModels();
-      if (provider === 'openadapter' && catalog.openAdapterModelOptions.length === 0)
-        void catalog.refreshOpenAdapterModels();
     }
   }, [catalog, modelSheetOpen]);
 

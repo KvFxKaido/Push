@@ -29,7 +29,6 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   kilocode: '',
   fireworks: '',
   sakana: '',
-  openadapter: '',
   deepseek: '',
 };
 
@@ -53,7 +52,6 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     fireworks:
       typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
     sakana: typeof parsed.sakana === 'string' ? normalizeSakanaModelName(parsed.sakana) : '',
-    openadapter: typeof parsed.openadapter === 'string' ? parsed.openadapter.trim() : '',
     deepseek: typeof parsed.deepseek === 'string' ? parsed.deepseek.trim() : '',
   };
 }
@@ -124,7 +122,6 @@ export function useWorkspaceComposerState({
       kilocode: catalog.kilocode.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
-      openadapter: catalog.openadapter.model,
       azure: catalog.azure.model,
       bedrock: catalog.bedrock.model,
       vertex: catalog.vertex.model,
@@ -145,7 +142,6 @@ export function useWorkspaceComposerState({
       catalog.kilocode.model,
       catalog.nvidia.model,
       catalog.ollama.model,
-      catalog.openadapter.model,
       catalog.openRouter.model,
       catalog.vertex.model,
       catalog.zen.model,
@@ -249,10 +245,6 @@ export function useWorkspaceComposerState({
         sakana: normalizeSakanaModelName(
           draft?.models?.sakana?.trim() || rememberedChatModels.sakana || defaultChatModels.sakana,
         ),
-        openadapter:
-          draft?.models?.openadapter?.trim() ||
-          rememberedChatModels.openadapter ||
-          defaultChatModels.openadapter,
         deepseek:
           draft?.models?.deepseek?.trim() ||
           rememberedChatModels.deepseek ||
@@ -454,15 +446,6 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
-  const handleSelectOpenAdapterModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('openadapter', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { openadapter: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
   const handleSelectDeepSeekModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('deepseek', model);
@@ -547,7 +530,6 @@ export function useWorkspaceComposerState({
     handleSelectKilocodeModelFromChat,
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,
-    handleSelectOpenAdapterModelFromChat,
     handleSelectDeepSeekModelFromChat,
     handleSelectAzureModelFromChat,
     handleSelectBedrockModelFromChat,

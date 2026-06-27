@@ -23,7 +23,6 @@ export type BuiltInSettingsProviderId = Extract<
   | 'kilocode'
   | 'fireworks'
   | 'sakana'
-  | 'openadapter'
   | 'deepseek'
   | 'anthropic'
   | 'openai'

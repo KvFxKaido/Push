@@ -226,18 +226,6 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'moonshotai/kimi-k2.5': M(256000, false, true, false, TEXT_IMAGE_VIDEO),
     'kilo-auto/balanced': M(204800, true, true, false, TEXT, TEXT, false),
   },
-  openadapter: {
-    'deepseek/deepseek-r1': M(128000, true, true, false, TEXT, TEXT, false),
-    'deepseek/deepseek-v3': M(163840, false, true, false, TEXT, TEXT, false),
-    'qwen/qwen3-coder': M(262144, false, true, false, TEXT, TEXT, false),
-    'qwen/qwen3.5': M(262144, true, true, false, TEXT_IMAGE_VIDEO),
-    'mistralai/mistral-large': M(128000, false, true, false, TEXT, TEXT, false),
-    'mistralai/devstral': M(262144, false, true, true, TEXT_PDF),
-    'moonshotai/kimi-k2.5': M(256000, false, true, false, TEXT_IMAGE_VIDEO),
-    'minimax/minimax-m2.5': M(204800, true, true, false, TEXT, TEXT, false),
-    'meta-llama/llama-4-maverick': M(1048576, false, true, false, TEXT_IMAGE),
-    'z-ai/glm-5': M(200000, true, true, false, TEXT, TEXT, false),
-  },
   sakana: {
     fugu: M(1000000, true, true, false, TEXT_IMAGE),
     'fugu-ultra': M(1000000, true, true, false, TEXT_IMAGE),

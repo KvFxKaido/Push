@@ -9,7 +9,7 @@
  * Scope note (Phase 1):
  *   PR #3a wires the direct Worker handlers currently validated for
  *   background jobs: openrouter, ollama, cloudflare, zen, nvidia,
- *   kilocode, fireworks, openadapter, openai, and sakana. Providers that still require
+ *   kilocode, fireworks, openai, and sakana. Providers that still require
  *   extra runtime setup or are intentionally unsupported here return
  *   `null` from `resolveProviderHandler` so the caller can surface an
  *   explicit diagnostic and fail fast instead of silently hanging.
@@ -51,7 +51,6 @@ import {
   handleKiloCodeChat,
   handleNvidiaChat,
   handleOllamaChat,
-  handleOpenAdapterChat,
   handleOpenAIChat,
   handleOpenRouterChat,
   handleSakanaChat,
@@ -108,8 +107,6 @@ export function resolveProviderHandler(
       return handleKiloCodeChat as unknown as ProviderHandler;
     case 'fireworks':
       return handleFireworksChat as unknown as ProviderHandler;
-    case 'openadapter':
-      return handleOpenAdapterChat as unknown as ProviderHandler;
     case 'deepseek':
       return handleDeepSeekChat as unknown as ProviderHandler;
     case 'anthropic':
@@ -202,7 +199,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, ollama, cloudflare, zen, nvidia, kilocode, fireworks, openadapter, deepseek, anthropic, openai, sakana, google.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, kilocode, fireworks, deepseek, anthropic, openai, sakana, google.`,
         );
       }
 

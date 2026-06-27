@@ -24,7 +24,6 @@ import { kilocodeStream } from './kilocode-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
-import { openadapterStream } from './openadapter-stream';
 import { deepseekStream } from './deepseek-stream';
 import { azureStream } from './azure-stream';
 import { bedrockStream } from './bedrock-stream';
@@ -44,7 +43,6 @@ import {
   getNvidiaModelName,
   getKiloCodeModelName,
   getFireworksModelName,
-  getOpenAdapterModelName,
   getDeepSeekModelName,
   getSakanaModelName,
   getAnthropicModelName,
@@ -195,7 +193,6 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   kilocode: kilocodeStream,
   fireworks: fireworksStream,
   sakana: sakanaStream,
-  openadapter: openadapterStream,
   deepseek: deepseekStream,
   nvidia: nvidiaStream,
   azure: azureStream,
@@ -304,8 +301,6 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getFireworksModelName();
     case 'sakana':
       return getSakanaModelName();
-    case 'openadapter':
-      return getOpenAdapterModelName();
     case 'deepseek':
       return getDeepSeekModelName();
     case 'azure':

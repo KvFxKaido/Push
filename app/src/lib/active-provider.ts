@@ -4,7 +4,6 @@ import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
-import { getOpenAdapterKey } from '@/hooks/useOpenAdapterConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
@@ -52,7 +51,6 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   nvidia: () => Boolean(getNvidiaKey()),
   kilocode: () => Boolean(getKilocodeKey()),
   fireworks: () => Boolean(getFireworksKey()),
-  openadapter: () => Boolean(getOpenAdapterKey()),
   deepseek: () => Boolean(getDeepSeekKey()),
   sakana: () => Boolean(getSakanaKey()),
   azure: () =>

@@ -29,8 +29,6 @@ export {
   NVIDIA_DEFAULT_MODEL,
   NVIDIA_MODELS,
   OLLAMA_DEFAULT_MODEL,
-  OPENADAPTER_DEFAULT_MODEL,
-  OPENADAPTER_MODELS,
   OPENAI_DEFAULT_MODEL,
   OPENAI_MODELS,
   OPENROUTER_DEFAULT_MODEL,
@@ -49,7 +47,6 @@ import {
   KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
-  OPENADAPTER_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
@@ -397,13 +394,6 @@ export const setBedrockModelName = bedrockModel.set;
 const vertexModel = createModelNameStorage(requireModelStorageKey('vertex'), VERTEX_DEFAULT_MODEL);
 export const setVertexModelName = vertexModel.set;
 
-const openAdapterModel = createModelNameStorage(
-  requireModelStorageKey('openadapter'),
-  OPENADAPTER_DEFAULT_MODEL,
-);
-export const getOpenAdapterModelName = openAdapterModel.get;
-export const setOpenAdapterModelName = openAdapterModel.set;
-
 const kiloCodeModel = createModelNameStorage(
   requireModelStorageKey('kilocode'),
   KILOCODE_DEFAULT_MODEL,
@@ -465,7 +455,6 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   vertex: getVertexModelName,
   kilocode: getKiloCodeModelName,
   fireworks: getFireworksModelName,
-  openadapter: getOpenAdapterModelName,
   sakana: getSakanaModelName,
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,

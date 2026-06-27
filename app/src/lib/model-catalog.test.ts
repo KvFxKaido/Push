@@ -24,7 +24,6 @@ import {
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
   KILOCODE_MODELS,
-  OPENADAPTER_MODELS,
   OPENAI_MODELS,
   VERTEX_MODELS,
 } from '@push/lib/provider-models';
@@ -1393,11 +1392,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     );
     expect(providerModelSupportsNativeToolCalling('kilocode', 'unknown/model')).toBe(false);
 
-    expect(providerModelSupportsNativeToolCalling('openadapter', 'deepseek/deepseek-v3')).toBe(
-      true,
-    );
-    expect(providerModelSupportsNativeToolCalling('openadapter', 'unknown/model')).toBe(false);
-
     expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
       true,
     );
@@ -1439,7 +1433,6 @@ describe('providerModelSupportsStructuredOutput', () => {
       ['google', GOOGLE_MODELS],
       ['vertex', VERTEX_MODELS],
       ['kilocode', KILOCODE_MODELS],
-      ['openadapter', OPENADAPTER_MODELS],
       ['openai', [...OPENAI_MODELS, 'gpt-5-mini', 'gpt-4o', 'not-a-model']],
       ['azure', [...OPENAI_MODELS, 'gpt-5-mini']],
       [

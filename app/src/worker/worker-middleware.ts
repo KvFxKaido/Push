@@ -40,7 +40,6 @@ export interface Env {
   NVIDIA_API_KEY?: string;
   KILOCODE_API_KEY?: string;
   FIREWORKS_API_KEY?: string;
-  OPENADAPTER_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   SAKANA_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
