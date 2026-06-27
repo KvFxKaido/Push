@@ -97,17 +97,26 @@ export function useStickToBottom(
   const followPausedRef = useRef(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
 
-  const syncBottomState = useCallback(() => {
+  // Recompute `isAtBottom` from live geometry and return it. Pure w.r.t. follow
+  // state — it never re-arms — so it's safe to call from non-scroll paths like
+  // the resize observer below, where streaming content grows the height without
+  // firing a `scroll` event.
+  const refreshIsAtBottom = useCallback(() => {
     const el = elRef.current;
-    if (!el) return;
+    if (!el) return false;
     const atBottom = distanceFromBottom(el) <= AT_BOTTOM_THRESHOLD_PX;
+    setIsAtBottom(atBottom);
+    return atBottom;
+  }, []);
+
+  const syncBottomState = useCallback(() => {
+    const atBottom = refreshIsAtBottom();
     // Reaching the bottom is the reader rejoining the live edge — resume
     // following. Only a real scroll reaches here, so a paused-at-bottom reader
     // (e.g. selecting text) stays paused until they actually scroll. The guard
     // exempts the anchor's own programmatic scroll (see `ignoreScrollClearRef`).
     if (atBottom && !ignoreScrollClearRef.current) followPausedRef.current = false;
-    setIsAtBottom(atBottom);
-  }, []);
+  }, [refreshIsAtBottom]);
 
   // Mark follow as paused on an explicit reading/navigation gesture. Position-
   // independent on purpose: selecting text while pinned at the bottom must stop
@@ -277,18 +286,26 @@ export function useStickToBottom(
     const el = elRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
-    const update = () =>
+    const update = () => {
       setBottomSpacerHeight((prev) => {
         const next = measureSpacer();
         return next === prev ? prev : next;
       });
+      // Content height changed (streaming tokens grow the answer) without a
+      // `scroll` event, so `isAtBottom` would otherwise go stale: once the
+      // spacer collapses to 0, further tokens push the live edge past the
+      // threshold below the viewport. Resync the flag so the scroll-to-bottom
+      // button + streaming dot reflect content that's now off-screen. No follow
+      // re-arm — a resize isn't the reader rejoining the live edge.
+      refreshIsAtBottom();
+    };
     update();
     if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(update);
     observer.observe(content);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [contentRef, measureSpacer]);
+  }, [contentRef, measureSpacer, refreshIsAtBottom]);
 
   // Anchor the target near the top of the viewport whenever it changes — a new
   // turn (the just-sent user message) or a chat load (the last user message).
