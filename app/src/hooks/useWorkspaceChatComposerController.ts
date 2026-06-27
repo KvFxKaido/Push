@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
+import {
+  DEPLOYMENT_LOCKED_MESSAGE,
+  MODEL_LOCKED_MESSAGE,
+  type ComposerModelControl,
+} from '@/lib/composer-provider-controls';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import { buildQuickPromptMessage } from '@/lib/quick-prompts';
+import type { PreferredProvider } from '@/lib/providers';
 import type {
   AIProviderType,
   AttachmentData,
@@ -10,27 +16,7 @@ import type {
   QuickPrompt,
 } from '@/types';
 import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
-
-const CHAT_PROVIDER_LABELS: Record<AIProviderType, string> = {
-  ollama: 'Ollama',
-  openrouter: 'OpenRouter',
-  cloudflare: 'Cloudflare Workers AI',
-  zen: 'OpenCode Zen',
-  nvidia: 'Nvidia NIM',
-  blackbox: 'Blackbox AI',
-  azure: 'Azure OpenAI',
-  bedrock: 'AWS Bedrock',
-  kilocode: 'Kilo Code',
-  fireworks: 'Fireworks AI',
-  sakana: 'Sakana AI',
-  openadapter: 'OpenAdapter',
-  deepseek: 'DeepSeek',
-  vertex: 'Google Vertex',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  google: 'Google Gemini',
-  demo: 'Demo',
-};
+import { getProviderDisplayName } from '@push/lib/provider-definition';
 
 type ComposerControllerArgs = Pick<
   ChatRouteProps,
@@ -118,26 +104,12 @@ export function useWorkspaceChatComposerController({
     isProviderLocked && lockedProvider && lockedProvider === selectedComposerProvider,
   );
 
-  const selectedComposerModel = (() => {
-    if (isDisplayedComposerProviderLocked && lockedModel) return lockedModel;
-    if (selectedComposerProvider === 'ollama') return selectedChatModels.ollama;
-    if (selectedComposerProvider === 'openrouter') return selectedChatModels.openrouter;
-    if (selectedComposerProvider === 'cloudflare') return selectedChatModels.cloudflare;
-    if (selectedComposerProvider === 'zen') return selectedChatModels.zen;
-    if (selectedComposerProvider === 'nvidia') return selectedChatModels.nvidia;
-    if (selectedComposerProvider === 'blackbox') return selectedChatModels.blackbox;
-    if (selectedComposerProvider === 'kilocode') return selectedChatModels.kilocode;
-    if (selectedComposerProvider === 'fireworks') return selectedChatModels.fireworks;
-    if (selectedComposerProvider === 'sakana') return selectedChatModels.sakana;
-    if (selectedComposerProvider === 'openadapter') return selectedChatModels.openadapter;
-    if (selectedComposerProvider === 'azure') return selectedChatModels.azure;
-    if (selectedComposerProvider === 'bedrock') return selectedChatModels.bedrock;
-    if (selectedComposerProvider === 'vertex') return selectedChatModels.vertex;
-    if (selectedComposerProvider === 'anthropic') return selectedChatModels.anthropic;
-    if (selectedComposerProvider === 'openai') return selectedChatModels.openai;
-    if (selectedComposerProvider === 'google') return selectedChatModels.google;
-    return 'demo';
-  })();
+  const selectedComposerModel =
+    isDisplayedComposerProviderLocked && lockedModel
+      ? lockedModel
+      : selectedComposerProvider === 'demo'
+        ? 'demo'
+        : selectedChatModels[selectedComposerProvider];
 
   const validateComposerAttachments = useCallback(
     (attachments?: AttachmentData[]) => {
@@ -152,7 +124,7 @@ export function useWorkspaceChatComposerController({
       );
       if (visionNotice.support !== 'unsupported') return true;
 
-      const providerLabel = CHAT_PROVIDER_LABELS[selectedComposerProvider];
+      const providerLabel = getProviderDisplayName(selectedComposerProvider);
       toast.error(`${providerLabel} · ${selectedComposerModel} cannot read image attachments yet.`);
       return false;
     },
@@ -253,22 +225,189 @@ export function useWorkspaceChatComposerController({
     [catalog.bedrock, handleSelectBedrockModelFromChat],
   );
 
-  const isOllamaModelLocked = isModelLocked && lockedProvider === 'ollama';
-  const isCloudflareModelLocked = isModelLocked && lockedProvider === 'cloudflare';
-  const isZenModelLocked = isModelLocked && lockedProvider === 'zen';
-  const isNvidiaModelLocked = isModelLocked && lockedProvider === 'nvidia';
-  const isBlackboxModelLocked = isModelLocked && lockedProvider === 'blackbox';
-  const isKilocodeModelLocked = isModelLocked && lockedProvider === 'kilocode';
-  const isFireworksModelLocked = isModelLocked && lockedProvider === 'fireworks';
-  const isSakanaModelLocked = isModelLocked && lockedProvider === 'sakana';
-  const isOpenAdapterModelLocked = isModelLocked && lockedProvider === 'openadapter';
-  const isDeepSeekModelLocked = isModelLocked && lockedProvider === 'deepseek';
-  const isAzureModelLocked = isModelLocked && lockedProvider === 'azure';
-  const isBedrockModelLocked = isModelLocked && lockedProvider === 'bedrock';
-  const isVertexModelLocked = isModelLocked && lockedProvider === 'vertex';
-  const isAnthropicModelLocked = isModelLocked && lockedProvider === 'anthropic';
-  const isOpenAIModelLocked = isModelLocked && lockedProvider === 'openai';
-  const isGoogleModelLocked = isModelLocked && lockedProvider === 'google';
+  const isProviderModelLocked = (provider: PreferredProvider) =>
+    isModelLocked && lockedProvider === provider;
+
+  const buildPickerControl = (
+    provider: PreferredProvider,
+    options: Omit<Extract<ComposerModelControl, { kind: 'picker' }>, 'kind' | 'provider' | 'value'>,
+  ): ComposerModelControl => ({
+    kind: 'picker',
+    provider,
+    value: selectedChatModels[provider],
+    lockedMessage: MODEL_LOCKED_MESSAGE,
+    ...options,
+  });
+
+  const modelControls = {
+    ollama: buildPickerControl('ollama', {
+      options: catalog.ollamaModelOptions,
+      onChange: handleSelectOllamaModelFromChat,
+      loading: catalog.ollamaModels.loading,
+      error: catalog.ollamaModels.error,
+      updatedAt: catalog.ollamaModels.updatedAt,
+      refreshModels: catalog.refreshOllamaModels,
+      isLocked: isProviderModelLocked('ollama'),
+      ariaLabel: 'Select Ollama model',
+    }),
+    openrouter: buildPickerControl('openrouter', {
+      options: catalog.openRouterModelOptions,
+      onChange: handleSelectOpenRouterModelFromChat,
+      loading: catalog.openRouterModels.loading,
+      error: catalog.openRouterModels.error,
+      updatedAt: catalog.openRouterModels.updatedAt,
+      refreshModels: catalog.refreshOpenRouterModels,
+      isLocked: isProviderModelLocked('openrouter'),
+      ariaLabel: 'Select OpenRouter model',
+    }),
+    cloudflare: buildPickerControl('cloudflare', {
+      options: catalog.cloudflareModelOptions,
+      onChange: handleSelectCloudflareModelFromChat,
+      loading: catalog.cloudflareModels.loading,
+      error: catalog.cloudflareModels.error,
+      updatedAt: catalog.cloudflareModels.updatedAt,
+      refreshModels: catalog.refreshCloudflareModels,
+      isLocked: isProviderModelLocked('cloudflare'),
+      ariaLabel: 'Select Cloudflare Workers AI model',
+      footer: 'Uses the deployed Worker binding. No browser API key needed.',
+    }),
+    zen: buildPickerControl('zen', {
+      options: catalog.zenModelOptions,
+      onChange: handleSelectZenModelFromChat,
+      loading: catalog.zenModels.loading,
+      error: catalog.zenModels.error,
+      updatedAt: catalog.zenModels.updatedAt,
+      refreshModels: catalog.refreshZenModels,
+      isLocked: isProviderModelLocked('zen'),
+      ariaLabel: 'Select OpenCode Zen model',
+    }),
+    nvidia: buildPickerControl('nvidia', {
+      options: catalog.nvidiaModelOptions,
+      onChange: handleSelectNvidiaModelFromChat,
+      loading: catalog.nvidiaModels.loading,
+      error: catalog.nvidiaModels.error,
+      updatedAt: catalog.nvidiaModels.updatedAt,
+      refreshModels: catalog.refreshNvidiaModels,
+      isLocked: isProviderModelLocked('nvidia'),
+      ariaLabel: 'Select Nvidia NIM model',
+    }),
+    blackbox: buildPickerControl('blackbox', {
+      options: catalog.blackboxModelOptions,
+      onChange: handleSelectBlackboxModelFromChat,
+      loading: catalog.blackboxModels.loading,
+      error: catalog.blackboxModels.error,
+      updatedAt: catalog.blackboxModels.updatedAt,
+      refreshModels: catalog.refreshBlackboxModels,
+      isLocked: isProviderModelLocked('blackbox'),
+      ariaLabel: 'Select Blackbox AI model',
+    }),
+    azure: {
+      kind: 'deployment',
+      provider: 'azure',
+      value: selectedChatModels.azure,
+      deployments: catalog.azure.deployments,
+      activeDeploymentId: catalog.azure.activeDeploymentId,
+      onSelectDeployment: handleSelectAzureDeploymentFromChat,
+      onChange: handleSelectAzureModelFromChat,
+      placeholder: 'Deployment or model',
+      isLocked: isProviderModelLocked('azure'),
+      lockedMessage: DEPLOYMENT_LOCKED_MESSAGE,
+    },
+    kilocode: buildPickerControl('kilocode', {
+      options: catalog.kilocodeModelOptions,
+      onChange: handleSelectKilocodeModelFromChat,
+      loading: catalog.kilocodeModels.loading,
+      error: catalog.kilocodeModels.error,
+      updatedAt: catalog.kilocodeModels.updatedAt,
+      refreshModels: catalog.refreshKilocodeModels,
+      isLocked: isProviderModelLocked('kilocode'),
+      ariaLabel: 'Select Kilo Code model',
+    }),
+    fireworks: buildPickerControl('fireworks', {
+      options: catalog.fireworksModelOptions,
+      onChange: handleSelectFireworksModelFromChat,
+      loading: catalog.fireworksModels.loading,
+      error: catalog.fireworksModels.error,
+      updatedAt: catalog.fireworksModels.updatedAt,
+      refreshModels: catalog.refreshFireworksModels,
+      isLocked: isProviderModelLocked('fireworks'),
+      ariaLabel: 'Select Fireworks AI model',
+    }),
+    openadapter: buildPickerControl('openadapter', {
+      options: catalog.openAdapterModelOptions,
+      onChange: handleSelectOpenAdapterModelFromChat,
+      loading: catalog.openAdapterModels.loading,
+      error: catalog.openAdapterModels.error,
+      updatedAt: catalog.openAdapterModels.updatedAt,
+      refreshModels: catalog.refreshOpenAdapterModels,
+      isLocked: isProviderModelLocked('openadapter'),
+      ariaLabel: 'Select OpenAdapter model',
+    }),
+    sakana: buildPickerControl('sakana', {
+      options: catalog.sakanaModelOptions,
+      onChange: handleSelectSakanaModelFromChat,
+      loading: catalog.sakanaModels.loading,
+      error: catalog.sakanaModels.error,
+      updatedAt: catalog.sakanaModels.updatedAt,
+      refreshModels: catalog.refreshSakanaModels,
+      isLocked: isProviderModelLocked('sakana'),
+      ariaLabel: 'Select Sakana AI model',
+    }),
+    bedrock: {
+      kind: 'deployment',
+      provider: 'bedrock',
+      value: selectedChatModels.bedrock,
+      deployments: catalog.bedrock.deployments,
+      activeDeploymentId: catalog.bedrock.activeDeploymentId,
+      onSelectDeployment: handleSelectBedrockDeploymentFromChat,
+      onChange: handleSelectBedrockModelFromChat,
+      placeholder: 'Bedrock model id',
+      isLocked: isProviderModelLocked('bedrock'),
+      lockedMessage: MODEL_LOCKED_MESSAGE,
+    },
+    vertex: buildPickerControl('vertex', {
+      options: catalog.vertex.modelOptions,
+      onChange: handleSelectVertexModelFromChat,
+      isLocked: isProviderModelLocked('vertex'),
+      ariaLabel: 'Select Google Vertex model',
+    }),
+    deepseek: buildPickerControl('deepseek', {
+      options: catalog.deepseekModelOptions,
+      onChange: handleSelectDeepSeekModelFromChat,
+      loading: catalog.deepseekModels.loading,
+      error: catalog.deepseekModels.error,
+      updatedAt: catalog.deepseekModels.updatedAt,
+      refreshModels: catalog.refreshDeepSeekModels,
+      isLocked: isProviderModelLocked('deepseek'),
+      ariaLabel: 'Select DeepSeek model',
+    }),
+    anthropic: buildPickerControl('anthropic', {
+      options: catalog.anthropicModelOptions,
+      onChange: handleSelectAnthropicModelFromChat,
+      isLocked: isProviderModelLocked('anthropic'),
+      ariaLabel: 'Select Anthropic model',
+    }),
+    openai: buildPickerControl('openai', {
+      options: catalog.openaiModelOptions,
+      onChange: handleSelectOpenAIModelFromChat,
+      loading: catalog.openaiModels.loading,
+      error: catalog.openaiModels.error,
+      updatedAt: catalog.openaiModels.updatedAt,
+      refreshModels: catalog.refreshOpenAIModels,
+      isLocked: isProviderModelLocked('openai'),
+      ariaLabel: 'Select OpenAI model',
+    }),
+    google: buildPickerControl('google', {
+      options: catalog.googleModelOptions,
+      onChange: handleSelectGoogleModelFromChat,
+      loading: catalog.googleModels.loading,
+      error: catalog.googleModels.error,
+      updatedAt: catalog.googleModels.updatedAt,
+      refreshModels: catalog.refreshGoogleModels,
+      isLocked: isProviderModelLocked('google'),
+      ariaLabel: 'Select Google Gemini model',
+    }),
+  } satisfies Record<PreferredProvider, ComposerModelControl>;
 
   return {
     composerPrefillRequest,
@@ -290,118 +429,7 @@ export function useWorkspaceChatComposerController({
       lockedProvider,
       lockedModel,
       onSelectBackend: handleSelectBackend,
-      ollamaModel: selectedChatModels.ollama,
-      ollamaModelOptions: catalog.ollamaModelOptions,
-      ollamaModelsLoading: catalog.ollamaModels.loading,
-      ollamaModelsError: catalog.ollamaModels.error,
-      ollamaModelsUpdatedAt: catalog.ollamaModels.updatedAt,
-      isOllamaModelLocked,
-      refreshOllamaModels: catalog.refreshOllamaModels,
-      onSelectOllamaModel: handleSelectOllamaModelFromChat,
-      openRouterModel: selectedChatModels.openrouter,
-      openRouterModelOptions: catalog.openRouterModelOptions,
-      isOpenRouterModelLocked: isProviderLocked && lockedProvider === 'openrouter',
-      onSelectOpenRouterModel: handleSelectOpenRouterModelFromChat,
-      cloudflareModel: selectedChatModels.cloudflare,
-      cloudflareModelOptions: catalog.cloudflareModelOptions,
-      cloudflareModelsLoading: catalog.cloudflareModels.loading,
-      cloudflareModelsError: catalog.cloudflareModels.error,
-      cloudflareModelsUpdatedAt: catalog.cloudflareModels.updatedAt,
-      isCloudflareModelLocked,
-      refreshCloudflareModels: catalog.refreshCloudflareModels,
-      onSelectCloudflareModel: handleSelectCloudflareModelFromChat,
-      zenModel: selectedChatModels.zen,
-      zenModelOptions: catalog.zenModelOptions,
-      zenModelsLoading: catalog.zenModels.loading,
-      zenModelsError: catalog.zenModels.error,
-      zenModelsUpdatedAt: catalog.zenModels.updatedAt,
-      isZenModelLocked,
-      refreshZenModels: catalog.refreshZenModels,
-      onSelectZenModel: handleSelectZenModelFromChat,
-      nvidiaModel: selectedChatModels.nvidia,
-      nvidiaModelOptions: catalog.nvidiaModelOptions,
-      nvidiaModelsLoading: catalog.nvidiaModels.loading,
-      nvidiaModelsError: catalog.nvidiaModels.error,
-      nvidiaModelsUpdatedAt: catalog.nvidiaModels.updatedAt,
-      isNvidiaModelLocked,
-      refreshNvidiaModels: catalog.refreshNvidiaModels,
-      onSelectNvidiaModel: handleSelectNvidiaModelFromChat,
-      blackboxModel: selectedChatModels.blackbox,
-      blackboxModelOptions: catalog.blackboxModelOptions,
-      blackboxModelsLoading: catalog.blackboxModels.loading,
-      blackboxModelsError: catalog.blackboxModels.error,
-      blackboxModelsUpdatedAt: catalog.blackboxModels.updatedAt,
-      isBlackboxModelLocked,
-      refreshBlackboxModels: catalog.refreshBlackboxModels,
-      onSelectBlackboxModel: handleSelectBlackboxModelFromChat,
-      kilocodeModel: selectedChatModels.kilocode,
-      kilocodeModelOptions: catalog.kilocodeModelOptions,
-      kilocodeModelsLoading: catalog.kilocodeModels.loading,
-      kilocodeModelsError: catalog.kilocodeModels.error,
-      kilocodeModelsUpdatedAt: catalog.kilocodeModels.updatedAt,
-      isKilocodeModelLocked,
-      refreshKilocodeModels: catalog.refreshKilocodeModels,
-      onSelectKilocodeModel: handleSelectKilocodeModelFromChat,
-      fireworksModel: selectedChatModels.fireworks,
-      fireworksModelOptions: catalog.fireworksModelOptions,
-      fireworksModelsLoading: catalog.fireworksModels.loading,
-      fireworksModelsError: catalog.fireworksModels.error,
-      fireworksModelsUpdatedAt: catalog.fireworksModels.updatedAt,
-      isFireworksModelLocked,
-      refreshFireworksModels: catalog.refreshFireworksModels,
-      onSelectFireworksModel: handleSelectFireworksModelFromChat,
-      sakanaModel: selectedChatModels.sakana,
-      sakanaModelOptions: catalog.sakanaModelOptions,
-      sakanaModelsLoading: catalog.sakanaModels.loading,
-      sakanaModelsError: catalog.sakanaModels.error,
-      sakanaModelsUpdatedAt: catalog.sakanaModels.updatedAt,
-      isSakanaModelLocked,
-      refreshSakanaModels: catalog.refreshSakanaModels,
-      onSelectSakanaModel: handleSelectSakanaModelFromChat,
-      openadapterModel: selectedChatModels.openadapter,
-      openadapterModelOptions: catalog.openAdapterModelOptions,
-      openadapterModelsLoading: catalog.openAdapterModels.loading,
-      openadapterModelsError: catalog.openAdapterModels.error,
-      openadapterModelsUpdatedAt: catalog.openAdapterModels.updatedAt,
-      isOpenAdapterModelLocked,
-      refreshOpenAdapterModels: catalog.refreshOpenAdapterModels,
-      onSelectOpenAdapterModel: handleSelectOpenAdapterModelFromChat,
-      deepseekModel: selectedChatModels.deepseek,
-      deepseekModelOptions: catalog.deepseekModelOptions,
-      deepseekModelsLoading: catalog.deepseekModels.loading,
-      deepseekModelsError: catalog.deepseekModels.error,
-      deepseekModelsUpdatedAt: catalog.deepseekModels.updatedAt,
-      isDeepSeekModelLocked,
-      refreshDeepSeekModels: catalog.refreshDeepSeekModels,
-      onSelectDeepSeekModel: handleSelectDeepSeekModelFromChat,
-      azureModel: selectedChatModels.azure,
-      azureDeployments: catalog.azure.deployments,
-      azureActiveDeploymentId: catalog.azure.activeDeploymentId,
-      isAzureModelLocked,
-      onSelectAzureModel: handleSelectAzureModelFromChat,
-      onSelectAzureDeployment: handleSelectAzureDeploymentFromChat,
-      bedrockModel: selectedChatModels.bedrock,
-      bedrockDeployments: catalog.bedrock.deployments,
-      bedrockActiveDeploymentId: catalog.bedrock.activeDeploymentId,
-      isBedrockModelLocked,
-      onSelectBedrockModel: handleSelectBedrockModelFromChat,
-      onSelectBedrockDeployment: handleSelectBedrockDeploymentFromChat,
-      vertexModel: selectedChatModels.vertex,
-      vertexModelOptions: catalog.vertex.modelOptions,
-      isVertexModelLocked,
-      onSelectVertexModel: handleSelectVertexModelFromChat,
-      anthropicModel: selectedChatModels.anthropic,
-      anthropicModelOptions: catalog.anthropicModelOptions,
-      isAnthropicModelLocked,
-      onSelectAnthropicModel: handleSelectAnthropicModelFromChat,
-      openaiModel: selectedChatModels.openai,
-      openaiModelOptions: catalog.openaiModelOptions,
-      isOpenAIModelLocked,
-      onSelectOpenAIModel: handleSelectOpenAIModelFromChat,
-      googleModel: selectedChatModels.google,
-      googleModelOptions: catalog.googleModelOptions,
-      isGoogleModelLocked,
-      onSelectGoogleModel: handleSelectGoogleModelFromChat,
+      modelControls,
     },
   };
 }

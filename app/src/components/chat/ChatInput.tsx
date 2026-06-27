@@ -23,12 +23,19 @@ import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
 import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import {
+  MODEL_LOCKED_MESSAGE,
+  type ComposerDeploymentModelControl,
+  type ComposerPickerModelControl,
+  type ComposerProviderControls,
+} from '@/lib/composer-provider-controls';
 import { hapticLight } from '@/lib/android/haptics';
 import {
   AttachmentLinkIcon,
   SendLiftIcon,
   VoicePulseIcon,
 } from '@/components/icons/push-custom-icons';
+import { getProviderDisplayName } from '@push/lib/provider-definition';
 
 interface ChatInputProps {
   onSend: (message: string, attachments?: AttachmentData[], options?: ChatSendOptions) => void;
@@ -69,126 +76,7 @@ interface ChatInputProps {
     label: string;
     onCancel: () => void;
   } | null;
-  providerControls?: {
-    selectedProvider: PreferredProvider | null;
-    availableProviders: readonly (readonly [PreferredProvider, string, boolean])[];
-    isProviderLocked: boolean;
-    lockedProvider: AIProviderType | null;
-    lockedModel: string | null;
-    onSelectBackend: (provider: PreferredProvider) => void;
-    ollamaModel: string;
-    ollamaModelOptions: string[];
-    ollamaModelsLoading: boolean;
-    ollamaModelsError: string | null;
-    ollamaModelsUpdatedAt: number | null;
-    isOllamaModelLocked: boolean;
-    refreshOllamaModels: () => void;
-    onSelectOllamaModel: (model: string) => void;
-    openRouterModel: string;
-    openRouterModelOptions: string[];
-    isOpenRouterModelLocked: boolean;
-    onSelectOpenRouterModel: (model: string) => void;
-    cloudflareModel: string;
-    cloudflareModelOptions: string[];
-    cloudflareModelsLoading: boolean;
-    cloudflareModelsError: string | null;
-    cloudflareModelsUpdatedAt: number | null;
-    isCloudflareModelLocked: boolean;
-    refreshCloudflareModels: () => void;
-    onSelectCloudflareModel: (model: string) => void;
-    zenModel: string;
-    zenModelOptions: string[];
-    zenModelsLoading: boolean;
-    zenModelsError: string | null;
-    zenModelsUpdatedAt: number | null;
-    isZenModelLocked: boolean;
-    refreshZenModels: () => void;
-    onSelectZenModel: (model: string) => void;
-    nvidiaModel: string;
-    nvidiaModelOptions: string[];
-    nvidiaModelsLoading: boolean;
-    nvidiaModelsError: string | null;
-    nvidiaModelsUpdatedAt: number | null;
-    isNvidiaModelLocked: boolean;
-    refreshNvidiaModels: () => void;
-    onSelectNvidiaModel: (model: string) => void;
-    blackboxModel: string;
-    blackboxModelOptions: string[];
-    blackboxModelsLoading: boolean;
-    blackboxModelsError: string | null;
-    blackboxModelsUpdatedAt: number | null;
-    isBlackboxModelLocked: boolean;
-    refreshBlackboxModels: () => void;
-    onSelectBlackboxModel: (model: string) => void;
-    kilocodeModel: string;
-    kilocodeModelOptions: string[];
-    kilocodeModelsLoading: boolean;
-    kilocodeModelsError: string | null;
-    kilocodeModelsUpdatedAt: number | null;
-    isKilocodeModelLocked: boolean;
-    refreshKilocodeModels: () => void;
-    onSelectKilocodeModel: (model: string) => void;
-    fireworksModel: string;
-    fireworksModelOptions: string[];
-    fireworksModelsLoading: boolean;
-    fireworksModelsError: string | null;
-    fireworksModelsUpdatedAt: number | null;
-    isFireworksModelLocked: boolean;
-    refreshFireworksModels: () => void;
-    onSelectFireworksModel: (model: string) => void;
-    sakanaModel: string;
-    sakanaModelOptions: string[];
-    sakanaModelsLoading: boolean;
-    sakanaModelsError: string | null;
-    sakanaModelsUpdatedAt: number | null;
-    isSakanaModelLocked: boolean;
-    refreshSakanaModels: () => void;
-    onSelectSakanaModel: (model: string) => void;
-    openadapterModel: string;
-    openadapterModelOptions: string[];
-    openadapterModelsLoading: boolean;
-    openadapterModelsError: string | null;
-    openadapterModelsUpdatedAt: number | null;
-    isOpenAdapterModelLocked: boolean;
-    refreshOpenAdapterModels: () => void;
-    onSelectOpenAdapterModel: (model: string) => void;
-    deepseekModel: string;
-    deepseekModelOptions: string[];
-    deepseekModelsLoading: boolean;
-    deepseekModelsError: string | null;
-    deepseekModelsUpdatedAt: number | null;
-    isDeepSeekModelLocked: boolean;
-    refreshDeepSeekModels: () => void;
-    onSelectDeepSeekModel: (model: string) => void;
-    azureModel: string;
-    azureDeployments: ExperimentalDeployment[];
-    azureActiveDeploymentId: string | null;
-    isAzureModelLocked: boolean;
-    onSelectAzureModel: (model: string) => void;
-    onSelectAzureDeployment: (id: string) => void;
-    bedrockModel: string;
-    bedrockDeployments: ExperimentalDeployment[];
-    bedrockActiveDeploymentId: string | null;
-    isBedrockModelLocked: boolean;
-    onSelectBedrockModel: (model: string) => void;
-    onSelectBedrockDeployment: (id: string) => void;
-    vertexModel: string;
-    vertexModelOptions: string[];
-    isVertexModelLocked: boolean;
-    onSelectVertexModel: (model: string) => void;
-    anthropicModel: string;
-    anthropicModelOptions: string[];
-    isAnthropicModelLocked: boolean;
-    onSelectAnthropicModel: (model: string) => void;
-    openaiModel: string;
-    openaiModelOptions: string[];
-    isOpenAIModelLocked: boolean;
-    onSelectOpenAIModel: (model: string) => void;
-    googleModel: string;
-    googleModelOptions: string[];
-    isGoogleModelLocked: boolean;
-    onSelectGoogleModel: (model: string) => void;
-  };
+  providerControls?: ComposerProviderControls;
 }
 
 function formatDeploymentLabel(dep: ExperimentalDeployment): string {
@@ -197,27 +85,6 @@ function formatDeploymentLabel(dep: ExperimentalDeployment): string {
 
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
 const COMPOSER_DRAFT_KEY_PREFIX = 'push:chat-composer-draft:';
-
-const PROVIDER_LABELS: Record<AIProviderType, string> = {
-  ollama: 'Ollama',
-  openrouter: 'OpenRouter',
-  cloudflare: 'Cloudflare Workers AI',
-  zen: 'OpenCode Zen',
-  nvidia: 'Nvidia NIM',
-  blackbox: 'Blackbox AI',
-  azure: 'Azure OpenAI',
-  bedrock: 'AWS Bedrock',
-  kilocode: 'Kilo Code',
-  fireworks: 'Fireworks AI',
-  sakana: 'Sakana AI',
-  openadapter: 'OpenAdapter',
-  deepseek: 'DeepSeek',
-  vertex: 'Google Vertex',
-  anthropic: 'Anthropic',
-  openai: 'OpenAI',
-  google: 'Google Gemini',
-  demo: 'Demo',
-};
 
 function formatTimeAgo(timestamp: number | null): string | null {
   if (!timestamp) return null;
@@ -492,29 +359,15 @@ export function ChatInput({
       providerControls.lockedProvider === selectedProvider,
   );
 
-  const selectedModel = (() => {
-    if (!providerControls) return '';
-    if (isDisplayedProviderLocked && providerControls.lockedModel)
-      return providerControls.lockedModel;
-    if (selectedProvider === 'ollama') return providerControls.ollamaModel;
-    if (selectedProvider === 'openrouter') return providerControls.openRouterModel;
-    if (selectedProvider === 'cloudflare') return providerControls.cloudflareModel;
-    if (selectedProvider === 'zen') return providerControls.zenModel;
-    if (selectedProvider === 'nvidia') return providerControls.nvidiaModel;
-    if (selectedProvider === 'blackbox') return providerControls.blackboxModel;
-    if (selectedProvider === 'kilocode') return providerControls.kilocodeModel;
-    if (selectedProvider === 'fireworks') return providerControls.fireworksModel;
-    if (selectedProvider === 'sakana') return providerControls.sakanaModel;
-    if (selectedProvider === 'openadapter') return providerControls.openadapterModel;
-    if (selectedProvider === 'deepseek') return providerControls.deepseekModel;
-    if (selectedProvider === 'azure') return providerControls.azureModel;
-    if (selectedProvider === 'bedrock') return providerControls.bedrockModel;
-    if (selectedProvider === 'vertex') return providerControls.vertexModel;
-    if (selectedProvider === 'anthropic') return providerControls.anthropicModel;
-    if (selectedProvider === 'openai') return providerControls.openaiModel;
-    if (selectedProvider === 'google') return providerControls.googleModel;
-    return 'demo';
-  })();
+  const selectedModelControl =
+    providerControls && selectedProvider !== 'demo'
+      ? providerControls.modelControls[selectedProvider]
+      : undefined;
+
+  const selectedModel =
+    isDisplayedProviderLocked && providerControls?.lockedModel
+      ? providerControls.lockedModel
+      : (selectedModelControl?.value ?? (selectedProvider === 'demo' ? 'demo' : ''));
 
   const canChangeProvider = Boolean(providerControls);
   const canChangeModel = Boolean(providerControls);
@@ -523,65 +376,13 @@ export function ChatInput({
     ? (selectedProvider as PreferredProvider)
     : (backendValues[0] ?? '');
 
-  const selectedModelLoading = (() => {
-    if (!providerControls) return false;
-    if (selectedProvider === 'ollama') return providerControls.ollamaModelsLoading;
-    if (selectedProvider === 'cloudflare') return providerControls.cloudflareModelsLoading;
-    if (selectedProvider === 'zen') return providerControls.zenModelsLoading;
-    if (selectedProvider === 'nvidia') return providerControls.nvidiaModelsLoading;
-    if (selectedProvider === 'blackbox') return providerControls.blackboxModelsLoading;
-    if (selectedProvider === 'kilocode') return providerControls.kilocodeModelsLoading;
-    if (selectedProvider === 'fireworks') return providerControls.fireworksModelsLoading;
-    if (selectedProvider === 'sakana') return providerControls.sakanaModelsLoading;
-    if (selectedProvider === 'openadapter') return providerControls.openadapterModelsLoading;
-    if (selectedProvider === 'deepseek') return providerControls.deepseekModelsLoading;
-    return false;
-  })();
-
-  const selectedModelUpdatedAgo = (() => {
-    if (!providerControls) return null;
-    if (selectedProvider === 'ollama') return formatTimeAgo(providerControls.ollamaModelsUpdatedAt);
-    if (selectedProvider === 'cloudflare')
-      return formatTimeAgo(providerControls.cloudflareModelsUpdatedAt);
-    if (selectedProvider === 'zen') return formatTimeAgo(providerControls.zenModelsUpdatedAt);
-    if (selectedProvider === 'nvidia') return formatTimeAgo(providerControls.nvidiaModelsUpdatedAt);
-    if (selectedProvider === 'blackbox')
-      return formatTimeAgo(providerControls.blackboxModelsUpdatedAt);
-    if (selectedProvider === 'kilocode')
-      return formatTimeAgo(providerControls.kilocodeModelsUpdatedAt);
-    if (selectedProvider === 'fireworks')
-      return formatTimeAgo(providerControls.fireworksModelsUpdatedAt);
-    if (selectedProvider === 'sakana') return formatTimeAgo(providerControls.sakanaModelsUpdatedAt);
-    if (selectedProvider === 'openadapter')
-      return formatTimeAgo(providerControls.openadapterModelsUpdatedAt);
-    if (selectedProvider === 'deepseek')
-      return formatTimeAgo(providerControls.deepseekModelsUpdatedAt);
-    return null;
-  })();
-
-  const canRefreshSelectedModelList =
-    selectedProvider === 'ollama' ||
-    selectedProvider === 'cloudflare' ||
-    selectedProvider === 'zen' ||
-    selectedProvider === 'nvidia' ||
-    selectedProvider === 'blackbox' ||
-    selectedProvider === 'kilocode' ||
-    selectedProvider === 'fireworks' ||
-    selectedProvider === 'sakana' ||
-    selectedProvider === 'openadapter' ||
-    selectedProvider === 'deepseek';
+  const selectedPickerControl =
+    selectedModelControl?.kind === 'picker' ? selectedModelControl : undefined;
+  const selectedModelLoading = Boolean(selectedPickerControl?.loading);
+  const selectedModelUpdatedAgo = formatTimeAgo(selectedPickerControl?.updatedAt ?? null);
+  const canRefreshSelectedModelList = Boolean(selectedPickerControl?.refreshModels);
   const refreshSelectedModelList = () => {
-    if (!providerControls) return;
-    if (selectedProvider === 'ollama') providerControls.refreshOllamaModels();
-    if (selectedProvider === 'cloudflare') providerControls.refreshCloudflareModels();
-    if (selectedProvider === 'zen') providerControls.refreshZenModels();
-    if (selectedProvider === 'nvidia') providerControls.refreshNvidiaModels();
-    if (selectedProvider === 'blackbox') providerControls.refreshBlackboxModels();
-    if (selectedProvider === 'kilocode') providerControls.refreshKilocodeModels();
-    if (selectedProvider === 'fireworks') providerControls.refreshFireworksModels();
-    if (selectedProvider === 'sakana') providerControls.refreshSakanaModels();
-    if (selectedProvider === 'openadapter') providerControls.refreshOpenAdapterModels();
-    if (selectedProvider === 'deepseek') providerControls.refreshDeepSeekModels();
+    selectedPickerControl?.refreshModels?.();
   };
   // Reasoning effort (per-provider, only for models that support it)
   const modelCaps = getModelCapabilities(selectedProvider, selectedModel);
@@ -608,6 +409,104 @@ export function ChatInput({
 
   // Display model name: strip provider prefix for OpenRouter, use as-is for others
   const displayModelName = selectedModel.replace(/^[^/]+\//, '');
+
+  const renderModelLockedMessage = (control: { isLocked: boolean; lockedMessage?: string }) =>
+    control.isLocked ? (
+      <p className="px-1 text-push-2xs text-amber-400">
+        {control.lockedMessage ?? MODEL_LOCKED_MESSAGE}
+      </p>
+    ) : null;
+
+  const renderPickerModelControl = (control: ComposerPickerModelControl) => {
+    const options =
+      control.options.length > 0 || !control.value ? control.options : [control.value];
+    return (
+      <>
+        <ModelPicker
+          provider={control.provider}
+          value={control.value}
+          options={options}
+          onChange={control.onChange}
+          disabled={!canChangeModel || Boolean(control.loading)}
+          ariaLabel={control.ariaLabel}
+          allowCustom={control.allowCustom}
+          customPlaceholder={control.customPlaceholder}
+          triggerLabel={control.triggerLabel}
+          triggerTrailing={control.triggerTrailing}
+        />
+        {control.loading && (
+          <p className="px-1 text-push-2xs text-push-fg-faint">
+            {control.loadingLabel ??
+              `Loading ${getProviderDisplayName(control.provider)} models...`}
+          </p>
+        )}
+        {!control.loading &&
+          control.options.length === 0 &&
+          !control.error &&
+          control.refreshModels && (
+            <p className="px-1 text-push-2xs text-push-fg-faint">
+              No models returned. Try refresh.
+            </p>
+          )}
+        {control.error && <p className="px-1 text-push-2xs text-amber-400">{control.error}</p>}
+        {selectedModelUpdatedAgo && (
+          <p className="px-1 text-push-2xs text-push-fg-faint">Updated {selectedModelUpdatedAgo}</p>
+        )}
+        {control.footer && (
+          <p className="px-1 text-push-2xs text-push-fg-faint">{control.footer}</p>
+        )}
+        {renderModelLockedMessage(control)}
+      </>
+    );
+  };
+
+  const renderDeploymentModelControl = (control: ComposerDeploymentModelControl) => (
+    <>
+      {control.deployments.length > 0 ? (
+        <select
+          value={control.activeDeploymentId ?? ''}
+          disabled={!canChangeModel}
+          onChange={(e) => control.onSelectDeployment(e.target.value)}
+          className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
+        >
+          {control.deployments.map((dep) => (
+            <option key={dep.id} value={dep.id}>
+              {formatDeploymentLabel(dep)}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          type="text"
+          value={control.value}
+          onChange={(e) => control.onChange(e.target.value)}
+          className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
+          placeholder={control.placeholder}
+        />
+      )}
+      {renderModelLockedMessage(control)}
+    </>
+  );
+
+  const renderSelectedModelControl = () => {
+    if (selectedProvider === 'demo') {
+      return (
+        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-secondary">
+          Demo mode (no model selection)
+        </div>
+      );
+    }
+    if (!selectedModelControl) {
+      return (
+        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-secondary">
+          No model selector is registered for {getProviderDisplayName(selectedProvider)}.
+        </div>
+      );
+    }
+    return selectedModelControl.kind === 'deployment'
+      ? renderDeploymentModelControl(selectedModelControl)
+      : renderPickerModelControl(selectedModelControl);
+  };
 
   const readyImageAttachments = readyAttachments.filter(
     (attachment) => attachment.type === 'image',
@@ -844,7 +743,7 @@ export function ChatInput({
                     className={`flex h-10 max-w-[188px] items-center gap-2 px-3 text-push-xs text-push-fg-secondary ${COMPOSER_CONTROL_SURFACE_CLASS} ${COMPOSER_CONTROL_INTERACTIVE_CLASS}`}
                     title={
                       isDisplayedProviderLocked
-                        ? `${PROVIDER_LABELS[selectedProvider]} locked for this chat`
+                        ? `${getProviderDisplayName(selectedProvider)} locked for this chat`
                         : 'Backend and model'
                     }
                   >
@@ -934,614 +833,7 @@ export function ChatInput({
                         )}
                       </div>
 
-                      {selectedProvider === 'demo' && (
-                        <div className="rounded-lg border border-push-edge-hover bg-push-surface px-2.5 py-2 text-push-xs text-push-fg-secondary">
-                          Demo mode (no model selection)
-                        </div>
-                      )}
-
-                      {selectedProvider === 'ollama' && (
-                        <>
-                          <ModelPicker
-                            provider="ollama"
-                            value={providerControls.ollamaModel}
-                            options={providerControls.ollamaModelOptions}
-                            onChange={providerControls.onSelectOllamaModel}
-                            disabled={!canChangeModel || providerControls.ollamaModelsLoading}
-                            ariaLabel="Select Ollama model"
-                          />
-                          {providerControls.ollamaModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Ollama models...
-                            </p>
-                          )}
-                          {!providerControls.ollamaModelsLoading &&
-                            providerControls.ollamaModelOptions.length === 0 &&
-                            !providerControls.ollamaModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.ollamaModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.ollamaModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isOllamaModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'openrouter' && (
-                        <>
-                          <ModelPicker
-                            provider="openrouter"
-                            value={providerControls.openRouterModel}
-                            options={providerControls.openRouterModelOptions}
-                            onChange={providerControls.onSelectOpenRouterModel}
-                            disabled={!canChangeModel}
-                            ariaLabel="Select OpenRouter model"
-                            triggerLabel={
-                              <>
-                                {displayModelName}
-                                {modelCaps.reasoning && (
-                                  <span className="text-push-2xs text-push-fg-faint">
-                                    {REASONING_EFFORT_LABELS[reasoningEffort]}
-                                  </span>
-                                )}
-                              </>
-                            }
-                          />
-                          {providerControls.isOpenRouterModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'cloudflare' && (
-                        <>
-                          <ModelPicker
-                            provider="cloudflare"
-                            value={providerControls.cloudflareModel}
-                            options={providerControls.cloudflareModelOptions}
-                            onChange={providerControls.onSelectCloudflareModel}
-                            disabled={!canChangeModel || providerControls.cloudflareModelsLoading}
-                            ariaLabel="Select Cloudflare Workers AI model"
-                          />
-                          {providerControls.cloudflareModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Cloudflare Workers AI models...
-                            </p>
-                          )}
-                          {!providerControls.cloudflareModelsLoading &&
-                            providerControls.cloudflareModelOptions.length === 0 &&
-                            !providerControls.cloudflareModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.cloudflareModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.cloudflareModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          <p className="px-1 text-push-2xs text-push-fg-faint">
-                            Uses the deployed Worker binding. No browser API key needed.
-                          </p>
-                          {providerControls.isCloudflareModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'zen' && (
-                        <>
-                          <ModelPicker
-                            provider="zen"
-                            value={providerControls.zenModel}
-                            options={providerControls.zenModelOptions}
-                            onChange={providerControls.onSelectZenModel}
-                            disabled={!canChangeModel || providerControls.zenModelsLoading}
-                            ariaLabel="Select OpenCode Zen model"
-                          />
-                          {providerControls.zenModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading OpenCode Zen models...
-                            </p>
-                          )}
-                          {!providerControls.zenModelsLoading &&
-                            providerControls.zenModelOptions.length === 0 &&
-                            !providerControls.zenModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.zenModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.zenModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isZenModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'nvidia' && (
-                        <>
-                          <ModelPicker
-                            provider="nvidia"
-                            value={providerControls.nvidiaModel}
-                            options={providerControls.nvidiaModelOptions}
-                            onChange={providerControls.onSelectNvidiaModel}
-                            disabled={!canChangeModel || providerControls.nvidiaModelsLoading}
-                            ariaLabel="Select Nvidia NIM model"
-                          />
-                          {providerControls.nvidiaModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Nvidia NIM models...
-                            </p>
-                          )}
-                          {!providerControls.nvidiaModelsLoading &&
-                            providerControls.nvidiaModelOptions.length === 0 &&
-                            !providerControls.nvidiaModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.nvidiaModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.nvidiaModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isNvidiaModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'blackbox' && (
-                        <>
-                          <ModelPicker
-                            provider="blackbox"
-                            value={providerControls.blackboxModel}
-                            options={providerControls.blackboxModelOptions}
-                            onChange={providerControls.onSelectBlackboxModel}
-                            disabled={!canChangeModel || providerControls.blackboxModelsLoading}
-                            ariaLabel="Select Blackbox AI model"
-                          />
-                          {providerControls.blackboxModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Blackbox AI models...
-                            </p>
-                          )}
-                          {!providerControls.blackboxModelsLoading &&
-                            providerControls.blackboxModelOptions.length === 0 &&
-                            !providerControls.blackboxModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.blackboxModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.blackboxModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isBlackboxModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'kilocode' && (
-                        <>
-                          <ModelPicker
-                            provider="kilocode"
-                            value={providerControls.kilocodeModel}
-                            options={providerControls.kilocodeModelOptions}
-                            onChange={providerControls.onSelectKilocodeModel}
-                            disabled={!canChangeModel || providerControls.kilocodeModelsLoading}
-                            ariaLabel="Select Kilo Code model"
-                          />
-                          {providerControls.kilocodeModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Kilo Code models...
-                            </p>
-                          )}
-                          {!providerControls.kilocodeModelsLoading &&
-                            providerControls.kilocodeModelOptions.length === 0 &&
-                            !providerControls.kilocodeModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.kilocodeModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.kilocodeModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isKilocodeModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'fireworks' && (
-                        <>
-                          <ModelPicker
-                            provider="fireworks"
-                            value={providerControls.fireworksModel}
-                            options={providerControls.fireworksModelOptions}
-                            onChange={providerControls.onSelectFireworksModel}
-                            disabled={!canChangeModel || providerControls.fireworksModelsLoading}
-                            ariaLabel="Select Fireworks AI model"
-                          />
-                          {providerControls.fireworksModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Fireworks AI models...
-                            </p>
-                          )}
-                          {!providerControls.fireworksModelsLoading &&
-                            providerControls.fireworksModelOptions.length === 0 &&
-                            !providerControls.fireworksModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.fireworksModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.fireworksModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isFireworksModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'sakana' && (
-                        <>
-                          <ModelPicker
-                            provider="sakana"
-                            value={providerControls.sakanaModel}
-                            options={providerControls.sakanaModelOptions}
-                            onChange={providerControls.onSelectSakanaModel}
-                            disabled={!canChangeModel || providerControls.sakanaModelsLoading}
-                            ariaLabel="Select Sakana AI model"
-                          />
-                          {providerControls.sakanaModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading Sakana AI models...
-                            </p>
-                          )}
-                          {!providerControls.sakanaModelsLoading &&
-                            providerControls.sakanaModelOptions.length === 0 &&
-                            !providerControls.sakanaModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.sakanaModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.sakanaModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isSakanaModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'openadapter' && (
-                        <>
-                          <ModelPicker
-                            provider="openadapter"
-                            value={providerControls.openadapterModel}
-                            options={providerControls.openadapterModelOptions}
-                            onChange={providerControls.onSelectOpenAdapterModel}
-                            disabled={!canChangeModel || providerControls.openadapterModelsLoading}
-                            ariaLabel="Select OpenAdapter model"
-                          />
-                          {providerControls.openadapterModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading OpenAdapter models...
-                            </p>
-                          )}
-                          {!providerControls.openadapterModelsLoading &&
-                            providerControls.openadapterModelOptions.length === 0 &&
-                            !providerControls.openadapterModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.openadapterModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.openadapterModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isOpenAdapterModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'deepseek' && (
-                        <>
-                          <ModelPicker
-                            provider="deepseek"
-                            value={providerControls.deepseekModel}
-                            options={providerControls.deepseekModelOptions}
-                            onChange={providerControls.onSelectDeepSeekModel}
-                            disabled={!canChangeModel || providerControls.deepseekModelsLoading}
-                            ariaLabel="Select DeepSeek model"
-                          />
-                          {providerControls.deepseekModelsLoading && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Loading DeepSeek models...
-                            </p>
-                          )}
-                          {!providerControls.deepseekModelsLoading &&
-                            providerControls.deepseekModelOptions.length === 0 &&
-                            !providerControls.deepseekModelsError && (
-                              <p className="px-1 text-push-2xs text-push-fg-faint">
-                                No models returned. Try refresh.
-                              </p>
-                            )}
-                          {providerControls.deepseekModelsError && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              {providerControls.deepseekModelsError}
-                            </p>
-                          )}
-                          {selectedModelUpdatedAgo && (
-                            <p className="px-1 text-push-2xs text-push-fg-faint">
-                              Updated {selectedModelUpdatedAgo}
-                            </p>
-                          )}
-                          {providerControls.isDeepSeekModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'azure' && (
-                        <>
-                          {providerControls.azureDeployments.length > 0 ? (
-                            <select
-                              value={providerControls.azureActiveDeploymentId ?? ''}
-                              disabled={!canChangeModel}
-                              onChange={(e) =>
-                                providerControls.onSelectAzureDeployment(e.target.value)
-                              }
-                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                            >
-                              {providerControls.azureDeployments.map((dep) => (
-                                <option key={dep.id} value={dep.id}>
-                                  {formatDeploymentLabel(dep)}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={providerControls.azureModel}
-                              onChange={(e) => providerControls.onSelectAzureModel(e.target.value)}
-                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
-                              placeholder="Deployment or model"
-                            />
-                          )}
-                          {providerControls.isAzureModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a deployment starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'bedrock' && (
-                        <>
-                          {providerControls.bedrockDeployments.length > 0 ? (
-                            <select
-                              value={providerControls.bedrockActiveDeploymentId ?? ''}
-                              disabled={!canChangeModel}
-                              onChange={(e) =>
-                                providerControls.onSelectBedrockDeployment(e.target.value)
-                              }
-                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                            >
-                              {providerControls.bedrockDeployments.map((dep) => (
-                                <option key={dep.id} value={dep.id}>
-                                  {formatDeploymentLabel(dep)}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <input
-                              type="text"
-                              value={providerControls.bedrockModel}
-                              onChange={(e) =>
-                                providerControls.onSelectBedrockModel(e.target.value)
-                              }
-                              className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
-                              placeholder="Bedrock model id"
-                            />
-                          )}
-                          {providerControls.isBedrockModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'vertex' && (
-                        <>
-                          <select
-                            value={providerControls.vertexModel}
-                            disabled={!canChangeModel}
-                            onChange={(e) => providerControls.onSelectVertexModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                          >
-                            {(providerControls.vertexModelOptions.length > 0
-                              ? providerControls.vertexModelOptions
-                              : [providerControls.vertexModel]
-                            ).map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.isVertexModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'anthropic' && (
-                        <>
-                          <select
-                            value={providerControls.anthropicModel}
-                            disabled={!canChangeModel}
-                            onChange={(e) =>
-                              providerControls.onSelectAnthropicModel(e.target.value)
-                            }
-                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                          >
-                            {(providerControls.anthropicModelOptions.length > 0
-                              ? providerControls.anthropicModelOptions
-                              : [providerControls.anthropicModel]
-                            ).map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.isAnthropicModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'openai' && (
-                        <>
-                          <select
-                            value={providerControls.openaiModel}
-                            disabled={!canChangeModel}
-                            onChange={(e) => providerControls.onSelectOpenAIModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                          >
-                            {(providerControls.openaiModelOptions.length > 0
-                              ? providerControls.openaiModelOptions
-                              : [providerControls.openaiModel]
-                            ).map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.isOpenAIModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
-
-                      {selectedProvider === 'google' && (
-                        <>
-                          <select
-                            value={providerControls.googleModel}
-                            disabled={!canChangeModel}
-                            onChange={(e) => providerControls.onSelectGoogleModel(e.target.value)}
-                            className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-                          >
-                            {(providerControls.googleModelOptions.length > 0
-                              ? providerControls.googleModelOptions
-                              : [providerControls.googleModel]
-                            ).map((model) => (
-                              <option key={model} value={model}>
-                                {model}
-                              </option>
-                            ))}
-                          </select>
-                          {providerControls.isGoogleModelLocked && (
-                            <p className="px-1 text-push-2xs text-amber-400">
-                              Current chat locked; choosing a model starts a new chat.
-                            </p>
-                          )}
-                        </>
-                      )}
+                      {renderSelectedModelControl()}
                     </div>
                     <p className="px-1 text-push-2xs text-push-fg-faint">
                       Settings controls your defaults. This picker only changes the selected
