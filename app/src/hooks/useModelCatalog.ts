@@ -27,6 +27,7 @@ import {
   type PreferredProvider,
 } from '@/lib/providers';
 import { getActiveProvider, type ActiveProvider } from '@/lib/active-provider';
+import { REAL_PROVIDERS, getProviderDisplayName } from '@push/lib/provider-definition';
 import { resolveApiUrl } from '@/lib/api-url';
 import {
   fetchCloudflareModels,
@@ -630,26 +631,29 @@ export function useModelCatalog(): ModelCatalog {
   const activeProviderLabel = getActiveProvider();
 
   // Available providers (filtered by key presence)
-  const availableProviders = (
-    [
-      ['ollama', 'Ollama', ollamaCfg.hasKey],
-      ['openrouter', 'OpenRouter', openRouterCfg.hasKey],
-      ['cloudflare', 'Cloudflare Workers AI', cloudflareConfigured],
-      ['zen', 'OpenCode Zen', zenCfg.hasKey],
-      ['nvidia', 'Nvidia NIM', nvidiaCfg.hasKey],
-      ['blackbox', 'Blackbox AI', blackboxCfg.hasKey],
-      ['kilocode', 'Kilo Code', kilocodeCfg.hasKey],
-      ['fireworks', 'Fireworks AI', fireworksCfg.hasKey],
-      ['sakana', 'Sakana AI', sakanaCfg.hasKey],
-      ['openadapter', 'OpenAdapter', openAdapterCfg.hasKey],
-      ['deepseek', 'DeepSeek', deepseekCfg.hasKey],
-      ['azure', 'Azure OpenAI', azureCfg.isConfigured],
-      ['bedrock', 'AWS Bedrock', bedrockCfg.isConfigured],
-      ['vertex', 'Google Vertex', vertexCfg.isConfigured],
-      ['anthropic', 'Anthropic', anthropicCfg.hasKey],
-      ['openai', 'OpenAI', openaiCfg.hasKey],
-      ['google', 'Google Gemini', googleCfg.hasKey],
-    ] as const
+  const providerAvailability = {
+    ollama: ollamaCfg.hasKey,
+    openrouter: openRouterCfg.hasKey,
+    cloudflare: cloudflareConfigured,
+    zen: zenCfg.hasKey,
+    nvidia: nvidiaCfg.hasKey,
+    blackbox: blackboxCfg.hasKey,
+    kilocode: kilocodeCfg.hasKey,
+    fireworks: fireworksCfg.hasKey,
+    openadapter: openAdapterCfg.hasKey,
+    deepseek: deepseekCfg.hasKey,
+    sakana: sakanaCfg.hasKey,
+    azure: azureCfg.isConfigured,
+    bedrock: bedrockCfg.isConfigured,
+    vertex: vertexCfg.isConfigured,
+    anthropic: anthropicCfg.hasKey,
+    openai: openaiCfg.hasKey,
+    google: googleCfg.hasKey,
+  } satisfies Record<PreferredProvider, boolean>;
+
+  const availableProviders = REAL_PROVIDERS.map(
+    (provider) =>
+      [provider, getProviderDisplayName(provider), providerAvailability[provider]] as const,
   ).filter(([, , has]) => has);
 
   // ----- Per-provider model lists -----
