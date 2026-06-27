@@ -187,7 +187,6 @@ export const ALL_PROVIDERS = [
   'azure',
   'kilocode',
   'fireworks',
-  'openadapter',
   'sakana',
   'bedrock',
   'vertex',

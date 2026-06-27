@@ -2,7 +2,7 @@
  * CLI native OpenAI-compatible PushStream.
  *
  * Every CLI provider in `PROVIDER_CONFIGS` (ollama, openrouter, zen, nvidia,
- * kilocode, fireworks, openadapter) speaks the same OpenAI-shaped
+ * kilocode, fireworks) speaks the same OpenAI-shaped
  * `chat/completions` wire format, so they share one stream parameterized by
  * `ProviderConfig`. Per-provider extensions (OpenRouter's `HTTP-Referer`,
  * `X-Title`, `session_id`, `trace`) branch on `config.id`.

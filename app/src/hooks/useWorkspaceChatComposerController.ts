@@ -37,7 +37,6 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectKilocodeModelFromChat'
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
-  | 'handleSelectOpenAdapterModelFromChat'
   | 'handleSelectDeepSeekModelFromChat'
   | 'handleSelectAzureModelFromChat'
   | 'handleSelectBedrockModelFromChat'
@@ -71,7 +70,6 @@ export function useWorkspaceChatComposerController({
   handleSelectKilocodeModelFromChat,
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
-  handleSelectOpenAdapterModelFromChat,
   handleSelectDeepSeekModelFromChat,
   handleSelectAzureModelFromChat,
   handleSelectBedrockModelFromChat,
@@ -320,16 +318,6 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshFireworksModels,
       isLocked: isProviderModelLocked('fireworks'),
       ariaLabel: 'Select Fireworks AI model',
-    }),
-    openadapter: buildPickerControl('openadapter', {
-      options: catalog.openAdapterModelOptions,
-      onChange: handleSelectOpenAdapterModelFromChat,
-      loading: catalog.openAdapterModels.loading,
-      error: catalog.openAdapterModels.error,
-      updatedAt: catalog.openAdapterModels.updatedAt,
-      refreshModels: catalog.refreshOpenAdapterModels,
-      isLocked: isProviderModelLocked('openadapter'),
-      ariaLabel: 'Select OpenAdapter model',
     }),
     sakana: buildPickerControl('sakana', {
       options: catalog.sakanaModelOptions,

@@ -24,7 +24,6 @@ VITE_ZEN_API_KEY=...              # Optional — OpenCode Zen
 VITE_NVIDIA_API_KEY=...           # Optional — Nvidia NIM
 VITE_KILOCODE_API_KEY=...         # Optional — Kilo Code
 VITE_FIREWORKS_API_KEY=...        # Optional — Fireworks AI
-VITE_OPENADAPTER_API_KEY=...      # Optional — OpenAdapter
 VITE_SAKANA_API_KEY=...           # Optional — Sakana AI
 VITE_ANTHROPIC_API_KEY=...        # Optional — Anthropic (native /v1/messages API with prompt caching)
 VITE_OPENAI_API_KEY=...           # Optional — OpenAI (GPT models with automatic prefix-based prompt caching)

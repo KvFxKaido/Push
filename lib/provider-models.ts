@@ -19,7 +19,6 @@ export type SharedProviderModelId =
   | 'nvidia'
   | 'kilocode'
   | 'fireworks'
-  | 'openadapter'
   | 'deepseek'
   | 'sakana'
   | 'openai'
@@ -38,7 +37,6 @@ export const KILOCODE_DEFAULT_MODEL = 'google/gemini-3-flash-preview';
 // DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
 // against /api/fireworks/models if it 404s.
 export const FIREWORKS_DEFAULT_MODEL = 'accounts/fireworks/models/deepseek-v4-pro';
-export const OPENADAPTER_DEFAULT_MODEL = 'deepseek/deepseek-v3';
 // Direct DeepSeek API (api.deepseek.com) — OpenAI-compatible. `deepseek-v4-pro`
 // is DeepSeek's flagship (frontier reasoning + thinking mode, up to 1M context);
 // `deepseek-v4-flash` is the faster, cheaper sibling. The legacy `deepseek-chat`
@@ -234,19 +232,6 @@ export const FIREWORKS_MODELS: string[] = [
   'accounts/fireworks/models/nemotron-3-ultra-nvfp4',
 ];
 
-export const OPENADAPTER_MODELS: string[] = [
-  'deepseek/deepseek-r1',
-  OPENADAPTER_DEFAULT_MODEL,
-  'qwen/qwen3-coder',
-  'qwen/qwen3.5',
-  'mistralai/mistral-large',
-  'mistralai/devstral',
-  'moonshotai/kimi-k2.5',
-  'minimax/minimax-m2.5',
-  'meta-llama/llama-4-maverick',
-  'z-ai/glm-5',
-];
-
 export const DEEPSEEK_MODELS: string[] = [DEEPSEEK_DEFAULT_MODEL, 'deepseek-v4-flash'];
 // Sakana Fugu orchestration tiers. The model field also accepts any free-text
 // slug; these two are the curated suggestions.
@@ -304,7 +289,6 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   nvidia: NVIDIA_MODELS,
   kilocode: KILOCODE_MODELS,
   fireworks: FIREWORKS_MODELS,
-  openadapter: OPENADAPTER_MODELS,
   deepseek: DEEPSEEK_MODELS,
   sakana: SAKANA_MODELS,
   openai: OPENAI_MODELS,
@@ -319,7 +303,6 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   nvidia: NVIDIA_DEFAULT_MODEL,
   kilocode: KILOCODE_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
-  openadapter: OPENADAPTER_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,

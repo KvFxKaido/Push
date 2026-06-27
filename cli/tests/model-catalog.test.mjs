@@ -11,7 +11,6 @@ import {
   ZEN_MODELS,
   KILOCODE_MODELS,
   FIREWORKS_MODELS,
-  OPENADAPTER_MODELS,
 } from '../model-catalog.ts';
 
 const originalFetch = globalThis.fetch;
@@ -68,12 +67,6 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, NVIDIA_MODELS);
   });
 
-  it('returns OpenAdapter models', () => {
-    const models = getCuratedModels('openadapter');
-    assert.ok(models.length > 0);
-    assert.deepEqual(models, OPENADAPTER_MODELS);
-  });
-
   it('returns empty array for unknown provider', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
@@ -106,10 +99,6 @@ describe('catalog parity', () => {
       FIREWORKS_MODELS,
       extractExportedStringArray(providerModelsSource, 'FIREWORKS_MODELS'),
     );
-    assert.deepEqual(
-      OPENADAPTER_MODELS,
-      extractExportedStringArray(providerModelsSource, 'OPENADAPTER_MODELS'),
-    );
   });
 
   it('keeps the CLI provider defaults in sync with the web catalog', () => {
@@ -120,7 +109,6 @@ describe('catalog parity', () => {
       nvidia: extractExportedStringConstant(providerModelsSource, 'NVIDIA_DEFAULT_MODEL'),
       kilocode: extractExportedStringConstant(providerModelsSource, 'KILOCODE_DEFAULT_MODEL'),
       fireworks: extractExportedStringConstant(providerModelsSource, 'FIREWORKS_DEFAULT_MODEL'),
-      openadapter: extractExportedStringConstant(providerModelsSource, 'OPENADAPTER_DEFAULT_MODEL'),
       deepseek: extractExportedStringConstant(providerModelsSource, 'DEEPSEEK_DEFAULT_MODEL'),
       sakana: extractExportedStringConstant(providerModelsSource, 'SAKANA_DEFAULT_MODEL'),
       openai: extractExportedStringConstant(providerModelsSource, 'OPENAI_DEFAULT_MODEL'),
@@ -140,7 +128,6 @@ describe('DEFAULT_MODELS', () => {
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     kilocode: 'google/gemini-3-flash-preview',
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
-    openadapter: 'deepseek/deepseek-v3',
     deepseek: 'deepseek-v4-pro',
     sakana: 'fugu',
     openai: 'gpt-5.4',
@@ -163,7 +150,6 @@ describe('DEFAULT_MODELS', () => {
       'kilocode',
       'nvidia',
       'ollama',
-      'openadapter',
       'openai',
       'openrouter',
       'sakana',

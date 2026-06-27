@@ -18,7 +18,6 @@ import {
   FIREWORKS_MODELS,
   SAKANA_DEFAULT_MODEL,
   SAKANA_MODELS,
-  OPENADAPTER_MODELS,
   DEEPSEEK_MODELS,
   normalizeKilocodeModelName,
   normalizeFireworksModelName,
@@ -37,7 +36,6 @@ import {
   fetchKilocodeModels,
   fetchFireworksModels,
   fetchSakanaModels,
-  fetchOpenAdapterModels,
   fetchDeepSeekModels,
   fetchGoogleModels,
   fetchOpenAIModels,
@@ -53,7 +51,6 @@ import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
-import { useOpenAdapterConfig } from '@/hooks/useOpenAdapterConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
 import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
@@ -166,7 +163,6 @@ export interface ModelCatalog {
   kilocode: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
-  openadapter: ProviderKeyConfig;
   deepseek: ProviderKeyConfig;
   azure: ExperimentalProviderConfig;
   bedrock: ExperimentalProviderConfig;
@@ -193,7 +189,6 @@ export interface ModelCatalog {
   kilocodeModels: ProviderModelState;
   fireworksModels: ProviderModelState;
   sakanaModels: ProviderModelState;
-  openAdapterModels: ProviderModelState;
   deepseekModels: ProviderModelState;
   googleModels: ProviderModelState;
   openaiModels: ProviderModelState;
@@ -207,7 +202,6 @@ export interface ModelCatalog {
   kilocodeModelOptions: string[];
   fireworksModelOptions: string[];
   sakanaModelOptions: string[];
-  openAdapterModelOptions: string[];
   deepseekModelOptions: string[];
   anthropicModelOptions: string[];
   openaiModelOptions: string[];
@@ -226,7 +220,6 @@ export interface ModelCatalog {
   refreshKilocodeModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
   refreshSakanaModels: () => Promise<void>;
-  refreshOpenAdapterModels: () => Promise<void>;
   refreshDeepSeekModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
   refreshOpenAIModels: () => Promise<void>;
@@ -405,20 +398,6 @@ export function buildModelControl(
         error: catalog.sakanaModels.error,
         onRefresh: catalog.refreshSakanaModels,
       };
-    case 'openadapter':
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'OpenAdapter'),
-        value: lockedModel ?? catalog.openadapter.model,
-        options: includeSelectedModel(
-          catalog.openAdapterModelOptions,
-          lockedModel ?? catalog.openadapter.model,
-        ),
-        onChange: catalog.openadapter.setModel,
-        loading: catalog.openAdapterModels.loading,
-        error: catalog.openAdapterModels.error,
-        onRefresh: catalog.refreshOpenAdapterModels,
-      };
     case 'azure': {
       const value = lockedModel ?? catalog.azure.model;
       const options = catalog.azure.deployments.map((deployment) => deployment.model);
@@ -515,7 +494,6 @@ export function useModelCatalog(): ModelCatalog {
   const kilocodeCfg = useKilocodeConfig();
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
-  const openAdapterCfg = useOpenAdapterConfig();
   const deepseekCfg = useDeepSeekConfig();
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
@@ -533,7 +511,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [sakanaKeyInput, setSakanaKeyInput] = useState('');
-  const [openAdapterKeyInput, setOpenAdapterKeyInput] = useState('');
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
@@ -616,7 +593,6 @@ export function useModelCatalog(): ModelCatalog {
     nvidia: nvidiaCfg.hasKey,
     kilocode: kilocodeCfg.hasKey,
     fireworks: fireworksCfg.hasKey,
-    openadapter: openAdapterCfg.hasKey,
     deepseek: deepseekCfg.hasKey,
     sakana: sakanaCfg.hasKey,
     azure: azureCfg.isConfigured,
@@ -642,7 +618,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
-  const [openAdapterModelList, setOpenAdapterModelList] = useState<string[]>([]);
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
   const [openaiModelList, setOpenaiModelList] = useState<string[]>([]);
@@ -655,7 +630,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
   const [sakanaLoading, setSakanaLoading] = useState(false);
-  const [openAdapterLoading, setOpenAdapterLoading] = useState(false);
   const [deepseekLoading, setDeepseekLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [openaiLoading, setOpenaiLoading] = useState(false);
@@ -668,7 +642,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [sakanaError, setSakanaError] = useState<string | null>(null);
-  const [openAdapterError, setOpenAdapterError] = useState<string | null>(null);
   const [deepseekError, setDeepseekError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [openaiError, setOpenaiError] = useState<string | null>(null);
@@ -681,7 +654,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [sakanaUpdatedAt, setSakanaUpdatedAt] = useState<number | null>(null);
-  const [openAdapterUpdatedAt, setOpenAdapterUpdatedAt] = useState<number | null>(null);
   const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
@@ -939,20 +911,6 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [sakanaCfg.hasKey, sakanaLoading, refreshModels]);
 
-  const refreshOpenAdapterModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: openAdapterCfg.hasKey,
-      isLoading: openAdapterLoading,
-      setLoading: setOpenAdapterLoading,
-      setError: setOpenAdapterError,
-      setModels: setOpenAdapterModelList,
-      setUpdatedAt: setOpenAdapterUpdatedAt,
-      fetchModels: fetchOpenAdapterModels,
-      emptyMessage: 'No models returned by OpenAdapter.',
-      failureMessage: 'Failed to load OpenAdapter models.',
-    });
-  }, [openAdapterCfg.hasKey, openAdapterLoading, refreshModels]);
-
   // Google/OpenAI fetch live lists from the Worker proxies, which filter to
   // chat-capable models and fall back to the curated list on key-missing or
   // upstream failure. No models.dev metadata pass, so no force flag.
@@ -1207,29 +1165,6 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: openAdapterCfg.hasKey,
-          modelCount: openAdapterModelList.length,
-          loading: openAdapterLoading,
-          error: openAdapterError,
-        }),
-        activeProviderLabel === 'openadapter',
-        () => {
-          void refreshOpenAdapterModels();
-        },
-      ),
-    [
-      activeProviderLabel,
-      openAdapterCfg.hasKey,
-      openAdapterError,
-      openAdapterLoading,
-      openAdapterModelList.length,
-      refreshOpenAdapterModels,
-    ],
-  );
-  useEffect(
-    () =>
-      scheduleAutoFetch(
-        shouldAutoFetchProviderModels({
           hasKey: googleCfg.hasKey,
           modelCount: googleModelList.length,
           loading: googleLoading,
@@ -1366,16 +1301,6 @@ export function useModelCatalog(): ModelCatalog {
       return () => clearTimeout(id);
     }
   }, [sakanaCfg.hasKey]);
-  useEffect(() => {
-    if (!openAdapterCfg.hasKey) {
-      const id = setTimeout(() => {
-        setOpenAdapterModelList([]);
-        setOpenAdapterError(null);
-        setOpenAdapterUpdatedAt(null);
-      }, 0);
-      return () => clearTimeout(id);
-    }
-  }, [openAdapterCfg.hasKey]);
   useEffect(() => {
     if (!googleCfg.hasKey) {
       const id = setTimeout(() => {
@@ -1553,14 +1478,6 @@ export function useModelCatalog(): ModelCatalog {
     const union = [...new Set([...SAKANA_MODELS, ...sakanaModelList])];
     return includeSelectedModel(union, selectedModel);
   }, [sakanaModelList, sakanaSelectedModel]);
-  const openAdapterModelOptions = useMemo(
-    () =>
-      includeSelectedModel(
-        openAdapterModelList.length > 0 ? openAdapterModelList : OPENADAPTER_MODELS,
-        openAdapterCfg.model,
-      ),
-    [openAdapterModelList, openAdapterCfg.model],
-  );
   // Anthropic uses the curated list directly — no live `/v1/models` proxy yet
   // (curated covers MVP; live fetching can land in a follow-up with a Worker
   // /api/anthropic/models proxy that does more than echo the curated list).
@@ -1665,15 +1582,6 @@ export function useModelCatalog(): ModelCatalog {
       setModel: sakanaCfg.setModel,
       keyInput: sakanaKeyInput,
       setKeyInput: setSakanaKeyInput,
-    },
-    openadapter: {
-      setKey: openAdapterCfg.setKey,
-      clearKey: openAdapterCfg.clearKey,
-      hasKey: openAdapterCfg.hasKey,
-      model: openAdapterCfg.model,
-      setModel: openAdapterCfg.setModel,
-      keyInput: openAdapterKeyInput,
-      setKeyInput: setOpenAdapterKeyInput,
     },
     deepseek: {
       setKey: deepseekCfg.setKey,
@@ -1851,12 +1759,6 @@ export function useModelCatalog(): ModelCatalog {
       error: sakanaError,
       updatedAt: sakanaUpdatedAt,
     },
-    openAdapterModels: {
-      models: openAdapterModelList,
-      loading: openAdapterLoading,
-      error: openAdapterError,
-      updatedAt: openAdapterUpdatedAt,
-    },
     deepseekModels: {
       models: deepseekModelList,
       loading: deepseekLoading,
@@ -1884,7 +1786,6 @@ export function useModelCatalog(): ModelCatalog {
     kilocodeModelOptions,
     fireworksModelOptions,
     sakanaModelOptions,
-    openAdapterModelOptions,
     deepseekModelOptions,
     anthropicModelOptions,
     openaiModelOptions,
@@ -1901,7 +1802,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshKilocodeModels,
     refreshFireworksModels,
     refreshSakanaModels,
-    refreshOpenAdapterModels,
     refreshDeepSeekModels,
     refreshGoogleModels,
     refreshOpenAIModels,

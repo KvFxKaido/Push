@@ -261,7 +261,7 @@ Usage:
   push memory backfill          Embed stored memory records that lack an embedding (semantic recall)
 
 Options:
-  --provider <name>             ollama | openrouter | zen | nvidia | kilocode | fireworks | openadapter | deepseek | sakana | openai | anthropic | google (default: ollama)
+  --provider <name>             ollama | openrouter | zen | nvidia | kilocode | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
@@ -840,7 +840,7 @@ async function handleProviderCommand(arg, ctx, state, config) {
 
   if (!target) {
     process.stdout.write(
-      `Unknown provider: ${arg}. Use: ollama, openrouter, zen, nvidia, kilocode, fireworks, openadapter, deepseek, sakana, openai, anthropic, google\n`,
+      `Unknown provider: ${arg}. Use: ollama, openrouter, zen, nvidia, kilocode, fireworks, deepseek, sakana, openai, anthropic, google\n`,
     );
     return;
   }

@@ -813,30 +813,6 @@ export const handleFireworksModels = createJsonProxyHandler({
   timeoutError: 'Fireworks AI model list timed out after 30 seconds',
 });
 
-export const handleOpenAdapterChat = createStreamProxyHandler({
-  name: 'OpenAdapter API',
-  logTag: 'api/openadapter/chat',
-  upstreamUrl: 'https://api.openadapter.in/v1/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('OPENADAPTER_API_KEY'),
-  keyMissingError:
-    'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
-  timeoutError: 'OpenAdapter request timed out after 120 seconds',
-});
-
-export const handleOpenAdapterModels = createJsonProxyHandler({
-  name: 'OpenAdapter API',
-  logTag: 'api/openadapter/models',
-  upstreamUrl: 'https://api.openadapter.in/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('OPENADAPTER_API_KEY'),
-  keyMissingError:
-    'OpenAdapter API key not configured. Add it in Settings or set OPENADAPTER_API_KEY on the Worker.',
-  timeoutError: 'OpenAdapter model list timed out after 30 seconds',
-});
-
 // --- DeepSeek (Anthropic Messages transport) ---
 //
 // DeepSeek exposes an Anthropic-compatible Messages endpoint at
@@ -2849,7 +2825,6 @@ export const WORKER_PROVIDER_HANDLERS = {
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },
   kilocode: { chat: handleKiloCodeChat, models: handleKiloCodeModels },
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
-  openadapter: { chat: handleOpenAdapterChat, models: handleOpenAdapterModels },
   deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },
   sakana: { chat: handleSakanaChat, models: handleSakanaModels },
   azure: { chat: handleAzureChat, models: handleAzureModels },

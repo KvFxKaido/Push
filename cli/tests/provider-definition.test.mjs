@@ -40,7 +40,6 @@ const EXPECTED_INITIAL_FALLBACK_ORDER = [
   'nvidia',
   'kilocode',
   'fireworks',
-  'openadapter',
   'deepseek',
   'sakana',
   'anthropic',
@@ -56,7 +55,6 @@ const EXPECTED_FAILOVER_ORDER = [
   'nvidia',
   'kilocode',
   'fireworks',
-  'openadapter',
   'deepseek',
   'sakana',
   'azure',
@@ -74,7 +72,6 @@ const EXPECTED_CLI_PROVIDER_ORDER = [
   'nvidia',
   'kilocode',
   'fireworks',
-  'openadapter',
   'deepseek',
   'sakana',
   'openai',
@@ -94,7 +91,6 @@ const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
   'kilocode',
   'fireworks',
   'sakana',
-  'openadapter',
 ];
 
 // Drift-detector: internal consistency of every ProviderDefinition entry and

@@ -29,7 +29,6 @@ const providerHandlerMocks = vi.hoisted(() => ({
   handleNvidiaChat: vi.fn(),
   handleKiloCodeChat: vi.fn(),
   handleFireworksChat: vi.fn(),
-  handleOpenAdapterChat: vi.fn(),
 }));
 vi.mock('./worker-providers', () => providerHandlerMocks);
 

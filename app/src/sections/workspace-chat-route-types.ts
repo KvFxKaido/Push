@@ -177,7 +177,6 @@ export interface ChatRouteCatalogProps {
   handleSelectKilocodeModelFromChat: (model: string) => void;
   handleSelectFireworksModelFromChat: (model: string) => void;
   handleSelectSakanaModelFromChat: (model: string) => void;
-  handleSelectOpenAdapterModelFromChat: (model: string) => void;
   handleSelectDeepSeekModelFromChat: (model: string) => void;
   handleSelectAzureModelFromChat: (model: string) => void;
   handleSelectBedrockModelFromChat: (model: string) => void;

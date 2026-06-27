@@ -57,7 +57,6 @@ describe('isProviderEngineCapable', () => {
       NVIDIA_API_KEY: 'k',
       KILOCODE_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',
-      OPENADAPTER_API_KEY: 'k',
       DEEPSEEK_API_KEY: 'k',
       SAKANA_API_KEY: 'k',
       ANTHROPIC_API_KEY: 'k',
