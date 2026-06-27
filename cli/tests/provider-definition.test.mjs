@@ -6,6 +6,7 @@ import {
   REAL_PROVIDERS,
   findProviderDefinition,
   getAdapterRoutedProviderIds,
+  getCliProviderDefinitions,
   getFailoverProviderOrder,
   getInitialFallbackProviderOrder,
   getProviderDisplayName,
@@ -62,6 +63,22 @@ const EXPECTED_FAILOVER_ORDER = [
   'google',
 ];
 
+const EXPECTED_CLI_PROVIDER_ORDER = [
+  'ollama',
+  'openrouter',
+  'zen',
+  'nvidia',
+  'kilocode',
+  'fireworks',
+  'blackbox',
+  'openadapter',
+  'deepseek',
+  'sakana',
+  'openai',
+  'anthropic',
+  'google',
+];
+
 // Drift-detector: internal consistency of every ProviderDefinition entry and
 // coverage of every real provider id. Stream factories and per-model transport
 // hooks remain runtime-owned exceptions, but provider-keyed metadata should not
@@ -110,6 +127,29 @@ describe('ProviderDefinition', () => {
 
   it('marks every real provider as adapter-routed', () => {
     assert.deepEqual([...getAdapterRoutedProviderIds()].sort(), [...REAL_PROVIDERS].sort());
+  });
+
+  it('declares the CLI provider roster and live override env vars', () => {
+    const cliDefinitions = getCliProviderDefinitions();
+    assert.deepEqual(
+      cliDefinitions.map((def) => def.id),
+      EXPECTED_CLI_PROVIDER_ORDER,
+    );
+    for (const def of cliDefinitions) {
+      assert.ok(def.cli, `${def.id} missing cli metadata`);
+      assert.ok(def.defaultModel, `${def.id} missing defaultModel`);
+      assert.ok(def.apiKeyEnvVars || def.cli.apiKeyEnvVars, `${def.id} missing api key env vars`);
+      assert.equal(typeof def.cli.order, 'number', `${def.id} missing numeric CLI order`);
+      assert.equal(new URL(def.cli.defaultUrl).protocol, 'https:');
+      for (const envVar of def.cli.urlEnvVars) {
+        assert.match(envVar, /^[A-Z][A-Z0-9_]*$/, `${def.id} URL env is not SCREAMING_SNAKE_CASE`);
+      }
+      assert.match(
+        def.cli.modelEnvVar,
+        /^[A-Z][A-Z0-9_]*$/,
+        `${def.id} model env is not SCREAMING_SNAKE_CASE`,
+      );
+    }
   });
 
   it('exposes display names and legacy timeout names from the registry', () => {
