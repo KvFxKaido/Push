@@ -12,7 +12,11 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import {
+  expandToolMessagesForOpenAICompat,
+  flatToolToOpenAITool,
+  toOpenAIResponseFormat,
+} from '@push/lib/openai-chat-serializer';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -46,6 +50,17 @@ export async function* openrouterStream(
   //    (workspaceContext, hasSandbox, onPreCompact) flows through the
   //    adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
+  // Native function calling is active when the caller attached function schemas
+  // (gated upstream on model support). Gate the tool-history shape on this, NOT
+  // on the `openrouter:web_search` server tool below — web search alone doesn't
+  // put the model in native-FC mode. When active, deliver prior tool history as
+  // OpenAI-native `tool_calls[]` + `role:'tool'` results instead of the
+  // `[TOOL_RESULT]` text envelope, so a tool-capable model sees its own results
+  // as tool output rather than untrusted user-injected data. `emitContentBlocks`
+  // runs the kernel's paired tool sidecars through the whole-request adjacency
+  // pass so the expansion has paired `contentBlocks`; unpaired turns degrade to
+  // text. Off → byte-identical to before.
+  const nativeFcActive = Array.isArray(req.tools) && req.tools.length > 0;
   const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
     hasSandbox: req.hasSandbox,
@@ -61,7 +76,11 @@ export async function* openrouterStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: nativeFcActive,
   });
+  const wireMessages = nativeFcActive
+    ? expandToolMessagesForOpenAICompat(llmMessages)
+    : llmMessages;
 
   // 2. Layer in OpenRouter-specific body extensions (reasoning effort,
   //    Push session id, trace flags). These were previously injected via the
@@ -89,7 +108,7 @@ export async function* openrouterStream(
   // OpenRouter accepts a mixed `tools` array,
   // so native function schemas and the `openrouter:web_search` server tool merge
   // (web search appended last) when both are active.
-  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
+  const nativeTools = nativeFcActive ? (req.tools ?? []) : [];
   const openAITools = nativeTools.map(flatToolToOpenAITool);
   const toolsArray = [...openAITools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
   // `provider.require_parameters` is load-bearing whenever we send native tools
@@ -104,7 +123,7 @@ export async function* openrouterStream(
 
   const body: Record<string, unknown> = {
     model: req.model,
-    messages: llmMessages,
+    messages: wireMessages,
     stream: true,
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),

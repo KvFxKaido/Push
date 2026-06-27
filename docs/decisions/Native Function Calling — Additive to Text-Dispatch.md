@@ -172,15 +172,20 @@ own results as untrusted user-injected data rather than tool output — the
 provenance-confusion failure mode (a weak model distrusting the envelope and
 fabricating reality instead).
 
-Fixed for **Ollama Cloud only** (the reported surface; OpenRouter shares the
-legacy raw-forward path and remains a candidate follow-up). When native FC is
-active, `ollama-stream.ts` passes `emitContentBlocks: true` to `toLLMMessages`
-(running the kernel's already-paired tool sidecars through the whole-request
-adjacency pass in `materializeToolContentBlocks`), then expands only the
-tool-bearing turns via the new `expandToolMessagesForOpenAICompat`
-(`lib/openai-chat-serializer.ts`) — reusing the same `flattenToolBearingBlocks`
-the neutral path uses. Assistant tool turns become `tool_calls[]`; each result
-becomes a standalone `{ role: 'tool', tool_call_id }`. Non-tool turns and
-unpaired/non-adjacent tool exchanges pass through verbatim (graceful degradation
-to the text arm), so the change is byte-identical to before when native FC is
-off.
+Fixed for the two legacy raw-forward web adapters — **Ollama Cloud** and
+**OpenRouter**. When native FC is active, the adapter passes
+`emitContentBlocks: true` to `toLLMMessages` (running the kernel's already-paired
+tool sidecars through the whole-request adjacency pass in
+`materializeToolContentBlocks`), then expands only the tool-bearing turns via the
+new `expandToolMessagesForOpenAICompat` (`lib/openai-chat-serializer.ts`) —
+reusing the same `flattenToolBearingBlocks` the neutral path uses. Assistant tool
+turns become `tool_calls[]`; each result becomes a standalone
+`{ role: 'tool', tool_call_id }`. Non-tool turns and unpaired/non-adjacent tool
+exchanges pass through verbatim (graceful degradation to the text arm), so the
+change is byte-identical to before when native FC is off.
+
+The gate is the presence of function schemas (`req.tools`), NOT OpenRouter's
+`openrouter:web_search` server tool — web search alone doesn't put the model in
+native-FC mode. Other OpenAI-compat adapters that already route through
+`toOpenAIChat` (Vertex Gemini, Zen-Go, CLI OpenAI-compat) get this flatten for
+free and need no change.

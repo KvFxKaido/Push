@@ -20,9 +20,15 @@ vi.mock('./model-catalog', () => ({
 }));
 
 // toLLMMessages pulls in huge dependency graph — stub to a trivial passthrough.
+// Preserves `contentBlocks` when present so the native-tool-history flatten can
+// be exercised; messages without it serialize exactly as before (most tests).
 vi.mock('./orchestrator', () => ({
-  toLLMMessages: (messages: ChatMessage[]) =>
-    messages.map((m) => ({ role: m.role, content: m.content })),
+  toLLMMessages: (messages: Array<ChatMessage & { contentBlocks?: unknown }>) =>
+    messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
+    })),
 }));
 
 // Narrow KNOWN_TOOL_NAMES so tests can assert on known-vs-unknown dispatch
@@ -503,6 +509,77 @@ describe('openrouterStream', () => {
     const body = JSON.parse(init.body as string);
     expect(body.tool_choice).toBeUndefined();
     expect(body.provider).toBeUndefined();
+  });
+
+  // Tool history shape — when native FC is active, prior tool turns ride the
+  // wire as OpenAI-native `tool_calls[]` + `role:'tool'` results rather than the
+  // `[TOOL_RESULT]` text envelope (the provenance-confusion fix).
+  const toolHistory = (): ChatMessage[] => [
+    {
+      id: 'a',
+      role: 'assistant',
+      content: '```json\n{"tool":"sandbox_read_file","args":{"path":"a.ts"}}\n```',
+      timestamp: 0,
+      contentBlocks: [
+        { type: 'tool_use', id: 'toolu_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+      ],
+    } as unknown as ChatMessage,
+    {
+      id: 'r',
+      role: 'user',
+      content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+      timestamp: 0,
+      contentBlocks: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'file body' }],
+    } as unknown as ChatMessage,
+  ];
+
+  it("expands tool history into tool_calls + role:'tool' when native tools are attached", async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const iter = openrouterStream({
+      ...baseRequest,
+      openrouterWebSearch: false,
+      messages: toolHistory(),
+      tools: [sampleTool],
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.messages).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'toolu_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'toolu_1', content: 'file body' },
+    ]);
+  });
+
+  it('leaves tool history as plain messages when no native tools are attached', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    // Web search on (the default) but no function schemas — the gate is the
+    // function tools, not the web_search server tool, so no flatten happens.
+    const iter = openrouterStream({ ...baseRequest, messages: toolHistory() });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.messages.some((m: { role: string }) => m.role === 'tool')).toBe(false);
+    expect(body.messages).toHaveLength(2);
   });
 
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {
