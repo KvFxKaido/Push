@@ -1,12 +1,7 @@
 import { OPENAI_DEFAULT_MODEL } from '@/lib/providers';
-import { createModelProviderConfig } from './useApiKeyConfig';
+import { createRegistryModelProviderConfig } from './useApiKeyConfig';
 
-const KEY_STORAGE = 'openai_api_key';
-const MODEL_STORAGE = 'openai_model';
-
-const providerConfig = createModelProviderConfig({
-  storageKey: KEY_STORAGE,
-  modelStorageKey: MODEL_STORAGE,
+const providerConfig = createRegistryModelProviderConfig('openai', {
   envVar: import.meta.env.VITE_OPENAI_API_KEY,
   defaultModel: OPENAI_DEFAULT_MODEL,
 });

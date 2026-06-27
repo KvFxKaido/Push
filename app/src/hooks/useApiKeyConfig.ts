@@ -1,9 +1,9 @@
 /**
  * Factory for API key management hooks.
  *
- * All provider config hooks (Tavily, Ollama, Mistral, OpenRouter, Z.AI, Google, Zen)
- * share the same skeleton: a standalone getter (localStorage → env var fallback)
- * and a React hook that wraps useState + useCallback for set/clear/hasKey.
+ * All API-key config hooks share the same skeleton: a standalone getter
+ * (localStorage → env var fallback) and a React hook that wraps useState +
+ * useCallback for set/clear/hasKey.
  *
  * This factory eliminates that duplication. Each hook file becomes a thin
  * wrapper that specifies its storage key, env var, and optional model config.
@@ -16,6 +16,11 @@ import {
   syncProviderKeyToServer,
 } from '@/lib/provider-key-sync';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
+import {
+  getProviderApiKeyStorageKey,
+  getProviderModelStorageKey,
+  type RealProviderId,
+} from '@push/lib/provider-definition';
 
 // ---------------------------------------------------------------------------
 // Standalone getter factory
@@ -167,4 +172,36 @@ export function createModelProviderConfig(
         normalizeModel,
       ),
   };
+}
+
+function requireProviderApiKeyStorageKey(provider: RealProviderId): string {
+  const key = getProviderApiKeyStorageKey(provider);
+  if (!key) {
+    throw new Error(`Provider "${provider}" is missing an API key storage key`);
+  }
+  return key;
+}
+
+function requireProviderModelStorageKey(provider: RealProviderId): string {
+  const key = getProviderModelStorageKey(provider);
+  if (!key) {
+    throw new Error(`Provider "${provider}" is missing a model storage key`);
+  }
+  return key;
+}
+
+type RegistryModelProviderConfigOptions = Omit<
+  ModelProviderConfigOptions,
+  'storageKey' | 'modelStorageKey'
+>;
+
+export function createRegistryModelProviderConfig(
+  provider: RealProviderId,
+  options: RegistryModelProviderConfigOptions,
+): ModelProviderConfig {
+  return createModelProviderConfig({
+    ...options,
+    storageKey: requireProviderApiKeyStorageKey(provider),
+    modelStorageKey: requireProviderModelStorageKey(provider),
+  });
 }

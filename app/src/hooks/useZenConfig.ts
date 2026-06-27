@@ -7,14 +7,9 @@ import {
   getZenGoMode,
   setZenGoMode as persistZenGoMode,
 } from '@/lib/providers';
-import { createModelProviderConfig } from './useApiKeyConfig';
+import { createRegistryModelProviderConfig } from './useApiKeyConfig';
 
-const KEY_STORAGE = 'zen_api_key';
-const MODEL_STORAGE = 'zen_model';
-
-const providerConfig = createModelProviderConfig({
-  storageKey: KEY_STORAGE,
-  modelStorageKey: MODEL_STORAGE,
+const providerConfig = createRegistryModelProviderConfig('zen', {
   envVar: import.meta.env.VITE_ZEN_API_KEY,
   defaultModel: ZEN_DEFAULT_MODEL,
 });

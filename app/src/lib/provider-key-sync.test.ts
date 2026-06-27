@@ -33,7 +33,9 @@ describe('providerForStorageKey', () => {
     expect(providerForStorageKey('fireworks_api_key')).toBe('fireworks');
   });
 
-  it('returns null for non-provider and CLI-only keys', () => {
+  it('returns null for non-provider, non-key, and CLI-only keys', () => {
+    expect(providerForStorageKey('cloudflare_api_key')).toBeNull();
+    expect(providerForStorageKey('vertex_service_account')).toBeNull();
     expect(providerForStorageKey('tavily_api_key')).toBeNull();
     expect(providerForStorageKey('mistral_api_key')).toBeNull();
     expect(providerForStorageKey('zai_api_key')).toBeNull();

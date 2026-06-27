@@ -2,75 +2,13 @@ import { useState } from 'react';
 import demoIcon from '@/assets/icons/push-pack-v1/push-orbit.svg';
 import { cn } from '@/lib/utils';
 import type { AIProviderType } from '@/types';
+import { findProviderDefinition } from '@push/lib/provider-definition';
 
-const MODELS_DEV_LOGOS: Record<AIProviderType, string> = {
-  // `models.dev/logos/ollama.svg` currently resolves to a generic fallback.
-  ollama: 'https://models.dev/logos/ollama-cloud.svg',
-  openrouter: 'https://models.dev/logos/openrouter.svg',
-  cloudflare: 'https://models.dev/logos/cloudflare.svg',
-  // `zen` is represented by OpenCode branding.
-  zen: 'https://models.dev/logos/opencode.svg',
-  nvidia: 'https://models.dev/logos/nvidia.svg',
-  blackbox: 'https://www.blackbox.ai/favicon.ico',
-  azure: 'https://models.dev/logos/azure.svg',
-  bedrock: 'https://models.dev/logos/aws.svg',
-  vertex: 'https://models.dev/logos/google.svg',
-  anthropic: 'https://models.dev/logos/anthropic.svg',
-  openai: 'https://models.dev/logos/openai.svg',
-  google: 'https://models.dev/logos/google.svg',
-  kilocode: 'https://kilo.ai/favicon.ico',
-  fireworks: 'https://fireworks.ai/favicon.ico',
-  sakana: 'https://sakana.ai/favicon.ico',
-  openadapter: 'https://openadapter.dev/favicon.ico',
-  deepseek: 'https://models.dev/logos/deepseek.svg',
-  demo: demoIcon,
-};
-
-const PROVIDER_ALT: Record<AIProviderType, string> = {
-  ollama: 'Ollama logo',
-  openrouter: 'OpenRouter logo',
-  cloudflare: 'Cloudflare logo',
-  zen: 'OpenCode Zen logo',
-  nvidia: 'NVIDIA NIM logo',
-  blackbox: 'Blackbox AI logo',
-  azure: 'Azure OpenAI logo',
-  bedrock: 'AWS Bedrock logo',
-  vertex: 'Google Vertex logo',
-  anthropic: 'Anthropic logo',
-  openai: 'OpenAI logo',
-  google: 'Google Gemini logo',
-  kilocode: 'Kilo Code logo',
-  fireworks: 'Fireworks AI logo',
-  sakana: 'Sakana AI logo',
-  openadapter: 'OpenAdapter logo',
-  deepseek: 'DeepSeek logo',
-  demo: 'Push logo',
-};
-
-const PROVIDER_FALLBACK_TEXT: Record<AIProviderType, string> = {
-  ollama: 'O',
-  openrouter: 'OR',
-  cloudflare: 'CF',
-  zen: 'Z',
-  nvidia: 'N',
-  blackbox: 'BB',
-  azure: 'Az',
-  bedrock: 'B',
-  vertex: 'V',
-  anthropic: 'A',
-  // OpenAdapter already owns 'OA'; use 'GPT' for OpenAI to keep the no-logo
-  // fallback unambiguous.
-  openai: 'GPT',
-  // 'G' would collide with a future Gemini-via-Vertex fallback if we ever
-  // gave Vertex a single-letter; 'Gm' is unambiguous and reads as "Gemini".
-  google: 'Gm',
-  kilocode: 'K',
-  fireworks: 'FW',
-  sakana: 'Sk',
-  openadapter: 'OA',
-  deepseek: 'DS',
-  demo: 'P',
-};
+const DEMO_ICON = {
+  src: demoIcon,
+  alt: 'Push logo',
+  fallbackText: 'P',
+} as const;
 
 interface ProviderIconProps {
   provider: AIProviderType;
@@ -78,14 +16,25 @@ interface ProviderIconProps {
   className?: string;
 }
 
+function getProviderIcon(provider: AIProviderType) {
+  if (provider === 'demo') return DEMO_ICON;
+  const icon = findProviderDefinition(provider)?.icon;
+  if (icon) return icon;
+  return {
+    src: '',
+    alt: `${provider} logo`,
+    fallbackText: provider.slice(0, 2).toUpperCase(),
+  };
+}
+
 export function ProviderIcon({ provider, size = 14, className }: ProviderIconProps) {
   const [failedSrc, setFailedSrc] = useState<string | null>(null);
-  const src = MODELS_DEV_LOGOS[provider];
+  const { src, alt, fallbackText } = getProviderIcon(provider);
   const hasError = failedSrc === src;
 
   const style = { width: size, height: size };
 
-  if (hasError) {
+  if (!src || hasError) {
     return (
       <span
         aria-hidden="true"
@@ -95,7 +44,7 @@ export function ProviderIcon({ provider, size = 14, className }: ProviderIconPro
         )}
         style={style}
       >
-        {PROVIDER_FALLBACK_TEXT[provider]}
+        {fallbackText}
       </span>
     );
   }
@@ -103,7 +52,7 @@ export function ProviderIcon({ provider, size = 14, className }: ProviderIconPro
   return (
     <img
       src={src}
-      alt={PROVIDER_ALT[provider]}
+      alt={alt}
       className={cn('inline-block rounded-[4px] bg-white/90 object-contain p-px', className)}
       style={style}
       loading="lazy"

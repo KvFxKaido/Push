@@ -10,12 +10,21 @@ import {
   normalizeVertexRegion,
   parseVertexServiceAccount,
 } from '@/lib/vertex-provider';
+import { getProviderModelStorageKey } from '@push/lib/provider-definition';
 
 const VERTEX_SERVICE_ACCOUNT_STORAGE_KEY = 'vertex_service_account';
 const VERTEX_REGION_STORAGE_KEY = 'vertex_region';
-const VERTEX_MODEL_STORAGE_KEY = 'vertex_model';
+const VERTEX_MODEL_STORAGE_KEY = requireVertexModelStorageKey();
 const LEGACY_VERTEX_KEY_STORAGE_KEY = 'vertex_api_key';
 const LEGACY_VERTEX_BASE_URL_STORAGE_KEY = 'vertex_base_url';
+
+function requireVertexModelStorageKey(): string {
+  const key = getProviderModelStorageKey('vertex');
+  if (!key) {
+    throw new Error('Provider "vertex" is missing a model storage key');
+  }
+  return key;
+}
 
 export type VertexConfiguredMode = 'native' | 'legacy' | 'none';
 

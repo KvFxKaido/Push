@@ -76,6 +76,34 @@ export interface ProviderCliDefinition {
   readonly apiKeyEnvVars?: readonly string[];
 }
 
+export interface ProviderIconDefinition {
+  /** Small provider mark used by app settings and provider pickers. */
+  readonly src: string;
+  readonly alt: string;
+  /** Text fallback when the remote logo cannot load. */
+  readonly fallbackText: string;
+}
+
+export interface ProviderSettingsDefinition {
+  /** Provider description shown in app settings and provider summaries. */
+  readonly description: string;
+  /** User-facing env var name for BYOK/setup copy. */
+  readonly envKey: string;
+  /** User-facing setup URL or deployment hint. */
+  readonly envUrl: string;
+  /** Context window used by the role-model summaries in Settings. */
+  readonly modelContextWindow: number;
+  /** Local storage key for user-entered API keys, when the provider uses one. */
+  readonly keyStorageKey?: string;
+  /** Local storage key for the selected model. */
+  readonly modelStorageKey?: string;
+  /** Built-in key settings order. Omitted for separate/private settings panels. */
+  readonly builtInOrder?: number;
+  readonly keyPlaceholder?: string;
+  readonly keySaveLabel?: string;
+  readonly keyHint?: string;
+}
+
 export interface ProviderDefinition {
   /** Stable provider id from `ALL_PROVIDERS`, excluding the non-network demo mode. */
   readonly id: RealProviderId;
@@ -116,6 +144,10 @@ export interface ProviderDefinition {
   readonly modelsProxyPath?: string;
   /** CLI runtime config when this provider ships in the local binary. */
   readonly cli?: ProviderCliDefinition;
+  /** App/provider-picker icon metadata. */
+  readonly icon: ProviderIconDefinition;
+  /** App settings metadata shared with provider summaries and storage helpers. */
+  readonly settings: ProviderSettingsDefinition;
 }
 
 /**
@@ -138,6 +170,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
     webProxyPath: '/api/ollama/chat',
     modelsProxyPath: '/api/ollama/models',
+    icon: {
+      src: 'https://models.dev/logos/ollama-cloud.svg',
+      alt: 'Ollama logo',
+      fallbackText: 'O',
+    },
+    settings: {
+      description: 'Ollama — run open models locally or on cloud GPUs (OpenAI-compatible)',
+      envKey: 'VITE_OLLAMA_API_KEY',
+      envUrl: 'http://localhost:11434',
+      modelContextWindow: 131_072,
+      keyStorageKey: 'ollama_api_key',
+      modelStorageKey: 'ollama_model',
+      builtInOrder: 10,
+      keyPlaceholder: 'Ollama API key',
+      keySaveLabel: 'Save Ollama key',
+      keyHint: 'Ollama API key (local or cloud).',
+    },
     cli: {
       order: 10,
       defaultUrl: 'https://ollama.com/v1/chat/completions',
@@ -158,6 +207,25 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
     webProxyPath: '/api/openrouter/chat',
     modelsProxyPath: '/api/openrouter/models',
+    icon: {
+      src: 'https://models.dev/logos/openrouter.svg',
+      alt: 'OpenRouter logo',
+      fallbackText: 'OR',
+    },
+    settings: {
+      description:
+        'OpenRouter — Access 50+ models including Claude, GPT-4, Gemini, with optional BYOK routing via your OpenRouter account',
+      envKey: 'VITE_OPENROUTER_API_KEY',
+      envUrl: 'https://openrouter.ai',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'openrouter_api_key',
+      modelStorageKey: 'openrouter_model',
+      builtInOrder: 20,
+      keyPlaceholder: 'OpenRouter API key',
+      keySaveLabel: 'Save OpenRouter key',
+      keyHint:
+        'OpenRouter API key from openrouter.ai. BYOK works too: keep provider-native keys in your OpenRouter account, then use your OpenRouter key here.',
+    },
     cli: {
       order: 20,
       defaultUrl: 'https://openrouter.ai/api/v1/chat/completions',
@@ -176,6 +244,19 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     models: CLOUDFLARE_MODELS,
     webProxyPath: '/api/cloudflare/chat',
     modelsProxyPath: '/api/cloudflare/models',
+    icon: {
+      src: 'https://models.dev/logos/cloudflare.svg',
+      alt: 'Cloudflare logo',
+      fallbackText: 'CF',
+    },
+    settings: {
+      description:
+        'Cloudflare Workers AI via native Worker binding (`env.AI`) with no browser API key',
+      envKey: 'CLOUDFLARE_WORKERS_AI_BINDING',
+      envUrl: 'Worker binding',
+      modelContextWindow: 131_072,
+      modelStorageKey: 'cloudflare_model',
+    },
   },
   {
     id: 'zen',
@@ -189,6 +270,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_ZEN_API_KEY', 'ZEN_API_KEY', 'VITE_ZEN_API_KEY'],
     webProxyPath: '/api/zen/chat',
     modelsProxyPath: '/api/zen/models',
+    icon: {
+      src: 'https://models.dev/logos/opencode.svg',
+      alt: 'OpenCode Zen logo',
+      fallbackText: 'Z',
+    },
+    settings: {
+      description: 'OpenCode Zen routing API (OpenAI-compatible)',
+      envKey: 'VITE_ZEN_API_KEY',
+      envUrl: 'https://opencode.ai/zen',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'zen_api_key',
+      modelStorageKey: 'zen_model',
+      builtInOrder: 80,
+      keyPlaceholder: 'Zen API key',
+      keySaveLabel: 'Save OpenCode Zen key',
+      keyHint: 'OpenCode Zen API key for https://opencode.ai/zen.',
+    },
     cli: {
       order: 30,
       defaultUrl: 'https://opencode.ai/zen/v1/chat/completions',
@@ -216,6 +314,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_NVIDIA_API_KEY', 'NVIDIA_API_KEY', 'VITE_NVIDIA_API_KEY'],
     webProxyPath: '/api/nvidia/chat',
     modelsProxyPath: '/api/nvidia/models',
+    icon: {
+      src: 'https://models.dev/logos/nvidia.svg',
+      alt: 'NVIDIA NIM logo',
+      fallbackText: 'N',
+    },
+    settings: {
+      description: 'Nvidia NIM inference microservices (OpenAI-compatible)',
+      envKey: 'VITE_NVIDIA_API_KEY',
+      envUrl: 'https://build.nvidia.com',
+      modelContextWindow: 131_072,
+      keyStorageKey: 'nvidia_api_key',
+      modelStorageKey: 'nvidia_model',
+      builtInOrder: 70,
+      keyPlaceholder: 'Nvidia API key',
+      keySaveLabel: 'Save Nvidia key',
+      keyHint: 'Nvidia NIM API key (OpenAI-compatible endpoint).',
+    },
     cli: {
       order: 40,
       defaultUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
@@ -235,6 +350,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     webProxyPath: '/api/blackbox/chat',
     modelsProxyPath: '/api/blackbox/models',
+    icon: {
+      src: 'https://www.blackbox.ai/favicon.ico',
+      alt: 'Blackbox AI logo',
+      fallbackText: 'BB',
+    },
+    settings: {
+      description: 'Blackbox AI — unified inference API with 300+ models (OpenAI-compatible)',
+      envKey: 'VITE_BLACKBOX_API_KEY',
+      envUrl: 'https://www.blackbox.ai',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'blackbox_api_key',
+      modelStorageKey: 'blackbox_model',
+      builtInOrder: 90,
+      keyPlaceholder: 'Blackbox API key',
+      keySaveLabel: 'Save Blackbox key',
+      keyHint: 'Blackbox AI API key from blackbox.ai. Unified access to 300+ models.',
+    },
     cli: {
       order: 70,
       defaultUrl: 'https://api.blackbox.ai/chat/completions',
@@ -255,6 +387,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
     webProxyPath: '/api/kilocode/chat',
     modelsProxyPath: '/api/kilocode/models',
+    icon: {
+      src: 'https://kilo.ai/favicon.ico',
+      alt: 'Kilo Code logo',
+      fallbackText: 'K',
+    },
+    settings: {
+      description: 'Kilo Code — Unified AI gateway with hundreds of models (OpenAI-compatible)',
+      envKey: 'VITE_KILOCODE_API_KEY',
+      envUrl: 'https://api.kilo.ai/api/gateway',
+      modelContextWindow: 128_000,
+      keyStorageKey: 'kilocode_api_key',
+      modelStorageKey: 'kilocode_model',
+      builtInOrder: 100,
+      keyPlaceholder: 'Kilo Code API key',
+      keySaveLabel: 'Save Kilo Code key',
+      keyHint: 'Kilo Code API key from kilo.ai. One key for hundreds of models.',
+    },
     cli: {
       order: 50,
       defaultUrl: 'https://api.kilo.ai/api/gateway/chat/completions',
@@ -275,6 +424,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_FIREWORKS_API_KEY', 'FIREWORKS_API_KEY', 'VITE_FIREWORKS_API_KEY'],
     webProxyPath: '/api/fireworks/chat',
     modelsProxyPath: '/api/fireworks/models',
+    icon: {
+      src: 'https://fireworks.ai/favicon.ico',
+      alt: 'Fireworks AI logo',
+      fallbackText: 'FW',
+    },
+    settings: {
+      description: 'Fireworks AI — OpenAI-compatible serverless inference API',
+      envKey: 'VITE_FIREWORKS_API_KEY',
+      envUrl: 'https://api.fireworks.ai/inference/v1',
+      modelContextWindow: 128_000,
+      keyStorageKey: 'fireworks_api_key',
+      modelStorageKey: 'fireworks_model',
+      builtInOrder: 110,
+      keyPlaceholder: 'Fireworks AI API key',
+      keySaveLabel: 'Save Fireworks AI key',
+      keyHint: 'Fireworks AI API key from fireworks.ai.',
+    },
     cli: {
       order: 60,
       defaultUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
@@ -294,6 +460,24 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
     webProxyPath: '/api/openadapter/chat',
     modelsProxyPath: '/api/openadapter/models',
+    icon: {
+      src: 'https://openadapter.dev/favicon.ico',
+      alt: 'OpenAdapter logo',
+      fallbackText: 'OA',
+    },
+    settings: {
+      description: 'OpenAdapter — 69+ open-source models through one OpenAI-compatible gateway',
+      envKey: 'VITE_OPENADAPTER_API_KEY',
+      envUrl: 'https://openadapter.dev',
+      modelContextWindow: 131_072,
+      keyStorageKey: 'openadapter_api_key',
+      modelStorageKey: 'openadapter_model',
+      builtInOrder: 130,
+      keyPlaceholder: 'OpenAdapter API key',
+      keySaveLabel: 'Save OpenAdapter key',
+      keyHint:
+        'OpenAdapter API key from openadapter.dev. 69+ open-source models through one gateway.',
+    },
     cli: {
       order: 80,
       defaultUrl: 'https://api.openadapter.in/v1/chat/completions',
@@ -316,6 +500,25 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'VITE_DEEPSEEK_API_KEY'],
     webProxyPath: '/api/deepseek/chat',
     modelsProxyPath: '/api/deepseek/models',
+    icon: {
+      src: 'https://models.dev/logos/deepseek.svg',
+      alt: 'DeepSeek logo',
+      fallbackText: 'DS',
+    },
+    settings: {
+      description:
+        'DeepSeek direct — OpenAI-compatible api.deepseek.com with V4 reasoning models and thinking mode',
+      envKey: 'VITE_DEEPSEEK_API_KEY',
+      envUrl: 'https://api.deepseek.com',
+      modelContextWindow: 1_000_000,
+      keyStorageKey: 'deepseek_api_key',
+      modelStorageKey: 'deepseek_model',
+      builtInOrder: 60,
+      keyPlaceholder: 'DeepSeek API key',
+      keySaveLabel: 'Save DeepSeek key',
+      keyHint:
+        'DeepSeek API key from platform.deepseek.com. Direct api.deepseek.com — OpenAI-compatible with V4 reasoning models.',
+    },
     cli: {
       order: 90,
       defaultUrl: 'https://api.deepseek.com/anthropic/v1/messages',
@@ -336,6 +539,24 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_SAKANA_API_KEY', 'SAKANA_API_KEY', 'VITE_SAKANA_API_KEY'],
     webProxyPath: '/api/sakana/chat',
     modelsProxyPath: '/api/sakana/models',
+    icon: {
+      src: 'https://sakana.ai/favicon.ico',
+      alt: 'Sakana AI logo',
+      fallbackText: 'Sk',
+    },
+    settings: {
+      description:
+        'Sakana AI — Fugu multi-agent orchestration over frontier models (OpenAI-compatible)',
+      envKey: 'VITE_SAKANA_API_KEY',
+      envUrl: 'https://api.sakana.ai/v1',
+      modelContextWindow: 1_000_000,
+      keyStorageKey: 'sakana_api_key',
+      modelStorageKey: 'sakana_model',
+      builtInOrder: 120,
+      keyPlaceholder: 'Sakana AI API key',
+      keySaveLabel: 'Save Sakana AI key',
+      keyHint: 'Sakana AI API key from console.sakana.ai. Fugu multi-agent orchestration.',
+    },
     cli: {
       order: 100,
       defaultUrl: 'https://api.sakana.ai/v1/responses',
@@ -351,6 +572,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     initialFallbackEligible: false,
     failoverEligible: true,
     adapterRouted: true,
+    defaultModel: 'gpt-4.1',
     apiKeyEnvVars: [
       'PUSH_AZURE_OPENAI_API_KEY',
       'AZURE_OPENAI_API_KEY',
@@ -358,6 +580,20 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     ],
     webProxyPath: '/api/azure/chat',
     modelsProxyPath: '/api/azure/models',
+    icon: {
+      src: 'https://models.dev/logos/azure.svg',
+      alt: 'Azure OpenAI logo',
+      fallbackText: 'Az',
+    },
+    settings: {
+      description:
+        'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
+      envKey: 'VITE_AZURE_OPENAI_API_KEY',
+      envUrl: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'azure_api_key',
+      modelStorageKey: 'azure_model',
+    },
   },
   {
     id: 'bedrock',
@@ -367,9 +603,23 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     initialFallbackEligible: false,
     failoverEligible: true,
     adapterRouted: true,
+    defaultModel: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
     apiKeyEnvVars: ['PUSH_BEDROCK_API_KEY', 'BEDROCK_API_KEY', 'VITE_BEDROCK_API_KEY'],
     webProxyPath: '/api/bedrock/chat',
     modelsProxyPath: '/api/bedrock/models',
+    icon: {
+      src: 'https://models.dev/logos/aws.svg',
+      alt: 'AWS Bedrock logo',
+      fallbackText: 'B',
+    },
+    settings: {
+      description: 'Experimental private connector for direct Bedrock OpenAI-compatible endpoints',
+      envKey: 'VITE_BEDROCK_API_KEY',
+      envUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'bedrock_api_key',
+      modelStorageKey: 'bedrock_model',
+    },
   },
   {
     id: 'vertex',
@@ -378,6 +628,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     initialFallbackEligible: false,
     failoverEligible: true,
     adapterRouted: true,
+    defaultModel: 'google/gemini-2.5-pro',
     apiKeyEnvVars: [
       'PUSH_VERTEX_SERVICE_ACCOUNT_JSON',
       'GOOGLE_APPLICATION_CREDENTIALS_JSON',
@@ -385,6 +636,19 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     ],
     webProxyPath: '/api/vertex/chat',
     modelsProxyPath: '/api/vertex/models',
+    icon: {
+      src: 'https://models.dev/logos/google.svg',
+      alt: 'Google Vertex logo',
+      fallbackText: 'V',
+    },
+    settings: {
+      description:
+        'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
+      envKey: 'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
+      envUrl: 'global',
+      modelContextWindow: 1_000_000,
+      modelStorageKey: 'vertex_model',
+    },
   },
   {
     id: 'anthropic',
@@ -401,6 +665,25 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_ANTHROPIC_API_KEY'],
     webProxyPath: '/api/anthropic/chat',
     modelsProxyPath: '/api/anthropic/models',
+    icon: {
+      src: 'https://models.dev/logos/anthropic.svg',
+      alt: 'Anthropic logo',
+      fallbackText: 'A',
+    },
+    settings: {
+      description:
+        'Anthropic Claude direct — native /v1/messages API with prompt caching and extended thinking',
+      envKey: 'VITE_ANTHROPIC_API_KEY',
+      envUrl: 'https://api.anthropic.com',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'anthropic_api_key',
+      modelStorageKey: 'anthropic_model',
+      builtInOrder: 30,
+      keyPlaceholder: 'Anthropic API key (sk-ant-…)',
+      keySaveLabel: 'Save Anthropic key',
+      keyHint:
+        'Anthropic API key from console.anthropic.com. Direct /v1/messages with prompt caching and extended thinking.',
+    },
     cli: {
       order: 120,
       defaultUrl: 'https://api.anthropic.com/v1/messages',
@@ -421,6 +704,24 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
     webProxyPath: '/api/openai/chat',
     modelsProxyPath: '/api/openai/models',
+    icon: {
+      src: 'https://models.dev/logos/openai.svg',
+      alt: 'OpenAI logo',
+      fallbackText: 'GPT',
+    },
+    settings: {
+      description: 'OpenAI direct — GPT models with automatic prefix-based prompt caching',
+      envKey: 'VITE_OPENAI_API_KEY',
+      envUrl: 'https://api.openai.com',
+      modelContextWindow: 200_000,
+      keyStorageKey: 'openai_api_key',
+      modelStorageKey: 'openai_model',
+      builtInOrder: 40,
+      keyPlaceholder: 'OpenAI API key (sk-…)',
+      keySaveLabel: 'Save OpenAI key',
+      keyHint:
+        'OpenAI API key from platform.openai.com. Direct /v1/responses with automatic prefix-based prompt caching.',
+    },
     cli: {
       order: 110,
       defaultUrl: 'https://api.openai.com/v1/responses',
@@ -447,6 +748,25 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     ],
     webProxyPath: '/api/google/chat',
     modelsProxyPath: '/api/google/models',
+    icon: {
+      src: 'https://models.dev/logos/google.svg',
+      alt: 'Google Gemini logo',
+      fallbackText: 'Gm',
+    },
+    settings: {
+      description:
+        'Google Gemini direct — native generativelanguage.googleapis.com API with a plain API key (distinct from Vertex)',
+      envKey: 'VITE_GOOGLE_API_KEY',
+      envUrl: 'https://generativelanguage.googleapis.com',
+      modelContextWindow: 1_000_000,
+      keyStorageKey: 'google_api_key',
+      modelStorageKey: 'google_model',
+      builtInOrder: 50,
+      keyPlaceholder: 'Google Gemini API key',
+      keySaveLabel: 'Save Google key',
+      keyHint:
+        'Google Gemini API key from aistudio.google.com. Direct generativelanguage.googleapis.com — distinct from Vertex.',
+    },
     cli: {
       order: 130,
       defaultUrl: 'https://generativelanguage.googleapis.com/v1beta',
@@ -462,8 +782,8 @@ const PROVIDER_DEFINITION_BY_ID: ReadonlyMap<RealProviderId, ProviderDefinition>
 
 export const REAL_PROVIDERS: readonly RealProviderId[] = PROVIDER_DEFINITIONS.map((def) => def.id);
 
-export function isRealProviderId(id: AIProviderType): id is RealProviderId {
-  return id !== 'demo';
+export function isRealProviderId(id: string): id is RealProviderId {
+  return PROVIDER_DEFINITION_BY_ID.has(id as RealProviderId);
 }
 
 export function getProviderDefinition(id: RealProviderId): ProviderDefinition {
@@ -491,6 +811,35 @@ export function getProviderTimeoutDisplayName(id: AIProviderType | string): stri
 
 export function getProviderStreamShape(id: RealProviderId): ProviderStreamShape {
   return getProviderDefinition(id).streamShape;
+}
+
+export function getProviderIconDefinition(id: RealProviderId): ProviderIconDefinition {
+  return getProviderDefinition(id).icon;
+}
+
+export function getProviderSettingsDefinition(id: RealProviderId): ProviderSettingsDefinition {
+  return getProviderDefinition(id).settings;
+}
+
+export function getBuiltInSettingsProviderDefinitions(): readonly ProviderDefinition[] {
+  return PROVIDER_DEFINITIONS.filter((def) => def.settings.builtInOrder !== undefined).sort(
+    (a, b) => (a.settings.builtInOrder ?? 0) - (b.settings.builtInOrder ?? 0),
+  );
+}
+
+export function getProviderApiKeyStorageKey(id: RealProviderId): string | undefined {
+  return getProviderDefinition(id).settings.keyStorageKey;
+}
+
+export function getProviderModelStorageKey(id: RealProviderId): string | undefined {
+  return getProviderDefinition(id).settings.modelStorageKey;
+}
+
+export function providerForApiKeyStorageKey(storageKey: string): RealProviderId | null {
+  for (const def of PROVIDER_DEFINITIONS) {
+    if (def.settings.keyStorageKey === storageKey) return def.id;
+  }
+  return null;
 }
 
 export function getInitialFallbackProviderOrder(): readonly RealProviderId[] {

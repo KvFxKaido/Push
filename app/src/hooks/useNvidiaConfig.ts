@@ -1,12 +1,7 @@
 import { NVIDIA_DEFAULT_MODEL } from '@/lib/providers';
-import { createModelProviderConfig } from './useApiKeyConfig';
+import { createRegistryModelProviderConfig } from './useApiKeyConfig';
 
-const KEY_STORAGE = 'nvidia_api_key';
-const MODEL_STORAGE = 'nvidia_model';
-
-const providerConfig = createModelProviderConfig({
-  storageKey: KEY_STORAGE,
-  modelStorageKey: MODEL_STORAGE,
+const providerConfig = createRegistryModelProviderConfig('nvidia', {
   envVar: import.meta.env.VITE_NVIDIA_API_KEY,
   defaultModel: NVIDIA_DEFAULT_MODEL,
 });

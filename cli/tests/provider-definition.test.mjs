@@ -6,15 +6,21 @@ import {
   REAL_PROVIDERS,
   findProviderDefinition,
   getAdapterRoutedProviderIds,
+  getBuiltInSettingsProviderDefinitions,
   getCliProviderDefinitions,
   getFailoverProviderOrder,
+  getProviderApiKeyStorageKey,
   getInitialFallbackProviderOrder,
+  getProviderIconDefinition,
+  getProviderModelStorageKey,
   getProviderDisplayName,
   getProviderDefinition,
+  getProviderSettingsDefinition,
   getProviderStreamShape,
   getProviderTimeoutDisplayName,
   providerCarriesReasoningBlocksByDefault,
   providerConsumesContentBlocksByDefault,
+  providerForApiKeyStorageKey,
   providerDefinitionsCoverCanonicalIds,
 } from '../../lib/provider-definition.ts';
 import { ALL_PROVIDERS } from '../../lib/provider-contract.ts';
@@ -77,6 +83,22 @@ const EXPECTED_CLI_PROVIDER_ORDER = [
   'openai',
   'anthropic',
   'google',
+];
+
+const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
+  'ollama',
+  'openrouter',
+  'anthropic',
+  'openai',
+  'google',
+  'deepseek',
+  'nvidia',
+  'zen',
+  'blackbox',
+  'kilocode',
+  'fireworks',
+  'sakana',
+  'openadapter',
 ];
 
 // Drift-detector: internal consistency of every ProviderDefinition entry and
@@ -160,6 +182,31 @@ describe('ProviderDefinition', () => {
     assert.equal(getProviderTimeoutDisplayName('openai'), 'OpenAI');
   });
 
+  it('declares built-in settings order and key copy from the registry', () => {
+    const definitions = getBuiltInSettingsProviderDefinitions();
+    assert.deepEqual(
+      definitions.map((def) => def.id),
+      EXPECTED_BUILT_IN_SETTINGS_ORDER,
+    );
+    for (const def of definitions) {
+      assert.equal(def.settings.keyStorageKey, `${def.id}_api_key`);
+      assert.equal(def.settings.modelStorageKey, `${def.id}_model`);
+      assert.ok(def.settings.keyPlaceholder?.trim(), `${def.id} missing keyPlaceholder`);
+      assert.ok(def.settings.keySaveLabel?.trim(), `${def.id} missing keySaveLabel`);
+      assert.ok(def.settings.keyHint?.trim(), `${def.id} missing keyHint`);
+    }
+  });
+
+  it('exposes settings/icon/storage helpers from the registry', () => {
+    assert.equal(getProviderSettingsDefinition('openrouter').envKey, 'VITE_OPENROUTER_API_KEY');
+    assert.equal(getProviderIconDefinition('openai').fallbackText, 'GPT');
+    assert.equal(getProviderApiKeyStorageKey('deepseek'), 'deepseek_api_key');
+    assert.equal(getProviderModelStorageKey('cloudflare'), 'cloudflare_model');
+    assert.equal(providerForApiKeyStorageKey('anthropic_api_key'), 'anthropic');
+    assert.equal(providerForApiKeyStorageKey('cloudflare_api_key'), null);
+    assert.equal(providerForApiKeyStorageKey('tavily_api_key'), null);
+  });
+
   it('exposes provider route defaults from the registry', () => {
     assert.equal(getProviderStreamShape('deepseek'), 'anthropic');
     assert.equal(getProviderStreamShape('openai'), 'openai-responses');
@@ -178,6 +225,30 @@ describe('ProviderDefinition', () => {
 
       it('displayName is non-empty', () => {
         assert.ok(def.displayName.trim().length > 0);
+      });
+
+      it('icon metadata is complete', () => {
+        assert.ok(def.icon.src.trim(), `${def.id} missing icon src`);
+        assert.ok(def.icon.alt.trim(), `${def.id} missing icon alt`);
+        assert.ok(def.icon.fallbackText.trim(), `${def.id} missing icon fallback`);
+      });
+
+      it('settings metadata is complete', () => {
+        assert.ok(def.settings.description.trim(), `${def.id} missing settings description`);
+        assert.ok(def.settings.envKey.trim(), `${def.id} missing settings envKey`);
+        assert.ok(def.settings.envUrl.trim(), `${def.id} missing settings envUrl`);
+        assert.equal(
+          typeof def.settings.modelContextWindow,
+          'number',
+          `${def.id} missing modelContextWindow`,
+        );
+        assert.ok(def.settings.modelContextWindow > 0, `${def.id} context must be positive`);
+        if (def.settings.keyStorageKey) {
+          assert.match(def.settings.keyStorageKey, /^[a-z][a-z0-9-]*_api_key$/);
+        }
+        if (def.settings.modelStorageKey) {
+          assert.match(def.settings.modelStorageKey, /^[a-z][a-z0-9-]*_model$/);
+        }
       });
 
       it('baseUrl parses as https URL when declared', () => {
