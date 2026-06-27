@@ -8,6 +8,8 @@
  * Runtime-agnostic — no localStorage or browser APIs.
  */
 
+import { lookupDeclaredModelMetadata } from './model-metadata.ts';
+
 // ---------------------------------------------------------------------------
 // Context Budget — model-aware token limits
 // ---------------------------------------------------------------------------
@@ -189,6 +191,9 @@ export function guessWindowFromName(model: string): number {
 export function getContextBudget(_provider?: string, model?: string): ContextBudget {
   const normalizedModel = (model || '').trim();
   if (!normalizedModel) return { ...DEFAULT_CONTEXT_BUDGET };
+
+  const declaredWindow = lookupDeclaredModelMetadata(_provider, normalizedModel)?.contextLimit ?? 0;
+  if (declaredWindow > 0) return budgetFromWindow(declaredWindow);
 
   let windowTokens = guessWindowFromName(normalizedModel);
   if (windowTokens === 0) {

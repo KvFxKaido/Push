@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  budgetFromWindow,
   estimateMessageTokens,
   getContextBudget,
   guessWindowFromName,
@@ -112,6 +113,20 @@ describe('getContextBudget (shared)', () => {
     // summarizeTokens stays at or below the soft target — invariant from
     // budgetFromWindow that downstream context-trim relies on.
     expect(budget.summarizeTokens).toBeLessThanOrEqual(budget.targetTokens);
+  });
+
+  it('uses declared metadata before broad name-pattern fallbacks', () => {
+    expect(getContextBudget('openai', 'gpt-5.4-mini')).toEqual(budgetFromWindow(400_000));
+    expect(getContextBudget('zen', 'big-pickle')).toEqual(budgetFromWindow(200_000));
+  });
+
+  it('keeps Cloudflare gateway-capped models on their cap-aware name fallback', () => {
+    // `@cf/zai-org/glm-5.2` is served by Workers AI at 256K, but declared
+    // `glm-5.2` is the native 1M. Cross-provider declared matches must not
+    // override the cap, or long Workers AI chats overrun the served window.
+    expect(getContextBudget('cloudflare', '@cf/zai-org/glm-5.2')).toEqual(
+      budgetFromWindow(262_144),
+    );
   });
 
   it('falls back to the default budget when the name matches nothing', () => {

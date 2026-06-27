@@ -49,6 +49,7 @@ import {
   providerCarriesReasoningBlocksByDefault,
   providerConsumesContentBlocksByDefault,
 } from '@push/lib/provider-definition';
+import { lookupDeclaredModelMetadata, type DeclaredModelMetadata } from '@push/lib/model-metadata';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
@@ -381,6 +382,28 @@ function resolveFromProviderMetadata(meta: ModelsDevProviderMetadata): ResolvedM
   };
 }
 
+function resolveFromDeclaredMetadata(meta: DeclaredModelMetadata): ResolvedModelCapabilities {
+  return {
+    reasoning: meta.reasoning,
+    toolCall: meta.toolCall,
+    // Vision = image input only. Declared `attachment` also covers PDF/file input
+    // (it defaults to image||pdf), so a PDF-only model (TEXT_PDF) must not be
+    // marked image-capable — matching resolveFromOpenRouterMetadata above.
+    vision: meta.inputModalities.includes('image'),
+    imageGen: meta.outputModalities.includes('image'),
+    structuredOutput: meta.structuredOutput,
+    contextLimit: meta.contextLimit,
+  };
+}
+
+function resolveDeclaredModelCapabilities(
+  provider: string,
+  modelId: string,
+): ResolvedModelCapabilities {
+  const meta = lookupDeclaredModelMetadata(provider, modelId);
+  return meta ? resolveFromDeclaredMetadata(meta) : EMPTY_CAPABILITIES;
+}
+
 /**
  * Look up cached model capabilities from models.dev metadata.
  * Works for any provider — checks OpenRouter, Ollama, Nvidia, OpenCode, and
@@ -395,7 +418,9 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
     // this, every routed (`:nitro`/`:free`) model resolves to EMPTY_CAPABILITIES
     // and silently loses reasoning / structured-output / native-tool gating.
     const meta = metadata?.[modelId] ?? metadata?.[openRouterBaseId(modelId)];
-    return meta ? resolveFromOpenRouterMetadata(meta) : EMPTY_CAPABILITIES;
+    return meta
+      ? resolveFromOpenRouterMetadata(meta)
+      : resolveDeclaredModelCapabilities(provider, modelId);
   }
 
   if (provider === 'blackbox') {
@@ -404,7 +429,9 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
     );
     const baseId = blackboxBaseId(modelId);
     const meta = metadata?.[modelId] ?? metadata?.[baseId];
-    return meta ? resolveFromProviderMetadata(meta) : EMPTY_CAPABILITIES;
+    return meta
+      ? resolveFromProviderMetadata(meta)
+      : resolveDeclaredModelCapabilities(provider, modelId);
   }
 
   const cacheKey =
@@ -416,11 +443,13 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
           ? MODELS_DEV_OPENCODE_CACHE_KEY
           : null;
 
-  if (!cacheKey) return EMPTY_CAPABILITIES;
+  if (!cacheKey) return resolveDeclaredModelCapabilities(provider, modelId);
 
   const metadata = readCachedModelsDevMetadata<ModelsDevProviderMetadata>(cacheKey);
   const meta = metadata?.[modelId];
-  return meta ? resolveFromProviderMetadata(meta) : EMPTY_CAPABILITIES;
+  return meta
+    ? resolveFromProviderMetadata(meta)
+    : resolveDeclaredModelCapabilities(provider, modelId);
 }
 
 /** Shorthand for checking OpenRouter reasoning support (used by orchestrator). */
