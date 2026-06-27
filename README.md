@@ -123,6 +123,10 @@ npm install
 
 Push is actively improving CLI ergonomics, daemon-backed Local PC/Remote sessions, and the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
 
+## Contributors
+
+Push is a solo project, built with heavy use of AI coding tools. Some accounts in the contributor list are AI/bots — co-author trailers on commits and automation (CI, review bots) — not separate human maintainers.
+
 ## Acknowledgements
 
 Push stands on the shoulders of a few open projects:
