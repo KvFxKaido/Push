@@ -63,6 +63,19 @@ export type ProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthro
 export type RealProviderId = Exclude<AIProviderType, 'demo'>;
 export type DirectProviderId = Extract<RealProviderId, 'openai' | 'anthropic' | 'google'>;
 
+export interface ProviderCliDefinition {
+  /** CLI/provider picker declaration order. */
+  readonly order: number;
+  /** Default upstream URL for the CLI when no URL env override is present. */
+  readonly defaultUrl: string;
+  /** Env vars checked live, in order, for URL overrides. */
+  readonly urlEnvVars: readonly string[];
+  /** Env var checked live for the model override. */
+  readonly modelEnvVar: string;
+  /** Optional CLI-only key aliases layered over the shared provider aliases. */
+  readonly apiKeyEnvVars?: readonly string[];
+}
+
 export interface ProviderDefinition {
   /** Stable provider id from `ALL_PROVIDERS`, excluding the non-network demo mode. */
   readonly id: RealProviderId;
@@ -101,6 +114,8 @@ export interface ProviderDefinition {
   readonly webProxyPath?: string;
   /** Worker proxy models path used by the web app, e.g. `/api/openai/models`. */
   readonly modelsProxyPath?: string;
+  /** CLI runtime config when this provider ships in the local binary. */
+  readonly cli?: ProviderCliDefinition;
 }
 
 /**
@@ -123,6 +138,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
     webProxyPath: '/api/ollama/chat',
     modelsProxyPath: '/api/ollama/models',
+    cli: {
+      order: 10,
+      defaultUrl: 'https://ollama.com/v1/chat/completions',
+      urlEnvVars: ['PUSH_OLLAMA_URL', 'OLLAMA_API_URL'],
+      modelEnvVar: 'PUSH_OLLAMA_MODEL',
+    },
   },
   {
     id: 'openrouter',
@@ -137,6 +158,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
     webProxyPath: '/api/openrouter/chat',
     modelsProxyPath: '/api/openrouter/models',
+    cli: {
+      order: 20,
+      defaultUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      urlEnvVars: ['PUSH_OPENROUTER_URL'],
+      modelEnvVar: 'PUSH_OPENROUTER_MODEL',
+    },
   },
   {
     id: 'cloudflare',
@@ -162,6 +189,19 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_ZEN_API_KEY', 'ZEN_API_KEY', 'VITE_ZEN_API_KEY'],
     webProxyPath: '/api/zen/chat',
     modelsProxyPath: '/api/zen/models',
+    cli: {
+      order: 30,
+      defaultUrl: 'https://opencode.ai/zen/v1/chat/completions',
+      urlEnvVars: ['PUSH_ZEN_URL'],
+      modelEnvVar: 'PUSH_ZEN_MODEL',
+      apiKeyEnvVars: [
+        'PUSH_ZEN_API_KEY',
+        'ZEN_API_KEY',
+        'OPENCODE_API_KEY',
+        'VITE_ZEN_API_KEY',
+        'VITE_OPENCODE_API_KEY',
+      ],
+    },
   },
   {
     id: 'nvidia',
@@ -176,6 +216,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_NVIDIA_API_KEY', 'NVIDIA_API_KEY', 'VITE_NVIDIA_API_KEY'],
     webProxyPath: '/api/nvidia/chat',
     modelsProxyPath: '/api/nvidia/models',
+    cli: {
+      order: 40,
+      defaultUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
+      urlEnvVars: ['PUSH_NVIDIA_URL'],
+      modelEnvVar: 'PUSH_NVIDIA_MODEL',
+    },
   },
   {
     id: 'blackbox',
@@ -189,6 +235,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
     webProxyPath: '/api/blackbox/chat',
     modelsProxyPath: '/api/blackbox/models',
+    cli: {
+      order: 70,
+      defaultUrl: 'https://api.blackbox.ai/chat/completions',
+      urlEnvVars: ['PUSH_BLACKBOX_URL'],
+      modelEnvVar: 'PUSH_BLACKBOX_MODEL',
+    },
   },
   {
     id: 'kilocode',
@@ -203,6 +255,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
     webProxyPath: '/api/kilocode/chat',
     modelsProxyPath: '/api/kilocode/models',
+    cli: {
+      order: 50,
+      defaultUrl: 'https://api.kilo.ai/api/gateway/chat/completions',
+      urlEnvVars: ['PUSH_KILOCODE_URL'],
+      modelEnvVar: 'PUSH_KILOCODE_MODEL',
+    },
   },
   {
     id: 'fireworks',
@@ -217,6 +275,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_FIREWORKS_API_KEY', 'FIREWORKS_API_KEY', 'VITE_FIREWORKS_API_KEY'],
     webProxyPath: '/api/fireworks/chat',
     modelsProxyPath: '/api/fireworks/models',
+    cli: {
+      order: 60,
+      defaultUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
+      urlEnvVars: ['PUSH_FIREWORKS_URL'],
+      modelEnvVar: 'PUSH_FIREWORKS_MODEL',
+    },
   },
   {
     id: 'openadapter',
@@ -230,6 +294,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
     webProxyPath: '/api/openadapter/chat',
     modelsProxyPath: '/api/openadapter/models',
+    cli: {
+      order: 80,
+      defaultUrl: 'https://api.openadapter.in/v1/chat/completions',
+      urlEnvVars: ['PUSH_OPENADAPTER_URL'],
+      modelEnvVar: 'PUSH_OPENADAPTER_MODEL',
+    },
   },
   {
     id: 'deepseek',
@@ -246,6 +316,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'VITE_DEEPSEEK_API_KEY'],
     webProxyPath: '/api/deepseek/chat',
     modelsProxyPath: '/api/deepseek/models',
+    cli: {
+      order: 90,
+      defaultUrl: 'https://api.deepseek.com/anthropic/v1/messages',
+      urlEnvVars: ['PUSH_DEEPSEEK_URL'],
+      modelEnvVar: 'PUSH_DEEPSEEK_MODEL',
+    },
   },
   {
     id: 'sakana',
@@ -260,6 +336,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_SAKANA_API_KEY', 'SAKANA_API_KEY', 'VITE_SAKANA_API_KEY'],
     webProxyPath: '/api/sakana/chat',
     modelsProxyPath: '/api/sakana/models',
+    cli: {
+      order: 100,
+      defaultUrl: 'https://api.sakana.ai/v1/responses',
+      urlEnvVars: ['PUSH_SAKANA_URL'],
+      modelEnvVar: 'PUSH_SAKANA_MODEL',
+    },
   },
   {
     id: 'azure',
@@ -319,6 +401,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_ANTHROPIC_API_KEY'],
     webProxyPath: '/api/anthropic/chat',
     modelsProxyPath: '/api/anthropic/models',
+    cli: {
+      order: 120,
+      defaultUrl: 'https://api.anthropic.com/v1/messages',
+      urlEnvVars: ['PUSH_ANTHROPIC_URL'],
+      modelEnvVar: 'PUSH_ANTHROPIC_MODEL',
+    },
   },
   {
     id: 'openai',
@@ -333,6 +421,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     apiKeyEnvVars: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
     webProxyPath: '/api/openai/chat',
     modelsProxyPath: '/api/openai/models',
+    cli: {
+      order: 110,
+      defaultUrl: 'https://api.openai.com/v1/responses',
+      urlEnvVars: ['PUSH_OPENAI_URL'],
+      modelEnvVar: 'PUSH_OPENAI_MODEL',
+    },
   },
   {
     id: 'google',
@@ -353,6 +447,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     ],
     webProxyPath: '/api/google/chat',
     modelsProxyPath: '/api/google/models',
+    cli: {
+      order: 130,
+      defaultUrl: 'https://generativelanguage.googleapis.com/v1beta',
+      urlEnvVars: ['PUSH_GOOGLE_URL'],
+      modelEnvVar: 'PUSH_GOOGLE_MODEL',
+    },
   },
 ];
 
@@ -403,6 +503,12 @@ export function getFailoverProviderOrder(): readonly RealProviderId[] {
 
 export function getAdapterRoutedProviderIds(): readonly RealProviderId[] {
   return PROVIDER_DEFINITIONS.filter((def) => def.adapterRouted).map((def) => def.id);
+}
+
+export function getCliProviderDefinitions(): readonly ProviderDefinition[] {
+  return PROVIDER_DEFINITIONS.filter((def) => def.cli).sort(
+    (a, b) => (a.cli?.order ?? 0) - (b.cli?.order ?? 0),
+  );
 }
 
 export function providerConsumesContentBlocksByDefault(provider: string): boolean {

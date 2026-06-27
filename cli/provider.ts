@@ -1,19 +1,4 @@
 import process from 'node:process';
-import {
-  ANTHROPIC_DEFAULT_MODEL,
-  BLACKBOX_DEFAULT_MODEL,
-  DEEPSEEK_DEFAULT_MODEL,
-  FIREWORKS_DEFAULT_MODEL,
-  GOOGLE_DEFAULT_MODEL,
-  KILOCODE_DEFAULT_MODEL,
-  NVIDIA_DEFAULT_MODEL,
-  OLLAMA_DEFAULT_MODEL,
-  OPENADAPTER_DEFAULT_MODEL,
-  OPENAI_DEFAULT_MODEL,
-  OPENROUTER_DEFAULT_MODEL,
-  SAKANA_DEFAULT_MODEL,
-  ZEN_DEFAULT_MODEL,
-} from '../lib/provider-models.ts';
 import type {
   AIProviderType,
   LlmMessage,
@@ -22,6 +7,11 @@ import type {
   ReasoningBlock,
   UrlCitation,
 } from '../lib/provider-contract.ts';
+import {
+  getCliProviderDefinitions,
+  type ProviderDefinition,
+  type ProviderStreamShape,
+} from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
@@ -46,7 +36,7 @@ const RETRY_BASE_DELAY_MS: number = 1_000;
  *  - `gemini`: Google Generative Language API; consume via
  *    `cli/gemini-stream.ts` (translates via `lib/gemini-bridge`).
  */
-export type CliProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthropic' | 'gemini';
+export type CliProviderStreamShape = ProviderStreamShape;
 
 export interface ProviderConfig {
   id: string;
@@ -128,188 +118,48 @@ function sleep(ms: number): Promise<void> {
 // request — the same live-resolution contract `resolveApiKey` already follows
 // for keys. Converting an entry back to a plain property silently re-breaks
 // TUI url/model edits against a running daemon (the bug class behind #858).
-export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = {
-  ollama: {
-    id: 'ollama',
+function firstLiveEnv(envVars: readonly string[]): string | undefined {
+  for (const envVar of envVars) {
+    const value = process.env[envVar]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
+  const cli = def.cli;
+  if (!cli) {
+    throw new Error(`Provider "${def.id}" is not enabled for the CLI.`);
+  }
+  if (!def.defaultModel) {
+    throw new Error(`CLI provider "${def.id}" is missing defaultModel in provider-definition.ts.`);
+  }
+  const apiKeyEnv = cli.apiKeyEnvVars ?? def.apiKeyEnvVars;
+  if (!apiKeyEnv || apiKeyEnv.length === 0) {
+    throw new Error(`CLI provider "${def.id}" is missing apiKeyEnvVars in provider-definition.ts.`);
+  }
+
+  const config: ProviderConfig = {
+    id: def.id,
     get url() {
-      return (
-        process.env.PUSH_OLLAMA_URL ||
-        process.env.OLLAMA_API_URL ||
-        'https://ollama.com/v1/chat/completions'
-      );
+      return firstLiveEnv(cli.urlEnvVars) ?? cli.defaultUrl;
     },
     get defaultModel() {
-      return process.env.PUSH_OLLAMA_MODEL || OLLAMA_DEFAULT_MODEL;
+      return process.env[cli.modelEnvVar]?.trim() || def.defaultModel || '';
     },
-    apiKeyEnv: ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'],
+    apiKeyEnv: [...apiKeyEnv],
     requiresKey: true,
-  },
-  openrouter: {
-    id: 'openrouter',
-    get url() {
-      return process.env.PUSH_OPENROUTER_URL || 'https://openrouter.ai/api/v1/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_OPENROUTER_MODEL || OPENROUTER_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
-    requiresKey: true,
-  },
-  zen: {
-    id: 'zen',
-    get url() {
-      return process.env.PUSH_ZEN_URL || 'https://opencode.ai/zen/v1/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_ZEN_MODEL || ZEN_DEFAULT_MODEL;
-    },
-    apiKeyEnv: [
-      'PUSH_ZEN_API_KEY',
-      'ZEN_API_KEY',
-      'OPENCODE_API_KEY',
-      'VITE_ZEN_API_KEY',
-      'VITE_OPENCODE_API_KEY',
-    ],
-    requiresKey: true,
-  },
-  nvidia: {
-    id: 'nvidia',
-    get url() {
-      return process.env.PUSH_NVIDIA_URL || 'https://integrate.api.nvidia.com/v1/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_NVIDIA_MODEL || NVIDIA_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_NVIDIA_API_KEY', 'NVIDIA_API_KEY', 'VITE_NVIDIA_API_KEY'],
-    requiresKey: true,
-  },
-  kilocode: {
-    id: 'kilocode',
-    get url() {
-      return process.env.PUSH_KILOCODE_URL || 'https://api.kilo.ai/api/gateway/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_KILOCODE_MODEL || KILOCODE_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_KILOCODE_API_KEY', 'KILOCODE_API_KEY', 'VITE_KILOCODE_API_KEY'],
-    requiresKey: true,
-  },
-  fireworks: {
-    id: 'fireworks',
-    get url() {
-      return (
-        process.env.PUSH_FIREWORKS_URL || 'https://api.fireworks.ai/inference/v1/chat/completions'
-      );
-    },
-    get defaultModel() {
-      return process.env.PUSH_FIREWORKS_MODEL || FIREWORKS_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_FIREWORKS_API_KEY', 'FIREWORKS_API_KEY', 'VITE_FIREWORKS_API_KEY'],
-    requiresKey: true,
-  },
-  blackbox: {
-    id: 'blackbox',
-    // `api.blackbox.ai` is the JSON API host. `www.blackbox.ai` is the marketing
-    // frontend and returns HTML, which breaks /models fetch (and chat) silently.
-    get url() {
-      return process.env.PUSH_BLACKBOX_URL || 'https://api.blackbox.ai/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_BLACKBOX_MODEL || BLACKBOX_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_BLACKBOX_API_KEY', 'BLACKBOX_API_KEY', 'VITE_BLACKBOX_API_KEY'],
-    requiresKey: true,
-  },
-  openadapter: {
-    id: 'openadapter',
-    get url() {
-      return process.env.PUSH_OPENADAPTER_URL || 'https://api.openadapter.in/v1/chat/completions';
-    },
-    get defaultModel() {
-      return process.env.PUSH_OPENADAPTER_MODEL || OPENADAPTER_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_OPENADAPTER_API_KEY', 'OPENADAPTER_API_KEY', 'VITE_OPENADAPTER_API_KEY'],
-    requiresKey: true,
-  },
-  deepseek: {
-    id: 'deepseek',
-    // DeepSeek via its Anthropic-compatible Messages endpoint
-    // (api.deepseek.com/anthropic). Routed through the Anthropic transport
-    // (`x-api-key` auth, `toAnthropicMessages`) so thinking returns as signed
-    // reasoning blocks that round-trip across turns — the OpenAI endpoint rejects
-    // replayed `reasoning_content`. Automatic prompt caching still applies here.
-    get url() {
-      return process.env.PUSH_DEEPSEEK_URL || 'https://api.deepseek.com/anthropic/v1/messages';
-    },
-    get defaultModel() {
-      return process.env.PUSH_DEEPSEEK_MODEL || DEEPSEEK_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_DEEPSEEK_API_KEY', 'DEEPSEEK_API_KEY', 'VITE_DEEPSEEK_API_KEY'],
-    requiresKey: true,
-    streamShape: 'anthropic',
-  },
-  sakana: {
-    id: 'sakana',
-    // Sakana Fugu speaks the provider-native Responses API (`/v1/responses`),
-    // like direct OpenAI — not Chat Completions.
-    get url() {
-      return process.env.PUSH_SAKANA_URL || 'https://api.sakana.ai/v1/responses';
-    },
-    get defaultModel() {
-      return process.env.PUSH_SAKANA_MODEL || SAKANA_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_SAKANA_API_KEY', 'SAKANA_API_KEY', 'VITE_SAKANA_API_KEY'],
-    requiresKey: true,
-    streamShape: 'openai-responses',
-  },
-  openai: {
-    id: 'openai',
-    // Direct OpenAI uses the provider-native Responses API. OpenAI-compatible
-    // gateways stay on their own Chat Completions entries above.
-    get url() {
-      return process.env.PUSH_OPENAI_URL || 'https://api.openai.com/v1/responses';
-    },
-    get defaultModel() {
-      return process.env.PUSH_OPENAI_MODEL || OPENAI_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_OPENAI_API_KEY', 'OPENAI_API_KEY', 'VITE_OPENAI_API_KEY'],
-    requiresKey: true,
-    streamShape: 'openai-responses',
-  },
-  anthropic: {
-    id: 'anthropic',
-    // Direct Anthropic Messages API. The CLI adapter translates the
-    // OpenAI-shaped body via `lib/anthropic-bridge` and pipes the
-    // response back through the same OpenAI SSE pump every other CLI
-    // provider uses, so consumers see one event surface.
-    get url() {
-      return process.env.PUSH_ANTHROPIC_URL || 'https://api.anthropic.com/v1/messages';
-    },
-    get defaultModel() {
-      return process.env.PUSH_ANTHROPIC_MODEL || ANTHROPIC_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY', 'VITE_ANTHROPIC_API_KEY'],
-    requiresKey: true,
-    streamShape: 'anthropic',
-  },
-  google: {
-    id: 'google',
-    // Direct Google Generative Language API. The CLI adapter appends
-    // `/models/{model}:streamGenerateContent?alt=sse` onto this base URL
-    // (the model name varies per request, so it can't be baked in here).
-    // If a caller pre-bakes a full URL with `:streamGenerateContent`, the
-    // adapter uses it verbatim — supports regional mirrors and proxies.
-    get url() {
-      return process.env.PUSH_GOOGLE_URL || 'https://generativelanguage.googleapis.com/v1beta';
-    },
-    get defaultModel() {
-      return process.env.PUSH_GOOGLE_MODEL || GOOGLE_DEFAULT_MODEL;
-    },
-    apiKeyEnv: ['PUSH_GOOGLE_API_KEY', 'GOOGLE_API_KEY', 'GEMINI_API_KEY', 'VITE_GOOGLE_API_KEY'],
-    requiresKey: true,
-    streamShape: 'gemini',
-  },
-};
+  };
+
+  if (def.streamShape !== 'openai-compat') {
+    config.streamShape = def.streamShape;
+  }
+  return config;
+}
+
+export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = Object.fromEntries(
+  getCliProviderDefinitions().map((def) => [def.id, buildProviderConfig(def)]),
+);
 
 /** Build the right `PushStream` for a provider based on its wire shape.
  *  Centralized so callers (legacy `streamCompletion` here, plus the

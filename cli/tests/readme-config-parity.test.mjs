@@ -2,93 +2,49 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { PROVIDER_CONFIGS } from '../provider.ts';
+import { getCliProviderDefinitions } from '../../lib/provider-definition.ts';
+
 const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-const rawProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
-const providerModelsSource = readFileSync(
-  new URL('../../lib/provider-models.ts', import.meta.url),
-  'utf8',
-);
 const cliSource = readFileSync(new URL('../cli.ts', import.meta.url), 'utf8');
 const toolsSource = readFileSync(new URL('../tools.ts', import.meta.url), 'utf8');
 
-// Some provider defaults were refactored from inline string literals to
-// named constants exported from `lib/provider-models.ts` (e.g.
-// `OLLAMA_DEFAULT_MODEL`). The regex extractor below looks for quoted
-// string literals inside each provider's config block, so it can't follow
-// that indirection. Pre-process `provider.ts` by inlining every known
-// `export const NAME = 'value'` from `provider-models.ts` into the
-// `PROVIDER_CONFIGS` block so the regex sees string literals where it
-// expects them.
-//
-// NOTE: this is a pragmatic band-aid. The correct long-term fix is to
-// dynamically `import()` `provider.ts` in a test harness with env vars
-// cleared and read `PROVIDER_CONFIGS` values directly. That's a bigger
-// refactor and out of scope for the CI-wiring PR that unblocked this.
-const stringConstPattern = /^export const ([A-Z_][A-Z0-9_]*) = '([^']+)'/gm;
-const inlinedConstants = new Map();
-for (const match of providerModelsSource.matchAll(stringConstPattern)) {
-  const [, name, value] = match;
-  inlinedConstants.set(name, value);
-}
-
-const providerSource = rawProviderSource.replace(
-  /(export const PROVIDER_CONFIGS[^=]*= \{[\s\S]*?\n\};)/,
-  (block) => {
-    let patched = block;
-    for (const [name, value] of inlinedConstants) {
-      patched = patched.replace(new RegExp(`\\b${name}\\b`, 'g'), `'${value}'`);
-    }
-    return patched;
-  },
-);
-
-function extractProviderConfigsBlock(source) {
-  const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
-  assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
-  return match[1];
-}
-
-function extractCliProviderEntries(source) {
-  const block = extractProviderConfigsBlock(source);
-  const entryRegex = /^\s{2}([a-z]+):\s*\{([\s\S]*?)^\s{2}\},?$/gm;
-  const entries = [];
-
-  for (const match of block.matchAll(entryRegex)) {
-    const [, providerId, entryBody] = match;
-    // `url` and `defaultModel` are live getters (`get url() { return …; }`) —
-    // env is observed at READ time so pushd's reload_config takes effect (see
-    // the PROVIDER_CONFIGS comment in cli/provider.ts). The return expression
-    // may span multiple lines for a long `process.env.X || process.env.Y ||
-    // 'fallback'` chain (see `ollama`); `[\s\S]+?` matches across newlines
-    // non-greedily and the `;` terminator anchors the end of the return.
-    const urlLine = entryBody.match(/get url\(\)\s*\{\s*return\s*([\s\S]+?);\s*\}/);
-    const defaultModelLine = entryBody.match(
-      /get defaultModel\(\)\s*\{\s*return\s*([\s\S]+?);\s*\}/,
-    );
-    const requiresKeyLine = entryBody.match(/requiresKey:\s*(true|false)/);
-
-    assert.ok(urlLine, `Expected ${providerId} to define url`);
-    assert.ok(defaultModelLine, `Expected ${providerId} to define defaultModel`);
-    assert.ok(requiresKeyLine, `Expected ${providerId} to define requiresKey`);
-
-    const urlStrings = [...urlLine[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
-    const modelStrings = [...defaultModelLine[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
-
-    assert.ok(urlStrings.length > 0, `Expected ${providerId} url line to include a default string`);
-    assert.ok(
-      modelStrings.length > 0,
-      `Expected ${providerId} defaultModel line to include a default string`,
-    );
-
-    entries.push({
-      id: providerId,
-      url: urlStrings[urlStrings.length - 1],
-      defaultModel: modelStrings[modelStrings.length - 1],
-      requiresKey: requiresKeyLine[1] === 'true',
-    });
+function withClearedCliEnv(fn) {
+  const envVars = new Set();
+  for (const def of getCliProviderDefinitions()) {
+    assert.ok(def.cli, `Expected ${def.id} to carry CLI metadata`);
+    envVars.add(def.cli.modelEnvVar);
+    for (const envVar of def.cli.urlEnvVars) envVars.add(envVar);
   }
 
-  return entries;
+  const previous = new Map();
+  for (const envVar of envVars) {
+    previous.set(envVar, process.env[envVar]);
+    delete process.env[envVar];
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [envVar, value] of previous) {
+      if (value === undefined) {
+        delete process.env[envVar];
+      } else {
+        process.env[envVar] = value;
+      }
+    }
+  }
+}
+
+function providerEntriesFromRuntime() {
+  return withClearedCliEnv(() =>
+    Object.values(PROVIDER_CONFIGS).map((provider) => ({
+      id: provider.id,
+      url: provider.url,
+      defaultModel: provider.defaultModel,
+      requiresKey: provider.requiresKey,
+    })),
+  );
 }
 
 function extractSetValues(source, setName) {
@@ -125,25 +81,10 @@ function extractReadmeEnvVarRows(source) {
 }
 
 function extractReadmeProviderRows(source) {
+  const providerIds = new Set(Object.keys(PROVIDER_CONFIGS).map((provider) => `\`${provider}\``));
   const rows = extractReadmeTableRows(source);
   return rows
-    .filter(([provider]) =>
-      [
-        '`ollama`',
-        '`openrouter`',
-        '`zen`',
-        '`nvidia`',
-        '`kilocode`',
-        '`fireworks`',
-        '`blackbox`',
-        '`openadapter`',
-        '`deepseek`',
-        '`sakana`',
-        '`openai`',
-        '`anthropic`',
-        '`google`',
-      ].includes(provider),
-    )
+    .filter(([provider]) => providerIds.has(provider))
     .map(([provider, model, requiresKey]) => ({
       id: provider.slice(1, -1),
       defaultModel: model.slice(1, -1),
@@ -163,7 +104,7 @@ function extractReadmeOptionValues(source, optionName) {
 }
 
 describe('README config parity', () => {
-  const providerEntries = extractCliProviderEntries(providerSource);
+  const providerEntries = providerEntriesFromRuntime();
   const readmeEnvRows = extractReadmeEnvVarRows(readmeSource);
   const readmeProviderRows = extractReadmeProviderRows(readmeSource);
   const searchBackendsFromCli = extractSetValues(cliSource, 'SEARCH_BACKENDS');

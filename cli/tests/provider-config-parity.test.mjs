@@ -2,64 +2,13 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-const cliProviderSource = readFileSync(new URL('../provider.ts', import.meta.url), 'utf8');
+import { PROVIDER_CONFIGS } from '../provider.ts';
+import { getCliProviderDefinitions } from '../../lib/provider-definition.ts';
+
 const webProviderSource = readFileSync(
   new URL('../../app/src/lib/providers.ts', import.meta.url),
   'utf8',
 );
-const sharedProviderModelSource = readFileSync(
-  new URL('../../lib/provider-models.ts', import.meta.url),
-  'utf8',
-);
-const providerContractSource = readFileSync(
-  new URL('../../lib/provider-contract.ts', import.meta.url),
-  'utf8',
-);
-
-function extractExportedStringConstant(source, exportName) {
-  const match = source.match(new RegExp(`export const ${exportName}\\s*=\\s*'([^']+)';`));
-  assert.ok(match, `Expected to find exported string constant ${exportName}`);
-  return match[1];
-}
-
-function extractConstArrayMembers(source, constName) {
-  const match = source.match(new RegExp(`export const ${constName}\\s*=\\s*\\[([\\s\\S]*?)\\]`));
-  assert.ok(match, `Expected to find const array ${constName}`);
-  return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
-}
-
-function extractProviderConfigsBlock(source) {
-  const match = source.match(/export const PROVIDER_CONFIGS[^=]*= \{([\s\S]*?)\n\};/);
-  assert.ok(match, 'Expected to find PROVIDER_CONFIGS');
-  return match[1];
-}
-
-function extractCliProviderIds(source) {
-  const block = extractProviderConfigsBlock(source);
-  return [...block.matchAll(/^\s{2}([a-z]+):\s*\{/gm)].map(([, id]) => id);
-}
-
-function extractCliProviderEntry(source, providerId) {
-  const block = extractProviderConfigsBlock(source);
-  const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = block.match(
-    new RegExp(`^\\s{2}${escapedId}:\\s*\\{([\\s\\S]*?)^\\s{2}\\},?$`, 'm'),
-  );
-  assert.ok(match, `Expected to find CLI provider entry ${providerId}`);
-
-  const entry = match[1];
-  const idMatch = entry.match(/id:\s*'([^']+)'/);
-  const apiKeyEnvMatch = entry.match(/apiKeyEnv:\s*\[([\s\S]*?)\]/);
-
-  assert.ok(idMatch, `Expected CLI provider ${providerId} to define id`);
-  assert.ok(apiKeyEnvMatch, `Expected CLI provider ${providerId} to define apiKeyEnv`);
-
-  return {
-    id: idMatch[1],
-    entry,
-    apiKeyEnv: [...apiKeyEnvMatch[1].matchAll(/'([^']+)'/g)].map(([, value]) => value),
-  };
-}
 
 function extractWebProviderEnvKey(source, providerId) {
   const escapedId = providerId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -68,68 +17,91 @@ function extractWebProviderEnvKey(source, providerId) {
   return match[1];
 }
 
-describe('provider config parity', () => {
-  // `PreferredProvider` now derives from `ALL_PROVIDERS` (the single id-vocabulary
-  // source) as `Exclude<AIProviderType, 'demo'>`, so read the roster from there.
-  const allWebProviderIds = extractConstArrayMembers(
-    providerContractSource,
-    'ALL_PROVIDERS',
-  ).filter((id) => id !== 'demo');
-  // CLI only implements built-in providers that ship with the binary.
-  // `azure` / `bedrock` / `vertex` are advanced connectors deferred per the
-  // Web-CLI Parity Plan; `cloudflare` is bound to the Worker's `env.AI`
-  // runtime and has no usable CLI shape.
-  const CLI_DEFERRED_PROVIDERS = new Set(['azure', 'bedrock', 'vertex', 'cloudflare']);
-  const providerIds = allWebProviderIds.filter((id) => !CLI_DEFERRED_PROVIDERS.has(id));
-  const defaultConstByProvider = {
-    ollama: 'OLLAMA_DEFAULT_MODEL',
-    openrouter: 'OPENROUTER_DEFAULT_MODEL',
-    zen: 'ZEN_DEFAULT_MODEL',
-    nvidia: 'NVIDIA_DEFAULT_MODEL',
-    kilocode: 'KILOCODE_DEFAULT_MODEL',
-    fireworks: 'FIREWORKS_DEFAULT_MODEL',
-    blackbox: 'BLACKBOX_DEFAULT_MODEL',
-    openadapter: 'OPENADAPTER_DEFAULT_MODEL',
-    deepseek: 'DEEPSEEK_DEFAULT_MODEL',
-    sakana: 'SAKANA_DEFAULT_MODEL',
-    openai: 'OPENAI_DEFAULT_MODEL',
-    anthropic: 'ANTHROPIC_DEFAULT_MODEL',
-    google: 'GOOGLE_DEFAULT_MODEL',
-  };
+function withClearedCliEnv(fn) {
+  const envVars = new Set();
+  for (const def of getCliProviderDefinitions()) {
+    assert.ok(def.cli, `Expected ${def.id} to carry CLI metadata`);
+    envVars.add(def.cli.modelEnvVar);
+    for (const envVar of def.cli.urlEnvVars) envVars.add(envVar);
+  }
 
-  it('keeps the CLI provider roster in sync with the web provider set', () => {
-    assert.deepEqual(extractCliProviderIds(cliProviderSource).sort(), [...providerIds].sort());
+  const previous = new Map();
+  for (const envVar of envVars) {
+    previous.set(envVar, process.env[envVar]);
+    delete process.env[envVar];
+  }
+
+  try {
+    return fn();
+  } finally {
+    for (const [envVar, value] of previous) {
+      if (value === undefined) {
+        delete process.env[envVar];
+      } else {
+        process.env[envVar] = value;
+      }
+    }
+  }
+}
+
+describe('provider config parity', () => {
+  const cliDefinitions = getCliProviderDefinitions();
+
+  it('derives the CLI provider roster from provider-definition.ts', () => {
+    assert.deepEqual(
+      Object.keys(PROVIDER_CONFIGS),
+      cliDefinitions.map((def) => def.id),
+    );
   });
 
-  it('keeps CLI provider ids and default models in sync with web defaults', () => {
-    for (const providerId of providerIds) {
-      const entry = extractCliProviderEntry(cliProviderSource, providerId);
-      assert.equal(entry.id, providerId);
-      // `defaultModel` is a live getter (reload_config contract) — match the
-      // `get defaultModel() { return process.env.X || CONST; }` shape.
-      assert.match(
-        entry.entry,
-        new RegExp(
-          `get defaultModel\\(\\)\\s*\\{\\s*return\\s*process\\.env\\.[A-Z0-9_]+\\s*\\|\\|\\s*${defaultConstByProvider[providerId]}`,
-        ),
-        `Expected ${providerId} default model to reference ${defaultConstByProvider[providerId]}`,
-      );
+  it('keeps CLI provider ids, defaults, URLs, and stream shapes in sync with the registry', () => {
+    withClearedCliEnv(() => {
+      for (const def of cliDefinitions) {
+        const cfg = PROVIDER_CONFIGS[def.id];
+        assert.ok(cfg, `Expected PROVIDER_CONFIGS to include ${def.id}`);
+        assert.ok(def.cli, `Expected ${def.id} to carry CLI metadata`);
+        assert.ok(def.defaultModel, `Expected ${def.id} to carry defaultModel`);
+        assert.equal(cfg.id, def.id);
+        assert.equal(cfg.url, def.cli.defaultUrl);
+        assert.equal(cfg.defaultModel, def.defaultModel);
+        assert.equal(cfg.requiresKey, true);
+        assert.equal(cfg.streamShape ?? 'openai-compat', def.streamShape);
+      }
+    });
+  });
+
+  it('keeps CLI API key fallbacks compatible with the registry and web env keys', () => {
+    for (const def of cliDefinitions) {
+      const cfg = PROVIDER_CONFIGS[def.id];
+      assert.ok(cfg, `Expected PROVIDER_CONFIGS to include ${def.id}`);
+      const expectedEnv = def.cli?.apiKeyEnvVars ?? def.apiKeyEnvVars;
+      assert.deepEqual(cfg.apiKeyEnv, expectedEnv);
+      const webEnvKey = extractWebProviderEnvKey(webProviderSource, def.id);
       assert.ok(
-        extractExportedStringConstant(sharedProviderModelSource, defaultConstByProvider[providerId])
-          .length > 0,
-        `Expected shared model constant ${defaultConstByProvider[providerId]} to resolve to a non-empty value`,
+        cfg.apiKeyEnv.includes(webEnvKey),
+        `Expected ${def.id} apiKeyEnv to include ${webEnvKey}`,
       );
     }
   });
 
-  it('keeps CLI API key fallbacks compatible with the web provider env keys', () => {
-    for (const providerId of providerIds) {
-      const entry = extractCliProviderEntry(cliProviderSource, providerId);
-      const webEnvKey = extractWebProviderEnvKey(webProviderSource, providerId);
-      assert.ok(
-        entry.apiKeyEnv.includes(webEnvKey),
-        `Expected ${providerId} apiKeyEnv to include ${webEnvKey}`,
-      );
+  it('keeps CLI URL and model overrides live', () => {
+    const def = cliDefinitions.find((entry) => entry.id === 'zen');
+    assert.ok(def?.cli, 'Expected zen to carry CLI metadata');
+    const cfg = PROVIDER_CONFIGS.zen;
+    const [urlEnv] = def.cli.urlEnvVars;
+    const modelEnv = def.cli.modelEnvVar;
+    const previousUrl = process.env[urlEnv];
+    const previousModel = process.env[modelEnv];
+    try {
+      process.env[urlEnv] = 'https://rotated.example/v1/chat/completions';
+      process.env[modelEnv] = 'rotated-model';
+      assert.equal(cfg.url, 'https://rotated.example/v1/chat/completions');
+      assert.equal(cfg.defaultModel, 'rotated-model');
+    } finally {
+      if (previousUrl === undefined) delete process.env[urlEnv];
+      else process.env[urlEnv] = previousUrl;
+      if (previousModel === undefined) delete process.env[modelEnv];
+      else process.env[modelEnv] = previousModel;
     }
   });
 });

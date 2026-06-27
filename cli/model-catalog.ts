@@ -33,7 +33,7 @@ export type ProviderId = SharedProviderModelId;
 
 const CATALOG: Record<ProviderId, readonly string[]> = SHARED_PROVIDER_MODEL_CATALOG;
 
-/** Default model per provider — keep in sync with PROVIDER_CONFIGS in provider.ts. */
+/** Default model per provider — provider.ts reads the same shared registry data. */
 export const DEFAULT_MODELS: Record<ProviderId, string> = SHARED_PROVIDER_DEFAULT_MODELS;
 
 /**
