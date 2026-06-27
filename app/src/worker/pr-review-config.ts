@@ -144,13 +144,46 @@ export async function getPrReviewRuntimeConfig(env: Env): Promise<PrReviewRuntim
   };
 }
 
+/**
+ * Coerce a resolved provider/model to a runnable pair. A persisted provider that
+ * is no longer in the catalog — e.g. a deployment still configured for the
+ * retired `blackbox` via the settings doc, the legacy `config:pr-review-provider`
+ * key, or `PR_REVIEW_PROVIDER` — must fall back to the built-in default reviewer
+ * (and its default model, since the stale model belonged to the removed
+ * provider) rather than letting the executor hard-fail every webhook review with
+ * "Configured review provider is unavailable". A model that is merely invalid for
+ * a *known* provider is left untouched so the caller's hard-fail policy can still
+ * surface a genuine misconfiguration. Logs the substitution so the silent
+ * fallback is visible to ops.
+ */
+export function coerceKnownPrReviewer(
+  provider: string,
+  model: string,
+): { provider: AIProviderType; model: string } {
+  if (isKnownPrReviewProvider(provider)) return { provider, model };
+  console.log(
+    JSON.stringify({
+      level: 'warn',
+      event: 'pr_review_provider_unavailable_fallback',
+      configuredProvider: provider,
+      fallbackProvider: DEFAULT_PR_REVIEW_PROVIDER,
+    }),
+  );
+  return {
+    provider: DEFAULT_PR_REVIEW_PROVIDER,
+    model: getDefaultPrReviewModel(DEFAULT_PR_REVIEW_PROVIDER) ?? DEFAULT_PR_REVIEW_MODEL,
+  };
+}
+
 export async function getPrReviewEffectiveConfig(env: Env): Promise<PrReviewEffectiveConfig> {
   const [enabled, runtime] = await Promise.all([
     isPrReviewEnabled(env),
     getPrReviewRuntimeConfig(env),
   ]);
-  const provider = runtime.provider ?? DEFAULT_PR_REVIEW_PROVIDER;
-  const model = runtime.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_PR_REVIEW_MODEL;
+  const resolvedProvider = runtime.provider ?? DEFAULT_PR_REVIEW_PROVIDER;
+  const resolvedModel =
+    runtime.model ?? getDefaultPrReviewModel(resolvedProvider) ?? DEFAULT_PR_REVIEW_MODEL;
+  const { provider, model } = coerceKnownPrReviewer(resolvedProvider, resolvedModel);
   return { enabled, provider, model };
 }
 

@@ -46,10 +46,10 @@ import type { Env } from './worker-middleware';
 import {
   DEFAULT_PR_REVIEW_MODEL,
   DEFAULT_PR_REVIEW_PROVIDER,
+  coerceKnownPrReviewer,
   getDefaultPrReviewModel,
   getPrReviewEffectiveConfig,
   getPrReviewRuntimeConfig,
-  isKnownPrReviewProvider,
   isValidPrReviewRuntimeConfig,
 } from './pr-review-config';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
@@ -1442,10 +1442,15 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     modelId = runtimeConfig.model ?? getDefaultPrReviewModel(provider) ?? DEFAULT_MODEL;
   }
 
-  // Hard-fail policy: no fallback when the configured model is invalid/unavailable.
-  if (!isKnownPrReviewProvider(provider)) {
-    throw new Error(`Configured review provider is unavailable: ${provider}`);
-  }
+  // A configured/pinned provider that's no longer in the catalog (e.g. the
+  // retired `blackbox`) falls back to the built-in default reviewer rather than
+  // hard-failing every review; its now-stale model is dropped with it.
+  const coerced = coerceKnownPrReviewer(provider, modelId);
+  provider = coerced.provider;
+  modelId = coerced.model;
+
+  // Hard-fail policy: a model that's invalid for a *known* provider still
+  // surfaces loudly (a genuine misconfiguration, not a removed provider).
   if (!isValidPrReviewRuntimeConfig(provider, modelId)) {
     throw new Error(`Configured review model is unavailable for ${provider}: ${modelId}`);
   }
