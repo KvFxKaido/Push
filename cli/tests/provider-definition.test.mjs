@@ -273,14 +273,11 @@ describe('anthropic cross-registry wiring', () => {
     );
   });
 
-  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+  it('has a stream-adapter factory in orchestrator-provider-routing.ts', async () => {
     const fs = await import('node:fs');
     const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(
-      source,
-      /case 'anthropic':\s*\n\s*stream = \(req\) => normalizeReasoning\(anthropicStream/,
-    );
+    assert.match(source, /anthropic:\s*anthropicStream/);
   });
 
   it('has a coder-job dispatch case for background runs', async () => {
@@ -309,14 +306,11 @@ describe('openai cross-registry wiring', () => {
     );
   });
 
-  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+  it('has a stream-adapter factory in orchestrator-provider-routing.ts', async () => {
     const fs = await import('node:fs');
     const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(
-      source,
-      /case 'openai':\s*\n\s*stream = \(req\) => normalizeReasoning\(openaiStream/,
-    );
+    assert.match(source, /openai:\s*openaiStream/);
   });
 
   it('has a coder-job dispatch case for background runs', async () => {
@@ -345,14 +339,11 @@ describe('google cross-registry wiring', () => {
     );
   });
 
-  it('has a stream-adapter dispatch case in orchestrator-provider-routing.ts', async () => {
+  it('has a stream-adapter factory in orchestrator-provider-routing.ts', async () => {
     const fs = await import('node:fs');
     const url = new URL('../../app/src/lib/orchestrator-provider-routing.ts', import.meta.url);
     const source = fs.readFileSync(url, 'utf8');
-    assert.match(
-      source,
-      /case 'google':\s*\n\s*stream = \(req\) => normalizeReasoning\(geminiStream/,
-    );
+    assert.match(source, /google:\s*geminiStream/);
   });
 
   it('has a coder-job dispatch case for background runs', async () => {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { REAL_PROVIDERS } from '@push/lib/provider-definition';
 
 type MockPreferredProvider = import('./providers').PreferredProvider;
 
@@ -124,6 +125,34 @@ describe('Cloudflare provider routing', () => {
     const { getActiveProvider } = await import('./orchestrator');
 
     expect(getActiveProvider()).toBe('cloudflare');
+  });
+});
+
+describe('provider PushStream registry', () => {
+  it('returns a memoized PushStream for every real provider', async () => {
+    mockProviderState();
+
+    const { getProviderPushStream } = await import('./orchestrator');
+
+    for (const provider of REAL_PROVIDERS) {
+      const first = getProviderPushStream(provider);
+      const second = getProviderPushStream(provider);
+      expect(typeof first, provider).toBe('function');
+      expect(second, provider).toBe(first);
+    }
+  });
+
+  it('keeps demo as an explicit erroring stream', async () => {
+    mockProviderState();
+
+    const { getProviderPushStream } = await import('./orchestrator');
+    const iterator = getProviderPushStream('demo')({
+      provider: 'demo',
+      model: '',
+      messages: [],
+    })[Symbol.asyncIterator]();
+
+    await expect(iterator.next()).rejects.toThrow(/Demo provider has no PushStream/);
   });
 });
 
