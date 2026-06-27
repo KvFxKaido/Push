@@ -3,7 +3,6 @@
  * Free-text input is always accepted — these are suggestions, not constraints.
  */
 import {
-  BLACKBOX_MODELS,
   FIREWORKS_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,
@@ -18,7 +17,6 @@ import {
 } from '../lib/provider-models.ts';
 
 export {
-  BLACKBOX_MODELS,
   FIREWORKS_MODELS,
   KILOCODE_MODELS,
   NVIDIA_MODELS,

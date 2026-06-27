@@ -93,8 +93,8 @@ describe('pr-review-config', () => {
   it('defaults provider/model to the built-in automated reviewer', async () => {
     expect(await getPrReviewEffectiveConfig(kvEnv().env)).toEqual({
       enabled: true,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'sakana',
+      model: 'fugu',
     });
   });
 

@@ -70,7 +70,6 @@ export interface PushConfig {
   nvidia?: ProviderConfig;
   kilocode?: ProviderConfig;
   fireworks?: ProviderConfig;
-  blackbox?: ProviderConfig;
   openadapter?: ProviderConfig;
   deepseek?: ProviderConfig;
   sakana?: ProviderConfig;
@@ -190,7 +189,6 @@ const PROVIDER_CONFIG_KEYS = [
   'nvidia',
   'kilocode',
   'fireworks',
-  'blackbox',
   'openadapter',
   'deepseek',
   'sakana',

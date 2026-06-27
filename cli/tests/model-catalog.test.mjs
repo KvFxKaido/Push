@@ -11,7 +11,6 @@ import {
   ZEN_MODELS,
   KILOCODE_MODELS,
   FIREWORKS_MODELS,
-  BLACKBOX_MODELS,
   OPENADAPTER_MODELS,
 } from '../model-catalog.ts';
 
@@ -108,10 +107,6 @@ describe('catalog parity', () => {
       extractExportedStringArray(providerModelsSource, 'FIREWORKS_MODELS'),
     );
     assert.deepEqual(
-      BLACKBOX_MODELS,
-      extractExportedStringArray(providerModelsSource, 'BLACKBOX_MODELS'),
-    );
-    assert.deepEqual(
       OPENADAPTER_MODELS,
       extractExportedStringArray(providerModelsSource, 'OPENADAPTER_MODELS'),
     );
@@ -125,7 +120,6 @@ describe('catalog parity', () => {
       nvidia: extractExportedStringConstant(providerModelsSource, 'NVIDIA_DEFAULT_MODEL'),
       kilocode: extractExportedStringConstant(providerModelsSource, 'KILOCODE_DEFAULT_MODEL'),
       fireworks: extractExportedStringConstant(providerModelsSource, 'FIREWORKS_DEFAULT_MODEL'),
-      blackbox: extractExportedStringConstant(providerModelsSource, 'BLACKBOX_DEFAULT_MODEL'),
       openadapter: extractExportedStringConstant(providerModelsSource, 'OPENADAPTER_DEFAULT_MODEL'),
       deepseek: extractExportedStringConstant(providerModelsSource, 'DEEPSEEK_DEFAULT_MODEL'),
       sakana: extractExportedStringConstant(providerModelsSource, 'SAKANA_DEFAULT_MODEL'),
@@ -146,7 +140,6 @@ describe('DEFAULT_MODELS', () => {
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     kilocode: 'google/gemini-3-flash-preview',
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
-    blackbox: 'claude-haiku-4-5-20251001',
     openadapter: 'deepseek/deepseek-v3',
     deepseek: 'deepseek-v4-pro',
     sakana: 'fugu',
@@ -164,7 +157,6 @@ describe('DEFAULT_MODELS', () => {
   it('covers all providers', () => {
     assert.deepEqual(Object.keys(DEFAULT_MODELS).sort(), [
       'anthropic',
-      'blackbox',
       'deepseek',
       'fireworks',
       'google',

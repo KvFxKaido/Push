@@ -188,7 +188,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `openadapter`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
@@ -207,9 +207,6 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_FIREWORKS_URL` | Fireworks AI endpoint (default: `https://api.fireworks.ai/inference/v1/chat/completions`) |
 | `PUSH_FIREWORKS_API_KEY` | Fireworks AI API key |
 | `PUSH_FIREWORKS_MODEL` | Fireworks AI model (default: `accounts/fireworks/models/deepseek-v4-pro`) |
-| `PUSH_BLACKBOX_URL` | Blackbox AI endpoint (default: `https://api.blackbox.ai/chat/completions`) |
-| `PUSH_BLACKBOX_API_KEY` | Blackbox AI API key |
-| `PUSH_BLACKBOX_MODEL` | Blackbox AI model (default: `claude-haiku-4-5-20251001`) |
 | `PUSH_OPENADAPTER_URL` | OpenAdapter endpoint (default: `https://api.openadapter.in/v1/chat/completions`) |
 | `PUSH_OPENADAPTER_API_KEY` | OpenAdapter API key |
 | `PUSH_OPENADAPTER_MODEL` | OpenAdapter model (default: `deepseek/deepseek-v3`) |
@@ -245,7 +242,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships thirteen providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `blackbox`, `openadapter`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships twelve providers. Seven (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `openadapter`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -255,7 +252,6 @@ The CLI ships thirteen providers. Eight (`ollama`, `openrouter`, `zen`, `nvidia`
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
 | `kilocode` | `google/gemini-3-flash-preview` | Yes |
 | `fireworks` | `accounts/fireworks/models/deepseek-v4-pro` | Yes |
-| `blackbox` | `claude-haiku-4-5-20251001` | Yes |
 | `openadapter` | `deepseek/deepseek-v3` | Yes |
 | `deepseek` | `deepseek-v4-pro` | Yes |
 | `sakana` | `fugu` | Yes |
@@ -465,7 +461,7 @@ TUI Remote flow:
   /remote pair                      Mint a fresh phone bundle for this TUI session
 
 Options:
-  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | blackbox | openadapter | deepseek | sakana | openai | anthropic | google (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | openadapter | deepseek | sakana | openai | anthropic | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

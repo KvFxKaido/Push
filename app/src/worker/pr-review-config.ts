@@ -13,16 +13,16 @@
  *   - provider/model: read by the Durable Object immediately before model execution
  *
  * Enabled defaults to true when unset / unavailable (fail-open so fresh deploys
- * review by default). Provider/model default to the built-in Anthropic reviewer
- * unless overridden by the doc, the legacy flat keys, or the Worker env vars
- * (precedence: doc → legacy KV → env → built-in default).
+ * review by default). Provider/model default to the built-in Sakana Fugu
+ * reviewer unless overridden by the doc, the legacy flat keys, or the Worker env
+ * vars (precedence: doc → legacy KV → env → built-in default).
  */
 
 import type { AIProviderType } from '@push/lib/provider-contract';
 import {
-  ANTHROPIC_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
   CLOUDFLARE_MODELS,
+  SAKANA_DEFAULT_MODEL,
   SHARED_PROVIDER_DEFAULT_MODELS,
   SHARED_PROVIDER_MODEL_CATALOG,
 } from '@push/lib/provider-models';
@@ -44,8 +44,8 @@ const LEGACY_ENABLED_KEY = 'config:pr-review-enabled';
 const LEGACY_PROVIDER_KEY = 'config:pr-review-provider';
 const LEGACY_MODEL_KEY = 'config:pr-review-model';
 
-export const DEFAULT_PR_REVIEW_PROVIDER: AIProviderType = 'anthropic';
-export const DEFAULT_PR_REVIEW_MODEL = ANTHROPIC_DEFAULT_MODEL;
+export const DEFAULT_PR_REVIEW_PROVIDER: AIProviderType = 'sakana';
+export const DEFAULT_PR_REVIEW_MODEL = SAKANA_DEFAULT_MODEL;
 
 const PR_REVIEW_MODEL_CATALOG: Partial<Record<AIProviderType, readonly string[]>> = {
   ...SHARED_PROVIDER_MODEL_CATALOG,

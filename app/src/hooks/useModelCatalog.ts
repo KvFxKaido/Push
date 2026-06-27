@@ -12,7 +12,6 @@ import {
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
-  BLACKBOX_MODELS,
   KILOCODE_DEFAULT_MODEL,
   KILOCODE_MODELS,
   FIREWORKS_DEFAULT_MODEL,
@@ -35,7 +34,6 @@ import {
   fetchOpenRouterModels,
   fetchZenModels,
   fetchNvidiaModels,
-  fetchBlackboxModels,
   fetchKilocodeModels,
   fetchFireworksModels,
   fetchSakanaModels,
@@ -52,7 +50,6 @@ import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
-import { useBlackboxConfig } from '@/hooks/useBlackboxConfig';
 import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
@@ -166,7 +163,6 @@ export interface ModelCatalog {
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
-  blackbox: ProviderKeyConfig;
   kilocode: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
@@ -194,7 +190,6 @@ export interface ModelCatalog {
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
-  blackboxModels: ProviderModelState;
   kilocodeModels: ProviderModelState;
   fireworksModels: ProviderModelState;
   sakanaModels: ProviderModelState;
@@ -209,7 +204,6 @@ export interface ModelCatalog {
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
-  blackboxModelOptions: string[];
   kilocodeModelOptions: string[];
   fireworksModelOptions: string[];
   sakanaModelOptions: string[];
@@ -229,7 +223,6 @@ export interface ModelCatalog {
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
-  refreshBlackboxModels: () => Promise<void>;
   refreshKilocodeModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
   refreshSakanaModels: () => Promise<void>;
@@ -369,20 +362,6 @@ export function buildModelControl(
         loading: catalog.nvidiaModels.loading,
         error: catalog.nvidiaModels.error,
         onRefresh: catalog.refreshNvidiaModels,
-      };
-    case 'blackbox':
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'Blackbox AI'),
-        value: lockedModel ?? catalog.blackbox.model,
-        options: includeSelectedModel(
-          catalog.blackboxModelOptions,
-          lockedModel ?? catalog.blackbox.model,
-        ),
-        onChange: catalog.blackbox.setModel,
-        loading: catalog.blackboxModels.loading,
-        error: catalog.blackboxModels.error,
-        onRefresh: catalog.refreshBlackboxModels,
       };
     case 'kilocode':
       return {
@@ -533,7 +512,6 @@ export function useModelCatalog(): ModelCatalog {
   const openRouterCfg = useOpenRouterConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
-  const blackboxCfg = useBlackboxConfig();
   const kilocodeCfg = useKilocodeConfig();
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
@@ -552,7 +530,6 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
-  const [blackboxKeyInput, setBlackboxKeyInput] = useState('');
   const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [sakanaKeyInput, setSakanaKeyInput] = useState('');
@@ -637,7 +614,6 @@ export function useModelCatalog(): ModelCatalog {
     cloudflare: cloudflareConfigured,
     zen: zenCfg.hasKey,
     nvidia: nvidiaCfg.hasKey,
-    blackbox: blackboxCfg.hasKey,
     kilocode: kilocodeCfg.hasKey,
     fireworks: fireworksCfg.hasKey,
     openadapter: openAdapterCfg.hasKey,
@@ -663,7 +639,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
-  const [blackboxModelList, setBlackboxModelList] = useState<string[]>([]);
   const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
@@ -677,7 +652,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
-  const [blackboxLoading, setBlackboxLoading] = useState(false);
   const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
   const [sakanaLoading, setSakanaLoading] = useState(false);
@@ -691,7 +665,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
-  const [blackboxError, setBlackboxError] = useState<string | null>(null);
   const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [sakanaError, setSakanaError] = useState<string | null>(null);
@@ -705,7 +678,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
-  const [blackboxUpdatedAt, setBlackboxUpdatedAt] = useState<number | null>(null);
   const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [sakanaUpdatedAt, setSakanaUpdatedAt] = useState<number | null>(null);
@@ -909,23 +881,6 @@ export function useModelCatalog(): ModelCatalog {
       });
     },
     [nvidiaCfg.hasKey, nvidiaLoading, refreshModels],
-  );
-
-  const refreshBlackboxModels = useCallback(
-    async (force = true) => {
-      await refreshModels({
-        hasKey: blackboxCfg.hasKey,
-        isLoading: blackboxLoading,
-        setLoading: setBlackboxLoading,
-        setError: setBlackboxError,
-        setModels: setBlackboxModelList,
-        setUpdatedAt: setBlackboxUpdatedAt,
-        fetchModels: () => fetchBlackboxModels({ forceMetadataRefresh: force }),
-        emptyMessage: 'No models returned by Blackbox AI.',
-        failureMessage: 'Failed to load Blackbox AI models.',
-      });
-    },
-    [blackboxCfg.hasKey, blackboxLoading, refreshModels],
   );
 
   const refreshKilocodeModels = useCallback(async () => {
@@ -1160,29 +1115,6 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: blackboxCfg.hasKey,
-          modelCount: blackboxModelList.length,
-          loading: blackboxLoading,
-          error: blackboxError,
-        }),
-        activeProviderLabel === 'blackbox',
-        () => {
-          void refreshBlackboxModels(false);
-        },
-      ),
-    [
-      activeProviderLabel,
-      blackboxCfg.hasKey,
-      blackboxError,
-      blackboxLoading,
-      blackboxModelList.length,
-      refreshBlackboxModels,
-    ],
-  );
-  useEffect(
-    () =>
-      scheduleAutoFetch(
-        shouldAutoFetchProviderModels({
           hasKey: kilocodeCfg.hasKey,
           modelCount: kilocodeModelList.length,
           loading: kilocodeLoading,
@@ -1395,16 +1327,6 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [nvidiaCfg.hasKey]);
   useEffect(() => {
-    if (!blackboxCfg.hasKey) {
-      const id = setTimeout(() => {
-        setBlackboxModelList([]);
-        setBlackboxError(null);
-        setBlackboxUpdatedAt(null);
-      }, 0);
-      return () => clearTimeout(id);
-    }
-  }, [blackboxCfg.hasKey]);
-  useEffect(() => {
     if (!kilocodeCfg.hasKey) {
       const id = setTimeout(() => {
         setKilocodeModelList([]);
@@ -1598,14 +1520,6 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(nvidiaModelList, nvidiaCfg.model),
     [nvidiaModelList, nvidiaCfg.model],
   );
-  const blackboxModelOptions = useMemo(
-    () =>
-      includeSelectedModel(
-        blackboxModelList.length > 0 ? blackboxModelList : BLACKBOX_MODELS,
-        blackboxCfg.model,
-      ),
-    [blackboxModelList, blackboxCfg.model],
-  );
   const deepseekModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1724,15 +1638,6 @@ export function useModelCatalog(): ModelCatalog {
       setModel: nvidiaCfg.setModel,
       keyInput: nvidiaKeyInput,
       setKeyInput: setNvidiaKeyInput,
-    },
-    blackbox: {
-      setKey: blackboxCfg.setKey,
-      clearKey: blackboxCfg.clearKey,
-      hasKey: blackboxCfg.hasKey,
-      model: blackboxCfg.model,
-      setModel: blackboxCfg.setModel,
-      keyInput: blackboxKeyInput,
-      setKeyInput: setBlackboxKeyInput,
     },
     kilocode: {
       setKey: kilocodeCfg.setKey,
@@ -1928,12 +1833,6 @@ export function useModelCatalog(): ModelCatalog {
       error: nvidiaError,
       updatedAt: nvidiaUpdatedAt,
     },
-    blackboxModels: {
-      models: blackboxModelList,
-      loading: blackboxLoading,
-      error: blackboxError,
-      updatedAt: blackboxUpdatedAt,
-    },
     kilocodeModels: {
       models: kilocodeModelList,
       loading: kilocodeLoading,
@@ -1982,7 +1881,6 @@ export function useModelCatalog(): ModelCatalog {
     cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
-    blackboxModelOptions,
     kilocodeModelOptions,
     fireworksModelOptions,
     sakanaModelOptions,
@@ -2000,7 +1898,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,
-    refreshBlackboxModels,
     refreshKilocodeModels,
     refreshFireworksModels,
     refreshSakanaModels,

@@ -55,7 +55,6 @@ describe('isProviderEngineCapable', () => {
       OPENROUTER_API_KEY: 'k',
       ZEN_API_KEY: 'k',
       NVIDIA_API_KEY: 'k',
-      BLACKBOX_API_KEY: 'k',
       KILOCODE_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',
       OPENADAPTER_API_KEY: 'k',

@@ -30,7 +30,6 @@ import {
   CLOUDFLARE_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
-  BLACKBOX_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
@@ -152,7 +151,6 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   cloudflare: 'push:review:model:cloudflare',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
-  blackbox: 'push:review:model:blackbox',
   azure: 'push:review:model:azure',
   bedrock: 'push:review:model:bedrock',
   vertex: 'push:review:model:vertex',
@@ -172,7 +170,6 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
-  blackbox: BLACKBOX_DEFAULT_MODEL,
   azure: AZURE_DEFAULT_MODEL,
   bedrock: BEDROCK_DEFAULT_MODEL,
   vertex: VERTEX_DEFAULT_MODEL,
@@ -202,7 +199,6 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'cloudflare' ||
     value === 'zen' ||
     value === 'nvidia' ||
-    value === 'blackbox' ||
     value === 'azure' ||
     value === 'bedrock' ||
     value === 'vertex' ||
@@ -235,7 +231,6 @@ function readReviewModels(): Record<PreferredProvider, string> {
     cloudflare: pick('cloudflare'),
     zen: pick('zen'),
     nvidia: pick('nvidia'),
-    blackbox: pick('blackbox'),
     kilocode: pick('kilocode'),
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),

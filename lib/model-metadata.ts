@@ -268,10 +268,6 @@ function modelCandidates(provider: string | undefined, modelId: string): string[
     addCandidate(candidates, `${modelId}:free`);
   }
 
-  if (modelId.startsWith('blackboxai/')) {
-    addCandidate(candidates, modelId.slice('blackboxai/'.length));
-  }
-
   for (const candidate of [...candidates]) {
     const slash = candidate.lastIndexOf('/');
     if (slash > 0) addCandidate(candidates, candidate.slice(slash + 1));

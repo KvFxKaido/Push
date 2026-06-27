@@ -24,7 +24,6 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
-  vi.doMock('@/hooks/useBlackboxConfig', () => ({ getBlackboxKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => kilocodeKey }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
   vi.doMock('@/hooks/useExperimentalProviderConfig', () => ({
@@ -199,7 +198,6 @@ function mockFailoverState(opts?: {
   }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
-  vi.doMock('@/hooks/useBlackboxConfig', () => ({ getBlackboxKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
   vi.doMock('@/hooks/useOpenAdapterConfig', () => ({ getOpenAdapterKey: () => '' }));

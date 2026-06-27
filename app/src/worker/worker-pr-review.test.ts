@@ -140,8 +140,8 @@ describe('handlePrReviewRoute — config (reviewer on/off)', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       enabled: true,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'sakana',
+      model: 'fugu',
     });
   });
 
@@ -155,14 +155,14 @@ describe('handlePrReviewRoute — config (reviewer on/off)', () => {
     expect(set.status).toBe(200);
     expect(await set.json()).toEqual({
       enabled: false,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'sakana',
+      model: 'fugu',
     });
     const get = await handlePrReviewRoute(makeRequest('/api/pr-reviews/config'), env, 'config-get');
     expect(await get.json()).toEqual({
       enabled: false,
-      provider: 'anthropic',
-      model: 'claude-sonnet-4-6',
+      provider: 'sakana',
+      model: 'fugu',
     });
   });
 

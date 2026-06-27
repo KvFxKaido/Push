@@ -38,7 +38,6 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
-  BLACKBOX_API_KEY?: string;
   KILOCODE_API_KEY?: string;
   FIREWORKS_API_KEY?: string;
   OPENADAPTER_API_KEY?: string;
@@ -1264,8 +1263,8 @@ export function createJsonProxyHandler(
           // GET proxies are the provider model-list endpoints. Without an
           // explicit bypass the Cloudflare edge caches the upstream GET per its
           // Cache-Control headers and serves a frozen catalog — the "provider
-          // list never updates on refresh" bug (Blackbox serves cacheable
-          // headers, so its list stayed static no matter how often the client
+          // list never updates on refresh" bug (some upstreams serve cacheable
+          // headers, so the list stayed static no matter how often the client
           // refreshed). Model lists are cold paths, so skipping the subrequest
           // cache is cheap and keeps every refresh reflecting upstream. POST
           // proxies are non-idempotent and not cached, so scope this to GET.

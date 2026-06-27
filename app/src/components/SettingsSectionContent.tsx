@@ -193,7 +193,7 @@ export function SettingsSectionContent({
       BUILT_IN_SETTINGS_PROVIDER_ORDER.find(
         (providerId) => ai.builtInProviders[providerId].hasKey,
       ) ??
-      'blackbox';
+      'zen';
 
     return Object.fromEntries(
       BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [
