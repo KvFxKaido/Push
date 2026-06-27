@@ -301,12 +301,15 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // (`openai` via the Responses pump, the rest via `pumpSseBody`).
       const isZenGoAnthropic =
         zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
+      // `deepseek` runs on its Anthropic-compatible endpoint, so its Worker
+      // handler returns raw Anthropic Messages SSE — parse it natively.
+      const isAnthropicTransport = args.provider === 'deepseek';
       const events = isResponsesProvider
         ? openAIResponsesSSEPump({
             body: response.body as unknown as ReadableStream<Uint8Array>,
             signal,
           })
-        : isZenGoAnthropic
+        : isZenGoAnthropic || isAnthropicTransport
           ? zenGoAnthropicEvents(response as unknown as Response, signal)
           : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
       for await (const event of events) {

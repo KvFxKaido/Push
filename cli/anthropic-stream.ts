@@ -50,8 +50,16 @@ const ANTHROPIC_API_VERSION = '2023-06-01';
  *  tool defaults ON so Claude CLI chats search the web without an opt-in
  *  step (parity with the web app's `'auto'` web-search mode). Set
  *  `PUSH_ANTHROPIC_WEB_SEARCH=0` (or `false`/`no`/`off`) to disable. */
-function resolveAnthropicWebSearch(req: PushStreamRequest<LlmMessage>): boolean {
+function resolveAnthropicWebSearch(
+  req: PushStreamRequest<LlmMessage>,
+  config: ProviderConfig,
+): boolean {
   if (typeof req.anthropicWebSearch === 'boolean') return req.anthropicWebSearch;
+  // Only the real Anthropic provider defaults web search on. Other providers on
+  // the Anthropic transport (e.g. `deepseek` via api.deepseek.com/anthropic)
+  // don't offer Anthropic's server-side `web_search_20250305` tool, so sending
+  // it would be rejected/ignored — default off for them.
+  if (config.id !== 'anthropic') return false;
   const env = process.env.PUSH_ANTHROPIC_WEB_SEARCH?.trim().toLowerCase();
   if (!env) return true;
   return !(env === '0' || env === 'false' || env === 'no' || env === 'off');
@@ -71,7 +79,7 @@ async function* cliAnthropicStream(
   req: PushStreamRequest<LlmMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
-  const enableWebSearch = resolveAnthropicWebSearch(req);
+  const enableWebSearch = resolveAnthropicWebSearch(req, config);
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',

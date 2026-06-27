@@ -511,12 +511,16 @@ function routeConsumesContentBlocks(
 ): boolean {
   if (options?.requestWire === 'neutral') return true;
   if (options?.requestWire === 'openai') return false;
-  return provider === 'anthropic' || provider === 'google';
+  // `deepseek` rides the Anthropic Messages transport (api.deepseek.com/anthropic).
+  return provider === 'anthropic' || provider === 'google' || provider === 'deepseek';
 }
 
 function routeCarriesReasoningBlocks(provider: string, modelId: string | undefined): boolean {
   if (!modelId) return false;
   if (provider === 'anthropic') return true;
+  // DeepSeek runs on its Anthropic-compatible endpoint and emits signed
+  // `thinking` blocks that round-trip across turns.
+  if (provider === 'deepseek') return true;
   if (provider === 'zen') return getZenGoTransport(modelId) === 'anthropic';
   if (provider === 'vertex') return getVertexModelTransport(modelId) === 'anthropic';
   return false;

@@ -836,26 +836,152 @@ export const handleOpenAdapterModels = createJsonProxyHandler({
   timeoutError: 'OpenAdapter model list timed out after 30 seconds',
 });
 
-// --- DeepSeek (direct OpenAI-compatible API) ---
+// --- DeepSeek (Anthropic Messages transport) ---
+//
+// DeepSeek exposes an Anthropic-compatible Messages endpoint at
+// `api.deepseek.com/anthropic` (same `x-api-key` / `anthropic-version` headers
+// as Anthropic). We route DeepSeek through the Anthropic transport rather than
+// its OpenAI Chat Completions endpoint so thinking returns as signed reasoning
+// blocks that round-trip across turns — the OpenAI endpoint's `reasoning_content`
+// can't be replayed (DeepSeek 400s if you echo it back). Verified against the
+// live endpoint: automatic prompt caching still applies here
+// (`cache_read_input_tokens` populates on a repeat prefix) and `deepseek-v4-pro`
+// emits signed `thinking` blocks by default that replay cleanly; only the
+// explicit Anthropic `cache_control` directive is ignored, which we don't send.
+const DEEPSEEK_ANTHROPIC_URL = 'https://api.deepseek.com/anthropic/v1/messages';
 
-export const handleDeepSeekChat = createStreamProxyHandler({
-  name: 'DeepSeek API',
-  logTag: 'api/deepseek/chat',
-  upstreamUrl: 'https://api.deepseek.com/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('DEEPSEEK_API_KEY'),
-  keyMissingError:
-    'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
-  timeoutError: 'DeepSeek request timed out after 120 seconds',
-  // Classify DeepSeek's structured upstream errors (notably 429 quota / rate
-  // limit) the same way the other OpenAI-compat providers do, instead of the
-  // default opaque "API error <status>" passthrough.
-  formatUpstreamError: (status, bodyText) => ({
-    error: `DeepSeek ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
-    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-  }),
-});
+function buildDeepSeekAuth(env: Env, request: Request): string | null {
+  const serverKey = env.DEEPSEEK_API_KEY;
+  if (serverKey) return serverKey;
+  // Dev / unconfigured-Worker fallback: accept a client-side Bearer key, same
+  // shape as `buildAnthropicAuth`.
+  const clientAuth = request.headers.get('Authorization');
+  if (clientAuth?.startsWith('Bearer ')) return clientAuth.slice(7);
+  return clientAuth;
+}
+
+export async function handleDeepSeekChat(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: buildDeepSeekAuth,
+    keyMissingError:
+      'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
+    needsBody: true,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { authHeader: apiKey, bodyText, requestId } = preamble;
+
+  // Dual-accept (push.stream.v1): the web client sends the neutral wire; the
+  // background coder-job adapter sends the legacy OpenAI shape. Both converge on
+  // an Anthropic Messages body.
+  const dual = parseDualAcceptRequest(bodyText, {
+    routeLabel: 'DeepSeek',
+    maxOutputTokens: 8_192,
+    provider: 'deepseek',
+  });
+  if (!dual.ok) return Response.json({ error: dual.error }, { status: dual.status });
+  if (dual.adjustments.length > 0) {
+    wlog('warn', 'chat_request_adjusted', {
+      requestId,
+      route: 'api/deepseek/chat',
+      adjustments: dual.adjustments,
+    });
+  }
+
+  let upstreamBody: string;
+  let model: string;
+  if (dual.contractKind === 'neutral') {
+    model = dual.request.model;
+    try {
+      upstreamBody = JSON.stringify(
+        toAnthropicMessages(dual.request, {
+          modelOverride: model,
+          // DeepSeek's Anthropic endpoint has no server-side web_search tool, so
+          // never enable it — no `pause_turn` continuation arises on this route.
+          enableWebSearch: false,
+        }),
+      );
+    } catch (err) {
+      return Response.json(
+        { error: `DeepSeek request: ${err instanceof Error ? err.message : String(err)}` },
+        { status: 400 },
+      );
+    }
+  } else {
+    model = typeof dual.parsed.model === 'string' ? dual.parsed.model.trim() : '';
+    if (!model) {
+      return Response.json({ error: 'DeepSeek request is missing a model id' }, { status: 400 });
+    }
+    upstreamBody = JSON.stringify({ ...buildAnthropicMessagesRequest(dual.parsed), model });
+  }
+
+  wlog('info', 'request', {
+    requestId,
+    route: 'api/deepseek/chat',
+    model,
+    contract: dual.contractKind,
+  });
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 180_000);
+    let upstream: Response;
+    try {
+      upstream = await fetch(DEEPSEEK_ANTHROPIC_URL, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'Content-Type': 'application/json',
+          [REQUEST_ID_HEADER]: requestId,
+        },
+        body: upstreamBody,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const errBody = await upstream.text().catch(() => '');
+      wlog('error', 'upstream_error', {
+        requestId,
+        route: 'api/deepseek/chat',
+        status: upstream.status,
+        body: errBody.slice(0, 500),
+      });
+      return Response.json(
+        {
+          error: `DeepSeek ${upstream.status}: ${extractProviderHttpErrorDetail(upstream.status, errBody)}`,
+          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+        },
+        { status: upstream.status },
+      );
+    }
+
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+        [REQUEST_ID_HEADER]: requestId,
+      },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('error', 'unhandled', {
+      requestId,
+      route: 'api/deepseek/chat',
+      message,
+      timeout: isTimeout,
+    });
+    return Response.json(
+      { error: isTimeout ? 'DeepSeek request timed out after 180 seconds' : message },
+      { status: isTimeout ? 504 : 502 },
+    );
+  }
+}
 
 export const handleDeepSeekModels = createJsonProxyHandler({
   name: 'DeepSeek API',

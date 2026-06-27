@@ -108,7 +108,7 @@ const PROVIDER_STREAM_SHAPE: Record<ActiveProvider, ProviderWireShape> = {
   kilocode: 'openai-compat',
   fireworks: 'openai-compat',
   openadapter: 'openai-compat',
-  deepseek: 'openai-compat',
+  deepseek: 'anthropic',
   sakana: 'openai-responses',
   azure: 'openai-compat',
   bedrock: 'openai-compat',
