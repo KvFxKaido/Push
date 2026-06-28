@@ -111,7 +111,7 @@ export function ScratchpadNoteEditor({
             </div>
             <div className="flex shrink-0 items-center gap-2">
               <div
-                role="tablist"
+                role="group"
                 aria-label="Editor mode"
                 className="flex items-center rounded-full border border-push-edge bg-black/20 p-0.5 text-push-2xs"
               >
@@ -183,8 +183,7 @@ function ModeTab({
   return (
     <button
       type="button"
-      role="tab"
-      aria-selected={active}
+      aria-pressed={active}
       onClick={onClick}
       className={`rounded-full px-2.5 py-1 font-medium transition-colors ${
         active ? 'bg-push-surface-raised text-push-fg' : 'text-push-fg-dim hover:text-push-fg'
