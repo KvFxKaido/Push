@@ -66,5 +66,23 @@ describe('maybeBranchOnFirstPrompt', () => {
     const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply });
     expect(apply).not.toHaveBeenCalled();
     expect(result).toMatchObject({ branched: false, error: 'no sandbox' });
+    expect(fork).toHaveBeenCalledTimes(1); // non-collision error → no retry
+  });
+
+  it('retries with a numeric suffix on a name collision', async () => {
+    const branchSwitch = { name: 'owner-repo/fix-login-2', kind: 'forked' as const };
+    const fork = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, errorMessage: 'a branch named X already exists' })
+      .mockResolvedValueOnce({ ok: true, branchSwitch });
+    const apply = vi.fn();
+    const result = await maybeBranchOnFirstPrompt({ ...base, promptText: 'Fix login' }, ctx, {
+      fork,
+      apply,
+    });
+    expect(fork).toHaveBeenCalledTimes(2);
+    expect(fork.mock.calls[1][1]).toMatch(/-2$/); // second attempt is suffixed
+    expect(apply).toHaveBeenCalledWith(branchSwitch, ctx);
+    expect(result.branched).toBe(true);
   });
 });

@@ -23,7 +23,13 @@
 
 import { applyBranchSwitchPayload, type BranchForkMigrationContext } from './branch-fork-migration';
 import { deriveBranchNameFromPrompt, getBranchSuggestionPrefix } from './branch-names';
+import { isBranchExistsMessage } from './ensure-commit-target-branch';
 import { forkBranchInWorkspace } from './fork-branch-in-workspace';
+
+/** Bounded suffix retries on a name collision, mirroring the commit-time
+ *  fail-safe's `withNumericSuffix` loop. Keeps common/repeated first prompts
+ *  ("Fix login") in the same repo from silently staying on the default branch. */
+const MAX_BRANCH_NAME_ATTEMPTS = 5;
 
 export interface FirstPromptBranchInput {
   /** Operator/setting gate. Mirrors auto-branch-on-commit's enablement. */
@@ -81,33 +87,41 @@ export async function maybeBranchOnFirstPrompt(
 
   const fork = deps.fork ?? forkBranchInWorkspace;
   const apply = deps.apply ?? applyBranchSwitchPayload;
-  const name = deriveBranchNameFromPrompt(
+  const base = deriveBranchNameFromPrompt(
     input.promptText,
     getBranchSuggestionPrefix(input.repoFullName ?? undefined),
   );
 
-  const result = await fork(input.sandboxId, name);
-  if (!result.ok || !result.branchSwitch) {
-    console.log(
-      JSON.stringify({
-        level: 'warn',
-        event: 'branch_on_first_prompt_failed',
-        name,
-        repoFullName: input.repoFullName,
-        error: result.errorMessage,
-      }),
-    );
-    return { branched: false, name, error: result.errorMessage };
+  let lastError: string | undefined;
+  for (let attempt = 0; attempt < MAX_BRANCH_NAME_ATTEMPTS; attempt++) {
+    const name = attempt === 0 ? base : `${base}-${attempt + 1}`;
+    const result = await fork(input.sandboxId, name);
+    if (result.ok && result.branchSwitch) {
+      apply(result.branchSwitch, migrationCtx);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'branch_on_first_prompt_created',
+          name,
+          repoFullName: input.repoFullName,
+        }),
+      );
+      return { branched: true, name };
+    }
+    lastError = result.errorMessage;
+    // Only a name collision is worth another attempt — a different name won't
+    // fix a missing sandbox or a git-level failure, so bail on those.
+    if (!isBranchExistsMessage(result.errorMessage)) break;
   }
 
-  apply(result.branchSwitch, migrationCtx);
   console.log(
     JSON.stringify({
-      level: 'info',
-      event: 'branch_on_first_prompt_created',
-      name,
+      level: 'warn',
+      event: 'branch_on_first_prompt_failed',
+      name: base,
       repoFullName: input.repoFullName,
+      error: lastError,
     }),
   );
-  return { branched: true, name };
+  return { branched: false, name: base, error: lastError };
 }

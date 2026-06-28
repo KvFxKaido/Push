@@ -32,7 +32,14 @@ vi.mock('./chat-persistence', async (importOriginal) => {
   };
 });
 
+vi.mock('@/lib/first-prompt-branch', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/first-prompt-branch')>();
+  return { ...actual, maybeBranchOnFirstPrompt: vi.fn(async () => ({ branched: false })) };
+});
+
 import { setLastUsedProvider } from '@/lib/providers';
+import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
+import type { FirstPromptBranchDeps } from './chat-prepare-send';
 
 function makeRefs(initial: Partial<PrepareSendRefs> = {}): PrepareSendRefs {
   return {
@@ -425,5 +432,85 @@ describe('prepareSendContext — sandbox prewarm', () => {
     expect(refs.sandboxIdRef.current).toBeNull();
     // Prepare still completes — caller can decide to lazy-ensure later.
     expect(result.apiMessages).toHaveLength(1);
+  });
+});
+
+describe('prepareSendContext — branch-on-first-prompt wiring', () => {
+  function makeBranchDeps(
+    branchInfo: { currentBranch?: string; defaultBranch?: string } = {
+      currentBranch: 'main',
+      defaultBranch: 'main',
+    },
+  ): FirstPromptBranchDeps {
+    return {
+      repoFullName: 'owner/repo',
+      branchInfoRef: { current: branchInfo },
+      activeChatIdRef: { current: 'chat-1' },
+      skipAutoCreateRef: { current: null },
+      runtimeHandlersRef: { current: undefined },
+    };
+  }
+
+  it('invokes maybeBranchOnFirstPrompt with the post-prewarm sandbox id on a first message', async () => {
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
+      ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
+    });
+    await prepareSendContext(
+      {
+        trimmedText: 'Add a feature',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+      },
+      refs,
+      makeCallbacks(),
+      makeBranchDeps(),
+    );
+    expect(maybeBranchOnFirstPrompt).toHaveBeenCalledTimes(1);
+    const input = vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0];
+    expect(input.isFirstMessage).toBe(true);
+    expect(input.sandboxId).toBe('sb-99'); // resolved by the prewarm above
+    expect(input.promptText).toBe('Add a feature');
+    expect(input.repoFullName).toBe('owner/repo');
+  });
+
+  it('passes isFirstMessage:false for a follow-up so the helper no-ops', async () => {
+    const existing: ChatMessage = {
+      id: 'u1',
+      role: 'user',
+      content: 'hi',
+      timestamp: 1,
+      status: 'done',
+    };
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [existing] }) } },
+      ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
+    });
+    await prepareSendContext(
+      { trimmedText: 'second', attachments: undefined, options: undefined, chatId: 'chat-1' },
+      refs,
+      makeCallbacks(),
+      makeBranchDeps(),
+    );
+    expect(vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0].isFirstMessage).toBe(false);
+  });
+
+  it('skips branching entirely when no branchDeps are provided', async () => {
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
+      ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
+    });
+    await prepareSendContext(
+      {
+        trimmedText: 'Add a feature',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+      },
+      refs,
+      makeCallbacks(),
+    );
+    expect(maybeBranchOnFirstPrompt).not.toHaveBeenCalled();
   });
 });

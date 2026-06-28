@@ -187,10 +187,28 @@ export async function prepareSendContext(
     status: 'streaming',
   };
 
+  // When branch-on-first-prompt may fire below, defer the streaming-assistant
+  // placeholder until *after* the fork: the fork's `branch_forked` divider would
+  // otherwise become the last assistant message, and the stream writes deltas
+  // into the last assistant slot — so a divider-last swallows the first response
+  // (empty spinner forever). Over-approximated from pre-prewarm state (sandbox id
+  // isn't known yet); the post-fork append fires whether or not the fork landed,
+  // so the placeholder is always appended exactly once, last. Every other send
+  // keeps the immediate single-render placeholder.
+  const branchInfo = branchDeps?.branchInfoRef.current;
+  const mayBranchOnFirstPrompt = Boolean(
+    branchDeps &&
+      isFirstMessage &&
+      branchDeps.repoFullName &&
+      (branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? 'main') ===
+        (branchInfo?.defaultBranch ?? 'main'),
+  );
+
   callbacks.updateConversations((prev) => {
-    const messages = skipStreamingPlaceholder
-      ? updatedWithUser
-      : [...updatedWithUser, firstAssistant];
+    const messages =
+      skipStreamingPlaceholder || mayBranchOnFirstPrompt
+        ? updatedWithUser
+        : [...updatedWithUser, firstAssistant];
     const updated = {
       ...prev,
       [chatId]: {
@@ -259,6 +277,18 @@ export async function prepareSendContext(
         runtimeHandlersRef: branchDeps.runtimeHandlersRef,
       },
     );
+  }
+
+  // Deferred streaming placeholder (see mayBranchOnFirstPrompt): append it now,
+  // after any branch divider, so the stream writes into the placeholder rather
+  // than the divider. `prev`-based so it lands after the migration's update
+  // regardless of state-flush timing. Fires whether or not the fork landed.
+  if (mayBranchOnFirstPrompt && !skipStreamingPlaceholder) {
+    callbacks.updateConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, firstAssistant] } };
+    });
   }
 
   refs.abortControllerRef.current = new AbortController();
