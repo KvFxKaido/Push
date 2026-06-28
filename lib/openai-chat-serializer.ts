@@ -51,6 +51,7 @@ import type {
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
+import { toolCallThoughtSignatureFields } from './gemini-thought-signature.ts';
 
 /**
  * Build the OpenAI `response_format` payload from the neutral `ResponseFormatSpec`.
@@ -242,14 +243,15 @@ function flattenToolBearingBlocks(
       // Anthropic carries `input` as a parsed object; OpenAI wants a JSON string.
       // Round-trip Gemini's `thoughtSignature` when present (an OpenAI-compat
       // upstream fronting Gemini, e.g. Ollama Cloud, 400s on replay without it).
-      // Sibling field on the tool call, mirroring how the SSE pump captured it.
+      // Emitted in BOTH wire shapes (top-level sibling + Google's `extra_content`
+      // envelope) since compat upstreams disagree on which they honor.
       pendingToolCalls.push({
         id: block.id,
         type: 'function',
         function: { name: block.name, arguments: JSON.stringify(block.input) },
-        ...(typeof block.thoughtSignature === 'string' && block.thoughtSignature
-          ? { thoughtSignature: block.thoughtSignature }
-          : {}),
+        ...toolCallThoughtSignatureFields(
+          typeof block.thoughtSignature === 'string' ? block.thoughtSignature : undefined,
+        ),
       });
     } else if (block.type === 'tool_result') {
       if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string') {

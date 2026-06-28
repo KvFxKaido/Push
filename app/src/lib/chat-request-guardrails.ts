@@ -24,6 +24,10 @@ import type {
   ToolFunctionSchema,
 } from '@push/lib/provider-contract';
 import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
+import {
+  readToolCallThoughtSignature,
+  toolCallThoughtSignatureFields,
+} from '@push/lib/gemini-thought-signature';
 
 const MAX_REASONING_BLOCKS_PER_MESSAGE = 64;
 const MAX_REASONING_BLOCK_SIGNATURE_LENGTH = 16_384;
@@ -131,20 +135,17 @@ function normalizeToolCalls(
     ) {
       return { ok: false };
     }
-    // Round-trip Gemini's `thoughtSignature` sibling when present — an
-    // OpenAI-compat upstream fronting Gemini (Ollama Cloud) 400s on replay
-    // without it. Model-generated and low-risk; preserve when it's a non-empty
-    // string, drop silently otherwise (a missing signature isn't a 400-able
-    // request shape on its own).
-    const thoughtSignature =
-      typeof rec.thoughtSignature === 'string' && rec.thoughtSignature.length > 0
-        ? rec.thoughtSignature
-        : undefined;
+    // Round-trip Gemini's `thoughtSignature` when present — an OpenAI-compat
+    // upstream fronting Gemini (Ollama Cloud) 400s on replay without it.
+    // Model-generated and low-risk; read either wire shape (top-level sibling or
+    // Google's `extra_content` envelope) and re-emit BOTH so the field survives
+    // whichever the upstream honors. Drop silently when absent (a missing
+    // signature isn't a 400-able request shape on its own).
     out.push({
       id: rec.id,
       type: 'function',
       function: { name: fn.name, arguments: fn.arguments },
-      ...(thoughtSignature ? { thoughtSignature } : {}),
+      ...toolCallThoughtSignatureFields(readToolCallThoughtSignature(rec)),
     });
   }
   return { ok: true, value: out };
