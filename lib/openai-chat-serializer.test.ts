@@ -719,6 +719,28 @@ describe('expandToolMessagesForOpenAICompat', () => {
     ]);
   });
 
+  it("round-trips Gemini's thoughtSignature on the flattened tool_call (both shapes)", () => {
+    // An OpenAI-compat upstream fronting Gemini (Ollama Cloud) 400s on replay
+    // unless the tool call carries its signature. Compat upstreams disagree on
+    // the shape, so emit both the top-level sibling and Google's extra_content.
+    const out = expandToolMessagesForOpenAICompat([
+      { role: 'assistant', contentBlocks: [{ ...toolUse, thoughtSignature: 'sig-abc' }] },
+    ]);
+    expect(out[0]).toEqual({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        {
+          id: toolUse.id,
+          type: 'function',
+          function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          thoughtSignature: 'sig-abc',
+          extra_content: { google: { thought_signature: 'sig-abc' } },
+        },
+      ],
+    });
+  });
+
   it("expands a tool_result turn into a standalone role:'tool' message", () => {
     expect(
       expandToolMessagesForOpenAICompat([{ role: 'user', contentBlocks: [toolResult] }]),

@@ -82,6 +82,79 @@ describe('validateAndNormalizeChatRequest', () => {
       expect(tool).toEqual({ role: 'tool', tool_call_id: 'toolu_1', content: 'file body' });
     });
 
+    it("preserves Gemini's thoughtSignature and re-emits both wire shapes", () => {
+      // Top-level sibling in → both shapes out, so the field survives whichever
+      // the upstream honors.
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gemini-3-flash-preview',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'toolu_1',
+                  type: 'function',
+                  function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+                  thoughtSignature: 'sig-abc',
+                },
+              ],
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect((result.value.parsed.messages ?? [])[0]).toEqual({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'toolu_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+            thoughtSignature: 'sig-abc',
+            extra_content: { google: { thought_signature: 'sig-abc' } },
+          },
+        ],
+      });
+    });
+
+    it('reads the thoughtSignature from the extra_content envelope shape too', () => {
+      // extra_content-only in → both shapes out.
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gemini-3-flash-preview',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'toolu_1',
+                  type: 'function',
+                  function: { name: 'f', arguments: '{}' },
+                  extra_content: { google: { thought_signature: 'sig-xyz' } },
+                },
+              ],
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const toolCall = (result.value.parsed.messages ?? [])[0]?.tool_calls?.[0];
+      expect(toolCall).toMatchObject({
+        thoughtSignature: 'sig-xyz',
+        extra_content: { google: { thought_signature: 'sig-xyz' } },
+      });
+    });
+
     it('rejects malformed tool_calls instead of silently dropping them', () => {
       const result = validateAndNormalizeChatRequest(
         JSON.stringify({

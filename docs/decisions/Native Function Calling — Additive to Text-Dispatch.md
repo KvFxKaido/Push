@@ -208,3 +208,22 @@ Two seams the first cut missed (caught in #1219 review):
    content parts and drops the Push-private `contentBlocks` field, instead of
    forwarding it verbatim. A blunt strip would lose images that live only in
    `contentBlocks`, so it mirrors `toOpenAIChat`'s non-tool branch.
+
+3. **Gemini `thoughtSignature` round-trip on the OpenAI-compat path.** Once native
+   tool calls were live, an OpenAI-compat upstream fronting a **Gemini** model
+   (Ollama Cloud serving Gemini) 400s on the follow-up turn — "Function call is
+   missing a thought_signature in functionCall parts" — because Gemini requires
+   the signed-reasoning token it emitted on the `functionCall` to be replayed. The
+   signature was already captured (`openai-sse-pump.ts` → `NativeToolCall` →
+   `LlmToolUseBlock.thoughtSignature`) and replayed on the **Gemini-native**
+   serializer (`gemini-bridge.ts`), but the OpenAI-compat flatten dropped it.
+   Carried it through end-to-end as the OpenAI-compat peer of the native path,
+   emitted by `flattenToolBearingBlocks` and preserved by the proxy normalizer's
+   `normalizeToolCalls`. Compat upstreams disagree on the **shape** — some use a
+   top-level `tool_calls[].thoughtSignature` sibling (what `openai-sse-pump`
+   historically observed), Google's compat surface uses an
+   `extra_content.google.thought_signature` envelope and ignores unknown
+   top-level fields (#1220 Codex P1). Rather than bet on one, Push reads EITHER on
+   capture and emits BOTH on replay; the unused field is ignored. The dual-shape
+   read/emit lives in `lib/gemini-thought-signature.ts`, shared by the pump,
+   serializer, and normalizer. Absent for every non-Gemini upstream.

@@ -20,6 +20,7 @@ import type {
   StreamUsage,
   UrlCitation,
 } from './provider-contract.js';
+import { readToolCallThoughtSignature } from './gemini-thought-signature.js';
 
 // ---------------------------------------------------------------------------
 // Helpers — duplicated across openrouter/zen/kilocode adapters before #392
@@ -343,6 +344,7 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         id?: unknown;
         function?: { name?: unknown; arguments?: unknown };
         thoughtSignature?: unknown;
+        extra_content?: unknown;
       }>) {
         const idx = typeof tc?.index === 'number' ? tc.index : 0;
         const fnCall = tc?.function;
@@ -353,7 +355,10 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
         // Push-private Gemini sidecar (see `PendingNativeToolCall`). Non-Gemini
         // upstreams never set it; arrives whole on the call fragment, not split.
-        if (typeof tc?.thoughtSignature === 'string') entry.thoughtSignature = tc.thoughtSignature;
+        // Compat upstreams carry it as a top-level sibling OR in Google's
+        // `extra_content` envelope — read whichever this one used.
+        const signature = readToolCallThoughtSignature(tc);
+        if (signature) entry.thoughtSignature = signature;
         pendingNativeToolCalls.set(idx, entry);
         observedFragment = true;
       }
