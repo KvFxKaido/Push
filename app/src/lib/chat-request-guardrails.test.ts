@@ -40,6 +40,91 @@ describe('validateAndNormalizeChatRequest', () => {
     expect(result.error).toContain('invalid role');
   });
 
+  describe('native tool-call round-trip (Ollama / OpenRouter raw-forward)', () => {
+    const POLICY = { routeLabel: 'Ollama', maxOutputTokens: 8192 };
+
+    it('preserves assistant tool_calls and the tool result tool_call_id', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gpt-oss:120b',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'toolu_1',
+                  type: 'function',
+                  function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+                },
+              ],
+            },
+            { role: 'tool', tool_call_id: 'toolu_1', content: 'file body' },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const [assistant, tool] = result.value.parsed.messages ?? [];
+      expect(assistant).toEqual({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'toolu_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      });
+      expect(tool).toEqual({ role: 'tool', tool_call_id: 'toolu_1', content: 'file body' });
+    });
+
+    it('rejects malformed tool_calls instead of silently dropping them', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gpt-oss:120b',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              // `function.arguments` must be a string (OpenAI wire shape).
+              tool_calls: [{ id: 'x', type: 'function', function: { name: 'f', arguments: {} } }],
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toContain('invalid "tool_calls"');
+    });
+
+    it('ignores tool_calls on non-assistant roles and tool_call_id off tool turns', () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gpt-oss:120b',
+          messages: [
+            {
+              role: 'user',
+              content: 'hi',
+              tool_calls: [{ id: 'x', type: 'function', function: { name: 'f', arguments: '{}' } }],
+              tool_call_id: 'nope',
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect((result.value.parsed.messages ?? [])[0]).toEqual({ role: 'user', content: 'hi' });
+    });
+  });
+
   describe('reasoning_blocks normalization', () => {
     it('keeps well-formed signed thinking blocks on `parsed` for the bridge to consume', () => {
       const result = validateAndNormalizeChatRequest(

@@ -19,17 +19,27 @@ vi.mock('./model-catalog', () => ({
   getReasoningEffort: () => 'off',
 }));
 
-// toLLMMessages pulls in huge dependency graph — stub to a trivial passthrough.
-// Preserves `contentBlocks` when present so the native-tool-history flatten can
-// be exercised; messages without it serialize exactly as before (most tests).
-vi.mock('./orchestrator', () => ({
-  toLLMMessages: (messages: Array<ChatMessage & { contentBlocks?: unknown }>) =>
-    messages.map((m) => ({
-      role: m.role,
-      content: m.content,
-      ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
-    })),
-}));
+// toLLMMessages pulls in a huge dependency graph — stub it, but run the REAL
+// `materializeToolContentBlocks` under `emitContentBlocks` so the tests exercise
+// the production pairing/adjacency path (not just pre-attached contentBlocks).
+vi.mock('./orchestrator', async () => {
+  const { materializeToolContentBlocks } = await import('@push/lib/content-blocks');
+  return {
+    toLLMMessages: (
+      messages: Array<ChatMessage & { contentBlocks?: unknown }>,
+      opts?: { emitContentBlocks?: boolean },
+    ) => {
+      const prepared = opts?.emitContentBlocks
+        ? (materializeToolContentBlocks(messages as never) as typeof messages)
+        : messages;
+      return prepared.map((m) => ({
+        role: m.role,
+        content: m.content,
+        ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
+      }));
+    },
+  };
+});
 
 // Narrow KNOWN_TOOL_NAMES so tests can assert on known-vs-unknown dispatch
 // without depending on the real registry. sandbox_write_file is common; the
@@ -514,13 +524,15 @@ describe('openrouterStream', () => {
   // Tool history shape — when native FC is active, prior tool turns ride the
   // wire as OpenAI-native `tool_calls[]` + `role:'tool'` results rather than the
   // `[TOOL_RESULT]` text envelope (the provenance-confusion fix).
+  // Real kernel sidecars (toolUses/toolResults) — the mock runs the real
+  // materializeToolContentBlocks over these, so pairing/adjacency is exercised.
   const toolHistory = (): ChatMessage[] => [
     {
       id: 'a',
       role: 'assistant',
       content: '```json\n{"tool":"sandbox_read_file","args":{"path":"a.ts"}}\n```',
       timestamp: 0,
-      contentBlocks: [
+      toolUses: [
         { type: 'tool_use', id: 'toolu_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
       ],
     } as unknown as ChatMessage,
@@ -529,7 +541,7 @@ describe('openrouterStream', () => {
       role: 'user',
       content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
       timestamp: 0,
-      contentBlocks: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'file body' }],
+      toolResults: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'file body' }],
     } as unknown as ChatMessage,
   ];
 
@@ -580,6 +592,52 @@ describe('openrouterStream', () => {
     const body = JSON.parse(init.body as string);
     expect(body.messages.some((m: { role: string }) => m.role === 'tool')).toBe(false);
     expect(body.messages).toHaveLength(2);
+  });
+
+  it('mixed conversation: plain + paired tool + unpaired result, no contentBlocks leak', async () => {
+    installStreamFetch(fetchMock);
+    const { openrouterStream } = await import('./openrouter-stream');
+    const messages: ChatMessage[] = [
+      { id: 'u0', role: 'user', content: 'do a thing', timestamp: 0 } as unknown as ChatMessage,
+      ...toolHistory(),
+      {
+        id: 'orphan',
+        role: 'user',
+        content: '[TOOL_RESULT] orphan [/TOOL_RESULT]',
+        timestamp: 0,
+        toolResults: [{ type: 'tool_result', tool_use_id: 'missing', content: 'orphan' }],
+      } as unknown as ChatMessage,
+    ];
+    const iter = openrouterStream({
+      ...baseRequest,
+      openrouterWebSearch: false,
+      messages,
+      tools: [sampleTool],
+    });
+    iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.messages).toEqual([
+      { role: 'user', content: 'do a thing' },
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'toolu_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: 'toolu_1', content: 'file body' },
+      { role: 'user', content: '[TOOL_RESULT] orphan [/TOOL_RESULT]' },
+    ]);
+    for (const m of body.messages) expect('contentBlocks' in m).toBe(false);
   });
 
   it('closes cleanly when the stream ends without a [DONE] or finish_reason', async () => {

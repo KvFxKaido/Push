@@ -189,3 +189,22 @@ The gate is the presence of function schemas (`req.tools`), NOT OpenRouter's
 native-FC mode. Other OpenAI-compat adapters that already route through
 `toOpenAIChat` (Vertex Gemini, Zen-Go, CLI OpenAI-compat) get this flatten for
 free and need no change.
+
+Two seams the first cut missed (caught in #1219 review):
+
+1. **Worker proxy normalizer.** These adapters proxy their client-built body
+   through `validateAndNormalizeChatRequest` (`chat-request-guardrails.ts`), which
+   rebuilds each message and previously kept only `role`/`content`/reasoning
+   fields — silently dropping `tool_calls` (assistant) and `tool_call_id` (tool
+   role). So the expanded messages arrived malformed upstream (an assistant turn
+   with no calls + a dangling `role: 'tool'`). The normalizer now shape-validates
+   and preserves both fields (`normalizeToolCalls`, fail-closed: a malformed
+   `tool_calls` 400s rather than forwarding a half-stripped exchange). Providers
+   on the neutral path are unaffected — the Worker builds their tool messages
+   server-side via `toOpenAIChat`, after validation. `'tool'` was already an
+   allowed role.
+2. **contentBlocks leak on passthrough.** `expandToolMessagesForOpenAICompat`
+   now downcasts non-tool `contentBlocks` (multimodal/attachment turns) to OpenAI
+   content parts and drops the Push-private `contentBlocks` field, instead of
+   forwarding it verbatim. A blunt strip would lose images that live only in
+   `contentBlocks`, so it mirrors `toOpenAIChat`'s non-tool branch.

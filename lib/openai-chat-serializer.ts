@@ -490,19 +490,26 @@ export function expandToolMessagesForOpenAICompat<T extends ToolExpandableMessag
   const out: Array<T | OpenAIMessage> = [];
   for (const m of messages) {
     const blocks = m.contentBlocks;
-    const hasToolBlocks =
-      blocks !== undefined &&
-      blocks.length > 0 &&
-      blocks.some((b) => b.type === 'tool_use' || b.type === 'tool_result');
-    if (hasToolBlocks) {
-      out.push(
-        ...flattenToolBearingBlocks(
-          m.role,
-          blocks,
-          false,
-          m.reasoningContent ?? m.reasoning_content,
-        ),
-      );
+    if (blocks && blocks.length > 0) {
+      const reasoning = m.reasoningContent ?? m.reasoning_content;
+      const hasToolBlocks = blocks.some((b) => b.type === 'tool_use' || b.type === 'tool_result');
+      if (hasToolBlocks) {
+        out.push(...flattenToolBearingBlocks(m.role, blocks, false, reasoning));
+      } else {
+        // Non-tool contentBlocks (multimodal / attachment turns). Downcast to
+        // OpenAI content parts and DROP the Push-private `contentBlocks` field —
+        // a strict OpenAI-compat transport may reject the unknown message field,
+        // and these raw-forward adapters proxy the body verbatim. Mirrors
+        // `toOpenAIChat`'s non-tool branch; a blunt strip would lose images that
+        // live only in `contentBlocks` (attachment turns whose `content` is just
+        // the text fallback).
+        out.push(
+          withReasoningContent(
+            { role: m.role, content: llmContentBlocksToOpenAI(blocks, false) },
+            reasoning,
+          ),
+        );
+      }
     } else {
       out.push(m);
     }

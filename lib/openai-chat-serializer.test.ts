@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
+import { materializeToolContentBlocks } from './content-blocks.ts';
 import {
   expandToolMessagesForOpenAICompat,
   toOpenAIChat,
@@ -724,17 +725,33 @@ describe('expandToolMessagesForOpenAICompat', () => {
     ).toEqual([{ role: 'tool', tool_call_id: toolUse.id, content: 'file body' }]);
   });
 
-  it('passes non-tool turns through by reference, untouched', () => {
-    // A plain string turn and a text-only contentBlocks turn are both NOT tool
-    // turns — the adapter keeps its own serialization for them.
+  it('passes a plain string turn through by reference, untouched', () => {
     const plain = { role: 'user' as const, content: 'hi' };
-    const textBlocks = {
-      role: 'assistant' as const,
-      contentBlocks: [{ type: 'text' as const, text: 'yo' }],
-    };
-    const out = expandToolMessagesForOpenAICompat([plain, textBlocks]);
+    const out = expandToolMessagesForOpenAICompat([plain]);
     expect(out[0]).toBe(plain);
-    expect(out[1]).toBe(textBlocks);
+  });
+
+  it('downcasts a non-tool contentBlocks turn and drops the contentBlocks field', () => {
+    // Multimodal/attachment turns carry non-tool contentBlocks; these must NOT
+    // ride onto the OpenAI wire as the Push-private `contentBlocks` field.
+    const out = expandToolMessagesForOpenAICompat([
+      {
+        role: 'user',
+        content: 'fallback text',
+        contentBlocks: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'image', source: { type: 'url', url: 'https://example.com/cat.png' } },
+        ],
+      },
+    ]);
+    expect(out[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', image_url: { url: 'https://example.com/cat.png' } },
+      ],
+    });
+    expect('contentBlocks' in (out[0] as Record<string, unknown>)).toBe(false);
   });
 
   it('reads the web wire-shaped reasoning_content for the flushed assistant turn', () => {
@@ -742,5 +759,53 @@ describe('expandToolMessagesForOpenAICompat', () => {
       { role: 'assistant', reasoning_content: 'thought', contentBlocks: [toolUse] },
     ]);
     expect(out[0]).toMatchObject({ role: 'assistant', reasoning_content: 'thought' });
+  });
+
+  // Integration with the REAL materializeToolContentBlocks (the production path:
+  // toLLMMessages runs it under emitContentBlocks, then the adapter expands).
+  it('composes with materializeToolContentBlocks: paired flattens, no contentBlocks leak', () => {
+    const materialized = materializeToolContentBlocks([
+      {
+        role: 'assistant',
+        content: '```json\n{"tool":"sandbox_read_file","args":{"path":"a.ts"}}\n```',
+        toolUses: [toolUse],
+      },
+      {
+        role: 'user',
+        content: '[TOOL_RESULT] file body [/TOOL_RESULT]',
+        toolResults: [toolResult],
+      },
+    ]);
+    const wire = expandToolMessagesForOpenAICompat(materialized);
+    expect(wire).toEqual([
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: toolUse.id,
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          },
+        ],
+      },
+      { role: 'tool', tool_call_id: toolUse.id, content: 'file body' },
+    ]);
+    for (const m of wire) expect('contentBlocks' in (m as Record<string, unknown>)).toBe(false);
+  });
+
+  it('composes with materializeToolContentBlocks: an unpaired tool result degrades to text', () => {
+    const materialized = materializeToolContentBlocks([
+      {
+        role: 'user',
+        content: '[TOOL_RESULT] orphan [/TOOL_RESULT]',
+        toolResults: [{ type: 'tool_result', tool_use_id: 'missing', content: 'orphan' }],
+      },
+    ]);
+    // No pair → materialize adds no contentBlocks → expand leaves the text turn.
+    const wire = expandToolMessagesForOpenAICompat(materialized);
+    expect(wire.some((m) => (m as { role?: string }).role === 'tool')).toBe(false);
+    expect(wire[0]).toMatchObject({ role: 'user', content: '[TOOL_RESULT] orphan [/TOOL_RESULT]' });
+    expect('contentBlocks' in (wire[0] as Record<string, unknown>)).toBe(false);
   });
 });
