@@ -131,6 +131,7 @@ import {
   getCurrentSkillPlatform,
   lintSkills,
   formatSkillDiagnostics,
+  skillDiagnosticSummaryLine,
   type SkillDiagnostic,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES } from '../lib/capabilities.js';
@@ -3571,26 +3572,12 @@ export async function runTUI(options = {}) {
   // ── Skills ────────────────────────────────────────────────────────
 
   // Skill-lint diagnostics for the current workspace, collected on every (re)load so a malformed
-  // skill file no longer silently vanishes. Emitted to stderr as structured logs (TUI owns the
-  // alternate screen on stdout; stderr stays clean for ops) and surfaced on demand via `/skills lint`.
+  // skill file no longer silently vanishes. Unlike the line-based REPL, the TUI does NOT write these
+  // to stderr: `/skills reload` runs while the TUI owns the alternate screen, and stderr to a TTY
+  // isn't isolated from it — structured JSON would render directly over the live UI. Diagnostics are
+  // surfaced in-app instead, via the `/skills` listing footer and `/skills lint`.
   let skillDiagnostics: SkillDiagnostic[] = [];
-  function logSkillDiagnostics(diags: SkillDiagnostic[]): void {
-    for (const d of diags) {
-      console.error(
-        JSON.stringify({
-          level: d.severity === 'error' ? 'warn' : 'info',
-          event: d.severity === 'error' ? 'skill_lint_dropped' : 'skill_lint_degraded',
-          code: d.code,
-          name: d.name,
-          source: d.source,
-          filePath: d.filePath,
-          message: d.message,
-        }),
-      );
-    }
-  }
   const skills = await loadSkills(state.cwd, { diagnostics: skillDiagnostics });
-  logSkillDiagnostics(skillDiagnostics);
   // Sibling map filtered for the current environment — feeds the completer so hidden
   // skills don't tab-complete. Dispatch still uses the full `skills` map.
   const skillFilterEnv = {
@@ -3614,7 +3601,6 @@ export async function runTUI(options = {}) {
       skills.set(name, skill);
     }
     skillDiagnostics = freshDiagnostics;
-    logSkillDiagnostics(freshDiagnostics);
     rebuildVisibleSkills();
     tabCompleter.reset();
     return skills.size;
@@ -5892,12 +5878,9 @@ export async function runTUI(options = {}) {
             if (hidden > 0) {
               lines.push(`  (${hidden} hidden — platform or capability constraints unmet)`);
             }
-            if (skillDiagnostics.length > 0) {
-              const errs = skillDiagnostics.filter((d) => d.severity === 'error').length;
-              const detail = errs > 0 ? `, ${errs} skipped` : '';
-              lines.push(
-                `  (${skillDiagnostics.length} skill file(s) have problems${detail} — /skills lint)`,
-              );
+            const summary = skillDiagnosticSummaryLine(skillDiagnostics);
+            if (summary) {
+              lines.push(`  (${summary})`);
             }
             addTranscriptEntry(tuiState, 'status', lines.join('\n'));
           }

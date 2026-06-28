@@ -12,6 +12,8 @@ import {
   getCurrentSkillPlatform,
   lintSkills,
   formatSkillDiagnostics,
+  skillDiagnosticLogLines,
+  skillDiagnosticSummaryLine,
 } from '../skill-loader.ts';
 
 let tmpDir;
@@ -680,6 +682,83 @@ describe('lintSkills', () => {
     // Plain load must not throw and must simply omit the broken skill.
     const skills = await loadSkills(tmpDir);
     assert.ok(!skills.has('empty'));
+  });
+});
+
+describe('skillDiagnosticLogLines', () => {
+  it('returns one JSON line per diagnostic with paired event names/levels', () => {
+    const lines = skillDiagnosticLogLines([
+      {
+        filePath: '/w/a.md',
+        name: 'a',
+        source: 'workspace',
+        severity: 'error',
+        code: 'empty-body',
+        message: 'no body',
+      },
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: 'beos dropped',
+      },
+    ]);
+    assert.equal(lines.length, 2);
+    const dropped = JSON.parse(lines[0]);
+    assert.equal(dropped.level, 'warn');
+    assert.equal(dropped.event, 'skill_lint_dropped');
+    assert.equal(dropped.code, 'empty-body');
+    const degraded = JSON.parse(lines[1]);
+    assert.equal(degraded.level, 'info');
+    assert.equal(degraded.event, 'skill_lint_degraded');
+  });
+
+  it('returns an empty array for no diagnostics', () => {
+    assert.deepEqual(skillDiagnosticLogLines([]), []);
+  });
+});
+
+describe('skillDiagnosticSummaryLine', () => {
+  it('returns null when there is nothing to report', () => {
+    assert.equal(skillDiagnosticSummaryLine([]), null);
+  });
+
+  it('counts dropped files separately from total problems', () => {
+    const line = skillDiagnosticSummaryLine([
+      {
+        filePath: '/w/a.md',
+        name: 'a',
+        source: 'workspace',
+        severity: 'error',
+        code: 'empty-body',
+        message: '',
+      },
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: '',
+      },
+    ]);
+    assert.equal(line, '2 skill file(s) have problems, 1 skipped — /skills lint');
+  });
+
+  it('omits the skipped clause when there are only warnings', () => {
+    const line = skillDiagnosticSummaryLine([
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: '',
+      },
+    ]);
+    assert.equal(line, '1 skill file(s) have problems — /skills lint');
   });
 });
 

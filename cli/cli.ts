@@ -57,6 +57,8 @@ import {
   getCurrentSkillPlatform,
   lintSkills,
   formatSkillDiagnostics,
+  skillDiagnosticLogLines,
+  skillDiagnosticSummaryLine,
   type SkillDiagnostic,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
@@ -922,23 +924,13 @@ async function runInteractive(
   }
   // Skill-lint diagnostics for the current workspace. Collected on every (re)load so a malformed
   // `.push/skills/*.md` or `.claude/commands/**.md` no longer silently vanishes from `/skills`.
+  // Structured, symmetric logs go to stderr (CLI stdout is reserved for user output / --json) so a
+  // dropped skill is visible to ops, not just to whoever runs `/skills lint`. This is the line-based
+  // REPL — stderr is safe here; the full-screen TUI deliberately omits these (see tui.ts) and relies
+  // on its in-app surfacing instead. Event names/levels live once in `skillDiagnosticLogLines`.
   let skillDiagnostics: SkillDiagnostic[] = [];
-  // Structured, symmetric logs on stderr (CLI stdout is reserved for user output / --json) so a
-  // dropped skill is visible to ops, not just to whoever runs `/skills lint`.
   function logSkillDiagnostics(diags: SkillDiagnostic[]): void {
-    for (const d of diags) {
-      console.error(
-        JSON.stringify({
-          level: d.severity === 'error' ? 'warn' : 'info',
-          event: d.severity === 'error' ? 'skill_lint_dropped' : 'skill_lint_degraded',
-          code: d.code,
-          name: d.name,
-          source: d.source,
-          filePath: d.filePath,
-          message: d.message,
-        }),
-      );
-    }
+    for (const line of skillDiagnosticLogLines(diags)) console.error(line);
   }
   const skills = await loadSkills(state.cwd, { diagnostics: skillDiagnostics });
   logSkillDiagnostics(skillDiagnostics);
@@ -1203,14 +1195,9 @@ async function runInteractive(
               );
             }
           }
-          if (skillDiagnostics.length > 0) {
-            const errs = skillDiagnostics.filter((d) => d.severity === 'error').length;
-            const detail = errs > 0 ? `, ${errs} skipped` : '';
-            process.stdout.write(
-              fmt.dim(
-                `  (${skillDiagnostics.length} skill file(s) have problems${detail} — /skills lint)\n`,
-              ),
-            );
+          const summary = skillDiagnosticSummaryLine(skillDiagnostics);
+          if (summary) {
+            process.stdout.write(fmt.dim(`  (${summary})\n`));
           }
           continue;
         }

@@ -518,6 +518,38 @@ export async function lintSkills(workspaceRoot: string): Promise<SkillDiagnostic
 }
 
 /**
+ * Build the structured ops-log lines for a set of diagnostics — one JSON object per line, paired
+ * `skill_lint_dropped` (error) / `skill_lint_degraded` (warning) events. This is the single home for
+ * the event names + levels so the REPL/headless surfaces can't drift from each other; each surface
+ * decides where to write them (stderr is safe on a line-based REPL, but NOT inside a full-screen TUI
+ * render — the TUI surfaces diagnostics in-app instead, via the `/skills` footer and `/skills lint`).
+ */
+export function skillDiagnosticLogLines(diagnostics: SkillDiagnostic[]): string[] {
+  return diagnostics.map((d) =>
+    JSON.stringify({
+      level: d.severity === 'error' ? 'warn' : 'info',
+      event: d.severity === 'error' ? 'skill_lint_dropped' : 'skill_lint_degraded',
+      code: d.code,
+      name: d.name,
+      source: d.source,
+      filePath: d.filePath,
+      message: d.message,
+    }),
+  );
+}
+
+/**
+ * One-line summary hint for the `/skills` listing footer, or null when there's nothing to report.
+ * Plain text (no color, no surrounding parens) so each surface can wrap it in its own styling.
+ */
+export function skillDiagnosticSummaryLine(diagnostics: SkillDiagnostic[]): string | null {
+  if (diagnostics.length === 0) return null;
+  const errors = diagnostics.filter((d) => d.severity === 'error').length;
+  const detail = errors > 0 ? `, ${errors} skipped` : '';
+  return `${diagnostics.length} skill file(s) have problems${detail} — /skills lint`;
+}
+
+/**
  * Render lint diagnostics as plain text (no terminal color — callers add styling). Returns a
  * single line when there's nothing to report so the caller can print it unconditionally.
  */
