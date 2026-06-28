@@ -152,8 +152,14 @@ export default defineConfig([
   // card genuinely needs elevation it's *floating* chrome, not a content card —
   // move it or use the overlay `shadow-push-card*` family, which is what cards
   // that lift off the page are for.
+  //
+  // Co-located test files are excluded: the guard constrains the production card
+  // *components*, not assertions about them. A card test that asserts a card
+  // does NOT carry neumorphic depth would otherwise have to name the forbidden
+  // string and trip its own guard.
   {
     files: ['src/components/cards/**/*.{ts,tsx}'],
+    ignores: ['src/components/cards/**/*.test.{ts,tsx}'],
     rules: {
       'no-restricted-syntax': [
         'error',
