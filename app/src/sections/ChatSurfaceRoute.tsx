@@ -381,6 +381,8 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
             onScratchpadSaveMemory={scratchpad.saveMemory}
             onScratchpadLoadMemory={scratchpad.loadMemory}
             onScratchpadDeleteMemory={scratchpad.deleteMemory}
+            appearance={chatModeAppearance}
+            accentHex={chatModeAccentHex}
             todos={todo.todos}
             onTodoClear={todo.clear}
             branchProps={{
