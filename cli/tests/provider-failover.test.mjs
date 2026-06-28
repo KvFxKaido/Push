@@ -86,9 +86,11 @@ describe('resolveCliFailoverCandidates', () => {
       PUSH_ANTHROPIC_API_KEY: 'k-anthropic',
     });
     try {
-      // openai is Responses-native; anthropic (different shape) is excluded
-      // even though it has a key. Order follows PROVIDER_CONFIGS declaration.
-      assert.deepEqual(ids(resolveCliFailoverCandidates('openrouter', new Set(['openrouter']))), [
+      // openai + fireworks are both Responses-native, so a turn locked on
+      // openai fails over to fireworks. openrouter (openai-compat) and anthropic
+      // (different shape) are excluded even though they have keys. Order follows
+      // PROVIDER_CONFIGS declaration.
+      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), [
         'fireworks',
       ]);
     } finally {

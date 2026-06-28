@@ -1,18 +1,26 @@
 /**
  * Fireworks AI PushStream implementation.
  *
- * Hits the Fireworks AI chat endpoint, then delegates SSE parsing to the shared
- * `openAISSEPump` in `lib/`.
+ * Fireworks exposes an OpenAI-compatible Responses API, so this mirrors the
+ * direct OpenAI / Sakana adapters rather than the Chat Completions ones. Hits
+ * the Worker proxy at `/api/fireworks/chat`, which proxies to
+ * `api.fireworks.ai/inference/v1/responses` with Bearer auth and pipes the
+ * typed Responses SSE stream back unchanged.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
  */
 
-import type { ChatMessage } from '@/types';
-import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
-import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
-import type { WorkspaceContext } from '@/types';
+import type { ChatMessage, WorkspaceContext } from '@/types';
+import type {
+  LlmContentBlock,
+  LlmContentPart,
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+} from '@push/lib/provider-contract';
+import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
+import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -21,6 +29,33 @@ import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 import { ProviderStreamError } from './stream-error';
+
+type FireworksLlmMessage = {
+  role: LlmMessage['role'];
+  content: string | LlmContentPart[];
+  contentBlocks?: LlmContentBlock[];
+};
+
+function contentFallbackText(content: string | LlmContentPart[]): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part): part is Extract<LlmContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function toNeutralMessages(messages: FireworksLlmMessage[]): LlmMessage[] {
+  return messages.map((message, index) => ({
+    id: `fireworks-response-${index}`,
+    role: message.role,
+    content: contentFallbackText(message.content),
+    timestamp: 0,
+    ...(Array.isArray(message.content) ? { contentParts: message.content } : {}),
+    ...(message.contentBlocks && message.contentBlocks.length > 0
+      ? { contentBlocks: message.contentBlocks }
+      : {}),
+  }));
+}
 
 export async function* fireworksStream(
   req: PushStreamRequest<ChatMessage>,
@@ -43,37 +78,28 @@ export async function* fireworksStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: true,
+  }) as FireworksLlmMessage[];
+
+  // 2. Typed Responses `input`-item body via the shared serializer.
+  const body = toOpenAIResponses({
+    provider: 'fireworks',
+    model: req.model,
+    messages: toNeutralMessages(llmMessages),
+    maxTokens: req.maxTokens,
+    temperature: req.temperature,
+    topP: req.topP,
+    signal: req.signal,
+    responseFormat: req.responseFormat,
+    tools: req.tools,
   });
 
-  // 2. Plain OpenAI-compatible request body — no Fireworks AI-specific fields.
-  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
-  const openAITools = nativeTools?.map(flatToolToOpenAITool);
-  const body: Record<string, unknown> = {
-    model: req.model,
-    messages: llmMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    // Native function calling: forward the caller's tool schemas (gated on model
-    // support via `providerModelSupportsNativeToolCalling`) so the OpenAI-compatible
-    // endpoint can answer through its constrained tool-calling path. Additive to
-    // text-dispatch — `openAISSEPump` emits native `tool_calls` as structured
-    // events. `tool_choice: 'auto'` keeps prose
-    // answers available when no tool is needed.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
-    // Native structured outputs: forward the caller's JSON-Schema constraint so
-    // the OpenAI-compatible endpoint constrains generation server-side. Shared
-    // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`
-    // guard — that field is OpenRouter-specific.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
-  };
-
-  // 3. Headers. Bearer auth, single endpoint. Omit the header entirely when
-  //    no client key is configured — `standardAuth` treats any non-empty
-  //    client `Authorization` as "key supplied" and skips the Worker's
-  //    `keyMissingError` 401, so sending `Bearer ` would bypass the
-  //    configured fallback and forward an empty bearer upstream.
+  // 3. Headers. The Worker prefers its own server-side FIREWORKS_API_KEY when
+  //    set and ignores the client-side header. Sending the client key as a
+  //    Bearer when present preserves dev / unconfigured-Worker paths via
+  //    standardAuth's fallback. Omit the header entirely on empty key so the
+  //    Worker's keyMissingError 401 fires (sending `Bearer ` would be treated
+  //    as "key supplied" and forward an empty bearer upstream).
   const apiKey = (getFireworksKey() ?? '').trim();
   const requestId = createRequestId('chat');
   const headers: Record<string, string> = {
@@ -100,16 +126,19 @@ export async function* fireworksStream(
     } catch {
       detail = errBody ? errBody.slice(0, 200) : 'empty body';
     }
-    throw new ProviderStreamError(`Fireworks AI ${response.status}: ${detail}`, {
-      status: response.status,
-    });
+    // Worker's handleFireworksChat already prefixes its JSON error with
+    // `Fireworks AI ${status}: …`, so don't re-prefix here.
+    const message = detail.startsWith('Fireworks AI ')
+      ? detail
+      : `Fireworks AI ${response.status}: ${detail}`;
+    throw new ProviderStreamError(message, { status: response.status });
   }
 
   if (!response.body) {
     throw new Error('Fireworks AI response had no body');
   }
 
-  yield* openAISSEPump({
+  yield* openAIResponsesSSEPump({
     body: response.body,
     signal: req.signal,
     isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),

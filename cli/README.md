@@ -206,7 +206,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_KILOCODE_URL` | Kilo Code endpoint (default: `https://api.kilo.ai/api/gateway/chat/completions`) |
 | `PUSH_KILOCODE_API_KEY` | Kilo Code API key |
 | `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-3-flash-preview`) |
-| `PUSH_FIREWORKS_URL` | Fireworks AI endpoint (default: `https://api.fireworks.ai/inference/v1/chat/completions`) |
+| `PUSH_FIREWORKS_URL` | Fireworks AI endpoint (default: `https://api.fireworks.ai/inference/v1/responses`) |
 | `PUSH_FIREWORKS_API_KEY` | Fireworks AI API key |
 | `PUSH_FIREWORKS_MODEL` | Fireworks AI model (default: `accounts/fireworks/models/deepseek-v4-pro`) |
 | `PUSH_DEEPSEEK_URL` | DeepSeek endpoint (default: `https://api.deepseek.com/anthropic/v1/messages`) |
@@ -241,7 +241,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships eleven providers. Six (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai` and `sakana` (Fugu) use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships eleven providers. Five (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
