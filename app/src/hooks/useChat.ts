@@ -4,8 +4,6 @@ import type {
   AgentStatusEvent,
   AIProviderType,
   AttachmentData,
-  BranchSwitchPayload,
-  BranchSwitchSource,
   ChatMessage,
   ChatSendOptions,
   Conversation,
@@ -59,13 +57,7 @@ import { useWorkspacePatchCapture, useWorkspacePatchReplay } from './useWorkspac
 import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
-import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
-import {
-  forkBranchInWorkspace,
-  type ForkBranchInWorkspaceResult,
-  switchBranchInWorkspace,
-  type SwitchBranchInWorkspaceResult,
-} from '@/lib/fork-branch-in-workspace';
+import { useBranchSwitchActions } from './useBranchSwitchActions';
 import { useBranchForkGuard } from './useBranchForkGuard';
 import { useChatAutoSwitch } from './useChatAutoSwitch';
 
@@ -631,6 +623,14 @@ export function useChat(
           abortControllerRef,
         },
         { updateConversations, setIsStreaming, updateAgentStatus },
+        // Branch-on-first-prompt wiring; decision + fork logic live in
+        // first-prompt-branch.ts. useChat only threads refs (it's at its cap).
+        {
+          repoFullName: repoRef.current,
+          branchInfoRef,
+          skipAutoCreateRef,
+          runtimeHandlersRef,
+        },
       );
       const lockedProviderForChat = prepared.lockedProvider;
       const resolvedModelForChat = prepared.resolvedModel;
@@ -833,59 +833,20 @@ export function useChat(
   // UI branch transitions (fork: slice 2.1; switch: warm-switch doc) wrap the
   // typed sandbox branch tools so the UI buttons and the model emit the same
   // operations, then dispatch the BranchSwitchPayload through
-  // applyBranchSwitchPayload — single source of truth for chat migration, no
-  // parallel implementation in the UI handlers.
-  const applyBranchSwitchFromUI = useCallback(
-    (payload: BranchSwitchPayload): void => {
-      applyBranchSwitchPayload(payload, {
-        activeChatIdRef,
-        conversationsRef,
-        branchInfoRef,
-        skipAutoCreateRef,
-        setConversations: updateConversations,
-        dirtyConversationIdsRef,
-        runtimeHandlersRef,
-      });
-    },
-    [updateConversations, skipAutoCreateRef, dirtyConversationIdsRef],
-  );
-
-  const forkBranchFromUI = useCallback(
-    async (name: string, from?: string): Promise<ForkBranchInWorkspaceResult> => {
-      const result = await forkBranchInWorkspace(sandboxIdRef.current, name, from);
-      if (!result.ok || !result.branchSwitch) return result;
-      applyBranchSwitchFromUI(result.branchSwitch);
-      return result;
-    },
-    [applyBranchSwitchFromUI],
-  );
-
-  const switchBranchFromUI = useCallback(
-    async (branch: string): Promise<SwitchBranchInWorkspaceResult> => {
-      const result = await switchBranchInWorkspace(sandboxIdRef.current, branch);
-      if (!result.ok || !result.branchSwitch) return result;
-      applyBranchSwitchFromUI(result.branchSwitch);
-      return result;
-    },
-    [applyBranchSwitchFromUI],
-  );
-
-  // Post-merge migration: emit kind:'merged' through the shared branch-switch dispatcher.
-  const mergeBranchInUI = useCallback(
-    (
-      toBranch: string,
-      opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
-    ): void => {
-      applyBranchSwitchFromUI({
-        name: toBranch,
-        kind: 'merged',
-        from: opts?.from,
-        prNumber: opts?.prNumber,
-        source: opts?.source ?? 'ui-merge',
-      });
-    },
-    [applyBranchSwitchFromUI],
-  );
+  // UI branch operations (fork / switch / merge) + the shared migration entry
+  // point. Extracted to a sibling hook so useChat stays under its line cap; see
+  // useBranchSwitchActions.ts.
+  const { applyBranchSwitchFromUI, forkBranchFromUI, switchBranchFromUI, mergeBranchInUI } =
+    useBranchSwitchActions({
+      activeChatIdRef,
+      conversationsRef,
+      branchInfoRef,
+      skipAutoCreateRef,
+      setConversations: updateConversations,
+      dirtyConversationIdsRef,
+      runtimeHandlersRef,
+      sandboxIdRef,
+    });
 
   return {
     // Active chat

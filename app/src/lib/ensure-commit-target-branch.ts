@@ -156,7 +156,7 @@ function withNumericSuffix(base: string, suffix: number): string {
   return `${base.slice(0, maxBase).replace(/[^a-z0-9]+$/g, '')}${marker}`;
 }
 
-function isBranchExistsMessage(message: string | undefined): boolean {
+export function isBranchExistsMessage(message: string | undefined): boolean {
   return Boolean(message && /already exists|exists already|a branch named/i.test(message));
 }
 

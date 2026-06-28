@@ -1,12 +1,37 @@
 # Auto-Branch on Commit — Nothing Lands on Main
 
 Date: 2026-06-13
-Status: **Current** — shipped for the web/cloud surfaces. The model tool path
-(`handlePrepareCommit`), the workspace hub, and the file-browser commit flow
-all route an on-default-branch commit through the auto-branch seam; the hub's
-previously-raw commit/push is now gated by the secret scan. CLI deferred (see
-Non-goals).
+Status: **Current (trigger relocated 2026-06-28)** — the persistence goal
+("nothing lands on `main`") holds, but the branch is now created at the **first
+user prompt** (named from the prompt), not at the first commit. See "Update —
+Branch on First Prompt" below. The commit-time auto-branch documented here is
+retained as a **fail-safe**: it only forks when `currentBranch === defaultBranch`,
+so it self-neutralizes once a session has already branched off the default
+branch. Web/cloud surfaces still route an on-default-branch commit through the
+auto-branch seam; the hub's commit/push is gated by the secret scan. CLI
+deferred (see Non-goals).
 Owner: Push
+
+## Update — Branch on First Prompt (2026-06-28)
+
+Working on `main` with an ephemeral sandbox is retired. A repo-backed session now
+forks a work branch the moment the user sends their **first message** — named
+from that prompt — before any tool call, so the session never *works* on the
+default branch (mirrors Claude Code's branch-per-session). Pragmatic ordering:
+the sandbox has already cloned `main` (prewarm), then immediately
+`sandbox_create_branch` (→ `git checkout -b`); the conversation migrates onto the
+new branch via the shared `applyBranchSwitchPayload` dispatcher. The branch stays
+**local in the sandbox until the first commit** (gate-at-push), so pure Q&A
+sessions never create a remote branch — no branch sprawl even though every first
+prompt branches.
+
+Implementation: `app/src/lib/first-prompt-branch.ts` (decision + fork +
+migration), `deriveBranchNameFromPrompt` in `app/src/lib/branch-names.ts`
+(deterministic prompt slug), wired through `prepareSendContext`
+(`app/src/hooks/chat-prepare-send.ts`) so `useChat` stays at its line cap. The
+commit-time seam specified below is unchanged and now serves only as the
+fail-safe. Naming is a deterministic slug for v1 (zero pre-turn latency); the
+model-namer from the commit path can be grafted on later if slugs read poorly.
 
 ## Problem
 

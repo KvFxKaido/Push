@@ -26,6 +26,9 @@ import { getActiveProvider, isProviderAvailable, type ActiveProvider } from '@/l
 import { setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import { resolveWebAutoBranchOnCommitEnabled } from '@/lib/ensure-commit-target-branch';
+import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
+import type { BranchForkMigrationContext } from '@/lib/branch-fork-migration';
 import { createId, generateTitle } from './chat-persistence';
 import type {
   AgentStatus,
@@ -102,6 +105,21 @@ export interface PrepareSendCallbacks {
   updateAgentStatus: (status: AgentStatus, opts?: { chatId?: string }) => void;
 }
 
+/**
+ * Extra wiring for branch-on-first-prompt. Kept as a discrete optional param so
+ * `useChat` (at its line cap) only threads refs, and the decision + fork logic
+ * stays in `first-prompt-branch.ts`. Field types are reused from the migration
+ * context so no extra type imports are needed. Omit to disable branching for a
+ * caller (e.g. the no-repo path or tests).
+ */
+export interface FirstPromptBranchDeps {
+  /** owner/name, or null for scratch / no-repo. */
+  repoFullName: string | null;
+  branchInfoRef: BranchForkMigrationContext['branchInfoRef'];
+  skipAutoCreateRef: BranchForkMigrationContext['skipAutoCreateRef'];
+  runtimeHandlersRef: BranchForkMigrationContext['runtimeHandlersRef'];
+}
+
 export interface PrepareSendResult {
   /** Initial message stack the round loop streams against. */
   apiMessages: ChatMessage[];
@@ -123,6 +141,7 @@ export async function prepareSendContext(
   args: PrepareSendArgs,
   refs: PrepareSendRefs,
   callbacks: PrepareSendCallbacks,
+  branchDeps?: FirstPromptBranchDeps,
 ): Promise<PrepareSendResult> {
   const { trimmedText, attachments, options, chatId, skipStreamingPlaceholder } = args;
 
@@ -167,10 +186,28 @@ export async function prepareSendContext(
     status: 'streaming',
   };
 
+  // When branch-on-first-prompt may fire below, defer the streaming-assistant
+  // placeholder until *after* the fork: the fork's `branch_forked` divider would
+  // otherwise become the last assistant message, and the stream writes deltas
+  // into the last assistant slot — so a divider-last swallows the first response
+  // (empty spinner forever). Over-approximated from pre-prewarm state (sandbox id
+  // isn't known yet); the post-fork append fires whether or not the fork landed,
+  // so the placeholder is always appended exactly once, last. Every other send
+  // keeps the immediate single-render placeholder.
+  const branchInfo = branchDeps?.branchInfoRef.current;
+  const mayBranchOnFirstPrompt = Boolean(
+    branchDeps &&
+      isFirstMessage &&
+      branchDeps.repoFullName &&
+      (branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? 'main') ===
+        (branchInfo?.defaultBranch ?? 'main'),
+  );
+
   callbacks.updateConversations((prev) => {
-    const messages = skipStreamingPlaceholder
-      ? updatedWithUser
-      : [...updatedWithUser, firstAssistant];
+    const messages =
+      skipStreamingPlaceholder || mayBranchOnFirstPrompt
+        ? updatedWithUser
+        : [...updatedWithUser, firstAssistant];
     const updated = {
       ...prev,
       [chatId]: {
@@ -212,6 +249,51 @@ export async function prepareSendContext(
     } catch {
       // Best effort prewarm; continue chat flow without sandbox.
     }
+  }
+
+  // Branch-on-first-prompt: now that the sandbox has cloned `main`, fork a work
+  // branch named from this prompt and migrate the conversation onto it before
+  // the round loop runs — so the session never works on the default branch. A
+  // no-op for non-first messages, scratch/no-repo, or when already off main.
+  if (branchDeps) {
+    await maybeBranchOnFirstPrompt(
+      {
+        enabled: resolveWebAutoBranchOnCommitEnabled(),
+        isFirstMessage,
+        promptText: trimmedText,
+        repoFullName: branchDeps.repoFullName,
+        sandboxId: refs.sandboxIdRef.current,
+        currentBranch: branchDeps.branchInfoRef.current?.currentBranch,
+        defaultBranch: branchDeps.branchInfoRef.current?.defaultBranch,
+      },
+      {
+        // Target THIS send's chat, not `activeChatIdRef` ("active at resolution
+        // time"): the branch was created for this prompt, and across the
+        // prewarm/fork awaits the active chat can drift (a just-created first-
+        // message chat, or a user chat-switch). The deferred placeholder + the
+        // stream both key off `chatId`, so the migration must too — otherwise the
+        // branch_forked divider lands on a different chat than the response.
+        activeChatIdRef: { current: chatId },
+        conversationsRef: refs.conversationsRef,
+        branchInfoRef: branchDeps.branchInfoRef,
+        skipAutoCreateRef: branchDeps.skipAutoCreateRef,
+        setConversations: callbacks.updateConversations,
+        dirtyConversationIdsRef: refs.dirtyConversationIdsRef,
+        runtimeHandlersRef: branchDeps.runtimeHandlersRef,
+      },
+    );
+  }
+
+  // Deferred streaming placeholder (see mayBranchOnFirstPrompt): append it now,
+  // after any branch divider, so the stream writes into the placeholder rather
+  // than the divider. `prev`-based so it lands after the migration's update
+  // regardless of state-flush timing. Fires whether or not the fork landed.
+  if (mayBranchOnFirstPrompt && !skipStreamingPlaceholder) {
+    callbacks.updateConversations((prev) => {
+      const conv = prev[chatId];
+      if (!conv) return prev;
+      return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, firstAssistant] } };
+    });
   }
 
   refs.abortControllerRef.current = new AbortController();

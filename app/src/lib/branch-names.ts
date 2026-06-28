@@ -38,6 +38,27 @@ export function deriveBranchNameFromCommitMessage(commitMessage: string, prefix:
   return `${normalizedPrefix}/${slug || 'update-workspace'}`;
 }
 
+/**
+ * Derive a work-branch name from the user's first prompt. Takes the first
+ * non-empty line, keeps the leading words within a length budget, slugifies,
+ * and namespaces under the repo-derived prefix. Bounded (unlike
+ * `deriveBranchNameFromCommitMessage`) because prompt text is free-form and can
+ * be arbitrarily long. Used by branch-on-first-prompt to name the branch the
+ * moment a session starts, before any diff exists.
+ */
+export function deriveBranchNameFromPrompt(promptText: string, prefix: string): string {
+  const normalizedPrefix = sanitizeBranchName(prefix).replace(/\//g, '-') || 'work';
+  const slug = sanitizeBranchName(unwrapFirstLine(promptText))
+    .replace(/\//g, '-')
+    .split('-')
+    .filter(Boolean)
+    .slice(0, 8)
+    .join('-')
+    .slice(0, 48)
+    .replace(/-+$/, '');
+  return `${normalizedPrefix}/${slug || 'session'}`;
+}
+
 export function normalizeSuggestedBranchName(raw: string, prefix: string): string {
   const normalizedPrefix = sanitizeBranchName(prefix).replace(/\//g, '-') || 'work';
   const firstLine = unwrapFirstLine(raw)
