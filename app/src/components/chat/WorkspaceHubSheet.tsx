@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { categorizeSandboxError } from '@/lib/sandbox-error-utils';
+import type { RepoAppearance } from '@/lib/repo-appearance';
 import { toast } from 'sonner';
 import {
   Sheet,
@@ -235,6 +236,10 @@ interface WorkspaceHubSheetProps {
   onScratchpadSaveMemory: (name: string) => void;
   onScratchpadLoadMemory: (id: string | null) => void;
   onScratchpadDeleteMemory: (id: string) => void;
+  /** Active repo appearance + accent so the full-screen note editor matches the
+   *  repo theme. Optional — the Notes tab defaults to the canonical sky/gradient. */
+  appearance?: RepoAppearance;
+  accentHex?: string;
   // Todo list — model's working plan, read-only display
   todos: readonly TodoItem[];
   onTodoClear: () => void;
@@ -448,6 +453,8 @@ export function WorkspaceHubSheet({
   onScratchpadSaveMemory,
   onScratchpadLoadMemory,
   onScratchpadDeleteMemory,
+  appearance,
+  accentHex,
   todos,
   onTodoClear,
   branchProps,
@@ -1849,6 +1856,8 @@ export function WorkspaceHubSheet({
                 onUpdateLabel={onUpdateArtifactLabel}
                 todos={todos}
                 onTodoClear={onTodoClear}
+                appearance={appearance}
+                accentHex={accentHex}
               />
             )}
 

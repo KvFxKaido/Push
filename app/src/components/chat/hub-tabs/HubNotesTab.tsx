@@ -13,6 +13,11 @@ import {
   HUB_TAG_CLASS,
 } from '@/components/chat/hub-styles';
 import { KeptCacheIcon, NotebookPadIcon } from '@/components/icons/push-custom-icons';
+import {
+  DEFAULT_REPO_APPEARANCE,
+  getRepoAppearanceColorHex,
+  type RepoAppearance,
+} from '@/lib/repo-appearance';
 import { ScratchpadMemoryGallery } from '@/components/chat/scratchpad/ScratchpadMemoryGallery';
 import { ScratchpadNoteEditor } from '@/components/chat/scratchpad/ScratchpadNoteEditor';
 import { cardViewTransitionName } from '@/components/chat/scratchpad/scratchpad-morph';
@@ -47,6 +52,13 @@ interface HubNotesTabProps {
   onUpdateLabel: (id: string, label: string) => void;
   todos: readonly TodoItem[];
   onTodoClear: () => void;
+  /**
+   * The active repo's appearance + resolved accent hex, so the full-screen note
+   * editor's ambient background matches the repo theme. Defaults to Push's
+   * canonical sky/gradient when no repo theme applies (e.g. the scratch repo).
+   */
+  appearance?: RepoAppearance;
+  accentHex?: string;
 }
 
 export function HubNotesTab({
@@ -65,9 +77,14 @@ export function HubNotesTab({
   onUpdateLabel,
   todos,
   onTodoClear,
+  appearance = DEFAULT_REPO_APPEARANCE,
+  accentHex,
 }: HubNotesTabProps) {
   const [memoryName, setMemoryName] = useState('');
   const [editor, setEditor] = useState<NoteEditorTarget | null>(null);
+  // Prefer the caller's resolved accent; fall back to the appearance's own color
+  // so the editor glow always has a concrete hex even without an explicit accent.
+  const resolvedAccentHex = accentHex ?? getRepoAppearanceColorHex(appearance.color);
   const activeMemory = activeMemoryId
     ? (scratchpadMemories.find((memory) => memory.id === activeMemoryId) ?? null)
     : null;
@@ -255,7 +272,9 @@ export function HubNotesTab({
           onClose={closeEditor}
           onDelete={editor.memoryId ? () => deleteFromEditor(editor.memoryId as string) : undefined}
           morphName={editor.morph}
-          glowKey={editor.memoryId ?? 'draft'}
+          glowStyle={appearance.glowStyle}
+          glowEnabled={appearance.glowEnabled}
+          accentHex={resolvedAccentHex}
         />
       )}
     </div>

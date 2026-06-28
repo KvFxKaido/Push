@@ -821,6 +821,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
             onScratchpadSaveMemory={scratchpad.saveMemory}
             onScratchpadLoadMemory={scratchpad.loadMemory}
             onScratchpadDeleteMemory={scratchpad.deleteMemory}
+            appearance={activeRepoAppearance ?? undefined}
+            accentHex={activeRepoAccentHex ?? undefined}
             todos={todo.todos}
             onTodoClear={todo.clear}
             branchProps={branchProps}
