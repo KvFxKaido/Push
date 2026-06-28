@@ -51,9 +51,10 @@ oversight — additions to web no-repo should later be justified by observed nee
   (`workspace-context.ts:187-231`). It already honors "no cloud sandbox."
 - **Native git.** `capacitor-native-git` exposes `clone` / `fetch` / `push` / `commit` /
   `createBranch` / `switchBranch` / `status` + checkpoint ops (`plugins/.../definitions.ts`),
-  device-validated. The `git-session.ts` selection seam (`sandbox` vs `native`) **shipped** but
-  the native arm is **dormant** — nothing registers an on-device working copy
-  (`git-session.ts:95,104-116`). There is **no native file CRUD** (`read`/`write`/`list`) yet.
+  device-validated. The `app/src/lib/git-session.ts` selection seam (`sandbox` vs `native`)
+  **shipped** but the native arm is **dormant** — nothing registers an on-device working copy
+  (`app/src/lib/git-session.ts:95,104-116`). There is **no native file CRUD**
+  (`read`/`write`/`list`) yet.
 
 ## The invariant we're completing
 
@@ -70,11 +71,15 @@ rule; it makes an existing 3-of-4 invariant uniform.
 2. **File ops gate behind the native shell** — `isNativePlatform()` (the probe `git-session.ts`
    already uses) + a `VITE_NATIVE_*`-style flag (the checkpoint-store pattern). Web no-repo →
    file ops off → presents as today's chat. Native shell → file ops on → local-first project.
-3. **APK no-repo file ops = `local-pc`'s profile on the native transport.** Reuse
-   `LOCAL_PC_TOOL_PROTOCOL` (or a near-clone), the no-`/workspace` / no-remote context block, and
-   the `sandbox_*` tool surface — **rebound to the native plugin** (JGit + a new file-CRUD
-   bridge) instead of the daemon socket. This is the `SandboxProvider`/backend-selection pattern
-   a third time (cloud sandbox, pushd daemon, **native plugin**).
+3. **APK no-repo file ops = `local-pc`'s profile on the native transport.** Reuse the local-pc
+   tool *contract* — the no-`/workspace` / no-remote context block and the `sandbox_*` tool
+   surface — via a **native near-clone** of `LOCAL_PC_TOOL_PROTOCOL` (`NATIVE_TOOL_PROTOCOL`) with
+   the **daemon-specific framing stripped**: its body opens "connected to a local pushd daemon"
+   (`sandbox-tool-detection.ts:626`), which a native session has no concept of — reusing it
+   verbatim would leak daemon framing and contradict the "keep native free of daemon assumptions"
+   rule below. Bind the protocol to the **native plugin** (JGit + a new file-CRUD bridge) instead
+   of the daemon socket. This is the `SandboxProvider`/backend-selection pattern a third time
+   (cloud sandbox, pushd daemon, **native plugin**).
 4. **Repo mode is unchanged here.** "Lean on local fs where possible on APK" is a *later*
    increment whose hard part is the **device↔sandbox coherence seam** (two live copies of the
    tree once execution forces a cloud round-trip). Explicitly **out of scope** for this doc —
@@ -99,15 +104,16 @@ carries only a dir — and a transport tag would drag those daemon assumptions (
 `PATH_OUTSIDE_WORKSPACE`, attach token) onto a path that has none. UI lists already branch on
 `kind` (`RepoChatDrawer.tsx:205` separates local-pc; `workspace-chat-route-builders.ts:347` skips
 local-pc/relay), so a new kind slots into the existing dispatch rather than overloading it. The
-rule: **share the *tool protocol* (`LOCAL_PC_TOOL_PROTOCOL`), keep the *session kind* distinct.**
+rule: **share the tool *contract* — a native near-clone of `LOCAL_PC_TOOL_PROTOCOL` with daemon
+framing removed — and keep the *session kind* distinct.**
 
 ## Build ledger — reused vs. new
 
 **Reused (already shipped / validated):**
 - `git-session.ts` native arm + `isNativePlatform()` gate.
 - `capacitor-native-git`: `clone` / `commit` / `branch` / `status` / `fetch` / `push`.
-- `LOCAL_PC_TOOL_PROTOCOL` + the no-`/workspace`/no-remote context block + the `sandbox_*` tool
-  vocabulary.
+- The local-pc tool *contract* — the no-`/workspace`/no-remote context block + the `sandbox_*`
+  tool vocabulary + its "no `/workspace`" leakage tests (`sandbox-tool-detection.test.ts:324`).
 - Foreground Orchestrator-loop routing for no-repo (`delegation-mode-settings.ts`).
 - The checkpoint store's native git engine, `filesDir` app-private storage, and durable-local
   security model (retention cap, `Clear all` purge, sensitivity marking).
@@ -119,6 +125,9 @@ rule: **share the *tool protocol* (`LOCAL_PC_TOOL_PROTOCOL`), keep the *session 
 - **Native `sandbox_*` execution path** — a backend selector at the tool-execution seam
   (`web-tool-execution-runtime.ts` / `sandbox-client.ts`) that targets the native bridge when the
   session kind is native, the way local-pc targets the daemon.
+- **`NATIVE_TOOL_PROTOCOL`** — a near-clone of `LOCAL_PC_TOOL_PROTOCOL` with the daemon intro
+  replaced by native-shell framing (no daemon, no attach token, no allowlist); same
+  no-`/workspace`/no-remote contract. Keeps native prompts from misdescribing their transport.
 - **`git init` lifecycle + working-copy registry** that flips the dormant `git-session.ts` arm
   (`:95`). The `Native Git Runtime Integration.md` "clone-on-session" increment, **simplified**:
   `git init`, no auth, no remote.
