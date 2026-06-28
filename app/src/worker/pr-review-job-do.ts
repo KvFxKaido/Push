@@ -54,6 +54,7 @@ import {
 } from './pr-review-config';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
 import { recordInflightReview } from './pr-review-inflight-index';
+import { runReviewSandboxReachabilitySpike } from './review-sandbox-spike';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
@@ -1417,6 +1418,20 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   const auth = { token };
 
   const diff = await fetchPullRequestDiff(input.repoFullName, input.prNumber, auth);
+
+  // Flag-gated reachability spike for the sandbox-backed reviewer (see
+  // review-sandbox-spike.ts). Inert unless PUSH_REVIEW_SANDBOX_SPIKE=1; never
+  // throws into the review. Confirms the DO can provision + grep + tear down a
+  // sandbox on a real PR before the full lazy-provision integration is built.
+  if (env.PUSH_REVIEW_SANDBOX_SPIKE === '1') {
+    await runReviewSandboxReachabilitySpike({
+      origin: input.origin,
+      repoFullName: input.repoFullName,
+      headRef: input.headRef,
+      githubToken: token,
+      isCrossFork: Boolean(input.isCrossFork),
+    });
+  }
 
   // REVIEW.md from the BASE ref, never the head — a fork's head is
   // attacker-controlled (design doc Security checklist). For same-repo PRs the
