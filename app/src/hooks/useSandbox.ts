@@ -578,6 +578,12 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
             snapshotRestoredSandboxIdRef.current = null;
             setRestoredFromSnapshotSandboxId(null);
             setStatus('idle');
+            // The reconnect/restore effect no longer keys on `status` (that
+            // self-cancelled its own probe — see its dep-array note), so the
+            // status→idle write above won't re-enter it on its own. Bump the
+            // nonce explicitly to drive the documented hand-off: probe the dead
+            // container → definitively-gone → attemptSnapshotRestore.
+            setReconnectNonce((n) => n + 1);
             console.log(
               `[useSandbox] Backend terminated despite keep_warm → hibernated to ${result.snapshotId}`,
             );
