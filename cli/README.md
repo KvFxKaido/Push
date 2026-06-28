@@ -70,6 +70,7 @@ Shared in-session commands:
 - `/session` — print current session id
 - `/session rename <name>` — rename the current session (`--clear` to unset)
 - `/skills reload` — reload skill files from `.push/skills` and `.claude/commands`
+- `/skills lint` — report skill files that were dropped (errors) or had a constraint ignored (warnings)
 - `@path[:line[-end]]` — preload file references into context (example: `@src/app.ts:120-180`)
 - `/exit` or `/quit` — exit interactive mode
 
@@ -80,6 +81,7 @@ Skill discovery:
 - Nested Claude command paths are flattened to hyphenated names (example: `.claude/commands/git/pr-review.md` -> `/git-pr-review`).
 - If names collide, `.push/skills` overrides Claude commands, and Claude commands override built-ins.
 - Skills are loaded at startup; run `/skills reload` in REPL/TUI to refresh without restarting.
+- Invalid skill files are skipped silently at load time. To see *why* a skill didn't appear, run `/skills lint` in REPL/TUI or `./push skills --lint` (add `--json` for machine output). It reports dropped files (bad name, reserved name, missing heading/body, unreadable) as errors and ignored frontmatter (typo'd capability/platform, malformed fence) as warnings. The headless command exits non-zero when any file is dropped, so it can gate CI.
 
 ### Headless
 

@@ -55,6 +55,11 @@ import {
   getSkillPromptTemplate,
   filterSkillsForEnvironment,
   getCurrentSkillPlatform,
+  lintSkills,
+  formatSkillDiagnostics,
+  skillDiagnosticLogLines,
+  skillDiagnosticSummaryLine,
+  type SkillDiagnostic,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
@@ -101,6 +106,7 @@ const KNOWN_OPTIONS = new Set([
   'max-rounds',
   'maxRounds',
   'json',
+  'lint',
   'headless',
   'allow-exec',
   'allowExec',
@@ -224,7 +230,7 @@ Usage:
   push resume --no-attach       List resumable sessions without prompting (script-friendly)
   push sessions                 List resumable sessions (never prompts; alias for scripts)
   push sessions prune           Prune stored sessions: --empty / --older-than <days> / --keep <n> / --match-model <regex> (AND-combined; dry-run unless --force)
-  push skills                   List available skills
+  push skills                   List available skills (--lint to report dropped/degraded skill files)
   push stats                    Show provider compliance stats
   push daemon start             Start background daemon
   push daemon stop              Stop background daemon
@@ -916,7 +922,18 @@ async function runInteractive(
     });
     await saveSessionState(state);
   }
-  const skills = await loadSkills(state.cwd);
+  // Skill-lint diagnostics for the current workspace. Collected on every (re)load so a malformed
+  // `.push/skills/*.md` or `.claude/commands/**.md` no longer silently vanishes from `/skills`.
+  // Structured, symmetric logs go to stderr (CLI stdout is reserved for user output / --json) so a
+  // dropped skill is visible to ops, not just to whoever runs `/skills lint`. This is the line-based
+  // REPL — stderr is safe here; the full-screen TUI deliberately omits these (see tui.ts) and relies
+  // on its in-app surfacing instead. Event names/levels live once in `skillDiagnosticLogLines`.
+  let skillDiagnostics: SkillDiagnostic[] = [];
+  function logSkillDiagnostics(diags: SkillDiagnostic[]): void {
+    for (const line of skillDiagnosticLogLines(diags)) console.error(line);
+  }
+  const skills = await loadSkills(state.cwd, { diagnostics: skillDiagnostics });
+  logSkillDiagnostics(skillDiagnostics);
   // `visibleSkills` mirrors `skills` filtered by current platform + capabilities.
   // The completer iterates the visible view so hidden skills don't tab-complete;
   // dispatch uses the full `skills` so explicit `/<name>` invocation still runs.
@@ -934,11 +951,14 @@ async function runInteractive(
   }
 
   async function reloadSkillsMap() {
-    const fresh = await loadSkills(state.cwd);
+    const freshDiagnostics: SkillDiagnostic[] = [];
+    const fresh = await loadSkills(state.cwd, { diagnostics: freshDiagnostics });
     skills.clear();
     for (const [name, skill] of fresh) {
       skills.set(name, skill);
     }
+    skillDiagnostics = freshDiagnostics;
+    logSkillDiagnostics(freshDiagnostics);
     rebuildVisibleSkills();
     return skills.size;
   }
@@ -1175,6 +1195,10 @@ async function runInteractive(
               );
             }
           }
+          const summary = skillDiagnosticSummaryLine(skillDiagnostics);
+          if (summary) {
+            process.stdout.write(fmt.dim(`  (${summary})\n`));
+          }
           continue;
         }
         if (arg === 'reload') {
@@ -1182,7 +1206,13 @@ async function runInteractive(
           process.stdout.write(`Reloaded skills: ${count}\n`);
           continue;
         }
-        process.stdout.write('Usage: /skills | /skills reload\n');
+        if (arg === 'lint') {
+          const diags = await lintSkills(state.cwd);
+          skillDiagnostics = diags;
+          process.stdout.write(`${formatSkillDiagnostics(diags)}\n`);
+          continue;
+        }
+        process.stdout.write('Usage: /skills | /skills reload | /skills lint\n');
         continue;
       }
 
@@ -3290,6 +3320,7 @@ export async function main() {
       'max-rounds': { type: 'string' },
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
+      lint: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
       allowExec: { type: 'boolean' },
@@ -3596,6 +3627,18 @@ export async function main() {
 
   if (subcommand === 'skills') {
     const cwd = path.resolve(values.cwd || process.cwd());
+    if (values.lint) {
+      // `push skills --lint` is CI-usable: exit 1 when any skill file is dropped (errors),
+      // 0 when only warnings or clean. Warnings don't fail the gate — they're fail-open degrades.
+      const diags = await lintSkills(cwd);
+      const hasErrors = diags.some((d) => d.severity === 'error');
+      if (values.json) {
+        process.stdout.write(`${JSON.stringify(diags, null, 2)}\n`);
+      } else {
+        process.stdout.write(`${formatSkillDiagnostics(diags)}\n`);
+      }
+      return hasErrors ? 1 : 0;
+    }
     const skills = await loadSkills(cwd);
     if (values.json) {
       // JSON includes every skill plus its constraint fields so tooling can introspect

@@ -10,6 +10,10 @@ import {
   getSkillPromptTemplate,
   filterSkillsForEnvironment,
   getCurrentSkillPlatform,
+  lintSkills,
+  formatSkillDiagnostics,
+  skillDiagnosticLogLines,
+  skillDiagnosticSummaryLine,
 } from '../skill-loader.ts';
 
 let tmpDir;
@@ -553,5 +557,238 @@ describe('getCurrentSkillPlatform', () => {
     if (p !== undefined) {
       assert.ok(['linux', 'macos', 'windows'].includes(p));
     }
+  });
+});
+
+describe('lintSkills', () => {
+  async function writeSkill(name, content) {
+    const skillDir = path.join(tmpDir, '.push', 'skills');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(path.join(skillDir, name), content);
+  }
+
+  function find(diags, code) {
+    return diags.filter((d) => d.code === code);
+  }
+
+  it('a clean workspace produces no diagnostics', async () => {
+    await writeSkill('deploy.md', '# Deploy the app\n\nRun deploy.\n\n{{args}}\n');
+    const diags = await lintSkills(tmpDir);
+    assert.deepEqual(diags, []);
+  });
+
+  it('flags an invalid filename as an error (and the skill does not load)', async () => {
+    await writeSkill('My-Skill.md', '# Bad\n\nBody.\n');
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'invalid-name');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'error');
+    assert.equal(hits[0].source, 'workspace');
+    assert.ok(hits[0].filePath.endsWith('My-Skill.md'));
+    // And the loader genuinely drops it.
+    const skills = await loadSkills(tmpDir);
+    assert.ok(!skills.has('My-Skill'));
+  });
+
+  it('flags a reserved name as an error', async () => {
+    await writeSkill('help.md', '# Help\n\nBody.\n');
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'reserved-name');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'error');
+    assert.equal(hits[0].name, 'help');
+  });
+
+  it('flags a missing description as an error', async () => {
+    await writeSkill('noheading.md', 'Just some text, no heading.\n');
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'missing-description');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'error');
+  });
+
+  it('flags an empty body as an error', async () => {
+    await writeSkill('empty.md', '# Has heading\n');
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'empty-body');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'error');
+  });
+
+  it('flags an unclosed frontmatter fence as a warning (skill still loads)', async () => {
+    await writeSkill('bad.md', '---\nplatforms: [linux]\n# Looks like body\n\nReal body.\n');
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'malformed-frontmatter');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'warning');
+    // Fail-open: the skill is still loaded from the body.
+    const skills = await loadSkills(tmpDir);
+    assert.ok(skills.has('bad'));
+  });
+
+  it('flags a non-array requires_capabilities value as malformed', async () => {
+    await writeSkill(
+      'scalar.md',
+      ['---', 'requires_capabilities: git:push', '---', '# Scalar', '', 'Body.'].join('\n'),
+    );
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'malformed-frontmatter');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'warning');
+  });
+
+  it('flags a dropped unknown capability as a warning, listing the bad entry', async () => {
+    await writeSkill(
+      'typo.md',
+      ['---', 'requires_capabilities: [git:pus, repo:write]', '---', '# Typo', '', 'Body.'].join(
+        '\n',
+      ),
+    );
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'unknown-capability');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'warning');
+    assert.ok(hits[0].message.includes('git:pus'));
+    // The valid capability still applies on the loaded skill.
+    const skills = await loadSkills(tmpDir);
+    assert.deepEqual(skills.get('typo').requiresCapabilities, ['repo:write']);
+  });
+
+  it('flags a dropped unknown platform as a warning', async () => {
+    await writeSkill(
+      'mixed.md',
+      ['---', 'platforms: [linux, beos, macos]', '---', '# Mixed', '', 'Body.'].join('\n'),
+    );
+    const diags = await lintSkills(tmpDir);
+    const hits = find(diags, 'invalid-platform');
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0].severity, 'warning');
+    assert.ok(hits[0].message.includes('beos'));
+  });
+
+  it('sorts errors before warnings, then by file path', async () => {
+    await writeSkill(
+      'zwarn.md',
+      ['---', 'platforms: [linux, beos]', '---', '# Warns', '', 'Body.'].join('\n'),
+    );
+    await writeSkill('aerror.md', '# Has heading only\n');
+    const diags = await lintSkills(tmpDir);
+    assert.equal(diags[0].severity, 'error');
+    assert.equal(diags[diags.length - 1].severity, 'warning');
+  });
+
+  it('does not collect diagnostics when loadSkills is called without the option (unchanged path)', async () => {
+    await writeSkill('empty.md', '# Has heading\n');
+    // Plain load must not throw and must simply omit the broken skill.
+    const skills = await loadSkills(tmpDir);
+    assert.ok(!skills.has('empty'));
+  });
+});
+
+describe('skillDiagnosticLogLines', () => {
+  it('returns one JSON line per diagnostic with paired event names/levels', () => {
+    const lines = skillDiagnosticLogLines([
+      {
+        filePath: '/w/a.md',
+        name: 'a',
+        source: 'workspace',
+        severity: 'error',
+        code: 'empty-body',
+        message: 'no body',
+      },
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: 'beos dropped',
+      },
+    ]);
+    assert.equal(lines.length, 2);
+    const dropped = JSON.parse(lines[0]);
+    assert.equal(dropped.level, 'warn');
+    assert.equal(dropped.event, 'skill_lint_dropped');
+    assert.equal(dropped.code, 'empty-body');
+    const degraded = JSON.parse(lines[1]);
+    assert.equal(degraded.level, 'info');
+    assert.equal(degraded.event, 'skill_lint_degraded');
+  });
+
+  it('returns an empty array for no diagnostics', () => {
+    assert.deepEqual(skillDiagnosticLogLines([]), []);
+  });
+});
+
+describe('skillDiagnosticSummaryLine', () => {
+  it('returns null when there is nothing to report', () => {
+    assert.equal(skillDiagnosticSummaryLine([]), null);
+  });
+
+  it('counts dropped files separately from total problems', () => {
+    const line = skillDiagnosticSummaryLine([
+      {
+        filePath: '/w/a.md',
+        name: 'a',
+        source: 'workspace',
+        severity: 'error',
+        code: 'empty-body',
+        message: '',
+      },
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: '',
+      },
+    ]);
+    assert.equal(line, '2 skill file(s) have problems, 1 skipped — /skills lint');
+  });
+
+  it('omits the skipped clause when there are only warnings', () => {
+    const line = skillDiagnosticSummaryLine([
+      {
+        filePath: '/w/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: '',
+      },
+    ]);
+    assert.equal(line, '1 skill file(s) have problems — /skills lint');
+  });
+});
+
+describe('formatSkillDiagnostics', () => {
+  it('reports a clean result on its own line', () => {
+    assert.equal(formatSkillDiagnostics([]), 'No skill problems found.');
+  });
+
+  it('renders each diagnostic and a summary count', () => {
+    const out = formatSkillDiagnostics([
+      {
+        filePath: '/w/.push/skills/a.md',
+        name: 'a',
+        source: 'workspace',
+        severity: 'error',
+        code: 'empty-body',
+        message: 'has a description but no body/prompt content below it; skill skipped',
+      },
+      {
+        filePath: '/w/.push/skills/b.md',
+        name: 'b',
+        source: 'workspace',
+        severity: 'warning',
+        code: 'invalid-platform',
+        message: 'unknown platform dropped: beos (valid: linux, macos, windows)',
+      },
+    ]);
+    assert.ok(out.includes('error: /w/.push/skills/a.md'));
+    assert.ok(out.includes('[empty-body]'));
+    assert.ok(out.includes('warning: /w/.push/skills/b.md'));
+    assert.ok(out.includes('1 error(s), 1 warning(s).'));
   });
 });
