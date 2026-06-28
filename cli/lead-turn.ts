@@ -32,6 +32,7 @@ import {
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
+import { createRuntimeContext } from '../lib/runtime-context.ts';
 import type {
   AIProviderType,
   LlmMessage,
@@ -330,6 +331,15 @@ export async function runLeadKernelTurn(
     suppressEventPersist = false,
   } = options;
   const runId: string = options.runId || makeRunId();
+  // Coder working memory is NOT seeded onto the CLI runtimeContext: nothing on
+  // the CLI reads runtimeContext.workingMemory.coder (the kernel keeps its own
+  // loop reference and persists to state.workingMemory). Seeding it here would
+  // create a write-only mirror that drifts from state.workingMemory.
+  const runtimeContext =
+    options.runtimeContext ??
+    createRuntimeContext({
+      correlation: { surface: 'cli', sessionId: state.sessionId, runId },
+    });
 
   function dispatchEvent(type: string, payload: unknown): void {
     if (suppressRunComplete && type === 'run_complete') return;
@@ -606,6 +616,9 @@ export async function runLeadKernelTurn(
           askUserFn(context ? `${question}\n\nContext: ${context}` : question)
       : undefined,
     onWorkingMemoryUpdate: (mem) => {
+      // state.workingMemory is the CLI's single source of truth (persisted +
+      // read by repo-commands); runtimeContext.workingMemory.coder is unused on
+      // the CLI, so it is deliberately not mirrored here.
       state.workingMemory = JSON.parse(JSON.stringify(mem));
     },
     onRunEvent: (event) => {

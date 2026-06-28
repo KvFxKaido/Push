@@ -126,7 +126,9 @@ const chatCheckpoint = vi.hoisted(() => ({
     updateAgentStatus: vi.fn(),
     flushCheckpoint: vi.fn(),
     checkpointRefs: {},
-    lastCoderStateRef: { current: null },
+    runtimeContextRef: {
+      current: { correlation: {}, memory: { scope: null }, workingMemory: { coder: null } },
+    },
     tabLockIntervalRef: { current: null },
   })),
 }));

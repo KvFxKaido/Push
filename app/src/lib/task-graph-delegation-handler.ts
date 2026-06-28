@@ -15,19 +15,18 @@
  * call because the TG Auditor reads state that lives in the handler
  * (`graphResult.nodeStates`), so there's no reason to slice the arc.
  *
- * ## The `lastCoderStateRef` contract (Option A)
+ * ## The latest-Coder-state contract (Option A)
  *
  * The Phase 5 design spike (docs/decisions/Phase 5 Handoff - Task-Graph
  * Extraction.md) picked Option A: preserve the current
  * single-coder-node-vs-multi-node `evalWorkingMemory` policy byte-for-
- * byte. The ref stays hook-owned; this handler reaches the ref only
+ * byte. The state carrier stays hook-owned; this handler reaches it only
  * through three context callbacks:
  *
  *   - `resetCoderState()` — called once on entry when the graph has
  *     coder tasks, so a prior delegation's memory doesn't leak in.
  *   - `onCoderStateUpdate(state)` — passed into each TG Coder node's
- *     runCoderAgent invocation; the hook writes `lastCoderStateRef.current
- *     = state`.
+ *     runCoderAgent invocation; the hook persists the latest state.
  *   - `readLatestCoderState()` — called once in the TG Auditor branch
  *     near the `evalWorkingMemory` decision point.
  *
@@ -142,8 +141,8 @@ export type TaskGraphToolCall = Extract<AnyToolCall, { call: { tool: 'plan_tasks
  * refs and callbacks the handler reaches for are enumerated here so the
  * seam has zero implicit reach into the hook's closure. The three
  * coder-state hooks (`resetCoderState`, `onCoderStateUpdate`,
- * `readLatestCoderState`) bridge the hook's `lastCoderStateRef`
- * ownership into the handler's execution path without handing the ref
+ * `readLatestCoderState`) bridge the hook-owned runtimeContext working
+ * memory into the handler's execution path without handing the carrier
  * itself across the seam — see Phase 5 Handoff doc §"Open Design
  * Question" for the rationale.
  */
@@ -178,13 +177,14 @@ export interface TaskGraphHandlerContext {
 
   /**
    * Clear any prior Coder working memory before starting a new graph
-   * run that contains coder tasks. Hook binds to
-   * `lastCoderStateRef.current = null`.
+   * run that contains coder tasks. Hook binds this to the runtimeContext
+   * Coder working-memory reset.
    */
   resetCoderState: () => void;
   /**
    * Called with each working-memory update from `runCoderAgent` in a TG
-   * Coder node. Hook binds to `lastCoderStateRef.current = state`.
+   * Coder node. Hook binds this to the runtimeContext Coder
+   * working-memory update.
    */
   onCoderStateUpdate: (state: CoderWorkingMemory) => void;
   /**

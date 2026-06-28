@@ -56,6 +56,11 @@ import { getRunTokenBudgetPref } from '@/lib/run-token-budget-pref';
 import { buildMemoryScope, runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
 import { invalidateMemoryForChangedFiles } from '@/lib/context-memory';
 import {
+  clearRuntimeCoderWorkingMemory,
+  readRuntimeCoderWorkingMemory,
+  setRuntimeCoderWorkingMemory,
+} from '@push/lib/runtime-context';
+import {
   extractChangedPathsFromDiff,
   recordVerificationArtifact,
   recordVerificationCommandResult,
@@ -79,6 +84,7 @@ import { createId } from '@push/lib/id-utils';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
 import { SESSION_DIGEST_HEADER, type SessionDigest } from '@push/lib/session-digest';
 import type { CoderCheckpointState } from '@push/lib/coder-agent';
+import type { CoderWorkingMemory } from '@push/lib/working-memory';
 import type { RunEventInput } from '@push/lib/runtime-contract';
 import type {
   LlmContentPart,
@@ -314,6 +320,18 @@ const MIN_MESSAGES_BEFORE_INLINE_PREFETCH = 20;
 
 const MAX_CACHED_INLINE_DIGESTS = 64;
 const _lastInlineSessionDigests = new Map<string, SessionDigest>();
+
+function readLatestCoderState(ctx: SendLoopContext): CoderWorkingMemory | null {
+  return readRuntimeCoderWorkingMemory(ctx.runtimeContext);
+}
+
+function setLatestCoderState(ctx: SendLoopContext, state: CoderWorkingMemory): void {
+  setRuntimeCoderWorkingMemory(ctx.runtimeContext, state);
+}
+
+function clearLatestCoderState(ctx: SendLoopContext): void {
+  clearRuntimeCoderWorkingMemory(ctx.runtimeContext);
+}
 
 function recordInlineSessionDigest(chatId: string, digest: SessionDigest): void {
   if (_lastInlineSessionDigests.has(chatId)) {
@@ -616,7 +634,8 @@ export async function startInlineCoderTurn(
     return { completedNormally: false };
   }
 
-  const memoryScope = buildMemoryScope(chatId, repoFullName, activeBranch);
+  const memoryScope =
+    ctx.runtimeContext.memory.scope ?? buildMemoryScope(chatId, repoFullName, activeBranch);
   const verificationPolicy = args.getVerificationPolicyForChat(chatId);
   const harnessSettings = resolveHarnessSettings(lockedProvider, resolvedModel || undefined, {
     runTokenBudget: getRunTokenBudgetPref(),
@@ -669,7 +688,7 @@ export async function startInlineCoderTurn(
     // that self-consultation into durable decision memory would pollute it with
     // internal reasoning future turns retrieve as if it were a delegated ruling.
     memoryScope: null,
-    readLatestCoderState: () => ctx.lastCoderStateRef.current,
+    readLatestCoderState: () => readLatestCoderState(ctx),
     getSignal: () => ctx.abortControllerRef.current?.signal,
     // Route the answerer's status through the same phase-first translation the
     // kernel's `onStatus` uses. The answerer emits delegated-arc vocabulary
@@ -723,11 +742,11 @@ export async function startInlineCoderTurn(
     }
     ctx.emitRunEngineEvent({ type: 'ROUND_STARTED', timestamp: Date.now(), round: state.round });
     ctx.checkpointRefs.apiMessages.current = state.messages as unknown as ChatMessage[];
-    ctx.lastCoderStateRef.current = state.workingMemory;
+    setLatestCoderState(ctx, state.workingMemory);
     ctx.flushCheckpoint('turn');
   };
 
-  ctx.lastCoderStateRef.current = null;
+  clearLatestCoderState(ctx);
 
   // Collect tool completion events so we can synthesize the per-turn
   // collapsible disclosure after the kernel finishes.
@@ -846,10 +865,10 @@ export async function startInlineCoderTurn(
         instructionFilename: args.instructionFilenameRef.current || undefined,
         verificationPolicy,
         harnessSettings,
-        memoryScope: { repoFullName, branch: activeBranch, chatId },
+        memoryScope: memoryScope ?? undefined,
         scratchpad: ctx.scratchpadRef.current,
         todo: ctx.todoRef.current,
-        correlation: { surface: 'web', chatId, runId: args.runId },
+        correlation: ctx.runtimeContext.correlation,
         stream,
         // Orchestrator parity: the collapsed single lead gets the GitHub
         // PR/commit/CI/workflow tools, ask_user, and create_artifact on top of
@@ -886,7 +905,7 @@ export async function startInlineCoderTurn(
         onCheckpointRequest: answerCheckpoint,
         onCheckpoint,
         onWorkingMemoryUpdate: (state) => {
-          ctx.lastCoderStateRef.current = state;
+          setLatestCoderState(ctx, state);
         },
         onRunEvent: (event) => {
           ctx.appendRunEvent(chatId, event);
@@ -1134,14 +1153,14 @@ export async function startInlineCoderTurn(
         {
           repoRef: ctx.repoRef,
           branchInfoRef: ctx.branchInfoRef,
-          readLatestCoderState: () => ctx.lastCoderStateRef.current,
+          readLatestCoderState: () => readLatestCoderState(ctx),
           appendRunEvent: ctx.appendRunEvent,
           updateAgentStatus: ctx.updateAgentStatus,
           updateVerificationStateForChat: ctx.updateVerificationState,
         },
         {
           chatId,
-          baseCorrelation: { surface: 'web', chatId, runId: args.runId },
+          baseCorrelation: ctx.runtimeContext.correlation,
           lockedProviderForChat: lockedProvider,
           resolvedModelForChat: resolvedModel || undefined,
           verificationPolicy,

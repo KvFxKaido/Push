@@ -56,11 +56,11 @@
  *     (`runCoderAuditorGate` in `inline-coder-run.ts` — the
  *     `evaluateAfterCoder` rule lives there so the inline lane shares
  *     it). The handler is reactive, not gated.
- *   - **`lastCoderStateRef` stays hook-owned.** The handler's context
- *     carries an `onCoderStateUpdate` callback the hook binds to
- *     `lastCoderStateRef.current = state`. The ref itself is never
- *     passed in — the handler has no awareness of the persistence
- *     mechanism its updates feed into.
+ *   - **Latest Coder state stays hook-owned.** The handler's context
+ *     carries an `onCoderStateUpdate` callback; the hook decides how to
+ *     persist that state (today: runtimeContext, with a legacy ref mirror).
+ *     The carrier itself is never passed in, so the handler has no awareness
+ *     of the persistence mechanism its updates feed into.
  *   - **Behavior preservation:** the delegated Coder arc is gated by the
  *     characterization tests in `hooks/useAgentDelegation.test.ts`.
  */
@@ -129,9 +129,9 @@ export type CoderToolCall = Extract<AnyToolCall, { call: { tool: 'delegate_coder
  * and callbacks the handler reaches for are enumerated here so the seam
  * has zero implicit reach into the hook's closure. `onCoderStateUpdate`
  * is the load-bearing escape hatch — the handler emits coder-working-
- * memory updates through this callback; the hook wires it to
- * `lastCoderStateRef.current = state`, keeping ownership of the ref
- * on the hook side where Auditor (still inline in Phase 3) reads it.
+ * memory updates through this callback; the hook writes them into the
+ * active runtimeContext while keeping ownership on the hook side where
+ * Auditor (still inline in Phase 3) reads it.
  */
 export interface CoderHandlerContext {
   sandboxIdRef: React.MutableRefObject<string | null>;
@@ -157,13 +157,12 @@ export interface CoderHandlerContext {
   ) => void;
   /**
    * Clear any prior Coder working memory before starting a new arc.
-   * Hook binds this to `lastCoderStateRef.current = null`.
+   * Hook binds this to its runtimeContext-backed state reset.
    */
   resetCoderState: () => void;
   /**
    * Called with each working-memory update from `runCoderAgent`. The
-   * hook binds this to `lastCoderStateRef.current = state` — the
-   * handler has no awareness of where the value is persisted.
+   * handler has no awareness of where the hook persists the value.
    */
   onCoderStateUpdate: (state: CoderWorkingMemory) => void;
   /**

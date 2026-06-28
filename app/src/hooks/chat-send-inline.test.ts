@@ -123,6 +123,7 @@ import {
   ADOPTION_RESUME_NOTE_MARKER,
 } from '@push/lib/run-adoption-loop';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
+import { createRuntimeContext } from '@push/lib/runtime-context';
 import type { AttachmentData, ChatMessage, Conversation, VerificationRuntimeState } from '@/types';
 import type { SendLoopContext } from './chat-send-types';
 
@@ -203,12 +204,20 @@ function makeHarness(opts?: {
     repoRef: { current: opts?.repo === undefined ? 'owner/repo' : opts.repo },
     isMainProtectedRef: { current: true },
     branchInfoRef: { current: { currentBranch: 'feat/x', defaultBranch: 'main' } },
+    runtimeContext: createRuntimeContext({
+      correlation: { surface: 'web', chatId: 'chat-1', runId: 'run-inline' },
+      memory: {
+        scope:
+          opts?.repo === null
+            ? null
+            : { repoFullName: opts?.repo ?? 'owner/repo', branch: 'feat/x', chatId: 'chat-1' },
+      },
+    }),
     activeChatIdRef: { current: 'chat-1' },
     conversationsRef: store,
     skipAutoCreateRef: { current: null },
     runtimeHandlersRef: { current: { onBranchSwitch: vi.fn() } },
     checkpointRefs: { apiMessages: { current: [] as ChatMessage[] } },
-    lastCoderStateRef: { current: null },
     setConversations: (
       updater: (prev: Record<string, Conversation>) => Record<string, Conversation>,
     ) => {
@@ -1058,7 +1067,7 @@ describe('startInlineCoderTurn', () => {
       expect.objectContaining({ type: 'ROUND_STARTED', round: 4 }),
     );
     expect(ctx.checkpointRefs.apiMessages.current).toBe(kernelMessages);
-    expect(ctx.lastCoderStateRef.current).toEqual({ plan: 'p' });
+    expect(ctx.runtimeContext.workingMemory.coder).toEqual({ plan: 'p' });
     expect(flushCheckpoint).toHaveBeenCalledWith('turn');
   });
 

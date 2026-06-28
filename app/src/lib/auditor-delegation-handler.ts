@@ -43,7 +43,7 @@
  *     No internal `shouldRun` branch. The recon's containment rule
  *     is explicit on this: "policy decisions stay in the hook;
  *     handlers are reactive, not gated."
- *   - **`lastCoderStateRef` stays hook-owned.** The handler reads
+ *   - **Latest Coder state stays hook-owned.** The handler reads
  *     the latest coder working memory through a bound
  *     `readLatestCoderState` getter — called exactly once, near the
  *     working-memory decision point, so the ref's read semantics
@@ -97,9 +97,8 @@ export interface AuditorHandlerContext {
     { currentBranch?: string; defaultBranch?: string } | undefined | null
   >;
   /**
-   * Returns the latest Coder working memory. Hook binds this to
-   * `lastCoderStateRef.current`. The handler never touches the ref
-   * directly — it only depends on this read API.
+   * Returns the latest Coder working memory. The handler never touches
+   * the hook-owned state carrier directly — it only depends on this read API.
    */
   readLatestCoderState: () => CoderWorkingMemory | null;
 

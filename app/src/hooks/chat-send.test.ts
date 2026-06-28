@@ -3,6 +3,7 @@ import type { ChatMessage, Conversation, VerificationRuntimeState } from '@/type
 import { setApprovalMode } from '@/lib/approval-mode';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { TodoHandlers } from './chat-send';
+import { createRuntimeContext } from '@push/lib/runtime-context';
 
 const { mockStreamChat } = vi.hoisted(() => ({
   mockStreamChat: vi.fn(),
@@ -84,11 +85,11 @@ function makeLoopContext(
     repoRef: { current: null },
     isMainProtectedRef: { current: false },
     branchInfoRef: { current: undefined },
+    runtimeContext: createRuntimeContext({ correlation: { surface: 'web', chatId: 'chat-1' } }),
     checkpointRefs: {
       apiMessages: { current: [] },
     },
     processedContentRef: { current: new Set<string>() },
-    lastCoderStateRef: { current: null },
     setConversations: (updater) => {
       conversationsRef.current =
         typeof updater === 'function' ? updater(conversationsRef.current) : updater;
