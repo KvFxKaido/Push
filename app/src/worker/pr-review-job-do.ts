@@ -54,7 +54,6 @@ import {
 } from './pr-review-config';
 import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-infra';
 import { recordInflightReview } from './pr-review-inflight-index';
-import { runReviewSandboxReachabilitySpike } from './review-sandbox-spike';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import type { ReviewablePullRequest } from './github-webhook';
@@ -1424,6 +1423,13 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   // throws into the review. Confirms the DO can provision + grep + tear down a
   // sandbox on a real PR before the full lazy-provision integration is built.
   if (env.PUSH_REVIEW_SANDBOX_SPIKE === '1') {
+    // Dynamic import: the spike pulls in worker-cf-sandbox (and the CF Sandbox
+    // SDK's `cloudflare:`-scheme imports). Loading that statically would drag the
+    // SDK into every importer of this module — including pr-review-job-do.test.ts
+    // under the node/vitest loader, which can't resolve `cloudflare:`. Deferring
+    // it behind the flag keeps the SDK off both the test graph and the normal
+    // (flag-off) review path.
+    const { runReviewSandboxReachabilitySpike } = await import('./review-sandbox-spike');
     await runReviewSandboxReachabilitySpike({
       env,
       repoFullName: input.repoFullName,
