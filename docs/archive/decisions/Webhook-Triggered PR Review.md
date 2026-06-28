@@ -1,5 +1,12 @@
 # Webhook-Triggered PR Review
 
+> **Extension (2026-06-28):** the trigger layer now also accepts an on-demand
+> `@push-agent review` comment (collaborator-gated) in addition to the
+> `pull_request` open events — a commenter can request a review of the current
+> head. Operational steps live in the runbook
+> [`Enabling Autonomous PR Review.md` §7](<../../runbooks/Enabling Autonomous PR Review.md>);
+> the shared enqueue core is `app/src/worker/pr-review-trigger.ts`.
+
 Date: 2026-05-28
 Status: **Current** — ROADMAP-tracked (`Autonomous Webhook PR Review`). Shipped: receiver + DO + REVIEW.md base-ref binding (#690), shared token-injectable client (#691), PWA read-only review-history surface (#692), web-tool suppression (#694), deep + cancellable reviews (#693), manual re-run from the PWA (#695), opt-in Checks-API gating (`PR_REVIEW_GATING_REPOS`, critical-only), and manual cancellation of an in-flight review from the PWA. Feature-complete for v1. Not live in prod until the `v4` DO migration is applied via a one-time non-versioned `wrangler deploy`; gating additionally needs the App's `checks: write` permission. Open: PWA gating-status surfacing and the multi-tenant read-authz caveat (both documented).
 Owner: Push

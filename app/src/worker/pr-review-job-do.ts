@@ -132,6 +132,14 @@ export interface PrReviewStartInput extends ReviewablePullRequest {
    */
   pinnedProvider?: string;
   pinnedModel?: string;
+  /**
+   * Widen coalescing to supersede an in-flight review on the *same* head SHA,
+   * not just older ones. Set by an explicit on-demand `@push-agent review`
+   * comment so a re-request cancels the running pass and the latest request
+   * wins. Transient (not persisted) — a later relaunch/retry of the winning
+   * review has no competitor left to supersede.
+   */
+  supersedeSameHead?: boolean;
 }
 
 export interface PrReviewStatusSnapshot {
@@ -576,14 +584,23 @@ export class PrReviewJob {
 
     // Coalesce: supersede any non-terminal review for this PR on an older head
     // SHA, and abort it if in-flight. A redelivery of the *same* head SHA still
-    // dedupes above; this only fires for genuinely newer pushes.
-    const stale = this.ctx.storage.sql
-      .exec(
-        "SELECT delivery_id FROM review WHERE pr_number = ? AND head_sha != ? AND status IN ('queued','running')",
-        input.prNumber,
-        input.headSha,
-      )
-      .toArray() as Array<{ delivery_id: string }>;
+    // dedupes above; this only fires for genuinely newer pushes. An explicit
+    // comment re-request (`supersedeSameHead`) widens this to the same head too,
+    // so "review again now" cancels the in-flight pass and the latest wins. The
+    // current delivery's own row isn't inserted yet, so it can't supersede
+    // itself.
+    const stale = (
+      input.supersedeSameHead
+        ? this.ctx.storage.sql.exec(
+            "SELECT delivery_id FROM review WHERE pr_number = ? AND status IN ('queued','running')",
+            input.prNumber,
+          )
+        : this.ctx.storage.sql.exec(
+            "SELECT delivery_id FROM review WHERE pr_number = ? AND head_sha != ? AND status IN ('queued','running')",
+            input.prNumber,
+            input.headSha,
+          )
+    ).toArray() as Array<{ delivery_id: string }>;
     for (const row of stale) {
       this.ctx.storage.sql.exec(
         "UPDATE review SET status = 'superseded', finished_at = ? WHERE delivery_id = ?",

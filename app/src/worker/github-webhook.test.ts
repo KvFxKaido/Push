@@ -1,10 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { DurableObjectId, DurableObjectNamespace } from '@cloudflare/workers-types';
 import {
+  type GitHubWebhookDeps,
   handleGitHubWebhook,
+  isAuthorizedTriggerAssociation,
   isInstallationAllowed,
   parseInstallationAllowlist,
+  parseReviewCommand,
   prReviewJobName,
+  resolveBotHandle,
+  selectReviewableComment,
   selectReviewablePullRequest,
   verifyWebhookSignature,
 } from './github-webhook';
@@ -45,6 +50,40 @@ function makeRequest(body: string, headers: Record<string, string>): Request {
     headers: { 'content-type': 'application/json', ...headers },
     body,
   });
+}
+
+/** issue_comment (conversation-tab) payload with an `@push-agent review` body. */
+function issueCommentPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'created',
+    repository: { full_name: 'octo/repo' },
+    installation: { id: 42 },
+    issue: { number: 7, pull_request: { url: 'https://api.github.com/.../pulls/7' } },
+    comment: {
+      id: 555,
+      body: '@push-agent review',
+      author_association: 'COLLABORATOR',
+      user: { type: 'User' },
+    },
+    ...overrides,
+  };
+}
+
+/** pull_request_review_comment (inline diff-line) payload. */
+function reviewCommentPayload(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    action: 'created',
+    repository: { full_name: 'octo/repo' },
+    installation: { id: 42 },
+    pull_request: { number: 7 },
+    comment: {
+      id: 777,
+      body: 'hey @push-agent please review again',
+      author_association: 'MEMBER',
+      user: { type: 'User' },
+    },
+    ...overrides,
+  };
 }
 
 describe('verifyWebhookSignature', () => {
@@ -281,5 +320,299 @@ describe('handleGitHubWebhook', () => {
       env,
     );
     expect(res.status).toBe(503);
+  });
+});
+
+describe('parseReviewCommand', () => {
+  it('fires on a mention + review command (case-insensitive, re-review)', () => {
+    expect(parseReviewCommand('@push-agent review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('hey @push-agent please review again', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@PUSH-AGENT Review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@push-agent re-review', 'push-agent')).toBe(true);
+  });
+
+  it('does not fire on a bare mention, a longer login, an email, or non-command words', () => {
+    expect(parseReviewCommand('@push-agent what do you think?', 'push-agent')).toBe(false);
+    expect(parseReviewCommand('thanks, reviewed already', 'push-agent')).toBe(false); // no mention
+    expect(parseReviewCommand('@push-agent-bot review', 'push-agent')).toBe(false); // longer login
+    expect(parseReviewCommand('mail foo@push-agent.io to review', 'push-agent')).toBe(false); // not a boundary
+    expect(parseReviewCommand('@push-agent reviewed it', 'push-agent')).toBe(false); // "reviewed" ≠ "review"
+    expect(parseReviewCommand('@push-agent review', '')).toBe(false); // no handle
+    expect(parseReviewCommand('', 'push-agent')).toBe(false);
+  });
+});
+
+describe('isAuthorizedTriggerAssociation', () => {
+  it('allows write-adjacent roles only', () => {
+    for (const a of ['OWNER', 'MEMBER', 'COLLABORATOR']) {
+      expect(isAuthorizedTriggerAssociation(a)).toBe(true);
+    }
+    for (const a of [
+      'CONTRIBUTOR',
+      'FIRST_TIME_CONTRIBUTOR',
+      'NONE',
+      'MANNEQUIN',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(isAuthorizedTriggerAssociation(a)).toBe(false);
+    }
+  });
+});
+
+describe('resolveBotHandle', () => {
+  it('defaults to the app slug, honors an override, and normalizes it', () => {
+    expect(resolveBotHandle({} as Env)).toBe('push-agent');
+    expect(resolveBotHandle({ PR_REVIEW_BOT_HANDLE: '@Push-Reviewer[bot]' } as Env)).toBe(
+      'push-reviewer',
+    );
+    // Blank/whitespace coalesces back to the slug (kill-switch is the off lever).
+    expect(resolveBotHandle({ PR_REVIEW_BOT_HANDLE: '   ' } as Env)).toBe('push-agent');
+  });
+});
+
+describe('selectReviewableComment', () => {
+  const H = 'push-agent';
+
+  it('selects an issue_comment trigger from a collaborator', () => {
+    const r = selectReviewableComment('issue_comment', issueCommentPayload(), H);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.request).toMatchObject({
+        repoFullName: 'octo/repo',
+        prNumber: 7,
+        installationId: '42',
+        commentId: 555,
+        commentKind: 'issue',
+      });
+    }
+  });
+
+  it('selects a pull_request_review_comment trigger with kind "review"', () => {
+    const r = selectReviewableComment('pull_request_review_comment', reviewCommentPayload(), H);
+    expect(r.ok && r.request.commentKind).toBe('review');
+    expect(r.ok && r.request.prNumber).toBe(7);
+    expect(r.ok && r.request.commentId).toBe(777);
+  });
+
+  it('skips a comment on a plain issue (not a PR)', () => {
+    expect(
+      selectReviewableComment('issue_comment', issueCommentPayload({ issue: { number: 3 } }), H),
+    ).toMatchObject({ ok: false, reason: 'not_pull_request' });
+  });
+
+  it('skips non-created actions, bot senders, and a missing trigger phrase', () => {
+    expect(
+      selectReviewableComment('issue_comment', issueCommentPayload({ action: 'edited' }), H),
+    ).toMatchObject({ ok: false, reason: 'action:edited' });
+    expect(
+      selectReviewableComment(
+        'issue_comment',
+        issueCommentPayload({
+          comment: {
+            id: 1,
+            body: '@push-agent review',
+            author_association: 'COLLABORATOR',
+            user: { type: 'Bot' },
+          },
+        }),
+        H,
+      ),
+    ).toMatchObject({ ok: false, reason: 'bot_sender' });
+    expect(
+      selectReviewableComment(
+        'issue_comment',
+        issueCommentPayload({
+          comment: { id: 1, body: 'lgtm', author_association: 'OWNER', user: { type: 'User' } },
+        }),
+        H,
+      ),
+    ).toMatchObject({ ok: false, reason: 'no_trigger' });
+  });
+
+  it('skips an unauthorized author_association even with the trigger', () => {
+    expect(
+      selectReviewableComment(
+        'issue_comment',
+        issueCommentPayload({
+          comment: {
+            id: 1,
+            body: '@push-agent review',
+            author_association: 'NONE',
+            user: { type: 'User' },
+          },
+        }),
+        H,
+      ),
+    ).toMatchObject({ ok: false, reason: 'association:NONE' });
+  });
+
+  it('skips non-comment events and incomplete payloads', () => {
+    expect(selectReviewableComment('pull_request', issueCommentPayload(), H)).toMatchObject({
+      ok: false,
+      reason: 'event:pull_request',
+    });
+    expect(
+      selectReviewableComment('issue_comment', issueCommentPayload({ repository: {} }), H),
+    ).toMatchObject({ ok: false, reason: 'missing_fields' });
+  });
+});
+
+describe('handleGitHubWebhook — comment trigger', () => {
+  function commentEnv(overrides: Partial<Env> = {}): Env {
+    return {
+      GITHUB_WEBHOOK_SECRET: SECRET,
+      GITHUB_ALLOWED_INSTALLATION_IDS: '42',
+      ...overrides,
+    } as Env;
+  }
+
+  function makeDeps(overrides: Partial<GitHubWebhookDeps> = {}) {
+    return {
+      enqueueReviewForExistingPr: vi.fn(async () => ({
+        ok: true as const,
+        status: 'queued',
+        headSha: 'sha-9',
+      })),
+      mintInstallationToken: vi.fn(async () => 'install-tok'),
+      addCommentReaction: vi.fn(async () => true),
+      ...overrides,
+    };
+  }
+
+  async function postComment(
+    event: string,
+    payload: unknown,
+    deps: ReturnType<typeof makeDeps>,
+    env: Env,
+    delivery = 'c-1',
+  ): Promise<Response> {
+    const body = JSON.stringify(payload);
+    return handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': event,
+        'X-GitHub-Delivery': delivery,
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      env,
+      deps as unknown as GitHubWebhookDeps,
+    );
+  }
+
+  it('enqueues comment-<id> and leaves a 👀 on the happy path', async () => {
+    const deps = makeDeps();
+    const env = commentEnv();
+    const res = await postComment('issue_comment', issueCommentPayload(), deps, env, 'c-happy');
+    expect(res.status).toBe(202);
+    expect(deps.enqueueReviewForExistingPr).toHaveBeenCalledWith(
+      env,
+      expect.objectContaining({
+        repo: 'octo/repo',
+        prNumber: 7,
+        installationId: '42',
+        deliveryId: 'comment-555',
+        token: 'install-tok',
+        // An on-demand comment is a latest-wins re-request.
+        supersedeSameHead: true,
+      }),
+    );
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
+  });
+
+  it('reacts on the inline review-comment endpoint kind', async () => {
+    const deps = makeDeps();
+    const res = await postComment(
+      'pull_request_review_comment',
+      reviewCommentPayload(),
+      deps,
+      commentEnv(),
+    );
+    expect(res.status).toBe(202);
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'review', 777, 'eyes', {
+      token: 'install-tok',
+    });
+  });
+
+  it('skips (204) a comment without the trigger and never mints/enqueues', async () => {
+    const deps = makeDeps();
+    const res = await postComment(
+      'issue_comment',
+      issueCommentPayload({
+        comment: { id: 9, body: 'nice work', author_association: 'OWNER', user: { type: 'User' } },
+      }),
+      deps,
+      commentEnv(),
+    );
+    expect(res.status).toBe(204);
+    expect(deps.mintInstallationToken).not.toHaveBeenCalled();
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+  });
+
+  it('skips (204) an unauthorized author even with the trigger', async () => {
+    const deps = makeDeps();
+    const res = await postComment(
+      'issue_comment',
+      issueCommentPayload({
+        comment: {
+          id: 9,
+          body: '@push-agent review',
+          author_association: 'NONE',
+          user: { type: 'User' },
+        },
+      }),
+      deps,
+      commentEnv(),
+    );
+    expect(res.status).toBe(204);
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+  });
+
+  it('rejects (403) a non-allowlisted installation', async () => {
+    const deps = makeDeps();
+    const res = await postComment(
+      'issue_comment',
+      issueCommentPayload({ installation: { id: 999 } }),
+      deps,
+      commentEnv(),
+    );
+    expect(res.status).toBe(403);
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+  });
+
+  it('acks 202 "disabled" without enqueue when the reviewer is off', async () => {
+    const deps = makeDeps();
+    const env = commentEnv({
+      SNAPSHOT_INDEX: {
+        get: async (k: string) => (k === 'config:pr-review-enabled' ? '0' : null),
+      } as unknown as Env['SNAPSHOT_INDEX'],
+    });
+    const res = await postComment('issue_comment', issueCommentPayload(), deps, env);
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({ status: 'disabled' });
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
+  });
+
+  it('acks 204 and does not react when the PR is not reviewable', async () => {
+    const deps = makeDeps({
+      enqueueReviewForExistingPr: vi.fn(async () => ({
+        ok: false as const,
+        code: 'NOT_REVIEWABLE',
+        message: 'PR #7 is closed — only open, non-draft PRs are reviewed.',
+        httpStatus: 409,
+      })),
+    });
+    const res = await postComment('issue_comment', issueCommentPayload(), deps, commentEnv());
+    expect(res.status).toBe(204);
+    expect(deps.addCommentReaction).not.toHaveBeenCalled();
+  });
+
+  it('returns 502 when token minting fails (and does not enqueue)', async () => {
+    const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
+    const res = await postComment('issue_comment', issueCommentPayload(), deps, commentEnv());
+    expect(res.status).toBe(502);
+    expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
   });
 });

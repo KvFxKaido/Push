@@ -1336,6 +1336,46 @@ export type ReviewCheckConclusion = 'success' | 'failure' | 'neutral';
 export const REVIEW_CHECK_NAME = 'Push review';
 
 /**
+ * Which comment endpoint a reaction targets. Top-level PR conversation comments
+ * (`issue_comment`) and inline diff-line review comments
+ * (`pull_request_review_comment`) live at different reaction URLs.
+ */
+export type CommentReactionKind = 'issue' | 'review';
+
+/**
+ * Add a reaction to a PR comment. Best-effort acknowledgement — e.g. the 👀 the
+ * autonomous reviewer leaves when it's @-mentioned to confirm the request
+ * landed. Returns false (never throws) so a failed reaction can't break the
+ * trigger path. `kind` selects the endpoint: `issue` for conversation comments,
+ * `review` for inline diff-line comments.
+ */
+export async function addCommentReaction(
+  repo: string,
+  kind: CommentReactionKind,
+  commentId: number,
+  content: 'eyes' | '+1' | 'rocket' | 'heart',
+  auth?: GitHubAuth,
+): Promise<boolean> {
+  const path = kind === 'review' ? 'pulls/comments' : 'issues/comments';
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/${path}/${commentId}/reactions`,
+      {
+        method: 'POST',
+        headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ content }),
+      },
+      { retry: false },
+    );
+    // 201 = reaction created, 200 = the same reaction already existed; either way
+    // the reaction is present.
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Start an `in_progress` "Push review" check-run on the head commit and return
  * its id, so a later {@link finalizeReviewCheckRun} can update the same run in
  * place. Gives every reviewed PR a visible "Reviewing…" status while the model

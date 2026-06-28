@@ -11,6 +11,8 @@ vi.mock('./worker-infra', () => ({
   generateGitHubAppJWT: (...args: unknown[]) => jwtMock(...args),
   resolveRepoInstallationId: (...args: unknown[]) => resolveInstallMock(...args),
   exchangeForInstallationToken: (...args: unknown[]) => exchangeMock(...args),
+  // Pulled in transitively by github-webhook.ts (comment-trigger handle).
+  GITHUB_APP_SLUG: 'push-agent',
 }));
 
 const { fetchRefsMock } = vi.hoisted(() => ({
@@ -34,6 +36,8 @@ const { fetchRefsMock } = vi.hoisted(() => ({
 }));
 vi.mock('@/lib/github-tools', () => ({
   fetchPullRequestRefs: (...args: unknown[]) => fetchRefsMock(...args),
+  // Pulled in transitively by github-webhook.ts (comment-trigger 👀 ack).
+  addCommentReaction: vi.fn(async () => true),
 }));
 
 import type { ExecutionContext } from '@cloudflare/workers-types';

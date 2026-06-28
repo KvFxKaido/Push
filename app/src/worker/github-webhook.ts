@@ -18,6 +18,17 @@
 
 import { timingSafeEqual, type Env } from './worker-middleware';
 import { isPrReviewEnabled } from './pr-review-config';
+import {
+  enqueueReviewForExistingPr,
+  mintInstallationToken,
+  prReviewJobName,
+} from './pr-review-trigger';
+import { GITHUB_APP_SLUG } from './worker-infra';
+import { addCommentReaction, type CommentReactionKind } from '@/lib/github-tools';
+
+// `prReviewJobName` now lives in pr-review-trigger.ts (single owner of DO
+// addressing); re-export it here so existing importers/tests keep their path.
+export { prReviewJobName } from './pr-review-trigger';
 
 /**
  * Actions on a `pull_request` event that warrant a fresh review.
@@ -161,16 +172,178 @@ export function selectReviewablePullRequest(
   };
 }
 
-/** Stable DO name so all events for one PR land on the same instance. */
-export function prReviewJobName(repoFullName: string, prNumber: number): string {
-  return `${repoFullName}#${prNumber}`;
+// --- Comment-triggered review (`@push-agent review`) ---
+
+/** Comment events that can carry an @-mention trigger. */
+const COMMENT_EVENTS = new Set(['issue_comment', 'pull_request_review_comment']);
+
+/**
+ * `author_association` values trusted to spend a review. These are the
+ * write-adjacent relationships; CONTRIBUTOR / FIRST_TIME_CONTRIBUTOR / NONE /
+ * MANNEQUIN are intentionally excluded so a drive-by outsider on a public PR
+ * can't burn provider tokens. This gates *who within the repo* may trigger; the
+ * installation allowlist (who installed the app) is a separate gate in the
+ * handler.
+ */
+const AUTHORIZED_TRIGGER_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+
+export function isAuthorizedTriggerAssociation(assoc: string | null | undefined): boolean {
+  return !!assoc && AUTHORIZED_TRIGGER_ASSOCIATIONS.has(assoc);
 }
+
+/**
+ * Resolve the mention handle that triggers a review. Defaults to the App slug
+ * (GitHub renders an app mention as `@<slug>`); `PR_REVIEW_BOT_HANDLE` overrides
+ * it. Normalizes a configured full login (`@push-agent[bot]`) down to the bare
+ * slug and lower-cases for case-insensitive matching. Returns '' when blank so
+ * the caller fails closed (can't match a mention it doesn't know).
+ */
+export function resolveBotHandle(env: Env): string {
+  // A blank/whitespace override coalesces back to the slug — the reviewer
+  // kill-switch (isPrReviewEnabled) is the lever for turning triggering off, not
+  // an empty handle.
+  const raw = env.PR_REVIEW_BOT_HANDLE?.trim() || GITHUB_APP_SLUG;
+  return raw
+    .replace(/^@/, '')
+    .replace(/\[bot\]$/i, '')
+    .trim()
+    .toLowerCase();
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * True when a comment body @-mentions the bot AND carries the `review` command —
+ * `@push-agent review`, `@push-agent please review again`, `@push-agent re-review`.
+ * The mention must sit at a word boundary (start-of-line or after whitespace) and
+ * not be a prefix of a longer login (`@push-agent-bot` ≠ `@push-agent`), so an
+ * incidental mention or an email-looking string doesn't fire. The command word
+ * is a standalone `review` (so "reviewed"/"preview" don't match).
+ */
+export function parseReviewCommand(body: string | null | undefined, handle: string): boolean {
+  if (!body || !handle) return false;
+  const mention = new RegExp(`(?:^|\\s)@${escapeRegExp(handle)}(?![a-z0-9-])`, 'im');
+  if (!mention.test(body)) return false;
+  return /\breview\b/i.test(body);
+}
+
+/** A PR comment we've decided is a review trigger, with what the enqueue needs. */
+export interface CommentReviewRequest {
+  repoFullName: string;
+  prNumber: number;
+  installationId: string;
+  commentId: number;
+  /** Which reaction endpoint to use when acking (conversation vs inline comment). */
+  commentKind: CommentReactionKind;
+}
+
+/**
+ * Decide whether a comment event is a review trigger and extract the fields the
+ * enqueue needs. Returns a `reason` (logged by the caller) for every non-trigger
+ * path: non-comment event; unknown handle; non-`created` action; bot sender;
+ * comment on a plain issue (not a PR); no trigger phrase; unauthorized
+ * association; missing fields. The trigger-phrase check precedes the
+ * authorization check on purpose — only comments that actually invoked the bot
+ * get an `association:*` skip logged, so ordinary chatter stays quiet.
+ */
+export function selectReviewableComment(
+  eventName: string | null,
+  payload: unknown,
+  handle: string,
+): { ok: true; request: CommentReviewRequest } | { ok: false; reason: string } {
+  if (!eventName || !COMMENT_EVENTS.has(eventName)) {
+    return { ok: false, reason: `event:${eventName ?? 'none'}` };
+  }
+  if (!handle) return { ok: false, reason: 'no_handle' };
+
+  const p = payload as {
+    action?: string;
+    repository?: { full_name?: string };
+    installation?: { id?: number | string };
+    comment?: {
+      id?: number;
+      body?: string;
+      author_association?: string;
+      user?: { type?: string };
+    };
+    issue?: { number?: number; pull_request?: unknown };
+    pull_request?: { number?: number };
+  };
+
+  // Only newly-created comments trigger. Edits/deletes are ignored so editing an
+  // old comment (or a re-delivered edit) can't silently re-spend a review.
+  if (p.action !== 'created') return { ok: false, reason: `action:${p.action ?? ''}` };
+
+  const comment = p.comment;
+  if (!comment) return { ok: false, reason: 'no_comment' };
+
+  // Never act on a bot's comment — keeps the reviewer's own posts (or any other
+  // bot) from triggering a review loop.
+  if (comment.user?.type === 'Bot') return { ok: false, reason: 'bot_sender' };
+
+  // issue_comment fires for plain issues too; only PR comments carry
+  // `issue.pull_request`. pull_request_review_comment is always on a PR.
+  const isReview = eventName === 'pull_request_review_comment';
+  if (!isReview && !p.issue?.pull_request) return { ok: false, reason: 'not_pull_request' };
+
+  if (!parseReviewCommand(comment.body, handle)) return { ok: false, reason: 'no_trigger' };
+
+  if (!isAuthorizedTriggerAssociation(comment.author_association)) {
+    return { ok: false, reason: `association:${comment.author_association ?? 'none'}` };
+  }
+
+  const repoFullName = p.repository?.full_name;
+  const prNumber = isReview ? p.pull_request?.number : p.issue?.number;
+  const installationId = p.installation?.id != null ? String(p.installation.id) : '';
+  const commentId = comment.id;
+
+  if (!repoFullName || !prNumber || !installationId || !commentId) {
+    return { ok: false, reason: 'missing_fields' };
+  }
+
+  return {
+    ok: true,
+    request: {
+      repoFullName,
+      prNumber,
+      installationId,
+      commentId,
+      commentKind: isReview ? 'review' : 'issue',
+    },
+  };
+}
+
+/**
+ * Network-touching collaborators of the comment-trigger path, injectable so unit
+ * tests can exercise the routing without minting GitHub tokens or posting
+ * reactions. Defaults to the real implementations.
+ */
+export interface GitHubWebhookDeps {
+  enqueueReviewForExistingPr: typeof enqueueReviewForExistingPr;
+  mintInstallationToken: typeof mintInstallationToken;
+  addCommentReaction: typeof addCommentReaction;
+}
+
+const DEFAULT_DEPS: GitHubWebhookDeps = {
+  enqueueReviewForExistingPr,
+  mintInstallationToken,
+  addCommentReaction,
+};
 
 /**
  * `/api/github/webhook` handler. Gates the delivery (signature → parse →
  * event-select → allowlist), then enqueues to the `PrReviewJob` DO and acks 202.
+ * `pull_request` opens fire a review directly; `issue_comment` /
+ * `pull_request_review_comment` carrying `@<bot> review` route through the
+ * comment trigger.
  */
-export async function handleGitHubWebhook(request: Request, env: Env): Promise<Response> {
+export async function handleGitHubWebhook(
+  request: Request,
+  env: Env,
+  deps: GitHubWebhookDeps = DEFAULT_DEPS,
+): Promise<Response> {
   const deliveryId = request.headers.get('X-GitHub-Delivery') ?? '';
   const eventName = request.headers.get('X-GitHub-Event');
 
@@ -195,6 +368,19 @@ export async function handleGitHubWebhook(request: Request, env: Env): Promise<R
   } catch {
     log('warn', 'webhook_rejected_body', { deliveryId, eventName });
     return json({ error: 'INVALID_BODY' }, 400);
+  }
+
+  // Comment events (`@push-agent review`) route through the comment trigger; the
+  // signature + body parse above are shared with the pull_request path.
+  if (eventName && COMMENT_EVENTS.has(eventName)) {
+    return handleCommentReviewTrigger(
+      env,
+      deps,
+      payload,
+      eventName,
+      deliveryId,
+      new URL(request.url).origin,
+    );
   }
 
   const selected = selectReviewablePullRequest(eventName, payload);
@@ -277,6 +463,132 @@ export async function handleGitHubWebhook(request: Request, env: Env): Promise<R
     });
     return json({ error: 'ENQUEUE_FAILED' }, 502);
   }
+}
+
+/**
+ * Comment-trigger path: a collaborator @-mentioned the bot with `review`. Gates
+ * (select → installation allowlist → kill-switch), then enqueues a review for the
+ * PR's *current* head (refs are fetched fresh in the enqueue helper) and leaves a
+ * 👀 reaction so the commenter sees it landed. `deliveryId: comment-<id>` dedupes
+ * a re-delivered comment in the DO while letting a genuinely new comment request
+ * another review.
+ */
+async function handleCommentReviewTrigger(
+  env: Env,
+  deps: GitHubWebhookDeps,
+  payload: unknown,
+  eventName: string,
+  deliveryId: string,
+  origin: string,
+): Promise<Response> {
+  const handle = resolveBotHandle(env);
+  const selected = selectReviewableComment(eventName, payload, handle);
+  if (!selected.ok) {
+    log('debug', 'webhook_comment_skipped', { deliveryId, eventName, reason: selected.reason });
+    return new Response(null, { status: 204 });
+  }
+  const req = selected.request;
+
+  const allowlist = parseInstallationAllowlist(env.GITHUB_ALLOWED_INSTALLATION_IDS);
+  if (!isInstallationAllowed(req.installationId, allowlist)) {
+    log('warn', 'webhook_comment_rejected_installation', {
+      deliveryId,
+      installationId: req.installationId,
+      repo: req.repoFullName,
+    });
+    return json({ error: 'INSTALLATION_NOT_ALLOWED' }, 403);
+  }
+
+  // Reviewer kill-switch — same gate the pull_request path honors. Ack 202; the
+  // skip is intentional, not retry-worthy.
+  if (!(await isPrReviewEnabled(env))) {
+    log('info', 'webhook_comment_skipped_disabled', {
+      deliveryId,
+      repo: req.repoFullName,
+      pr: req.prNumber,
+    });
+    return json({ ok: true, status: 'disabled' }, 202);
+  }
+
+  log('info', 'webhook_comment_trigger', {
+    deliveryId,
+    repo: req.repoFullName,
+    pr: req.prNumber,
+    kind: req.commentKind,
+  });
+
+  // One installation token, reused for the refs lookup AND the 👀 ack.
+  const token = await deps.mintInstallationToken(env, req.installationId);
+  if (!token) {
+    log('error', 'webhook_comment_enqueue_failed', {
+      deliveryId,
+      repo: req.repoFullName,
+      pr: req.prNumber,
+      code: 'TOKEN_MINT_FAILED',
+    });
+    return json({ error: 'TOKEN_MINT_FAILED' }, 502);
+  }
+
+  const result = await deps.enqueueReviewForExistingPr(env, {
+    repo: req.repoFullName,
+    prNumber: req.prNumber,
+    installationId: req.installationId,
+    origin,
+    deliveryId: `comment-${req.commentId}`,
+    token,
+    // An explicit "review again" cancels any in-flight pass on this PR — even on
+    // the same commit — so the latest request wins.
+    supersedeSameHead: true,
+  });
+
+  if (!result.ok) {
+    if (result.code === 'NOT_REVIEWABLE') {
+      // The PR is closed/draft — a valid trigger but nothing to review. Ack 204
+      // (no body); the detail is in the log, and no 👀 is left since we did
+      // nothing.
+      log('info', 'webhook_comment_not_reviewable', {
+        deliveryId,
+        repo: req.repoFullName,
+        pr: req.prNumber,
+        message: result.message,
+      });
+      return new Response(null, { status: 204 });
+    }
+    log('error', 'webhook_comment_enqueue_failed', {
+      deliveryId,
+      repo: req.repoFullName,
+      pr: req.prNumber,
+      code: result.code,
+    });
+    return json({ error: result.code }, result.httpStatus);
+  }
+
+  // Best-effort ack. Awaited (the handler has no ExecutionContext.waitUntil) but
+  // it's a single fast POST inside the delivery budget; a failure is logged, never
+  // thrown (addCommentReaction returns false rather than rejecting).
+  const reacted = await deps.addCommentReaction(
+    req.repoFullName,
+    req.commentKind,
+    req.commentId,
+    'eyes',
+    { token },
+  );
+  if (!reacted) {
+    log('warn', 'webhook_comment_reaction_failed', {
+      deliveryId,
+      repo: req.repoFullName,
+      commentId: req.commentId,
+    });
+  }
+
+  log('info', 'webhook_comment_enqueued', {
+    deliveryId,
+    repo: req.repoFullName,
+    pr: req.prNumber,
+    headSha: result.headSha,
+    status: result.status,
+  });
+  return json({ ok: true, status: result.status }, 202);
 }
 
 function json(body: unknown, status = 200): Response {
