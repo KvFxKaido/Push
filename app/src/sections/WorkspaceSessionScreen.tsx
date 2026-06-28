@@ -287,6 +287,15 @@ export function WorkspaceSessionScreen({
     // commit, switching the user into a matching existing chat
     // before the drain runs.
     if (pendingNewChat) return;
+    // Wait for IDB hydration before deciding there's no chat to resume.
+    // The synchronous localStorage seed in useChat is replaced wholesale
+    // once `migrateConversationsToIndexedDB` resolves; running this effect
+    // against the pre-hydration map can find no workspace match and mint a
+    // throwaway chat — the user sees a "new chat" flash before the real
+    // chat loads, and the transient swap can flip `current_branch` and
+    // tear down the sandbox. Gate on `conversationsLoaded` like the drain
+    // effect below does.
+    if (!conversationsLoaded) return;
 
     const activeConversation = conversations[activeChatId];
     const workspaceMode =
@@ -319,6 +328,7 @@ export function WorkspaceSessionScreen({
   }, [
     activeChatId,
     conversations,
+    conversationsLoaded,
     createNewChat,
     pendingNewChat,
     pendingResumeChatId,
