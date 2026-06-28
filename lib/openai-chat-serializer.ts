@@ -53,6 +53,7 @@ import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
 import {
   resolveGeminiReplaySignature,
+  toolCallFunctionThoughtSignatureField,
   toolCallThoughtSignatureFields,
 } from './gemini-thought-signature.ts';
 
@@ -257,12 +258,15 @@ function flattenToolBearingBlocks(
       // Anthropic carries `input` as a parsed object; OpenAI wants a JSON string.
       // Round-trip Gemini's `thoughtSignature` when present (an OpenAI-compat
       // upstream fronting Gemini, e.g. Ollama Cloud, 400s on replay without it).
-      // Emitted in BOTH wire shapes (top-level sibling + Google's `extra_content`
-      // envelope) since compat upstreams disagree on which they honor. When the
-      // target is Gemini (`geminiThoughtSignatureFallback`) and the turn's first
-      // call carries no captured signature, substitute the documented placeholder
-      // so the replay doesn't 400; non-Gemini upstreams pass `false` and keep
-      // emitting only a real signature (which they never have → no field).
+      // Emitted in ALL THREE wire shapes — top-level sibling, Google's
+      // `extra_content` envelope, and Ollama's nested `function.thought_signature`
+      // (the only one Ollama Cloud maps onto the forwarded Gemini `functionCall`;
+      // ref ollama/ollama#14676) — since compat upstreams disagree on which they
+      // honor and the unused ones are ignored. When the target is Gemini
+      // (`geminiThoughtSignatureFallback`) and the turn's first call carries no
+      // captured signature, substitute the documented placeholder so the replay
+      // doesn't 400; non-Gemini upstreams pass `false` and keep emitting only a
+      // real signature (which they never have → no field).
       const ownSignature =
         typeof block.thoughtSignature === 'string' && block.thoughtSignature
           ? block.thoughtSignature
@@ -274,7 +278,11 @@ function flattenToolBearingBlocks(
       pendingToolCalls.push({
         id: block.id,
         type: 'function',
-        function: { name: block.name, arguments: JSON.stringify(block.input) },
+        function: {
+          name: block.name,
+          arguments: JSON.stringify(block.input),
+          ...toolCallFunctionThoughtSignatureField(replaySignature),
+        },
         ...toolCallThoughtSignatureFields(replaySignature),
       });
     } else if (block.type === 'tool_result') {

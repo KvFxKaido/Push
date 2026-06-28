@@ -79,10 +79,12 @@ describe('provider wire contract — tool turns', () => {
       });
     });
 
-    it('round-trips Gemini thoughtSignature in BOTH wire shapes', () => {
+    it('round-trips Gemini thoughtSignature in ALL THREE wire shapes', () => {
       expect(assistant?.tool_calls?.[0]).toMatchObject({
         thoughtSignature: SIGNATURE,
         extra_content: { google: { thought_signature: SIGNATURE } },
+        // Ollama's nested shape — the only one an Ollama-fronted Gemini reads.
+        function: { thought_signature: SIGNATURE },
       });
     });
 
@@ -110,7 +112,11 @@ describe('provider wire contract — tool turns', () => {
       expect(assistant?.tool_calls?.[0]).toMatchObject({
         id: 'toolu_1',
         type: 'function',
-        function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+        function: {
+          name: 'sandbox_read_file',
+          arguments: '{"path":"a.ts"}',
+          thought_signature: SIGNATURE,
+        },
         thoughtSignature: SIGNATURE,
         extra_content: { google: { thought_signature: SIGNATURE } },
       });

@@ -5,6 +5,7 @@ import {
   isGeminiModelId,
   readToolCallThoughtSignature,
   resolveGeminiReplaySignature,
+  toolCallFunctionThoughtSignatureField,
   toolCallThoughtSignatureFields,
 } from './gemini-thought-signature.ts';
 
@@ -19,16 +20,27 @@ describe('readToolCallThoughtSignature', () => {
     ).toBe('sig');
   });
 
-  it('prefers the top-level sibling when both are present', () => {
+  it("reads Ollama's nested function.thought_signature shape", () => {
+    expect(readToolCallThoughtSignature({ function: { thought_signature: 'sig' } })).toBe('sig');
+  });
+
+  it('prefers the top-level sibling, then extra_content, then function-nested', () => {
     expect(
       readToolCallThoughtSignature({
         thoughtSignature: 'top',
         extra_content: { google: { thought_signature: 'nested' } },
+        function: { thought_signature: 'fn' },
       }),
     ).toBe('top');
+    expect(
+      readToolCallThoughtSignature({
+        extra_content: { google: { thought_signature: 'nested' } },
+        function: { thought_signature: 'fn' },
+      }),
+    ).toBe('nested');
   });
 
-  it('returns undefined when neither shape carries a non-empty string', () => {
+  it('returns undefined when no shape carries a non-empty string', () => {
     expect(readToolCallThoughtSignature({})).toBeUndefined();
     expect(readToolCallThoughtSignature({ thoughtSignature: '' })).toBeUndefined();
     expect(
@@ -37,11 +49,14 @@ describe('readToolCallThoughtSignature', () => {
     expect(readToolCallThoughtSignature({ thoughtSignature: 42 })).toBeUndefined();
     expect(readToolCallThoughtSignature({ extra_content: { google: {} } })).toBeUndefined();
     expect(readToolCallThoughtSignature({ extra_content: {} })).toBeUndefined();
+    expect(readToolCallThoughtSignature({ function: { thought_signature: '' } })).toBeUndefined();
+    expect(readToolCallThoughtSignature({ function: { thought_signature: 42 } })).toBeUndefined();
+    expect(readToolCallThoughtSignature({ function: {} })).toBeUndefined();
   });
 });
 
 describe('toolCallThoughtSignatureFields', () => {
-  it('emits both wire shapes when a signature is present', () => {
+  it('emits both tool-call-root wire shapes when a signature is present', () => {
     expect(toolCallThoughtSignatureFields('sig')).toEqual({
       thoughtSignature: 'sig',
       extra_content: { google: { thought_signature: 'sig' } },
@@ -51,6 +66,17 @@ describe('toolCallThoughtSignatureFields', () => {
   it('emits nothing when the signature is absent', () => {
     expect(toolCallThoughtSignatureFields(undefined)).toEqual({});
     expect(toolCallThoughtSignatureFields('')).toEqual({});
+  });
+});
+
+describe('toolCallFunctionThoughtSignatureField', () => {
+  it("emits Ollama's nested shape when a signature is present", () => {
+    expect(toolCallFunctionThoughtSignatureField('sig')).toEqual({ thought_signature: 'sig' });
+  });
+
+  it('emits nothing when the signature is absent', () => {
+    expect(toolCallFunctionThoughtSignatureField(undefined)).toEqual({});
+    expect(toolCallFunctionThoughtSignatureField('')).toEqual({});
   });
 });
 
