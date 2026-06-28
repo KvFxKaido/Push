@@ -26,6 +26,9 @@ import { getActiveProvider, isProviderAvailable, type ActiveProvider } from '@/l
 import { setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import { resolveWebAutoBranchOnCommitEnabled } from '@/lib/ensure-commit-target-branch';
+import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
+import type { BranchForkMigrationContext } from '@/lib/branch-fork-migration';
 import { createId, generateTitle } from './chat-persistence';
 import type {
   AgentStatus,
@@ -102,6 +105,22 @@ export interface PrepareSendCallbacks {
   updateAgentStatus: (status: AgentStatus, opts?: { chatId?: string }) => void;
 }
 
+/**
+ * Extra wiring for branch-on-first-prompt. Kept as a discrete optional param so
+ * `useChat` (at its line cap) only threads refs, and the decision + fork logic
+ * stays in `first-prompt-branch.ts`. Field types are reused from the migration
+ * context so no extra type imports are needed. Omit to disable branching for a
+ * caller (e.g. the no-repo path or tests).
+ */
+export interface FirstPromptBranchDeps {
+  /** owner/name, or null for scratch / no-repo. */
+  repoFullName: string | null;
+  branchInfoRef: BranchForkMigrationContext['branchInfoRef'];
+  activeChatIdRef: BranchForkMigrationContext['activeChatIdRef'];
+  skipAutoCreateRef: BranchForkMigrationContext['skipAutoCreateRef'];
+  runtimeHandlersRef: BranchForkMigrationContext['runtimeHandlersRef'];
+}
+
 export interface PrepareSendResult {
   /** Initial message stack the round loop streams against. */
   apiMessages: ChatMessage[];
@@ -123,6 +142,7 @@ export async function prepareSendContext(
   args: PrepareSendArgs,
   refs: PrepareSendRefs,
   callbacks: PrepareSendCallbacks,
+  branchDeps?: FirstPromptBranchDeps,
 ): Promise<PrepareSendResult> {
   const { trimmedText, attachments, options, chatId, skipStreamingPlaceholder } = args;
 
@@ -212,6 +232,33 @@ export async function prepareSendContext(
     } catch {
       // Best effort prewarm; continue chat flow without sandbox.
     }
+  }
+
+  // Branch-on-first-prompt: now that the sandbox has cloned `main`, fork a work
+  // branch named from this prompt and migrate the conversation onto it before
+  // the round loop runs — so the session never works on the default branch. A
+  // no-op for non-first messages, scratch/no-repo, or when already off main.
+  if (branchDeps) {
+    await maybeBranchOnFirstPrompt(
+      {
+        enabled: resolveWebAutoBranchOnCommitEnabled(),
+        isFirstMessage,
+        promptText: trimmedText,
+        repoFullName: branchDeps.repoFullName,
+        sandboxId: refs.sandboxIdRef.current,
+        currentBranch: branchDeps.branchInfoRef.current?.currentBranch,
+        defaultBranch: branchDeps.branchInfoRef.current?.defaultBranch,
+      },
+      {
+        activeChatIdRef: branchDeps.activeChatIdRef,
+        conversationsRef: refs.conversationsRef,
+        branchInfoRef: branchDeps.branchInfoRef,
+        skipAutoCreateRef: branchDeps.skipAutoCreateRef,
+        setConversations: callbacks.updateConversations,
+        dirtyConversationIdsRef: refs.dirtyConversationIdsRef,
+        runtimeHandlersRef: branchDeps.runtimeHandlersRef,
+      },
+    );
   }
 
   refs.abortControllerRef.current = new AbortController();
