@@ -232,6 +232,12 @@ function flattenToolBearingBlocks(
     messages.push(message);
     pendingVisible = [];
     pendingToolCalls = [];
+    // A flush closes the current assistant message. When a `tool_result` flushes
+    // mid-list, a following `tool_use` starts a NEW assistant message (= a new
+    // Gemini turn), so its first call must be eligible for the placeholder again
+    // — reset the per-turn first-call tracker. (Parallel calls in one turn don't
+    // flush between them, so this never clears a genuine trailing-parallel skip.)
+    seenToolCall = false;
   };
 
   for (const block of blocks) {

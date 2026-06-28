@@ -831,6 +831,40 @@ describe('expandToolMessagesForOpenAICompat', () => {
     });
   });
 
+  it('re-backfills the placeholder on the first call of each step in an interleaved block list', () => {
+    // A single block list that interleaves call→result→call splits into two
+    // assistant messages (a `tool_result` flushes the first). Each flushed
+    // assistant message is its own Gemini turn, so BOTH first calls need the
+    // placeholder — the per-turn tracker must reset on flush (Codex P2).
+    const out = expandToolMessagesForOpenAICompat(
+      [
+        {
+          role: 'assistant',
+          contentBlocks: [
+            { type: 'tool_use', id: 'c1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+            { type: 'tool_result', tool_use_id: 'c1', content: 'a-data' },
+            { type: 'tool_use', id: 'c2', name: 'sandbox_read_file', input: { path: 'b.ts' } },
+          ],
+        },
+      ],
+      true,
+    );
+    // [assistant(c1), tool(c1 result), assistant(c2)]
+    const assistantMsgs = out.filter(
+      (m): m is { role: string; tool_calls: Array<Record<string, unknown>> } =>
+        (m as { role?: string }).role === 'assistant' &&
+        Array.isArray((m as { tool_calls?: unknown }).tool_calls),
+    );
+    expect(assistantMsgs).toHaveLength(2);
+    expect(assistantMsgs[0].tool_calls[0]).toMatchObject({
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    });
+    // Without the reset, c2 (first call of the second step) would replay bare.
+    expect(assistantMsgs[1].tool_calls[0]).toMatchObject({
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    });
+  });
+
   it("expands a tool_result turn into a standalone role:'tool' message", () => {
     expect(
       expandToolMessagesForOpenAICompat([{ role: 'user', contentBlocks: [toolResult] }]),
