@@ -146,7 +146,10 @@ export function getRoleLabel(
  * not a phase; `system` stays "System"; every other source resolves via
  * `getRoleLabel`. Keeps the console's source vocabulary inside the seam.
  */
-export function getSourceLabel(source: AgentRole | 'system' | string): string {
+export function getSourceLabel(
+  source: AgentRole | 'system' | string,
+  _prefix: string,
+): string {
   if (source === 'system') return 'System';
   if (source === 'orchestrator') return 'Assistant';
   return getRoleLabel(source);
