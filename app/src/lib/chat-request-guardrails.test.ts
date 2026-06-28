@@ -82,9 +82,10 @@ describe('validateAndNormalizeChatRequest', () => {
       expect(tool).toEqual({ role: 'tool', tool_call_id: 'toolu_1', content: 'file body' });
     });
 
-    it("preserves Gemini's thoughtSignature and re-emits both wire shapes", () => {
-      // Top-level sibling in → both shapes out, so the field survives whichever
-      // the upstream honors.
+    it("preserves Gemini's thoughtSignature and re-emits all three wire shapes", () => {
+      // Top-level sibling in → all three shapes out, so the field survives
+      // whichever the upstream honors (Ollama Cloud reads ONLY the nested
+      // function.thought_signature, so this proxy normalizer must re-emit it).
       const result = validateAndNormalizeChatRequest(
         JSON.stringify({
           model: 'gemini-3-flash-preview',
@@ -115,11 +116,48 @@ describe('validateAndNormalizeChatRequest', () => {
           {
             id: 'toolu_1',
             type: 'function',
-            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+            function: {
+              name: 'sandbox_read_file',
+              arguments: '{"path":"a.ts"}',
+              thought_signature: 'sig-abc',
+            },
             thoughtSignature: 'sig-abc',
             extra_content: { google: { thought_signature: 'sig-abc' } },
           },
         ],
+      });
+    });
+
+    it("reads the thoughtSignature from Ollama's nested function shape and re-emits all three", () => {
+      // function.thought_signature-only in (the shape Ollama Cloud actually
+      // sends) → all three shapes out, so the proxy round-trip survives.
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gemini-3-flash-preview',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'toolu_1',
+                  type: 'function',
+                  function: { name: 'f', arguments: '{}', thought_signature: 'sig-fn' },
+                },
+              ],
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      const toolCall = (result.value.parsed.messages ?? [])[0]?.tool_calls?.[0];
+      expect(toolCall).toMatchObject({
+        function: { name: 'f', arguments: '{}', thought_signature: 'sig-fn' },
+        thoughtSignature: 'sig-fn',
+        extra_content: { google: { thought_signature: 'sig-fn' } },
       });
     });
 
@@ -150,6 +188,7 @@ describe('validateAndNormalizeChatRequest', () => {
       if (!result.ok) return;
       const toolCall = (result.value.parsed.messages ?? [])[0]?.tool_calls?.[0];
       expect(toolCall).toMatchObject({
+        function: { name: 'f', arguments: '{}', thought_signature: 'sig-xyz' },
         thoughtSignature: 'sig-xyz',
         extra_content: { google: { thought_signature: 'sig-xyz' } },
       });

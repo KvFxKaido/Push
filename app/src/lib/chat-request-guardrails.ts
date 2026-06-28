@@ -26,6 +26,7 @@ import type {
 import { PUSH_STREAM_WIRE_CONTRACT } from '@push/lib/provider-wire';
 import {
   readToolCallThoughtSignature,
+  toolCallFunctionThoughtSignatureField,
   toolCallThoughtSignatureFields,
 } from '@push/lib/gemini-thought-signature';
 
@@ -137,15 +138,25 @@ function normalizeToolCalls(
     }
     // Round-trip Gemini's `thoughtSignature` when present — an OpenAI-compat
     // upstream fronting Gemini (Ollama Cloud) 400s on replay without it.
-    // Model-generated and low-risk; read either wire shape (top-level sibling or
-    // Google's `extra_content` envelope) and re-emit BOTH so the field survives
-    // whichever the upstream honors. Drop silently when absent (a missing
-    // signature isn't a 400-able request shape on its own).
+    // Model-generated and low-risk; read ANY wire shape (top-level sibling,
+    // Google's `extra_content` envelope, or Ollama's nested
+    // `function.thought_signature`) and re-emit ALL THREE so the field survives
+    // whichever the upstream honors. Crucially the nested shape must be
+    // re-emitted into the rebuilt `function` object here too — Ollama Cloud reads
+    // ONLY `function.thought_signature`, so dropping it on this proxy normalizer
+    // would strip the one shape that reaches the forwarded Gemini and the replay
+    // would still 400 (the production web path runs through here). Drop silently
+    // when absent (a missing signature isn't a 400-able request shape on its own).
+    const sig = readToolCallThoughtSignature(rec);
     out.push({
       id: rec.id,
       type: 'function',
-      function: { name: fn.name, arguments: fn.arguments },
-      ...toolCallThoughtSignatureFields(readToolCallThoughtSignature(rec)),
+      function: {
+        name: fn.name,
+        arguments: fn.arguments,
+        ...toolCallFunctionThoughtSignatureField(sig),
+      },
+      ...toolCallThoughtSignatureFields(sig),
     });
   }
   return { ok: true, value: out };
