@@ -1070,6 +1070,37 @@ export async function runInPageCoderKernel(
     surface: 'full',
   });
   const capabilityProfile = resolvePushCapabilityProfile(spec.provider, spec.modelId);
+  // Native-FC gate decision, resolved once per run. The lead surface attaches
+  // native tool schemas only when the model is native-capable; otherwise the
+  // run silently lands on the text-dispatch `[TOOL_RESULT]` path. That fallback
+  // was previously untraced — a provider/model with no native-tool capability
+  // (e.g. an Ollama Cloud id absent from models.dev's `toolCall` metadata)
+  // dropped to text-dispatch with no log line, so a weak model distrusting the
+  // `[TOOL_RESULT]` envelope read as an inexplicable runtime quirk. Emit one
+  // structured line per branch (enabled ↔ gated-off) so ops can distinguish the
+  // two without inferring from downstream behavior. Web surface → `console.log`
+  // per the logging-stream rule in CLAUDE.md.
+  const nativeFcEligible = Boolean(leadRuntime) && capabilityProfile.toolCalling === 'native';
+  console.log(
+    JSON.stringify(
+      nativeFcEligible
+        ? {
+            level: 'info',
+            event: 'native_fc_enabled',
+            provider: spec.provider,
+            model: spec.modelId,
+            toolCalling: capabilityProfile.toolCalling,
+          }
+        : {
+            level: 'info',
+            event: 'native_fc_gated_off',
+            provider: spec.provider,
+            model: spec.modelId,
+            toolCalling: capabilityProfile.toolCalling,
+            reason: !leadRuntime ? 'not_lead_runtime' : 'model_not_native_capable',
+          },
+    ),
+  );
   const libOptions: CoderAgentOptions<AnyToolCall, ChatCard> = {
     provider: spec.provider,
     stream:
@@ -1163,26 +1194,25 @@ export async function runInPageCoderKernel(
     //      sandbox/web (+ memory when a scope is threaded) plus the lead's
     //      extra GitHub/ask/artifact surface. Advertising a tool the lead
     //      can't execute (e.g. `delegate_*`) would let a native call no-op.
-    nativeToolSchemas:
-      leadRuntime && capabilityProfile.toolCalling === 'native'
-        ? getToolFunctionSchemasForSources(
-            leadNativeToolSources({
-              hasMemoryScope: Boolean(spec.memoryScope),
-              hasScratchpad: Boolean(spec.scratchpad),
-              hasTodo: Boolean(spec.todo),
-            }),
-            {
-              // Pin the GitHub tools' `repo` arg to the active repo so the model
-              // emits it correctly instead of a placeholder that trips the
-              // executor's repo-mismatch rejection (validation_failed churn).
-              activeRepo: spec.memoryScope?.repoFullName,
-              // The `delegate` source is wired for `delegate_explorer` only —
-              // keep `delegate_coder` / `plan_tasks` out of the native schema so
-              // a native call can't fire an advertised-but-denied delegation.
-              excludeTools: LEAD_EXCLUDED_DELEGATION_TOOLS,
-            },
-          )
-        : undefined,
+    nativeToolSchemas: nativeFcEligible
+      ? getToolFunctionSchemasForSources(
+          leadNativeToolSources({
+            hasMemoryScope: Boolean(spec.memoryScope),
+            hasScratchpad: Boolean(spec.scratchpad),
+            hasTodo: Boolean(spec.todo),
+          }),
+          {
+            // Pin the GitHub tools' `repo` arg to the active repo so the model
+            // emits it correctly instead of a placeholder that trips the
+            // executor's repo-mismatch rejection (validation_failed churn).
+            activeRepo: spec.memoryScope?.repoFullName,
+            // The `delegate` source is wired for `delegate_explorer` only —
+            // keep `delegate_coder` / `plan_tasks` out of the native schema so
+            // a native call can't fire an advertised-but-denied delegation.
+            excludeTools: LEAD_EXCLUDED_DELEGATION_TOOLS,
+          },
+        )
+      : undefined,
   };
 
   // --- Run the lib kernel ---

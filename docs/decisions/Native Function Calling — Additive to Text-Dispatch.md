@@ -161,3 +161,50 @@ Coder/Explorer, and scoped toolsets.
   surface: web lead uses source-scoped registry schemas; CLI lead uses the full
   CLI protocol plus conditional GitHub schemas; delegated Coder uses the full CLI
   protocol; delegated Explorer uses the read-only CLI protocol.
+
+## Addendum (2026-06-27) — native tool-result delivery on Ollama Cloud
+
+The original wiring made models *emit* calls natively but still fed prior tool
+**results** back as `role: 'user'` `[TOOL_RESULT]` text on the OpenAI-compat web
+adapters, which assemble their own body (via `toLLMMessages`) and forward it raw
+rather than routing through `toOpenAIChat`. A tool-capable model then sees its
+own results as untrusted user-injected data rather than tool output — the
+provenance-confusion failure mode (a weak model distrusting the envelope and
+fabricating reality instead).
+
+Fixed for the two legacy raw-forward web adapters — **Ollama Cloud** and
+**OpenRouter**. When native FC is active, the adapter passes
+`emitContentBlocks: true` to `toLLMMessages` (running the kernel's already-paired
+tool sidecars through the whole-request adjacency pass in
+`materializeToolContentBlocks`), then expands only the tool-bearing turns via the
+new `expandToolMessagesForOpenAICompat` (`lib/openai-chat-serializer.ts`) —
+reusing the same `flattenToolBearingBlocks` the neutral path uses. Assistant tool
+turns become `tool_calls[]`; each result becomes a standalone
+`{ role: 'tool', tool_call_id }`. Non-tool turns and unpaired/non-adjacent tool
+exchanges pass through verbatim (graceful degradation to the text arm), so the
+change is byte-identical to before when native FC is off.
+
+The gate is the presence of function schemas (`req.tools`), NOT OpenRouter's
+`openrouter:web_search` server tool — web search alone doesn't put the model in
+native-FC mode. Other OpenAI-compat adapters that already route through
+`toOpenAIChat` (Vertex Gemini, Zen-Go, CLI OpenAI-compat) get this flatten for
+free and need no change.
+
+Two seams the first cut missed (caught in #1219 review):
+
+1. **Worker proxy normalizer.** These adapters proxy their client-built body
+   through `validateAndNormalizeChatRequest` (`chat-request-guardrails.ts`), which
+   rebuilds each message and previously kept only `role`/`content`/reasoning
+   fields — silently dropping `tool_calls` (assistant) and `tool_call_id` (tool
+   role). So the expanded messages arrived malformed upstream (an assistant turn
+   with no calls + a dangling `role: 'tool'`). The normalizer now shape-validates
+   and preserves both fields (`normalizeToolCalls`, fail-closed: a malformed
+   `tool_calls` 400s rather than forwarding a half-stripped exchange). Providers
+   on the neutral path are unaffected — the Worker builds their tool messages
+   server-side via `toOpenAIChat`, after validation. `'tool'` was already an
+   allowed role.
+2. **contentBlocks leak on passthrough.** `expandToolMessagesForOpenAICompat`
+   now downcasts non-tool `contentBlocks` (multimodal/attachment turns) to OpenAI
+   content parts and drops the Push-private `contentBlocks` field, instead of
+   forwarding it verbatim. A blunt strip would lose images that live only in
+   `contentBlocks`, so it mirrors `toOpenAIChat`'s non-tool branch.

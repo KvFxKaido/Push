@@ -5,6 +5,7 @@ import type {
   OpenAIContentPart,
   OpenAIMessage,
   OpenAIReasoningBlock,
+  OpenAIToolCall,
 } from '@push/lib/openai-chat-types';
 export type {
   OpenAIChatRequest,
@@ -74,6 +75,7 @@ function normalizeReasoningContent(raw: unknown): string | undefined {
 }
 
 const MAX_ASSISTANT_CONTENT_BLOCKS = 256;
+const MAX_TOOL_CALLS_PER_MESSAGE = 64;
 
 /** Validate the Push-private `assistant_content_blocks` sidecar used for
  *  Anthropic `pause_turn` replay. Anthropic treats the replayed content
@@ -93,6 +95,49 @@ function normalizeAssistantContentBlocks(raw: unknown): Array<Record<string, unk
     out.push(rec);
   }
   return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Validate + normalize an assistant message's `tool_calls` (OpenAI native
+ * function calling). The legacy raw-forward adapters (Ollama Cloud, OpenRouter)
+ * build their own OpenAI body and proxy it through this normalizer, so without
+ * preserving `tool_calls` here the field is silently dropped and the upstream
+ * receives an assistant turn whose tool calls vanished (paired with a dangling
+ * `role: 'tool'` result). Unlike the lenient `reasoning_blocks` / cache_control
+ * helpers, this fails CLOSED with a discriminated result so the caller can 400
+ * a malformed payload rather than forward a half-stripped tool exchange.
+ * Returns `{ ok: true, value: undefined }` when the field is absent.
+ */
+function normalizeToolCalls(
+  raw: unknown,
+): { ok: true; value: OpenAIToolCall[] | undefined } | { ok: false } {
+  if (raw === undefined) return { ok: true, value: undefined };
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_TOOL_CALLS_PER_MESSAGE) {
+    return { ok: false };
+  }
+  const out: OpenAIToolCall[] = [];
+  for (const entry of raw) {
+    const rec = asRecord(entry);
+    const fn = asRecord(rec?.function);
+    if (
+      !rec ||
+      typeof rec.id !== 'string' ||
+      rec.id.trim().length === 0 ||
+      rec.type !== 'function' ||
+      !fn ||
+      typeof fn.name !== 'string' ||
+      fn.name.trim().length === 0 ||
+      typeof fn.arguments !== 'string'
+    ) {
+      return { ok: false };
+    }
+    out.push({
+      id: rec.id,
+      type: 'function',
+      function: { name: fn.name, arguments: fn.arguments },
+    });
+  }
+  return { ok: true, value: out };
 }
 
 /** Extract a `cache_control` field from a raw content part and return the
@@ -205,6 +250,26 @@ export function validateAndNormalizeChatRequest(
         ? normalizeAssistantContentBlocks(messageRecord.assistant_content_blocks)
         : undefined;
 
+    // Native function-calling round-trip on the legacy raw-forward adapters
+    // (Ollama Cloud, OpenRouter): the assistant turn carries `tool_calls[]` and
+    // each `role: 'tool'` result carries the `tool_call_id` linking it back.
+    // Preserve both (validated) — dropping them desyncs the exchange and the
+    // upstream rejects a tool result with no preceding call.
+    let toolCalls: OpenAIToolCall[] | undefined;
+    if (role === 'assistant' && messageRecord.tool_calls !== undefined) {
+      const result = normalizeToolCalls(messageRecord.tool_calls);
+      if (!result.ok) {
+        return validationError(
+          `${policy.routeLabel} request message ${index + 1} has invalid "tool_calls".`,
+        );
+      }
+      toolCalls = result.value;
+    }
+    const toolCallId =
+      role === 'tool' && typeof messageRecord.tool_call_id === 'string'
+        ? messageRecord.tool_call_id
+        : undefined;
+
     const rawContent = messageRecord.content;
     // Allow undefined `content` on assistant turns that carry the pause_turn
     // sidecar — the bridge uses `assistant_content_blocks` verbatim and the
@@ -221,6 +286,8 @@ export function validateAndNormalizeChatRequest(
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
         ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
         ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
+        ...(toolCalls ? { tool_calls: toolCalls } : {}),
+        ...(toolCallId ? { tool_call_id: toolCallId } : {}),
       });
       continue;
     }
@@ -294,6 +361,8 @@ export function validateAndNormalizeChatRequest(
       ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
       ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
       ...(assistantContentBlocks ? { assistant_content_blocks: assistantContentBlocks } : {}),
+      ...(toolCalls ? { tool_calls: toolCalls } : {}),
+      ...(toolCallId ? { tool_call_id: toolCallId } : {}),
     });
   }
 

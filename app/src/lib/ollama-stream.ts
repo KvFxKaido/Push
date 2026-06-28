@@ -12,7 +12,10 @@
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
-import { flatToolToOpenAITool } from '@push/lib/openai-chat-serializer';
+import {
+  expandToolMessagesForOpenAICompat,
+  flatToolToOpenAITool,
+} from '@push/lib/openai-chat-serializer';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -30,6 +33,16 @@ export async function* ollamaStream(
   // 1. Compose messages via the shared prompt builder. Runtime context flows
   //    through the adapter as opaque passthrough fields — cast locally.
   const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
+  // Native function calling is active when the caller attached tool schemas
+  // (gated upstream on model support). When active, deliver prior tool history
+  // in the OpenAI-native shape — assistant `tool_calls[]` + `role: 'tool'`
+  // results — instead of the `[TOOL_RESULT]` text envelope. A tool-capable model
+  // then sees its own results as tool output rather than untrusted user-injected
+  // data (the provenance-confusion failure mode). `emitContentBlocks` runs the
+  // kernel's tool sidecars through the whole-request adjacency/pairing pass so
+  // `expandToolMessagesForOpenAICompat` has paired `contentBlocks` to flatten;
+  // unpaired turns degrade to their text form. Off → byte-identical to before.
+  const nativeFcActive = Array.isArray(req.tools) && req.tools.length > 0;
   const llmMessages = toLLMMessages(req.messages, {
     workspaceContext,
     hasSandbox: req.hasSandbox,
@@ -45,7 +58,11 @@ export async function* ollamaStream(
       onEmit: req.onSessionDigestEmitted,
     },
     linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: nativeFcActive,
   });
+  const wireMessages = nativeFcActive
+    ? expandToolMessagesForOpenAICompat(llmMessages)
+    : llmMessages;
 
   // 2. Reasoning effort. Ollama Cloud's OpenAI-compatible endpoint honors a
   //    `reasoning_effort` field (`high|medium|low|none`) on thinking-capable
@@ -63,11 +80,11 @@ export async function* ollamaStream(
   // 3. OpenAI-compatible request body. Aside from `reasoning_effort` above,
   //    Ollama Cloud has no provider-specific extensions on
   //    `/v1/chat/completions`.
-  const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : undefined;
+  const nativeTools = nativeFcActive ? req.tools : undefined;
   const openAITools = nativeTools?.map(flatToolToOpenAITool);
   const body: Record<string, unknown> = {
     model: req.model,
-    messages: llmMessages,
+    messages: wireMessages,
     stream: true,
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
