@@ -74,12 +74,14 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 
 ### Accent & Interactive
 
-The accent is **Sky**, two-tier. Light Sky (`#7dd3fc`) is the airy identity color — accent text, icons, links, the ambient glow, focus rings, and tinted button fills. Deep Sky lives in the shadcn `--primary` var (`200 98% 39%` / `#0284c7`) for the few solid indicators (switch/checkbox) that need white-on-color contrast. There are **no solid Sky button fills** — the `Button` `default` variant is a tinted outline (`border-push-accent/40 bg-push-accent/10 text-push-accent`).
+The accent is **Sky**, two-tier. Light Sky (`#7dd3fc`) is the airy identity color — accent text, icons, links, the ambient glow, the **focus ring** (`--ring`), and tinted button fills. Deep Sky lives in the shadcn `--primary` var (`200 98% 39%` / `#0284c7`) for the few solid indicators (switch/checkbox) that need white-on-color contrast. There are **no solid Sky button fills** — the `Button` `default` variant is a tinted outline (`border-push-accent/40 bg-push-accent/10 text-push-accent`).
+
+**Focus ring vs. focus border are different tokens, on purpose.** The 3px focus *ring* (buttons, shadcn primitives) is light Sky via `--ring` (`199 95% 74%` ≈ `#7dd3fc`). The input *border* that lights on focus is mid Sky `push-sky` (`#38bdf8`, applied as `focus:border-push-sky/50`) — a darker, lower-glow tone that reads as a state change on the field edge without competing with the ring's bloom. Don't reach for `push-sky` for a ring or `push-accent` for a focus border.
 
 | Token        | Hex       | Use                              |
 | ------------ | --------- | -------------------------------- |
-| `push-accent`| `#7dd3fc` | Sky accent — text, icons, tinted CTAs, glow |
-| `push-sky`   | `#38bdf8` | Mid sky — focus rings, highlights |
+| `push-accent`| `#7dd3fc` | Sky accent — text, icons, tinted CTAs, focus rings (`--ring`), glow |
+| `push-sky`   | `#38bdf8` | Mid sky — input **focus border** (`focus:border-push-sky/50`), mid-sky icons, status dots |
 | `push-link`  | `#7dd3fc` | Links, interactive text actions  |
 | `push-link-hover` | `#bae6fd` | Brighter sky on hover        |
 | `push-violet`| `#c4b5fd` | Chat / conversation accent       |
@@ -228,7 +230,11 @@ Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tab
 | `push-inset-strong`  | Deeper inset                                                    | Emphasized recess (reserved; deeper wells)           |
 | `push-glass`         | Outer floating elevation + frosted inner edge, in one shadow   | Glass drawer shells (`RepoChatDrawer`, `WorkspaceHubSheet`) |
 
+**Glass: the *class* is shadow-free, the *token* is the shadow.** These are two layers, not a contradiction. `HUB_GLASS_PANEL_CLASS` (the base utility — translucent gradient + `backdrop-blur-2xl` + a `border-white/[0.07]` frame) ships **without elevation** so a glass panel mid-page reads as frosting, not a floating slab. A *drawer shell* (`RepoChatDrawer`, `WorkspaceHubSheet`) is what floats, so it composes the base class **plus** the `push-glass` token to add the combined elevation + frosted edge. So: glass-the-class has no shadow; glass-that-floats does, via the one `push-glass` token. Don't stack `push-glass` onto a glass surface that isn't a floating shell.
+
 Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-inset` (wired into `HUB_MATERIAL_INTERACTIVE_CLASS`). Don't compose two `shadow-*` utilities on one element — they collide on source order; pick raised **or** inset per surface. Raw shadow values live once in `tailwind.config.js`; consume the `shadow-push-*` token classes, never inline rgba.
+
+**Focus-visible on raised chrome.** A raised surface's lit top edge and soft drop shadow would swallow a same-size ring drawn flush against the element, so neumorphic chrome separates the focus ring from the shadow with an **offset**: `:focus-visible` adds the 3px light-Sky ring (`ring-ring/50`) plus a `ring-offset-2` in the surface's own fill (`ring-offset-push-surface-raised`), so the ring reads as a crisp line in a clean gap *outside* the soft depth halo rather than fighting it. This is keyboard-only (`focus-visible`, not `focus`) so a pointer press never paints the ring; the press itself still recesses via `:active`. Wired once into `HUB_MATERIAL_INTERACTIVE_CLASS` — don't hand-roll a focus ring per button. Recessed wells (inputs) keep their existing `focus:border-push-sky/50` edge-light instead, since a sunken field has no raised halo to clear.
 
 ## Motion
 

@@ -140,4 +140,34 @@ export default defineConfig([
       'max-lines': ['error', { max: 250 }],
     },
   },
+  // Neumorphic-depth containment for content cards. DESIGN.md → Shadows is
+  // explicit that the raised/inset depth tokens are for *chrome* (hub buttons,
+  // pills, panels) and *recessed wells* (inputs, console) — dense content cards
+  // (chat bubbles, diff/code/data cards) stay flat and earn hierarchy from
+  // border + background contrast instead. The doctrine was prose-only, so a
+  // new card reaching for `shadow-push-raised` "because it looks more designed"
+  // would pass review until someone noticed. This guard makes the boundary
+  // mechanical: the `components/cards/**` tree may not name `shadow-push-raised`
+  // / `shadow-push-inset` (any variant) in a className string or template. If a
+  // card genuinely needs elevation it's *floating* chrome, not a content card —
+  // move it or use the overlay `shadow-push-card*` family, which is what cards
+  // that lift off the page are for.
+  {
+    files: ['src/components/cards/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Literal[value=/shadow-push-(raised|inset)/]',
+          message:
+            'Neumorphic depth (shadow-push-raised / shadow-push-inset) is chrome-only — content cards stay flat (border + background contrast). See DESIGN.md → Shadows. For a card that floats off the page, use shadow-push-card*.',
+        },
+        {
+          selector: 'TemplateElement[value.raw=/shadow-push-(raised|inset)/]',
+          message:
+            'Neumorphic depth (shadow-push-raised / shadow-push-inset) is chrome-only — content cards stay flat (border + background contrast). See DESIGN.md → Shadows. For a card that floats off the page, use shadow-push-card*.',
+        },
+      ],
+    },
+  },
 ]);

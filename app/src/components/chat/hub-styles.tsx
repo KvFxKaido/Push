@@ -16,8 +16,13 @@ export const HUB_MATERIAL_SURFACE_CLASS = HUB_MATERIAL_SURFACE_BASE_CLASS;
 
 // Raised + pressable: a stronger lift on hover and a press-to-recess on
 // `:active`, so a hub button reads as a physical key rather than a flat chip.
+// Keyboard focus adds an *offset* 3px light-Sky ring (`ring-ring/50`) sitting in
+// a gap of the surface's own fill, so it clears the raised drop shadow + lit
+// edge instead of being swallowed by them. `focus-visible` keeps it keyboard-
+// only — a pointer press recesses via `:active` and never paints the ring.
+// See DESIGN.md → Shadows → "Focus-visible on raised chrome".
 export const HUB_MATERIAL_INTERACTIVE_CLASS =
-  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 hover:shadow-push-raised-hover active:shadow-push-inset';
+  'transition-all duration-200 hover:border-push-edge-hover hover:text-push-fg hover:brightness-110 hover:shadow-push-raised-hover active:shadow-push-inset focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-push-surface-raised';
 
 const HUB_MATERIAL_PILL_LAYOUT_CLASS =
   'inline-flex h-8 items-center gap-1.5 rounded-full px-3 text-push-xs text-push-fg-dim disabled:opacity-50';
