@@ -91,9 +91,7 @@ export type SendMessageOptions = Partial<ChatDraftSelection> &
     titleOverride?: string;
   };
 
-type AbortStreamOptions = {
-  clearQueuedFollowUps?: boolean;
-};
+type AbortStreamOptions = { clearQueuedFollowUps?: boolean };
 
 // ---------------------------------------------------------------------------
 // Hook
@@ -297,7 +295,8 @@ export function useChat(
     saveExpiryCheckpoint,
     flushCheckpoint,
     checkpointRefs,
-    lastCoderStateRef,
+    runtimeContextRef,
+    resetRuntimeContextForRun,
     tabLockIntervalRef,
   } = useChatCheckpoint({
     runEngineStateRef,
@@ -588,7 +587,7 @@ export function useChat(
     repoRef,
     abortControllerRef,
     abortRef,
-    lastCoderStateRef,
+    runtimeContextRef,
     backgroundCoderJob,
     // Phase 1: global toggle; per-chat override is a later layer (docs/archive/runbooks/Background Coder Tasks Phase 1.md §4).
     isBackgroundModeEnabledForChat: () => isBackgroundModeEnabled(),
@@ -676,7 +675,7 @@ export function useChat(
       );
       if (!acquired) return;
 
-      // --- Build loop context (constant for this call) ---
+      const runtimeContext = resetRuntimeContextForRun(chatId);
       const loopCtx: SendLoopContext = {
         chatId,
         lockedProvider: lockedProviderForChat,
@@ -693,9 +692,9 @@ export function useChat(
         repoRef,
         isMainProtectedRef,
         branchInfoRef,
+        runtimeContext,
         checkpointRefs,
         processedContentRef,
-        lastCoderStateRef,
         setConversations: updateConversations,
         dirtyConversationIdsRef,
         updateAgentStatus,
@@ -777,7 +776,7 @@ export function useChat(
       pendingSteersByChatRef,
       enqueuePendingSteer,
       workspaceContextRef,
-      lastCoderStateRef,
+      resetRuntimeContextForRun,
       tabLockIntervalRef,
       dirtyConversationIdsRef,
       updateConversations,

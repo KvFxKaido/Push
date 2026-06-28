@@ -36,6 +36,7 @@ import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-pro
 import { createId } from '@push/lib/id-utils';
 import { buildToolUseBlock, createToolUseBlockId } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
+import { clearRuntimeCoderWorkingMemory } from '@push/lib/runtime-context';
 import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock } from '@/types';
@@ -76,7 +77,6 @@ export async function executeBatchedToolCalls(
     isMainProtectedRef,
     branchInfoRef,
     checkpointRefs,
-    lastCoderStateRef,
     dirtyConversationIdsRef,
     setConversations,
     updateAgentStatus,
@@ -510,7 +510,7 @@ export async function executeBatchedToolCalls(
         lockedProvider,
         resolvedModel || undefined,
       );
-      lastCoderStateRef.current = null;
+      clearRuntimeCoderWorkingMemory(ctx.runtimeContext);
       emitRunEngineEvent({
         type: 'DELEGATION_COMPLETED',
         timestamp: Date.now(),

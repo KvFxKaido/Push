@@ -15,13 +15,13 @@ import type { MigrationGuard } from '@/lib/chat-message';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
+import type { PushRuntimeContext } from '@push/lib/runtime-context';
 import type {
   ActiveRepo,
   AgentStatus,
   AgentStatusSource,
   ChatMessage,
   Conversation,
-  CoderWorkingMemory,
   ReasoningBlock,
   RunEventInput,
   ToolExecutionResult,
@@ -93,9 +93,9 @@ export interface SendLoopContext {
   repoRef: MutableRefObject<string | null>;
   isMainProtectedRef: MutableRefObject<boolean>;
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
+  runtimeContext: PushRuntimeContext;
   checkpointRefs: CheckpointRefs;
   processedContentRef: MutableRefObject<Set<string>>;
-  lastCoderStateRef: MutableRefObject<CoderWorkingMemory | null>;
   // Slice 2 conversation-fork migration. Set by chat-send when a 'forked'
   // branchSwitch arrives; cleared by useChat's state-observed effect once the
   // migration is observable. While set, useChat's auto-switch effect early-

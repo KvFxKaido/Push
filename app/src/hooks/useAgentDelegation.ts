@@ -36,6 +36,12 @@ import {
 import { writeCoderMemory, invalidateMemoryForChangedFiles } from '@/lib/context-memory';
 import { runContextMemoryBestEffort } from '@/lib/memory-context-helpers';
 import { type CorrelationContext } from '@push/lib/correlation-context';
+import {
+  clearRuntimeCoderWorkingMemory,
+  readRuntimeCoderWorkingMemory,
+  setRuntimeCoderWorkingMemory,
+  type PushRuntimeContext,
+} from '@push/lib/runtime-context';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { VerificationPolicy } from '@/lib/verification-policy';
@@ -230,7 +236,7 @@ export interface UseAgentDelegationParams {
   repoRef: React.MutableRefObject<string | null>;
   abortControllerRef: React.MutableRefObject<AbortController | null>;
   abortRef: React.MutableRefObject<boolean>;
-  lastCoderStateRef: React.MutableRefObject<CoderWorkingMemory | null>;
+  runtimeContextRef: React.MutableRefObject<PushRuntimeContext>;
   /**
    * Optional background-job hook. When present AND
    * `isBackgroundModeEnabledForChat(chatId)` returns true, a
@@ -259,10 +265,24 @@ export function useAgentDelegation({
   repoRef,
   abortControllerRef,
   abortRef,
-  lastCoderStateRef,
+  runtimeContextRef,
   backgroundCoderJob,
   isBackgroundModeEnabledForChat,
 }: UseAgentDelegationParams) {
+  const readLatestCoderState = useCallback(
+    () => readRuntimeCoderWorkingMemory(runtimeContextRef.current) as CoderWorkingMemory | null,
+    [runtimeContextRef],
+  );
+  const resetCoderState = useCallback(() => {
+    clearRuntimeCoderWorkingMemory(runtimeContextRef.current);
+  }, [runtimeContextRef]);
+  const updateCoderState = useCallback(
+    (state: CoderWorkingMemory) => {
+      setRuntimeCoderWorkingMemory(runtimeContextRef.current, state);
+    },
+    [runtimeContextRef],
+  );
+
   // Wire up the Sequential Explorer handler context with the hook's refs and
   // callbacks. Kept hook-local (not exported) so the extraction boundary stays
   // one-way: the handler module never imports from this hook.
@@ -303,8 +323,8 @@ export function useAgentDelegation({
   // Wire up the Sequential Coder handler context. Same one-way boundary
   // rule as buildExplorerContext: the handler never imports from this
   // hook. `resetCoderState` and `onCoderStateUpdate` bridge the hook's
-  // `lastCoderStateRef` ownership into the handler's execution path
-  // without handing the ref itself across the seam.
+  // runtimeContext-backed working-memory state into the handler's
+  // execution path without handing the carrier itself across the seam.
   const buildCoderContext = useCallback(
     (): CoderHandlerContext => ({
       sandboxIdRef,
@@ -319,13 +339,9 @@ export function useAgentDelegation({
       appendRunEvent,
       updateAgentStatus,
       updateVerificationStateForChat,
-      resetCoderState: () => {
-        lastCoderStateRef.current = null;
-      },
-      onCoderStateUpdate: (state) => {
-        lastCoderStateRef.current = state;
-      },
-      readLatestCoderState: () => lastCoderStateRef.current,
+      resetCoderState,
+      onCoderStateUpdate: updateCoderState,
+      readLatestCoderState,
     }),
     [
       sandboxIdRef,
@@ -340,7 +356,9 @@ export function useAgentDelegation({
       appendRunEvent,
       updateAgentStatus,
       updateVerificationStateForChat,
-      lastCoderStateRef,
+      resetCoderState,
+      updateCoderState,
+      readLatestCoderState,
     ],
   );
 
@@ -353,7 +371,7 @@ export function useAgentDelegation({
     (): AuditorHandlerContext => ({
       repoRef,
       branchInfoRef,
-      readLatestCoderState: () => lastCoderStateRef.current,
+      readLatestCoderState,
       appendRunEvent,
       updateAgentStatus,
       updateVerificationStateForChat,
@@ -361,7 +379,7 @@ export function useAgentDelegation({
     [
       repoRef,
       branchInfoRef,
-      lastCoderStateRef,
+      readLatestCoderState,
       appendRunEvent,
       updateAgentStatus,
       updateVerificationStateForChat,
@@ -391,13 +409,9 @@ export function useAgentDelegation({
       updateVerificationStateForChat,
       appendInlineDelegationCards: (chatId, cards) =>
         appendInlineDelegationCards(setConversations, chatId, cards),
-      resetCoderState: () => {
-        lastCoderStateRef.current = null;
-      },
-      onCoderStateUpdate: (state) => {
-        lastCoderStateRef.current = state;
-      },
-      readLatestCoderState: () => lastCoderStateRef.current,
+      resetCoderState,
+      onCoderStateUpdate: updateCoderState,
+      readLatestCoderState,
     }),
     [
       sandboxIdRef,
@@ -413,7 +427,9 @@ export function useAgentDelegation({
       updateAgentStatus,
       updateVerificationStateForChat,
       setConversations,
-      lastCoderStateRef,
+      resetCoderState,
+      updateCoderState,
+      readLatestCoderState,
     ],
   );
 
@@ -432,6 +448,7 @@ export function useAgentDelegation({
       // by `extendCorrelation` at each span site so the merge is
       // copy-on-write rather than mutation.
       const baseCorrelation: CorrelationContext = {
+        ...runtimeContextRef.current.correlation,
         surface: 'web',
         chatId,
       };
@@ -701,6 +718,7 @@ export function useAgentDelegation({
       isMainProtectedRef,
       agentsMdRef,
       instructionFilenameRef,
+      runtimeContextRef,
     ],
   );
 

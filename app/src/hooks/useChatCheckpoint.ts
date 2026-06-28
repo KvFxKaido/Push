@@ -27,7 +27,6 @@ import type {
   AIProviderType,
   ChatMessage,
   Conversation,
-  CoderWorkingMemory,
   RunCheckpoint,
 } from '@/types';
 import {
@@ -45,6 +44,11 @@ import { getApprovalMode } from '@/lib/approval-mode';
 import { getZenGoMode } from '@/lib/providers';
 import type { RunCheckpointReason } from '@push/lib/run-checkpoint';
 import type { VerificationPolicy } from '@push/lib/verification-policy';
+import {
+  createRuntimeContext,
+  readRuntimeCoderWorkingMemory,
+  type PushRuntimeContext,
+} from '@push/lib/runtime-context';
 import { isRunActive, type RunEnginePhase, type RunEngineState } from '@/lib/run-engine';
 import { setConversationAgentEvents } from '@/lib/chat-runtime-state';
 import type { LoopPhase } from '@/types';
@@ -52,6 +56,7 @@ import { fetchSandboxDiff, sandboxStatus, type SandboxStatusResult } from '@/lib
 import { createRunDiffSnapshotTracker } from '@/lib/run-diff-snapshot';
 import { createId } from '@/hooks/chat-persistence';
 import { useRunHostAttach } from './useRunHostAttach';
+import { createWebRunRuntimeContext } from './chat-run-context';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -164,8 +169,24 @@ export function useChatCheckpoint({
   // from runEngineStateRef.current (the authoritative engine state).
   const checkpointApiMessagesRef = useRef<ChatMessage[]>([]);
 
-  // Phase 3: last Coder working memory state
-  const lastCoderStateRef = useRef<CoderWorkingMemory | null>(null);
+  const runtimeContextRef = useRef<PushRuntimeContext>(createRuntimeContext());
+  const readLatestCoderState = useCallback(
+    () => readRuntimeCoderWorkingMemory(runtimeContextRef.current),
+    [],
+  );
+  const resetRuntimeContextForRun = useCallback(
+    (chatId: string): PushRuntimeContext => {
+      const runtimeContext = createWebRunRuntimeContext({
+        chatId,
+        runId: runEngineStateRef.current.runId,
+        repoFullName: repoRef.current,
+        branchInfo: branchInfoRef.current,
+      });
+      runtimeContextRef.current = runtimeContext;
+      return runtimeContext;
+    },
+    [branchInfoRef, repoRef, runEngineStateRef],
+  );
 
   // Tab lock heartbeat interval (side-effect ref, not state)
   const tabLockIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -318,7 +339,7 @@ export function useChatCheckpoint({
         approvalMode: getApprovalMode(),
         verificationPolicy: getVerificationPolicyForChat(chatId),
         zenGo: engineState.provider === 'zen' ? getZenGoMode() : undefined,
-        workingMemory: lastCoderStateRef.current,
+        workingMemory: readLatestCoderState(),
         sandboxSessionId: sandboxIdRef.current,
         savedDiff:
           overrides?.savedDiff ??
@@ -330,6 +351,7 @@ export function useChatCheckpoint({
       abortRef,
       branchInfoRef,
       getVerificationPolicyForChat,
+      readLatestCoderState,
       repoRef,
       runEngineStateRef,
       sandboxIdRef,
@@ -355,7 +377,7 @@ export function useChatCheckpoint({
         apiMessages: checkpointApiMessagesRef.current,
         accumulated: '',
         thinkingAccumulated: '',
-        lastCoderState: lastCoderStateRef.current,
+        lastCoderState: readLatestCoderState(),
         provider: engineState.provider as AIProviderType,
         model: engineState.model,
         sandboxSessionId: sandboxIdRef.current || '',
@@ -378,6 +400,7 @@ export function useChatCheckpoint({
       activeChatId,
       branchInfoRef,
       captureV1Checkpoint,
+      readLatestCoderState,
       repoRef,
       runEngineStateRef,
       sandboxIdRef,
@@ -400,7 +423,7 @@ export function useChatCheckpoint({
         apiMessages: checkpointApiMessagesRef.current,
         accumulated: engineState.accumulatedText,
         thinkingAccumulated: engineState.accumulatedThinking,
-        lastCoderState: lastCoderStateRef.current,
+        lastCoderState: readLatestCoderState(),
         provider: engineState.provider as AIProviderType,
         model: engineState.model,
         sandboxSessionId: sandboxIdRef.current || '',
@@ -426,6 +449,7 @@ export function useChatCheckpoint({
       abortRef,
       branchInfoRef,
       captureV1Checkpoint,
+      readLatestCoderState,
       repoRef,
       runEngineStateRef,
       sandboxIdRef,
@@ -709,7 +733,8 @@ export function useChatCheckpoint({
     flushCheckpoint,
     // Ref bundles
     checkpointRefs,
-    lastCoderStateRef,
+    runtimeContextRef,
+    resetRuntimeContextForRun,
     tabLockIntervalRef,
   };
 }

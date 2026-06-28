@@ -49,6 +49,7 @@ import {
   createToolUseBlockId,
 } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
+import { clearRuntimeCoderWorkingMemory } from '@push/lib/runtime-context';
 import { composeToolResultBody } from '@/lib/tool-call-recovery';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatCard, ChatMessage, ReasoningBlock, ToolExecutionResult } from '@/types';
@@ -89,7 +90,6 @@ export async function executeSingleToolCall(
     isMainProtectedRef,
     branchInfoRef,
     checkpointRefs,
-    lastCoderStateRef,
     dirtyConversationIdsRef,
     setConversations,
     updateAgentStatus,
@@ -209,7 +209,7 @@ export async function executeSingleToolCall(
       resolvedModel || undefined,
     );
     toolExecDurationMs = Date.now() - toolExecStart;
-    lastCoderStateRef.current = null;
+    clearRuntimeCoderWorkingMemory(ctx.runtimeContext);
     emitRunEngineEvent({
       type: 'DELEGATION_COMPLETED',
       timestamp: Date.now(),

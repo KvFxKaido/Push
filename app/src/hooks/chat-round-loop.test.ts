@@ -20,6 +20,7 @@ vi.mock('./chat-send', async () => {
 import { runRoundLoop } from './chat-round-loop';
 import type { SendLoopContext } from './chat-send';
 import type { PendingSteersByChat } from './usePendingSteer';
+import { createRuntimeContext } from '@push/lib/runtime-context';
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -88,9 +89,9 @@ function makeHarness(initialMessages: ChatMessage[] = [makeMessage()]): Harness 
     repoRef: { current: null },
     isMainProtectedRef: { current: false },
     branchInfoRef: { current: undefined },
+    runtimeContext: createRuntimeContext({ correlation: { surface: 'web', chatId: 'chat-1' } }),
     checkpointRefs: { apiMessages: { current: [] } },
     processedContentRef: { current: new Set<string>() },
-    lastCoderStateRef: { current: null },
     skipAutoCreateRef: { current: null },
     activeChatIdRef: { current: 'chat-1' },
     conversationsRef,

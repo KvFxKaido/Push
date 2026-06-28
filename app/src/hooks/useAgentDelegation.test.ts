@@ -153,7 +153,9 @@ function makeParams() {
     repoRef: { current: null as string | null },
     abortControllerRef: { current: null },
     abortRef: { current: false },
-    lastCoderStateRef: { current: null },
+    runtimeContextRef: {
+      current: { correlation: {}, memory: { scope: null }, workingMemory: { coder: null } },
+    },
   };
 }
 
@@ -912,9 +914,9 @@ describe('useAgentDelegation.executeDelegateCall — Sequential Auditor', () => 
     );
   });
 
-  it('passes lastCoderStateRef.current as evalWorkingMemory on single-task, null on multi-task', async () => {
+  it('passes runtimeContext coder memory as evalWorkingMemory on single-task, null on multi-task', async () => {
     // runCoderAgent is positional; index 8 is the onStateUpdate callback.
-    // Invoke it from the mock so lastCoderStateRef.current gets populated
+    // Invoke it from the mock so runtimeContext working memory gets populated
     // before the auditor reads it — otherwise single-task and multi-task
     // would both appear null and the policy would be invisible.
     const populateState = async (args: unknown[]) => {
@@ -1244,10 +1246,10 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
     );
   });
 
-  it('passes lastCoderStateRef as evalWorkingMemory on single-node graph, null on multi-node (Option A pin)', async () => {
+  it('passes runtimeContext coder memory as evalWorkingMemory on single-node graph, null on multi-node (Option A pin)', async () => {
     // Shared fake runCoderAgent that fires onStateUpdate (positional index 8
     // on runCoderAgent) from within the executor closure, populating
-    // lastCoderStateRef.current before the auditor reads it. Without this
+    // runtimeContext working memory before the auditor reads it. Without this
     // the single-node case would also read null and the policy pin would
     // be vacuous (both branches of the ternary would appear equal).
     const populateState = async (args: unknown[]) => {
@@ -1264,7 +1266,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
 
     // Executor-invoking graph mock: actually call the hook's taskExecutor
     // closure for each node so runCoderAgent's onStateUpdate callback fires
-    // and mutates lastCoderStateRef. The default mock's resolvedValue would
+    // and mutates runtimeContext working memory. The default mock's resolvedValue would
     // skip the executor entirely.
     type Executor = (
       node: unknown,
@@ -1372,7 +1374,7 @@ describe('useAgentDelegation.executeDelegateCall — plan_tasks (task graph)', (
     );
 
     // Multi-coder-node graph: evalWorkingMemory must be null even though
-    // the ref was populated by each node's onStateUpdate. This pins the
+    // runtimeContext was populated by each node's onStateUpdate. This pins the
     // "pass null for multi-node" policy (recon §Coupling Hazards #3).
     // If Phase 5 extraction accidentally feeds the last node's memory or
     // changes to Map accumulation without a matching contract update,

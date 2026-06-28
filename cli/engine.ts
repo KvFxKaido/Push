@@ -9,6 +9,7 @@ import {
 import { formatProjectInstructionsBlock } from '../lib/project-instructions.ts';
 import { estimateTokens } from './context-manager.js';
 import { type PromptCompositionCost } from '../lib/prompt-cost-telemetry.ts';
+import { createRuntimeContext, type PushRuntimeContext } from '../lib/runtime-context.ts';
 import { escapeToolResultBoundaries } from '../lib/untrusted-content.ts';
 import {
   SystemPromptBuilder,
@@ -66,6 +67,7 @@ export interface RunOptions {
   // writer of the parent-visible `delegation.*` lifecycle + `run_complete`
   // envelopes for this turn.
   suppressEventPersist?: boolean;
+  runtimeContext?: PushRuntimeContext;
 }
 
 export interface RunResult {
@@ -392,7 +394,18 @@ export async function runAssistantTurn(
   // Mint a stable runId once for the whole turn so consumers keying on runId
   // (event logs, daemon attach clients) see one correlated stream per turn.
   const turnRunId = options.runId ?? makeRunId();
-  const turnOptions: RunOptions = { ...options, runId: turnRunId };
+  const turnOptions: RunOptions = {
+    ...options,
+    runId: turnRunId,
+    // Coder working memory is not seeded here: nothing on the CLI reads
+    // runtimeContext.workingMemory.coder (state.workingMemory is the source of
+    // truth), so seeding it would only create a write-only mirror that drifts.
+    runtimeContext:
+      options.runtimeContext ??
+      createRuntimeContext({
+        correlation: { surface: 'cli', sessionId: state.sessionId, runId: turnRunId },
+      }),
+  };
 
   // Single conversational lead is the only turn shape (Agent Runtime Decisions
   // §10): the turn runs on the shared coder kernel (`leadMode`) — same kernel +
