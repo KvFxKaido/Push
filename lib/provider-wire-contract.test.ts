@@ -6,15 +6,22 @@ import { toAnthropicMessages } from './anthropic-bridge.ts';
 import { toGeminiGenerateContent } from './gemini-bridge.ts';
 
 /**
- * Cross-provider wire-contract pins for tool-bearing turns.
+ * Cross-provider wire-contract pins for tool-bearing turns — at the SERIALIZER
+ * stage (neutral message -> provider wire body).
  *
  * A tool call/result must survive serialization on EVERY provider that supports
  * native tool calling, and provider-specific sidecars (Gemini's
- * `thoughtSignature`) must round-trip wherever they apply. The two regressions
- * this guards against both shipped because a wire field was carried on one path
- * and silently dropped on another:
- *   - tool_calls / tool_call_id stripped by the proxy normalizer (#1219)
- *   - thoughtSignature dropped on the OpenAI-compat flatten (#1220)
+ * `thoughtSignature`) must round-trip wherever they apply. This directly guards
+ * the #1220 class — `thoughtSignature` dropped on the OpenAI-compat flatten —
+ * and the serializer-stage emission of `tool_calls` / `tool_call_id`.
+ *
+ * Scope note: the sibling #1219 regression was a strip at a DIFFERENT stage —
+ * the Worker proxy normalizer (`validateAndNormalizeChatRequest`) dropping
+ * `tool_calls` / `tool_call_id` after the client serialized them. That stage is
+ * app-layer (a `lib/` test importing it would invert layering) and is guarded in
+ * `app/src/lib/chat-request-guardrails.test.ts`. This file is the serializer-stage
+ * half of the same "a wire field carried on one path is silently dropped on
+ * another" class; the two together cover producer + proxy.
  *
  * Two layers:
  *   1. Round-trip invariants — the call id and (where supported) the signature
