@@ -8,6 +8,7 @@ function makeInput(overrides: Partial<AutoSwitchDecisionInput> = {}): AutoSwitch
     activeRepoFullName: null,
     skipAutoCreate: false,
     migrationActive: false,
+    conversationsLoaded: true,
     ...overrides,
   };
 }
@@ -82,6 +83,38 @@ describe('decideAutoSwitchAction', () => {
       }),
     );
     expect(action).toEqual({ kind: 'noop' });
+  });
+
+  it('returns noop before IDB hydration even when a repo is selected and the seed looks empty', () => {
+    // Regression: a repo session whose history lives only in IDB has an empty
+    // localStorage seed, so `sortedChatIds` is empty pre-hydration. Without the
+    // gate this mints a throwaway "New Chat" before hydration replaces the map
+    // — the restore flash on the main sandbox-backed path (Codex P2 on #1223).
+    const action = decideAutoSwitchAction(
+      makeInput({ activeRepoFullName: 'owner/repo', conversationsLoaded: false }),
+    );
+    expect(action).toEqual({ kind: 'noop' });
+  });
+
+  it('returns noop before IDB hydration even when the active chat is missing from the seed', () => {
+    // The switch branch is suppressed pre-hydration too, so a stale seed
+    // cannot churn activeChatId before the real map lands.
+    const action = decideAutoSwitchAction(
+      makeInput({
+        sortedChatIds: ['chat-newest'],
+        activeChatId: 'chat-stale',
+        activeRepoFullName: 'owner/repo',
+        conversationsLoaded: false,
+      }),
+    );
+    expect(action).toEqual({ kind: 'noop' });
+  });
+
+  it('creates once hydration completes for a repo with no chats', () => {
+    const action = decideAutoSwitchAction(
+      makeInput({ activeRepoFullName: 'owner/repo', conversationsLoaded: true }),
+    );
+    expect(action).toEqual({ kind: 'create' });
   });
 
   it('does not create when sortedChatIds is empty but no repo is selected', () => {
