@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { useChat } from '@/hooks/useChat';
-import { conversationBelongsToWorkspace } from '@/hooks/chat-management';
+import { resolveWorkspaceChatAction } from '@/hooks/chat-management';
 import { useSandbox } from '@/hooks/useSandbox';
 import { useScratchpad } from '@/hooks/useScratchpad';
 import { useTodo } from '@/hooks/useTodo';
@@ -280,51 +280,31 @@ export function WorkspaceSessionScreen({
   }, [sandbox.status, sandbox.sandboxId, replayOnFreshSandbox, activeChatId, conversations]);
 
   useEffect(() => {
-    if (pendingResumeChatId) return;
-    // Pre-flight menu owns chat minting on commit — let its drain
-    // effect create the fresh chat in the right context. Without this
-    // guard the auto-effect can race the drain on a cross-context
-    // commit, switching the user into a matching existing chat
-    // before the drain runs.
-    if (pendingNewChat) return;
-    // Wait for IDB hydration before deciding there's no chat to resume.
-    // The synchronous localStorage seed in useChat is replaced wholesale
-    // once `migrateConversationsToIndexedDB` resolves; running this effect
-    // against the pre-hydration map can find no workspace match and mint a
-    // throwaway chat — the user sees a "new chat" flash before the real
-    // chat loads, and the transient swap can flip `current_branch` and
-    // tear down the sandbox. Gate on `conversationsLoaded` like the drain
-    // effect below does.
-    if (!conversationsLoaded) return;
-
-    const activeConversation = conversations[activeChatId];
+    // Decision (including the `conversationsLoaded` hydration gate that keeps
+    // a pre-hydration map from minting a throwaway chat) lives in the pure
+    // `resolveWorkspaceChatAction` helper so it can be unit-tested without
+    // mounting this screen.
     const workspaceMode =
       workspaceSession.kind === 'chat'
         ? 'chat'
         : workspaceSession.kind === 'scratch'
           ? 'scratch'
           : 'repo';
-    const repoFullName = workspaceRepo?.full_name ?? null;
+    const action = resolveWorkspaceChatAction({
+      conversations,
+      activeChatId,
+      repoFullName: workspaceRepo?.full_name ?? null,
+      workspaceMode,
+      conversationsLoaded,
+      hasPendingResume: Boolean(pendingResumeChatId),
+      hasPendingNewChat: Boolean(pendingNewChat),
+    });
 
-    if (
-      activeConversation &&
-      conversationBelongsToWorkspace(activeConversation, repoFullName, workspaceMode)
-    ) {
-      return;
+    if (action.kind === 'switch') {
+      switchChat(action.chatId);
+    } else if (action.kind === 'create') {
+      createNewChat();
     }
-
-    const matchingConversations = Object.values(conversations)
-      .filter((conversation) =>
-        conversationBelongsToWorkspace(conversation, repoFullName, workspaceMode),
-      )
-      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
-
-    if (matchingConversations.length > 0) {
-      switchChat(matchingConversations[0].id);
-      return;
-    }
-
-    createNewChat();
   }, [
     activeChatId,
     conversations,

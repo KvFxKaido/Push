@@ -69,6 +69,78 @@ export function conversationBelongsToWorkspace(
   return !conversation.repoFullName;
 }
 
+// ---------------------------------------------------------------------------
+// Workspace chat auto-resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * Decides what the WorkspaceSessionScreen auto-effect should do when a
+ * session mounts/restores: keep the current chat, switch to an existing
+ * workspace chat, or mint a new one. Extracted as a pure function so the
+ * ordering guards (especially the `conversationsLoaded` hydration gate) are
+ * unit-testable without mounting the whole screen.
+ */
+export type WorkspaceChatAction =
+  | { kind: 'noop' }
+  | { kind: 'switch'; chatId: string }
+  | { kind: 'create' };
+
+export interface ResolveWorkspaceChatActionParams {
+  conversations: Record<string, Conversation>;
+  activeChatId: string;
+  repoFullName: string | null;
+  workspaceMode: WorkspaceMode;
+  conversationsLoaded: boolean;
+  /** Truthy when a resume is pending — the resume path owns chat selection. */
+  hasPendingResume: boolean;
+  /** Truthy when the pre-flight menu's drain effect owns chat minting. */
+  hasPendingNewChat: boolean;
+}
+
+export function resolveWorkspaceChatAction({
+  conversations,
+  activeChatId,
+  repoFullName,
+  workspaceMode,
+  conversationsLoaded,
+  hasPendingResume,
+  hasPendingNewChat,
+}: ResolveWorkspaceChatActionParams): WorkspaceChatAction {
+  if (hasPendingResume) return { kind: 'noop' };
+  // Pre-flight menu owns chat minting on commit — let its drain effect
+  // create the fresh chat in the right context. Without this guard the
+  // auto-effect can race the drain on a cross-context commit, switching the
+  // user into a matching existing chat before the drain runs.
+  if (hasPendingNewChat) return { kind: 'noop' };
+  // Wait for IDB hydration before deciding there's no chat to resume. The
+  // synchronous localStorage seed in useChat is replaced wholesale once
+  // `migrateConversationsToIndexedDB` resolves; running against the
+  // pre-hydration map can find no workspace match and mint a throwaway chat —
+  // the user sees a "new chat" flash before the real chat loads, and the
+  // transient swap can flip `current_branch` and tear down the sandbox.
+  if (!conversationsLoaded) return { kind: 'noop' };
+
+  const activeConversation = conversations[activeChatId];
+  if (
+    activeConversation &&
+    conversationBelongsToWorkspace(activeConversation, repoFullName, workspaceMode)
+  ) {
+    return { kind: 'noop' };
+  }
+
+  const matchingConversations = Object.values(conversations)
+    .filter((conversation) =>
+      conversationBelongsToWorkspace(conversation, repoFullName, workspaceMode),
+    )
+    .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+
+  if (matchingConversations.length > 0) {
+    return { kind: 'switch', chatId: matchingConversations[0].id };
+  }
+
+  return { kind: 'create' };
+}
+
 function buildEmptyConversation(
   id: string,
   repoFullName: string | null,

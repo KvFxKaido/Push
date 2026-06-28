@@ -16,6 +16,15 @@ export interface AutoSwitchDecisionInput {
   activeRepoFullName: string | null;
   skipAutoCreate: boolean;
   migrationActive: boolean;
+  /**
+   * Whether the IDB conversation hydration in useChat has completed.
+   * `sortedChatIds` is derived from the synchronous localStorage seed until
+   * then, so a repo session whose history lives only in IDB looks empty and
+   * would mint a throwaway "New Chat" before hydration replaces the map — the
+   * restore flash, on the main sandbox-backed path. Suppress both branches
+   * until hydration settles, same as the skipAutoCreate/migration gates.
+   */
+  conversationsLoaded: boolean;
 }
 
 export type AutoSwitchAction =
@@ -24,6 +33,7 @@ export type AutoSwitchAction =
   | { kind: 'switch'; chatId: string };
 
 export function decideAutoSwitchAction(input: AutoSwitchDecisionInput): AutoSwitchAction {
+  if (!input.conversationsLoaded) return { kind: 'noop' };
   if (input.skipAutoCreate || input.migrationActive) return { kind: 'noop' };
   if (input.sortedChatIds.length === 0 && input.activeRepoFullName) {
     return { kind: 'create' };
@@ -38,6 +48,7 @@ export interface UseChatAutoSwitchParams {
   sortedChatIds: string[];
   activeChatId: string;
   activeRepoFullName: string | null;
+  conversationsLoaded: boolean;
   branchInfoRef: React.MutableRefObject<
     { currentBranch?: string; defaultBranch?: string } | undefined
   >;
@@ -63,6 +74,7 @@ export function useChatAutoSwitch({
   sortedChatIds,
   activeChatId,
   activeRepoFullName,
+  conversationsLoaded,
   branchInfoRef,
   skipAutoCreateRef,
   updateConversations,
@@ -76,6 +88,7 @@ export function useChatAutoSwitch({
       sortedChatIds,
       activeChatId,
       activeRepoFullName,
+      conversationsLoaded,
       skipAutoCreate: Boolean(skipAutoCreateRef.current),
       migrationActive: Boolean(getMigrationMarker()),
     });
@@ -117,6 +130,7 @@ export function useChatAutoSwitch({
     sortedChatIds,
     activeChatId,
     activeRepoFullName,
+    conversationsLoaded,
     updateConversations,
     skipAutoCreateRef,
     dirtyConversationIdsRef,

@@ -430,6 +430,7 @@ export function useChat(
     sortedChatIds,
     activeChatId,
     activeRepoFullName,
+    conversationsLoaded,
     branchInfoRef,
     skipAutoCreateRef,
     updateConversations,
@@ -474,8 +475,7 @@ export function useChat(
     [replaceAgentEvents, hydrateQueuedFollowUps],
   );
 
-  // IDB migration: `.finally` flips `conversationsLoaded` on reject too
-  // (pendingNewChat drain gates on it); isMountedRef skips late settles.
+  // IDB migration: `.finally` flips `conversationsLoaded` on reject too (the auto-switch + drain + screen effects gate on it); isMountedRef skips late settles.
   useEffect(() => {
     migrateConversationsToIndexedDB()
       .then((convs) => {
