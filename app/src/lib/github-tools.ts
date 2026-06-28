@@ -1214,6 +1214,32 @@ export async function fetchReviewGuidance(
 }
 
 /**
+ * Fetch a single committed repo file from GitHub via the REST contents API.
+ * Token-injectable for server-side callers that need raw trusted base-ref
+ * content, not model-facing read_file envelopes.
+ */
+export async function fetchRepoFileContent(
+  repo: string,
+  path: string,
+  branch?: string,
+  auth?: GitHubAuth,
+): Promise<string | null> {
+  const encodedPath = path.split('/').map(encodeURIComponent).join('/');
+  const ref = branch ? `?ref=${encodeURIComponent(branch)}` : '';
+  const res = await githubFetch(
+    `https://api.github.com/repos/${repo}/contents/${encodedPath}${ref}`,
+    {
+      headers: resolveHeaders(auth),
+    },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`GitHub API error ${res.status} fetching ${path}`);
+  const data = await res.json();
+  if (data.type !== 'file' || !data.content) return null;
+  return decodeGitHubBase64Utf8(data.content);
+}
+
+/**
  * Fetch the unified diff for a specific PR by number. Token-injectable so the
  * webhook DO can fetch a PR diff with its installation token. Distinct from
  * {@link fetchGitHubReviewDiff}, which resolves the PR from a branch name for

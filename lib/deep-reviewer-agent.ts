@@ -261,7 +261,7 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
   sandboxToolProtocol?: string;
 
   /**
-   * Whether read-only sandbox tools are advertised and reported available.
+   * Whether reviewer sandbox tools are advertised and reported available.
    * Defaults to `Boolean(sandboxId)`. The webhook reviewer sets this true for
    * same-repo PRs (the sandbox is provisioned lazily on first tool use, so there
    * is no `sandboxId` up front) and false for cross-fork / no-sandbox — keeping
@@ -273,8 +273,8 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
 
   /**
    * Override the public names on the protocol's `- Sandbox:` line. Defaults to
-   * the full read-only set; the webhook reviewer narrows it to the subset its
-   * executor supports so it never advertises a tool it would reject.
+   * the broad reviewer sandbox set; the webhook reviewer narrows it to the
+   * subset its executor supports so it never advertises a tool it would reject.
    */
   sandboxToolNames?: string;
 
@@ -337,6 +337,7 @@ Usage:
 Rules:
 - Include the fenced JSON block when requesting a tool. A brief sentence before or after the block is fine, but the JSON block must be present.
 - Use only the tools listed above.
+- If the Sandbox list includes typecheck, you may run that listed verification tool to check whether the PR compiles; do not run other command tools.
 - Do NOT call ${REVIEWER_MUTATION_BLOCKLIST}, scratchpad tools, todo tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
@@ -361,7 +362,7 @@ This is a two-phase process:
 ## Phase 1: Investigation
 Read files, trace callers of changed functions, check test coverage, search for import dependencies, and gather any context the diff alone doesn't show. Use tools aggressively — a deep review that doesn't investigate is worthless.
 
-You must stay strictly read-only.
+You must stay strictly read-only. A listed sandbox verification tool such as typecheck is permitted for checking the PR because it does not modify the repo.
 
 Never:
 - edit files

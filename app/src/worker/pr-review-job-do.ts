@@ -28,6 +28,7 @@ import type {
   PushStream,
   ReviewResult,
 } from '@push/lib/provider-contract';
+import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock } from '@push/lib/role-context';
 import { runDeepReviewer, type DeepReviewerResumeState } from '@push/lib/deep-reviewer-agent';
@@ -36,6 +37,7 @@ import {
   createReviewCheckRun,
   executePostPRReview,
   executeReadOnlyGitHubToolWithToken,
+  fetchRepoFileContent,
   fetchPullRequestDiff,
   fetchPullRequestHeadSha,
   fetchReviewGuidance,
@@ -59,7 +61,7 @@ import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector
 import {
   REVIEW_SANDBOX_TOOL_NAMES,
   cleanupReviewSandbox,
-  executeReadOnlySandboxTool,
+  executeReviewSandboxTool,
   provisionReviewSandbox,
   type ReviewSandbox,
 } from './review-sandbox-tools';
@@ -112,6 +114,7 @@ const RETRY_FALLBACK_ORIGIN = 'https://push.internal';
 // github-webhook.ts), so the old "push a new commit" advice was a dead end.
 const TERMINAL_RETRY_ADVICE =
   'New commits do not trigger reviews — close and reopen the PR to run a fresh review.';
+const DEFAULT_REVIEW_TYPECHECK_COMMAND = 'npx tsc --noEmit';
 
 /** Start payload the webhook receiver POSTs to the DO. */
 export interface PrReviewStartInput extends ReviewablePullRequest {
@@ -1401,6 +1404,36 @@ export class PrReviewJob {
 // Default executor — the model + GitHub leaf
 // ---------------------------------------------------------------------------
 
+async function resolveReviewTypecheckCommand(
+  repoFullName: string,
+  baseRef: string,
+  auth: { token: string },
+): Promise<string> {
+  for (const filename of ['AGENTS.md', 'CLAUDE.md'] as const) {
+    try {
+      const content = await fetchRepoFileContent(repoFullName, filename, baseRef, auth);
+      if (!content) continue;
+      const hit = parseAgentsMdHints(content).find((hint) => hint.kind === 'typecheck');
+      if (hit?.command.trim()) {
+        log('debug', 'pr_review_typecheck_command_resolved', {
+          source: filename,
+          command: hit.command,
+        });
+        return hit.command.trim();
+      }
+    } catch (err) {
+      log('warn', 'pr_review_typecheck_command_fetch_failed', {
+        source: filename,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  log('debug', 'pr_review_typecheck_command_defaulted', {
+    command: DEFAULT_REVIEW_TYPECHECK_COMMAND,
+  });
+  return DEFAULT_REVIEW_TYPECHECK_COMMAND;
+}
+
 /**
  * Mint an installation token, fetch the PR diff, resolve REVIEW.md at the **base**
  * ref, run the agentic **deep reviewer** (reads beyond the diff via GitHub tools),
@@ -1496,14 +1529,18 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
 
   const detectors = createWebDetectorAdapter();
 
-  // Read-only sandbox for the reviewer (lazy): provisioned on the FIRST sandbox
-  // tool call so reviews that never grep pay nothing. Gated to same-repo PRs with
-  // a CF sandbox configured; killable via PUSH_REVIEWER_SANDBOX=0. Fail-safe —
-  // any provisioning/exec problem degrades to a diff-only review.
+  // Sandbox tools for the reviewer (lazy): provisioned on the FIRST sandbox
+  // tool call so reviews that never inspect or typecheck pay nothing. Gated to
+  // same-repo PRs with a CF sandbox configured; killable via
+  // PUSH_REVIEWER_SANDBOX=0. Fail-safe — any provisioning/exec problem degrades
+  // to a diff-only review.
   const sandboxToolsEnabled =
     Boolean(env.Sandbox && env.SANDBOX_TOKENS) &&
     !input.isCrossFork &&
     env.PUSH_REVIEWER_SANDBOX !== '0';
+  const reviewTypecheckCommand = sandboxToolsEnabled
+    ? await resolveReviewTypecheckCommand(input.repoFullName, input.baseRef, auth)
+    : DEFAULT_REVIEW_TYPECHECK_COMMAND;
   let reviewSandbox: ReviewSandbox | null = null;
   let sandboxProvisionPromise: Promise<ReviewSandbox | null> | null = null;
   // Memoize the in-flight provision so concurrent (Promise.all) tool calls in a
@@ -1558,8 +1595,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
           );
           return { resultText: r.text };
         }
-        // Read-only sandbox tools over the checked-out PR head (same-repo only,
-        // lazily provisioned). Degrades to diff-only on any provisioning failure.
+        // Sandbox inspection + base-command typecheck over the checked-out PR
+        // head (same-repo only, lazily provisioned). Degrades to diff-only on
+        // any provisioning/tool failure.
         if (sandboxToolsEnabled && toolCall.source === 'sandbox') {
           try {
             const sb = await getReviewSandbox();
@@ -1569,7 +1607,12 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
                   '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
               };
             }
-            const r = await executeReadOnlySandboxTool(env, sb, toolCall.call);
+            const r = await executeReviewSandboxTool(
+              env,
+              sb,
+              toolCall.call,
+              reviewTypecheckCommand,
+            );
             return { resultText: r.text };
           } catch {
             // toolExec must NEVER throw into the reviewer loop (it awaits this

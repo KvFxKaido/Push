@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type {
+  DetachedExecPrimitives,
+  DetachedExecResult,
+  RunDetachedOptions,
+} from '@push/lib/detached-exec-runner';
 import type { Env } from './worker-middleware';
 
 // Mock the runtime deps that `review-sandbox-tools` dynamically imports. Mocking
@@ -6,6 +11,11 @@ import type { Env } from './worker-middleware';
 // imports off this test's graph (the reason the module uses dynamic import).
 const dispatchMock = vi.fn();
 vi.mock('./worker-cf-sandbox', () => ({ dispatchSandboxRouteInternal: dispatchMock }));
+
+const runDetachedMock = vi.fn();
+vi.mock('@push/lib/detached-exec-runner', () => ({
+  runDetachedToCompletion: runDetachedMock,
+}));
 
 const handleSearchMock = vi.fn(async () => ({ text: 'SEARCH_RESULT' }));
 const handleReadFileMock = vi.fn(async () => ({ text: 'READ_RESULT' }));
@@ -19,8 +29,9 @@ vi.mock('@/lib/sandbox-read-only-inspection-handlers', () => ({
 import {
   REVIEW_SANDBOX_TOOL_NAMES,
   cleanupReviewSandbox,
-  executeReadOnlySandboxTool,
+  executeReviewSandboxTool,
   provisionReviewSandbox,
+  runReviewTypecheck,
 } from './review-sandbox-tools';
 
 const env = {} as Env;
@@ -29,6 +40,7 @@ const jsonRes = (body: unknown, status = 200): Response =>
 
 beforeEach(() => {
   dispatchMock.mockReset();
+  runDetachedMock.mockReset();
   handleSearchMock.mockClear();
   handleReadFileMock.mockClear();
   handleListDirMock.mockClear();
@@ -92,44 +104,180 @@ describe('provisionReviewSandbox', () => {
   });
 });
 
-describe('executeReadOnlySandboxTool', () => {
+describe('executeReviewSandboxTool', () => {
   const sb = { sandboxId: 'sb1', ownerToken: 'tok1' };
 
   it('routes search/read/ls to the redacting inspection handlers', async () => {
     expect(
       (
-        await executeReadOnlySandboxTool(env, sb, {
-          tool: 'sandbox_search',
-          args: { query: 'x' },
-        } as never)
+        await executeReviewSandboxTool(
+          env,
+          sb,
+          {
+            tool: 'sandbox_search',
+            args: { query: 'x' },
+          } as never,
+          'npm run typecheck',
+        )
       ).text,
     ).toBe('SEARCH_RESULT');
     expect(handleSearchMock).toHaveBeenCalledTimes(1);
     expect(
       (
-        await executeReadOnlySandboxTool(env, sb, {
-          tool: 'sandbox_read_file',
-          args: { path: 'a.ts' },
-        } as never)
+        await executeReviewSandboxTool(
+          env,
+          sb,
+          {
+            tool: 'sandbox_read_file',
+            args: { path: 'a.ts' },
+          } as never,
+          'npm run typecheck',
+        )
       ).text,
     ).toBe('READ_RESULT');
     expect(handleReadFileMock).toHaveBeenCalledTimes(1);
     expect(
-      (await executeReadOnlySandboxTool(env, sb, { tool: 'sandbox_list_dir', args: {} } as never))
-        .text,
+      (
+        await executeReviewSandboxTool(
+          env,
+          sb,
+          { tool: 'sandbox_list_dir', args: {} } as never,
+          'npm run typecheck',
+        )
+      ).text,
     ).toBe('LS_RESULT');
     expect(handleListDirMock).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects tools outside the read-only set without touching the sandbox', async () => {
-    const r = await executeReadOnlySandboxTool(env, sb, {
-      tool: 'sandbox_exec',
-      args: { command: 'rm -rf /' },
-    } as never);
-    expect(r.text).toContain('not available in automated PR review');
-    expect(r.text).toContain(REVIEW_SANDBOX_TOOL_NAMES);
+  it('rejects non-allowlisted exec/verification tools without touching the sandbox', async () => {
+    for (const call of [
+      { tool: 'sandbox_exec', args: { command: 'rm -rf /' } },
+      { tool: 'sandbox_run_tests', args: {} },
+      { tool: 'sandbox_verify_workspace', args: {} },
+    ]) {
+      const r = await executeReviewSandboxTool(env, sb, call as never, 'npm run typecheck');
+      expect(r.text).toContain('not available in automated PR review');
+      expect(r.text).toContain(REVIEW_SANDBOX_TOOL_NAMES);
+    }
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(handleSearchMock).not.toHaveBeenCalled();
+    expect(runDetachedMock).not.toHaveBeenCalled();
+  });
+
+  it('routes sandbox_check_types through the detached runner and reports pass on exit 0', async () => {
+    dispatchMock
+      .mockResolvedValueOnce(jsonRes({ process_id: 'pid1' }))
+      .mockResolvedValueOnce(jsonRes({ running: false, exit_code: 0, branch: 'main' }))
+      .mockResolvedValueOnce(
+        jsonRes({
+          stdout: 'chunk',
+          stderr: '',
+          next_cursor_stdout: 5,
+          next_cursor_stderr: 0,
+        }),
+      )
+      .mockResolvedValueOnce(jsonRes({ ok: true }));
+    runDetachedMock.mockImplementationOnce(
+      async (
+        primitives: DetachedExecPrimitives,
+        command: string,
+        options: RunDetachedOptions,
+      ): Promise<DetachedExecResult> => {
+        expect(command).toBe('cd /workspace && npm run typecheck');
+        expect(options.workdir).toBe('/workspace');
+        expect(options.overallTimeoutMs).toBe(480_000);
+        await expect(primitives.start(command, { workdir: options.workdir })).resolves.toEqual({
+          processId: 'pid1',
+        });
+        await expect(primitives.status('pid1')).resolves.toEqual({
+          running: false,
+          exitCode: 0,
+          branch: 'main',
+        });
+        await expect(
+          primitives.logs('pid1', { cursorStdout: 2, cursorStderr: 3 }),
+        ).resolves.toEqual({
+          stdout: 'chunk',
+          stderr: '',
+          nextCursorStdout: 5,
+          nextCursorStderr: 0,
+        });
+        await expect(primitives.interrupt('pid1')).resolves.toBeUndefined();
+        return {
+          stdout: 'typecheck passed',
+          stderr: '',
+          exitCode: 0,
+          truncated: false,
+          terminalReason: 'completed',
+        };
+      },
+    );
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_check_types', args: {} } as never,
+      'npm run typecheck',
+    );
+
+    expect(r.text).toContain('[Tool Result — typecheck]');
+    expect(r.text).toContain('Exit code: 0');
+    expect(r.text).toContain('Result: PASS');
+    expect(r.text).toContain('typecheck passed');
+    expect(dispatchMock).toHaveBeenNthCalledWith(1, env, 'exec-start', {
+      sandbox_id: 'sb1',
+      owner_token: 'tok1',
+      command: 'cd /workspace && npm run typecheck',
+      workdir: '/workspace',
+    });
+    expect(dispatchMock).toHaveBeenNthCalledWith(2, env, 'exec-status', {
+      sandbox_id: 'sb1',
+      owner_token: 'tok1',
+      process_id: 'pid1',
+    });
+    expect(dispatchMock).toHaveBeenNthCalledWith(3, env, 'exec-logs', {
+      sandbox_id: 'sb1',
+      owner_token: 'tok1',
+      process_id: 'pid1',
+      cursor_stdout: 2,
+      cursor_stderr: 3,
+    });
+    expect(dispatchMock).toHaveBeenNthCalledWith(4, env, 'exec-kill', {
+      sandbox_id: 'sb1',
+      owner_token: 'tok1',
+      process_id: 'pid1',
+    });
+  });
+
+  it('reports fail on a non-zero typecheck exit', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: 'src/a.ts(1,1): error TS2322',
+      stderr: '',
+      exitCode: 2,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+
+    const r = await runReviewTypecheck(env, sb, 'npm run typecheck');
+
+    expect(r.text).toContain('Exit code: 2');
+    expect(r.text).toContain('Result: FAIL');
+    expect(r.text).toContain('error TS2322');
+  });
+
+  it('never throws when detached exec transport fails before start confirmation', async () => {
+    dispatchMock.mockRejectedValueOnce(new Error('transport down'));
+    runDetachedMock.mockImplementationOnce(
+      async (primitives: DetachedExecPrimitives, command: string, options: RunDetachedOptions) => {
+        await primitives.start(command, { workdir: options.workdir });
+      },
+    );
+
+    const r = await runReviewTypecheck(env, sb, 'npm run typecheck');
+
+    expect(r.text).toContain('Exit code: -1');
+    expect(r.text).toContain('Result: FAIL');
+    expect(r.text).toContain('transport down');
   });
 });
 
