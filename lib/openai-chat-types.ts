@@ -47,6 +47,16 @@ export interface OpenAIToolCall {
   id: string;
   type: 'function';
   function: { name: string; arguments: string };
+  /**
+   * Gemini-private signed-reasoning token, carried as a sibling field on the
+   * tool call. When an OpenAI-compatible upstream fronts a Gemini model (Ollama
+   * Cloud serving Gemini), the model emits it on the streamed `tool_calls` delta
+   * and REQUIRES it back on replay, or the follow-up 400s ("Function call is
+   * missing a thought_signature in functionCall parts"). The peer of the
+   * `gemini-bridge`'s native `functionCall.thoughtSignature` round-trip. Absent
+   * for every non-Gemini upstream. See `lib/provider-contract.ts` `NativeToolCall`.
+   */
+  thoughtSignature?: string;
 }
 
 /** OpenAI's NESTED function-tool wire shape for the request `tools` array.

@@ -240,10 +240,16 @@ function flattenToolBearingBlocks(
         );
       }
       // Anthropic carries `input` as a parsed object; OpenAI wants a JSON string.
+      // Round-trip Gemini's `thoughtSignature` when present (an OpenAI-compat
+      // upstream fronting Gemini, e.g. Ollama Cloud, 400s on replay without it).
+      // Sibling field on the tool call, mirroring how the SSE pump captured it.
       pendingToolCalls.push({
         id: block.id,
         type: 'function',
         function: { name: block.name, arguments: JSON.stringify(block.input) },
+        ...(typeof block.thoughtSignature === 'string' && block.thoughtSignature
+          ? { thoughtSignature: block.thoughtSignature }
+          : {}),
       });
     } else if (block.type === 'tool_result') {
       if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string') {

@@ -82,6 +82,44 @@ describe('validateAndNormalizeChatRequest', () => {
       expect(tool).toEqual({ role: 'tool', tool_call_id: 'toolu_1', content: 'file body' });
     });
 
+    it("preserves Gemini's thoughtSignature on assistant tool_calls", () => {
+      const result = validateAndNormalizeChatRequest(
+        JSON.stringify({
+          model: 'gemini-3-flash-preview',
+          messages: [
+            {
+              role: 'assistant',
+              content: null,
+              tool_calls: [
+                {
+                  id: 'toolu_1',
+                  type: 'function',
+                  function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+                  thoughtSignature: 'sig-abc',
+                },
+              ],
+            },
+          ],
+        }),
+        POLICY,
+      );
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect((result.value.parsed.messages ?? [])[0]).toEqual({
+        role: 'assistant',
+        content: null,
+        tool_calls: [
+          {
+            id: 'toolu_1',
+            type: 'function',
+            function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+            thoughtSignature: 'sig-abc',
+          },
+        ],
+      });
+    });
+
     it('rejects malformed tool_calls instead of silently dropping them', () => {
       const result = validateAndNormalizeChatRequest(
         JSON.stringify({

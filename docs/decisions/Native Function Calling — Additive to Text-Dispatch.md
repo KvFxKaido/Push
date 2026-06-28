@@ -208,3 +208,16 @@ Two seams the first cut missed (caught in #1219 review):
    content parts and drops the Push-private `contentBlocks` field, instead of
    forwarding it verbatim. A blunt strip would lose images that live only in
    `contentBlocks`, so it mirrors `toOpenAIChat`'s non-tool branch.
+
+3. **Gemini `thoughtSignature` round-trip on the OpenAI-compat path.** Once native
+   tool calls were live, an OpenAI-compat upstream fronting a **Gemini** model
+   (Ollama Cloud serving Gemini) 400s on the follow-up turn — "Function call is
+   missing a thought_signature in functionCall parts" — because Gemini requires
+   the signed-reasoning token it emitted on the `functionCall` to be replayed. The
+   signature was already captured (`openai-sse-pump.ts` → `NativeToolCall` →
+   `LlmToolUseBlock.thoughtSignature`) and replayed on the **Gemini-native**
+   serializer (`gemini-bridge.ts`), but the OpenAI-compat flatten dropped it.
+   Carried it through end-to-end as the OpenAI-compat peer of the native path:
+   `OpenAIToolCall.thoughtSignature` (a sibling field on the tool call, matching
+   the capture shape), emitted by `flattenToolBearingBlocks` and preserved by the
+   proxy normalizer's `normalizeToolCalls`. Absent for every non-Gemini upstream.
