@@ -129,6 +129,9 @@ import {
   getSkillPromptTemplate,
   filterSkillsForEnvironment,
   getCurrentSkillPlatform,
+  lintSkills,
+  formatSkillDiagnostics,
+  type SkillDiagnostic,
 } from './skill-loader.js';
 import { ALL_CAPABILITIES } from '../lib/capabilities.js';
 import { TUI_DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
@@ -3567,7 +3570,27 @@ export async function runTUI(options = {}) {
 
   // ── Skills ────────────────────────────────────────────────────────
 
-  const skills = await loadSkills(state.cwd);
+  // Skill-lint diagnostics for the current workspace, collected on every (re)load so a malformed
+  // skill file no longer silently vanishes. Emitted to stderr as structured logs (TUI owns the
+  // alternate screen on stdout; stderr stays clean for ops) and surfaced on demand via `/skills lint`.
+  let skillDiagnostics: SkillDiagnostic[] = [];
+  function logSkillDiagnostics(diags: SkillDiagnostic[]): void {
+    for (const d of diags) {
+      console.error(
+        JSON.stringify({
+          level: d.severity === 'error' ? 'warn' : 'info',
+          event: d.severity === 'error' ? 'skill_lint_dropped' : 'skill_lint_degraded',
+          code: d.code,
+          name: d.name,
+          source: d.source,
+          filePath: d.filePath,
+          message: d.message,
+        }),
+      );
+    }
+  }
+  const skills = await loadSkills(state.cwd, { diagnostics: skillDiagnostics });
+  logSkillDiagnostics(skillDiagnostics);
   // Sibling map filtered for the current environment — feeds the completer so hidden
   // skills don't tab-complete. Dispatch still uses the full `skills` map.
   const skillFilterEnv = {
@@ -3584,11 +3607,14 @@ export async function runTUI(options = {}) {
   }
 
   async function reloadSkillsMap() {
-    const fresh = await loadSkills(state.cwd);
+    const freshDiagnostics: SkillDiagnostic[] = [];
+    const fresh = await loadSkills(state.cwd, { diagnostics: freshDiagnostics });
     skills.clear();
     for (const [name, skill] of fresh) {
       skills.set(name, skill);
     }
+    skillDiagnostics = freshDiagnostics;
+    logSkillDiagnostics(freshDiagnostics);
     rebuildVisibleSkills();
     tabCompleter.reset();
     return skills.size;
@@ -5728,6 +5754,7 @@ export async function runTUI(options = {}) {
             '  /debug runtime       Show runtime path/provider/session diagnostics',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
+            '  /skills lint         Report dropped/degraded skill files',
             `  /compact [turns]      Compact older context (default keep ${DEFAULT_COMPACT_TURNS} turns; daemon: session_summarize)`,
             '  /revert [n]           Daemon: undo last n user turns (default 1; transcript only)',
             '  /unrevert             Daemon: restore the messages a /revert dropped',
@@ -5825,8 +5852,19 @@ export async function runTUI(options = {}) {
           scheduler.flush();
           return true;
         }
+        if (arg === 'lint') {
+          const diags = await lintSkills(state.cwd);
+          skillDiagnostics = diags;
+          addTranscriptEntry(
+            tuiState,
+            diags.some((d) => d.severity === 'error') ? 'warning' : 'status',
+            formatSkillDiagnostics(diags),
+          );
+          scheduler.flush();
+          return true;
+        }
         if (arg) {
-          addTranscriptEntry(tuiState, 'warning', 'Usage: /skills | /skills reload');
+          addTranscriptEntry(tuiState, 'warning', 'Usage: /skills | /skills reload | /skills lint');
           scheduler.flush();
           return true;
         }
@@ -5853,6 +5891,13 @@ export async function runTUI(options = {}) {
             const hidden = skills.size - visibleSkills.size;
             if (hidden > 0) {
               lines.push(`  (${hidden} hidden — platform or capability constraints unmet)`);
+            }
+            if (skillDiagnostics.length > 0) {
+              const errs = skillDiagnostics.filter((d) => d.severity === 'error').length;
+              const detail = errs > 0 ? `, ${errs} skipped` : '';
+              lines.push(
+                `  (${skillDiagnostics.length} skill file(s) have problems${detail} — /skills lint)`,
+              );
             }
             addTranscriptEntry(tuiState, 'status', lines.join('\n'));
           }
