@@ -496,6 +496,49 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0].isFirstMessage).toBe(false);
   });
 
+  it('appends the streaming placeholder after the branch divider, not before (P1)', async () => {
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
+      ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
+    });
+    const callbacks = makeCallbacks();
+    // Simulate a successful fork: the migration appends a `branch_forked`
+    // divider as the last message, the way applyBranchSwitchPayload would.
+    vi.mocked(maybeBranchOnFirstPrompt).mockImplementationOnce(async (_input, ctx) => {
+      ctx.setConversations((prev) => {
+        const conv = prev['chat-1'];
+        const divider: ChatMessage = {
+          id: 'divider',
+          role: 'assistant',
+          content: '',
+          timestamp: 2,
+          status: 'done',
+        };
+        return { ...prev, 'chat-1': { ...conv, messages: [...conv.messages, divider] } };
+      });
+      return { branched: true, name: 'owner-repo/add-a-feature' };
+    });
+
+    await prepareSendContext(
+      {
+        trimmedText: 'Add a feature',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+      },
+      refs,
+      callbacks,
+      makeBranchDeps(),
+    );
+
+    const msgs = callbacks.capturedConversations['chat-1'].messages;
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
+    // The divider is not last; the streaming placeholder is, so the stream
+    // writes deltas into the placeholder rather than the divider.
+    expect(msgs[1].id).toBe('divider');
+    expect(msgs[msgs.length - 1].status).toBe('streaming');
+  });
+
   it('skips branching entirely when no branchDeps are provided', async () => {
     const refs = makeRefs({
       conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
