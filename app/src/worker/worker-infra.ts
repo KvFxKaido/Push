@@ -20,7 +20,12 @@ import {
   type WorkerSpan,
 } from './worker-tracing';
 
-const GITHUB_APP_SLUG = 'push-agent';
+/**
+ * The GitHub App's slug — the handle a user types to @-mention the app in a PR
+ * comment (`@push-agent`). Exported so the webhook comment-trigger path can use
+ * it as the default mention target (overridable via `PR_REVIEW_BOT_HANDLE`).
+ */
+export const GITHUB_APP_SLUG = 'push-agent';
 
 export async function handleSandbox(
   request: Request,

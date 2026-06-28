@@ -19,17 +19,9 @@
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import type { AIProviderType } from '@push/lib/provider-contract';
 import { getClientIp, validateOrigin, type Env } from './worker-middleware';
-import {
-  exchangeForInstallationToken,
-  generateGitHubAppJWT,
-  resolveRepoInstallationId,
-} from './worker-infra';
-import {
-  isInstallationAllowed,
-  parseInstallationAllowlist,
-  prReviewJobName,
-} from './github-webhook';
-import { fetchPullRequestRefs } from '@/lib/github-tools';
+import { generateGitHubAppJWT, resolveRepoInstallationId } from './worker-infra';
+import { isInstallationAllowed, parseInstallationAllowlist } from './github-webhook';
+import { enqueueReviewForExistingPr, forwardToDo } from './pr-review-trigger';
 import {
   getPrReviewEffectiveConfig,
   isPrReviewEnabled,
@@ -372,75 +364,31 @@ async function handleRun(request: Request, env: Env, requestUrl: URL): Promise<R
     return json({ error: 'INSTALLATION_NOT_ALLOWED' }, 403);
   }
 
-  let refs: Awaited<ReturnType<typeof fetchPullRequestRefs>>;
-  try {
-    const { token } = await exchangeForInstallationToken(jwt, installationId);
-    refs = await fetchPullRequestRefs(repo, prNumber, { token });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    log('warn', 'pr_review_run_pr_lookup_failed', { repo, pr: prNumber, message });
-    return json({ error: 'PR_LOOKUP_FAILED', message }, 502);
-  }
-
-  // Mirror the webhook's reviewability gate: only open, non-draft PRs. A stale
-  // tab or direct call shouldn't spend a review on a PR the autonomous path
-  // intentionally ignores.
-  if (refs.state !== 'open' || refs.draft) {
-    log('info', 'pr_review_run_not_reviewable', {
-      repo,
-      pr: prNumber,
-      state: refs.state,
-      draft: refs.draft,
-    });
-    return json(
-      {
-        error: 'NOT_REVIEWABLE',
-        message: `PR #${prNumber} is ${refs.draft ? 'a draft' : refs.state} — only open, non-draft PRs are reviewed.`,
-      },
-      409,
-    );
-  }
-
-  const startBody = JSON.stringify({
-    deliveryId: `manual-${crypto.randomUUID()}`,
-    repoFullName: repo,
-    prNumber,
-    headSha: refs.headSha,
-    headRef: refs.headRef,
-    baseRef: refs.baseRef,
-    installationId,
-    isCrossFork: refs.isCrossFork,
-    origin: requestUrl.origin,
-  });
-  const doResponse = await forwardToDo(
-    env,
+  // Shared with the webhook comment trigger: fetch refs, gate reviewability,
+  // and forward the start to the DO. handleRun owns the installation
+  // resolution + allowlist above; the helper owns everything from refs onward.
+  const result = await enqueueReviewForExistingPr(env, {
     repo,
     prNumber,
-    new Request('https://do/start', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: startBody,
-    }),
-  );
-  const outcome = (await doResponse
-    .clone()
-    .json()
-    .catch(() => ({}))) as { status?: string };
-  if (!doResponse.ok) {
-    log('error', 'pr_review_run_enqueue_failed', {
+    installationId,
+    origin: requestUrl.origin,
+    deliveryId: `manual-${crypto.randomUUID()}`,
+  });
+  if (!result.ok) {
+    log('warn', 'pr_review_run_enqueue_rejected', {
       repo,
       pr: prNumber,
-      doStatus: doResponse.status,
+      code: result.code,
     });
-    return json({ error: 'ENQUEUE_FAILED', status: outcome.status }, 502);
+    return json({ error: result.code, message: result.message }, result.httpStatus);
   }
   log('info', 'pr_review_run_enqueued', {
     repo,
     pr: prNumber,
-    headSha: refs.headSha,
-    status: outcome.status ?? 'queued',
+    headSha: result.headSha,
+    status: result.status,
   });
-  return json({ ok: true, status: outcome.status ?? 'queued' }, 202);
+  return json({ ok: true, status: result.status }, 202);
 }
 
 /**
@@ -515,21 +463,6 @@ async function handleCancel(request: Request, env: Env): Promise<Response> {
     doResponse.ok ? { ok: true, status: outcome.status ?? 'cancelled' } : outcome,
     doResponse.status,
   );
-}
-
-async function forwardToDo(
-  env: Env,
-  repo: string,
-  prNumber: number,
-  doRequest: Request,
-): Promise<Response> {
-  const id = env.PrReviewJob!.idFromName(prReviewJobName(repo, prNumber));
-  const stub = env.PrReviewJob!.get(id);
-  // CF Workers types diverge from DOM types; cast at this single boundary, same
-  // as worker-coder-job.ts.
-  return (await (stub as unknown as { fetch: (r: Request) => Promise<Response> }).fetch(
-    doRequest,
-  )) as Response;
 }
 
 function json(body: unknown, status = 200): Response {

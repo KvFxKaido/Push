@@ -73,6 +73,11 @@ export interface Env {
   // sensible built-in when unset.
   PR_REVIEW_PROVIDER?: string;
   PR_REVIEW_MODEL?: string;
+  // GitHub handle that triggers a review when @-mentioned with "review" in a PR
+  // comment (e.g. `@push-agent review`). Defaults to the App slug
+  // (`push-agent`); set this only to override. Blank/unset keeps the default —
+  // comment triggering is never silently disabled by omission.
+  PR_REVIEW_BOT_HANDLE?: string;
   // When truthy and PR_REVIEW_PROVIDER is `zen`, route the reviewer through the
   // OpenCode Zen "Go" endpoint (`/zen/go/v1/...`). The browser selects Go via a
   // `localStorage` flag the Worker can't read, so the server-side DO opts in

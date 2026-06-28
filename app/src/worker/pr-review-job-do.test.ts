@@ -121,12 +121,16 @@ function createMockCtx() {
         .map((r) => ({ ...r }));
     }
     if (/^SELECT delivery_id FROM review WHERE pr_number/i.test(sql)) {
-      const [prNumber, headSha] = p as [number, string];
+      const prNumber = p[0] as number;
+      // The same-head (latest-wins) coalescing variant drops the `head_sha != ?`
+      // filter; detect it from the SQL and bind params accordingly.
+      const filtersHead = /head_sha != \?/i.test(sql);
+      const headSha = filtersHead ? (p[1] as string) : undefined;
       return [...reviews.values()]
         .filter(
           (r) =>
             r.pr_number === prNumber &&
-            r.head_sha !== headSha &&
+            (!filtersHead || r.head_sha !== headSha) &&
             (r.status === 'queued' || r.status === 'running'),
         )
         .map((r) => ({ delivery_id: r.delivery_id }));
@@ -460,6 +464,62 @@ describe('PrReviewJob', () => {
 
     await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
     await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));
+    await Promise.allSettled(mock.pending);
+
+    expect(abortedSignal).toBe(true);
+    expect(mock.reviews.get('d1')?.status).toBe('superseded');
+    expect(mock.reviews.get('d2')).toMatchObject({ status: 'completed', comments_posted: 1 });
+  });
+
+  it('does NOT supersede a same-head review by default (two reviews run)', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaA' })));
+    await Promise.allSettled(mock.pending);
+
+    // Same head, no flag → the first is left alone; both complete.
+    expect(mock.reviews.get('d1')?.status).toBe('completed');
+    expect(mock.reviews.get('d2')?.status).toBe('completed');
+  });
+
+  it('supersedes an in-flight same-head review when supersedeSameHead is set (latest wins)', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+
+    let abortedSignal = false;
+    __setPrReviewExecutorOverride(
+      'd1',
+      (_input, _env, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            abortedSignal = true;
+            reject(new Error('aborted'));
+          });
+        }),
+    );
+    __setPrReviewExecutorOverride('d2', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    // d1 is in flight on shaA; d2 re-requests the SAME head with the flag.
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await do_.fetch(
+      startRequest(startInput({ deliveryId: 'd2', headSha: 'shaA', supersedeSameHead: true })),
+    );
     await Promise.allSettled(mock.pending);
 
     expect(abortedSignal).toBe(true);
