@@ -304,6 +304,19 @@ export async function handleCloudflareSandbox(
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
+  return runSandboxRoute(env, route, body, requestId);
+}
+
+/**
+ * Owner-token gate + route dispatch — the trusted core shared by the public
+ * HTTP handler (after its browser gates) and `dispatchSandboxRouteInternal`.
+ */
+async function runSandboxRoute(
+  env: Env,
+  route: string,
+  body: Json,
+  requestId: string,
+): Promise<Response> {
   // Owner-token gate — every route except the exempt set below must present a
   // valid token matching the one issued at sandbox creation time. `create` is
   // exempt (that's where tokens are minted); `restore-snapshot` and
@@ -435,6 +448,35 @@ export async function handleCloudflareSandbox(
       { status: isDeadline ? 504 : code === 'FILE_NOT_FOUND' ? 404 : 500 },
     );
   }
+}
+
+/**
+ * Internal, gate-free entry to the sandbox-cf route logic for TRUSTED
+ * server-side callers (e.g. the PR-review Durable Object) already inside the
+ * trust boundary. Skips the browser-facing gates `handleCloudflareSandbox`
+ * applies — session auth, Origin/Referer, rate-limit, client-IP, request-body
+ * size — which are meaningless for a Worker-internal caller (and the session
+ * gate, in `worker.ts`, would reject it outright). Owner-token enforcement on
+ * non-create routes is preserved (it lives in `runSandboxRoute`). Server-side
+ * only — never expose this on a public path.
+ */
+export async function dispatchSandboxRouteInternal(
+  env: Env,
+  route: string,
+  body: Json,
+): Promise<Response> {
+  if (!ROUTES.has(route)) {
+    return Response.json({ error: `Unknown sandbox-cf route: ${route}` }, { status: 404 });
+  }
+  if (!env.Sandbox) {
+    return Response.json(
+      { error: 'Cloudflare Sandbox not configured', code: 'CF_NOT_CONFIGURED' },
+      { status: 503 },
+    );
+  }
+  applyEnvExecDeadline(env);
+  const requestId = getOrCreateRequestId(null, 'sandbox-cf-internal');
+  return runSandboxRoute(env, route, body, requestId);
 }
 
 // ---------------------------------------------------------------------------

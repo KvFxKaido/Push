@@ -1425,7 +1425,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   // sandbox on a real PR before the full lazy-provision integration is built.
   if (env.PUSH_REVIEW_SANDBOX_SPIKE === '1') {
     await runReviewSandboxReachabilitySpike({
-      origin: input.origin,
+      env,
       repoFullName: input.repoFullName,
       headRef: input.headRef,
       githubToken: token,
