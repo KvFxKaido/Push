@@ -11,6 +11,7 @@ import type {
 import { parseNativeToolCallArgs, stripTemplateTokens } from './openai-sse-pump.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
 import { openAIToolToFlatTool } from './openai-chat-serializer.ts';
+import { resolveGeminiReplaySignature } from './gemini-thought-signature.ts';
 
 /**
  * OpenAI ↔ Gemini bridge.
@@ -386,6 +387,11 @@ function llmContentBlocksToGemini(
   toolNameById: ReadonlyMap<string, string>,
 ): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
+  // Gemini validates that the turn's FIRST functionCall part carries a
+  // thoughtSignature; track whether we've emitted one yet so the placeholder
+  // fallback below only fills the first signatureless call (blocks here are a
+  // single neutral message = one Gemini `model` turn).
+  let seenFunctionCall = false;
   for (const rawBlock of blocks) {
     const block = rawBlock as {
       type?: unknown;
@@ -437,14 +443,23 @@ function llmContentBlocksToGemini(
       //
       // `thoughtSignature` is a sibling field on the *part* (not inside
       // `functionCall`), replayed verbatim. Gemini 3.x rejects the follow-up
-      // request 400 if a prior call's signature is missing; an altered value
-      // breaks the model's chain of reasoning. Only emitted when the captured
-      // call carried one (non-Gemini history never does).
+      // request 400 if the turn's first call has no signature; an altered value
+      // breaks the model's chain of reasoning, so a real captured signature is
+      // always preferred. When the first call carries none (text-dispatched call,
+      // an upstream that dropped it, or Google omitting it on the first parallel
+      // call), substitute the documented placeholder so the turn replays instead
+      // of 400ing. Trailing parallel calls legitimately carry none → left bare.
+      const replaySignature = resolveGeminiReplaySignature({
+        ownSignature:
+          typeof block.thoughtSignature === 'string' && block.thoughtSignature
+            ? block.thoughtSignature
+            : undefined,
+        isFirstCallInTurn: !seenFunctionCall,
+      });
+      seenFunctionCall = true;
       out.push({
         functionCall: { id: block.id, name: block.name, args: block.input },
-        ...(typeof block.thoughtSignature === 'string' && block.thoughtSignature
-          ? { thoughtSignature: block.thoughtSignature }
-          : {}),
+        ...(replaySignature ? { thoughtSignature: replaySignature } : {}),
       });
       continue;
     }

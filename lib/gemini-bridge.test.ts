@@ -13,6 +13,7 @@ import {
   toGeminiGenerateContent,
 } from './gemini-bridge.ts';
 import { flatToolToOpenAITool } from './openai-chat-serializer.ts';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from './gemini-thought-signature.ts';
 import { getToolFunctionSchemas } from './tool-function-schemas.ts';
 
 function createEventStreamResponse(chunks: string[]): Response {
@@ -661,8 +662,13 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
     }>;
     expect(contents.find((c) => c.role === 'model')?.parts).toEqual([
       { text: 'calling' },
-      // The call `id` is emitted for Gemini 3 correlation.
-      { functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } } },
+      // The call `id` is emitted for Gemini 3 correlation. The turn's first
+      // functionCall carried no captured signature, so the documented placeholder
+      // is backfilled (Gemini 3.x 400s on a bare first call).
+      {
+        functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } },
+        thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      },
     ]);
   });
 
@@ -695,9 +701,11 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
     ]);
   });
 
-  it('omits thoughtSignature on replay when the tool_use block carries none', () => {
-    // Non-Gemini history (or Gemini calls that never carried a signature) must
-    // not gain a spurious empty `thoughtSignature` key on the part.
+  it('backfills the placeholder on the turn-first functionCall that carries no signature', () => {
+    // A call that never carried a signature (text-dispatched, an upstream that
+    // dropped it, or cross-model-transfer history replayed to Gemini) would make
+    // Gemini 3.x 400 ("missing a thought_signature"). The documented placeholder
+    // is substituted so the turn replays instead.
     const body = toGeminiGenerateContent(
       req({
         role: 'assistant',
@@ -709,7 +717,62 @@ describe('toGeminiGenerateContent — contentBlocks', () => {
       parts: Array<Record<string, unknown>>;
     }>;
     const part = contents.find((c) => c.role === 'model')?.parts[0];
-    expect(part).not.toHaveProperty('thoughtSignature');
+    expect(part).toMatchObject({
+      functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } },
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    });
+  });
+
+  it('backfills only the turn-first call; trailing parallel calls stay bare', () => {
+    // Gemini attaches the turn signature to the FIRST parallel call only and
+    // validates that one; the rest legitimately carry none, so the fallback must
+    // not pad them.
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          { type: 'tool_use', id: 'c1', name: 'read', input: { path: 'a.ts' } },
+          { type: 'tool_use', id: 'c2', name: 'read', input: { path: 'b.ts' } },
+        ],
+      }),
+    );
+    const parts =
+      (body.contents as Array<{ role: string; parts: Array<Record<string, unknown>> }>).find(
+        (c) => c.role === 'model',
+      )?.parts ?? [];
+    expect(parts[0]).toMatchObject({
+      functionCall: { id: 'c1', name: 'read', args: { path: 'a.ts' } },
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    });
+    expect(parts[1]).toEqual({
+      functionCall: { id: 'c2', name: 'read', args: { path: 'b.ts' } },
+    });
+  });
+
+  it('does not override a real captured signature on the first call', () => {
+    const body = toGeminiGenerateContent(
+      req({
+        role: 'assistant',
+        contentBlocks: [
+          {
+            type: 'tool_use',
+            id: 'c1',
+            name: 'read',
+            input: { path: 'a.ts' },
+            thoughtSignature: 'AgQKAreal==',
+          },
+          { type: 'tool_use', id: 'c2', name: 'read', input: { path: 'b.ts' } },
+        ],
+      }),
+    );
+    const parts =
+      (body.contents as Array<{ role: string; parts: Array<Record<string, unknown>> }>).find(
+        (c) => c.role === 'model',
+      )?.parts ?? [];
+    expect(parts[0]).toMatchObject({ thoughtSignature: 'AgQKAreal==' });
+    // The first call had a real signature, so the second (bare) call is left bare
+    // rather than receiving the placeholder.
+    expect(parts[1]).not.toHaveProperty('thoughtSignature');
   });
 
   it('maps a tool_result block to a functionResponse with the id + resolved name', () => {

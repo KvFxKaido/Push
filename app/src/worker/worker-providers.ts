@@ -31,6 +31,7 @@ import {
   buildGeminiGenerateContentRequest,
   toGeminiGenerateContent,
 } from '@push/lib/gemini-bridge';
+import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
 import {
   buildVertexAnthropicEndpoint,
   buildVertexOpenApiBaseUrl,
@@ -1086,8 +1087,15 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
           : // `includeUsage` restores the `stream_options: { include_usage: true }`
             // the legacy guardrail validator defaulted before forwarding — without
             // it the neutral flip drops the trailing usage chunk (token/cache
-            // accounting) for OpenAI-transport Zen-Go streams.
-            JSON.stringify(toOpenAIChat(dual.request, { includeUsage: true }));
+            // accounting) for OpenAI-transport Zen-Go streams. The fallback gate
+            // backfills a placeholder thought_signature for a Gemini-fronted model
+            // (Zen-Go also routes non-Gemini openai-transport models → gated).
+            JSON.stringify(
+              toOpenAIChat(dual.request, {
+                includeUsage: true,
+                geminiThoughtSignatureFallback: isGeminiModelId(model),
+              }),
+            );
     } catch (err) {
       return Response.json(
         { error: `OpenCode Zen Go request: ${err instanceof Error ? err.message : String(err)}` },
@@ -1469,9 +1477,20 @@ export async function handleVertexChat(request: Request, env: Env): Promise<Resp
               }),
             )
           : JSON.stringify(
+              // Vertex's non-anthropic transport fronts Gemini, which 400s on the
+              // replay turn unless the prior call's first functionCall carries a
+              // thought_signature — backfill the documented placeholder when none
+              // was captured (gated on the model id; Vertex also serves non-Gemini
+              // openai-transport models).
               dual.request.googleSearchGrounding === true
-                ? appendVertexGoogleSearchTool(toOpenAIChat(dual.request))
-                : toOpenAIChat(dual.request),
+                ? appendVertexGoogleSearchTool(
+                    toOpenAIChat(dual.request, {
+                      geminiThoughtSignatureFallback: isGeminiModelId(model),
+                    }),
+                  )
+                : toOpenAIChat(dual.request, {
+                    geminiThoughtSignatureFallback: isGeminiModelId(model),
+                  }),
             );
     } catch (err) {
       return Response.json(

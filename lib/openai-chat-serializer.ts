@@ -51,7 +51,10 @@ import type {
 import { EPHEMERAL_CACHE_CONTROL } from './provider-contract.ts';
 import { MAX_ROLLING_CACHE_BREAKPOINTS } from './context-transformer.ts';
 import { withRequestContentBlocks } from './content-blocks.ts';
-import { toolCallThoughtSignatureFields } from './gemini-thought-signature.ts';
+import {
+  resolveGeminiReplaySignature,
+  toolCallThoughtSignatureFields,
+} from './gemini-thought-signature.ts';
 
 /**
  * Build the OpenAI `response_format` payload from the neutral `ResponseFormatSpec`.
@@ -191,8 +194,13 @@ function flattenToolBearingBlocks(
   blocks: readonly LlmContentBlock[],
   keepCacheControl: boolean,
   reasoningContent?: string,
+  geminiThoughtSignatureFallback = false,
 ): OpenAIMessage[] {
   const messages: OpenAIMessage[] = [];
+  // Gemini validates that an assistant turn's FIRST tool call carries a
+  // thoughtSignature; track whether one's been emitted so the placeholder
+  // fallback (Gemini-fronted compat upstreams only) fills just that call.
+  let seenToolCall = false;
 
   // Walk blocks IN ORDER, accumulating visible content + tool calls into a
   // pending main message and flushing it before each tool result. This
@@ -244,14 +252,24 @@ function flattenToolBearingBlocks(
       // Round-trip Gemini's `thoughtSignature` when present (an OpenAI-compat
       // upstream fronting Gemini, e.g. Ollama Cloud, 400s on replay without it).
       // Emitted in BOTH wire shapes (top-level sibling + Google's `extra_content`
-      // envelope) since compat upstreams disagree on which they honor.
+      // envelope) since compat upstreams disagree on which they honor. When the
+      // target is Gemini (`geminiThoughtSignatureFallback`) and the turn's first
+      // call carries no captured signature, substitute the documented placeholder
+      // so the replay doesn't 400; non-Gemini upstreams pass `false` and keep
+      // emitting only a real signature (which they never have → no field).
+      const ownSignature =
+        typeof block.thoughtSignature === 'string' && block.thoughtSignature
+          ? block.thoughtSignature
+          : undefined;
+      const replaySignature = geminiThoughtSignatureFallback
+        ? resolveGeminiReplaySignature({ ownSignature, isFirstCallInTurn: !seenToolCall })
+        : ownSignature;
+      seenToolCall = true;
       pendingToolCalls.push({
         id: block.id,
         type: 'function',
         function: { name: block.name, arguments: JSON.stringify(block.input) },
-        ...toolCallThoughtSignatureFields(
-          typeof block.thoughtSignature === 'string' ? block.thoughtSignature : undefined,
-        ),
+        ...toolCallThoughtSignatureFields(replaySignature),
       });
     } else if (block.type === 'tool_result') {
       if (typeof block.tool_use_id !== 'string' || typeof block.content !== 'string') {
@@ -344,6 +362,14 @@ export interface ToOpenAIChatOptions {
    * default so other callers (CLI) keep their current behavior.
    */
   includeUsage?: boolean;
+  /**
+   * Substitute the documented placeholder `thought_signature` on a tool turn's
+   * first signatureless call. Only set this when the upstream fronts Gemini (it
+   * 400s otherwise on the replay turn); leave false for every other OpenAI-compat
+   * route so their bodies stay byte-identical. See
+   * `gemini-thought-signature.ts#resolveGeminiReplaySignature`.
+   */
+  geminiThoughtSignatureFallback?: boolean;
 }
 
 /**
@@ -391,7 +417,13 @@ export function toOpenAIChat(
         // messages (standalone tool-result messages + the content/tool_calls
         // message), so push the expansion rather than a single message.
         messages.push(
-          ...flattenToolBearingBlocks(m.role, m.contentBlocks, tagCache, m.reasoningContent),
+          ...flattenToolBearingBlocks(
+            m.role,
+            m.contentBlocks,
+            tagCache,
+            m.reasoningContent,
+            options?.geminiThoughtSignatureFallback === true,
+          ),
         );
       } else {
         messages.push(
@@ -480,6 +512,11 @@ export function toOpenAIChat(
  * verbatim text form — the same graceful degradation {@link toOpenAIChat} uses.
  * Cache tagging is off: these adapters never opt into breakpoint tagging and the
  * upstream ignores `cache_control`.
+ *
+ * `geminiThoughtSignatureFallback` is forwarded to the flatten so a Gemini-fronted
+ * compat upstream (Ollama Cloud / OpenRouter `google/gemini-*`) gets the
+ * placeholder `thought_signature` on a first signatureless call instead of a 400;
+ * the adapter sets it via `isGeminiModelId(req.model)`.
  */
 export interface ToolExpandableMessage {
   role: string;
@@ -494,6 +531,7 @@ export interface ToolExpandableMessage {
 
 export function expandToolMessagesForOpenAICompat<T extends ToolExpandableMessage>(
   messages: readonly T[],
+  geminiThoughtSignatureFallback = false,
 ): Array<T | OpenAIMessage> {
   const out: Array<T | OpenAIMessage> = [];
   for (const m of messages) {
@@ -502,7 +540,15 @@ export function expandToolMessagesForOpenAICompat<T extends ToolExpandableMessag
       const reasoning = m.reasoningContent ?? m.reasoning_content;
       const hasToolBlocks = blocks.some((b) => b.type === 'tool_use' || b.type === 'tool_result');
       if (hasToolBlocks) {
-        out.push(...flattenToolBearingBlocks(m.role, blocks, false, reasoning));
+        out.push(
+          ...flattenToolBearingBlocks(
+            m.role,
+            blocks,
+            false,
+            reasoning,
+            geminiThoughtSignatureFallback,
+          ),
+        );
       } else {
         // Non-tool contentBlocks (multimodal / attachment turns). Downcast to
         // OpenAI content parts and DROP the Push-private `contentBlocks` field —

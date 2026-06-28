@@ -30,6 +30,7 @@ import type {
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { toOpenAIChat } from '../lib/openai-chat-serializer.ts';
+import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import type { ProviderConfig } from './provider.ts';
 
 const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
@@ -124,6 +125,11 @@ async function* cliProviderStream(
     temperatureDefault: 0.1,
     maxTokensField: config.id === 'openai' ? 'max_completion_tokens' : 'max_tokens',
     tagCacheBreakpoints: config.id === 'openrouter',
+    // A Gemini-fronting compat route (e.g. OpenRouter `google/gemini-*`) 400s on
+    // the replay turn unless the prior call's first functionCall carries a
+    // thought_signature; backfill the documented placeholder when none was
+    // captured. Gated on the model id so non-Gemini routes stay byte-identical.
+    geminiThoughtSignatureFallback: isGeminiModelId(model),
   });
   const nativeTools = Array.isArray(baseBody.tools) ? baseBody.tools : [];
   const openRouterWebSearch = config.id === 'openrouter' && resolveOpenRouterWebSearch(req);

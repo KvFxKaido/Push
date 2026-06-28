@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+  isGeminiModelId,
   readToolCallThoughtSignature,
+  resolveGeminiReplaySignature,
   toolCallThoughtSignatureFields,
 } from './gemini-thought-signature.ts';
 
@@ -48,5 +51,46 @@ describe('toolCallThoughtSignatureFields', () => {
   it('emits nothing when the signature is absent', () => {
     expect(toolCallThoughtSignatureFields(undefined)).toEqual({});
     expect(toolCallThoughtSignatureFields('')).toEqual({});
+  });
+});
+
+describe('isGeminiModelId', () => {
+  it('matches bare and namespaced Gemini ids', () => {
+    expect(isGeminiModelId('gemini-3-flash')).toBe(true);
+    expect(isGeminiModelId('gemini-3-pro-preview')).toBe(true);
+    expect(isGeminiModelId('google/gemini-3-pro')).toBe(true);
+    expect(isGeminiModelId('GEMINI-3-FLASH')).toBe(true);
+  });
+
+  it('does not match non-Gemini ids or non-strings', () => {
+    expect(isGeminiModelId('gpt-5')).toBe(false);
+    expect(isGeminiModelId('deepseek-reasoner')).toBe(false);
+    expect(isGeminiModelId('claude-opus-4-8')).toBe(false);
+    expect(isGeminiModelId(undefined)).toBe(false);
+    expect(isGeminiModelId('')).toBe(false);
+  });
+});
+
+describe('resolveGeminiReplaySignature', () => {
+  it('prefers a real captured signature over the placeholder', () => {
+    expect(resolveGeminiReplaySignature({ ownSignature: 'real', isFirstCallInTurn: true })).toBe(
+      'real',
+    );
+    // A real signature on a non-first call still wins (never overridden/dropped).
+    expect(resolveGeminiReplaySignature({ ownSignature: 'real', isFirstCallInTurn: false })).toBe(
+      'real',
+    );
+  });
+
+  it('substitutes the placeholder only for the turn-first signatureless call', () => {
+    expect(resolveGeminiReplaySignature({ ownSignature: undefined, isFirstCallInTurn: true })).toBe(
+      GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    );
+  });
+
+  it('leaves a trailing signatureless parallel call bare', () => {
+    expect(
+      resolveGeminiReplaySignature({ ownSignature: undefined, isFirstCallInTurn: false }),
+    ).toBeUndefined();
   });
 });
