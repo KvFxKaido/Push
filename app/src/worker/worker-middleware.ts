@@ -84,6 +84,10 @@ export interface Env {
    *  (`review-sandbox-spike.ts`). `'1'` enables it; inert otherwise. Temporary —
    *  removed once the full lazy-provision integration lands. */
   PUSH_REVIEW_SANDBOX_SPIKE?: string;
+  /** Kill switch for the sandbox-backed PR reviewer (read-only sandbox tools
+   *  over the checked-out PR head). Enabled by default; set `'0'` to disable and
+   *  force diff-only reviews. */
+  PUSH_REVIEWER_SANDBOX?: string;
   // Opt-in gating allowlist for autonomous PR review: comma/space-separated
   // `owner/name` repos. For a listed repo the DO posts a GitHub Checks API run
   // (failure on a critical finding, else success) alongside the advisory

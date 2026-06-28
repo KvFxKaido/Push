@@ -261,6 +261,24 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
   sandboxToolProtocol?: string;
 
   /**
+   * Whether read-only sandbox tools are advertised and reported available.
+   * Defaults to `Boolean(sandboxId)`. The webhook reviewer sets this true for
+   * same-repo PRs (the sandbox is provisioned lazily on first tool use, so there
+   * is no `sandboxId` up front) and false for cross-fork / no-sandbox — keeping
+   * the `- Sandbox:` line and `[SANDBOX STATUS]` consistent with what `toolExec`
+   * can actually serve. Fixes a pre-existing mismatch where the protocol listed
+   * sandbox tools the executor rejected.
+   */
+  sandboxAvailable?: boolean;
+
+  /**
+   * Override the public names on the protocol's `- Sandbox:` line. Defaults to
+   * the full read-only set; the webhook reviewer narrows it to the subset its
+   * executor supports so it never advertises a tool it would reject.
+   */
+  sandboxToolNames?: string;
+
+  /**
    * Memory tool protocol prompt block (`memory_grep`/`memory_expand`), or
    * undefined when memory tools aren't available. The web Deep-Reviewer's
    * executor (`WebToolExecutionRuntime`) supports the `memory` source and the
@@ -289,10 +307,16 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
 // System prompt — hybrid Explorer investigation + Reviewer criteria
 // ---------------------------------------------------------------------------
 
-function buildReviewerToolProtocol(webSearchAvailable: boolean): string {
+function buildReviewerToolProtocol(
+  webSearchAvailable: boolean,
+  sandboxAvailable: boolean,
+  sandboxToolNames: string,
+): string {
   const toolLines = [
     `- GitHub: ${REVIEWER_GITHUB_TOOL_NAMES}`,
-    `- Sandbox: ${REVIEWER_SANDBOX_TOOL_NAMES}`,
+    // Omit the Sandbox line when no sandbox is/will-be available (cross-fork,
+    // no-sandbox) so the model isn't told about tools toolExec would reject.
+    ...(sandboxAvailable ? [`- Sandbox: ${sandboxToolNames}`] : []),
     // Omit the Web tool entirely when no web-search backend is wired (e.g. the
     // webhook PrReviewJob DO), so the model doesn't burn a round attempting an
     // unavailable tool.
@@ -322,6 +346,8 @@ Rules:
 function buildDeepReviewerSystemPrompt(
   webSearchToolProtocol: string,
   webSearchAvailable: boolean,
+  sandboxAvailable: boolean,
+  sandboxToolNames: string,
   sandboxToolProtocol?: string,
   memoryToolProtocol?: string,
 ): string {
@@ -390,7 +416,7 @@ Keep comments specific and actionable. Prefer 0-8 high-signal comments total. Yo
     ...(sandboxToolProtocol
       ? [sandboxToolProtocol]
       : [
-          buildReviewerToolProtocol(webSearchAvailable),
+          buildReviewerToolProtocol(webSearchAvailable, sandboxAvailable, sandboxToolNames),
           // Drop the web-search protocol block when web search isn't available,
           // so the tool is neither listed nor described.
           ...(webSearchAvailable ? [webSearchToolProtocol] : []),
@@ -583,16 +609,25 @@ export async function runDeepReviewer<TCall, TCard>(
     webSearchToolProtocol,
     webSearchAvailable = true,
     sandboxToolProtocol,
+    sandboxAvailable,
+    sandboxToolNames,
     memoryToolProtocol,
     resumeState,
   } = options;
 
   const activeProvider: AIProviderType = provider;
+  // Advertise + report sandbox tools as available when the caller says so, else
+  // infer from a concrete `sandboxId`. Lets the webhook reviewer mark "available"
+  // for lazy provisioning (no id up front) while staying off for cross-fork.
+  const effectiveSandboxAvailable = sandboxAvailable ?? Boolean(sandboxId);
+  const effectiveSandboxToolNames = sandboxToolNames ?? REVIEWER_SANDBOX_TOOL_NAMES;
 
   // Build system prompt
   let systemPrompt = buildDeepReviewerSystemPrompt(
     webSearchToolProtocol,
     webSearchAvailable,
+    effectiveSandboxAvailable,
+    effectiveSandboxToolNames,
     sandboxToolProtocol,
     memoryToolProtocol,
   );
@@ -620,7 +655,7 @@ export async function runDeepReviewer<TCall, TCard>(
       systemPrompt += `\nALWAYS pass "branch": "${branchContext.activeBranch}" to GitHub read/search tools (read_file, grep_file, search_files, list_directory). Omitting it searches the default branch ("${branchContext.defaultBranch}"), which does not reflect the code under review.`;
     }
   }
-  if (!sandboxId) {
+  if (!effectiveSandboxAvailable) {
     systemPrompt +=
       '\n\n[SANDBOX STATUS]\nNo sandbox available — use GitHub tools instead of sandbox tools.';
   }
@@ -735,7 +770,7 @@ export async function runDeepReviewer<TCall, TCard>(
         model: modelId,
         messages,
         systemPromptOverride: systemPrompt,
-        hasSandbox: Boolean(sandboxId),
+        hasSandbox: effectiveSandboxAvailable,
       },
       DEEP_REVIEW_ROUND_TIMEOUT_MS,
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,

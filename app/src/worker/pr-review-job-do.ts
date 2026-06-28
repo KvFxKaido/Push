@@ -56,6 +56,13 @@ import { exchangeForInstallationToken, generateGitHubAppJWT } from './worker-inf
 import { recordInflightReview } from './pr-review-inflight-index';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
+import {
+  REVIEW_SANDBOX_TOOL_NAMES,
+  cleanupReviewSandbox,
+  executeReadOnlySandboxTool,
+  provisionReviewSandbox,
+  type ReviewSandbox,
+} from './review-sandbox-tools';
 import type { ReviewablePullRequest } from './github-webhook';
 
 const DEFAULT_PROVIDER: AIProviderType = DEFAULT_PR_REVIEW_PROVIDER;
@@ -1488,6 +1495,35 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   });
 
   const detectors = createWebDetectorAdapter();
+
+  // Read-only sandbox for the reviewer (lazy): provisioned on the FIRST sandbox
+  // tool call so reviews that never grep pay nothing. Gated to same-repo PRs with
+  // a CF sandbox configured; killable via PUSH_REVIEWER_SANDBOX=0. Fail-safe —
+  // any provisioning/exec problem degrades to a diff-only review.
+  const sandboxToolsEnabled =
+    Boolean(env.Sandbox && env.SANDBOX_TOKENS) &&
+    !input.isCrossFork &&
+    env.PUSH_REVIEWER_SANDBOX !== '0';
+  let reviewSandbox: ReviewSandbox | null = null;
+  let sandboxProvisionPromise: Promise<ReviewSandbox | null> | null = null;
+  // Memoize the in-flight provision so concurrent (Promise.all) tool calls in a
+  // single round share ONE sandbox instead of racing to create duplicates.
+  const getReviewSandbox = (): Promise<ReviewSandbox | null> => {
+    if (!sandboxProvisionPromise) {
+      sandboxProvisionPromise = provisionReviewSandbox(
+        env,
+        input.repoFullName,
+        input.headRef,
+        input.headSha,
+        token,
+      ).then((sb) => {
+        reviewSandbox = sb;
+        return sb;
+      });
+    }
+    return sandboxProvisionPromise;
+  };
+
   const result = await runDeepReviewer<AnyToolCall, unknown>(
     diff,
     {
@@ -1514,17 +1550,39 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       // detected read-only set); web search has no backend here, so reject it
       // with a model-readable note rather than failing the run.
       toolExec: async (toolCall) => {
-        if (toolCall.source !== 'github') {
-          return {
-            resultText: `[Tool Error] ${toolCall.call.tool} is unavailable in automated PR review (GitHub read tools only).`,
-          };
+        if (toolCall.source === 'github') {
+          const r = await executeReadOnlyGitHubToolWithToken(
+            toolCall.call,
+            input.repoFullName,
+            token,
+          );
+          return { resultText: r.text };
         }
-        const r = await executeReadOnlyGitHubToolWithToken(
-          toolCall.call,
-          input.repoFullName,
-          token,
-        );
-        return { resultText: r.text };
+        // Read-only sandbox tools over the checked-out PR head (same-repo only,
+        // lazily provisioned). Degrades to diff-only on any provisioning failure.
+        if (sandboxToolsEnabled && toolCall.source === 'sandbox') {
+          try {
+            const sb = await getReviewSandbox();
+            if (!sb) {
+              return {
+                resultText:
+                  '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
+              };
+            }
+            const r = await executeReadOnlySandboxTool(env, sb, toolCall.call);
+            return { resultText: r.text };
+          } catch {
+            // toolExec must NEVER throw into the reviewer loop (it awaits this
+            // directly). Degrade to diff-only on any sandbox-tool failure.
+            return {
+              resultText:
+                '[Tool Result] Sandbox tool failed — investigate via GitHub tools and the diff instead.',
+            };
+          }
+        }
+        return {
+          resultText: `[Tool Error] ${toolCall.call.tool} is unavailable in automated PR review (GitHub read tools only).`,
+        };
       },
       detectAllToolCalls: detectors.detectAllToolCalls,
       detectAnyToolCall: detectors.detectAnyToolCall,
@@ -1532,10 +1590,18 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       // prompt entirely so the model never attempts an unavailable tool.
       webSearchToolProtocol: '',
       webSearchAvailable: false,
+      sandboxAvailable: sandboxToolsEnabled,
+      sandboxToolNames: REVIEW_SANDBOX_TOOL_NAMES,
       resumeState: hooks?.resumeState,
     },
     { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
-  );
+  ).finally(async () => {
+    // Best-effort teardown on success, error, AND abort. cleanupReviewSandbox
+    // never throws, so it can't mask the review's own outcome.
+    if (reviewSandbox) {
+      await cleanupReviewSandbox(env, reviewSandbox);
+    }
+  });
   if (signal.aborted) throw new Error('aborted');
 
   // Pin the post to the SHA we reviewed. `fetchPullRequestDiff` returns the PR's
