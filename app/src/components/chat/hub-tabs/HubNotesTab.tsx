@@ -220,7 +220,7 @@ export function HubNotesTab({
                 { viewTransitionName: editor ? undefined : WORKING_NOTES_MORPH } as CSSProperties
               }
               aria-label="Edit notes full screen"
-              className="group relative flex-1 overflow-hidden rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-white/[0.02] focus:outline-none focus-visible:bg-white/[0.03]"
+              className="group relative flex-1 overflow-hidden rounded-lg px-1 py-1.5 text-left transition-colors hover:bg-white/[0.02] focus:outline-none focus-visible:bg-white/[0.03] focus-visible:ring-2 focus-visible:ring-ring/50"
             >
               <Maximize2 className="pointer-events-none absolute right-1 top-1 h-3.5 w-3.5 text-push-fg-dim" />
               {scratchpadContent.trim() ? (
