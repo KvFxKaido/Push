@@ -324,11 +324,20 @@ describe('handleGitHubWebhook', () => {
 });
 
 describe('parseReviewCommand', () => {
-  it('fires on a mention + review command (case-insensitive, re-review)', () => {
+  it('fires when the command directly follows the mention (case-insensitive, please, re-review)', () => {
     expect(parseReviewCommand('@push-agent review', 'push-agent')).toBe(true);
-    expect(parseReviewCommand('hey @push-agent please review again', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@push-agent please review again', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('hey @push-agent please review', 'push-agent')).toBe(true);
     expect(parseReviewCommand('@PUSH-AGENT Review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@push-agent: review', 'push-agent')).toBe(true);
     expect(parseReviewCommand('@push-agent re-review', 'push-agent')).toBe(true);
+  });
+
+  it('does not fire when "review" is not a command bound to the mention (Codex P2)', () => {
+    // The command must follow the mention — these talk *about* a review.
+    expect(parseReviewCommand('Thanks @push-agent for the review', 'push-agent')).toBe(false);
+    expect(parseReviewCommand("I addressed @push-agent's review", 'push-agent')).toBe(false);
+    expect(parseReviewCommand('@push-agent the review looks wrong', 'push-agent')).toBe(false);
   });
 
   it('does not fire on a bare mention, a longer login, an email, or non-command words', () => {

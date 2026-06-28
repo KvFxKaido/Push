@@ -215,18 +215,24 @@ function escapeRegExp(s: string): string {
 }
 
 /**
- * True when a comment body @-mentions the bot AND carries the `review` command —
- * `@push-agent review`, `@push-agent please review again`, `@push-agent re-review`.
- * The mention must sit at a word boundary (start-of-line or after whitespace) and
- * not be a prefix of a longer login (`@push-agent-bot` ≠ `@push-agent`), so an
- * incidental mention or an email-looking string doesn't fire. The command word
- * is a standalone `review` (so "reviewed"/"preview" don't match).
+ * True when a comment issues the `review` command **to** the bot — the command
+ * must directly follow the mention (only whitespace/punctuation and an optional
+ * `please`/`kindly` filler between), matching `@push-agent review`,
+ * `@push-agent please review`, `@push-agent re-review`. Binding the command to
+ * the mention is deliberate: checking `review` *anywhere* after the mention let
+ * "thanks @push-agent for the review" or "@push-agent's review" trigger a run
+ * (Codex P2). Other guards: the mention sits at a word boundary (start-of-line
+ * or after whitespace) and isn't a prefix of a longer login
+ * (`@push-agent-bot` ≠ `@push-agent`); `review` is a standalone word so
+ * "reviewed"/"preview" don't match.
  */
 export function parseReviewCommand(body: string | null | undefined, handle: string): boolean {
   if (!body || !handle) return false;
-  const mention = new RegExp(`(?:^|\\s)@${escapeRegExp(handle)}(?![a-z0-9-])`, 'im');
-  if (!mention.test(body)) return false;
-  return /\breview\b/i.test(body);
+  const re = new RegExp(
+    `(?:^|\\s)@${escapeRegExp(handle)}(?![a-z0-9-])[\\s:,>-]*(?:(?:please|pls|plz|kindly)\\s+)?(?:re-?)?review\\b`,
+    'im',
+  );
+  return re.test(body);
 }
 
 /** A PR comment we've decided is a review trigger, with what the enqueue needs. */
