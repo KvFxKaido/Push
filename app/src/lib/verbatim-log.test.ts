@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { VerbatimLog, VerbatimScope } from '@push/lib/verbatim-log';
+import type { VerbatimEntry, VerbatimLog, VerbatimScope } from '@push/lib/verbatim-log';
+import { verbatimScopedRef } from '@push/lib/verbatim-log';
 
 // Each `freshLog()` resets modules so `app-db` re-evaluates with a null
 // `dbPromise` and opens against the current global IDBFactory — the same
@@ -105,5 +106,33 @@ describe('createIndexedDbVerbatimLog', () => {
     const reader = await freshLog();
     expect(await reader.read(entry.ref)).toEqual(entry);
     expect(await reader.size()).toBe(1);
+  });
+
+  it('disambiguates to a _2 ref on a genuine ref collision', async () => {
+    // The probe branch (`ref = `${base}_${probe + 1}``) is unreachable via normal
+    // appends — it needs two distinct texts hashing to one scoped ref. Force it
+    // by pre-seeding a *different* text at the exact ref the collider would mint.
+    // Same resetModules cycle as the adapter so app-db is the one instance.
+    vi.resetModules();
+    const logMod = await import('./verbatim-log');
+    const { STORE, put } = await import('./app-db');
+    const log = logMod.createIndexedDbVerbatimLog();
+
+    const colliderText = 'collider';
+    const base = verbatimScopedRef(scope, colliderText);
+    const seeded: VerbatimEntry = {
+      ref: base,
+      scope,
+      text: 'pre-seeded different text',
+      byteLen: 'pre-seeded different text'.length,
+      createdAt: 500,
+    };
+    await put(STORE.verbatim, seeded);
+
+    const entry = await log.append({ scope, text: colliderText, now: 1000 });
+    expect(entry.ref).toBe(`${base}_2`);
+    expect((await log.read(base))?.text).toBe('pre-seeded different text');
+    expect((await log.read(`${base}_2`))?.text).toBe(colliderText);
+    expect(await log.size()).toBe(2);
   });
 });
