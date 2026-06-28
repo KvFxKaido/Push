@@ -7,6 +7,7 @@ import {
   toOpenAIChat,
   toOpenAIResponseFormat,
 } from './openai-chat-serializer.ts';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from './gemini-thought-signature.ts';
 
 function llm(
   id: string,
@@ -491,6 +492,33 @@ describe('toOpenAIChat', () => {
     ]);
   });
 
+  it('backfills the Gemini placeholder on a signatureless tool_call when geminiThoughtSignatureFallback is set', () => {
+    const body = toOpenAIChat(
+      reqWith([
+        llm('1', 'assistant', 'fallback', {
+          contentBlocks: [
+            {
+              type: 'tool_use',
+              id: 'call_1',
+              name: 'sandbox_read_file',
+              input: { path: 'a.ts' },
+            },
+          ],
+        }),
+      ]),
+      { geminiThoughtSignatureFallback: true },
+    );
+    expect(body.messages?.[0].tool_calls?.[0]).toEqual({
+      id: 'call_1',
+      type: 'function',
+      function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      extra_content: {
+        google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      },
+    });
+  });
+
   it('attaches reasoning_content to the first flushed assistant message when flattening tool blocks', () => {
     const reasoning = 'tool-bearing thought\n  exact spacing';
     const body = toOpenAIChat(
@@ -738,6 +766,102 @@ describe('expandToolMessagesForOpenAICompat', () => {
           extra_content: { google: { thought_signature: 'sig-abc' } },
         },
       ],
+    });
+  });
+
+  it('backfills the Gemini placeholder on a signatureless first call when gated on', () => {
+    // Gemini-fronted compat upstream + a call with no captured signature →
+    // substitute the documented placeholder (both wire shapes) so the replay
+    // turn doesn't 400.
+    const out = expandToolMessagesForOpenAICompat(
+      [{ role: 'assistant', contentBlocks: [toolUse] }],
+      true,
+    );
+    expect(out[0]).toEqual({
+      role: 'assistant',
+      content: null,
+      tool_calls: [
+        {
+          id: toolUse.id,
+          type: 'function',
+          function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+          extra_content: {
+            google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+          },
+        },
+      ],
+    });
+  });
+
+  it('leaves a signatureless call bare when the Gemini gate is off (non-Gemini route)', () => {
+    // Default (gate off): a non-Gemini compat route must stay byte-identical —
+    // no placeholder, no signature fields.
+    const out = expandToolMessagesForOpenAICompat([
+      { role: 'assistant', contentBlocks: [toolUse] },
+    ]);
+    expect((out[0] as { tool_calls: Array<Record<string, unknown>> }).tool_calls[0]).toEqual({
+      id: toolUse.id,
+      type: 'function',
+      function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+    });
+  });
+
+  it('gated fallback fills only the first parallel call and never overrides a real one', () => {
+    const out = expandToolMessagesForOpenAICompat(
+      [
+        {
+          role: 'assistant',
+          contentBlocks: [
+            { ...toolUse, id: 'toolu_1', thoughtSignature: 'sig-real' },
+            { type: 'tool_use', id: 'toolu_2', name: 'sandbox_read_file', input: { path: 'b.ts' } },
+          ],
+        },
+      ],
+      true,
+    );
+    const calls = (out[0] as { tool_calls: Array<Record<string, unknown>> }).tool_calls;
+    // First call keeps its real signature.
+    expect(calls[0]).toMatchObject({ thoughtSignature: 'sig-real' });
+    // Second (trailing parallel) call legitimately carries none → stays bare.
+    expect(calls[1]).toEqual({
+      id: 'toolu_2',
+      type: 'function',
+      function: { name: 'sandbox_read_file', arguments: '{"path":"b.ts"}' },
+    });
+  });
+
+  it('re-backfills the placeholder on the first call of each step in an interleaved block list', () => {
+    // A single block list that interleaves call→result→call splits into two
+    // assistant messages (a `tool_result` flushes the first). Each flushed
+    // assistant message is its own Gemini turn, so BOTH first calls need the
+    // placeholder — the per-turn tracker must reset on flush (Codex P2).
+    const out = expandToolMessagesForOpenAICompat(
+      [
+        {
+          role: 'assistant',
+          contentBlocks: [
+            { type: 'tool_use', id: 'c1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+            { type: 'tool_result', tool_use_id: 'c1', content: 'a-data' },
+            { type: 'tool_use', id: 'c2', name: 'sandbox_read_file', input: { path: 'b.ts' } },
+          ],
+        },
+      ],
+      true,
+    );
+    // [assistant(c1), tool(c1 result), assistant(c2)]
+    const assistantMsgs = out.filter(
+      (m): m is { role: string; tool_calls: Array<Record<string, unknown>> } =>
+        (m as { role?: string }).role === 'assistant' &&
+        Array.isArray((m as { tool_calls?: unknown }).tool_calls),
+    );
+    expect(assistantMsgs).toHaveLength(2);
+    expect(assistantMsgs[0].tool_calls[0]).toMatchObject({
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+    });
+    // Without the reset, c2 (first call of the second step) would replay bare.
+    expect(assistantMsgs[1].tool_calls[0]).toMatchObject({
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
     });
   });
 

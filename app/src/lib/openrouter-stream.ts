@@ -17,6 +17,7 @@ import {
   flatToolToOpenAITool,
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
+import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
 import { parseProviderError } from './orchestrator-streaming';
@@ -78,8 +79,11 @@ export async function* openrouterStream(
     linkedLibraryContent: req.linkedLibraryContent,
     emitContentBlocks: nativeFcActive,
   });
+  // OpenRouter routes `google/gemini-*` to Gemini, which 400s on the replay turn
+  // unless the prior call's first functionCall carries a thought_signature;
+  // backfill the documented placeholder when none was captured.
   const wireMessages = nativeFcActive
-    ? expandToolMessagesForOpenAICompat(llmMessages)
+    ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
     : llmMessages;
 
   // 2. Layer in OpenRouter-specific body extensions (reasoning effort,

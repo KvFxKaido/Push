@@ -16,6 +16,7 @@ import {
   expandToolMessagesForOpenAICompat,
   flatToolToOpenAITool,
 } from '@push/lib/openai-chat-serializer';
+import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -60,8 +61,11 @@ export async function* ollamaStream(
     linkedLibraryContent: req.linkedLibraryContent,
     emitContentBlocks: nativeFcActive,
   });
+  // Ollama Cloud fronts Gemini for `gemini-*` ids; those 400 on the replay turn
+  // unless the prior call's first functionCall carries a thought_signature, so
+  // backfill the documented placeholder when none was captured.
   const wireMessages = nativeFcActive
-    ? expandToolMessagesForOpenAICompat(llmMessages)
+    ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
     : llmMessages;
 
   // 2. Reasoning effort. Ollama Cloud's OpenAI-compatible endpoint honors a

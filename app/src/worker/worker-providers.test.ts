@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROVIDER_DEFINITIONS } from '@push/lib/provider-definition';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '@push/lib/gemini-thought-signature';
 import {
   handleAnthropicChat,
   handleAnthropicModels,
@@ -561,6 +562,64 @@ describe('handleZenGoChat — neutral wire (dual-accept)', () => {
       type: 'json_schema',
       json_schema: { name: 'verdict', strict: true, schema: { type: 'object' } },
     });
+  });
+
+  // Locks the per-route wiring `geminiThoughtSignatureFallback: isGeminiModelId(model)`
+  // at the worker boundary (the serializer logic itself is covered in
+  // openai-chat-serializer.test.ts). Zen-Go's live catalog has no Gemini model
+  // today, but the gate is uniform across every OpenAI-transport call site, so a
+  // gemini id flips it on and backfills the placeholder on a signatureless replay.
+  function toolReplayMessages() {
+    return [
+      { role: 'user', content: 'read it' },
+      {
+        role: 'assistant',
+        content: '',
+        contentBlocks: [
+          { type: 'tool_use', id: 'toolu_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+        ],
+      },
+      {
+        role: 'user',
+        content: '',
+        contentBlocks: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'data' }],
+      },
+    ];
+  }
+
+  function assistantToolCall(body: { messages: Array<Record<string, unknown>> }) {
+    const assistant = body.messages.find(
+      (m) => m.role === 'assistant' && Array.isArray(m.tool_calls),
+    ) as { tool_calls: Array<Record<string, unknown>> } | undefined;
+    return assistant?.tool_calls[0];
+  }
+
+  it('backfills the Gemini thought_signature placeholder for a Gemini OpenAI-transport model', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({ model: 'gemini-3-pro', messages: toolReplayMessages() }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const call = assistantToolCall(JSON.parse(get()!.init.body as string));
+    expect(call).toMatchObject({
+      function: { name: 'sandbox_read_file' },
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      extra_content: {
+        google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      },
+    });
+  });
+
+  it('leaves a signatureless tool call bare for a non-Gemini OpenAI-transport model', async () => {
+    const get = captureUpstream();
+    await handleZenGoChat(
+      makeNeutralRequest({ model: 'glm-5.1', messages: toolReplayMessages() }),
+      makeEnv({ ZEN_API_KEY: 'zen-key' }),
+    );
+    const call = assistantToolCall(JSON.parse(get()!.init.body as string));
+    expect(call).toMatchObject({ function: { name: 'sandbox_read_file' } });
+    expect(call).not.toHaveProperty('thoughtSignature');
+    expect(call).not.toHaveProperty('extra_content');
   });
 
   it('enables the native web_search tool from the neutral anthropicWebSearch flag', async () => {
