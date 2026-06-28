@@ -7,7 +7,7 @@
  */
 
 const DB_NAME = 'push-app-db';
-const DB_VERSION = 8;
+const DB_VERSION = 9;
 
 export const STORE = {
   conversations: 'conversations',
@@ -20,6 +20,10 @@ export const STORE = {
   runCheckpointsV1: 'run_checkpoints_v1',
   runJournal: 'run_journal',
   memoryRecords: 'memory_records',
+  // LCM #1234: append-only, content-addressed full text behind typed memory's
+  // `verbatimRef`. Durable so `memory_expand` resolves across reloads, not just
+  // within a session. Keyed by the immutable content `ref`.
+  verbatim: 'verbatim',
   pairedDevices: 'paired_devices',
   // Phase 2.f: paired remote daemons (relay-mediated). Separate
   // store from `pairedDevices` because the record shapes diverge
@@ -123,6 +127,19 @@ function openDb(): Promise<IDBDatabase> {
       ensureIndex(memStore, 'chatId', 'scope.chatId', { unique: false });
       ensureIndex(memStore, 'branch', 'scope.branch', { unique: false });
       ensureIndex(memStore, 'kind', 'kind', { unique: false });
+
+      // Verbatim log — append-only full text behind typed memory's `verbatimRef`
+      // (LCM #1234). New in v9, keyed by the immutable content `ref`. The scope +
+      // createdAt indexes mirror memoryRecords so scoped listing / age-based prune
+      // can use them; the adapter (verbatim-log.ts) scans via getAll today, same
+      // as the typed store.
+      if (!db.objectStoreNames.contains(STORE.verbatim)) {
+        const vbStore = db.createObjectStore(STORE.verbatim, { keyPath: 'ref' });
+        vbStore.createIndex('repoFullName', 'scope.repoFullName', { unique: false });
+        vbStore.createIndex('branch', 'scope.branch', { unique: false });
+        vbStore.createIndex('chatId', 'scope.chatId', { unique: false });
+        vbStore.createIndex('createdAt', 'createdAt', { unique: false });
+      }
 
       // Paired devices — one record per paired local pushd. The remote-
       // sessions track lets the web app drive a loopback daemon over WS;
