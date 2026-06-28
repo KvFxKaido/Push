@@ -80,6 +80,10 @@ export interface Env {
   // Anthropic-transport Go models (minimax-* / qwen-*); the coder-job stream
   // adapter parses it natively, so all Go models work on this path.
   PR_REVIEW_ZEN_GO?: string;
+  /** Flag-gated reachability spike for the sandbox-backed PR reviewer
+   *  (`review-sandbox-spike.ts`). `'1'` enables it; inert otherwise. Temporary —
+   *  removed once the full lazy-provision integration lands. */
+  PUSH_REVIEW_SANDBOX_SPIKE?: string;
   // Opt-in gating allowlist for autonomous PR review: comma/space-separated
   // `owner/name` repos. For a listed repo the DO posts a GitHub Checks API run
   // (failure on a critical finding, else success) alongside the advisory
