@@ -148,7 +148,7 @@ export function getRoleLabel(
  */
 export function getSourceLabel(source: AgentRole | 'system' | string): string {
   if (source === 'system') return 'System';
-  if (source === 'orchestrator') return 'Assistant';
+  if (source === 'orchestrator') return 'Agent';
   return getRoleLabel(source);
 }
 
