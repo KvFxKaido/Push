@@ -189,7 +189,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
 
   function buildLlm(
     messages: ChatMessage[],
-    provider: 'zen' | 'azure' | undefined = anthropicRoute[0],
+    provider: 'zen' | 'openrouter' | 'azure' | undefined = anthropicRoute[0],
     model: string | undefined = anthropicRoute[1],
   ) {
     return toLLMMessages(messages, { providerType: provider, providerModel: model });
@@ -297,6 +297,22 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     expect(assistant?.reasoning_content).toBe('plain reasoning\n  preserved spacing  ');
   });
 
+  it('replays plain reasoning_content for OpenRouter DeepSeek models', () => {
+    const messages: ChatMessage[] = [
+      makeMessage({ id: 'u1', role: 'user', content: 'q' }),
+      makeMessage({
+        id: 'a1',
+        role: 'assistant',
+        content: 'a',
+        thinking: 'openrouter deepseek reasoning',
+      }),
+      makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
+    ];
+    const llm = buildLlm(messages, 'openrouter', 'deepseek/deepseek-r1');
+    const assistant = llm.find((m) => m.role === 'assistant');
+    expect(assistant?.reasoning_content).toBe('openrouter deepseek reasoning');
+  });
+
   it('keeps a Zen DeepSeek assistant turn whose only payload is reasoning_content', () => {
     const messages: ChatMessage[] = [
       makeMessage({ id: 'u1', role: 'user', content: 'q' }),
@@ -367,8 +383,14 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
       makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
     ];
     const zenAssistant = buildLlm(messages, 'zen', 'glm-5.1').find((m) => m.role === 'assistant');
+    const openRouterAssistant = buildLlm(
+      messages,
+      'openrouter',
+      'anthropic/claude-sonnet-4.6:nitro',
+    ).find((m) => m.role === 'assistant');
     const azureAssistant = buildLlm(messages, 'azure', 'gpt-5').find((m) => m.role === 'assistant');
     expect(zenAssistant?.reasoning_content).toBeUndefined();
+    expect(openRouterAssistant?.reasoning_content).toBeUndefined();
     expect(azureAssistant?.reasoning_content).toBeUndefined();
   });
 });

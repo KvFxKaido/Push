@@ -1676,7 +1676,8 @@ export async function runCoderAgent<TCall, TCard>(
     //     (DeepSeek on api.deepseek.com/anthropic) — serialized to `content[].thinking`
     //     when the route carries reasoning blocks (`emitReasoningBlocks`).
     //   - `reasoningContent`: plain unsigned reasoning from OpenAI-compat thinking
-    //     routes (e.g. DeepSeek via Zen Go) — serialized to `reasoning_content`.
+    //     routes (e.g. DeepSeek via Zen Go/OpenRouter) — serialized to
+    //     `reasoning_content`.
     // Both are carried; `toLLMMessages` emits whichever the locked route requires.
     // The orchestrator lane carries this via `markLastAssistantToolCall`; the kernel
     // lane (web-inline default + CLI) had no equivalent until now. Guarded so a

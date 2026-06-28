@@ -260,13 +260,17 @@ describe('routesThroughAnthropicBridge', () => {
 });
 
 describe('routeReplaysReasoningContent', () => {
-  it('is true only for Zen DeepSeek models', async () => {
+  it('is true only for DeepSeek models on routes that require replay', async () => {
     mockFailoverState();
     const { routeReplaysReasoningContent } = await import('./orchestrator-provider-routing');
     expect(routeReplaysReasoningContent('zen', 'deepseek-v4-pro')).toBe(true);
     expect(routeReplaysReasoningContent('zen', 'deepseek-v4-flash')).toBe(true);
     expect(routeReplaysReasoningContent('zen', 'glm-5.1')).toBe(false);
-    expect(routeReplaysReasoningContent('openrouter', 'deepseek/deepseek-v4-pro')).toBe(false);
+    expect(routeReplaysReasoningContent('openrouter', 'deepseek/deepseek-r1')).toBe(true);
+    expect(routeReplaysReasoningContent('openrouter', 'deepseek/deepseek-v3.2:nitro')).toBe(true);
+    expect(routeReplaysReasoningContent('openrouter', 'anthropic/claude-sonnet-4.6:nitro')).toBe(
+      false,
+    );
     expect(routeReplaysReasoningContent('zen', undefined)).toBe(false);
   });
 });

@@ -113,17 +113,17 @@ export function routesThroughAnthropicBridge(
 
 /**
  * Whether a provider+model pair requires plain unsigned reasoning text to be
- * replayed on prior assistant turns. DeepSeek thinking mode through Zen Go's
- * OpenAI-compatible transport rejects round 2 unless the exact
- * `reasoning_content` string is echoed back; other Zen OpenAI-transport models
- * reject the field, so this stays DeepSeek-specific.
+ * replayed on prior assistant turns. DeepSeek thinking mode through
+ * OpenAI-compatible transports rejects round 2 unless the exact
+ * `reasoning_content` string is echoed back; other OpenAI-transport models may
+ * reject the field, so this stays provider+DeepSeek-specific.
  */
 export function routeReplaysReasoningContent(
   provider: Exclude<ActiveProvider, 'demo'> | undefined,
   model: string | undefined,
 ): boolean {
   if (!provider || !model) return false;
-  return provider === 'zen' && /deepseek/i.test(model);
+  return (provider === 'zen' || provider === 'openrouter') && /deepseek/i.test(model);
 }
 
 function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {
