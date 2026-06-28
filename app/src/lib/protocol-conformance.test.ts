@@ -229,10 +229,11 @@ conformanceColumn('reasoningBlocks', () => {
     expect(body.messages[0]?.content?.[1]).toEqual({ type: 'text', text: 'visible answer' });
   });
 
-  it('DeepSeek on Zen Go uses plain reasoning_content replay, not signed reasoningBlocks', () => {
+  it('DeepSeek on OpenAI-compatible gateways uses plain reasoning_content replay, not signed reasoningBlocks', () => {
     const model = 'deepseek-v4-pro';
     expect(resolvePushCapabilityProfile('zen', model).reasoningBlocks).toBe(false);
     expect(routeReplaysReasoningContent('zen', model)).toBe(true);
+    expect(routeReplaysReasoningContent('openrouter', 'deepseek/deepseek-r1')).toBe(true);
     const body = toOpenAIChat(
       req('zen', model, {
         messages: [

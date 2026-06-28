@@ -156,8 +156,8 @@ export interface LlmMessage {
   reasoningBlocks?: ReasoningBlock[];
   /** Plain unsigned reasoning text captured on a prior assistant turn.
    *  Some OpenAI-compatible reasoning models (DeepSeek thinking mode through
-   *  Zen Go) require this to be replayed verbatim as `reasoning_content` on
-   *  that assistant message in the next request. Distinct from
+   *  Zen Go / OpenRouter) require this to be replayed verbatim as
+   *  `reasoning_content` on that assistant message in the next request. Distinct from
    *  `reasoningBlocks`: this has no provider signature and is only emitted by
    *  route-gated OpenAI-compatible serializers that explicitly support it. */
   reasoningContent?: string;

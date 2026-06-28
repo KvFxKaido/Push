@@ -113,9 +113,9 @@ async function* cliProviderStream(
   // every provider here is a strict OpenAI-compat endpoint that may reject the
   // Push-private field — it only round-trips on the Anthropic-bridge surface.
   // TODO(deepseek-reasoning-cli): the CLI history does not persist plain
-  // reasoning text yet. Once it does, map Zen DeepSeek's stored reasoning onto
+  // reasoning text yet. Once it does, map DeepSeek gateway history onto
   // LlmMessage.reasoningContent so `toOpenAIChat` can echo `reasoning_content`
-  // the same way the web Zen Go path does.
+  // the same way the web route-gated path does.
   //
   // Cache markers are tagged only for OpenRouter, the one CLI provider known to
   // route to Anthropic models (other gateways ignore them harmlessly, but are
