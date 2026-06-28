@@ -36,8 +36,14 @@ import {
 import { createPolicyEnforcedStore } from '@push/lib/context-memory-policy-store';
 import { setDefaultEmbeddingProvider } from '@push/lib/embedding-provider';
 import { createWebEmbeddingProvider } from '@/lib/embedding-provider-web';
+import { createIndexedDbVerbatimLog, setDefaultVerbatimLog } from '@/lib/verbatim-log';
 
 setDefaultMemoryStore(createPolicyEnforcedStore(createIndexedDbStore()));
+// Verbatim log — durable IndexedDB backing for typed memory's `verbatimRef`
+// (LCM #1234), so `memory_expand` resolves full text across reloads, not just
+// within a session. Without this the log defaulted to in-memory and expansion
+// dead-ended after a reload. Mirrors the typed store above.
+setDefaultVerbatimLog(createIndexedDbVerbatimLog());
 // Semantic memory retrieval — records embed via /api/memory/embed and the
 // scorer blends cosine similarity. Falls back to lexical if the endpoint errors.
 setDefaultEmbeddingProvider(createWebEmbeddingProvider());
