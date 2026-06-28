@@ -193,8 +193,17 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   }, [status]);
 
   // Attempt to reconnect to a saved sandbox session on mount
+  //
+  // `status` is deliberately NOT in this effect's dep array. The probe below
+  // sets status to 'reconnecting' itself; if `status` were a dependency, that
+  // write would re-run the effect, and the prior run's cleanup would flip
+  // `cancelled = true` on the in-flight probe — so the probe's `.then`/`.catch`
+  // would no-op and status would stay 'reconnecting' forever (the "infinite
+  // reconnecting spinner on refresh" bug). Re-entry is driven by mount and by
+  // `reconnectNonce` (the retry path), exactly as the cooldown note below
+  // describes. We read the live status via `statusRef` instead.
   useEffect(() => {
-    if (status !== 'idle') return;
+    if (statusRef.current !== 'idle') return;
     // null/undefined = no sandbox context yet; '' = sandbox mode (ephemeral)
     if (activeRepoFullName == null || !activeSessionStorageKey) return;
     if (sandboxIdRef.current) return;
@@ -253,6 +262,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     setSandboxOwnerToken(saved.ownerToken, saved.sandboxId);
     const reconnectStartTimer = setTimeout(() => {
       if (cancelled) return;
+      // A warm probe can resolve before this 0ms timer fires; don't clobber a
+      // settled 'ready'/'idle' back to 'reconnecting' (which would re-strand
+      // the spinner). Only show 'reconnecting' if we're still waiting.
+      if (statusRef.current !== 'idle') return;
       setStatus('reconnecting');
       setActiveSandboxEnvironment(null);
     }, 0);
@@ -430,7 +443,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       reconnectingRef.current = false;
       reconnectPromiseRef.current = null;
     };
-  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, status, reconnectNonce]);
+  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, reconnectNonce]);
 
   // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
   // The snapshot preserves the full working tree so restore is fast. Without this,
