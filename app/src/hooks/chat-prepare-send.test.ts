@@ -445,7 +445,6 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     return {
       repoFullName: 'owner/repo',
       branchInfoRef: { current: branchInfo },
-      activeChatIdRef: { current: 'chat-1' },
       skipAutoCreateRef: { current: null },
       runtimeHandlersRef: { current: undefined },
     };
@@ -468,11 +467,13 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
       makeBranchDeps(),
     );
     expect(maybeBranchOnFirstPrompt).toHaveBeenCalledTimes(1);
-    const input = vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0];
+    const [input, migrationCtx] = vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0];
     expect(input.isFirstMessage).toBe(true);
     expect(input.sandboxId).toBe('sb-99'); // resolved by the prewarm above
     expect(input.promptText).toBe('Add a feature');
     expect(input.repoFullName).toBe('owner/repo');
+    // Migration targets THIS send's chat, not whatever activeChatIdRef holds.
+    expect(migrationCtx.activeChatIdRef.current).toBe('chat-1');
   });
 
   it('passes isFirstMessage:false for a follow-up so the helper no-ops', async () => {

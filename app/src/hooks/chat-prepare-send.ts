@@ -116,7 +116,6 @@ export interface FirstPromptBranchDeps {
   /** owner/name, or null for scratch / no-repo. */
   repoFullName: string | null;
   branchInfoRef: BranchForkMigrationContext['branchInfoRef'];
-  activeChatIdRef: BranchForkMigrationContext['activeChatIdRef'];
   skipAutoCreateRef: BranchForkMigrationContext['skipAutoCreateRef'];
   runtimeHandlersRef: BranchForkMigrationContext['runtimeHandlersRef'];
 }
@@ -268,7 +267,13 @@ export async function prepareSendContext(
         defaultBranch: branchDeps.branchInfoRef.current?.defaultBranch,
       },
       {
-        activeChatIdRef: branchDeps.activeChatIdRef,
+        // Target THIS send's chat, not `activeChatIdRef` ("active at resolution
+        // time"): the branch was created for this prompt, and across the
+        // prewarm/fork awaits the active chat can drift (a just-created first-
+        // message chat, or a user chat-switch). The deferred placeholder + the
+        // stream both key off `chatId`, so the migration must too — otherwise the
+        // branch_forked divider lands on a different chat than the response.
+        activeChatIdRef: { current: chatId },
         conversationsRef: refs.conversationsRef,
         branchInfoRef: branchDeps.branchInfoRef,
         skipAutoCreateRef: branchDeps.skipAutoCreateRef,

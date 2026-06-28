@@ -628,7 +628,6 @@ export function useChat(
         {
           repoFullName: repoRef.current,
           branchInfoRef,
-          activeChatIdRef,
           skipAutoCreateRef,
           runtimeHandlersRef,
         },
