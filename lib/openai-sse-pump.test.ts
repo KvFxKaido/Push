@@ -694,6 +694,48 @@ describe('openAISSEPump', () => {
     });
   });
 
+  it('captures the Gemini thoughtSignature from each compat wire shape (sibling / extra_content / function-nested)', async () => {
+    // The capture peer of the serializer's emit. A Gemini-fronting compat
+    // upstream carries the signature in one of three shapes; the pump must lift
+    // whichever onto the neutral call so the REAL signature (not the placeholder)
+    // round-trips. Ollama Cloud uses the nested `function.thought_signature` shape
+    // (ref ollama/ollama#14676) — the one prior fixes never read.
+    const shapes: Array<[string, Record<string, unknown>]> = [
+      ['top-level sibling', { thoughtSignature: 'sig-1' }],
+      ['extra_content envelope', { extra_content: { google: { thought_signature: 'sig-1' } } }],
+      ['function-nested (Ollama)', { function: { thought_signature: 'sig-1' } }],
+    ];
+    for (const [, extra] of shapes) {
+      const s = makeStream();
+      const events = collect(openAISSEPump({ body: s.body, isKnownToolName: () => true }));
+      const fnBase = (extra.function as Record<string, unknown>) ?? {};
+      s.push(
+        JSON.stringify({
+          choices: [
+            {
+              delta: {
+                tool_calls: [
+                  {
+                    index: 0,
+                    ...extra,
+                    function: { name: 'sandbox_read_file', arguments: '{"path":"a"}', ...fnBase },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      );
+      s.push(finishFrame('tool_calls'));
+      const out = await events;
+      const call = out.find(
+        (e): e is { type: 'native_tool_call'; call: { thoughtSignature?: string } } =>
+          e.type === 'native_tool_call',
+      )?.call;
+      expect(call?.thoughtSignature).toBe('sig-1');
+    }
+  });
+
   it('yields a tool_call_delta per fragment so the adapter sees progress while buffering', async () => {
     const s = makeStream();
     const events = collect(

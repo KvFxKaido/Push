@@ -511,7 +511,11 @@ describe('toOpenAIChat', () => {
     expect(body.messages?.[0].tool_calls?.[0]).toEqual({
       id: 'call_1',
       type: 'function',
-      function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+      function: {
+        name: 'sandbox_read_file',
+        arguments: '{"path":"a.ts"}',
+        thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      },
       thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
       extra_content: {
         google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
@@ -747,10 +751,11 @@ describe('expandToolMessagesForOpenAICompat', () => {
     ]);
   });
 
-  it("round-trips Gemini's thoughtSignature on the flattened tool_call (both shapes)", () => {
+  it("round-trips Gemini's thoughtSignature on the flattened tool_call (all three shapes)", () => {
     // An OpenAI-compat upstream fronting Gemini (Ollama Cloud) 400s on replay
     // unless the tool call carries its signature. Compat upstreams disagree on
-    // the shape, so emit both the top-level sibling and Google's extra_content.
+    // the shape, so emit the top-level sibling, Google's extra_content, AND
+    // Ollama's nested function.thought_signature (the only one Ollama forwards).
     const out = expandToolMessagesForOpenAICompat([
       { role: 'assistant', contentBlocks: [{ ...toolUse, thoughtSignature: 'sig-abc' }] },
     ]);
@@ -761,7 +766,11 @@ describe('expandToolMessagesForOpenAICompat', () => {
         {
           id: toolUse.id,
           type: 'function',
-          function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          function: {
+            name: 'sandbox_read_file',
+            arguments: '{"path":"a.ts"}',
+            thought_signature: 'sig-abc',
+          },
           thoughtSignature: 'sig-abc',
           extra_content: { google: { thought_signature: 'sig-abc' } },
         },
@@ -784,7 +793,11 @@ describe('expandToolMessagesForOpenAICompat', () => {
         {
           id: toolUse.id,
           type: 'function',
-          function: { name: 'sandbox_read_file', arguments: '{"path":"a.ts"}' },
+          function: {
+            name: 'sandbox_read_file',
+            arguments: '{"path":"a.ts"}',
+            thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+          },
           thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
           extra_content: {
             google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },

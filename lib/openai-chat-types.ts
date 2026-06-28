@@ -46,7 +46,17 @@ export type OpenAIReasoningBlock =
 export interface OpenAIToolCall {
   id: string;
   type: 'function';
-  function: { name: string; arguments: string };
+  function: {
+    name: string;
+    arguments: string;
+    /** Ollama's shape for the same Gemini signature, nested inside `function`.
+     *  Ollama Cloud maps `tool_calls[].function.thought_signature` onto the
+     *  Gemini `functionCall` it forwards and reads it back from here on replay
+     *  (ref ollama/ollama#14676); it drops the top-level sibling and
+     *  `extra_content`, so this is the ONLY shape that reaches an
+     *  Ollama-fronted Gemini. Emitted alongside the other two. */
+    thought_signature?: string;
+  };
   /**
    * Gemini-private signed-reasoning token, carried on the tool call. When an
    * OpenAI-compatible upstream fronts a Gemini model (Ollama Cloud serving
@@ -54,9 +64,10 @@ export interface OpenAIToolCall {
    * it back on replay, or the follow-up 400s ("Function call is missing a
    * thought_signature in functionCall parts"). Compat upstreams disagree on the
    * shape — some use this top-level sibling, others Google's `extra_content`
-   * envelope below — so Push emits BOTH (see `lib/gemini-thought-signature.ts`).
-   * The peer of `gemini-bridge`'s native `functionCall.thoughtSignature`
-   * round-trip. Absent for every non-Gemini upstream.
+   * envelope below, others Ollama's nested `function.thought_signature` above —
+   * so Push emits ALL THREE (see `lib/gemini-thought-signature.ts`). The peer of
+   * `gemini-bridge`'s native `functionCall.thoughtSignature` round-trip. Absent
+   * for every non-Gemini upstream.
    */
   thoughtSignature?: string;
   /** Google's OpenAI-compat provider-metadata envelope for the same signature.

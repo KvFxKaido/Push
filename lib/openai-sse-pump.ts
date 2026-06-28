@@ -342,7 +342,7 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
       for (const tc of toolCalls as Array<{
         index?: unknown;
         id?: unknown;
-        function?: { name?: unknown; arguments?: unknown };
+        function?: { name?: unknown; arguments?: unknown; thought_signature?: unknown };
         thoughtSignature?: unknown;
         extra_content?: unknown;
       }>) {
@@ -355,8 +355,10 @@ export async function* openAISSEPump(opts: OpenAISSEPumpOptions): AsyncIterable<
         if (typeof fnCall.arguments === 'string') entry.args += fnCall.arguments;
         // Push-private Gemini sidecar (see `PendingNativeToolCall`). Non-Gemini
         // upstreams never set it; arrives whole on the call fragment, not split.
-        // Compat upstreams carry it as a top-level sibling OR in Google's
-        // `extra_content` envelope — read whichever this one used.
+        // Compat upstreams carry it as a top-level sibling, in Google's
+        // `extra_content` envelope, OR (Ollama Cloud) nested in
+        // `function.thought_signature` — read whichever this one used so the real
+        // captured signature (not just the placeholder) round-trips on replay.
         const signature = readToolCallThoughtSignature(tc);
         if (signature) entry.thoughtSignature = signature;
         pendingNativeToolCalls.set(idx, entry);
