@@ -218,18 +218,25 @@ function escapeRegExp(s: string): string {
  * True when a comment issues the `review` command **to** the bot — the command
  * must directly follow the mention (only whitespace/punctuation and an optional
  * `please`/`kindly` filler between), matching `@push-agent review`,
- * `@push-agent please review`, `@push-agent re-review`. Binding the command to
- * the mention is deliberate: checking `review` *anywhere* after the mention let
- * "thanks @push-agent for the review" or "@push-agent's review" trigger a run
- * (Codex P2). Other guards: the mention sits at a word boundary (start-of-line
- * or after whitespace) and isn't a prefix of a longer login
- * (`@push-agent-bot` ≠ `@push-agent`); `review` is a standalone word so
+ * `@push-agent please review`, `@push-agent re-review`.
+ *
+ * Accepts both mention shapes GitHub produces: the bare app slug `@push-agent`
+ * (what a user types, the Dependabot-style command convention) AND the full bot
+ * login `@push-agent[bot]` (what GitHub's @-autocomplete inserts, since the bot's
+ * actual login carries the `[bot]` suffix). The handle is normalized to the bare
+ * slug by `resolveBotHandle`; the optional `[bot]` is matched here.
+ *
+ * Binding the command to the mention is deliberate: checking `review` *anywhere*
+ * after the mention let "thanks @push-agent for the review" or "@push-agent's
+ * review" trigger a run (Codex P2). Other guards: the mention sits at a word
+ * boundary (start-of-line or after whitespace) and isn't a prefix of a longer
+ * login (`@push-agent-bot` ≠ `@push-agent`); `review` is a standalone word so
  * "reviewed"/"preview" don't match.
  */
 export function parseReviewCommand(body: string | null | undefined, handle: string): boolean {
   if (!body || !handle) return false;
   const re = new RegExp(
-    `(?:^|\\s)@${escapeRegExp(handle)}(?![a-z0-9-])[\\s:,>-]*(?:(?:please|pls|plz|kindly)\\s+)?(?:re-?)?review\\b`,
+    `(?:^|\\s)@${escapeRegExp(handle)}(?:\\[bot\\])?(?![a-z0-9-])[\\s:,>-]*(?:(?:please|pls|plz|kindly)\\s+)?(?:re-?)?review\\b`,
     'im',
   );
   return re.test(body);

@@ -333,6 +333,19 @@ describe('parseReviewCommand', () => {
     expect(parseReviewCommand('@push-agent re-review', 'push-agent')).toBe(true);
   });
 
+  it('accepts the @<slug>[bot] mention form GitHub autocomplete inserts', () => {
+    expect(parseReviewCommand('@push-agent[bot] review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@push-agent[bot] please review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('hey @push-agent[bot] re-review', 'push-agent')).toBe(true);
+    // Case-insensitive — the regex 'i' flag covers a rendered-case [BOT].
+    expect(parseReviewCommand('@push-agent[BOT] review', 'push-agent')).toBe(true);
+    // The optional [bot] group must NOT weaken the prefix-login guard: a longer
+    // login that merely starts with the handle is still rejected.
+    expect(parseReviewCommand('@push-agent-helper[bot] review', 'push-agent')).toBe(false);
+    // …but the [bot] form still requires the command bound to the mention.
+    expect(parseReviewCommand('thanks @push-agent[bot] for the review', 'push-agent')).toBe(false);
+  });
+
   it('does not fire when "review" is not a command bound to the mention (Codex P2)', () => {
     // The command must follow the mention — these talk *about* a review.
     expect(parseReviewCommand('Thanks @push-agent for the review', 'push-agent')).toBe(false);

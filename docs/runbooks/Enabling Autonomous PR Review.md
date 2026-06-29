@@ -161,9 +161,12 @@ Once the App is subscribed to `Issue comments` + `Pull request review comments`
 @push-agent re-review
 ```
 
-The command must **directly follow the mention** (only punctuation or a short
-`please`/`kindly` filler between) — so talking *about* a review, e.g.
-"thanks @push-agent for the review", does **not** trigger one.
+Both mention shapes work: the bare slug `@push-agent` (what you type) and
+`@push-agent[bot]` (what GitHub's @-autocomplete inserts, since the bot's login
+carries the `[bot]` suffix). The command must **directly follow the mention**
+(only punctuation or a short `please`/`kindly` filler between) — so talking
+*about* a review, e.g. "thanks @push-agent for the review", does **not** trigger
+one.
 
 It reviews the PR's **current head**, so this is how you request "another look"
 after pushing changes (the webhook itself doesn't re-review on push).
