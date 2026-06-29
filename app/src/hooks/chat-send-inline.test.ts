@@ -113,6 +113,7 @@ vi.mock('@/lib/auditor-delegation-handler', () => ({
 import {
   buildInlineTurnPreamble,
   createInlineTranscriptMirror,
+  isCommittableRoundProse,
   splitVisibleContent,
   startInlineCoderTurn,
 } from './chat-send-inline';
@@ -426,6 +427,31 @@ describe('createInlineTranscriptMirror', () => {
     mirror({ type: 'text_delta', text: 'late token' } as PushStreamEvent);
     expect(lastAssistant(store).content).toBe('');
   });
+
+  it('snapshots each settled round’s visible prose via onRoundSettled, tool JSON stripped', () => {
+    const { ctx } = makeHarness();
+    const settled: string[] = [];
+    const mirror = createInlineTranscriptMirror(ctx, undefined, undefined, (visible) => {
+      settled.push(visible);
+    });
+
+    // Round 1: a prose preamble followed by a fenced tool call.
+    mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '\n```json\n{"tool":"sandbox_exec","args":{"cmd":"ls"}}\n```',
+    } as PushStreamEvent);
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+
+    // Round 2: a fresh buffer with different prose.
+    mirror({ type: 'text_delta', text: 'Now let me run the test.' } as PushStreamEvent);
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+
+    // Each round's prose is captured once at its `done`, in order, with the
+    // tool-call JSON already stripped — so the persistent transcript message
+    // the caller commits is clean narration, never protocol residue.
+    expect(settled).toEqual(['Let me check the file.', 'Now let me run the test.']);
+  });
 });
 
 describe('splitVisibleContent', () => {
@@ -470,6 +496,47 @@ describe('splitVisibleContent', () => {
     const unquoted = splitVisibleContent('intro\n```\n{tool: "read_file"}\n```');
     expect(unquoted).toEqual({ visible: 'intro', toolCallActive: true });
   });
+
+  it('cuts tilde and 4+ backtick fences at the fence, leaving no header behind', () => {
+    // The dispatcher accepts tilde (`~~~`) and 4+ backtick fences too. Cutting
+    // only at the brace would leave the fence header (`~~~json`) stuck to the
+    // prose — harmless in the in-flight preview, but now persisted, so the
+    // header must be cut with the rest of the construct.
+    expect(splitVisibleContent('Let me check.\n~~~json\n{"tool":"sandbox_exec"}\n~~~')).toEqual({
+      visible: 'Let me check.',
+      toolCallActive: true,
+    });
+    expect(splitVisibleContent('Now run it.\n````json\n{"tool":"sandbox_exec"}\n````')).toEqual({
+      visible: 'Now run it.',
+      toolCallActive: true,
+    });
+  });
+});
+
+describe('isCommittableRoundProse', () => {
+  it('accepts clean narration prose', () => {
+    expect(isCommittableRoundProse('Let me check the file.')).toBe(true);
+  });
+
+  it('rejects empty / whitespace-only prose', () => {
+    expect(isCommittableRoundProse('')).toBe(false);
+    expect(isCommittableRoundProse('   \n  ')).toBe(false);
+  });
+
+  it('rejects prose that still parses as a tool call (recovery-shape leak guard)', () => {
+    // splitVisibleContent strips canonical fenced/bare JSON, but the kernel also
+    // dispatches recovery shapes it can't see. The persistence guard re-checks
+    // with the kernel's own detector and fails safe — residual tool-call text is
+    // dropped rather than committed as a durable transcript artifact.
+    expect(isCommittableRoundProse('{"tool":"sandbox_exec","args":{"command":"ls"}}')).toBe(false);
+    // An XML-form recovery shape splitVisibleContent can't see, but the kernel's
+    // own detector does — the exact leak class this guard exists for.
+    expect(
+      isCommittableRoundProse(
+        '<tool_call>{"tool":"sandbox_read_file","args":{"path":"/workspace/main.ts"}}</tool_call>',
+      ),
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -511,6 +578,81 @@ describe('startInlineCoderTurn', () => {
     expect(callbacks.onCheckpoint).toBeInstanceOf(Function);
     expect(callbacks.onCheckpointRequest).toBeInstanceOf(Function);
     expect(callbacks.onBranchSwitchPayload).toBeInstanceOf(Function);
+  });
+
+  it('commits each tool-bearing round’s narration as an interleaved transcript message', async () => {
+    // Two rounds, each: narration → settle → tool. The single streaming
+    // placeholder would otherwise retain only the final round's prose; the lane
+    // now snapshots each round and re-commits it just before that round's tool
+    // pair, reconstructing the step → action → step → action transcript.
+    mockRunInPageCoderKernel.mockImplementationOnce(
+      async (
+        _spec: unknown,
+        callbacks: { onRunEvent: (event: Record<string, unknown>) => void },
+      ) => {
+        // The mirror the lane teed onto the provider stream (2nd arg to
+        // teePushStream) — drive it to simulate the model streaming each round.
+        const mirror = mockTeePushStream.mock.calls.at(-1)?.[1] as (e: PushStreamEvent) => void;
+
+        callbacks.onRunEvent({ type: 'assistant.turn_start', round: 1 });
+        mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'x-1',
+          toolName: 'sandbox_read_file',
+          toolSource: 'coder',
+          durationMs: 1,
+          isError: false,
+          preview: 'read a.ts',
+        });
+
+        callbacks.onRunEvent({ type: 'assistant.turn_start', round: 2 });
+        mirror({ type: 'text_delta', text: 'Now let me run the test.' } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent({
+          type: 'tool.execution_complete',
+          round: 2,
+          executionId: 'x-2',
+          toolName: 'sandbox_exec',
+          toolSource: 'coder',
+          durationMs: 1,
+          isError: false,
+          preview: 'tests pass',
+        });
+
+        return {
+          summary: 'All done.',
+          cards: [],
+          rounds: 2,
+          checkpoints: 0,
+          criteriaResults: undefined,
+        };
+      },
+    );
+
+    const { ctx, store } = makeHarness();
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const msgs = store.current['chat-1'].messages;
+    // Both intermediate narrations survived as committed messages — not just
+    // the final summary — in stream order.
+    const proseTexts = msgs
+      .filter((m) => m.role === 'assistant' && !m.isToolCall)
+      .map((m) => m.content);
+    expect(proseTexts).toEqual(['Let me check the file.', 'Now let me run the test.', 'All done.']);
+    // Each round's prose sits immediately before that round's tool marker.
+    const idx = (pred: (m: ChatMessage) => boolean) => msgs.findIndex(pred);
+    expect(idx((m) => m.content === 'Let me check the file.')).toBeLessThan(
+      idx((m) => Boolean(m.isToolCall) && m.toolMeta?.toolName === 'sandbox_read_file'),
+    );
+    expect(idx((m) => m.content === 'Now let me run the test.')).toBeLessThan(
+      idx((m) => Boolean(m.isToolCall) && m.toolMeta?.toolName === 'sandbox_exec'),
+    );
+    // The reconstructed narration is display-only — it must never feed back to
+    // the model on the next turn (parity with the synthetic tool messages).
+    expect(msgs.find((m) => m.content === 'Let me check the file.')?.visibleToModel).toBe(false);
   });
 
   it('signals a workspace mutation at completion when the run changed the workspace (device finding 2026-06-22)', async () => {
