@@ -8,6 +8,7 @@ import {
   effectiveMessageBranch,
   filterModelVisibleMessages,
   nextCompactionCount,
+  resolveMessageWriteBranch,
 } from './chat-message';
 
 describe('createMessage', () => {
@@ -204,7 +205,7 @@ describe('backfillConversationMessageBranches', () => {
     expect(result.conversation.messages[1].branch).toBe('feature/foo');
   });
 
-  it('uses main for legacy repo conversations with no stored branch', () => {
+  it('leaves legacy repo conversations with no stored branch unstamped', () => {
     const result = backfillConversationMessageBranches({
       id: 'c1',
       title: 'Test',
@@ -213,8 +214,29 @@ describe('backfillConversationMessageBranches', () => {
       lastMessageAt: 1,
     });
 
-    expect(result.changed).toBe(true);
-    expect(result.conversation.messages[0].branch).toBe('main');
+    expect(result.changed).toBe(false);
+    expect(result.conversation.messages[0].branch).toBeUndefined();
+  });
+});
+
+describe('resolveMessageWriteBranch', () => {
+  it('prefers the conversation branch over a stale branchInfo currentBranch', () => {
+    expect(
+      resolveMessageWriteBranch(
+        { currentBranch: 'main', defaultBranch: 'main' },
+        'feature/new-head',
+      ),
+    ).toBe('feature/new-head');
+  });
+
+  it('uses branchInfo currentBranch when no conversation branch is available', () => {
+    expect(resolveMessageWriteBranch({ currentBranch: 'feature/current' }, undefined)).toBe(
+      'feature/current',
+    );
+  });
+
+  it('falls back to defaultBranch only when neither conversation nor current branch is available', () => {
+    expect(resolveMessageWriteBranch({ defaultBranch: 'main' }, undefined)).toBe('main');
   });
 });
 

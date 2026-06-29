@@ -13,27 +13,63 @@ import type { BranchSwitchPayload, ChatMessage, Conversation, RunEventInput } fr
 import type { ChatRuntimeHandlers } from '@/hooks/chat-send';
 import { createBranchForkedMessage, createBranchMergedMessage } from './chat-message';
 
-export interface BranchForkMigrationContext {
-  /** Optional origin chat id/event logger fields shared with broader branch
-   *  transition context assembly. The unified path does not emit run events,
-   *  but accepting the shared shape avoids caller churn. */
-  chatId?: string;
-  appendRunEvent?: (chatId: string, event: RunEventInput) => void;
+export interface BranchConversationUpdateContext {
   /** Active chat id at resolution time. The current chat is the one whose
    *  mutable branch state follows sandbox HEAD. */
   activeChatIdRef: MutableRefObject<string | null>;
   /** Current conversation snapshot, used to avoid dirty writes for missing or
    *  already-updated conversations. */
   conversationsRef: MutableRefObject<Record<string, Conversation>>;
-  /** Current branch info retained for shared context compatibility. */
-  branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
   /** Conversation state setter. */
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
   /** Dirty-tracking set so the next persistence flush stores the branch update. */
   dirtyConversationIdsRef: MutableRefObject<Set<string>>;
+}
+
+export interface BranchForkMigrationContext {
+  /** Optional origin chat id/event logger fields shared with broader branch
+   *  transition context assembly. The unified path does not emit run events,
+   *  but accepting the shared shape avoids caller churn. */
+  chatId?: string;
+  appendRunEvent?: (chatId: string, event: RunEventInput) => void;
+  activeChatIdRef: BranchConversationUpdateContext['activeChatIdRef'];
+  conversationsRef: BranchConversationUpdateContext['conversationsRef'];
+  /** Current branch info retained for shared context compatibility. */
+  branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
+  setConversations: BranchConversationUpdateContext['setConversations'];
+  dirtyConversationIdsRef: BranchConversationUpdateContext['dirtyConversationIdsRef'];
   /** Runtime handlers registry. `onBranchSwitch` owns the warm follow
    *  coordination (`skipBranchTeardownRef` + `setCurrentBranch`). */
   runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
+}
+
+export function updateActiveConversationBranchInPlace(
+  ctx: BranchConversationUpdateContext,
+  branch: string,
+  moment?: ChatMessage | null,
+): boolean {
+  const targetChatId = ctx.activeChatIdRef.current;
+  if (!targetChatId) return false;
+
+  const targetConv = ctx.conversationsRef.current[targetChatId];
+  if (!targetConv || targetConv.branch === branch) return false;
+
+  ctx.setConversations((prev) => {
+    const conv = prev[targetChatId];
+    if (!conv || conv.branch === branch) return prev;
+    return {
+      ...prev,
+      [targetChatId]: {
+        ...conv,
+        branch,
+        ...(moment
+          ? { messages: [...conv.messages, moment], lastMessageAt: moment.timestamp }
+          : {}),
+      },
+    };
+  });
+  ctx.dirtyConversationIdsRef.current.add(targetChatId);
+  return true;
 }
 
 export function applyBranchSwitchPayload(
@@ -74,19 +110,5 @@ export function applyBranchSwitchPayload(
           })
         : null;
 
-  ctx.setConversations((prev) => {
-    const conv = prev[targetChatId];
-    if (!conv || conv.branch === payload.name) return prev;
-    return {
-      ...prev,
-      [targetChatId]: {
-        ...conv,
-        branch: payload.name,
-        ...(moment
-          ? { messages: [...conv.messages, moment], lastMessageAt: moment.timestamp }
-          : {}),
-      },
-    };
-  });
-  ctx.dirtyConversationIdsRef.current.add(targetChatId);
+  updateActiveConversationBranchInPlace(ctx, payload.name, moment);
 }

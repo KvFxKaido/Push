@@ -175,6 +175,7 @@ const verificationRuntime = vi.hoisted(() => ({
 }));
 const branchForkMigration = vi.hoisted(() => ({
   applyBranchSwitchPayload: vi.fn(),
+  updateActiveConversationBranchInPlace: vi.fn(),
 }));
 
 vi.mock('@/lib/chat-runtime-state', () => chatRuntimeState);
@@ -214,6 +215,7 @@ const reactState = vi.hoisted(() => ({
   index: 0,
   refs: [] as { current: unknown }[],
   refIndex: 0,
+  effects: [] as Array<() => void>,
 }));
 
 vi.mock('react', () => ({
@@ -230,7 +232,9 @@ vi.mock('react', () => ({
     return [cell.value as T, setter];
   },
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
-  useEffect: () => {},
+  useEffect: (fn: () => void) => {
+    reactState.effects.push(fn);
+  },
   useRef: <T>(initial: T) => {
     const i = reactState.refIndex++;
     if (!reactState.refs[i]) reactState.refs[i] = { current: initial };
@@ -250,7 +254,14 @@ beforeEach(() => {
   reactState.index = 0;
   reactState.refs = [];
   reactState.refIndex = 0;
+  reactState.effects = [];
 });
+
+function flushRegisteredEffects(matcher?: (effect: () => void) => boolean): void {
+  const effects = matcher ? reactState.effects.filter(matcher) : [...reactState.effects];
+  reactState.effects = [];
+  for (const effect of effects) effect();
+}
 
 describe('useChat — public API surface', () => {
   it('returns the expected keys with sensible defaults', () => {
@@ -349,6 +360,37 @@ describe('useChat — public API surface', () => {
     // Without the default-branch fallback the unfiltered list would be
     // ['chat-feature', 'chat-1'] (feature is newer); the fix scopes it to main.
     expect(hook.sortedChatIds).toEqual(['chat-1']);
+  });
+
+  it('syncs the active conversation branch when currentBranch changes through a plain state write', () => {
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      'chat-1': {
+        id: 'chat-1',
+        title: 'On main',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 2,
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      },
+    });
+    branchForkMigration.updateActiveConversationBranchInPlace.mockClear();
+
+    useChat('owner/repo', undefined, undefined, {
+      currentBranch: 'feature/plain-write',
+      defaultBranch: 'main',
+    });
+    flushRegisteredEffects((effect) =>
+      effect.toString().includes('updateActiveConversationBranchInPlace'),
+    );
+
+    expect(branchForkMigration.updateActiveConversationBranchInPlace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeChatIdRef: expect.objectContaining({ current: 'chat-1' }),
+        dirtyConversationIdsRef: expect.objectContaining({ current: expect.any(Set) }),
+      }),
+      'feature/plain-write',
+    );
   });
 
   it('setSandboxId updates the mirror ref consumers read from', () => {

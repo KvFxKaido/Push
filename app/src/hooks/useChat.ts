@@ -58,6 +58,7 @@ import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
 import { useBranchSwitchActions } from './useBranchSwitchActions';
+import { updateActiveConversationBranchInPlace } from '@/lib/branch-fork-migration';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, ChatRuntimeHandlers } from './chat-send';
@@ -220,6 +221,30 @@ export function useChat(
     },
     [],
   );
+
+  useEffect(() => {
+    const branch = branchInfo?.currentBranch;
+    if (!activeRepoFullName || !branch) return;
+    const activeConversation = conversationsRef.current[activeChatIdRef.current ?? ''];
+    if (!activeConversation || activeConversation.repoFullName !== activeRepoFullName) return;
+
+    updateActiveConversationBranchInPlace(
+      {
+        activeChatIdRef,
+        conversationsRef,
+        setConversations: updateConversations,
+        dirtyConversationIdsRef,
+      },
+      branch,
+    );
+  }, [
+    activeRepoFullName,
+    activeChatId,
+    branchInfo?.currentBranch,
+    conversations,
+    updateConversations,
+    dirtyConversationIdsRef,
+  ]);
 
   const {
     queuedFollowUpsByChat,

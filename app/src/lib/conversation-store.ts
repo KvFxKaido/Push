@@ -18,7 +18,7 @@ import { backfillConversationMessageBranches } from './chat-message';
 
 const LEGACY_CONVERSATIONS_KEY = 'diff_conversations';
 const MIGRATION_FLAG_KEY = 'push:idb-conversations-migrated';
-const MESSAGE_BRANCH_BACKFILL_KEY = 'push:message-branch-backfill-v1';
+const MESSAGE_BRANCH_BACKFILL_KEY = 'push:message-branch-backfill-v2';
 
 // ---------------------------------------------------------------------------
 // Read
@@ -95,7 +95,9 @@ export async function replaceAllConversations(convs: Record<string, Conversation
 
 const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
 
-function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+function sanitizeMessageForLoad(message: ChatMessage): ChatMessage | null {
+  if ((message as { kind?: string }).kind === 'branch_carried') return null;
+
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   if (
     message.role === 'assistant' &&
@@ -108,13 +110,33 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   return { ...message, cards };
 }
 
+function sanitizeConversationForLoad(conversation: Conversation): {
+  conversation: Conversation;
+  changed: boolean;
+} {
+  let changed = false;
+  const cleaned: ChatMessage[] = [];
+  for (const message of conversation.messages || []) {
+    const sanitized = sanitizeMessageForLoad(message);
+    if (!sanitized) {
+      changed = true;
+      continue;
+    }
+    if (sanitized !== message) changed = true;
+    cleaned.push(sanitized);
+  }
+
+  const sanitizedConversation = sanitizeConversationRuntimeState({
+    ...conversation,
+    messages: cleaned,
+  });
+  return { conversation: sanitizedConversation, changed };
+}
+
 function sanitizeConversations(convs: Record<string, Conversation>): Record<string, Conversation> {
   for (const id of Object.keys(convs)) {
-    const cleaned = (convs[id].messages || [])
-      .map(sanitizeSandboxStateCards)
-      .filter((m): m is ChatMessage => m !== null);
-    const sanitized = sanitizeConversationRuntimeState({ ...convs[id], messages: cleaned });
-    convs[id] = backfillConversationMessageBranches(sanitized).conversation;
+    const sanitized = sanitizeConversationForLoad(convs[id]);
+    convs[id] = backfillConversationMessageBranches(sanitized.conversation).conversation;
   }
   return convs;
 }
@@ -122,14 +144,17 @@ function sanitizeConversations(convs: Record<string, Conversation>): Record<stri
 async function backfillPersistedMessageBranches(
   convs: Record<string, Conversation>,
 ): Promise<Record<string, Conversation>> {
-  if (safeStorageGet(MESSAGE_BRANCH_BACKFILL_KEY)) return convs;
+  const branchBackfillDone = Boolean(safeStorageGet(MESSAGE_BRANCH_BACKFILL_KEY));
 
   const next: Record<string, Conversation> = {};
   const changed: Conversation[] = [];
   for (const [id, conv] of Object.entries(convs)) {
-    const backfilled = backfillConversationMessageBranches(conv);
+    const sanitized = sanitizeConversationForLoad(conv);
+    const backfilled = branchBackfillDone
+      ? { conversation: sanitized.conversation, changed: false }
+      : backfillConversationMessageBranches(sanitized.conversation);
     next[id] = backfilled.conversation;
-    if (backfilled.changed) changed.push(backfilled.conversation);
+    if (sanitized.changed || backfilled.changed) changed.push(backfilled.conversation);
   }
 
   if (changed.length > 0) {
@@ -141,7 +166,7 @@ async function backfillPersistedMessageBranches(
     }
   }
 
-  safeStorageSet(MESSAGE_BRANCH_BACKFILL_KEY, '1');
+  if (!branchBackfillDone) safeStorageSet(MESSAGE_BRANCH_BACKFILL_KEY, '1');
   return next;
 }
 

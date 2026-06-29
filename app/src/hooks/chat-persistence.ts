@@ -12,6 +12,8 @@ const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+  if ((message as { kind?: string }).kind === 'branch_carried') return null;
+
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
 

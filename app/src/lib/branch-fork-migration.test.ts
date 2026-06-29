@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BranchSwitchPayload, ChatMessage, Conversation } from '@/types';
 import type { BranchForkMigrationContext } from './branch-fork-migration';
-import { applyBranchSwitchPayload } from './branch-fork-migration';
+import {
+  applyBranchSwitchPayload,
+  updateActiveConversationBranchInPlace,
+} from './branch-fork-migration';
 
 function message(id: string, branch = 'main'): ChatMessage {
   return {
@@ -107,6 +110,35 @@ describe('applyBranchSwitchPayload', () => {
 
     expect(ctx.onBranchSwitch).toHaveBeenCalledWith('feature/new');
     expect(ctx.conversationsRef.current).toEqual({});
+    expect(ctx.dirtyConversationIdsRef.current.size).toBe(0);
+  });
+});
+
+describe('updateActiveConversationBranchInPlace', () => {
+  it('keeps the active conversation branch in sync for plain branch writes', () => {
+    const ctx = makeContext({
+      'chat-1': conversation({ branch: 'main' }),
+      other: conversation({ id: 'other', branch: 'main' }),
+    });
+
+    const changed = updateActiveConversationBranchInPlace(ctx, 'feature/plain-write');
+
+    expect(changed).toBe(true);
+    expect(ctx.conversationsRef.current['chat-1'].branch).toBe('feature/plain-write');
+    expect(ctx.conversationsRef.current.other.branch).toBe('main');
+    expect(ctx.conversationsRef.current['chat-1'].messages).toEqual([message('m1')]);
+    expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+    expect(ctx.onBranchSwitch).not.toHaveBeenCalled();
+  });
+
+  it('no-ops when the active conversation already matches the branch', () => {
+    const ctx = makeContext({ 'chat-1': conversation({ branch: 'feature/plain-write' }) });
+    const before = ctx.conversationsRef.current;
+
+    const changed = updateActiveConversationBranchInPlace(ctx, 'feature/plain-write');
+
+    expect(changed).toBe(false);
+    expect(ctx.conversationsRef.current).toBe(before);
     expect(ctx.dirtyConversationIdsRef.current.size).toBe(0);
   });
 });

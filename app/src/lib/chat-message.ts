@@ -57,15 +57,15 @@ export interface BranchInfoLike {
   defaultBranch?: string;
 }
 
-/** Resolve the branch to stamp on a newly-authored message. Prefer the live
- *  sandbox-tracked branch; fall back to the conversation branch when a caller is
- *  writing against persisted state; finally use the default branch when that is
- *  the only branch context available. */
+/** Resolve the branch to stamp on a newly-authored message. Prefer the active
+ *  conversation branch because `applyBranchSwitchPayload` updates it
+ *  synchronously while React state for `branchInfo.currentBranch` may still be
+ *  catching up. Fall back to the live sandbox-tracked branch, then default. */
 export function resolveMessageWriteBranch(
   branchInfo: BranchInfoLike | undefined,
   conversationBranch?: string,
 ): string | undefined {
-  return branchInfo?.currentBranch ?? conversationBranch ?? branchInfo?.defaultBranch;
+  return conversationBranch ?? branchInfo?.currentBranch ?? branchInfo?.defaultBranch;
 }
 
 /** Stamp a new message with branch provenance without clobbering a deliberate
@@ -95,7 +95,7 @@ export function stampMessagesBranch<T extends { branch?: ChatMessage['branch'] }
 export function backfillConversationMessageBranches<T extends ConversationLikeForBackfill>(
   conversation: T,
 ): { conversation: T; changed: boolean } {
-  const branch = conversation.branch ?? (conversation.repoFullName ? 'main' : undefined);
+  const branch = conversation.branch;
   if (!branch) return { conversation, changed: false };
   let changed = false;
   const messages = conversation.messages.map((message) => {

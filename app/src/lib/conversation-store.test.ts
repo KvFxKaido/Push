@@ -185,6 +185,37 @@ describe('migrateConversationsToIndexedDB', () => {
     expect(mockPutMany).not.toHaveBeenCalled();
   });
 
+  it('does not backfill existing IndexedDB conversations that have no stored branch', async () => {
+    const existing = makeConversation('c1', [makeMessage({ content: 'legacy idb message' })]);
+    delete (existing as Partial<Conversation>).branch;
+    mockGetAll.mockResolvedValue([existing]);
+
+    const result = await migrateConversationsToIndexedDB();
+
+    expect(result['c1'].messages[0].branch).toBeUndefined();
+    expect(mockPutMany).not.toHaveBeenCalled();
+  });
+
+  it('filters legacy branch_carried messages from existing IndexedDB conversations', async () => {
+    fakeStorage['push:message-branch-backfill-v2'] = '1';
+    const carried = makeMessage({
+      id: 'legacy-carried',
+      content: '',
+      visibleToModel: false,
+      kind: 'branch_carried' as ChatMessage['kind'],
+    });
+    const keep = makeMessage({ id: 'keep', role: 'user', content: 'next message', branch: 'main' });
+    const existing = makeConversation('c1', [carried, keep]);
+    mockGetAll.mockResolvedValue([existing]);
+
+    const result = await migrateConversationsToIndexedDB();
+
+    expect(result['c1'].messages).toHaveLength(1);
+    expect(result['c1'].messages[0].id).toBe('keep');
+    expect(mockPutMany).toHaveBeenCalledTimes(1);
+    expect(mockPutMany.mock.calls[0][1][0].messages.map((message) => message.id)).toEqual(['keep']);
+  });
+
   it('returns empty object when no legacy data exists', async () => {
     const result = await migrateConversationsToIndexedDB();
     expect(result).toEqual({});
