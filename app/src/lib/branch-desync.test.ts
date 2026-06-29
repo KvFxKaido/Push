@@ -24,7 +24,6 @@ function context(branch = 'main') {
     activeChatIdRef: { current: 'chat-1' },
     conversationsRef: { current: {} },
     branchInfoRef: { current: { currentBranch: branch, defaultBranch: 'main' } },
-    skipAutoCreateRef: { current: null },
     setConversations: vi.fn(),
     dirtyConversationIdsRef: { current: new Set<string>() },
     runtimeHandlersRef: { current: { onBranchSwitch, onBranchDesync } },

@@ -41,8 +41,7 @@ export interface BuildToolResultMessageOptions {
    *  the dispatch-time `originBranch` from the delegation envelope, NOT the
    *  current foreground branch — the delegate did its work against the
    *  launch branch. For non-delegate tools the caller passes the foreground
-   *  branch at completion time. Omitted callers leave the message
-   *  unstamped; the read-boundary fallback supplies `conv.branch`. */
+   *  branch at completion time. */
   branch?: string;
   toolResults?: LlmToolResultBlock[];
 }

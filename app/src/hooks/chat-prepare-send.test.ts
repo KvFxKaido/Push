@@ -445,7 +445,6 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     return {
       repoFullName: 'owner/repo',
       branchInfoRef: { current: branchInfo },
-      skipAutoCreateRef: { current: null },
       runtimeHandlersRef: { current: undefined },
     };
   }
@@ -497,25 +496,23 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0].isFirstMessage).toBe(false);
   });
 
-  it('appends the streaming placeholder after the branch divider, not before (P1)', async () => {
+  it('re-stamps the prompt and appends the placeholder on the new branch after the first-prompt fork', async () => {
     const refs = makeRefs({
       conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
       ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
     });
     const callbacks = makeCallbacks();
-    // Simulate a successful fork: the migration appends a `branch_forked`
-    // divider as the last message, the way applyBranchSwitchPayload would.
     vi.mocked(maybeBranchOnFirstPrompt).mockImplementationOnce(async (_input, ctx) => {
+      ctx.branchInfoRef.current = {
+        ...ctx.branchInfoRef.current,
+        currentBranch: 'owner-repo/add-a-feature',
+      };
       ctx.setConversations((prev) => {
         const conv = prev['chat-1'];
-        const divider: ChatMessage = {
-          id: 'divider',
-          role: 'assistant',
-          content: '',
-          timestamp: 2,
-          status: 'done',
+        return {
+          ...prev,
+          'chat-1': { ...conv, branch: 'owner-repo/add-a-feature' },
         };
-        return { ...prev, 'chat-1': { ...conv, messages: [...conv.messages, divider] } };
       });
       return { branched: true, name: 'owner-repo/add-a-feature' };
     });
@@ -533,11 +530,12 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     );
 
     const msgs = callbacks.capturedConversations['chat-1'].messages;
-    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant']);
-    // The divider is not last; the streaming placeholder is, so the stream
-    // writes deltas into the placeholder rather than the divider.
-    expect(msgs[1].id).toBe('divider');
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(msgs[msgs.length - 1].status).toBe('streaming');
+    // The whole opening exchange unifies onto the new work branch: both the
+    // re-stamped prompt and the deferred placeholder carry the post-fork branch.
+    expect(msgs[0].branch).toBe('owner-repo/add-a-feature');
+    expect(msgs[msgs.length - 1].branch).toBe('owner-repo/add-a-feature');
   });
 
   it('keeps the immediate streaming placeholder when starting on a non-default branch', async () => {

@@ -16,6 +16,7 @@ import {
   type SessionEvent,
   createLocalDaemonBinding,
 } from './local-daemon-binding';
+import { canListenOnLoopback } from './test-environment';
 
 // Node 22 has globalThis.WebSocket; Node 20 (which CI uses for the
 // app test job) does not. The adapter calls `new WebSocket(...)`
@@ -36,6 +37,8 @@ if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
 
 const VALID_TOKEN = 'pushd_test_valid_token_xxxxxxxxxxxxxxxxxxxxxxxxxxx';
 const SUBPROTOCOL_SELECTOR = 'pushd.v1';
+const loopbackAvailable = await canListenOnLoopback();
+const describeWithLoopback = loopbackAvailable ? describe : describe.skip;
 
 interface FixtureServer {
   port: number;
@@ -154,7 +157,7 @@ function waitForStatus(
   });
 }
 
-describe('local-daemon-binding', () => {
+describeWithLoopback('local-daemon-binding', () => {
   let server: FixtureServer;
 
   beforeEach(async () => {

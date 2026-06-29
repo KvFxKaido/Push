@@ -105,7 +105,6 @@ function makeLoopContext(
       return verificationStateRef.current;
     },
     executeDelegateCall: vi.fn(),
-    skipAutoCreateRef: { current: null },
     activeChatIdRef: { current: 'chat-1' },
     conversationsRef,
     ...overrides,

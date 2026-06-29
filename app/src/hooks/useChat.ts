@@ -58,8 +58,7 @@ import { useRunEngine } from './useRunEngine';
 import { useVerificationState } from './useVerificationState';
 import { usePendingSteer } from './usePendingSteer';
 import { useBranchSwitchActions } from './useBranchSwitchActions';
-import { useBranchForkGuard } from './useBranchForkGuard';
-import { useChatAutoSwitch } from './useChatAutoSwitch';
+import { updateActiveConversationBranchInPlace } from '@/lib/branch-fork-migration';
 
 // Re-export public interfaces from chat-send (avoids circular imports)
 export type { ScratchpadHandlers, ChatRuntimeHandlers } from './chat-send';
@@ -222,6 +221,30 @@ export function useChat(
     },
     [],
   );
+
+  useEffect(() => {
+    const branch = branchInfo?.currentBranch;
+    if (!activeRepoFullName || !branch) return;
+    const activeConversation = conversationsRef.current[activeChatIdRef.current ?? ''];
+    if (!activeConversation || activeConversation.repoFullName !== activeRepoFullName) return;
+
+    updateActiveConversationBranchInPlace(
+      {
+        activeChatIdRef,
+        conversationsRef,
+        setConversations: updateConversations,
+        dirtyConversationIdsRef,
+      },
+      branch,
+    );
+  }, [
+    activeRepoFullName,
+    activeChatId,
+    branchInfo?.currentBranch,
+    conversations,
+    updateConversations,
+    dirtyConversationIdsRef,
+  ]);
 
   const {
     queuedFollowUpsByChat,
@@ -417,24 +440,6 @@ export function useChat(
       })
       .sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt);
   }, [conversations, activeRepoFullName, currentBranch, defaultBranch]);
-
-  // Slice 2 conversation-fork migration guard. The hook owns the ref + the
-  // state-observed clear effect; the auto-switch effect below early-returns
-  // while the ref is set. Declared above the effect so the ref identity can
-  // sit in the effect's dependency array. See useBranchForkGuard for D2.
-  const skipAutoCreateRef = useBranchForkGuard(conversations, sortedChatIds);
-
-  useChatAutoSwitch({
-    sortedChatIds,
-    activeChatId,
-    activeRepoFullName,
-    conversationsLoaded,
-    branchInfoRef,
-    skipAutoCreateRef,
-    updateConversations,
-    dirtyConversationIdsRef,
-    setActiveChatId,
-  });
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {
@@ -635,7 +640,6 @@ export function useChat(
         {
           repoFullName: repoRef.current,
           branchInfoRef,
-          skipAutoCreateRef,
           runtimeHandlersRef,
         },
       );
@@ -712,7 +716,6 @@ export function useChat(
         executeDelegateCall,
         emitRunEngineEvent,
         captureWorkspacePatchAtRoundEnd,
-        skipAutoCreateRef,
         activeChatIdRef,
         conversationsRef,
       };
@@ -793,7 +796,6 @@ export function useChat(
       getVerificationPolicyForChat,
       persistRunJournal,
       updateVerificationStateForChat,
-      skipAutoCreateRef,
       backgroundCoderJob,
       captureWorkspacePatchAtRoundEnd,
     ],
@@ -848,7 +850,6 @@ export function useChat(
       activeChatIdRef,
       conversationsRef,
       branchInfoRef,
-      skipAutoCreateRef,
       setConversations: updateConversations,
       dirtyConversationIdsRef,
       runtimeHandlersRef,

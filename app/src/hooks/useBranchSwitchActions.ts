@@ -1,6 +1,6 @@
 /**
  * useBranchSwitchActions — the UI-facing branch operations (fork / switch /
- * merge) plus the single chat-migration entry point they all route through.
+ * merge) plus the single branch-state update entry point they all route through.
  *
  * Extracted from `useChat` to keep that hook under its line cap. The four
  * callbacks are cohesive (every one funnels through `applyBranchSwitchPayload`)
@@ -28,7 +28,6 @@ export interface BranchSwitchActionsDeps {
   activeChatIdRef: BranchForkMigrationContext['activeChatIdRef'];
   conversationsRef: BranchForkMigrationContext['conversationsRef'];
   branchInfoRef: BranchForkMigrationContext['branchInfoRef'];
-  skipAutoCreateRef: BranchForkMigrationContext['skipAutoCreateRef'];
   setConversations: BranchForkMigrationContext['setConversations'];
   dirtyConversationIdsRef: BranchForkMigrationContext['dirtyConversationIdsRef'];
   runtimeHandlersRef: BranchForkMigrationContext['runtimeHandlersRef'];
@@ -50,22 +49,20 @@ export function useBranchSwitchActions(deps: BranchSwitchActionsDeps): BranchSwi
     activeChatIdRef,
     conversationsRef,
     branchInfoRef,
-    skipAutoCreateRef,
     setConversations,
     dirtyConversationIdsRef,
     runtimeHandlersRef,
     sandboxIdRef,
   } = deps;
 
-  // applyBranchSwitchPayload — single source of truth for chat migration, no
-  // parallel implementation in the UI handlers.
+  // applyBranchSwitchPayload — single source of truth for in-place chat branch
+  // updates; no parallel implementation in the UI handlers.
   const applyBranchSwitchFromUI = useCallback(
     (payload: BranchSwitchPayload): void => {
       applyBranchSwitchPayload(payload, {
         activeChatIdRef,
         conversationsRef,
         branchInfoRef,
-        skipAutoCreateRef,
         setConversations,
         dirtyConversationIdsRef,
         runtimeHandlersRef,
@@ -75,7 +72,6 @@ export function useBranchSwitchActions(deps: BranchSwitchActionsDeps): BranchSwi
       activeChatIdRef,
       conversationsRef,
       branchInfoRef,
-      skipAutoCreateRef,
       setConversations,
       dirtyConversationIdsRef,
       runtimeHandlersRef,
@@ -102,7 +98,7 @@ export function useBranchSwitchActions(deps: BranchSwitchActionsDeps): BranchSwi
     [applyBranchSwitchFromUI, sandboxIdRef],
   );
 
-  // Post-merge migration: emit kind:'merged' through the shared dispatcher.
+  // Post-merge branch update: emit kind:'merged' through the shared dispatcher.
   const mergeBranchInUI = useCallback(
     (
       toBranch: string,

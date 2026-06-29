@@ -11,12 +11,14 @@
  */
 
 import { STORE, clear, getAll, get, put, del, putMany } from './app-db';
-import { safeStorageGet, safeStorageRemove } from './safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import type { Conversation, ChatMessage } from '@/types';
 import { sanitizeConversationRuntimeState } from './chat-runtime-state';
+import { backfillConversationMessageBranches } from './chat-message';
 
 const LEGACY_CONVERSATIONS_KEY = 'diff_conversations';
 const MIGRATION_FLAG_KEY = 'push:idb-conversations-migrated';
+const MESSAGE_BRANCH_BACKFILL_KEY = 'push:message-branch-backfill-v2';
 
 // ---------------------------------------------------------------------------
 // Read
@@ -93,7 +95,13 @@ export async function replaceAllConversations(convs: Record<string, Conversation
 
 const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
 
-function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+function sanitizeMessageForLoad(message: ChatMessage): ChatMessage | null {
+  // Deliberate one-way migration: carry-chat was removed (no renderer, no
+  // `carry_chat` verb), so legacy `branch_carried` dividers are meaningless and
+  // dropped on load. This permanently removes them from persisted transcripts on
+  // the next flush — intentional, not an accidental filter.
+  if ((message as { kind?: string }).kind === 'branch_carried') return null;
+
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   if (
     message.role === 'assistant' &&
@@ -106,14 +114,64 @@ function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
   return { ...message, cards };
 }
 
+function sanitizeConversationForLoad(conversation: Conversation): {
+  conversation: Conversation;
+  changed: boolean;
+} {
+  let changed = false;
+  const cleaned: ChatMessage[] = [];
+  for (const message of conversation.messages || []) {
+    const sanitized = sanitizeMessageForLoad(message);
+    if (!sanitized) {
+      changed = true;
+      continue;
+    }
+    if (sanitized !== message) changed = true;
+    cleaned.push(sanitized);
+  }
+
+  const sanitizedConversation = sanitizeConversationRuntimeState({
+    ...conversation,
+    messages: cleaned,
+  });
+  return { conversation: sanitizedConversation, changed };
+}
+
 function sanitizeConversations(convs: Record<string, Conversation>): Record<string, Conversation> {
   for (const id of Object.keys(convs)) {
-    const cleaned = (convs[id].messages || [])
-      .map(sanitizeSandboxStateCards)
-      .filter((m): m is ChatMessage => m !== null);
-    convs[id] = sanitizeConversationRuntimeState({ ...convs[id], messages: cleaned });
+    const sanitized = sanitizeConversationForLoad(convs[id]);
+    convs[id] = backfillConversationMessageBranches(sanitized.conversation).conversation;
   }
   return convs;
+}
+
+async function backfillPersistedMessageBranches(
+  convs: Record<string, Conversation>,
+): Promise<Record<string, Conversation>> {
+  const branchBackfillDone = Boolean(safeStorageGet(MESSAGE_BRANCH_BACKFILL_KEY));
+
+  const next: Record<string, Conversation> = {};
+  const changed: Conversation[] = [];
+  for (const [id, conv] of Object.entries(convs)) {
+    const sanitized = sanitizeConversationForLoad(conv);
+    const backfilled = branchBackfillDone
+      ? { conversation: sanitized.conversation, changed: false }
+      : backfillConversationMessageBranches(sanitized.conversation);
+    next[id] = backfilled.conversation;
+    if (sanitized.changed || backfilled.changed) changed.push(backfilled.conversation);
+  }
+
+  if (changed.length > 0) {
+    try {
+      await putMany(STORE.conversations, changed);
+    } catch (err) {
+      console.warn('[ConversationStore] Message branch backfill failed', err);
+      return next;
+    }
+  }
+
+  if (!branchBackfillDone) safeStorageSet(MESSAGE_BRANCH_BACKFILL_KEY, '1');
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,11 +196,11 @@ function loadConversationsFromLocalStorage(): Record<string, Conversation> {
 export async function migrateConversationsToIndexedDB(): Promise<Record<string, Conversation>> {
   // Check if already migrated
   if (safeStorageGet(MIGRATION_FLAG_KEY)) {
-    return loadAllConversations();
+    return backfillPersistedMessageBranches(await loadAllConversations());
   }
 
   // Check if IndexedDB already has data (e.g., partial migration)
-  const existing = await loadAllConversations();
+  const existing = await backfillPersistedMessageBranches(await loadAllConversations());
   if (Object.keys(existing).length > 0) {
     safeStorageRemove(LEGACY_CONVERSATIONS_KEY);
     return existing;

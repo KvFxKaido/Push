@@ -26,6 +26,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
+import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import {
@@ -113,15 +114,19 @@ export function useChatCardActions({
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
+        // Resolve the stamp inside the updater so it prefers the fresh
+        // conversation branch over the possibly-stale live ref.
+        const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+        const stamped = branch !== undefined ? { ...msg, branch } : msg;
         const updated = {
           ...prev,
-          [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() },
+          [chatId]: { ...conv, messages: [...conv.messages, stamped], lastMessageAt: Date.now() },
         };
         dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
     },
-    [setConversations, dirtyConversationIdsRef],
+    [branchInfoRef, setConversations, dirtyConversationIdsRef],
   );
 
   const injectAssistantCardMessage = useCallback(
@@ -140,15 +145,17 @@ export function useChatCardActions({
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
+        const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+        const stamped = branch !== undefined ? { ...msg, branch } : msg;
         const updated = {
           ...prev,
-          [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() },
+          [chatId]: { ...conv, messages: [...conv.messages, stamped], lastMessageAt: Date.now() },
         };
         dirtyConversationIdsRef.current.add(chatId);
         return updated;
       });
     },
-    [setConversations, dirtyConversationIdsRef],
+    [branchInfoRef, setConversations, dirtyConversationIdsRef],
   );
 
   // Flip an already-injected approval card to a terminal status by approvalId.
@@ -598,11 +605,18 @@ export function useChatCardActions({
                       setConversations((prev) => {
                         const conv = prev[chatId];
                         if (!conv) return prev;
+                        // Stamp from the fresh conversation branch — this fires in a
+                        // setTimeout after push, so the live ref may have moved on.
+                        const branch = resolveMessageWriteBranch(
+                          branchInfoRef.current,
+                          conv.branch,
+                        );
+                        const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
                         const updated = {
                           ...prev,
                           [chatId]: {
                             ...conv,
-                            messages: [...conv.messages, ciMsg],
+                            messages: [...conv.messages, stamped],
                             lastMessageAt: Date.now(),
                           },
                         };
@@ -754,11 +768,15 @@ export function useChatCardActions({
                     setConversations((prev) => {
                       const conv = prev[chatId];
                       if (!conv) return prev;
+                      // Stamp from the fresh conversation branch — this fires in a
+                      // setTimeout after push, so the live ref may have moved on.
+                      const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+                      const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
                       const updated = {
                         ...prev,
                         [chatId]: {
                           ...conv,
-                          messages: [...conv.messages, ciMsg],
+                          messages: [...conv.messages, stamped],
                           lastMessageAt: Date.now(),
                         },
                       };

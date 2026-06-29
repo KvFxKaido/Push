@@ -241,7 +241,7 @@ export function buildToolOutcome(
   rawResult: ToolExecRawResult,
   metaLine: string,
   provider: ActiveProvider,
-  options: { toolUseId?: string } = {},
+  options: { toolUseId?: string; currentBranch?: string } = {},
 ): ToolExecOutcome {
   const isError = rawResult.raw.text.includes('[Tool Error]');
   const resultMessage = buildToolResultMessage({
@@ -257,11 +257,10 @@ export function buildToolOutcome(
       durationMs: rawResult.durationMs,
       isError,
     }),
-    // R11: stamp delegate result messages with their LAUNCH branch (captured
-    // at delegation dispatch into ToolExecutionResult.originBranch). For
-    // non-delegate tools this is undefined and the message stays unstamped,
-    // falling back to conv.branch via effectiveMessageBranch.
-    branch: rawResult.raw.originBranch,
+    // Delegate result messages keep their launch branch (captured at
+    // delegation dispatch). Other tools stamp the branch active when the result
+    // is written, with branch-switch tools using their payload target.
+    branch: rawResult.raw.originBranch ?? rawResult.raw.branchSwitch?.name ?? options.currentBranch,
     ...(options.toolUseId
       ? {
           toolResults: [
@@ -413,6 +412,7 @@ export function handleRecoveryResult(
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
   model: string | undefined,
+  currentBranch?: string,
 ): RecoveryAction {
   const reasoningBlocksField =
     reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {};
@@ -455,6 +455,7 @@ export function handleRecoveryResult(
       timestamp: Date.now(),
       status: 'done',
       isToolResult: true,
+      ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
       toolMeta: buildToolMeta({
         toolName: feedback.toolName,
         source: feedback.source,
@@ -485,6 +486,7 @@ export function handleRecoveryResult(
           content: accumulated,
           timestamp: Date.now(),
           status: 'done' as const,
+          ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
           ...reasoningBlocksField,
         },
         feedbackMsg,
@@ -555,6 +557,7 @@ export function handleDroppedCandidatesError(
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
   model: string | undefined,
+  currentBranch?: string,
 ): MultipleMutationsErrorAction {
   const dropped = detected.droppedCandidates;
   const primary = dropped[0];
@@ -605,6 +608,7 @@ export function handleDroppedCandidatesError(
     timestamp: Date.now(),
     status: 'done',
     isToolResult: true,
+    ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
     toolMeta,
   };
 
@@ -618,6 +622,7 @@ export function handleDroppedCandidatesError(
         content: accumulated,
         timestamp: Date.now(),
         status: 'done' as const,
+        ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       },
       errorMessage,
@@ -663,6 +668,7 @@ export function handleMultipleMutationsError(
   reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
+  currentBranch?: string,
 ): MultipleMutationsErrorAction {
   // `mutating` ONLY counts as a rejected ordering call when actual
   // ordering extras are present (i.e. the model emitted a second
@@ -732,6 +738,7 @@ export function handleMultipleMutationsError(
     timestamp: Date.now(),
     status: 'done',
     isToolResult: true,
+    ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
     toolMeta,
   };
 
@@ -745,6 +752,7 @@ export function handleMultipleMutationsError(
         content: accumulated,
         timestamp: Date.now(),
         status: 'done' as const,
+        ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       },
       errorMessage,
@@ -773,6 +781,7 @@ export function buildLoopSteerInjection(
   reasoningBlocks: ReasoningBlock[],
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
+  currentBranch?: string,
 ): MultipleMutationsErrorAction {
   const toolMeta = buildToolMeta({
     toolName: 'loop_detected',
@@ -789,6 +798,7 @@ export function buildLoopSteerInjection(
     timestamp: Date.now(),
     status: 'done',
     isToolResult: true,
+    ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
     toolMeta,
   };
 
@@ -802,6 +812,7 @@ export function buildLoopSteerInjection(
         content: accumulated,
         timestamp: Date.now(),
         status: 'done' as const,
+        ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
       },
       errorMessage,

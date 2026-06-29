@@ -119,7 +119,7 @@ export type SandboxToolCall =
   | { tool: 'sandbox_download'; args: { path?: string } }
   | { tool: 'sandbox_save_draft'; args: { message?: string; branch_name?: string } }
   | { tool: 'sandbox_create_branch'; args: { name: string; from?: string } }
-  | { tool: 'sandbox_switch_branch'; args: { branch: string; carry_chat?: boolean } }
+  | { tool: 'sandbox_switch_branch'; args: { branch: string } }
   | {
       tool: 'promote_to_github';
       args: { repo_name: string; description?: string; private?: boolean };
@@ -408,14 +408,7 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
     if (!branch) return null;
     return {
       tool: 'sandbox_switch_branch',
-      args: {
-        branch,
-        // Only an explicit `true` opts into carry-chat migration; `false` and
-        // an omitted arg both mean the default leave-the-chat-behind switch.
-        // Strict equality keeps a stray truthy value (e.g. a string "false")
-        // from silently flipping a plain switch into a conversation migration.
-        ...(args.carry_chat === true ? { carry_chat: true } : {}),
-      },
+      args: { branch },
     };
   }
   if (tool === 'sandbox_read_symbols' && typeof args.path === 'string') {

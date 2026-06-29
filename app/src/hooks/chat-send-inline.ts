@@ -70,6 +70,7 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { applyStampedSandboxExecBranchDesync } from '@/lib/branch-desync';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
+import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
 import {
   buildPriorTurnAttachmentParts,
@@ -376,10 +377,9 @@ function logInlineTurnCompleted(fields: {
 /**
  * Id of the last assistant message — the streaming placeholder this lane
  * finalizes. Captured once at turn start so later finalization targets it
- * explicitly rather than by position. A typed branch tool fired mid-run
- * (`carry_chat` switch/fork) appends a `branch_carried`/`branch_forked`
- * assistant event AFTER the placeholder, so `msgs.length - 1` would then
- * point at the divider, not the placeholder (Codex P1 on PR #918).
+ * explicitly rather than by position. A typed branch tool may update the
+ * conversation branch mid-run, so finalization should stay anchored to the
+ * placeholder instead of relying on list position.
  */
 function lastAssistantMessageId(messages: readonly ChatMessage[] | undefined): string | undefined {
   if (!messages) return undefined;
@@ -463,6 +463,10 @@ function insertSyntheticToolPairs(
 ): string | undefined {
   if (events.length === 0) return undefined;
   const { chatId } = ctx;
+  const currentWriteBranch = resolveMessageWriteBranch(
+    ctx.branchInfoRef.current,
+    ctx.conversationsRef.current[chatId]?.branch,
+  );
 
   // Build the synthetic messages (with their ids) OUTSIDE the state updater so
   // the returned last-call id matches the committed state even under React's
@@ -488,7 +492,7 @@ function insertSyntheticToolPairs(
     // drops these so they never feed back to the model on mode switches
     // or Orchestrator-path replays (undefined would be treated as visible).
     // Cards go on the last call message so they render inside the collapsible.
-    synthetic.push({
+    const callMessage: ChatMessage = {
       id: callId,
       role: 'assistant',
       content: event.toolName,
@@ -498,9 +502,10 @@ function insertSyntheticToolPairs(
       toolMeta: meta,
       visibleToModel: false,
       ...(isLast && cards && cards.length > 0 ? { cards } : {}),
-    });
+    };
+    synthetic.push(stampMessageBranch(callMessage, currentWriteBranch));
     // Synthetic user message carrying the tool result preview.
-    synthetic.push({
+    const resultMessage: ChatMessage = {
       ...buildToolResultMessage({
         id: createId(),
         timestamp: ts,
@@ -508,7 +513,8 @@ function insertSyntheticToolPairs(
         toolMeta: meta,
       }),
       visibleToModel: false,
-    });
+    };
+    synthetic.push(stampMessageBranch(resultMessage, currentWriteBranch));
   }
 
   ctx.setConversations((prev) => {
@@ -574,9 +580,8 @@ export async function startInlineCoderTurn(
   const startedMs = Date.now();
 
   // Capture the streaming placeholder's id up front. Finalization targets it by
-  // id so a typed branch tool fired mid-run (carry_chat switch/fork) — which
-  // appends a `branch_*` divider after the placeholder — can't divert the final
-  // summary / tool disclosure onto the divider (Codex P1 on PR #918).
+  // id so typed branch tools fired mid-run cannot divert the final summary /
+  // tool disclosure onto a later assistant message.
   const placeholderId = lastAssistantMessageId(ctx.conversationsRef.current[chatId]?.messages);
 
   console.log(
@@ -926,7 +931,6 @@ export async function startInlineCoderTurn(
               activeChatIdRef: ctx.activeChatIdRef,
               conversationsRef: ctx.conversationsRef,
               branchInfoRef: ctx.branchInfoRef,
-              skipAutoCreateRef: ctx.skipAutoCreateRef,
               setConversations: ctx.setConversations,
               dirtyConversationIdsRef: ctx.dirtyConversationIdsRef,
               runtimeHandlersRef: ctx.runtimeHandlersRef,
@@ -940,7 +944,6 @@ export async function startInlineCoderTurn(
             activeChatIdRef: ctx.activeChatIdRef,
             conversationsRef: ctx.conversationsRef,
             branchInfoRef: ctx.branchInfoRef,
-            skipAutoCreateRef: ctx.skipAutoCreateRef,
             setConversations: ctx.setConversations,
             dirtyConversationIdsRef: ctx.dirtyConversationIdsRef,
             runtimeHandlersRef: ctx.runtimeHandlersRef,

@@ -515,11 +515,10 @@ export function DaemonChatBody({
     };
   }, [setWorkspaceContext, workspaceContext]);
 
-  // Conversation scope: useChatAutoSwitch only auto-creates when an
-  // activeRepoFullName is set, which daemon-backed sessions don't
-  // have. On first mount we either switch to the most recent
-  // mode-tagged chat, or create a fresh one. The reentrancy guard
-  // keeps the effect idempotent across re-renders.
+  // Conversation scope: daemon-backed sessions do not have an active repo
+  // name. On first mount we either switch to the most recent mode-tagged chat,
+  // or create a fresh one. The reentrancy guard keeps the effect idempotent
+  // across re-renders.
   const initializedConversationRef = useRef(false);
   useEffect(() => {
     if (!conversationsLoaded || initializedConversationRef.current) return;

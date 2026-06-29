@@ -2,6 +2,7 @@ import type { AIProviderType, ChatMessage, Conversation } from '@/types';
 import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
+import { backfillConversationMessageBranches } from '@/lib/chat-message';
 
 export { createId };
 
@@ -11,6 +12,12 @@ const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+  // Deliberate one-way migration: carry-chat was removed (no renderer, no
+  // `carry_chat` verb), so legacy `branch_carried` dividers are meaningless and
+  // dropped on load. This permanently removes them from persisted transcripts on
+  // the next flush — intentional, not an accidental filter.
+  if ((message as { kind?: string }).kind === 'branch_carried') return null;
+
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');
   const sandboxAttachedBanner = /^Sandbox attached on `[^`]+`\.\s*$/;
 
@@ -92,6 +99,11 @@ export function loadConversations(): Record<string, Conversation> {
         if ((conversation.model ?? null) !== normalizedModel) {
           migrated = true;
         }
+        const backfilled = backfillConversationMessageBranches(convs[id]);
+        if (backfilled.changed) {
+          convs[id] = backfilled.conversation;
+          migrated = true;
+        }
       }
 
       // Migration: stamp unscoped conversations with the current active repo
@@ -131,6 +143,10 @@ export function loadConversations(): Record<string, Conversation> {
             repoFullName: repoFullName || undefined,
           },
         };
+        const backfilled = backfillConversationMessageBranches(migrated[id]);
+        if (backfilled.changed) {
+          migrated[id] = backfilled.conversation;
+        }
         saveConversationsLegacy(migrated);
         saveActiveChatId(id);
         safeStorageRemove(OLD_STORAGE_KEY);

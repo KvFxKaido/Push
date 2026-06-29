@@ -29,6 +29,7 @@ import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { resolveWebAutoBranchOnCommitEnabled } from '@/lib/ensure-commit-target-branch';
 import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
 import type { BranchForkMigrationContext } from '@/lib/branch-fork-migration';
+import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { createId, generateTitle } from './chat-persistence';
 import type {
   AgentStatus,
@@ -54,6 +55,7 @@ export function buildRuntimeUserMessage(
   text: string,
   attachments?: AttachmentData[],
   displayText?: string,
+  currentBranch?: string,
 ): ChatMessage {
   const trimmedText = text.trim();
   const trimmedDisplayText = displayText?.trim();
@@ -65,6 +67,7 @@ export function buildRuntimeUserMessage(
       trimmedDisplayText && trimmedDisplayText !== trimmedText ? trimmedDisplayText : undefined,
     timestamp: Date.now(),
     status: 'done',
+    ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
     attachments: attachments && attachments.length > 0 ? attachments : undefined,
   };
 }
@@ -116,7 +119,6 @@ export interface FirstPromptBranchDeps {
   /** owner/name, or null for scratch / no-repo. */
   repoFullName: string | null;
   branchInfoRef: BranchForkMigrationContext['branchInfoRef'];
-  skipAutoCreateRef: BranchForkMigrationContext['skipAutoCreateRef'];
   runtimeHandlersRef: BranchForkMigrationContext['runtimeHandlersRef'];
 }
 
@@ -144,10 +146,16 @@ export async function prepareSendContext(
   branchDeps?: FirstPromptBranchDeps,
 ): Promise<PrepareSendResult> {
   const { trimmedText, attachments, options, chatId, skipStreamingPlaceholder } = args;
+  const currentWriteBranch = resolveMessageWriteBranch(
+    branchDeps?.branchInfoRef.current,
+    refs.conversationsRef.current[chatId]?.branch,
+  );
 
   const displayText = options?.displayText?.trim();
   const userMessage: ChatMessage =
-    options?.existingUserMessage ?? buildRuntimeUserMessage(trimmedText, attachments, displayText);
+    options?.existingUserMessage !== undefined
+      ? stampMessageBranch(options.existingUserMessage, currentWriteBranch)
+      : buildRuntimeUserMessage(trimmedText, attachments, displayText, currentWriteBranch);
 
   const currentMessages =
     options?.baseMessages ?? (refs.conversationsRef.current[chatId]?.messages || []);
@@ -178,21 +186,21 @@ export async function prepareSendContext(
     isProviderAvailable,
   });
 
-  const firstAssistant: ChatMessage = {
+  const buildStreamingAssistant = (branch: string | undefined): ChatMessage => ({
     id: createId(),
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
     status: 'streaming',
-  };
+    ...(branch !== undefined ? { branch } : {}),
+  });
+  const firstAssistant = buildStreamingAssistant(currentWriteBranch);
 
   // When branch-on-first-prompt may fire below, defer the streaming-assistant
-  // placeholder until *after* the fork: the fork's `branch_forked` divider would
-  // otherwise become the last assistant message, and the stream writes deltas
-  // into the last assistant slot — so a divider-last swallows the first response
-  // (empty spinner forever). Over-approximated from pre-prewarm state (sandbox id
-  // isn't known yet); the post-fork append fires whether or not the fork landed,
-  // so the placeholder is always appended exactly once, last. Every other send
+  // placeholder until *after* the fork so it is written with the post-fork
+  // branch stamp. Over-approximated from pre-prewarm state (sandbox id isn't
+  // known yet); the post-fork append fires whether or not the fork landed, so
+  // the placeholder is always appended exactly once, last. Every other send
   // keeps the immediate single-render placeholder.
   const branchInfo = branchDeps?.branchInfoRef.current;
   // Mirror `shouldBranchOnFirstPrompt`'s branch gate: only a session positively
@@ -256,9 +264,9 @@ export async function prepareSendContext(
   }
 
   // Branch-on-first-prompt: now that the sandbox has cloned `main`, fork a work
-  // branch named from this prompt and migrate the conversation onto it before
-  // the round loop runs — so the session never works on the default branch. A
-  // no-op for non-first messages, scratch/no-repo, or when already off main.
+  // branch named from this prompt and update the conversation branch before the
+  // round loop runs — so the session never works on the default branch. A no-op
+  // for non-first messages, scratch/no-repo, or when already off main.
   if (branchDeps) {
     await maybeBranchOnFirstPrompt(
       {
@@ -275,12 +283,10 @@ export async function prepareSendContext(
         // time"): the branch was created for this prompt, and across the
         // prewarm/fork awaits the active chat can drift (a just-created first-
         // message chat, or a user chat-switch). The deferred placeholder + the
-        // stream both key off `chatId`, so the migration must too — otherwise the
-        // branch_forked divider lands on a different chat than the response.
+        // stream both key off `chatId`, so the branch update must too.
         activeChatIdRef: { current: chatId },
         conversationsRef: refs.conversationsRef,
         branchInfoRef: branchDeps.branchInfoRef,
-        skipAutoCreateRef: branchDeps.skipAutoCreateRef,
         setConversations: callbacks.updateConversations,
         dirtyConversationIdsRef: refs.dirtyConversationIdsRef,
         runtimeHandlersRef: branchDeps.runtimeHandlersRef,
@@ -288,15 +294,38 @@ export async function prepareSendContext(
     );
   }
 
-  // Deferred streaming placeholder (see mayBranchOnFirstPrompt): append it now,
-  // after any branch divider, so the stream writes into the placeholder rather
-  // than the divider. `prev`-based so it lands after the migration's update
-  // regardless of state-flush timing. Fires whether or not the fork landed.
-  if (mayBranchOnFirstPrompt && !skipStreamingPlaceholder) {
+  // After branch-on-first-prompt: re-stamp the prompt onto the post-fork branch
+  // AND append the deferred streaming placeholder with the same stamp, so the
+  // whole opening exchange sits on ONE branch (the new work branch) rather than
+  // splitting prompt=main / response=new. The prompt was stamped with the
+  // pre-fork default above, so this is a deliberate *overwrite* (not the
+  // no-clobber `stampMessageBranch`) — chosen for a simpler mental model and
+  // cleaner branch-based navigation. `prev`-based so it lands after the branch
+  // update regardless of state-flush timing; the branch re-stamp is a no-op
+  // when the fork didn't land (conv.branch unchanged), and the placeholder
+  // still appends.
+  if (mayBranchOnFirstPrompt) {
     callbacks.updateConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;
-      return { ...prev, [chatId]: { ...conv, messages: [...conv.messages, firstAssistant] } };
+      const deferredBranch = resolveMessageWriteBranch(
+        branchDeps?.branchInfoRef.current,
+        conv.branch,
+      );
+      const restamped =
+        deferredBranch !== undefined
+          ? conv.messages.map((m) =>
+              m.id === userMessage.id ? { ...m, branch: deferredBranch } : m,
+            )
+          : conv.messages;
+      const messages = skipStreamingPlaceholder
+        ? restamped
+        : [...restamped, buildStreamingAssistant(deferredBranch)];
+      refs.dirtyConversationIdsRef.current.add(chatId);
+      return {
+        ...prev,
+        [chatId]: { ...conv, messages },
+      };
     });
   }
 

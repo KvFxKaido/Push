@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket as WsClient, WebSocketServer, type WebSocket as WsServerSocket } from 'ws';
 import { PROTOCOL_VERSION } from '@push/lib/protocol-schema';
 import { type AttachResult, buildRelayUrl, createRelayDaemonBinding } from './relay-daemon-binding';
+import { canListenOnLoopback } from './test-environment';
 
 if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
   (globalThis as unknown as { WebSocket: typeof WsClient }).WebSocket = WsClient;
@@ -29,6 +30,8 @@ const RELAY_SUBPROTOCOL = 'push.relay.v1';
 const VALID_TOKEN = 'pushd_da_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const TARGET_TOKEN = 'pushd_da_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const TARGET_SESSION_ID = 'sess_tui_target_xyz';
+const loopbackAvailable = await canListenOnLoopback();
+const describeWithLoopback = loopbackAvailable ? describe : describe.skip;
 
 describe('buildRelayUrl (#530 normalization)', () => {
   it('replaces the path on a bare https URL', () => {
@@ -140,7 +143,7 @@ async function startStubRelay(): Promise<StubRelay> {
   };
 }
 
-describe('createRelayDaemonBinding — targeted attach_session', () => {
+describeWithLoopback('createRelayDaemonBinding — targeted attach_session', () => {
   let server: StubRelay;
 
   beforeEach(async () => {

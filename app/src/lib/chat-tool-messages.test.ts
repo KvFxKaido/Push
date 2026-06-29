@@ -235,8 +235,7 @@ describe('chat-tool-messages', () => {
     });
     expect(message.content).toContain('[meta] round=1');
     expect(message.content).toContain('[Tool Result] ok');
-    // No branch passed -> message left unstamped, deferring to the
-    // read-boundary fallback.
+    // Low-level builder leaves branch decisions to runtime call sites.
     expect(message.branch).toBeUndefined();
   });
 

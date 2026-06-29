@@ -593,8 +593,8 @@ function App() {
 
   // Tapping a chat in the sidebar must migrate the workspace to match the
   // chat's mode/repo/branch — otherwise WorkspaceSessionScreen's
-  // belong-to-workspace effect (and useChatAutoSwitch) snap the active chat
-  // back to the workspace's matching conversation. Same-context taps keep
+  // belong-to-workspace effect can snap the active chat back to the
+  // workspace's matching conversation. Same-context taps keep
   // the existing session (no sandbox restart) and rely on pendingResumeChatId
   // + the resume bridge to switch the chat.
   const handleResumeChatFromDrawer = useCallback(

@@ -55,6 +55,7 @@ import type { LoopPhase } from '@/types';
 import { fetchSandboxDiff, sandboxStatus, type SandboxStatusResult } from '@/lib/sandbox-client';
 import { createRunDiffSnapshotTracker } from '@/lib/run-diff-snapshot';
 import { createId } from '@/hooks/chat-persistence';
+import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import { useRunHostAttach } from './useRunHostAttach';
 import { createWebRunRuntimeContext } from './chat-run-context';
 
@@ -509,6 +510,10 @@ export function useChatCheckpoint({
 
     const chatId = checkpoint.chatId;
     const currentSandboxId = sandboxIdRef.current;
+    const currentWriteBranch = resolveMessageWriteBranch(
+      branchInfoRef.current,
+      conversations[chatId]?.branch,
+    );
 
     // Revalidate checkpoint identity at click-time (sandbox/branch/repo may have
     // changed while the resume banner was visible)
@@ -581,6 +586,7 @@ export function useChatCheckpoint({
             'Session was interrupted, but the sandbox is no longer available. Starting fresh.',
           timestamp: Date.now(),
           status: 'done',
+          ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
         };
         const updated = {
           ...prev,
@@ -617,6 +623,7 @@ export function useChatCheckpoint({
             content: `Session was interrupted, but sandbox status check failed: ${err instanceof Error ? err.message : String(err)}. Starting fresh.`,
             timestamp: Date.now(),
             status: 'done',
+            ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
           };
           const updated = {
             ...prev,
@@ -642,6 +649,7 @@ export function useChatCheckpoint({
             content: `Session was interrupted, but the sandbox is in an unexpected state: ${sandboxStateError}. Starting fresh.`,
             timestamp: Date.now(),
             status: 'done',
+            ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
           };
           const updated = {
             ...prev,

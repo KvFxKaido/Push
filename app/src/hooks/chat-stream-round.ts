@@ -15,7 +15,11 @@
 import { streamChat, peekLastPromptSnapshot } from '@/lib/orchestrator';
 import { emitPromptCompositionCost } from '@push/lib/prompt-cost-telemetry';
 import { drainRecentContextMetrics } from '@/lib/context-metrics';
-import { createCompactionMessage, nextCompactionCount } from '@/lib/chat-message';
+import {
+  createCompactionMessage,
+  nextCompactionCount,
+  resolveMessageWriteBranch,
+} from '@/lib/chat-message';
 import { assertReadyForAssistantTurn } from '@push/lib/llm-message-invariants';
 import {
   buildLinkedLibraryContext,
@@ -571,6 +575,7 @@ export async function streamAssistantRound(
         phase: last.phase,
         messagesDropped,
         compactionCount: nextCompactionCount(msgs),
+        branch: resolveMessageWriteBranch(ctx.branchInfoRef.current, conv.branch),
       });
       // Compaction logically happened before this turn's response was
       // generated, so the marker belongs just before the trailing assistant

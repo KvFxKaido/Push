@@ -42,6 +42,7 @@ import {
 import { TurnPolicyRegistry, type TurnContext } from '@/lib/turn-policy';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
+import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import type { ChatMessage, ReasoningBlock } from '@/types';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 
@@ -65,6 +66,10 @@ export async function processNoToolPath(
     appendRunEvent,
     getVerificationState,
   } = ctx;
+  const currentWriteBranch = resolveMessageWriteBranch(
+    ctx.branchInfoRef.current,
+    ctx.conversationsRef.current[chatId]?.branch,
+  );
 
   const recoveryResult = resolveToolCallRecovery(accumulated, recoveryState);
   const nextRecoveryState = recoveryResult.nextState;
@@ -109,6 +114,7 @@ export async function processNoToolPath(
     apiMessages,
     lockedProvider,
     resolvedModel,
+    currentWriteBranch,
   );
 
   if (action.conversationUpdate) {
@@ -222,6 +228,7 @@ export async function processNoToolPath(
             '[/POLICY]',
           ].join('\n'),
           timestamp: Date.now(),
+          ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
         },
       ],
       nextRecoveryState: { ...nextRecoveryState, reasoningToolCallNudges: reasoningNudges + 1 },
@@ -270,6 +277,7 @@ export async function processNoToolPath(
             role: 'user',
             content: formatVerificationBlock(verificationEvaluation, 'completion'),
             timestamp: Date.now(),
+            ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
           },
         ],
         nextRecoveryState,
@@ -310,7 +318,10 @@ export async function processNoToolPath(
       });
 
       // Nudge the model — inject corrective message and continue the loop
-      const nextApiMessages = [...action.apiMessages, policyResult.message];
+      const nextApiMessages = [
+        ...action.apiMessages,
+        stampMessageBranch(policyResult.message, currentWriteBranch),
+      ];
       return {
         nextApiMessages,
         nextRecoveryState,
@@ -361,6 +372,7 @@ export async function processNoToolPath(
             '[/POLICY]',
           ].join('\n'),
           timestamp: Date.now(),
+          ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
         },
       ],
       nextRecoveryState: { ...nextRecoveryState, trailingIntentNudges: trailingIntentNudges + 1 },

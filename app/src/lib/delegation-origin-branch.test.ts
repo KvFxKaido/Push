@@ -183,7 +183,7 @@ describe('R11 delegation originBranch contract', () => {
       });
 
       // Undefined is the correct fallback signal — buildToolResultMessage
-      // skips stamping, and effectiveMessageBranch defaults to conv.branch.
+      // skips stamping, and effectiveMessageBranch uses the neutral default.
       expect(result.originBranch).toBeUndefined();
     });
   });

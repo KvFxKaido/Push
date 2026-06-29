@@ -18,10 +18,6 @@
  * tab lock, finally block). `processAssistantTurn` here is now a router:
  * detect tool calls, run the circuit breaker, handle the multiple-mutations
  * malformed case, then dispatch to one of the three branch handlers.
- *
- * Re-exports from the sibling modules below preserve the public import
- * surface for `useChat.ts`, `chat-round-loop.ts`, tests, and
- * `branch-fork-migration.ts`.
  */
 
 import { detectAllToolCalls, detectAnyToolCall, detectNativeToolCalls } from '@/lib/tool-dispatch';
@@ -40,6 +36,7 @@ import {
   createLoopLadderState,
   createTurnRunContext,
   dispatchDroppedCandidatesError,
+  getCurrentWriteBranch,
   handleLoopVerdict,
   recordGithubToolTurnUsage,
   type LoopLadderState,
@@ -163,6 +160,7 @@ export async function processAssistantTurn(
       reasoningBlocks,
       apiMessages,
       lockedProvider,
+      getCurrentWriteBranch(ctx),
     );
 
     appendRunEvent(chatId, {
