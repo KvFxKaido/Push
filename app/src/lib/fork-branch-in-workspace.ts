@@ -3,16 +3,15 @@
  *
  * Wraps the existing `sandbox_create_branch` tool path so the UI button and
  * the model emit the same operation. Returns the `BranchSwitchPayload` from
- * the tool result so the caller can forward it to the slice 2 migration
+ * the tool result so the caller can forward it to the branch-state
  * dispatcher (`applyBranchSwitchPayload` in `branch-fork-migration.ts`),
- * which is what actually migrates the active conversation.
+ * which is what actually updates the active conversation.
  *
- * Why route through the tool: slice 2's migration handler is wired to fire
+ * Why route through the tool: the branch-state handler is wired to fire
  * on `branchSwitch.kind === 'forked'` results coming back from
  * `executeSandboxToolCall`. By calling that same entry point from the UI,
- * the conversation-following + cross-tab marker + R12 atomic backfill all
- * happen the same way they would for a model-initiated fork. No second
- * implementation of the migration logic.
+ * the conversation-following path behaves the same way it would for a
+ * model-initiated fork. No second implementation of the branch-update logic.
  */
 
 import { executeSandboxToolCall } from './sandbox-tools';
@@ -35,7 +34,7 @@ export interface ForkBranchInWorkspaceResult {
   ok: boolean;
   /** Present when the tool result reported a successful branch creation —
    *  caller should forward this to `applyBranchSwitchPayload` (or the
-   *  active chat-send dispatcher) to trigger conversation migration. */
+   *  active chat-send dispatcher) to trigger a branch-state update. */
   branchSwitch?: BranchSwitchPayload;
   /** User-facing error text on failure. Stripped of `[Tool Error]` prefixes. */
   errorMessage?: string;
@@ -52,7 +51,7 @@ export interface ForkBranchInWorkspaceResult {
 export interface SwitchBranchInWorkspaceResult {
   ok: boolean;
   /** Present when the tool result reported a successful branch switch —
-   *  caller should forward this to `applyBranchSwitchPayload` to route the
+   *  caller should forward this to `applyBranchSwitchPayload` to update the
    *  conversation through the same path as model-initiated switches. */
   branchSwitch?: BranchSwitchPayload;
   /** User-facing error text on failure. Stripped of `[Tool Error]` prefixes. */
@@ -80,7 +79,7 @@ export function cleanToolText(text: string): string {
 
 /** Create a new branch from the current sandbox HEAD (or from `from` if
  *  supplied) and return the BranchSwitchPayload so the caller can drive
- *  conversation migration through the slice 2 dispatcher. */
+ *  active-conversation branch updates through the shared dispatcher. */
 export async function forkBranchInWorkspace(
   sandboxId: string | null,
   name: string,

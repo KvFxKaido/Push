@@ -1,35 +1,27 @@
 import { useMemo, useState } from 'react';
 import { Check, MessageSquare, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import type { Conversation } from '@/types';
-import { BranchWaveIcon } from '@/components/icons/push-custom-icons';
+import { timeAgoCompact } from '@/lib/utils';
 
 interface HubChatsTabProps {
   conversations: Record<string, Conversation>;
   activeChatId: string;
   repoFullName: string | null;
-  currentBranch: string | undefined;
-  defaultBranch: string | undefined;
   onSwitchChat: (id: string) => void;
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string, title: string) => void;
-  onSwitchBranch: (branch: string) => void;
   onClose: () => void;
 }
-
-import { timeAgoCompact } from '@/lib/utils';
 
 export function HubChatsTab({
   conversations,
   activeChatId,
   repoFullName,
-  currentBranch,
-  defaultBranch,
   onSwitchChat,
   onNewChat,
   onDeleteChat,
   onRenameChat,
-  onSwitchBranch,
   onClose,
 }: HubChatsTabProps) {
   const [searchQuery, setSearchQuery] = useState('');
@@ -54,32 +46,6 @@ export function HubChatsTab({
     const q = searchQuery.toLowerCase();
     return repoChats.filter((c) => c.title.toLowerCase().includes(q));
   }, [repoChats, searchQuery]);
-
-  // Group by branch
-  const branchGroups = useMemo(() => {
-    const branchMap = new Map<string, Conversation[]>();
-    for (const chat of filteredChats) {
-      const b = chat.branch || defaultBranch || 'main';
-      const arr = branchMap.get(b) || [];
-      arr.push(chat);
-      branchMap.set(b, arr);
-    }
-    const branchNames = Array.from(branchMap.keys());
-    // Sort: active branch first, then default, then alphabetical
-    branchNames.sort((a, b) => {
-      if (a === currentBranch) return -1;
-      if (b === currentBranch) return 1;
-      const def = defaultBranch || 'main';
-      if (a === def) return -1;
-      if (b === def) return 1;
-      return a.localeCompare(b);
-    });
-    return branchNames.map((name) => ({
-      name,
-      chats: branchMap.get(name) || [],
-      isActive: name === currentBranch,
-    }));
-  }, [filteredChats, currentBranch, defaultBranch]);
 
   const startRename = (chat: Conversation) => {
     setEditingChatId(chat.id);
@@ -138,130 +104,105 @@ export function HubChatsTab({
             </p>
           </div>
         ) : (
-          branchGroups.map((group) => (
-            <div key={group.name}>
-              {/* Branch header */}
-              {branchGroups.length > 1 && (
-                <button
-                  onClick={() => {
-                    if (group.name !== currentBranch) {
-                      onSwitchBranch(group.name);
-                    }
-                  }}
-                  className="flex w-full items-center gap-1.5 px-3 pb-1 pt-3 text-left"
-                >
-                  <BranchWaveIcon
-                    className={`h-3 w-3 shrink-0 ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}
-                  />
-                  <span
-                    className={`truncate text-push-2xs font-medium ${group.isActive ? 'text-push-link' : 'text-push-fg-dim'}`}
-                  >
-                    {group.name}
-                  </span>
-                  <span className="text-push-2xs text-push-fg-dim">({group.chats.length})</span>
-                </button>
-              )}
+          filteredChats.map((chat) => {
+            const isActive = chat.id === activeChatId;
+            const isEditing = editingChatId === chat.id;
+            const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
+            const branchLabel = chat.repoFullName ? chat.branch : null;
 
-              {/* Chat rows */}
-              {group.chats.map((chat) => {
-                const isActive = chat.id === activeChatId;
-                const isEditing = editingChatId === chat.id;
-                const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
-
-                return (
-                  <div
-                    key={chat.id}
-                    className={`mx-2 flex items-center gap-1 rounded-lg ${isActive ? 'bg-push-surface-raised' : 'hover:bg-push-surface-raised'}`}
+            return (
+              <div
+                key={chat.id}
+                className={`mx-2 flex items-center gap-1 rounded-lg ${isActive ? 'bg-push-surface-raised' : 'hover:bg-push-surface-raised'}`}
+              >
+                {isEditing ? (
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      commitRename();
+                    }}
+                    className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5"
                   >
-                    {isEditing ? (
-                      <form
-                        onSubmit={(e) => {
+                    <input
+                      value={editingTitle}
+                      autoFocus
+                      maxLength={80}
+                      onChange={(e) => setEditingTitle(e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
                           e.preventDefault();
-                          commitRename();
-                        }}
-                        className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5"
+                          cancelRename();
+                        }
+                      }}
+                      className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-push-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
+                      placeholder="Chat name"
+                      aria-label="Rename chat"
+                    />
+                    <button
+                      type="submit"
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-push-status-success-bg hover:text-emerald-200"
+                      aria-label="Save chat name"
+                    >
+                      <Check className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelRename();
+                      }}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-push-fg-secondary"
+                      aria-label="Cancel rename"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        onSwitchChat(chat.id);
+                        onClose();
+                      }}
+                      className="min-w-0 flex-1 px-2.5 py-2 text-left"
+                    >
+                      <p
+                        className={`truncate text-push-sm ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}
                       >
-                        <input
-                          value={editingTitle}
-                          autoFocus
-                          maxLength={80}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onClick={(e) => e.stopPropagation()}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Escape') {
-                              e.preventDefault();
-                              cancelRename();
-                            }
-                          }}
-                          className="h-7 w-full rounded-md border border-push-edge bg-push-surface px-2 text-push-sm text-push-fg outline-none placeholder:text-push-fg-dim focus:border-push-sky/50"
-                          placeholder="Chat name"
-                          aria-label="Rename chat"
-                        />
-                        <button
-                          type="submit"
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-emerald-300 transition-colors hover:bg-push-status-success-bg hover:text-emerald-200"
-                          aria-label="Save chat name"
-                        >
-                          <Check className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            cancelRename();
-                          }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-push-fg-secondary"
-                          aria-label="Cancel rename"
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </button>
-                      </form>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => {
-                            onSwitchChat(chat.id);
-                            onClose();
-                          }}
-                          className="min-w-0 flex-1 px-2.5 py-2 text-left"
-                        >
-                          <p
-                            className={`truncate text-push-sm ${isActive ? 'text-push-fg' : 'text-push-fg-secondary'}`}
-                          >
-                            {chat.title}
-                          </p>
-                          <p className="mt-0.5 text-push-2xs text-push-fg-muted">
-                            {messageCount} msg{messageCount !== 1 ? 's' : ''} ·{' '}
-                            {timeAgoCompact(chat.lastMessageAt)}
-                          </p>
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            startRename(chat);
-                          }}
-                          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-push-fg-secondary"
-                          aria-label={`Rename ${chat.title}`}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onDeleteChat(chat.id);
-                          }}
-                          className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-red-400"
-                          aria-label={`Delete ${chat.title}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))
+                        {chat.title}
+                      </p>
+                      <p className="mt-0.5 text-push-2xs text-push-fg-muted">
+                        {messageCount} msg{messageCount !== 1 ? 's' : ''} ·{' '}
+                        {branchLabel ? `${branchLabel} · ` : ''}
+                        {timeAgoCompact(chat.lastMessageAt)}
+                      </p>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        startRename(chat);
+                      }}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-push-fg-secondary"
+                      aria-label={`Rename ${chat.title}`}
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDeleteChat(chat.id);
+                      }}
+                      className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-raised hover:text-red-400"
+                      aria-label={`Delete ${chat.title}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })
         )}
       </div>
     </div>

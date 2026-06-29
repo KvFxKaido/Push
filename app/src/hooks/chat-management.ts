@@ -24,6 +24,7 @@ export interface ChatManagementParams {
   dirtyConversationIdsRef: MutableRefObject<Set<string>>;
   deletedConversationIdsRef: MutableRefObject<Set<string>>;
   activeChatId: string;
+  activeChatIdRef: MutableRefObject<string | null>;
   activeRepoFullName: string | null;
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
   repoRef: MutableRefObject<string | null>;
@@ -173,6 +174,7 @@ export function useChatManagement({
   dirtyConversationIdsRef,
   deletedConversationIdsRef,
   activeChatId,
+  activeChatIdRef,
   activeRepoFullName,
   branchInfoRef,
   repoRef,
@@ -196,11 +198,13 @@ export function useChatManagement({
       dirtyConversationIdsRef.current.add(id);
       return updated;
     });
+    activeChatIdRef.current = id;
     setActiveChatId(id);
     saveActiveChatId(id);
     return id;
   }, [
     activeRepoFullName,
+    activeChatIdRef,
     branchInfoRef,
     dirtyConversationIdsRef,
     setActiveChatId,
@@ -215,10 +219,18 @@ export function useChatManagement({
         clearQueuedFollowUps(activeChatId);
         abortStream({ clearQueuedFollowUps: true });
       }
+      activeChatIdRef.current = id;
       setActiveChatId(id);
       saveActiveChatId(id);
     },
-    [activeChatId, abortStream, clearQueuedFollowUps, isStreaming, setActiveChatId],
+    [
+      activeChatId,
+      activeChatIdRef,
+      abortStream,
+      clearQueuedFollowUps,
+      isStreaming,
+      setActiveChatId,
+    ],
   );
 
   const renameChat = useCallback(

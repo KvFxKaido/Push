@@ -592,11 +592,10 @@ function App() {
   );
 
   // Tapping a chat in the sidebar must migrate the workspace to match the
-  // chat's mode/repo/branch — otherwise WorkspaceSessionScreen's
-  // belong-to-workspace effect can snap the active chat back to the
-  // workspace's matching conversation. Same-context taps keep
-  // the existing session (no sandbox restart) and rely on pendingResumeChatId
-  // + the resume bridge to switch the chat.
+  // chat's mode/repo. Branch is mutable session state now: same-repo chat
+  // taps are routed through the workspace screen so it can warm-restore the
+  // saved branch, while cross-repo resumes seed the new repo session from the
+  // chat's last branch.
   const handleResumeChatFromDrawer = useCallback(
     (chatId: string) => {
       const conversation = conversationIndex[chatId];
@@ -627,14 +626,8 @@ function App() {
       if (!repo) return;
 
       const targetBranch = conversation.branch || undefined;
-      // Legacy conversations may have no `branch` set. Treat a missing
-      // target branch as "match whatever's current" so tapping an older
-      // chat on a non-default branch doesn't yank the workspace back to
-      // the default branch and restart the sandbox.
       const sameContext =
-        workspaceSession?.kind === 'repo' &&
-        workspaceSession.repo.full_name === repo.full_name &&
-        (!targetBranch || workspaceSession.repo.current_branch === targetBranch);
+        workspaceSession?.kind === 'repo' && workspaceSession.repo.full_name === repo.full_name;
 
       if (!sameContext) {
         // handleSelectRepo resets pendingResumeChatId internally; (re-)set

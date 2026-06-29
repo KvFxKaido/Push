@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import { toast } from 'sonner';
+import { restoreResumeBranchIfNeeded } from '@/lib/resume-branch-restore';
 import { fetchSandboxDiff } from '@/lib/sandbox-client';
 import type { ChatRouteProps } from '@/sections/workspace-chat-route-types';
 
@@ -10,6 +11,7 @@ type PanelsControllerArgs = Pick<
   | 'conversations'
   | 'repos'
   | 'switchChat'
+  | 'switchBranchFromUI'
   | 'handleSelectRepoFromDrawer'
   | 'handleOpenDraftComposer'
   | 'handleStartWorkspace'
@@ -31,6 +33,7 @@ export function useWorkspaceChatPanelsController({
   conversations,
   repos,
   switchChat,
+  switchBranchFromUI,
   handleSelectRepoFromDrawer,
   handleOpenDraftComposer,
   handleStartWorkspace,
@@ -135,7 +138,7 @@ export function useWorkspaceChatPanelsController({
   );
 
   const handleResumeConversationFromLauncher = useCallback(
-    (chatId: string) => {
+    async (chatId: string) => {
       const conversation = conversations[chatId];
       if (!conversation) return;
 
@@ -149,12 +152,35 @@ export function useWorkspaceChatPanelsController({
       // Repo conversations — select the repo first, then switch.
       const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
       if (!repo) return;
+      if (activeRepo?.full_name === conversation.repoFullName) {
+        closePanels();
+        switchChat(chatId);
+        await restoreResumeBranchIfNeeded({
+          chatId,
+          repoFullName: conversation.repoFullName,
+          activeRepoFullName: activeRepo.full_name,
+          savedBranch: conversation.branch,
+          currentBranch: activeRepo.current_branch || activeRepo.default_branch,
+          surface: 'launcher',
+          switchBranchFromUI,
+        });
+        return;
+      }
+
       handleSelectRepoFromDrawer(repo, conversation.branch);
       requestAnimationFrame(() => {
         switchChat(chatId);
       });
     },
-    [closePanels, conversations, handleSelectRepoFromDrawer, repos, switchChat],
+    [
+      activeRepo,
+      closePanels,
+      conversations,
+      handleSelectRepoFromDrawer,
+      repos,
+      switchChat,
+      switchBranchFromUI,
+    ],
   );
 
   const handleStartWorkspaceRequest = useCallback(() => {

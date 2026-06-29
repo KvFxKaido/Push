@@ -9,6 +9,7 @@ interface UseWorkspaceSessionBridgeOptions {
   pendingResumeChatId: string | null;
   workspaceSessionId: string;
   switchChat: (id: string) => void;
+  onPendingResumeChatSwitch?: (chatId: string, conversation: Conversation) => void;
   setIsMainProtected: (value: boolean) => void;
   repoFullName: string | undefined;
 }
@@ -28,6 +29,7 @@ export function useWorkspaceSessionBridge({
   pendingResumeChatId,
   workspaceSessionId,
   switchChat,
+  onPendingResumeChatSwitch,
   setIsMainProtected,
   repoFullName,
 }: UseWorkspaceSessionBridgeOptions) {
@@ -44,7 +46,14 @@ export function useWorkspaceSessionBridge({
     if (handledResumeKeyRef.current === resumeKey) return;
     handledResumeKeyRef.current = resumeKey;
     switchChat(pendingResumeChatId);
-  }, [conversations, pendingResumeChatId, switchChat, workspaceSessionId]);
+    onPendingResumeChatSwitch?.(pendingResumeChatId, conversations[pendingResumeChatId]);
+  }, [
+    conversations,
+    onPendingResumeChatSwitch,
+    pendingResumeChatId,
+    switchChat,
+    workspaceSessionId,
+  ]);
 
   // Sync main-branch protection state into the chat system
   const protectMain = useProtectMain(repoFullName);

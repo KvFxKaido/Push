@@ -34,7 +34,7 @@ Backend routing:
 Repo/session model:
 - Exactly one active branch per repo session
 - Branch transitions preserve context; the sandbox stays alive
-- Chats are branch-scoped. A forked branch creation migrates the active chat to the new branch; switching to an existing branch routes to that branch's chat
+- Chats are repo-scoped. The branch is mutable session state that follows sandbox HEAD; creating or switching branches updates the active conversation in place
 - Models can create branches via create_branch and switch existing branches via switch_branch. Raw git checkout/switch branch commands are blocked in sandbox_exec and should use the typed tools instead
 
 Workspace Hub:

@@ -1,7 +1,7 @@
 # Repo-Scoped Chats — Branch as Session State
 
 Date: 2026-06-29
-Status: **Draft** — proposed; no code yet. Owner: Push web/runtime.
+Status: **Draft** — in progress. Steps 1–2 shipped (#1257, #1258); step 3 (merge→base + FF) pending. Flips to **Current** when step 3 lands (see Status flip plan). Owner: Push web/runtime.
 Tracking: [#1255](https://github.com/KvFxKaido/Push/issues/1255) (sequencing).
 
 Related: the warm UI branch-switch + branch-desync work (the *follow* this keeps and makes

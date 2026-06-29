@@ -412,7 +412,7 @@ export function ComposerDraftScreen({
                 <button
                   onClick={() => setBranchSheetOpen(true)}
                   className={PILL_CLASS}
-                  aria-label="Select branch"
+                  aria-label="Select starting branch"
                   disabled={branchManager.repoBranchesLoading && branchOptions.length === 0}
                 >
                   <span className="text-push-fg-dim">on</span>
@@ -567,10 +567,12 @@ export function ComposerDraftScreen({
         >
           <SheetHeader className="px-5 pb-2 pt-5">
             <SheetTitle className="text-push-lg font-display font-semibold text-push-fg">
-              Select branch
+              Starting branch
             </SheetTitle>
             <SheetDescription className="text-push-fg-muted">
-              {selectedRepo?.full_name ?? 'No repo selected'}
+              {selectedRepo
+                ? `Open ${selectedRepo.full_name} from this branch.`
+                : 'No repo selected'}
             </SheetDescription>
           </SheetHeader>
           <div className="max-h-[50dvh] overflow-y-auto px-3 pb-3 pt-2">

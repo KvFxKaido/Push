@@ -30,7 +30,7 @@ interface BranchForkSheetProps {
    *  guard in WorkspaceChatRoute). */
   fromBranch: string;
   /** Bound to `useChat.forkBranchFromUI`. Calls the sandbox_create_branch
-   *  tool path; the chat hook handles conversation migration internally. */
+   *  tool path; the chat hook updates the active conversation's branch state. */
   forkBranch: (name: string, from?: string) => Promise<ForkBranchInWorkspaceResult>;
 }
 
@@ -74,8 +74,8 @@ function BranchForkSheet({ open, onOpenChange, fromBranch, forkBranch }: BranchF
         setError(result.errorMessage ?? 'Failed to create branch');
         return;
       }
-      // Success: useChat.forkBranchFromUI already triggered conversation
-      // migration via applyBranchSwitchPayload. Just close the sheet.
+      // Success: useChat.forkBranchFromUI already updated the active
+      // conversation branch via applyBranchSwitchPayload. Just close the sheet.
       setBranchName('');
       onOpenChange(false);
     } finally {

@@ -120,9 +120,9 @@ export interface CoderTracingAdapter {
 /** Headless-side observability metadata for branch-affecting tools.
  *
  * The boundary rule: foreground tools emit `branchSwitch` for UI routing
- * (conversation migration / chat selection); background-job tools emit
- * `meta` for logs and future observability features only — no chat or
- * routing side effects fire from a background result.
+ * (active-conversation branch updates); background-job tools emit `meta` for
+ * logs and future observability features only — no chat or routing side
+ * effects fire from a background result.
  *
  * Shape is intentionally broad so future headless branch-affecting
  * producers (e.g. a backgrounded `sandbox_switch_branch`) inherit the
