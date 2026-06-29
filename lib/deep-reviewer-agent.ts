@@ -30,7 +30,7 @@ import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { iteratePushStreamText } from './stream-utils.js';
-import { reasoningHeavyStreamOpts } from './reasoning-models.js';
+import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
 import { parseStructured } from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
@@ -75,6 +75,17 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 // that just needed more room). 180s gives that headroom while still bounding a
 // true runaway; the DO's ~15-min job budget is the real ceiling above this.
 const DEEP_REVIEW_ROUND_WALL_CLOCK_MS = 180_000;
+// First-token grace, applied UNCONDITIONALLY to every model — mirroring the
+// Coder kernel (CODER_FIRST_TOKEN_GRACE_MS), not the registry-gated
+// `reasoningHeavyStreamOpts`. Slow time-to-first-token isn't exclusive to
+// registry-matched reasoners: a capable non-registry model (sakana/fugu) on a
+// deep round with a large accumulated transcript needs >60s just to connect +
+// chew through the context before its first token. Gating the grace on the
+// heavy-reasoner table left fugu with a flat 60s window, which killed an
+// otherwise-progressing round-7 review (#1242, "round 7 timed out after 60s").
+// The grace only WIDENS the first-token window; the per-round activity timeout
+// and the 180s wall-clock above still bound a true stall/runaway.
+const DEEP_REVIEW_FIRST_TOKEN_GRACE_MS = REASONING_HEAVY_FIRST_TOKEN_GRACE_MS;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
 const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
 const DIFF_LIMIT = SIZE_BUDGETS.reviewerDiffChunk;
@@ -787,14 +798,13 @@ export async function runDeepReviewer<TCall, TCard>(
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
-      // Heavy reasoners (glm-5.1) legitimately stream reasoning for >60s
-      // before the first text token on large-transcript rounds — observed
-      // killing an actively-progressing round 7 live (PR #907). Thinking is
-      // progress here; the wall-clock cap above bounds endless reasoning. The
-      // helper also widens the FIRST-token window for a known heavy reasoner
-      // (the round timeout alone gave the connect + reasoning preamble no
-      // grace); other models keep the per-round window unchanged.
-      reasoningHeavyStreamOpts(modelId),
+      // Count reasoning as activity (heavy reasoners stream thinking for >60s
+      // before the first text token) AND give EVERY model a wider first-token
+      // window: a large-transcript round needs time to connect + process the
+      // context before its first token, and that's not exclusive to registry
+      // reasoners (it killed a round-7 fugu review, #1242). The wall-clock cap
+      // above still bounds endless reasoning.
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -1050,10 +1060,10 @@ export async function runDeepReviewer<TCall, TCard>(
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
-    // Same heavy-reasoner allowance as the loop rounds: the forced-output
-    // turn is where glm thinks hardest (whole-investigation synthesis), so the
+    // Same allowance as the loop rounds: the forced-output turn is where the
+    // model works hardest (whole-investigation synthesis), so the unconditional
     // first-token grace matters most here.
-    reasoningHeavyStreamOpts(modelId),
+    { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
