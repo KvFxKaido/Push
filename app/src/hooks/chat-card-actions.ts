@@ -935,18 +935,18 @@ export function useChatCardActions({
 
         case 'approval-approve':
         case 'approval-reject': {
-          // Runtime-driven approval: flip the card to its resolved state and
-          // release the suspended tool call (Approve → true, Reject → false).
-          // The runtime's `await approvalCallback(...)` resumes from here.
+          // Runtime-driven approval: release the suspended tool call, then flip
+          // the card to match. Only mark approved/rejected when a waiter was
+          // actually released — a stale card (refreshed, or already settled by
+          // Stop/abort) has none, so resolveApproval returns false and we mark
+          // it 'expired' rather than falsely reporting an action that never ran.
           const approved = action.type === 'approval-approve';
+          const settled = resolveApproval(action.approvalId, approved);
           updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
             if (card.type !== 'approval') return card;
-            return {
-              ...card,
-              data: { ...card.data, status: approved ? 'approved' : 'rejected' },
-            };
+            const status = settled ? (approved ? 'approved' : 'rejected') : 'expired';
+            return { ...card, data: { ...card.data, status } };
           });
-          resolveApproval(action.approvalId, approved);
           break;
         }
       }

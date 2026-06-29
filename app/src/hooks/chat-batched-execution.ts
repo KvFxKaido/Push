@@ -36,6 +36,7 @@ import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-pro
 import { createId } from '@push/lib/id-utils';
 import { buildToolUseBlock, createToolUseBlockId } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
+import { requestApproval } from '@/lib/approval-bridge';
 import { clearRuntimeCoderWorkingMemory } from '@push/lib/runtime-context';
 import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
@@ -184,6 +185,8 @@ export async function executeBatchedToolCalls(
     provider: lockedProvider,
     model: resolvedModel,
     abortSignal: abortControllerRef.current?.signal,
+    approvalCallback: (request) =>
+      requestApproval(chatId, request, abortControllerRef.current?.signal),
   };
 
   const parallelRawResults = await Promise.all(
@@ -338,6 +341,8 @@ export async function executeBatchedToolCalls(
       provider: lockedProvider,
       model: resolvedModel,
       abortSignal: abortControllerRef.current?.signal,
+      approvalCallback: (request) =>
+        requestApproval(chatId, request, abortControllerRef.current?.signal),
     };
 
     for (let i = 0; i < fileMutationBatch.length; i++) {
@@ -559,6 +564,8 @@ export async function executeBatchedToolCalls(
         model: resolvedModel,
         abortSignal: abortControllerRef.current?.signal,
         onExecProgress: execProgressTail,
+        approvalCallback: (request) =>
+          requestApproval(chatId, request, abortControllerRef.current?.signal),
       };
       mutRawResult = await executeToolWithChatHooks(mutCall, mutCtx, {
         scratchpadRef,

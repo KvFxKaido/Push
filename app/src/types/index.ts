@@ -1445,8 +1445,9 @@ export interface ApprovalCardData {
   command?: string;
   /** Gate reason + recovery path, shown as a meta line while pending. */
   reason: string;
-  /** Undefined/'pending' = awaiting decision; set on resolve. */
-  status?: 'pending' | 'approved' | 'rejected';
+  /** Undefined/'pending' = awaiting decision; set on resolve. 'expired' = the
+   *  card was actioned after its waiter was gone (refresh/Stop) — nothing ran. */
+  status?: 'pending' | 'approved' | 'rejected' | 'expired';
 }
 
 // --- Resumable Sessions ---

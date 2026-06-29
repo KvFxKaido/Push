@@ -1,4 +1,4 @@
-import { CheckCircle2, GitBranch, ShieldAlert, XCircle } from 'lucide-react';
+import { Ban, CheckCircle2, GitBranch, ShieldAlert, XCircle } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { ApprovalCardData, CardAction } from '@/types';
 import {
@@ -47,6 +47,16 @@ function headerStyle(data: ApprovalCardData): HeaderStyle {
       title: 'Rejected',
     };
   }
+  if (data.status === 'expired') {
+    // No band — a quiet, inactive header; the decision had no effect.
+    return {
+      band: '',
+      Icon: Ban,
+      iconClass: 'text-push-fg-dim',
+      titleClass: 'text-push-fg-muted',
+      title: 'Expired',
+    };
+  }
   if (data.category === 'remote_side_effect') {
     return {
       band: CARD_HEADER_BG_INFO,
@@ -67,7 +77,8 @@ function headerStyle(data: ApprovalCardData): HeaderStyle {
 }
 
 export function ConfirmationCard({ data, messageId, cardIndex, onAction }: ConfirmationCardProps) {
-  const resolved = data.status === 'approved' || data.status === 'rejected';
+  const resolved =
+    data.status === 'approved' || data.status === 'rejected' || data.status === 'expired';
   const { band, Icon, iconClass, titleClass, title } = headerStyle(data);
 
   const decide = (approved: boolean) => {
@@ -80,11 +91,13 @@ export function ConfirmationCard({ data, messageId, cardIndex, onAction }: Confi
     });
   };
 
-  const lead = resolved
-    ? data.status === 'approved'
+  const lead = !resolved
+    ? data.summary
+    : data.status === 'approved'
       ? 'You approved this action.'
-      : 'You rejected this action — it was not run.'
-    : data.summary;
+      : data.status === 'rejected'
+        ? 'You rejected this action — it was not run.'
+        : 'This approval expired — the turn already ended, so nothing ran.';
 
   return (
     <div className={CARD_SHELL_CLASS}>

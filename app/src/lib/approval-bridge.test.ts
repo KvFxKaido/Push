@@ -29,6 +29,15 @@ describe('approval-bridge', () => {
     expect(resolveApproval('never-registered', true)).toBe(false);
   });
 
+  it('a second resolve finds no waiter (stale card actioned after Stop)', async () => {
+    const decision = registerApproval('dup');
+    expect(resolveApproval('dup', false)).toBe(true);
+    await expect(decision).resolves.toBe(false);
+    // The user then clicks the still-visible card; no waiter remains → false,
+    // which the handler maps to an 'expired' card instead of false success.
+    expect(resolveApproval('dup', true)).toBe(false);
+  });
+
   it('fails closed (denies) when no injector is registered', async () => {
     setApprovalCardInjector(null);
     await expect(requestApproval('chat-1', REQ)).resolves.toBe(false);
