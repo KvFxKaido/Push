@@ -143,7 +143,9 @@ describe('switchMergedBaseInWorkspace', () => {
       {
         tool: 'sandbox_exec',
         args: {
-          command: 'test -z "$(git status --porcelain)" || { git status --short; exit 2; }',
+          command:
+            'status=$(git status --porcelain) || exit 3; ' +
+            '[ -z "$status" ] || { printf \'%s\\n\' "$status"; exit 2; }',
         },
       },
       'sb-1',
@@ -214,6 +216,33 @@ describe('switchMergedBaseInWorkspace', () => {
         },
       },
     });
+  });
+
+  it('fails closed when git status itself errors (exit 3), not masked as clean', async () => {
+    // A `git status` failure (corrupt repo / index lock) exits 3 with empty
+    // stdout — the probe must treat that as a failure and NOT proceed to switch,
+    // and must NOT mislabel it as a dirty tree (dirty-status extraction is
+    // gated on exit 2).
+    sandboxTools.executeSandboxToolCall.mockResolvedValueOnce({
+      text: '[Tool Result — sandbox_exec]\nfatal: not a git repository',
+      card: {
+        type: 'sandbox' as const,
+        data: {
+          command: 'status=$(git status --porcelain) || exit 3; ...',
+          stdout: '',
+          stderr: 'fatal: not a git repository',
+          exitCode: 3,
+          truncated: false,
+        },
+      },
+    });
+
+    const result = await switchMergedBaseInWorkspace('sb-1', 'main');
+
+    expect(sandboxTools.executeSandboxToolCall).toHaveBeenCalledTimes(1);
+    expect(result.ok).toBe(false);
+    // Not the dirty-tree message — the generic tool-error path.
+    expect(result.errorMessage).not.toMatch(/uncommitted changes/);
   });
 
   it('rejects unsafe branch refs before shelling out', async () => {

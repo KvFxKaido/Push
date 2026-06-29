@@ -193,7 +193,16 @@ export async function switchMergedBaseInWorkspace(
     {
       tool: 'sandbox_exec',
       args: {
-        command: 'test -z "$(git status --porcelain)" || { git status --short; exit 2; }',
+        // Fail-closed on a `git status` *failure*, not just a dirty tree. The
+        // earlier `test -z "$(git status --porcelain)"` form masked a status
+        // failure: if git exited non-zero with empty stdout, `test -z ""`
+        // succeeds and the tree reads "clean", so a corrupt repo / index lock
+        // would let the switch+FF proceed. Capture the status first and
+        // propagate git's own failure as exit 3 (distinct from dirty = exit 2);
+        // the caller treats any non-zero exit as a failure.
+        command:
+          'status=$(git status --porcelain) || exit 3; ' +
+          '[ -z "$status" ] || { printf \'%s\\n\' "$status"; exit 2; }',
       },
     },
     sandboxId,
