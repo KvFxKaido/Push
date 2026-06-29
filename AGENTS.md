@@ -9,9 +9,9 @@ Startup loaders use the first existing file in this order: `PUSH.md` → `AGENTS
 - Push collapses the mobile dev stack — GitHub, terminal, CI, code, and AI — into one conversation: a git tool with the feel of your everyday AI app, across a web app, an experimental Capacitor Android shell, and a local CLI.
 - Internal runtime roles are **Orchestrator**, **Explorer**, **Coder**, **Reviewer**, and **Auditor**. User-facing surfaces de-emphasize that org chart: Explorer/Coder render as workflow phases through `lib/role-display.ts`, while Reviewer/Auditor keep names where attribution is a trust signal.
 - Repo context is locked to the selected repo.
-- Chats are branch-scoped.
-- The **active branch** is the commit target, push target, diff base, and chat context.
-- Typed branch tools preserve context: the sandbox stays alive; fork migrates the active chat; switch routes to the target branch chat. UI swaps may restart the sandbox.
+- Chats are repo-scoped; the active branch is mutable session state that follows sandbox HEAD.
+- The **active branch** is the commit target, push target, and diff base.
+- Typed branch tools and chat resume preserve the sandbox (warm switch); a branch change updates the active conversation's branch **in place** — it no longer migrates the chat or routes to a per-branch chat. A bare UI swap that bypasses the warm path may restart the sandbox.
 - Models can create branches with `create_branch` and switch with `switch_branch` (`sandbox_create_branch` / `sandbox_switch_branch` still resolve). These keep Push's tracked branch in sync with sandbox HEAD. Raw `git checkout` / `git switch` branch ops and any single bare operand (`feat/foo`, `src/utils.ts`) block in `sandbox_exec` and route through typed tools. File restores require `git checkout -- <path>` or `git checkout HEAD <path>`; ref expressions (`HEAD~1`, `main^`, `branch@{upstream}`) pass through.
 
 ## Repo map

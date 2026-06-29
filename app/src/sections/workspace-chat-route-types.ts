@@ -157,8 +157,8 @@ export interface ChatRouteRepositoryProps {
   handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
   /** Resumes a chat picked from the Chats drawer. Migrates the workspace
    * session to the chat's mode/repo when the current context doesn't match;
-   * same-context taps just route the active chat via pendingResumeChatId so
-   * the sandbox is preserved. */
+   * same-context taps route via pendingResumeChatId so the workspace screen can
+   * warm-restore the saved branch while preserving the sandbox. */
   handleResumeChatFromDrawer: (chatId: string) => void;
 }
 

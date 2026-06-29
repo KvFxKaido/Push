@@ -16,6 +16,7 @@ import { useWorkspaceSandboxAutoBack } from '@/hooks/useWorkspaceSandboxAutoBack
 import { useWorkspaceSandboxRestore } from '@/hooks/useWorkspaceSandboxRestore';
 import { perfMark } from '@/lib/perf-marks';
 import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
+import { restoreResumeBranchIfNeeded } from '@/lib/resume-branch-restore';
 import { useWorkspaceSessionBridge } from './useWorkspaceSessionBridge';
 import { getDefaultMemoryStore } from '@/lib/context-memory-store';
 import type { ActiveRepo, RepoWithActivity, WorkspaceScreenProps } from '@/types';
@@ -321,12 +322,34 @@ export function WorkspaceSessionScreen({
     workspaceSession.kind,
   ]);
 
+  const handlePendingResumeChatSwitch = useCallback(
+    (chatId: string, conversation: (typeof conversations)[string]) => {
+      const currentBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch;
+      void restoreResumeBranchIfNeeded({
+        chatId,
+        repoFullName: conversation.repoFullName,
+        activeRepoFullName: workspaceRepo?.full_name,
+        savedBranch: conversation.branch,
+        currentBranch,
+        surface: 'drawer',
+        switchBranchFromUI,
+      });
+    },
+    [
+      switchBranchFromUI,
+      workspaceRepo?.current_branch,
+      workspaceRepo?.default_branch,
+      workspaceRepo?.full_name,
+    ],
+  );
+
   const { protectMain } = useWorkspaceSessionBridge({
     conversations,
     onConversationIndexChange,
     pendingResumeChatId,
     workspaceSessionId: workspaceSession.id,
     switchChat,
+    onPendingResumeChatSwitch: handlePendingResumeChatSwitch,
     setIsMainProtected,
     repoFullName: workspaceRepo?.full_name ?? undefined,
   });

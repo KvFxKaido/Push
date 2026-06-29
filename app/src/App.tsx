@@ -593,8 +593,9 @@ function App() {
 
   // Tapping a chat in the sidebar must migrate the workspace to match the
   // chat's mode/repo. Branch is mutable session state now: same-repo chat
-  // taps should keep the warm sandbox on its current branch, while cross-repo
-  // resumes can still seed the new repo session from the chat's last branch.
+  // taps are routed through the workspace screen so it can warm-restore the
+  // saved branch, while cross-repo resumes seed the new repo session from the
+  // chat's last branch.
   const handleResumeChatFromDrawer = useCallback(
     (chatId: string) => {
       const conversation = conversationIndex[chatId];

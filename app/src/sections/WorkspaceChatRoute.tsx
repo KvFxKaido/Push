@@ -349,6 +349,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     conversations,
     repos,
     switchChat,
+    switchBranchFromUI,
     handleSelectRepoFromDrawer,
     handleOpenDraftComposer,
     handleStartWorkspace,

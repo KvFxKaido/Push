@@ -530,6 +530,7 @@ export function useChat(
     dirtyConversationIdsRef,
     deletedConversationIdsRef,
     activeChatId,
+    activeChatIdRef,
     activeRepoFullName,
     branchInfoRef,
     repoRef,

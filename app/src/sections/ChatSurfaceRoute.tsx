@@ -177,6 +177,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     conversations,
     repos,
     switchChat,
+    switchBranchFromUI: props.switchBranchFromUI,
     handleSelectRepoFromDrawer,
     handleOpenDraftComposer,
     handleStartWorkspace,
