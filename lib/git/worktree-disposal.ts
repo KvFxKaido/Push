@@ -6,10 +6,12 @@
  * branch in an isolated work area: a real `git worktree` on the CLI lead, a
  * cloned sandbox on the web/Modal surfaces. When the session ends (or its
  * branch/sandbox is reclaimed) we want that area gone — but never at the cost
- * of destroying work that isn't safely on the remote. Both surfaces observe the
- * same state and act on the same verdict, so the "never silently destroy
- * unpushed work" guarantee is defined once here rather than re-derived per
- * surface (CLAUDE.md: promote to lib the moment a second surface needs it).
+ * of destroying work that isn't safely on the remote. The CLI lead routes its
+ * teardown through this decision today; the web/Modal sandbox-reclaim path is
+ * the second surface this is promoted ahead of, so both can act on one verdict
+ * and the "never silently destroy unpushed work" guarantee is defined once here
+ * rather than re-derived per surface (CLAUDE.md: promote to lib the moment a
+ * second surface needs it).
  *
  * The criterion is *recoverability*, not merely "has commits". A clean branch
  * whose commits are all on the remote is safe to remove — it can be re-fetched

@@ -34,13 +34,19 @@ call, decided at session start), with a clean-if-clean lifecycle.
   Every CLI tool already resolves against `state.cwd`, so nothing else needs to
   change — reads, writes, `exec`, and `git_commit` all land in the worktree.
   `SessionState.worktree` persists `{ path, branch, baseSha, repoRoot }`.
-- **Lifecycle — "clean if clean, keep if work exists":** on session end the
-  worktree is removed (and its throwaway branch deleted) **only** when it has no
-  uncommitted changes and no commits beyond its base SHA. Otherwise it is kept
-  and its path reported, so unpushed/uncommitted work is never silently
-  destroyed. Teardown runs in a `finally`, so an aborted or failed run still
-  gets the keep-if-work check; any read failure during the disposability check
-  biases toward keeping.
+- **Lifecycle — "remove if recoverable, keep if work could be lost":** on
+  session end the worktree is removed (and its throwaway branch deleted) when it
+  is clean **and** holds nothing unrecoverable — either no commits beyond its
+  base SHA, or every commit beyond base is already on `origin/<branch>` (a clean
+  fully-pushed branch is re-fetchable, so reclaiming it loses nothing). It is
+  kept and its path reported whenever it is dirty or has unpushed commits, so
+  unpushed/uncommitted work is never silently destroyed. The keep/remove verdict
+  is the pure `decideWorktreeDisposal` in
+  [`lib/git/worktree-disposal.ts`](../../lib/git/worktree-disposal.ts); the older
+  "any commits beyond base ⇒ keep" rule never reclaimed pushed branches, so
+  worktrees accumulated under `~/.push/worktrees`. Teardown runs in a `finally`,
+  so an aborted or failed run still gets the disposability check; any read
+  failure during it biases toward keeping.
 - **Delivery is unchanged:** work in the worktree is committed on its branch and
   shipped through the normal PR flow (`Pushed Branch as Source of Truth`). The
   worktree is disposable compute; the pushed branch is the artifact.
@@ -52,11 +58,15 @@ call, decided at session start), with a clean-if-clean lifecycle.
   fights the "cwd is set at session creation" model.
 - **Reusing `SandboxProvider`?** That abstraction is web/Cloudflare/Modal
   container isolation. The CLI has the real OS and real git; a worktree is the
-  native, zero-infra equivalent. No second consumer ⇒ the helper stays in
-  `cli/worktree.ts`, not `lib/` (CLAUDE.md promotion rule).
+  native, zero-infra equivalent. The worktree *plumbing* stays in
+  `cli/worktree.ts`; only the keep/remove *decision* moved to
+  `lib/git/worktree-disposal.ts` once the web sandbox-reclaim path became its
+  second consumer (CLAUDE.md promotion rule).
 - **Always remove on exit?** Too dangerous for a real-shell lead — it would
-  discard uncommitted work. Persistent named worktrees were the other option but
-  accumulate trees the user must GC; clean-if-clean is the safer default.
+  discard uncommitted or unpushed work. Persistent named worktrees were the
+  other option but accumulate trees the user must GC; remove-if-recoverable is
+  the safer default — it reclaims clean fully-pushed branches without ever
+  discarding work that isn't on the remote.
 
 ## Implementation
 

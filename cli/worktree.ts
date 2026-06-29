@@ -176,11 +176,17 @@ export async function worktreeState(handle: WorktreeHandle): Promise<WorktreeSta
   const revlist = await exec(['rev-list', '--count', `${handle.baseSha}..HEAD`]);
   const commitsAhead = revlist.exitCode === 0 ? Number.parseInt(revlist.stdout.trim(), 10) || 0 : 1;
 
-  // Refs are shared across a repo's worktrees, so `origin/<branch>` resolves
-  // here even though the push happened from another worktree/process. A missing
-  // ref (never pushed) is `null`; a read failure on an existing ref biases to
-  // "unpushed" (1) so we keep rather than risk discarding unpushed commits.
-  const remoteRef = `origin/${handle.branch}`;
+  // Refs are shared across a repo's worktrees, so the remote-tracking ref
+  // resolves here even though the push happened from another worktree/process.
+  // Use the fully-qualified `refs/remotes/origin/<branch>` rather than the
+  // `origin/<branch>` shorthand: the shorthand follows git's disambiguation
+  // order (refs/, refs/tags/, refs/heads/, refs/remotes/), so a tag or local
+  // branch literally named `origin/<branch>` would shadow the real
+  // remote-tracking ref and could make unpushed work look pushed — exactly the
+  // false-positive that would let teardown delete it. A missing ref (never
+  // pushed) is `null`; a read failure on an existing ref biases to "unpushed"
+  // (1) so we keep rather than risk discarding unpushed commits.
+  const remoteRef = `refs/remotes/origin/${handle.branch}`;
   const hasRemote = await exec(['rev-parse', '--verify', '--quiet', remoteRef]);
   let unpushedCommits: number | null;
   if (hasRemote.exitCode !== 0) {
