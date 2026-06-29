@@ -498,6 +498,9 @@ describe('handleGitHubWebhook — comment trigger', () => {
     delivery = 'c-1',
   ): Promise<Response> {
     const body = JSON.stringify(payload);
+    // Stub ctx: the reaction is fired via ctx.waitUntil, so addCommentReaction is
+    // still invoked synchronously (the promise is constructed before waitUntil).
+    const ctx = { waitUntil: () => {} };
     return handleGitHubWebhook(
       makeRequest(body, {
         'X-GitHub-Event': event,
@@ -505,6 +508,7 @@ describe('handleGitHubWebhook — comment trigger', () => {
         'X-Hub-Signature-256': await sign(body, SECRET),
       }),
       env,
+      ctx,
       deps as unknown as GitHubWebhookDeps,
     );
   }
@@ -526,6 +530,52 @@ describe('handleGitHubWebhook — comment trigger', () => {
         supersedeSameHead: true,
       }),
     );
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
+  });
+
+  it('defers the 👀 via ctx.waitUntil rather than blocking the 202', async () => {
+    const deps = makeDeps();
+    const deferred: Promise<unknown>[] = [];
+    const ctx = {
+      waitUntil: (p: Promise<unknown>) => {
+        deferred.push(p);
+      },
+    };
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-defer',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      ctx,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(deferred).toHaveLength(1); // scheduled, not awaited inline
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
+      token: 'install-tok',
+    });
+    await Promise.all(deferred);
+  });
+
+  it('awaits the reaction inline when no ctx is provided (defensive fallback)', async () => {
+    const deps = makeDeps();
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-noctx',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
     expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'eyes', {
       token: 'install-tok',
     });
@@ -604,7 +654,7 @@ describe('handleGitHubWebhook — comment trigger', () => {
     expect(deps.enqueueReviewForExistingPr).not.toHaveBeenCalled();
   });
 
-  it('acks 204 and does not react when the PR is not reviewable', async () => {
+  it('acks 204 and leaves a 😕 when the PR is not reviewable', async () => {
     const deps = makeDeps({
       enqueueReviewForExistingPr: vi.fn(async () => ({
         ok: false as const,
@@ -615,7 +665,10 @@ describe('handleGitHubWebhook — comment trigger', () => {
     });
     const res = await postComment('issue_comment', issueCommentPayload(), deps, commentEnv());
     expect(res.status).toBe(204);
-    expect(deps.addCommentReaction).not.toHaveBeenCalled();
+    // A 'confused' reaction signals received-but-skipped rather than silent ignore.
+    expect(deps.addCommentReaction).toHaveBeenCalledWith('octo/repo', 'issue', 555, 'confused', {
+      token: 'install-tok',
+    });
   });
 
   it('returns 502 when token minting fails (and does not enqueue)', async () => {

@@ -569,6 +569,16 @@ export class PrReviewJob {
       return json({ error: 'MISSING_FIELDS', fields: missing }, 400);
     }
 
+    // ⚠️ INVARIANT: the dedupe → supersede → insert sequence below MUST stay
+    // synchronous — do NOT introduce an `await` until after insertQueuedReview().
+    // The reservation is what makes a concurrent redelivery dedupe and a newer
+    // head SHA coalesce instead of double-queueing; an external await parked
+    // mid-block let a redelivery race the unique insert (Codex P1, PR #910 — see
+    // the pin-await note further down, which is deliberately the FIRST yield).
+    // `supersedeSameHead` widens the coalescing scope to the whole PR, which
+    // makes this atomicity matter even more. Anything async (config/KV/network)
+    // belongs after the insert.
+
     // Replay dedupe: same delivery already seen → no-op.
     const existing = this.ctx.storage.sql
       .exec('SELECT status FROM review WHERE delivery_id = ?', input.deliveryId)

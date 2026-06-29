@@ -1353,7 +1353,7 @@ export async function addCommentReaction(
   repo: string,
   kind: CommentReactionKind,
   commentId: number,
-  content: 'eyes' | '+1' | 'rocket' | 'heart',
+  content: '+1' | '-1' | 'laugh' | 'confused' | 'heart' | 'hooray' | 'rocket' | 'eyes',
   auth?: GitHubAuth,
 ): Promise<boolean> {
   const path = kind === 'review' ? 'pulls/comments' : 'issues/comments';

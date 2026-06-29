@@ -129,7 +129,7 @@ export default {
       const exactRoute = matchExactApiRoute(url.pathname, request.method);
       if (exactRoute) {
         return withRequestIdOnResponse(
-          await exactRoute.handler(requestWithId, env),
+          await exactRoute.handler(requestWithId, env, ctx),
           requestId,
           requestWithId,
           env,
@@ -412,7 +412,10 @@ function withRequestIdOnResponse(
 type ExactApiRoute = {
   path: string;
   method: 'GET' | 'POST';
-  handler: (request: Request, env: Env) => Promise<Response>;
+  // `ctx` is threaded so a handler can defer best-effort work past its response
+  // via `ctx.waitUntil` (the webhook reaction ack); handlers that don't need it
+  // simply ignore the extra arg.
+  handler: (request: Request, env: Env, ctx: ExecutionContext) => Promise<Response>;
 };
 
 const EXACT_API_ROUTES: ExactApiRoute[] = [
