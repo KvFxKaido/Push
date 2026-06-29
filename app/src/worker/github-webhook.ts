@@ -339,6 +339,15 @@ const DEFAULT_DEPS: GitHubWebhookDeps = {
 };
 
 /**
+ * The slice of `ExecutionContext` the comment path needs — just `waitUntil`, to
+ * defer the best-effort reaction past the 202 ack. Kept structural so unit tests
+ * can pass a stub without the full Workers runtime type.
+ */
+export interface WebhookExecutionCtx {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+/**
  * `/api/github/webhook` handler. Gates the delivery (signature → parse →
  * event-select → allowlist), then enqueues to the `PrReviewJob` DO and acks 202.
  * `pull_request` opens fire a review directly; `issue_comment` /
@@ -348,6 +357,7 @@ const DEFAULT_DEPS: GitHubWebhookDeps = {
 export async function handleGitHubWebhook(
   request: Request,
   env: Env,
+  ctx?: WebhookExecutionCtx,
   deps: GitHubWebhookDeps = DEFAULT_DEPS,
 ): Promise<Response> {
   const deliveryId = request.headers.get('X-GitHub-Delivery') ?? '';
@@ -381,6 +391,7 @@ export async function handleGitHubWebhook(
   if (eventName && COMMENT_EVENTS.has(eventName)) {
     return handleCommentReviewTrigger(
       env,
+      ctx,
       deps,
       payload,
       eventName,
@@ -481,6 +492,7 @@ export async function handleGitHubWebhook(
  */
 async function handleCommentReviewTrigger(
   env: Env,
+  ctx: WebhookExecutionCtx | undefined,
   deps: GitHubWebhookDeps,
   payload: unknown,
   eventName: string,
@@ -535,6 +547,40 @@ async function handleCommentReviewTrigger(
     return json({ error: 'TOKEN_MINT_FAILED' }, 502);
   }
 
+  // Best-effort comment reaction, deferred via waitUntil so it never blocks the
+  // 202 (it's a second sequential GitHub call after the enqueue). With no
+  // ExecutionContext (defensive / unit tests) it's awaited inline instead.
+  // addCommentReaction returns false rather than throwing, so a failure only logs.
+  const ackReaction = async (content: 'eyes' | 'confused'): Promise<void> => {
+    const posted = deps
+      .addCommentReaction(req.repoFullName, req.commentKind, req.commentId, content, { token })
+      .then((reacted) => {
+        if (!reacted) {
+          log('warn', 'webhook_comment_reaction_failed', {
+            deliveryId,
+            repo: req.repoFullName,
+            commentId: req.commentId,
+            content,
+          });
+        }
+      })
+      .catch((err) => {
+        // addCommentReaction is contracted not to throw, but harden regardless:
+        // a best-effort ack must never reject into the deferred waitUntil task
+        // (an unhandled rejection) nor throw on the inline-await fallback (which
+        // would 500 the webhook). Contain it here so `posted` never rejects.
+        log('warn', 'webhook_comment_reaction_failed', {
+          deliveryId,
+          repo: req.repoFullName,
+          commentId: req.commentId,
+          content,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    if (ctx) ctx.waitUntil(posted);
+    else await posted;
+  };
+
   const result = await deps.enqueueReviewForExistingPr(env, {
     repo: req.repoFullName,
     prNumber: req.prNumber,
@@ -549,15 +595,16 @@ async function handleCommentReviewTrigger(
 
   if (!result.ok) {
     if (result.code === 'NOT_REVIEWABLE') {
-      // The PR is closed/draft — a valid trigger but nothing to review. Ack 204
-      // (no body); the detail is in the log, and no 👀 is left since we did
-      // nothing.
+      // The PR is closed/draft — a valid trigger but nothing to review. Leave a
+      // 😕 so the commenter sees it was received-but-skipped (a silent 204 is
+      // indistinguishable from the bot ignoring them), then ack 204.
       log('info', 'webhook_comment_not_reviewable', {
         deliveryId,
         repo: req.repoFullName,
         pr: req.prNumber,
         message: result.message,
       });
+      await ackReaction('confused');
       return new Response(null, { status: 204 });
     }
     log('error', 'webhook_comment_enqueue_failed', {
@@ -569,23 +616,8 @@ async function handleCommentReviewTrigger(
     return json({ error: result.code }, result.httpStatus);
   }
 
-  // Best-effort ack. Awaited (the handler has no ExecutionContext.waitUntil) but
-  // it's a single fast POST inside the delivery budget; a failure is logged, never
-  // thrown (addCommentReaction returns false rather than rejecting).
-  const reacted = await deps.addCommentReaction(
-    req.repoFullName,
-    req.commentKind,
-    req.commentId,
-    'eyes',
-    { token },
-  );
-  if (!reacted) {
-    log('warn', 'webhook_comment_reaction_failed', {
-      deliveryId,
-      repo: req.repoFullName,
-      commentId: req.commentId,
-    });
-  }
+  // 👀 to confirm the request landed — deferred so it doesn't delay the 202.
+  await ackReaction('eyes');
 
   log('info', 'webhook_comment_enqueued', {
     deliveryId,
