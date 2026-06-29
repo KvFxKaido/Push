@@ -104,21 +104,23 @@ export function useChatCardActions({
 
   const injectSyntheticMessage = useCallback(
     (chatId: string, content: string) => {
-      const branch = resolveMessageWriteBranch(branchInfoRef.current);
       const msg: ChatMessage = {
         id: createId(),
         role: 'assistant',
         content,
         timestamp: Date.now(),
         status: 'done',
-        ...(branch !== undefined ? { branch } : {}),
       };
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
+        // Resolve the stamp inside the updater so it prefers the fresh
+        // conversation branch over the possibly-stale live ref.
+        const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+        const stamped = branch !== undefined ? { ...msg, branch } : msg;
         const updated = {
           ...prev,
-          [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() },
+          [chatId]: { ...conv, messages: [...conv.messages, stamped], lastMessageAt: Date.now() },
         };
         dirtyConversationIdsRef.current.add(chatId);
         return updated;
@@ -132,22 +134,22 @@ export function useChatCardActions({
       if (card.type === 'sandbox-state') {
         return;
       }
-      const branch = resolveMessageWriteBranch(branchInfoRef.current);
       const msg: ChatMessage = {
         id: createId(),
         role: 'assistant',
         content,
         timestamp: Date.now(),
         status: 'done',
-        ...(branch !== undefined ? { branch } : {}),
         cards: [card],
       };
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
+        const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+        const stamped = branch !== undefined ? { ...msg, branch } : msg;
         const updated = {
           ...prev,
-          [chatId]: { ...conv, messages: [...conv.messages, msg], lastMessageAt: Date.now() },
+          [chatId]: { ...conv, messages: [...conv.messages, stamped], lastMessageAt: Date.now() },
         };
         dirtyConversationIdsRef.current.add(chatId);
         return updated;
@@ -592,24 +594,29 @@ export function useChatCardActions({
                       repo,
                     );
                     if (ciResult.card) {
-                      const branch = resolveMessageWriteBranch(branchInfoRef.current);
                       const ciMsg: ChatMessage = {
                         id: createId(),
                         role: 'assistant',
                         content: 'CI status after push:',
                         timestamp: Date.now(),
                         status: 'done',
-                        ...(branch !== undefined ? { branch } : {}),
                         cards: [ciResult.card],
                       };
                       setConversations((prev) => {
                         const conv = prev[chatId];
                         if (!conv) return prev;
+                        // Stamp from the fresh conversation branch — this fires in a
+                        // setTimeout after push, so the live ref may have moved on.
+                        const branch = resolveMessageWriteBranch(
+                          branchInfoRef.current,
+                          conv.branch,
+                        );
+                        const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
                         const updated = {
                           ...prev,
                           [chatId]: {
                             ...conv,
-                            messages: [...conv.messages, ciMsg],
+                            messages: [...conv.messages, stamped],
                             lastMessageAt: Date.now(),
                           },
                         };
@@ -750,24 +757,26 @@ export function useChatCardActions({
                     repo,
                   );
                   if (ciResult.card) {
-                    const branch = resolveMessageWriteBranch(branchInfoRef.current);
                     const ciMsg: ChatMessage = {
                       id: createId(),
                       role: 'assistant',
                       content: 'CI status after push:',
                       timestamp: Date.now(),
                       status: 'done',
-                      ...(branch !== undefined ? { branch } : {}),
                       cards: [ciResult.card],
                     };
                     setConversations((prev) => {
                       const conv = prev[chatId];
                       if (!conv) return prev;
+                      // Stamp from the fresh conversation branch — this fires in a
+                      // setTimeout after push, so the live ref may have moved on.
+                      const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
+                      const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
                       const updated = {
                         ...prev,
                         [chatId]: {
                           ...conv,
-                          messages: [...conv.messages, ciMsg],
+                          messages: [...conv.messages, stamped],
                           lastMessageAt: Date.now(),
                         },
                       };
