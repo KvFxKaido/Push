@@ -1,6 +1,6 @@
 import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { MergeDetectedBanner } from './MergeDetectedBanner';
+import { MergeDetectedBannerView } from './MergeDetectedBanner';
 
 function textContent(node: ReactNode): string {
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -30,24 +30,33 @@ function findButtonByText(node: ReactNode, text: string): ReactElement<{ onClick
 describe('MergeDetectedBanner', () => {
   it('continues the chat via mergeBranchInUI with merge-detected provenance', () => {
     const mergeBranchInUI = vi.fn();
-    const element = MergeDetectedBanner({
+    const onContinue = vi.fn(() => {
+      void mergeBranchInUI('develop', {
+        from: 'feature/merged',
+        prNumber: 42,
+        source: 'merge_detected',
+      });
+    });
+    const element = MergeDetectedBannerView({
       branch: 'feature/merged',
       defaultBranch: 'main',
+      baseBranch: 'develop',
       pr: {
         number: 42,
         title: 'Ship it',
         url: 'https://github.test/pr/42',
         mergedAt: '2026-06-12T00:00:00Z',
-        baseBranch: 'main',
+        baseBranch: 'develop',
         headSha: 'sha-merged',
       },
-      mergeBranchInUI,
+      onContinue,
       onDismiss: vi.fn(),
     });
 
-    findButtonByText(element, 'Continue on main').props.onClick();
+    findButtonByText(element, 'Continue on develop').props.onClick();
 
-    expect(mergeBranchInUI).toHaveBeenCalledWith('main', {
+    expect(onContinue).toHaveBeenCalledTimes(1);
+    expect(mergeBranchInUI).toHaveBeenCalledWith('develop', {
       from: 'feature/merged',
       prNumber: 42,
       source: 'merge_detected',

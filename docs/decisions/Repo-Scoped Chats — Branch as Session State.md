@@ -1,7 +1,7 @@
 # Repo-Scoped Chats — Branch as Session State
 
 Date: 2026-06-29
-Status: **Draft** — in progress. Steps 1–2 shipped (#1257, #1258); step 3 (merge→base + FF) pending. Flips to **Current** when step 3 lands (see Status flip plan). Owner: Push web/runtime.
+Status: **Current** — all three sequencing steps have landed and are unit-tested: repo-scoped chat state (#1257), repo-keyed routing/UI (#1258), and merge→base + FF (this PR). The end-to-end acceptance loop (a live `branch → work → merge → back-to-base` run, sandbox warm throughout) has **not** been manually walked in the app yet — pending. Owner: Push web/runtime.
 Tracking: [#1255](https://github.com/KvFxKaido/Push/issues/1255) (sequencing).
 
 Related: the warm UI branch-switch + branch-desync work (the *follow* this keeps and makes
@@ -157,9 +157,9 @@ branch-scoping the chat.
   branch+PR for a one-liner" path (Protect-Main-gated) is a separate question; today it's the user's
   manual escape hatch.
 
-## Status flip plan
+## Status note
 
-Flip **Draft → Current** when sequencing steps 1–3 land and a chat survives a `branch → work → merge →
-back-to-base` loop in one conversation without re-routing, with the sandbox warm throughout. (Steps
-1–3, not 1–2: the acceptance loop's `merge → back-to-base` *is* step 3 — push-agent on #1256.) Fold the
-durable parts into the platform/sessions decision doc once the model stabilizes.
+This flipped **Draft → Current** on sequencing steps 1–3 landing (code-complete + unit-tested). The
+doc's original gate also asked for the live `branch → work → merge → back-to-base` acceptance loop to
+be walked in the app, sandbox warm throughout — that manual verification is still **pending**, tracked
+in #1255. Fold the durable parts into the platform/sessions decision doc once the model stabilizes.

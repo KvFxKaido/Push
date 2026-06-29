@@ -207,7 +207,7 @@ interface ChatContainerProps {
   mergeBranchInUI?: (
     toBranch: string,
     opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
-  ) => void;
+  ) => Promise<{ ok: boolean; errorMessage?: string } | void> | void;
   onDismissMergeDetected?: () => void;
   onEditUserMessage?: (messageId: string) => void;
   onRegenerateLastResponse?: () => void;

@@ -63,6 +63,14 @@ export interface SwitchBranchInWorkspaceResult {
   raw?: ToolExecutionResult;
 }
 
+export interface SwitchMergedBaseInWorkspaceResult {
+  ok: boolean;
+  branchSwitch?: BranchSwitchPayload;
+  errorMessage?: string;
+  noSandbox?: true;
+  raw?: ToolExecutionResult;
+}
+
 /** Fallback text cleaner for sandbox tool output that lacks a structured
  *  error. Strips both the leading `[Tool Error]` / `[Tool Result]` envelope
  *  AND the trailing `error_type:` / `retryable:` diagnostic lines that
@@ -75,6 +83,38 @@ export function cleanToolText(text: string): string {
     .replace(/^\s*error_type:\s.*$/gm, '')
     .replace(/^\s*retryable:\s.*$/gm, '')
     .trim();
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`;
+}
+
+function isSafeBranchRef(value: string): boolean {
+  if (!value || value.startsWith('-')) return false;
+  if (value.includes('..') || value.includes('@{') || value.includes('\\')) return false;
+  if (/[~^:?*[\]\s;|&`$<>(){}]/.test(value)) return false;
+  return !value.split('/').some((part) => part === '' || part === '.' || part.endsWith('.'));
+}
+
+function toolErrorMessage(result: ToolExecutionResult): string {
+  const struct = result.structuredError;
+  return struct?.message
+    ? struct.detail
+      ? `${struct.message} — ${struct.detail}`
+      : struct.message
+    : cleanToolText(result.text);
+}
+
+function sandboxExitCode(result: ToolExecutionResult): number | undefined {
+  return result.card?.type === 'sandbox' ? result.card.data.exitCode : undefined;
+}
+
+function compactStatusLines(status: string): string {
+  return status
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join('; ');
 }
 
 /** Create a new branch from the current sandbox HEAD (or from `from` if
@@ -123,6 +163,101 @@ export async function forkBranchInWorkspace(
     ok: true,
     branchSwitch: result.branchSwitch,
     raw: result,
+  };
+}
+
+/** Follow a merged PR to its base branch without tearing down the sandbox:
+ *  typed branch switch first, then update the base from origin with FF-only. */
+export async function switchMergedBaseInWorkspace(
+  sandboxId: string | null,
+  branch: string,
+  opts?: { from?: string; prNumber?: number; source?: BranchSwitchPayload['source'] },
+  executeTool: SandboxToolExecutor = executeSandboxTool,
+): Promise<SwitchMergedBaseInWorkspaceResult> {
+  if (!sandboxId) {
+    return {
+      ok: false,
+      noSandbox: true,
+      errorMessage: 'No active sandbox — start one before switching branches.',
+    };
+  }
+
+  if (!isSafeBranchRef(branch)) {
+    return {
+      ok: false,
+      errorMessage: `Invalid branch name "${branch}".`,
+    };
+  }
+
+  const cleanTreeResult = await executeTool(
+    {
+      tool: 'sandbox_exec',
+      args: {
+        command: 'test -z "$(git status --porcelain)" || { git status --short; exit 2; }',
+      },
+    },
+    sandboxId,
+  );
+  const cleanTreeExitCode = sandboxExitCode(cleanTreeResult);
+  if (
+    cleanTreeResult.structuredError ||
+    /^\[Tool Error/i.test(cleanTreeResult.text) ||
+    (cleanTreeExitCode !== undefined && cleanTreeExitCode !== 0)
+  ) {
+    const dirtyStatus =
+      cleanTreeExitCode === 2 && cleanTreeResult.card?.type === 'sandbox'
+        ? compactStatusLines(cleanTreeResult.card.data.stdout)
+        : '';
+    return {
+      ok: false,
+      errorMessage: dirtyStatus
+        ? `Workspace has uncommitted changes: ${dirtyStatus}`
+        : toolErrorMessage(cleanTreeResult),
+      raw: cleanTreeResult,
+    };
+  }
+
+  const switchResult = await switchBranchInWorkspace(sandboxId, branch, executeTool);
+  if (!switchResult.ok) return switchResult;
+
+  const branchSwitch: BranchSwitchPayload = {
+    name: branch,
+    kind: 'merged',
+    ...(opts?.from ? { from: opts.from } : {}),
+    ...(opts?.prNumber ? { prNumber: opts.prNumber } : {}),
+    source: opts?.source ?? 'ui-merge',
+  };
+
+  const quotedBranch = shellQuote(branch);
+  const ffResult = await executeTool(
+    {
+      tool: 'sandbox_exec',
+      args: {
+        command: `git fetch origin ${quotedBranch} && git pull --ff-only origin ${quotedBranch}`,
+        allowDirectGit: true,
+      },
+    },
+    sandboxId,
+  );
+
+  const ffExitCode = sandboxExitCode(ffResult);
+  if (
+    ffResult.structuredError ||
+    /^\[Tool Error/i.test(ffResult.text) ||
+    (ffExitCode !== undefined && ffExitCode !== 0)
+  ) {
+    return {
+      ok: false,
+      branchSwitch,
+      errorMessage: toolErrorMessage(ffResult),
+      raw: ffResult,
+    };
+  }
+
+  return {
+    ok: true,
+    branchSwitch,
+    raw: ffResult,
   };
 }
 

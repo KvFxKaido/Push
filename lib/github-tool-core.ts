@@ -277,6 +277,15 @@ export type GitHubCoreCard =
 export interface GitHubCoreToolResult {
   text: string;
   card?: GitHubCoreCard;
+  branchSwitch?: {
+    name: string;
+    kind: 'forked' | 'switched' | 'merged';
+    from?: string;
+    previous?: string;
+    sha?: string;
+    prNumber?: number;
+    source?: string;
+  };
 }
 
 export type GitHubCoreToolCall =
@@ -2163,6 +2172,35 @@ export async function executeMergePRTool(
 ): Promise<GitHubCoreToolResult> {
   const headers = runtime.buildHeaders(DEFAULT_ACCEPT);
   const method = mergeMethod || 'merge';
+  let branchSwitch: GitHubCoreToolResult['branchSwitch'];
+
+  try {
+    const prRes = await runtime.githubFetch(
+      buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}`),
+      { headers },
+    );
+    if (prRes.ok) {
+      const prData = (await prRes.json()) as {
+        head?: { ref?: string };
+        base?: { ref?: string };
+      };
+      const baseBranch = prData.base?.ref?.trim();
+      if (baseBranch) {
+        const headBranch = prData.head?.ref?.trim();
+        branchSwitch = {
+          name: baseBranch,
+          kind: 'merged',
+          ...(headBranch ? { from: headBranch } : {}),
+          prNumber,
+          source: 'merge_pr',
+        };
+      }
+    }
+  } catch {
+    // Best-effort metadata fetch: merging should not fail just because the
+    // branch-switch hint could not be enriched.
+  }
+
   const res = await runtime.githubFetch(
     buildGitHubApiUrl(runtime, `/repos/${repo}/pulls/${prNumber}/merge`),
     {
@@ -2197,6 +2235,7 @@ export async function executeMergePRTool(
     ]
       .filter(Boolean)
       .join('\n'),
+    ...(branchSwitch ? { branchSwitch } : {}),
   };
 }
 

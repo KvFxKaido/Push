@@ -51,6 +51,44 @@ function run(runtime: GitHubCoreRuntime, call: GitHubCoreToolCall) {
   return executeGitHubCoreTool(runtime, call);
 }
 
+describe('merge_pr', () => {
+  it('emits a merged branch switch payload for the PR base', async () => {
+    const { runtime, calls } = makeRuntime((url, init) => {
+      if (url.endsWith('/repos/o/r/pulls/42') && init?.method !== 'PUT') {
+        return {
+          body: {
+            head: { ref: 'feature/merged' },
+            base: { ref: 'develop' },
+          },
+        };
+      }
+      if (url.endsWith('/repos/o/r/pulls/42/merge')) {
+        return { body: { sha: 'abcdef1234567890', message: 'merged' } };
+      }
+      return { status: 404 };
+    });
+
+    const result = await run(runtime, {
+      tool: 'merge_pr',
+      args: { repo: 'o/r', pr_number: 42, merge_method: 'squash' },
+    });
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'https://api.github.com/repos/o/r/pulls/42',
+      'https://api.github.com/repos/o/r/pulls/42/merge',
+    ]);
+    expect(calls[1]?.init?.method).toBe('PUT');
+    expect(result.text).toContain('PR #42 merged on o/r via squash.');
+    expect(result.branchSwitch).toEqual({
+      name: 'develop',
+      kind: 'merged',
+      from: 'feature/merged',
+      prNumber: 42,
+      source: 'merge_pr',
+    });
+  });
+});
+
 describe('get_job_logs', () => {
   const jobs = {
     jobs: [

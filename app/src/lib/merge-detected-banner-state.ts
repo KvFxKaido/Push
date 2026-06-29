@@ -6,6 +6,7 @@ const DISMISSED_STORAGE_KEY = 'push:merge-detected-banner-dismissed-chats';
 export interface MergeDetectedBannerState {
   branch: string;
   defaultBranch: string;
+  baseBranch: string;
   pr: MergedPRForBranch;
 }
 
@@ -47,16 +48,15 @@ export function visibleMergeDetectedBannerForChat(
   return candidate;
 }
 
-/** Build a banner candidate only when the merged PR actually targeted the
- *  default branch. The banner claims "<branch> was merged into <default>" and
- *  migrates the chat to <default>; a PR that merged into a non-default base
- *  (stacked PR, release branch, develop) would make that claim false and
- *  strand the conversation on the wrong branch, so it must not surface. */
+/** Build a banner candidate when the merged PR targeted any concrete base.
+ *  The action follows the PR base, not the repo default, so stacked/release
+ *  branch merges are safe to surface. */
 export function mergeDetectedCandidate(
   branch: string,
   defaultBranch: string,
   pr: MergedPRForBranch | null,
 ): MergeDetectedBannerState | null {
-  if (!pr || pr.baseBranch !== defaultBranch) return null;
-  return { branch, defaultBranch, pr };
+  const baseBranch = pr?.baseBranch?.trim();
+  if (!pr || !baseBranch || branch === baseBranch) return null;
+  return { branch, defaultBranch, baseBranch, pr };
 }
