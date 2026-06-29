@@ -29,8 +29,17 @@ describe('shouldBranchOnFirstPrompt', () => {
     expect(shouldBranchOnFirstPrompt({ ...base, currentBranch: 'feat/x' })).toBe(false);
   });
 
-  it('treats a missing currentBranch as being on the default branch', () => {
-    expect(shouldBranchOnFirstPrompt({ ...base, currentBranch: undefined })).toBe(true);
+  it('does not branch when the current branch is unknown', () => {
+    // Unknown branch must not be treated as the default branch — a session
+    // started on an existing branch (whose metadata hasn't loaded) must not be
+    // force-forked off it.
+    expect(shouldBranchOnFirstPrompt({ ...base, currentBranch: undefined })).toBe(false);
+  });
+
+  it('does not branch when the current branch differs from the default', () => {
+    expect(
+      shouldBranchOnFirstPrompt({ ...base, currentBranch: 'main', defaultBranch: 'develop' }),
+    ).toBe(false);
   });
 });
 

@@ -403,10 +403,17 @@ export function useChat(
         const conv = conversations[id];
         if (!activeRepoFullName) return !conv.repoFullName;
         if (conv.repoFullName !== activeRepoFullName) return false;
-        if (!currentBranch) return true;
-        const isOnDefaultBranch = currentBranch === (defaultBranch || 'main');
+        // Branch filter for a repo session. `currentBranch` is now the *raw*
+        // session branch (undefined until repo metadata loads), so resolve the
+        // default fallback here rather than treating unknown as "show every
+        // branch's chats" — an unfiltered window would let the auto-switch select
+        // a conversation from another branch and violate branch-scoping. Scratch /
+        // no-repo already returned above, so an unknown branch here means a repo
+        // session mid-load: filter to the default branch, the pre-raw behavior.
+        const effectiveBranch = currentBranch || defaultBranch || 'main';
+        const isOnDefaultBranch = effectiveBranch === (defaultBranch || 'main');
         if (!conv.branch) return isOnDefaultBranch;
-        return conv.branch === currentBranch;
+        return conv.branch === effectiveBranch;
       })
       .sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt);
   }, [conversations, activeRepoFullName, currentBranch, defaultBranch]);

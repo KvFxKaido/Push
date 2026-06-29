@@ -540,6 +540,32 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(msgs[msgs.length - 1].status).toBe('streaming');
   });
 
+  it('keeps the immediate streaming placeholder when starting on a non-default branch', async () => {
+    // A session started on an existing branch (currentBranch unknown here) must
+    // not defer its placeholder: the fork won't fire, so deferring would leave
+    // an empty spinner with no divider ever arriving.
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
+      ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
+    });
+    const callbacks = makeCallbacks();
+    await prepareSendContext(
+      {
+        trimmedText: 'Add a feature',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+      },
+      refs,
+      callbacks,
+      makeBranchDeps({ currentBranch: undefined, defaultBranch: 'main' }),
+    );
+    // user + immediately-appended streaming assistant placeholder.
+    const msgs = callbacks.capturedConversations['chat-1'].messages;
+    expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(msgs[msgs.length - 1].status).toBe('streaming');
+  });
+
   it('skips branching entirely when no branchDeps are provided', async () => {
     const refs = makeRefs({
       conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },

@@ -315,6 +315,42 @@ describe('useChat — public API surface', () => {
     expect(hook.lockedModel).toBe('gpt-4o');
   });
 
+  it('filters sortedChatIds to the default branch when the current branch is unknown', () => {
+    // Regression: `currentBranch` is the raw session branch (undefined until repo
+    // metadata loads). An unknown branch must filter to the default branch, not
+    // expose every branch's chats — otherwise the auto-switch could select a
+    // conversation from another branch and break branch-scoping (#1249 Codex P2).
+    chatPersistence.loadConversations.mockReturnValueOnce({
+      // 'chat-1' is the active chat (loadActiveChatId), so it must exist or the
+      // hook resets to a default single chat.
+      'chat-1': {
+        id: 'chat-1',
+        title: 'On main',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 2,
+        repoFullName: 'owner/repo',
+        branch: 'main',
+      },
+      'chat-feature': {
+        id: 'chat-feature',
+        title: 'On a feature branch',
+        messages: [],
+        createdAt: 1,
+        lastMessageAt: 3, // newer — would sort first (and win auto-switch) if not filtered out
+        repoFullName: 'owner/repo',
+        branch: 'feature/x',
+      },
+    });
+    const hook = useChat('owner/repo', undefined, undefined, {
+      currentBranch: undefined,
+      defaultBranch: 'main',
+    });
+    // Without the default-branch fallback the unfiltered list would be
+    // ['chat-feature', 'chat-1'] (feature is newer); the fix scopes it to main.
+    expect(hook.sortedChatIds).toEqual(['chat-1']);
+  });
+
   it('setSandboxId updates the mirror ref consumers read from', () => {
     const hook = useChat('owner/repo');
     // The sandbox id ref is among the useRef slots; rather than indexing,

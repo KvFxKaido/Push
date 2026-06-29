@@ -14,10 +14,17 @@ Owner: Push
 
 ## Update — Branch on First Prompt (2026-06-28)
 
-Working on `main` with an ephemeral sandbox is retired. A repo-backed session now
-forks a work branch the moment the user sends their **first message** — named
-from that prompt — before any tool call, so the session never *works* on the
-default branch (mirrors Claude Code's branch-per-session). Pragmatic ordering:
+Working on `main` with an ephemeral sandbox is retired. A repo-backed session
+**that starts on the default branch** now forks a work branch the moment the user
+sends their **first message** — named from that prompt — before any tool call, so
+the session never *works* on the default branch (mirrors Claude Code's
+branch-per-session). The trigger is gated on being *positively* on the default
+branch (`currentBranch === defaultBranch`, with the **raw** current branch — an
+unknown branch is **not** treated as the default): a session the user
+deliberately started on an existing branch is left there, never force-forked off
+it. Erring toward "don't branch" loses no protection — the commit-time fail-safe
+above still blocks an actual commit landing on the default branch. Pragmatic
+ordering:
 the sandbox has already cloned `main` (prewarm), then immediately
 `sandbox_create_branch` (→ `git checkout -b`); the conversation migrates onto the
 new branch via the shared `applyBranchSwitchPayload` dispatcher. The branch stays

@@ -227,7 +227,11 @@ export function WorkspaceSessionScreen({
       },
     },
     {
-      currentBranch: workspaceRepo?.current_branch || workspaceRepo?.default_branch,
+      // Raw current branch (no `|| default_branch` collapse): branch-on-first-
+      // prompt only fires when this is *known* to equal the default branch, so
+      // an unknown branch must stay undefined rather than masquerade as the
+      // default. Downstream consumers re-apply their own `?? defaultBranch`.
+      currentBranch: workspaceRepo?.current_branch,
       defaultBranch: workspaceRepo?.default_branch,
     },
     {
