@@ -3,6 +3,7 @@ import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { getRoleDisplay, getSourceLabel, getSubagentLabel } from '@push/lib/role-display';
+import { resolveToolName } from '@/lib/tool-registry';
 import { cn } from '@/lib/utils';
 import {
   Sandbox,
@@ -45,12 +46,35 @@ function formatSandboxDuration(durationMs: number): string {
   return durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`;
 }
 
+// Run events carry the tool's *public* name (`getToolName` → `getToolPublicName`),
+// so `sandbox_exec` arrives as `exec`. Resolve through the registry so the card
+// matches by canonical name regardless of which alias the event carries (web
+// emits `exec`, and aliases/canonical must work on every surface).
+function isSandboxExecEvent(toolName: string): boolean {
+  return resolveToolName(toolName) === 'sandbox_exec';
+}
+
+// A non-zero `sandbox_exec` exit is NOT a tool error: `sandbox-tools.ts` wraps it
+// in a `[Tool Result — sandbox_exec]` envelope (with `Exit code: N`), and `isError`
+// is only set for dispatch/unreachable failures (`[Tool Error]`). So a failing
+// command would otherwise read as "Completed". Recover the exit code from the
+// summarized preview to flag the card as failed (matching SandboxCard's
+// expand-on-non-zero behavior). Returns null when no exit code is present (e.g. a
+// command long enough to push it past the preview cap) — the card then falls back
+// to `isError` alone.
+function parseExitCodeFromPreview(preview: string): number | null {
+  const match = preview.match(/Exit code:\s*(-?\d+)/);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
 function ConsoleSandboxItem({ item }: { item: ConsoleSandboxPayload }) {
   return (
     <Sandbox defaultOpen={item.state !== 'completed'}>
       <SandboxHeader title={item.command || 'sandbox_exec'} state={item.state} />
       <SandboxContent>
-        <SandboxTabs defaultValue="code">
+        {/* On failure, open straight to the Console tab so the error output is
+            visible without an extra click (the command is still one tab away). */}
+        <SandboxTabs defaultValue={item.state === 'error' ? 'console' : 'code'}>
           <SandboxTabsBar>
             <SandboxTabsList>
               <SandboxTabsTrigger value="code">Code</SandboxTabsTrigger>
@@ -105,7 +129,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
     const completedSandboxExecIds = new Set(
       runEvents
         .filter(
-          (event) => event.type === 'tool.execution_complete' && event.toolName === 'sandbox_exec',
+          (event) => event.type === 'tool.execution_complete' && isSandboxExecEvent(event.toolName),
         )
         .map(
           (event) => (event as Extract<RunEvent, { type: 'tool.execution_complete' }>).executionId,
@@ -161,7 +185,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           });
           break;
         case 'tool.execution_start':
-          if (event.toolName === 'sandbox_exec') {
+          if (isSandboxExecEvent(event.toolName)) {
             // A completed run renders from execution_complete below; only emit a
             // running card when no completion exists for this execution yet.
             if (!completedSandboxExecIds.has(event.executionId)) {
@@ -181,7 +205,9 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           });
           break;
         case 'tool.execution_complete':
-          if (event.toolName === 'sandbox_exec') {
+          if (isSandboxExecEvent(event.toolName)) {
+            const exitCode = parseExitCodeFromPreview(event.preview);
+            const failed = event.isError || (exitCode !== null && exitCode !== 0);
             items.push({
               type: 'sandbox',
               content: event.target || 'sandbox_exec',
@@ -189,7 +215,7 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
               sandbox: {
                 command: event.target || '',
                 output: event.preview,
-                state: event.isError ? 'error' : 'completed',
+                state: failed ? 'error' : 'completed',
                 durationMs: event.durationMs,
               },
             });

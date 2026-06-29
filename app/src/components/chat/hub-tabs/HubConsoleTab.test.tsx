@@ -107,7 +107,7 @@ describe('HubConsoleTab', () => {
     expect(html).toContain('Thinking...');
   });
 
-  it('renders a completed sandbox_exec as a Sandbox card instead of flat lines', () => {
+  it('renders a completed sandbox_exec as a Sandbox card, matching the public tool name', () => {
     const html = renderToStaticMarkup(
       <HubConsoleTab
         messages={[]}
@@ -119,7 +119,8 @@ describe('HubConsoleTab', () => {
             type: 'tool.execution_start',
             round: 0,
             executionId: 'exec-1',
-            toolName: 'sandbox_exec',
+            // Run events carry the registry public name; sandbox_exec → 'exec'.
+            toolName: 'exec',
             toolSource: 'sandbox',
           },
           {
@@ -128,27 +129,29 @@ describe('HubConsoleTab', () => {
             type: 'tool.execution_complete',
             round: 0,
             executionId: 'exec-1',
-            toolName: 'sandbox_exec',
+            toolName: 'exec',
             toolSource: 'sandbox',
             durationMs: 1500,
             isError: false,
-            preview: 'hello world',
+            preview: 'Command: echo "hello world" Exit code: 0 hello world',
             target: 'echo "hello world"',
           },
         ]}
       />,
     );
 
-    // The command lands in the collapsed card header (completed → collapsed).
+    // The 'exec' public name must still resolve to the sandbox card (not the
+    // flat result line). Command lands in the collapsed header (completed →
+    // collapsed).
     expect(html).toContain('echo &quot;hello world&quot;');
     expect(html).toContain('Completed');
     // The flat result line ("preview (durationMs)") must NOT appear for exec.
-    expect(html).not.toContain('hello world (1500ms)');
+    expect(html).not.toContain('(1500ms)');
     // It must not double-render the running placeholder for a completed run.
     expect(html).not.toContain('Running');
   });
 
-  it('expands an errored sandbox_exec and shows its output + duration', () => {
+  it('flags a non-zero exec exit as errored and opens the Console tab', () => {
     const html = renderToStaticMarkup(
       <HubConsoleTab
         messages={[]}
@@ -160,25 +163,27 @@ describe('HubConsoleTab', () => {
             type: 'tool.execution_complete',
             round: 0,
             executionId: 'exec-err',
-            toolName: 'sandbox_exec',
+            toolName: 'exec',
             toolSource: 'sandbox',
             durationMs: 1500,
-            isError: true,
-            preview: 'command not found',
+            // A non-zero exit is a tool *result*, not a tool *error*: isError is
+            // false, the exit code lives in the preview envelope.
+            isError: false,
+            preview: 'Command: badcmd Exit code: 127 command not found',
             target: 'badcmd --nope',
           },
         ]}
       />,
     );
 
-    // Error state defaults open, so the card body renders. The command shows in
-    // the active "Code" tab and the duration in the tab bar. (The Console tab —
-    // which carries `preview` — is an inactive Radix tab panel and isn't emitted
-    // by renderToStaticMarkup, so it's asserted via the copy/download path, not
-    // here.)
+    // Errored cards default open AND default to the Console tab, so the failure
+    // output (and its error styling) render in the active panel — this is the
+    // real coverage of the console-output branch.
     expect(html).toContain('badcmd --nope');
     expect(html).toContain('Error');
     expect(html).toContain('1.5s');
+    expect(html).toContain('command not found');
+    expect(html).toContain('text-push-status-error/80');
   });
 
   it('shows a running Sandbox card for an exec with no completion event', () => {
@@ -193,7 +198,7 @@ describe('HubConsoleTab', () => {
             type: 'tool.execution_start',
             round: 0,
             executionId: 'exec-running',
-            toolName: 'sandbox_exec',
+            toolName: 'exec',
             toolSource: 'sandbox',
           },
         ]}
