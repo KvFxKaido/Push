@@ -10,8 +10,8 @@
  *
  *   - `lib/coder-agent.ts`        — heavy-reasoner timer opt-in + the
  *                                   reasoning-answer promotion salvage.
- *   - `lib/deep-reviewer-agent.ts`— same timer opt-in; wrap-up pressure for an
- *                                   "investigation-hungry" glm-5.1.
+ *   - `lib/deep-reviewer-agent.ts`— unconditional first-token grace for every
+ *                                   model (DEEP_REVIEW_FIRST_TOKEN_GRACE_MS).
  *   - `app/src/worker/run-host-do.ts` — TTFT measured off reasoning, not text.
  *
  * Centralizing the *which models* knowledge here means a new model family is a
@@ -139,10 +139,13 @@ export const REASONING_HEAVY_FIRST_TOKEN_GRACE_MS = 90_000;
  *     falls back to `timeoutMs`). This can only *widen* a window, never tighten
  *     one, so an unlisted model is never worse off than before.
  *
- * Call sites that want an unconditional grace for ALL models (the Coder does,
- * via `CODER_FIRST_TOKEN_GRACE_MS`) intentionally do NOT use this helper —
- * routing the Coder through here would tighten its non-heavy models from 90s to
- * the per-round window, a regression.
+ * Call sites that want an unconditional grace for ALL models intentionally do
+ * NOT use this helper — both the Coder (`CODER_FIRST_TOKEN_GRACE_MS`) and the
+ * deep reviewer (`DEEP_REVIEW_FIRST_TOKEN_GRACE_MS`) pass the grace inline for
+ * every model, because slow time-to-first-token isn't exclusive to registry
+ * reasoners (a non-heavy fugu round-7 review hit the flat 60s window, #1242).
+ * Routing them through here would tighten their non-heavy models from 90s to the
+ * per-round window, a regression.
  */
 export function reasoningHeavyStreamOpts(modelId: string | null | undefined): {
   reasoningResetsActivityTimer: true;
