@@ -498,6 +498,59 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
   });
 
+  it('re-clones and recreates the branch when a snapshot hydrate fails mid-restore', async () => {
+    // The riskiest path: the indexed object exists but extraction fails after the
+    // wipe, so /workspace is empty. The caller must re-clone the default HEAD and
+    // recreate the branch — not leave an empty workspace.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('ls-remote')) return { stdout: '', stderr: '', exitCode: 0 };
+      // `tar -xzf` is the snapshot extraction — fail it (the `tar -tzf` member
+      // listing still succeeds, so hydrate reaches extraction before failing).
+      if (command.includes('tar -xzf'))
+        return { stdout: '', stderr: 'corrupt archive', exitCode: 1 };
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) throw new Error('fatal: Remote branch feature/x not found');
+      return { success: true };
+    });
+    const r2 = makeR2({
+      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
+    });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/snap-1',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'feature/x',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // Hydrate failed → re-clone default HEAD (a third gitCheckout) → recreate.
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(3);
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes("git checkout -b 'feature/x'")),
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_cold_restore_failed')),
+    ).toBe(true);
+  });
+
   it('does NOT recreate when the branch exists on origin (transient clone failure)', async () => {
     // P1: a `--branch` clone failing transiently on a branch that DOES exist on
     // origin must not be recreated off the default HEAD (that would base the

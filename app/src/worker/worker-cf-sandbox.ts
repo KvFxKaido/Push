@@ -1932,6 +1932,21 @@ async function restoreSnapshotIntoSandbox(
   try {
     const entry = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch);
     if (!entry?.imageId) return 'absent';
+    // Bound the archive before pulling it into the isolate as a JS string,
+    // consistent with the raw download / hydrate paths (`MAX_ARCHIVE_BYTES`). The
+    // index carries the captured size, so we can reject an oversized snapshot
+    // without fetching it. Too large → fall back to a clean recreate.
+    if (entry.sizeBytes != null && entry.sizeBytes > MAX_ARCHIVE_BYTES) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'snapshot_too_large',
+          sizeBytes: entry.sizeBytes,
+        }),
+      );
+      return 'absent';
+    }
     const object = await env.SNAPSHOTS.get(entry.imageId);
     if (!object) {
       // The index points at an object the eviction cron already reaped — nothing
@@ -1947,10 +1962,24 @@ async function restoreSnapshotIntoSandbox(
     }
     const archive = await object.text();
     // Clean slate: discard the default-HEAD clone used for the origin probe so it
-    // can't blend with the restored tree/.git.
-    await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
-      () => {},
-    );
+    // can't blend with the restored tree/.git. If the wipe fails, do NOT hydrate
+    // over the surviving clone (that would blend trees / .git into a corrupt
+    // workspace) — the default checkout is still intact, so report `absent` and
+    // let the caller recreate the branch on it.
+    const wipe = (await withExecDeadline(
+      sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
+    ).catch(() => ({ exitCode: 1 }))) as { exitCode?: number; stderr?: string };
+    if ((wipe.exitCode ?? 0) !== 0) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'workspace_wipe_failed',
+          error: (wipe.stderr ?? '').trim(),
+        }),
+      );
+      return 'absent';
+    }
     const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
     if (!hydrated.ok) {
       console.log(
