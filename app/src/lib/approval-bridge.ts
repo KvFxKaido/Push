@@ -136,6 +136,17 @@ export function setApprovalCardInjector(
   cardInjector = fn;
 }
 
+let cardResolver: ((chatId: string, approvalId: string, status: 'expired') => void) | null = null;
+
+/** Register (or clear) the function that flips an already-injected card to a
+ *  terminal status. The abort handler uses it so a stopped turn's card stops
+ *  showing live Approve/Reject instead of lingering as actionable. */
+export function setApprovalCardResolver(
+  fn: ((chatId: string, approvalId: string, status: 'expired') => void) | null,
+): void {
+  cardResolver = fn;
+}
+
 /**
  * Entry point the runtime-wired `approvalCallback` calls when a policy gate
  * suspends a tool call. Builds the card, surfaces it via the registered
@@ -148,6 +159,13 @@ export async function requestApproval(
   req: ApprovalRequest,
   signal?: AbortSignal,
 ): Promise<boolean> {
+  // Already stopped — deny without surfacing a card the user can't act on.
+  if (signal?.aborted) {
+    console.log(
+      JSON.stringify({ level: 'info', event: 'approval_skipped_aborted', tool: req.toolName }),
+    );
+    return false;
+  }
   const approvalId = createId();
   const data = buildApprovalCardData({
     approvalId,
@@ -170,11 +188,15 @@ export async function requestApproval(
   }
   cardInjector(chatId, data);
   const decision = registerApproval(approvalId);
-  // If the turn is aborted (Stop) while the card is pending, deny so the
-  // suspended tool call unblocks instead of hanging the round loop forever.
-  if (signal) {
-    if (signal.aborted) resolveApproval(approvalId, false);
-    else signal.addEventListener('abort', () => resolveApproval(approvalId, false), { once: true });
-  }
+  // If the turn is stopped while the card is pending, deny so the tool unblocks
+  // AND flip the card to 'expired' so it stops showing live Approve/Reject. The
+  // resolveApproval guard avoids racing a user click that already settled it.
+  signal?.addEventListener(
+    'abort',
+    () => {
+      if (resolveApproval(approvalId, false)) cardResolver?.(chatId, approvalId, 'expired');
+    },
+    { once: true },
+  );
   return decision;
 }

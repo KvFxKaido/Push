@@ -28,7 +28,11 @@ import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
-import { resolveApproval, setApprovalCardInjector } from '@/lib/approval-bridge';
+import {
+  resolveApproval,
+  setApprovalCardInjector,
+  setApprovalCardResolver,
+} from '@/lib/approval-bridge';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -147,16 +151,61 @@ export function useChatCardActions({
     [setConversations, dirtyConversationIdsRef],
   );
 
-  // Register the injector the approval bridge uses to surface a Confirmation
-  // card when a policy gate suspends a tool call mid-turn (lib/approval-bridge.ts
-  // → requestApproval routes here). Cleared on unmount so a stale closure can't
-  // inject into a torn-down chat.
+  // Flip an already-injected approval card to a terminal status by approvalId.
+  // Used by the bridge's abort handler so a stopped turn's card stops showing
+  // live Approve/Reject. Only touches still-'pending' cards, so it never
+  // clobbers a card the user already resolved.
+  const updateApprovalCardStatus = useCallback(
+    (chatId: string, approvalId: string, status: 'expired') => {
+      setConversations((prev) => {
+        const conv = prev[chatId];
+        if (!conv) return prev;
+        let changed = false;
+        const messages = conv.messages.map((m) => {
+          if (
+            !m.cards?.some(
+              (c) =>
+                c.type === 'approval' &&
+                c.data.approvalId === approvalId &&
+                c.data.status === 'pending',
+            )
+          ) {
+            return m;
+          }
+          changed = true;
+          return {
+            ...m,
+            cards: m.cards.map((c) =>
+              c.type === 'approval' &&
+              c.data.approvalId === approvalId &&
+              c.data.status === 'pending'
+                ? { ...c, data: { ...c.data, status } }
+                : c,
+            ),
+          };
+        });
+        if (!changed) return prev;
+        dirtyConversationIdsRef.current.add(chatId);
+        return { ...prev, [chatId]: { ...conv, messages } };
+      });
+    },
+    [setConversations, dirtyConversationIdsRef],
+  );
+
+  // Register the injector + resolver the approval bridge uses to surface and (on
+  // Stop) expire a Confirmation card when a policy gate suspends a tool call
+  // (lib/approval-bridge.ts → requestApproval routes here). Cleared on unmount
+  // so a stale closure can't touch a torn-down chat.
   useEffect(() => {
     setApprovalCardInjector((chatId, data) =>
       injectAssistantCardMessage(chatId, '', { type: 'approval', data }),
     );
-    return () => setApprovalCardInjector(null);
-  }, [injectAssistantCardMessage]);
+    setApprovalCardResolver(updateApprovalCardStatus);
+    return () => {
+      setApprovalCardInjector(null);
+      setApprovalCardResolver(null);
+    };
+  }, [injectAssistantCardMessage, updateApprovalCardStatus]);
 
   const handleCardAction = useCallback(
     async (action: CardAction) => {

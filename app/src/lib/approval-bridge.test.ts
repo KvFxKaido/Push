@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ApprovalCardData } from '@/types';
 import {
   buildApprovalCardData,
@@ -6,6 +6,7 @@ import {
   requestApproval,
   resolveApproval,
   setApprovalCardInjector,
+  setApprovalCardResolver,
 } from './approval-bridge';
 
 const REQ = {
@@ -16,7 +17,10 @@ const REQ = {
   args: { command: 'rm -rf node_modules' },
 };
 
-afterEach(() => setApprovalCardInjector(null));
+afterEach(() => {
+  setApprovalCardInjector(null);
+  setApprovalCardResolver(null);
+});
 
 describe('approval-bridge', () => {
   it('resolveApproval resolves a registered promise with the decision', async () => {
@@ -61,19 +65,27 @@ describe('approval-bridge', () => {
     await expect(decision).resolves.toBe(true);
   });
 
-  it('denies when the turn is already aborted', async () => {
-    setApprovalCardInjector(() => {});
+  it('skips injection and denies when the turn is already aborted', async () => {
+    const injector = vi.fn();
+    setApprovalCardInjector(injector);
     const controller = new AbortController();
     controller.abort();
     await expect(requestApproval('chat-1', REQ, controller.signal)).resolves.toBe(false);
+    expect(injector).not.toHaveBeenCalled();
   });
 
-  it('denies when the turn aborts while the card is pending', async () => {
-    setApprovalCardInjector(() => {});
+  it('denies and expires the card when the turn aborts while pending', async () => {
+    let injected: ApprovalCardData | undefined;
+    setApprovalCardInjector((_chatId, data) => {
+      injected = data;
+    });
+    const resolver = vi.fn();
+    setApprovalCardResolver(resolver);
     const controller = new AbortController();
     const decision = requestApproval('chat-1', REQ, controller.signal);
     controller.abort();
     await expect(decision).resolves.toBe(false);
+    expect(resolver).toHaveBeenCalledWith('chat-1', injected?.approvalId, 'expired');
   });
 
   it('coerces an unknown gate category to the caution band', () => {
