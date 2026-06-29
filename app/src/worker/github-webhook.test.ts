@@ -333,6 +333,14 @@ describe('parseReviewCommand', () => {
     expect(parseReviewCommand('@push-agent re-review', 'push-agent')).toBe(true);
   });
 
+  it('accepts the @<slug>[bot] mention form GitHub autocomplete inserts', () => {
+    expect(parseReviewCommand('@push-agent[bot] review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('@push-agent[bot] please review', 'push-agent')).toBe(true);
+    expect(parseReviewCommand('hey @push-agent[bot] re-review', 'push-agent')).toBe(true);
+    // …but the [bot] form still requires the command bound to the mention.
+    expect(parseReviewCommand('thanks @push-agent[bot] for the review', 'push-agent')).toBe(false);
+  });
+
   it('does not fire when "review" is not a command bound to the mention (Codex P2)', () => {
     // The command must follow the mention — these talk *about* a review.
     expect(parseReviewCommand('Thanks @push-agent for the review', 'push-agent')).toBe(false);
