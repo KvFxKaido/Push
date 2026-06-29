@@ -278,7 +278,10 @@ export function RepoChatDrawer({
   ) => {
     const showActions = opts?.actions !== false;
     const isActiveChat = chat.id === activeChatId;
-    const isEditing = editingChatId === chat.id;
+    // Gate edit mode on showActions too — otherwise an open-only Recents row
+    // would still render the rename *form* (not just the trigger) whenever its
+    // repo-card twin is being renamed, since edit state is keyed by chat.id.
+    const isEditing = showActions && editingChatId === chat.id;
     const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
     const subtitle = opts?.showRepoTag
       ? `${repoTagForChat(chat)} · ${timeAgoCompact(chat.lastMessageAt)}`

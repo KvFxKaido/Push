@@ -166,7 +166,7 @@ interface CommitPushTarget {
 export interface HubBranchProps {
   currentBranch: string | undefined;
   defaultBranch: string | undefined;
-  availableBranches: Array<{ name: string; isDefault: boolean }>;
+  availableBranches: Array<{ name: string; isDefault: boolean; isProtected?: boolean }>;
   branchesLoading: boolean;
   branchesError: string | null;
   onSwitchBranch: (branch: string) => void;
@@ -1478,7 +1478,9 @@ export function WorkspaceHubSheet({
                                     name={branch.name}
                                     isDefault={branch.isDefault}
                                     isActive={isActive}
-                                    canDelete={!isActive && !branch.isDefault}
+                                    canDelete={
+                                      !isActive && !branch.isDefault && !branch.isProtected
+                                    }
                                     isDeleting={deletingBranch === branch.name}
                                     anyDeleting={deletingBranch !== null}
                                     onSwitch={() => handleBranchSwitch(branch.name)}
