@@ -158,3 +158,98 @@ export function reasoningHeavyStreamOpts(modelId: string | null | undefined): {
       }
     : { reasoningResetsActivityTimer: true };
 }
+
+// ---------------------------------------------------------------------------
+// Sparse-streaming model registry — a DISTINCT axis from reasoning-heavy.
+// ---------------------------------------------------------------------------
+
+/**
+ * Sparse-streaming models are *live but quiet*: they orchestrate server-side
+ * between user-visible tokens and stream output sparsely, with no
+ * `reasoning_delta` during the gaps. Sakana Fugu is the case — multi-agent
+ * orchestration behind a single `/v1/responses` endpoint — but the property,
+ * not the name, is what matters.
+ *
+ * Why this is a separate table from reasoning-heavy: a heavy reasoner *streams
+ * its thinking* (`reasoning_delta` resets the activity timer, so the
+ * unconditional `reasoningResetsActivityTimer` keeps it alive). A sparse
+ * streamer streams *nothing* during its gaps — the orchestration never reaches
+ * us as reasoning — so reasoning-reset can't help. For these models an
+ * inter-token activity timeout is the wrong tool entirely: a 60s gap is the
+ * model *working*, not a hung stream, and we have no way to tell the two apart
+ * from the wire. The per-round **wall-clock** is the only meaningful bound.
+ *
+ * This drives a LIVENESS-relevant relaxation, which the module header says must
+ * not depend on table completeness. `effectiveActivityTimeoutMs` keeps that
+ * invariant by being **widen-only**: an unlisted model is never worse off (it
+ * keeps the default tight timeout), and the table only *improves* listed models
+ * — it never tightens, so liveness correctness never *depends* on the table.
+ * Same additive shape as `firstTokenGraceMs`.
+ */
+export interface SparseStreamingMatcher {
+  family: string;
+  pattern: RegExp;
+  note: string;
+}
+
+export const SPARSE_STREAMING_MODEL_MATCHERS: readonly SparseStreamingMatcher[] = [
+  {
+    family: 'fugu',
+    // Matches `fugu`, `fugu-ultra`, vendor-prefixed `sakana/fugu`. The lead-in /
+    // tail guards keep it from matching inside an unrelated token.
+    pattern: /(?:^|[^a-z0-9])fugu(?:[^a-z0-9]|$)/,
+    note: 'Sakana Fugu — multi-agent orchestration behind /v1/responses; streams output_text sparsely with no reasoning_delta during server-side orchestration gaps, so the inter-token activity timeout killed otherwise-progressing deep-review rounds (#1242 round-7; the round-11 60s-activity death that prompted this).',
+  },
+];
+
+/**
+ * True when `modelId` names a known sparse-streaming (opaque-orchestration)
+ * model. Defensive on a null/empty id (returns `false` — the conservative
+ * default keeps the tight timeout). Case-insensitive, substring-anchored, so
+ * vendor-prefixed and suffixed ids resolve the same as bare ones.
+ */
+export function isSparseStreamingModel(modelId: string | null | undefined): boolean {
+  if (!modelId) return false;
+  const normalized = modelId.toLowerCase();
+  return SPARSE_STREAMING_MODEL_MATCHERS.some((m) => m.pattern.test(normalized));
+}
+
+/**
+ * The effective per-round activity timeout for a model. **Widen-only:** a
+ * sparse streamer relaxes its activity window up to the wall-clock so the
+ * wall-clock becomes the sole per-round bound (inter-token silence is not a
+ * stall for it); every other model keeps `defaultActivityMs`. Because it can
+ * only RAISE the timeout (never lower it — `wallClockMs` is always the larger
+ * value at the call sites), an unlisted model is never worse off and liveness
+ * correctness never depends on table completeness. See the registry note above.
+ */
+export function effectiveActivityTimeoutMs(
+  modelId: string | null | undefined,
+  defaultActivityMs: number,
+  wallClockMs: number,
+): number {
+  if (!isSparseStreamingModel(modelId)) return defaultActivityMs;
+  return Math.max(defaultActivityMs, wallClockMs);
+}
+
+/**
+ * The effective FIRST-TOKEN grace for a model — the companion to
+ * `effectiveActivityTimeoutMs`. `iteratePushStreamText` uses a *separate*
+ * window (`firstTokenGraceMs`) until the first activity, then the activity
+ * timeout between tokens. A sparse streamer's worst case is *silence before
+ * the first token* (it orchestrates server-side before emitting anything —
+ * the forced-output synthesis round especially), so relaxing only the
+ * post-first-token activity window leaves that quiet start bounded by the
+ * default grace. Widen the grace to the wall-clock too, so BOTH windows
+ * collapse onto the wall-clock and it's genuinely the sole per-round bound.
+ * **Widen-only** (same invariant as the activity helper): every other model
+ * keeps `defaultGraceMs`.
+ */
+export function effectiveFirstTokenGraceMs(
+  modelId: string | null | undefined,
+  defaultGraceMs: number,
+  wallClockMs: number,
+): number {
+  if (!isSparseStreamingModel(modelId)) return defaultGraceMs;
+  return Math.max(defaultGraceMs, wallClockMs);
+}

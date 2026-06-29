@@ -30,7 +30,11 @@ import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { iteratePushStreamText } from './stream-utils.js';
-import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
+import {
+  REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
+  effectiveActivityTimeoutMs,
+  effectiveFirstTokenGraceMs,
+} from './reasoning-models.js';
 import { parseStructured } from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
@@ -781,6 +785,20 @@ export async function runDeepReviewer<TCall, TCard>(
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
 
+    // Sparse streamers (Fugu) collapse both per-round windows onto the
+    // wall-clock; every other model keeps the defaults. Computed once per round
+    // so the timeout value and its diagnostic message stay in lockstep.
+    const roundActivityTimeoutMs = effectiveActivityTimeoutMs(
+      modelId,
+      DEEP_REVIEW_ROUND_TIMEOUT_MS,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    );
+    const roundFirstTokenGraceMs = effectiveFirstTokenGraceMs(
+      modelId,
+      DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    );
+
     const {
       error: streamError,
       text: rawAccumulated,
@@ -794,8 +812,14 @@ export async function runDeepReviewer<TCall, TCard>(
         systemPromptOverride: systemPrompt,
         hasSandbox: effectiveSandboxAvailable,
       },
-      DEEP_REVIEW_ROUND_TIMEOUT_MS,
-      `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
+      // Sparse-streaming models (Fugu) relax BOTH per-round windows — the
+      // activity timeout AND the first-token grace below — to the wall-clock:
+      // their silence (between tokens and, especially, before the first one) is
+      // server-side orchestration, not a stall, so neither is a meaningful kill
+      // signal. The wall-clock remains the sole bound. Widen-only — every other
+      // model keeps the tight 60s / 90s windows.
+      roundActivityTimeoutMs,
+      `Deep review round ${roundNum} timed out after ${roundActivityTimeoutMs / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
       // Count reasoning as activity (heavy reasoners stream thinking for >60s
@@ -804,7 +828,7 @@ export async function runDeepReviewer<TCall, TCard>(
       // context before its first token, and that's not exclusive to registry
       // reasoners (it killed a round-7 fugu review, #1242). The wall-clock cap
       // above still bounds endless reasoning.
-      { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: roundFirstTokenGraceMs },
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -1043,6 +1067,23 @@ export async function runDeepReviewer<TCall, TCard>(
     usage: { ...usageAcc },
   });
 
+  // Sparse-streaming relaxation (see the loop round above): the forced-output
+  // turn is the heaviest synthesis and the most exposed to Fugu's silent
+  // orchestration gaps — especially a long silence BEFORE the first token, which
+  // the first-token grace (not the activity timeout) bounds. Both windows
+  // collapse onto the wall-clock for sparse models. Hoisted into consts, like
+  // the loop round, so the value and any future message stay in lockstep.
+  const finalActivityTimeoutMs = effectiveActivityTimeoutMs(
+    modelId,
+    DEEP_REVIEW_ROUND_TIMEOUT_MS,
+    DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+  );
+  const finalFirstTokenGraceMs = effectiveFirstTokenGraceMs(
+    modelId,
+    DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
+    DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+  );
+
   const {
     error: finalError,
     text: rawFinalAccumulated,
@@ -1056,14 +1097,11 @@ export async function runDeepReviewer<TCall, TCard>(
       systemPromptOverride: systemPrompt,
       hasSandbox: Boolean(sandboxId),
     },
-    DEEP_REVIEW_ROUND_TIMEOUT_MS,
+    finalActivityTimeoutMs,
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
-    // Same allowance as the loop rounds: the forced-output turn is where the
-    // model works hardest (whole-investigation synthesis), so the unconditional
-    // first-token grace matters most here.
-    { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
+    { reasoningResetsActivityTimer: true, firstTokenGraceMs: finalFirstTokenGraceMs },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
