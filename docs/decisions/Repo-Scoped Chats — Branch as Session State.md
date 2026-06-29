@@ -70,14 +70,28 @@ branch-scoping the chat.
 2. **All four `BranchSwitchPayload` kinds collapse into one "branch changed → update state" signal**
    — the existing `switched` light path becomes the only path. No migration, no auto-create, no
    cross-tab coordination.
-3. **Keep `message.branch` stamps.** They cost little and preserve the timeline story so a branch
-   moment can read "this happened on `feat/x`." (Decided — the one open fork, chosen to keep.)
+3. **Keep `message.branch` stamps — but move stamping from migration-time to write-time.** They
+   preserve the timeline story so a branch moment can read "this happened on `feat/x`." (Decided.)
+   **Critical dependency:** the deleted heavy path's R12 backfill is what currently stamps unstamped
+   messages, and `effectiveMessageBranch` falls back to `msg.branch ?? conv.branch`
+   (`app/src/lib/chat-message.ts`) while `buildToolOutcome` leaves many tool results unstamped
+   (`app/src/lib/chat-tool-execution.ts`). Once `conv.branch` is mutable, that fallback would
+   retroactively mis-attribute any unstamped message to the *new* branch — breaking the very story
+   this keeps. So step 1 must (a) stamp `message.branch` at **write time** for all new messages
+   (close the `buildToolOutcome` gap), and (b) run a **one-time backfill** stamping existing
+   unstamped messages with `conv.branch` *before* it becomes mutable. After that the `?? conv.branch`
+   fallback is inert and is dropped. (Codex P2 on #1256.)
 4. **Merge lands you on the base and fast-forwards the sandbox.** On merge (model-driven `merge_pr`
    emitting a signal directly, or the out-of-band detection as fallback): warm-`switch` the sandbox
    to the **PR base** (not hardcoded `defaultBranch`) → **`git fetch`/`pull --ff-only`** to
    `origin/<base>` → set `conv.branch = base`. FF-only so a divergence *surfaces* instead of silently
    merging (this also closes the `git pull` merge hole in this path). Guard the switch against an
-   unexpectedly dirty tree.
+   unexpectedly dirty tree. **Caveat:** the out-of-band detection we keep as fallback
+   (`mergeDetectedCandidate`, `merge-detected-banner-state.ts`) currently returns null unless
+   `pr.baseBranch === defaultBranch` — so for a non-default base it doesn't fire at all, not just
+   route wrong. Extending it to carry the PR base and fire for any base is a required build item
+   (below), or this fallback silently never surfaces for the exact non-default-base case Decision 4
+   exists to fix. (push-agent on #1256.)
 5. **"Stays off main" stays enforced by auto-branch-on-commit**, not by chat scope. A commit on main
    silently branches off; uncommitted work is captured to a draft ref. Optionally name the auto-branch
    from the conversation (a small upgrade over the auto-named retroactive branch).
@@ -110,14 +124,27 @@ branch-scoping the chat.
   deletes.
 - Branch indicator — promote to a live, prominent display of the active branch.
 
+**New (to build — surfaced by review):**
+- **Write-time `message.branch` stamping + one-time backfill** (Decision 3) — stamp every new message
+  with the current branch (close the `buildToolOutcome` gap), backfill legacy unstamped messages with
+  `conv.branch` before it goes mutable, then drop the `?? conv.branch` fallback. *Must land in step 1,
+  before `conv.branch` becomes mutable*, or attribution silently breaks.
+- **Extend `mergeDetectedCandidate`** (Decision 4) — carry the PR base and fire for any base, not only
+  `defaultBranch`, so the out-of-band fallback covers non-default-base merges.
+
 ## Sequencing
 
-1. **Collapse 4 kinds → 1 + delete the guard/marker/auto-switch trio.** Internal, CI-testable, and it
-   subtracts the most race-prone code in the app *first*. The branch change becomes a state update.
+1. **Collapse 4 kinds → 1 + delete the guard/marker/auto-switch trio — *and* land write-time
+   stamping + the backfill first.** Internal, CI-testable, and it subtracts the most race-prone code
+   in the app *first*. The branch change becomes a state update. Attribution (Decision 3) must be
+   moved to write-time and legacy messages backfilled *in this step*, before `conv.branch` goes
+   mutable — otherwise the stamps decision breaks on the first switch.
 2. **Repo-key the routing/UI.** The riskier half — ~20 files read `conv.branch` / route by branch.
    Branch picker → starting-choice + in-session switcher; indicator → live state.
-3. **Swap the merge action to switch-to-base + FF-only** (Decision 4). Trivial once the migration it
-   used to compete with is gone; `merge_pr` emits the signal, detection is the fallback.
+3. **Swap the merge action to switch-to-base + FF-only** (Decision 4), and **extend
+   `mergeDetectedCandidate` to fire for any PR base** (not just `defaultBranch`). Mostly trivial once
+   the migration it used to compete with is gone; `merge_pr` emits the signal, detection is the
+   fallback.
 
 ## Out of scope (deferred, not rejected)
 
@@ -132,6 +159,7 @@ branch-scoping the chat.
 
 ## Status flip plan
 
-Flip **Draft → Current** when sequencing steps 1–2 land and a chat survives a `branch → work → merge →
-back-to-base` loop in one conversation without re-routing, with the sandbox warm throughout. Fold the
+Flip **Draft → Current** when sequencing steps 1–3 land and a chat survives a `branch → work → merge →
+back-to-base` loop in one conversation without re-routing, with the sandbox warm throughout. (Steps
+1–3, not 1–2: the acceptance loop's `merge → back-to-base` *is* step 3 — push-agent on #1256.) Fold the
 durable parts into the platform/sessions decision doc once the model stabilizes.
