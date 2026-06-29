@@ -3,6 +3,18 @@ import { Copy, Download, Check } from 'lucide-react';
 import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import { HUB_MATERIAL_PILL_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { getRoleDisplay, getSourceLabel, getSubagentLabel } from '@push/lib/role-display';
+import { cn } from '@/lib/utils';
+import {
+  Sandbox,
+  SandboxContent,
+  SandboxHeader,
+  SandboxTabContent,
+  SandboxTabs,
+  SandboxTabsBar,
+  SandboxTabsList,
+  SandboxTabsTrigger,
+  type SandboxState,
+} from '@/components/cards/sandbox-console';
 import type { AgentStatusEvent, AgentStatusSource, ChatMessage, RunEvent } from '@/types';
 
 interface HubConsoleTabProps {
@@ -11,12 +23,64 @@ interface HubConsoleTabProps {
   runEvents: RunEvent[];
 }
 
+interface ConsoleSandboxPayload {
+  /** Command line (from the execution_complete `target`); empty while running. */
+  command: string;
+  /** Output summary (from the execution_complete `preview`). */
+  output: string;
+  state: SandboxState;
+  durationMs?: number;
+}
+
 interface ConsoleLogItem {
-  type: 'call' | 'result' | 'status' | 'malformed' | 'lifecycle';
+  type: 'call' | 'result' | 'status' | 'malformed' | 'lifecycle' | 'sandbox';
   content: string;
   timestamp: number;
   source?: AgentStatusSource;
   detail?: string;
+  sandbox?: ConsoleSandboxPayload;
+}
+
+function formatSandboxDuration(durationMs: number): string {
+  return durationMs < 1000 ? `${durationMs}ms` : `${(durationMs / 1000).toFixed(1)}s`;
+}
+
+function ConsoleSandboxItem({ item }: { item: ConsoleSandboxPayload }) {
+  return (
+    <Sandbox defaultOpen={item.state !== 'completed'}>
+      <SandboxHeader title={item.command || 'sandbox_exec'} state={item.state} />
+      <SandboxContent>
+        <SandboxTabs defaultValue="code">
+          <SandboxTabsBar>
+            <SandboxTabsList>
+              <SandboxTabsTrigger value="code">Code</SandboxTabsTrigger>
+              <SandboxTabsTrigger value="console">Console</SandboxTabsTrigger>
+            </SandboxTabsList>
+            {item.durationMs !== undefined && (
+              <span className="ml-auto px-3 font-mono text-push-xs text-push-fg-dim">
+                {formatSandboxDuration(item.durationMs)}
+              </span>
+            )}
+          </SandboxTabsBar>
+          <SandboxTabContent value="code">
+            <pre className="overflow-auto whitespace-pre-wrap break-all bg-push-surface-inset p-3 font-mono text-push-xs text-push-fg-secondary">
+              {item.command || '—'}
+            </pre>
+          </SandboxTabContent>
+          <SandboxTabContent value="console">
+            <pre
+              className={cn(
+                'overflow-auto whitespace-pre-wrap break-all bg-push-surface-inset p-3 font-mono text-push-xs',
+                item.state === 'error' ? 'text-push-status-error/80' : 'text-push-fg-secondary',
+              )}
+            >
+              {item.output || (item.state === 'running' ? 'Running…' : 'No output')}
+            </pre>
+          </SandboxTabContent>
+        </SandboxTabs>
+      </SandboxContent>
+    </Sandbox>
+  );
 }
 
 // User-facing labels come from the shared display seam (`lib/role-display.ts`),
@@ -33,6 +97,20 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
   const logs = useMemo(() => {
     const items: ConsoleLogItem[] = [];
     const firstStructuredEventAt = runEvents[0]?.timestamp ?? Number.POSITIVE_INFINITY;
+    // `sandbox_exec` runs render as a tabbed Sandbox card rather than the flat
+    // call/result lines. The command + output only land on the
+    // `tool.execution_complete` event (`target` + `preview`); a start with no
+    // matching complete is a still-running exec. Pre-scan completes so a
+    // running placeholder isn't emitted for a run that has already finished.
+    const completedSandboxExecIds = new Set(
+      runEvents
+        .filter(
+          (event) => event.type === 'tool.execution_complete' && event.toolName === 'sandbox_exec',
+        )
+        .map(
+          (event) => (event as Extract<RunEvent, { type: 'tool.execution_complete' }>).executionId,
+        ),
+    );
 
     messages.forEach((m) => {
       if (m.timestamp >= firstStructuredEventAt) return;
@@ -83,6 +161,19 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           });
           break;
         case 'tool.execution_start':
+          if (event.toolName === 'sandbox_exec') {
+            // A completed run renders from execution_complete below; only emit a
+            // running card when no completion exists for this execution yet.
+            if (!completedSandboxExecIds.has(event.executionId)) {
+              items.push({
+                type: 'sandbox',
+                content: 'sandbox_exec',
+                timestamp: event.timestamp,
+                sandbox: { command: '', output: '', state: 'running' },
+              });
+            }
+            break;
+          }
           items.push({
             type: 'call',
             content: `> ${event.toolName}`,
@@ -90,6 +181,20 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           });
           break;
         case 'tool.execution_complete':
+          if (event.toolName === 'sandbox_exec') {
+            items.push({
+              type: 'sandbox',
+              content: event.target || 'sandbox_exec',
+              timestamp: event.timestamp,
+              sandbox: {
+                command: event.target || '',
+                output: event.preview,
+                state: event.isError ? 'error' : 'completed',
+                durationMs: event.durationMs,
+              },
+            });
+            break;
+          }
           items.push({
             type: 'result',
             content: `${event.preview} (${event.durationMs}ms)`,
@@ -218,6 +323,13 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [${getSourceLabel(log.source)}] ${log.content}${detail}`;
         }
+        if (log.type === 'sandbox' && log.sandbox) {
+          const { command, output, state, durationMs } = log.sandbox;
+          const dur = durationMs !== undefined ? ` (${formatSandboxDuration(durationMs)})` : '';
+          const stateLabel = state.charAt(0).toUpperCase() + state.slice(1);
+          const outputLine = output ? `\n    ${output}` : '';
+          return `[${date}] [Sandbox · ${stateLabel}] > ${command || 'sandbox_exec'}${dur}${outputLine}`;
+        }
         if (log.type === 'lifecycle') {
           const detail = log.detail ? ` — ${log.detail}` : '';
           return `[${date}] [Lifecycle] ${log.content}${detail}`;
@@ -291,30 +403,34 @@ export function HubConsoleTab({ messages, agentEvents, runEvents }: HubConsoleTa
 
       <div className="flex-1 overflow-y-auto bg-push-surface-inset p-3 font-mono text-xs leading-relaxed text-push-fg-secondary shadow-push-inset">
         <div className="space-y-2">
-          {logs.map((log, idx) => (
-            <div
-              key={`${log.timestamp}-${idx}`}
-              className={
-                log.type === 'call'
-                  ? 'text-push-fg-secondary'
-                  : log.type === 'malformed'
-                    ? 'text-amber-400'
-                    : log.type === 'result'
-                      ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
-                      : log.type === 'lifecycle'
-                        ? 'ml-2 border-l border-push-edge/70 pl-2 text-push-status-success-soft'
-                        : 'ml-2 border-l border-push-edge/70 pl-2 text-push-link'
-              }
-            >
-              {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
-              {log.type === 'lifecycle' ? '[Lifecycle] ' : ''}
-              {log.content}
-              {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') &&
-              log.detail
-                ? ` — ${log.detail}`
-                : ''}
-            </div>
-          ))}
+          {logs.map((log, idx) =>
+            log.type === 'sandbox' && log.sandbox ? (
+              <ConsoleSandboxItem key={`${log.timestamp}-${idx}`} item={log.sandbox} />
+            ) : (
+              <div
+                key={`${log.timestamp}-${idx}`}
+                className={
+                  log.type === 'call'
+                    ? 'text-push-fg-secondary'
+                    : log.type === 'malformed'
+                      ? 'text-amber-400'
+                      : log.type === 'result'
+                        ? 'ml-2 border-l border-push-edge pl-2 text-push-fg-dim'
+                        : log.type === 'lifecycle'
+                          ? 'ml-2 border-l border-push-edge/70 pl-2 text-push-status-success-soft'
+                          : 'ml-2 border-l border-push-edge/70 pl-2 text-push-link'
+                }
+              >
+                {log.type === 'status' && log.source ? `[${getSourceLabel(log.source)}] ` : ''}
+                {log.type === 'lifecycle' ? '[Lifecycle] ' : ''}
+                {log.content}
+                {(log.type === 'status' || log.type === 'lifecycle' || log.type === 'malformed') &&
+                log.detail
+                  ? ` — ${log.detail}`
+                  : ''}
+              </div>
+            ),
+          )}
           {logs.length === 0 && <p className="text-push-fg-dim">No console logs yet.</p>}
         </div>
       </div>

@@ -106,4 +106,101 @@ describe('HubConsoleTab', () => {
     expect(html).toContain('Turn 1 steered');
     expect(html).toContain('Thinking...');
   });
+
+  it('renders a completed sandbox_exec as a Sandbox card instead of flat lines', () => {
+    const html = renderToStaticMarkup(
+      <HubConsoleTab
+        messages={[]}
+        agentEvents={[]}
+        runEvents={[
+          {
+            id: 'event-1',
+            timestamp: 1,
+            type: 'tool.execution_start',
+            round: 0,
+            executionId: 'exec-1',
+            toolName: 'sandbox_exec',
+            toolSource: 'sandbox',
+          },
+          {
+            id: 'event-2',
+            timestamp: 2,
+            type: 'tool.execution_complete',
+            round: 0,
+            executionId: 'exec-1',
+            toolName: 'sandbox_exec',
+            toolSource: 'sandbox',
+            durationMs: 1500,
+            isError: false,
+            preview: 'hello world',
+            target: 'echo "hello world"',
+          },
+        ]}
+      />,
+    );
+
+    // The command lands in the collapsed card header (completed → collapsed).
+    expect(html).toContain('echo &quot;hello world&quot;');
+    expect(html).toContain('Completed');
+    // The flat result line ("preview (durationMs)") must NOT appear for exec.
+    expect(html).not.toContain('hello world (1500ms)');
+    // It must not double-render the running placeholder for a completed run.
+    expect(html).not.toContain('Running');
+  });
+
+  it('expands an errored sandbox_exec and shows its output + duration', () => {
+    const html = renderToStaticMarkup(
+      <HubConsoleTab
+        messages={[]}
+        agentEvents={[]}
+        runEvents={[
+          {
+            id: 'event-1',
+            timestamp: 1,
+            type: 'tool.execution_complete',
+            round: 0,
+            executionId: 'exec-err',
+            toolName: 'sandbox_exec',
+            toolSource: 'sandbox',
+            durationMs: 1500,
+            isError: true,
+            preview: 'command not found',
+            target: 'badcmd --nope',
+          },
+        ]}
+      />,
+    );
+
+    // Error state defaults open, so the card body renders. The command shows in
+    // the active "Code" tab and the duration in the tab bar. (The Console tab —
+    // which carries `preview` — is an inactive Radix tab panel and isn't emitted
+    // by renderToStaticMarkup, so it's asserted via the copy/download path, not
+    // here.)
+    expect(html).toContain('badcmd --nope');
+    expect(html).toContain('Error');
+    expect(html).toContain('1.5s');
+  });
+
+  it('shows a running Sandbox card for an exec with no completion event', () => {
+    const html = renderToStaticMarkup(
+      <HubConsoleTab
+        messages={[]}
+        agentEvents={[]}
+        runEvents={[
+          {
+            id: 'event-1',
+            timestamp: 1,
+            type: 'tool.execution_start',
+            round: 0,
+            executionId: 'exec-running',
+            toolName: 'sandbox_exec',
+            toolSource: 'sandbox',
+          },
+        ]}
+      />,
+    );
+
+    expect(html).toContain('Running');
+    expect(html).toContain('sandbox_exec');
+  });
 });
