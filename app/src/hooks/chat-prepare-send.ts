@@ -294,11 +294,17 @@ export async function prepareSendContext(
     );
   }
 
-  // Deferred streaming placeholder (see mayBranchOnFirstPrompt): append it now,
-  // after the branch update so the message gets the correct write-time branch
-  // stamp. `prev`-based so it lands after the branch update regardless of
-  // state-flush timing. Fires whether or not the fork landed.
-  if (mayBranchOnFirstPrompt && !skipStreamingPlaceholder) {
+  // After branch-on-first-prompt: re-stamp the prompt onto the post-fork branch
+  // AND append the deferred streaming placeholder with the same stamp, so the
+  // whole opening exchange sits on ONE branch (the new work branch) rather than
+  // splitting prompt=main / response=new. The prompt was stamped with the
+  // pre-fork default above, so this is a deliberate *overwrite* (not the
+  // no-clobber `stampMessageBranch`) — chosen for a simpler mental model and
+  // cleaner branch-based navigation. `prev`-based so it lands after the branch
+  // update regardless of state-flush timing; the branch re-stamp is a no-op
+  // when the fork didn't land (conv.branch unchanged), and the placeholder
+  // still appends.
+  if (mayBranchOnFirstPrompt) {
     callbacks.updateConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;
@@ -306,12 +312,19 @@ export async function prepareSendContext(
         branchDeps?.branchInfoRef.current,
         conv.branch,
       );
+      const restamped =
+        deferredBranch !== undefined
+          ? conv.messages.map((m) =>
+              m.id === userMessage.id ? { ...m, branch: deferredBranch } : m,
+            )
+          : conv.messages;
+      const messages = skipStreamingPlaceholder
+        ? restamped
+        : [...restamped, buildStreamingAssistant(deferredBranch)];
+      refs.dirtyConversationIdsRef.current.add(chatId);
       return {
         ...prev,
-        [chatId]: {
-          ...conv,
-          messages: [...conv.messages, buildStreamingAssistant(deferredBranch)],
-        },
+        [chatId]: { ...conv, messages },
       };
     });
   }

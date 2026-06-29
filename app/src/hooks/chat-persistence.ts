@@ -12,6 +12,10 @@ const OLD_STORAGE_KEY = 'diff_chat_history';
 const ACTIVE_REPO_KEY = 'active_repo';
 
 function sanitizeSandboxStateCards(message: ChatMessage): ChatMessage | null {
+  // Deliberate one-way migration: carry-chat was removed (no renderer, no
+  // `carry_chat` verb), so legacy `branch_carried` dividers are meaningless and
+  // dropped on load. This permanently removes them from persisted transcripts on
+  // the next flush — intentional, not an accidental filter.
   if ((message as { kind?: string }).kind === 'branch_carried') return null;
 
   const cards = (message.cards || []).filter((card) => card.type !== 'sandbox-state');

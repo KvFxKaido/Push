@@ -496,7 +496,7 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(vi.mocked(maybeBranchOnFirstPrompt).mock.calls[0][0].isFirstMessage).toBe(false);
   });
 
-  it('appends the deferred streaming placeholder after the first-prompt branch update', async () => {
+  it('re-stamps the prompt and appends the placeholder on the new branch after the first-prompt fork', async () => {
     const refs = makeRefs({
       conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
       ensureSandboxRef: { current: vi.fn(async () => 'sb-99') },
@@ -532,6 +532,9 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     const msgs = callbacks.capturedConversations['chat-1'].messages;
     expect(msgs.map((m) => m.role)).toEqual(['user', 'assistant']);
     expect(msgs[msgs.length - 1].status).toBe('streaming');
+    // The whole opening exchange unifies onto the new work branch: both the
+    // re-stamped prompt and the deferred placeholder carry the post-fork branch.
+    expect(msgs[0].branch).toBe('owner-repo/add-a-feature');
     expect(msgs[msgs.length - 1].branch).toBe('owner-repo/add-a-feature');
   });
 
