@@ -7,7 +7,7 @@
  * All dependencies threaded in explicitly; no closures over hook state.
  */
 
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type {
   AIProviderType,
@@ -28,6 +28,7 @@ import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
+import { resolveApproval, setApprovalCardInjector } from '@/lib/approval-bridge';
 
 // ---------------------------------------------------------------------------
 // Params
@@ -145,6 +146,17 @@ export function useChatCardActions({
     },
     [setConversations, dirtyConversationIdsRef],
   );
+
+  // Register the injector the approval bridge uses to surface a Confirmation
+  // card when a policy gate suspends a tool call mid-turn (lib/approval-bridge.ts
+  // → requestApproval routes here). Cleared on unmount so a stale closure can't
+  // inject into a torn-down chat.
+  useEffect(() => {
+    setApprovalCardInjector((chatId, data) =>
+      injectAssistantCardMessage(chatId, '', { type: 'approval', data }),
+    );
+    return () => setApprovalCardInjector(null);
+  }, [injectAssistantCardMessage]);
 
   const handleCardAction = useCallback(
     async (action: CardAction) => {
@@ -918,6 +930,23 @@ export function useChatCardActions({
           } finally {
             updateAgentStatus({ active: false, phase: '' });
           }
+          break;
+        }
+
+        case 'approval-approve':
+        case 'approval-reject': {
+          // Runtime-driven approval: flip the card to its resolved state and
+          // release the suspended tool call (Approve → true, Reject → false).
+          // The runtime's `await approvalCallback(...)` resumes from here.
+          const approved = action.type === 'approval-approve';
+          updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+            if (card.type !== 'approval') return card;
+            return {
+              ...card,
+              data: { ...card.data, status: approved ? 'approved' : 'rejected' },
+            };
+          });
+          resolveApproval(action.approvalId, approved);
           break;
         }
       }

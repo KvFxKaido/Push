@@ -1169,7 +1169,7 @@ export async function executeAnyToolCall(
   hooks?: ToolHookRegistry,
   approvalGates?: ApprovalGateRegistry,
   capabilityLedger?: import('./capabilities').CapabilityLedger,
-  approvalCallback?: (toolName: string, reason: string, recoveryPath: string) => Promise<boolean>,
+  approvalCallback?: import('@push/lib/tool-execution-runtime').ApprovalCallback,
   chatId?: string,
   localDaemonBinding?: ToolDispatchBinding,
   abortSignal?: AbortSignal,

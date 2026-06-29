@@ -7,6 +7,7 @@ import { DiffPreviewCard } from './DiffPreviewCard';
 import { AuditVerdictCard } from './AuditVerdictCard';
 import { EvaluationCard } from './EvaluationCard';
 import { WorkspacePatchCard } from './WorkspacePatchCard';
+import { ConfirmationCard } from './ConfirmationCard';
 
 // --- Lazy-loaded card components (code-split) ---
 const PRCard = lazyWithRecovery(
@@ -248,6 +249,7 @@ const ACTION_CARDS: Record<
   'ci-status': CIStatusCard,
   editor: EditorCard,
   'ask-user': AskUserCard,
+  approval: ConfirmationCard,
 };
 
 // ---------------------------------------------------------------------------

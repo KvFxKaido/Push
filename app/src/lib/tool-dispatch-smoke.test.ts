@@ -343,9 +343,13 @@ describe('tool-dispatch -- approval callback seam (Phase 4)', () => {
 
     expect(approvalCallback).toHaveBeenCalledTimes(1);
     expect(approvalCallback).toHaveBeenCalledWith(
-      'sandbox_exec',
-      expect.any(String),
-      expect.any(String),
+      expect.objectContaining({
+        toolName: 'sandbox_exec',
+        reason: expect.any(String),
+        recoveryPath: expect.any(String),
+        category: expect.any(String),
+        args: expect.any(Object),
+      }),
     );
     expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
     expect(result.text).toContain('[Tool Result] executed');

@@ -409,11 +409,13 @@ export class WebToolExecutionRuntime
           }
           if (gateResult.decision === 'ask_user') {
             if (context.approvalCallback) {
-              const approved = await context.approvalCallback(
+              const approved = await context.approvalCallback({
                 toolName,
-                gateResult.reason,
-                gateResult.recoveryPath,
-              );
+                reason: gateResult.reason,
+                recoveryPath: gateResult.recoveryPath,
+                category: gateResult.category,
+                args: toolArgs,
+              });
               if (!approved) {
                 return {
                   text: `[Approval Denied — ${toolName}] User denied approval.\n\nReason: ${gateResult.reason}`,

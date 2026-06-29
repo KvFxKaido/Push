@@ -18,6 +18,7 @@ const {
 
 vi.mock('react', () => ({
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
+  useEffect: () => {},
 }));
 
 vi.mock('@/lib/sandbox-client', () => ({

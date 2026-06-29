@@ -11,6 +11,7 @@ import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from 
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import type { AgentRole } from '@push/lib/runtime-contract';
+import type { ApprovalCallback } from '@push/lib/tool-execution-runtime';
 import type { ExecutionMode } from '@push/lib/capabilities';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
@@ -102,6 +103,14 @@ export interface ToolExecRunContext {
   model: string | undefined;
   approvalGates?: ApprovalGateRegistry;
   /**
+   * Runtime-driven approval callback. When a policy gate returns 'ask_user',
+   * the runtime awaits this — rendering a Confirmation card and suspending
+   * until the user decides — instead of bouncing a structured error back to
+   * the model (the control-plane-in-prompt smell). Absent → the model-bounce
+   * fallback for headless/delegated paths with no UI. See lib/approval-bridge.ts.
+   */
+  approvalCallback?: ApprovalCallback;
+  /**
    * Passive correlation tags to attach to the tool-execution span as
    * `push.*` attributes (see `lib/correlation-context.ts`). The caller
    * builds this from whatever ids it already knows (`chatId`, `runId`,
@@ -184,7 +193,7 @@ export async function executeTool(
           undefined,
           ctx.approvalGates ?? DEFAULT_APPROVAL_GATES,
           undefined,
-          undefined,
+          ctx.approvalCallback,
           ctx.chatId ?? undefined,
           ctx.localDaemonBinding,
           ctx.abortSignal,

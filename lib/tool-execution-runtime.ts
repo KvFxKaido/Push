@@ -87,11 +87,22 @@ export interface ToolEventEmitter {
 // Approval callback — Phase 4 seam
 // ---------------------------------------------------------------------------
 
-export type ApprovalCallback = (
-  toolName: string,
-  reason: string,
-  recoveryPath: string,
-) => Promise<boolean>;
+/**
+ * Structured request the runtime hands to an approval callback when a policy
+ * gate returns `ask_user`. Carries the gate `category` (severity) and the tool
+ * `args` (the literal command/target) so the surface can render an honest
+ * confirmation, not a paraphrase. `category` is the `ApprovalGateCategory`
+ * string — kept as `string` here so this seam doesn't import the gate registry.
+ */
+export interface ApprovalRequest {
+  toolName: string;
+  reason: string;
+  recoveryPath: string;
+  category: string;
+  args: Record<string, unknown>;
+}
+
+export type ApprovalCallback = (request: ApprovalRequest) => Promise<boolean>;
 
 // ---------------------------------------------------------------------------
 // Runtime context — collapses the 11-param positional signature from Phase 4
