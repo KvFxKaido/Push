@@ -43,7 +43,6 @@ import { getRepoMetadata } from '@/lib/repo-metadata';
 import { getVibeVerbs } from '@/lib/repo-vibe-verbs';
 import { translateCoderStatus } from '@/lib/inline-coder-status';
 import { classifyTurnIntent } from '@/lib/turn-intent';
-import { detectAnyToolCall } from '@/lib/tool-dispatch';
 import {
   capturePreCoderSnapshot,
   createCoderCheckpointAnswerer,
@@ -191,14 +190,11 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
 
   // A tool-call object/array wrapped in a code fence. Cut at the fence so
   // the ```` ```json ```` wrapper is hidden too, even once the closing fence
-  // has balanced the count. The fence opener matches every shape the text
-  // dispatcher accepts — 3+ backticks, 4+ backticks, and tilde (`~~~`) fences
-  // per CommonMark (`detectToolFromText`) — so a tilde- or `````-fenced call
-  // doesn't leave its fence header behind. The key match likewise tolerates
-  // double/single/unquoted `tool` keys and a leading `[` for fenced arrays
-  // (`lib/tool-dispatch.test.ts`) — so a balanced `[{'tool':…}]` block can't
-  // reappear in the bubble (Codex #894).
-  const fencedTool = /(?:`{3,}|~{3,})[^\n`~]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
+  // has balanced the count. The key match tolerates every shape the text
+  // dispatcher executes — double/single/unquoted `tool` keys and a leading
+  // `[` for fenced arrays (`lib/tool-dispatch.test.ts`) — so a balanced
+  // `[{'tool':…}]` block can't reappear in the bubble (Codex #894).
+  const fencedTool = /```[^\n`]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
   if (fencedTool) mark(fencedTool.index);
 
   // The same object/array emitted bare (no fence). Matched anywhere, not
@@ -223,25 +219,6 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
 }
 
 /**
- * Whether a round's snapshotted prose is safe to commit as a persistent
- * transcript message. Two gates: non-empty after trim, AND it no longer parses
- * as a tool call.
- *
- * `splitVisibleContent` strips canonical fenced / bare `{tool}` JSON, but the
- * kernel also dispatches recovery shapes (XML / token / bare-args) the splitter
- * can't see. For the in-flight preview a missed strip is transient — the kernel
- * summary overwrites it. But this prose is *persisted*, so a missed strip would
- * promote that leak into a durable protocol-text artifact in the transcript.
- * `detectAnyToolCall` is the same detector the kernel dispatches with, so this
- * fails safe (drops the round's narration) only when residue genuinely remains,
- * and never false-drops clean prose or a native-call round (whose content
- * carries no tool text at all).
- */
-export function isCommittableRoundProse(visible: string): boolean {
-  return visible.trim().length > 0 && !detectAnyToolCall(visible);
-}
-
-/**
  * Build the tee observer that feeds the streaming assistant placeholder.
  * Accumulates per kernel round (a `done` event resets the buffer on the
  * next delta) so the placeholder always shows the round in flight; the
@@ -254,7 +231,6 @@ export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
   thinkingVerbs?: string[],
   placeholderId?: string,
-  onRoundSettled?: (visible: string) => void,
 ): (event: PushStreamEvent) => void {
   const { chatId } = ctx;
   let accumulated = '';
@@ -265,15 +241,6 @@ export function createInlineTranscriptMirror(
     if (ctx.abortRef.current) return;
     if (event.type === 'done') {
       roundSettled = true;
-      // Snapshot the just-settled round's visible prose before the next delta
-      // resets the buffer. A tool-bearing round's narration would otherwise be
-      // overwritten by the following round and lost; the caller commits it as a
-      // persistent transcript message instead. `splitVisibleContent` removes
-      // canonical fenced / bare tool-call JSON here (the same separator the live
-      // preview trusts); the caller's `isCommittableRoundProse` guard is the
-      // backstop that drops anything the splitter can't strip (recovery shapes)
-      // rather than persisting residue.
-      onRoundSettled?.(splitVisibleContent(accumulated).visible);
       return;
     }
     if (event.type !== 'text_delta' && event.type !== 'reasoning_delta') return;
@@ -493,7 +460,6 @@ function insertSyntheticToolPairs(
   events: ToolCompleteEvent[],
   cards?: ChatCard[],
   placeholderId?: string,
-  roundProse?: ReadonlyMap<number, string>,
 ): string | undefined {
   if (events.length === 0) return undefined;
   const { chatId } = ctx;
@@ -504,32 +470,8 @@ function insertSyntheticToolPairs(
   // anchors its card to this id, so it must be stable.
   const synthetic: ChatMessage[] = [];
   let lastToolCallId: string | undefined;
-  // Track the round so each round's captured narration is committed once, just
-  // before that round's first tool pair — reconstructing the step-by-step
-  // "let me check… / let me run…" chain the single overwriting placeholder
-  // otherwise collapses to only the final round's prose. The terminal round
-  // (the user-facing summary) has no tool events, so its prose is never
-  // interleaved here — `completeAssistantMessage` renders it on the placeholder.
-  let lastRound: number | undefined;
   for (let i = 0; i < events.length; i++) {
     const event = events[i];
-    if (event.round !== lastRound) {
-      lastRound = event.round;
-      const prose = roundProse?.get(event.round);
-      if (prose && prose.trim()) {
-        // Display-only, exactly like the synthetic tool messages below: the
-        // kernel owns the authoritative model context, so these reconstructed
-        // narration messages must never feed back on the next turn.
-        synthetic.push({
-          id: createId(),
-          role: 'assistant',
-          content: prose,
-          timestamp: Date.now(),
-          status: 'done',
-          visibleToModel: false,
-        });
-      }
-    }
     const isLast = i === events.length - 1;
     const meta = buildToolMeta({
       toolName: event.toolName,
@@ -727,28 +669,8 @@ export async function startInlineCoderTurn(
   // Pre-run HEAD + untracked baseline for the Auditor (PRs #604/#606).
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
 
-  // --- Per-round narration capture ---
-  // The tee mirrors each kernel round into a single placeholder, resetting on
-  // every `done`, so without this only the final round's prose survives. We
-  // snapshot each settled round's visible prose keyed by the kernel round
-  // (`liveRound`, synced from `assistant.turn_start` in onRunEvent below), then
-  // interleave it with that round's tool pairs at finalization. Keyed by the
-  // kernel's own round number — not a tee-side `done` count — so a retried or
-  // reconnected round overwrites its key instead of drifting out of alignment.
-  //
-  // Seed at -1, not 0: `turn_start` always fires before a round's deltas, so by
-  // the round's `done` `liveRound` already holds the real (0-based) index. The
-  // -1 sentinel only matters if that invariant is ever violated — a snapshot
-  // taken before any `turn_start` keys to a round with no tool events and is
-  // simply dropped at finalization, rather than being mis-attributed to round 0
-  // and interleaved at the wrong tool pair.
-  const roundProse = new Map<number, string>();
-  let liveRound = -1;
-
   // --- Kernel bindings ---
-  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId, (visible) => {
-    if (isCommittableRoundProse(visible)) roundProse.set(liveRound, visible);
-  });
+  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId);
   const stream = teePushStream(
     getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
     mirror,
@@ -987,14 +909,7 @@ export async function startInlineCoderTurn(
         },
         onRunEvent: (event) => {
           ctx.appendRunEvent(chatId, event);
-          if (event.type === 'assistant.turn_start') {
-            // Anchor the tee's per-round prose snapshot (the mirror's
-            // onRoundSettled, above) to the same round number the tool events
-            // carry — the interleave key at finalization. turn_start fires
-            // before the round's deltas, so liveRound is correct at the
-            // round's `done`.
-            liveRound = event.round;
-          } else if (event.type === 'tool.execution_complete') {
+          if (event.type === 'tool.execution_complete') {
             capturedToolEvents.push(event as ToolCompleteEvent);
           }
         },
@@ -1309,7 +1224,6 @@ export async function startInlineCoderTurn(
     capturedToolEvents,
     hasToolDisclosure ? result.cards : undefined,
     placeholderId,
-    roundProse,
   );
   // The completion verdict renders as a structured card, not appended prose —
   // matching the delegated arc, which routes the same verdict through the
