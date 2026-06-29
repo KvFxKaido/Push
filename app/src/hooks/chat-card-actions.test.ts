@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatCard, ChatMessage, CommitReviewCardData, Conversation } from '@/types';
 import type { ChatCardActionsParams } from './chat-card-actions';
+import { registerApproval } from '@/lib/approval-bridge';
 
 const {
   mockExecInSandbox,
@@ -18,6 +19,7 @@ const {
 
 vi.mock('react', () => ({
   useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
+  useEffect: () => {},
 }));
 
 vi.mock('@/lib/sandbox-client', () => ({
@@ -49,6 +51,20 @@ function makeConversation(messages: ChatMessage[]): Record<string, Conversation>
       messages,
       createdAt: 1,
       lastMessageAt: 1,
+    },
+  };
+}
+
+function makeApprovalCard(approvalId: string): ChatCard {
+  return {
+    type: 'approval',
+    data: {
+      approvalId,
+      toolName: 'sandbox_exec',
+      category: 'destructive_sandbox',
+      summary: 'held for approval',
+      reason: 'destructive · supervised',
+      status: 'pending',
     },
   };
 }
@@ -112,6 +128,83 @@ describe('chat-card-actions', () => {
       },
     });
     expect(dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('approval-approve flips the card to approved when a waiter is released', async () => {
+    void registerApproval('apv-ok');
+    let conversations = makeConversation([
+      {
+        id: 'message-1',
+        role: 'assistant',
+        content: '',
+        timestamp: 1,
+        status: 'done',
+        cards: [makeApprovalCard('apv-ok')],
+      },
+    ]);
+    const { handleCardAction } = useChatCardActions({
+      setConversations: (updater) => {
+        conversations = typeof updater === 'function' ? updater(conversations) : updater;
+      },
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      activeChatId: 'chat-1',
+      sandboxIdRef: { current: null },
+      isMainProtectedRef: { current: false },
+      branchInfoRef: { current: undefined },
+      repoRef: { current: null },
+      updateAgentStatus: vi.fn(),
+      sendMessageRef: { current: null },
+      isStreaming: false,
+      messages: conversations['chat-1'].messages,
+    });
+    await handleCardAction({
+      type: 'approval-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      approvalId: 'apv-ok',
+    });
+    expect(conversations['chat-1'].messages[0].cards?.[0]).toMatchObject({
+      type: 'approval',
+      data: { status: 'approved' },
+    });
+  });
+
+  it('approval-approve on an expired card (no waiter) marks expired, not approved', async () => {
+    let conversations = makeConversation([
+      {
+        id: 'message-1',
+        role: 'assistant',
+        content: '',
+        timestamp: 1,
+        status: 'done',
+        cards: [makeApprovalCard('apv-gone')],
+      },
+    ]);
+    const { handleCardAction } = useChatCardActions({
+      setConversations: (updater) => {
+        conversations = typeof updater === 'function' ? updater(conversations) : updater;
+      },
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      activeChatId: 'chat-1',
+      sandboxIdRef: { current: null },
+      isMainProtectedRef: { current: false },
+      branchInfoRef: { current: undefined },
+      repoRef: { current: null },
+      updateAgentStatus: vi.fn(),
+      sendMessageRef: { current: null },
+      isStreaming: false,
+      messages: conversations['chat-1'].messages,
+    });
+    await handleCardAction({
+      type: 'approval-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      approvalId: 'apv-gone',
+    });
+    expect(conversations['chat-1'].messages[0].cards?.[0]).toMatchObject({
+      type: 'approval',
+      data: { status: 'expired' },
+    });
   });
 
   it('ignores sandbox-state cards when injecting assistant card messages', () => {

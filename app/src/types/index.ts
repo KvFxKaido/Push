@@ -548,6 +548,7 @@ export type ChatCard =
   | { type: 'delegation-result'; data: DelegationResultCardData }
   | { type: 'evaluation'; data: EvaluationCardData }
   | { type: 'ask-user'; data: AskUserCardData }
+  | { type: 'approval'; data: ApprovalCardData }
   | { type: 'coder-progress'; data: CoderWorkingMemory }
   | { type: 'coder-job'; data: CoderJobCardData }
   | { type: 'artifact'; data: ArtifactCardData }
@@ -1053,7 +1054,9 @@ export type CardAction =
       sandboxId: string;
       expectedVersion?: string;
       expectedWorkspaceRevision?: number;
-    };
+    }
+  | { type: 'approval-approve'; messageId: string; cardIndex: number; approvalId: string }
+  | { type: 'approval-reject'; messageId: string; cardIndex: number; approvalId: string };
 
 export interface AgentStatus {
   active: boolean;
@@ -1419,6 +1422,32 @@ export interface AskUserCardData {
   multiSelect?: boolean;
   selectedOptionIds?: string[];
   responseText?: string;
+}
+
+/** Gate category drives the Confirmation card's severity band + icon. Mirrors
+ *  `ApprovalGateCategory` in `lib/approval-gates.ts` (kept as a local literal so
+ *  web types don't import lib runtime types). */
+export type ApprovalCardCategory =
+  | 'destructive_sandbox'
+  | 'git_override'
+  | 'remote_side_effect'
+  | 'capability_violation';
+
+/** Runtime-driven approval card — rendered when a policy gate SUSPENDS a tool
+ *  call awaiting the user's decision (see `lib/approval-bridge.ts`). */
+export interface ApprovalCardData {
+  approvalId: string;
+  toolName: string;
+  category: ApprovalCardCategory;
+  /** Human lead line describing what was held. */
+  summary: string;
+  /** The intercepted command / target, shown verbatim. */
+  command?: string;
+  /** Gate reason + recovery path, shown as a meta line while pending. */
+  reason: string;
+  /** Undefined/'pending' = awaiting decision; set on resolve. 'expired' = the
+   *  card was actioned after its waiter was gone (refresh/Stop) — nothing ran. */
+  status?: 'pending' | 'approved' | 'rejected' | 'expired';
 }
 
 // --- Resumable Sessions ---

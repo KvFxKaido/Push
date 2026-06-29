@@ -49,6 +49,7 @@ import {
   createToolUseBlockId,
 } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
+import { requestApproval } from '@/lib/approval-bridge';
 import { clearRuntimeCoderWorkingMemory } from '@push/lib/runtime-context';
 import { composeToolResultBody } from '@/lib/tool-call-recovery';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
@@ -251,6 +252,10 @@ export async function executeSingleToolCall(
       model: resolvedModel,
       abortSignal: abortControllerRef.current?.signal,
       onExecProgress: execProgressTail,
+      // Runtime-driven approval: a policy gate that returns 'ask_user' suspends
+      // here on the card's decision instead of bouncing to the model.
+      approvalCallback: (request) =>
+        requestApproval(chatId, request, abortControllerRef.current?.signal),
     };
     singleRawResult = await executeTool(toolCall, singleCtx);
     toolExecResult = singleRawResult.raw;
