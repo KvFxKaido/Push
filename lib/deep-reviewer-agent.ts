@@ -1067,6 +1067,23 @@ export async function runDeepReviewer<TCall, TCard>(
     usage: { ...usageAcc },
   });
 
+  // Sparse-streaming relaxation (see the loop round above): the forced-output
+  // turn is the heaviest synthesis and the most exposed to Fugu's silent
+  // orchestration gaps — especially a long silence BEFORE the first token, which
+  // the first-token grace (not the activity timeout) bounds. Both windows
+  // collapse onto the wall-clock for sparse models. Hoisted into consts, like
+  // the loop round, so the value and any future message stay in lockstep.
+  const finalActivityTimeoutMs = effectiveActivityTimeoutMs(
+    modelId,
+    DEEP_REVIEW_ROUND_TIMEOUT_MS,
+    DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+  );
+  const finalFirstTokenGraceMs = effectiveFirstTokenGraceMs(
+    modelId,
+    DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
+    DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+  );
+
   const {
     error: finalError,
     text: rawFinalAccumulated,
@@ -1080,31 +1097,11 @@ export async function runDeepReviewer<TCall, TCard>(
       systemPromptOverride: systemPrompt,
       hasSandbox: Boolean(sandboxId),
     },
-    // Sparse-streaming relaxation (see the loop round above): the forced-output
-    // turn is the heaviest synthesis and the most exposed to Fugu's silent
-    // orchestration gaps — especially a long silence BEFORE the first token,
-    // which the first-token grace below (not the activity timeout) bounds. Both
-    // windows collapse onto the wall-clock for sparse models. Widen-only.
-    effectiveActivityTimeoutMs(
-      modelId,
-      DEEP_REVIEW_ROUND_TIMEOUT_MS,
-      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
-    ),
+    finalActivityTimeoutMs,
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
-    // Same allowance as the loop rounds: the forced-output turn is where the
-    // model works hardest (whole-investigation synthesis), so the first-token
-    // grace matters most here — and for a sparse streamer it widens to the
-    // wall-clock so a silent synthesis start isn't killed at the default 90s.
-    {
-      reasoningResetsActivityTimer: true,
-      firstTokenGraceMs: effectiveFirstTokenGraceMs(
-        modelId,
-        DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
-        DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
-      ),
-    },
+    { reasoningResetsActivityTimer: true, firstTokenGraceMs: finalFirstTokenGraceMs },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();
