@@ -255,13 +255,30 @@ path **fail-closes** (destroys the container) because the fallback clone used th
 tokenized URL — an unstripped origin must not linger in an orphaned sandbox (#987).
 Emits `cf_sandbox_branch_recreated`.
 
-Lossless for a never-pushed branch (no commits to lose); it restores the **branch
-identity**, not prior in-sandbox work — that's the cloud snapshot / native
-checkpoint's job (and only recoverable if one was captured). The repo/branch-indexed
-R2 snapshot is **not yet** consulted on this cold-start path (the client's
-localStorage-keyed restore still covers same-session reconnect); wiring
-index-restore here to recover unpushed work for a tokenless cold start is the
-natural follow-up.
+**Recovering unpushed work, not just the branch name (2026-06-28).** Once a branch
+is confirmed absent on origin, `routeCreate` first tries to restore the
+**repo/branch-indexed R2 snapshot** (`restoreSnapshotIntoSandbox`) before falling
+back to an empty `checkout -b`: it reads the snapshot bytes by the index `imageId`
+and hydrates `/workspace` (tree **and** `.git`, so unpushed local commits come
+back). This closes the tokenless-cold-start gap the client's localStorage-keyed
+restore couldn't — a fresh app load that lost the saved `snapshotId`/`restoreToken`
+now finds the snapshot by repo+branch. No restore-token check: the worker is
+reading its own R2 object for its own freshly-created container, and the snapshot's
+origin is already the public URL (stripped before capture), so no credential rides
+in. Restore is **naturally scoped to absent branches** — the default branch is
+always on origin, so a stale default snapshot can never shadow a fresh clone — and
+**best-effort**: a missing object (`cf_sandbox_cold_restore_miss`), a failed
+hydrate (`cf_sandbox_cold_restore_failed`, which re-clones a clean base), or no
+snapshot at all all fall through to the empty-branch recreate. Emits
+`cf_sandbox_branch_restored_from_snapshot` on success vs `cf_sandbox_branch_recreated`
+on the empty fallback.
+
+Lossless for a never-pushed branch either way. **Still uncovered (follow-up):** a
+non-default branch that *is* on origin but carries **unpushed local commits** —
+its `--branch` clone succeeds, so cold start never enters this absent-branch path
+and the snapshot isn't consulted. Wiring a pre-clone index-restore for that case
+needs `default_branch` scoping (to keep the default branch on a fresh clone) and is
+deliberately deferred.
 
 ## UI surfacing (to design in implementation)
 

@@ -612,21 +612,48 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
           await failClosed();
         }
 
-        // Genuinely absent on origin → recreate locally off the default HEAD.
-        // Skip the `checkout -b` only when the default checkout already *is* the
-        // requested branch — compared via `symbolic-ref HEAD` (the actual current
-        // branch) rather than `rev-parse <branch>`, which would also resolve a
-        // same-named tag and wrongly skip the create.
-        const recreate = (await withExecDeadline(
-          sandbox.exec(
-            `cd /workspace && (test "$(git symbolic-ref --short HEAD 2>/dev/null)" = ${shellSingleQuote(branch)} || ` +
-              `git checkout -b ${shellSingleQuote(branch)})`,
-          ),
-        )) as { exitCode?: number; stderr?: string };
-        if ((recreate.exitCode ?? 0) !== 0) {
-          // Couldn't recreate the branch on the default checkout — surface the
-          // original clone failure rather than a confusing secondary error.
-          await failClosed();
+        // Genuinely absent on origin. Prefer restoring a durable R2 snapshot for
+        // this repo+branch — it recovers the *unpushed work* (tree + local
+        // commits) from the prior, now-dead sandbox, not just the branch name.
+        // This path is naturally scoped to absent branches: the default branch is
+        // always on origin, so a stale default-branch snapshot can never shadow a
+        // fresh clone here. Best-effort — a missing/failed snapshot falls through
+        // to recreating an empty branch (the prior behavior).
+        const restoreOutcome =
+          env.SNAPSHOTS && env.SNAPSHOT_INDEX
+            ? await time('clone', () => restoreSnapshotIntoSandbox(env, sandbox, repo, branch))
+            : 'absent';
+
+        let restoredFromSnapshot = false;
+        if (restoreOutcome === 'restored') {
+          restoredFromSnapshot = true;
+        } else {
+          if (restoreOutcome === 'wiped') {
+            // A restore attempt emptied /workspace before failing — re-establish
+            // the default-HEAD checkout so the empty-branch fallback has a base.
+            await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
+              () => {},
+            );
+            await time('clone', () =>
+              sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 }),
+            );
+          }
+          // Recreate locally off the default HEAD. Skip the `checkout -b` only
+          // when the default checkout already *is* the requested branch — compared
+          // via `symbolic-ref HEAD` (the actual current branch) rather than
+          // `rev-parse <branch>`, which would also resolve a same-named tag and
+          // wrongly skip the create.
+          const recreate = (await withExecDeadline(
+            sandbox.exec(
+              `cd /workspace && (test "$(git symbolic-ref --short HEAD 2>/dev/null)" = ${shellSingleQuote(branch)} || ` +
+                `git checkout -b ${shellSingleQuote(branch)})`,
+            ),
+          )) as { exitCode?: number; stderr?: string };
+          if ((recreate.exitCode ?? 0) !== 0) {
+            // Couldn't recreate the branch on the default checkout — surface the
+            // original clone failure rather than a confusing secondary error.
+            await failClosed();
+          }
         }
         // The retry recovered, so the 'clone' phase is no longer a failure even
         // though the first attempt threw and set it.
@@ -634,7 +661,9 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         console.log(
           JSON.stringify({
             level: 'info',
-            event: 'cf_sandbox_branch_recreated',
+            event: restoredFromSnapshot
+              ? 'cf_sandbox_branch_restored_from_snapshot'
+              : 'cf_sandbox_branch_recreated',
             sandbox_id: sandboxId,
             repo: repoHash,
             reason: 'branch_absent_on_origin',
@@ -1870,6 +1899,88 @@ async function archiveWorkspaceToBase64(
 export type CreateSnapshotResult =
   | { ok: true; snapshotId: string; restoreToken: string; sizeBytes: number }
   | { ok: false; error: string; status: number };
+
+/**
+ * Outcome of an in-place cold-start restore into an existing sandbox:
+ *  - `restored`: the snapshot was hydrated; `/workspace` holds the recovered tree.
+ *  - `absent`:   no snapshot to restore; `/workspace` is left untouched.
+ *  - `wiped`:    a restore was attempted and emptied `/workspace` before failing,
+ *                so the caller must re-establish a base before continuing.
+ */
+export type ColdRestoreOutcome = 'restored' | 'absent' | 'wiped';
+
+/**
+ * Restore the durable R2 snapshot for `repoFullName`/`branch` into an
+ * already-created sandbox (the cold-start counterpart to `restoreWorkspaceSnapshot`,
+ * which mints its own sandbox). Reads the snapshot bytes by the index's `imageId`
+ * — no restore-token check, because this is the worker reading its own R2 object
+ * for its own freshly-created container, not an externally-presented restore. The
+ * snapshot's `.git/config` origin is the public URL (it was stripped before the
+ * snapshot was ever captured), so no credential travels in the restored tree.
+ *
+ * Best-effort: every failure is a structured log + a non-throwing outcome so the
+ * caller falls back to a normal clone. Returns `wiped` once `/workspace` has been
+ * emptied for hydrate, so the caller knows it must re-clone before reusing it.
+ */
+async function restoreSnapshotIntoSandbox(
+  env: Env,
+  sandbox: SandboxStub,
+  repoFullName: string,
+  branch: string,
+): Promise<ColdRestoreOutcome> {
+  if (!env.SNAPSHOTS || !env.SNAPSHOT_INDEX) return 'absent';
+  try {
+    const entry = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch);
+    if (!entry?.imageId) return 'absent';
+    const object = await env.SNAPSHOTS.get(entry.imageId);
+    if (!object) {
+      // The index points at an object the eviction cron already reaped — nothing
+      // to restore. Symmetric log so the miss isn't invisible.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_sandbox_cold_restore_miss',
+          reason: 'snapshot_object_absent',
+        }),
+      );
+      return 'absent';
+    }
+    const archive = await object.text();
+    // Clean slate: discard the default-HEAD clone used for the origin probe so it
+    // can't blend with the restored tree/.git.
+    await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
+      () => {},
+    );
+    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
+    if (!hydrated.ok) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'hydrate_failed',
+          error: hydrated.error,
+        }),
+      );
+      return 'wiped';
+    }
+    // Advisory: reset the snapshot's TTL so an actively-resumed branch survives
+    // eviction (mirrors restoreWorkspaceSnapshot's index touch).
+    await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
+    return 'restored';
+  } catch (err) {
+    // The throw may be before or after the wipe; report `wiped` (conservative —
+    // a redundant re-clone of an intact tree is correct, a skipped one is not).
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'cf_sandbox_cold_restore_failed',
+        reason: 'exception',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return 'wiped';
+  }
+}
 
 /**
  * Archive /workspace into R2, record it in the snapshot index, and reclaim the

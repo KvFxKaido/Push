@@ -399,6 +399,105 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
   });
 
+  it('restores a never-pushed branch from its R2 snapshot instead of recreating it empty', async () => {
+    // When the absent branch has a durable snapshot (a prior, now-dead sandbox's
+    // unpushed work), cold start hydrates it rather than recreating an empty
+    // branch — recovering the work, not just the branch name.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: '', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+    const r2 = makeR2({
+      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
+    });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/snap-1',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'feature/x',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // The snapshot object is fetched by its index imageId and hydrated.
+    expect(r2.get).toHaveBeenCalledWith('cf-snapshots/snap-1');
+    // No empty branch is recreated — the restored tree already carries it.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).includes('git checkout -b'))).toBe(
+      false,
+    );
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_branch_restored_from_snapshot')),
+    ).toBe(true);
+  });
+
+  it('recreates an empty branch when the snapshot object was already reaped', async () => {
+    // Index points at an imageId the eviction cron deleted: restore finds no
+    // object, /workspace is untouched, and we fall back to recreating the branch.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: '', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) throw new Error('fatal: Remote branch feature/x not found');
+      return { success: true };
+    });
+    const r2 = makeR2(); // empty — the indexed object is gone
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/reaped',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'feature/x',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    // Falls back to recreating the branch off the default checkout.
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes("git checkout -b 'feature/x'")),
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_cold_restore_miss')),
+    ).toBe(true);
+  });
+
   it('does NOT recreate when the branch exists on origin (transient clone failure)', async () => {
     // P1: a `--branch` clone failing transiently on a branch that DOES exist on
     // origin must not be recreated off the default HEAD (that would base the
