@@ -30,7 +30,8 @@ The cut is a full **retire on web**, not bare-chat retention. Two reasons the or
 stripped-but-present one just lingers; (b) bare web chat would still route to the
 foreground Orchestrator loop (`repoBranchReady === false`), so *removing* web no-repo —
 together with the inline-delegation flag retirement — is what lets `runRoundLoop` be
-deleted. No-repo survives **native-only** as local mode.
+deleted. The `chat`/`scratch` no-repo lane survives **native-only** as local mode (`local-pc` and
+`relay` are separate no-repo surfaces, untouched).
 
 ## Context — current state (grounded)
 
@@ -73,12 +74,16 @@ rule; it makes an existing 3-of-4 invariant uniform.
 
 ## Decision
 
-1. **Retire no-repo on web; collapse `{chat, scratch}` into one native-only umbrella.** The web
-   composer becomes **repo-only** — no bare chat retained. The collapsed no-repo umbrella exists
-   **native-only**, behind `isNativePlatform()`. Scratch's cloud sandbox is retired.
+1. **Retire the `chat` / `scratch` no-repo lane on web; collapse it into one native-only umbrella.**
+   The web chat/scratch composer path becomes **repo-only** — no bare chat retained. The collapsed
+   umbrella exists **native-only**, behind `isNativePlatform()`. Scratch's cloud sandbox is retired.
+   **Scope: this retires only `chat`/`scratch`.** `local-pc` (the pushd daemon) and `relay` are the
+   *other* `sandboxId: null` no-repo surfaces — out of scope here, kept as-is. (`local-pc` is in fact
+   the *template* for the native profile in Decision 3, so it can't be what we remove.)
 2. **File ops gate behind the native shell** — `isNativePlatform()` (the probe `git-session.ts`
-   already uses) + a `VITE_NATIVE_*`-style flag (the checkpoint-store pattern). Off-native there is
-   no no-repo mode at all; native shell → file ops on → local-first project.
+   already uses) + a `VITE_NATIVE_*`-style flag (the checkpoint-store pattern). Off-native the
+   `chat`/`scratch` lane is gone (no bare chat); native shell → file ops on → local-first project.
+   (`local-pc` / `relay` keep their separate no-repo paths regardless of platform.)
 3. **APK no-repo file ops = `local-pc`'s profile on the native transport.** Reuse the local-pc
    tool *contract* — the no-`/workspace` / no-remote context block and the `sandbox_*` tool
    surface — via a **native near-clone** of `LOCAL_PC_TOOL_PROTOCOL` (`NATIVE_TOOL_PROTOCOL`) with
@@ -99,8 +104,8 @@ rule; it makes an existing 3-of-4 invariant uniform.
 > device-validated 2026-06-23). Local mode **reuses its substrate** (`filesDir` storage + native git
 > engine + durable-local security model), so local mode's blocker is the native **file-CRUD bridge**,
 > not storage. The remaining checkpoint-store question is GA-ing its flag, not building it. That
-> device backup is a *one-way mirror* (cloud canonical while alive; device copy for restore-after-
-> loss) — distinct from, and far lighter than, the two-live-tree coherence seam deferred above.
+> device backup is a *one-way mirror* — cloud canonical while alive, device copy for
+> restore-after-loss — far lighter than the two-live-tree coherence seam deferred above.
 
 ### Why `local-pc` is the template, not a reason to invent a new runtime
 
