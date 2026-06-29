@@ -657,12 +657,12 @@ function MergeFlowSheet({
 
   // ── Post-merge: switch to main ─────────────────────────────────────
   //
-  // Prefer `mergeBranchInUI` when present: it migrates the active chat to
-  // the default branch (mirrors the fork-migration path) so the user stays
-  // in the conversation they just shipped from. It calls `setCurrentBranch`
-  // internally via the runtime handler, so the direct call here only fires
-  // in the (legacy) no-callback case to preserve back-compat for any
-  // embedder that hasn't wired the new callback yet.
+  // Prefer `mergeBranchInUI` when present: it updates the active conversation's
+  // branch state to the default branch so the user stays in the conversation
+  // they just shipped from. It calls `setCurrentBranch` internally via the
+  // runtime handler, so the direct call here only fires in the (legacy)
+  // no-callback case to preserve back-compat for any embedder that hasn't wired
+  // the new callback yet.
 
   const handleSwitchToMain = useCallback(() => {
     if (mergeBranchInUI) {

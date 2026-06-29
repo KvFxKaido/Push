@@ -53,7 +53,7 @@ function formatGitGuardBlock(
   if (isBranchCreate) {
     guidance = `Direct "${label}" is blocked. Use sandbox_create_branch({"name": "<branch-name>"}) — it creates the branch in the sandbox and keeps Push's branch state in sync. Pass "from": "<base>" to branch from a specific ref instead of HEAD.`;
   } else if (isBranchSwitch) {
-    guidance = `Direct "${label}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and routes the conversation to the existing chat for that branch (or auto-creates one). For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`;
+    guidance = `Direct "${label}" is blocked. Use sandbox_switch_branch({"branch": "<branch-name>"}) — it switches the sandbox and updates Push's active branch state for the current conversation. For branch-restore-as-file flows, pass an explicit flag (e.g. "git checkout -- <path>").`;
   } else if (isLocalMerge) {
     // Distinct from commit/push: there is NO consented form — "allowDirectGit"
     // does not apply (it would bypass the push-time audit; see the guard).

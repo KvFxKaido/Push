@@ -317,7 +317,6 @@ export function buildRepoChatDrawerProps(args: {
   resolveRepoAppearance: ChatRouteProps['resolveRepoAppearance'];
   setRepoAppearance: ChatRouteProps['setRepoAppearance'];
   clearRepoAppearance: ChatRouteProps['clearRepoAppearance'];
-  handleSelectRepoFromDrawer: ChatRouteProps['handleSelectRepoFromDrawer'];
   handleResumeChatFromDrawer: ChatRouteProps['handleResumeChatFromDrawer'];
   handleCreateNewChatRequest: () => void;
   deleteChat: ChatRouteProps['deleteChat'];
@@ -358,7 +357,6 @@ export function buildRepoChatDrawerProps(args: {
     resolveRepoAppearance: args.resolveRepoAppearance,
     setRepoAppearance: args.setRepoAppearance,
     clearRepoAppearance: args.clearRepoAppearance,
-    onSelectRepo: args.handleSelectRepoFromDrawer,
     onResumeChat: args.handleResumeChatFromDrawer,
     onNewChat: args.handleCreateNewChatRequest,
     onDeleteChat: args.deleteChat,

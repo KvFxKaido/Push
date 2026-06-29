@@ -92,7 +92,6 @@ const chatCardActions = vi.hoisted(() => ({
 }));
 const chatManagement = vi.hoisted(() => ({
   useChatManagement: vi.fn(() => ({
-    sortedChatIds: ['chat-1'],
     switchChat: vi.fn(),
     renameChat: vi.fn(),
     createNewChat: vi.fn(),
@@ -326,11 +325,10 @@ describe('useChat — public API surface', () => {
     expect(hook.lockedModel).toBe('gpt-4o');
   });
 
-  it('filters sortedChatIds to the default branch when the current branch is unknown', () => {
-    // Regression: `currentBranch` is the raw session branch (undefined until repo
-    // metadata loads). An unknown branch must filter to the default branch, not
-    // expose every branch's chats — otherwise the auto-switch could select a
-    // conversation from another branch and break branch-scoping (#1249 Codex P2).
+  it('keeps repo chats visible when the current branch is unknown', () => {
+    // Repo-scoped chats no longer use branch as identity. `currentBranch` can
+    // be undefined while repo metadata loads; the chat list should still show
+    // the repo's conversations instead of filtering to the default branch.
     chatPersistence.loadConversations.mockReturnValueOnce({
       // 'chat-1' is the active chat (loadActiveChatId), so it must exist or the
       // hook resets to a default single chat.
@@ -357,9 +355,7 @@ describe('useChat — public API surface', () => {
       currentBranch: undefined,
       defaultBranch: 'main',
     });
-    // Without the default-branch fallback the unfiltered list would be
-    // ['chat-feature', 'chat-1'] (feature is newer); the fix scopes it to main.
-    expect(hook.sortedChatIds).toEqual(['chat-1']);
+    expect(hook.sortedChatIds).toEqual(['chat-feature', 'chat-1']);
   });
 
   it('syncs the active conversation branch when currentBranch changes through a plain state write', () => {

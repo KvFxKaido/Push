@@ -245,7 +245,6 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     resolveRepoAppearance,
     setRepoAppearance,
     clearRepoAppearance,
-    handleSelectRepoFromDrawer,
     handleResumeChatFromDrawer,
     handleCreateNewChatRequest,
     deleteChat,

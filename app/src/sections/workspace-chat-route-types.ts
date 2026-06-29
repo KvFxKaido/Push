@@ -75,24 +75,22 @@ export interface ChatRouteWorkspaceProps {
   setCurrentBranch: (branch: string) => void;
   /** Slice 2.1: UI-initiated fork. Calls sandbox_create_branch tool path
    *  then dispatches the resulting payload through applyBranchSwitchPayload
-   *  so conversation migration fires the same way as model-initiated forks. */
+   *  so active-conversation branch state updates the same way as
+   *  model-initiated forks. */
   forkBranchFromUI: (
     name: string,
     from?: string,
   ) => Promise<import('@/lib/fork-branch-in-workspace').ForkBranchInWorkspaceResult>;
   /** UI-initiated warm switch. Calls sandbox_switch_branch and dispatches the
-   *  resulting BranchSwitchPayload so chat routing and sandbox teardown-skip
+   *  resulting BranchSwitchPayload so branch state and sandbox teardown-skip
    *  behavior match model-initiated switches. */
   switchBranchFromUI: (
     branch: string,
   ) => Promise<import('@/lib/fork-branch-in-workspace').SwitchBranchInWorkspaceResult>;
-  /** UI-initiated post-merge migration. Dispatches a `kind: 'merged'`
+  /** UI-initiated post-merge branch update. Dispatches a `kind: 'merged'`
    *  BranchSwitchPayload through `applyBranchSwitchPayload`, so the active
-   *  chat migrates to the default branch instead of being filtered out by
-   *  the auto-switch effect. Called by `MergeFlowSheet` after a successful
-   *  PR merge — the chat follows on branch switches but explicitly
-   *  follows on merge too, just without auto-bumping the user to a fresh
-   *  conversation. */
+   *  chat records the default branch. Called by `MergeFlowSheet` after a
+   *  successful PR merge. */
   mergeBranchInUI: (
     toBranch: string,
     opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
@@ -158,9 +156,9 @@ export interface ChatRouteRepositoryProps {
   branches: BranchManager;
   handleSelectRepoFromDrawer: (repo: RepoWithActivity, branch?: string) => void;
   /** Resumes a chat picked from the Chats drawer. Migrates the workspace
-   * session to the chat's mode/repo/branch when the current context
-   * doesn't match; same-context taps just route the active chat via
-   * pendingResumeChatId so the sandbox is preserved. */
+   * session to the chat's mode/repo when the current context doesn't match;
+   * same-context taps just route the active chat via pendingResumeChatId so
+   * the sandbox is preserved. */
   handleResumeChatFromDrawer: (chatId: string) => void;
 }
 

@@ -417,29 +417,16 @@ export function useChat(
   const queuedFollowUpCount = activeChatId ? (queuedFollowUpsByChat[activeChatId]?.length ?? 0) : 0;
   const pendingSteerCount = activeChatId ? (pendingSteersByChat[activeChatId]?.length ?? 0) : 0;
 
-  // --- Sorted chat IDs (filtered by repo + branch) ---
-  const currentBranch = branchInfo?.currentBranch;
-  const defaultBranch = branchInfo?.defaultBranch;
+  // --- Sorted chat IDs (filtered by workspace repo/mode, not branch) ---
   const sortedChatIds = useMemo(() => {
     return Object.keys(conversations)
       .filter((id) => {
         const conv = conversations[id];
         if (!activeRepoFullName) return !conv.repoFullName;
-        if (conv.repoFullName !== activeRepoFullName) return false;
-        // Branch filter for a repo session. `currentBranch` is now the *raw*
-        // session branch (undefined until repo metadata loads), so resolve the
-        // default fallback here rather than treating unknown as "show every
-        // branch's chats" — an unfiltered window would let the auto-switch select
-        // a conversation from another branch and violate branch-scoping. Scratch /
-        // no-repo already returned above, so an unknown branch here means a repo
-        // session mid-load: filter to the default branch, the pre-raw behavior.
-        const effectiveBranch = currentBranch || defaultBranch || 'main';
-        const isOnDefaultBranch = effectiveBranch === (defaultBranch || 'main');
-        if (!conv.branch) return isOnDefaultBranch;
-        return conv.branch === effectiveBranch;
+        return conv.repoFullName === activeRepoFullName;
       })
       .sort((a, b) => conversations[b].lastMessageAt - conversations[a].lastMessageAt);
-  }, [conversations, activeRepoFullName, currentBranch, defaultBranch]);
+  }, [conversations, activeRepoFullName]);
 
   // --- Sandbox setters ---
   const setSandboxId = useCallback((id: string | null) => {

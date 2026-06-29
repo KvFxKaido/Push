@@ -59,9 +59,8 @@ interface RepoChatDrawerProps {
   resolveRepoAppearance: (repoFullName?: string | null) => RepoAppearance;
   setRepoAppearance: (repoFullName: string, appearance: RepoAppearance) => void;
   clearRepoAppearance: (repoFullName: string) => void;
-  onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   /** Resume the chat the user tapped. The handler is responsible for
-   * migrating the workspace session (repo / branch / mode) to match the
+   * migrating the workspace session (repo / mode) to match the
    * chat — switching activeChatId in isolation gets reverted by the
    * workspace's belong-to-workspace auto-effects. */
   onResumeChat: (id: string) => void;
@@ -120,7 +119,6 @@ export function RepoChatDrawer({
   resolveRepoAppearance,
   setRepoAppearance,
   clearRepoAppearance,
-  onSelectRepo,
   onResumeChat,
   onNewChat,
   onDeleteChat,
@@ -349,6 +347,7 @@ export function RepoChatDrawer({
     const isActiveChat = chat.id === activeChatId;
     const isEditing = editingChatId === chat.id;
     const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
+    const branchLabel = chat.repoFullName ? chat.branch : null;
 
     return (
       <div
@@ -416,6 +415,7 @@ export function RepoChatDrawer({
               </p>
               <p className="mt-0.5 text-push-2xs text-push-fg-muted">
                 {messageCount} msg{messageCount !== 1 ? 's' : ''} ·{' '}
+                {branchLabel ? `${branchLabel} · ` : ''}
                 {timeAgoCompact(chat.lastMessageAt)}
               </p>
             </button>
@@ -681,69 +681,7 @@ export function RepoChatDrawer({
                                 No chats yet
                               </div>
                             ) : (
-                              (() => {
-                                // Group chats by branch
-                                const branchMap = new Map<string, Conversation[]>();
-                                for (const chat of chats) {
-                                  const b = chat.branch || defaultBranch || 'main';
-                                  const arr = branchMap.get(b) || [];
-                                  arr.push(chat);
-                                  branchMap.set(b, arr);
-                                }
-                                const branchNames = Array.from(branchMap.keys());
-                                const hasMultipleBranches = branchNames.length > 1;
-
-                                if (!hasMultipleBranches) {
-                                  // Single branch — no sub-headers needed
-                                  return chats.map((chat) => renderChatRow(chat));
-                                }
-
-                                // Sort branches: active branch first, then default branch, then rest alphabetically
-                                const activeBranch = isActiveRepo ? currentBranch : undefined;
-                                branchNames.sort((a, b) => {
-                                  if (a === activeBranch) return -1;
-                                  if (b === activeBranch) return 1;
-                                  const defBranch = defaultBranch || 'main';
-                                  if (a === defBranch) return -1;
-                                  if (b === defBranch) return 1;
-                                  return a.localeCompare(b);
-                                });
-
-                                return branchNames.map((branchName) => {
-                                  const branchChats = branchMap.get(branchName) || [];
-                                  const isActiveBranch =
-                                    isActiveRepo && branchName === currentBranch;
-                                  return (
-                                    <div key={branchName}>
-                                      <button
-                                        onClick={() => {
-                                          if (branchName !== currentBranch) {
-                                            if (isActiveRepo) {
-                                              void switchActiveRepoBranch(branchName);
-                                            } else {
-                                              onSelectRepo(repo, branchName);
-                                            }
-                                          }
-                                        }}
-                                        className="flex w-full items-center gap-1.5 px-1.5 pb-0.5 pt-2 text-left"
-                                      >
-                                        <BranchWaveIcon
-                                          className={`h-3 w-3 shrink-0 ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`}
-                                        />
-                                        <span
-                                          className={`truncate text-push-2xs font-medium ${isActiveBranch ? 'text-push-link' : 'text-push-fg-dim'}`}
-                                        >
-                                          {branchName}
-                                        </span>
-                                        <span className="text-push-2xs text-push-fg-dim">
-                                          ({branchChats.length})
-                                        </span>
-                                      </button>
-                                      {branchChats.map((chat) => renderChatRow(chat))}
-                                    </div>
-                                  );
-                                });
-                              })()
+                              chats.map((chat) => renderChatRow(chat))
                             )}
                           </div>
                         )}

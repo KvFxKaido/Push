@@ -664,9 +664,9 @@ export class WebToolExecutionRuntime
           // the sandbox is slow or down (memory is an availability surface, not
           // a safety gate); fall back to a live sandbox read, then to null.
           // Branch is best-effort (null when nothing is warm yet, or for
-          // local-daemon sessions); in that case the `chatId` filter still
-          // bounds reads, because chats are branch-scoped (see CLAUDE.md repo/
-          // session model) — so an undefined branch is not a cross-branch leak.
+          // local-daemon sessions). The `chatId` filter still bounds reads to
+          // the repo-scoped conversation; branch narrows the scope when known
+          // but is no longer chat identity.
           const memBranch =
             context.currentBranch ??
             (context.sandboxId ? await this.getSandboxBranch(context.sandboxId) : null);

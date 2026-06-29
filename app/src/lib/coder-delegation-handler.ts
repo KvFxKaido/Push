@@ -570,7 +570,7 @@ export async function handleCoderDelegation(
               declaredCapabilities: delegateArgs.declaredCapabilities,
               // Memory read-scope for the delegated Coder (LCM) — from session
               // context, never the model. repoFullName comes from the active
-              // repo ref; chatId bounds reads (chats are branch-scoped).
+              // repo ref; chatId bounds reads to the repo-scoped conversation.
               repoFullName: ctx.repoRef.current || undefined,
               chatId,
               correlation: coderCorrelation,

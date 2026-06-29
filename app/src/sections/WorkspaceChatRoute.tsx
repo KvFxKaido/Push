@@ -632,7 +632,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     resolveRepoAppearance,
     setRepoAppearance,
     clearRepoAppearance,
-    handleSelectRepoFromDrawer,
     handleResumeChatFromDrawer,
     handleCreateNewChatRequest,
     deleteChat,

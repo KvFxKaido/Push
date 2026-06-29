@@ -149,12 +149,25 @@ export function useWorkspaceChatPanelsController({
       // Repo conversations — select the repo first, then switch.
       const repo = repos.find((candidate) => candidate.full_name === conversation.repoFullName);
       if (!repo) return;
+      if (activeRepo?.full_name === conversation.repoFullName) {
+        closePanels();
+        switchChat(chatId);
+        return;
+      }
+
       handleSelectRepoFromDrawer(repo, conversation.branch);
       requestAnimationFrame(() => {
         switchChat(chatId);
       });
     },
-    [closePanels, conversations, handleSelectRepoFromDrawer, repos, switchChat],
+    [
+      activeRepo?.full_name,
+      closePanels,
+      conversations,
+      handleSelectRepoFromDrawer,
+      repos,
+      switchChat,
+    ],
   );
 
   const handleStartWorkspaceRequest = useCallback(() => {
