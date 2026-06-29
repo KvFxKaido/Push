@@ -2,6 +2,9 @@
 
 Date: 2026-06-28
 Status: **Draft** — proposed; no code yet. Owner: Push mobile/runtime.
+Revised 2026-06-29: web *retires* no-repo (was a bare-chat probe); repo-mode device
+durability is mapped onto the existing Native Checkpoint Store, so local mode's blocker
+is the native file-CRUD bridge, not storage.
 Tracking: [#1226](https://github.com/KvFxKaido/Push/issues/1226) (sequencing).
 
 Related: [`Native Git Runtime Integration.md`](<Native Git Runtime Integration.md>) (Deferred —
@@ -21,10 +24,14 @@ which deletes the single hardest blocker in the mobile-local arc (an on-device
 toolchain). What's left is file editing + local git history + optional push — all of
 which the native shell can already do or nearly do.
 
-The cut is deliberately drastic. Subtracting web no-repo down to bare chat is a
-**probe**: let real usage reveal what PWA chat actually needs, rather than carrying
-assumed / onboarding-era capability forward. The bareness is the point, not an
-oversight — additions to web no-repo should later be justified by observed need.
+The cut is a full **retire on web**, not bare-chat retention. Two reasons the original
+"keep bare chat as a probe" framing missed: (a) this is a sole-user deployment, so
+*removal* is the cleaner signal — a gone surface announces itself immediately, where a
+stripped-but-present one just lingers; (b) bare web chat would still route to the
+foreground Orchestrator loop (`repoBranchReady === false`), so *removing* web no-repo —
+together with the inline-delegation flag retirement — is what lets `runRoundLoop` be
+deleted. The `chat`/`scratch` no-repo lane survives **native-only** as local mode (`local-pc` and
+`relay` are separate no-repo surfaces, untouched).
 
 ## Context — current state (grounded)
 
@@ -39,7 +46,9 @@ oversight — additions to web no-repo should later be justified by observed nee
   - repos present → `{ includeGitHubTools: true, mode: 'repo' }` (`:232-238`).
 - **Routing.** No-repo workspaces (chat / scratch / local-pc) are never inline-eligible and
   fall through to the **foreground Orchestrator loop** (`delegation-mode-settings.ts:122-158`).
-  Unchanged by this doc.
+  Retiring web no-repo removes web's only no-repo→loop route; with the inline-delegation flag
+  retired, the web Orchestrator loop (`runRoundLoop`) becomes deletable. Native local mode runs
+  the native-inline transport, not the loop.
 - **Tool-protocol selection.** `orchestrator.ts` branches on `workspaceContext.mode` — a chat
   block (`:371,396,436,482`) and `LOCAL_PC_TOOL_PROTOCOL` pushed for local-pc (`:502`),
   `SANDBOX` protocol otherwise.
@@ -65,12 +74,16 @@ rule; it makes an existing 3-of-4 invariant uniform.
 
 ## Decision
 
-1. **Collapse `{chat, scratch}` into one sandbox-free no-repo umbrella.** No-repo's file
-   capability becomes a **flagged axis** of one mode, not a separate mode. Scratch's cloud
-   sandbox is retired.
+1. **Retire the `chat` / `scratch` no-repo lane on web; collapse it into one native-only umbrella.**
+   The web chat/scratch composer path becomes **repo-only** — no bare chat retained. The collapsed
+   umbrella exists **native-only**, behind `isNativePlatform()`. Scratch's cloud sandbox is retired.
+   **Scope: this retires only `chat`/`scratch`.** `local-pc` (the pushd daemon) and `relay` are the
+   *other* `sandboxId: null` no-repo surfaces — out of scope here, kept as-is. (`local-pc` is in fact
+   the *template* for the native profile in Decision 3, so it can't be what we remove.)
 2. **File ops gate behind the native shell** — `isNativePlatform()` (the probe `git-session.ts`
-   already uses) + a `VITE_NATIVE_*`-style flag (the checkpoint-store pattern). Web no-repo →
-   file ops off → presents as today's chat. Native shell → file ops on → local-first project.
+   already uses) + a `VITE_NATIVE_*`-style flag (the checkpoint-store pattern). Off-native the
+   `chat`/`scratch` lane is gone (no bare chat); native shell → file ops on → local-first project.
+   (`local-pc` / `relay` keep their separate no-repo paths regardless of platform.)
 3. **APK no-repo file ops = `local-pc`'s profile on the native transport.** Reuse the local-pc
    tool *contract* — the no-`/workspace` / no-remote context block and the `sandbox_*` tool
    surface — via a **native near-clone** of `LOCAL_PC_TOOL_PROTOCOL` (`NATIVE_TOOL_PROTOCOL`) with
@@ -84,6 +97,15 @@ rule; it makes an existing 3-of-4 invariant uniform.
    increment whose hard part is the **device↔sandbox coherence seam** (two live copies of the
    tree once execution forces a cloud round-trip). Explicitly **out of scope** for this doc —
    named so it isn't discovered at review time.
+
+> **Repo-mode device durability is not new work here.** Capturing the cloud-sandbox tree to the
+> device and restoring it is the **Native Checkpoint Store**
+> ([`Native Checkpoint Store.md`](<Native Checkpoint Store.md>) — Current, `VITE_NATIVE_CHECKPOINTS`,
+> device-validated 2026-06-23). Local mode **reuses its substrate** (`filesDir` storage + native git
+> engine + durable-local security model), so local mode's blocker is the native **file-CRUD bridge**,
+> not storage. The remaining checkpoint-store question is GA-ing its flag, not building it. That
+> device backup is a *one-way mirror* — cloud canonical while alive, device copy for
+> restore-after-loss — far lighter than the two-live-tree coherence seam deferred above.
 
 ### Why `local-pc` is the template, not a reason to invent a new runtime
 
@@ -155,19 +177,29 @@ framing removed — and keep the *session kind* distinct.**
 
 ## Sequencing
 
-1. **Web collapse (pure refactor, no device).** One sandbox-free no-repo mode; `fileOps=false`
-   off-native; retire the scratch sandbox path. Web no-repo = chat. Ships independently, fully
-   CI-testable. *This is the cheap, reversible first cut the Motivation describes.*
-2. **Native file-CRUD bridge + native `sandbox_*` execution path** (Kotlin + JS). Device-validate
-   `read`/`write`/`list`/`edit`/`diff` on the Moto G.
-3. **`git init` lifecycle + `'native'` session kind + flip the `git-session.ts` arm.** APK no-repo
+1. **Web retire (pure refactor, no device).** Composer becomes repo-only; retire the scratch
+   sandbox path; remove chat. Ships independently, fully CI-testable, reversible. *Unblocks
+   deleting the web Orchestrator loop (with the inline-delegation flag retirement).*
+2. **GA the Native Checkpoint Store** for repo-mode device durability. Already built +
+   device-validated; the work is widening `VITE_NATIVE_CHECKPOINTS` toward default-on once
+   confident — not a new build. Proves the shared `filesDir`/native-git substrate local mode reuses
+   (the cheap-consumer validation of the keystone is *already done*).
+3. **Native file-CRUD bridge + native `sandbox_*` execution path** (Kotlin + JS). The real long
+   pole; storage already exists. Device-validate `read`/`write`/`list`/`edit`/`diff` on the Moto G.
+4. **`git init` lifecycle + `'native'` session kind + flip the `git-session.ts` arm.** APK no-repo
    = local-first project, behind the `VITE_NATIVE_*` flag.
-4. **Optional GitHub sync.** Push first (solo authors push, not pull — native `push` + token
+5. **Optional GitHub sync.** Push first (solo authors push, not pull — native `push` + token
    wiring already exist at `git-session.ts:53`). `git remote add` graduates a local project.
+
+*Parallel/independent:* retire the inline-delegation flag → delete the web Orchestrator loop
+(`runRoundLoop`), unblocked by step 1.
 
 ## Out of scope (deferred, not rejected)
 
-- **Repo-mode local-fs lean on APK** — the device↔sandbox coherence seam. Its own increment/doc.
+- **Repo-mode local-fs lean on APK** — the device↔sandbox coherence seam (two *live* trees). Its
+  own increment/doc. Distinct from the Native Checkpoint Store's device backup, which is a one-way
+  mirror (cloud canonical while alive; device copy for restore-after-loss) — far lighter than two
+  live peers.
 - **On-device execution** — writing needs none; code does (the toolchain wall). Unbuilt.
 - **Pull / merge on native local repos** — solo push dominates; the `merge`/`pull` primitive plus
   no-shell conflict UX are deferred (`fetch` exists; `merge` is unbridged JGit).
@@ -178,7 +210,7 @@ framing removed — and keep the *session kind* distinct.**
 
 ## Status flip plan
 
-Flip **Draft → Current** when sequencing steps 1–3 land and APK no-repo local mode is
+Flip **Draft → Current** when sequencing steps 1–4 land and APK no-repo local mode is
 device-validated on the Moto G. Note steps inline as they ship. Fold the durable parts into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 when the arc stabilizes.
