@@ -342,6 +342,73 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.exec).toHaveBeenCalledTimes(4);
   });
 
+  it('recreates a branch absent on origin by cloning the default HEAD and checking it out', async () => {
+    // A branch-on-first-prompt branch that was never pushed (local-only, then the
+    // sandbox died) isn't on origin. `git clone --branch <missing>` hard-fails;
+    // the create must recover by cloning the default HEAD and recreating the
+    // branch locally rather than stranding the session.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+
+    const env = makeEnv();
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      env,
+    );
+
+    expect(response.status).toBe(200);
+    // First attempt is the `--branch` clone (fails); the retry clones the
+    // default HEAD with no branch pin.
+    expect(sandbox.gitCheckout).toHaveBeenNthCalledWith(
+      1,
+      'https://x-access-token:ghs_token@github.com/owner/repo.git',
+      { branch: 'feature/x', targetDir: '/workspace', depth: 1 },
+    );
+    expect(sandbox.gitCheckout).toHaveBeenNthCalledWith(
+      2,
+      'https://x-access-token:ghs_token@github.com/owner/repo.git',
+      { targetDir: '/workspace', depth: 1 },
+    );
+    // The branch is recreated locally off the default checkout.
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes("git checkout -b 'feature/x'")),
+    ).toBe(true);
+    // Symmetric structured log so the recovery isn't a silent path.
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_branch_recreated')),
+    ).toBe(true);
+  });
+
+  it('surfaces the original clone failure when the default-HEAD retry also fails', async () => {
+    // If cloning the default HEAD ALSO fails, it's a real infra/auth error, not a
+    // missing branch — the create must surface it rather than mask it as a
+    // recreate.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    sandbox.gitCheckout.mockRejectedValue(new Error('fatal: could not read from remote'));
+
+    const env = makeEnv();
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      env,
+    );
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await jsonBody(response))).not.toContain('ghs_token');
+  });
+
   it('fails closed (destroys the sandbox) when the clone-credential strip fails', async () => {
     // #987: if the post-clone `git remote set-url` to the tokenless URL fails,
     // the tokenized clone URL may still be in .git/config — a reusable
@@ -430,7 +497,10 @@ describe('handleCloudflareSandbox happy paths', () => {
     const sandbox = mockSandbox();
     mockUuid();
     sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
-    sandbox.gitCheckout.mockRejectedValueOnce(new Error('clone exploded'));
+    // Both clone attempts fail (the `--branch` clone and the default-HEAD retry),
+    // so the failure is terminal — not a missing-branch recovery — and the
+    // failed-phase timing path is exercised.
+    sandbox.gitCheckout.mockRejectedValue(new Error('clone exploded'));
     const consoleLog = vi.mocked(console.log);
     consoleLog.mockClear();
 
