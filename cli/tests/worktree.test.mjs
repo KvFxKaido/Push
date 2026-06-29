@@ -132,7 +132,11 @@ describe('worktreeState / isDisposableWorktree', () => {
       branch: 'sandbox/clean',
       dir: path.join(wtBase, 'clean'),
     });
-    assert.deepEqual(await worktreeState(handle), { dirty: false, commitsAhead: 0 });
+    assert.deepEqual(await worktreeState(handle), {
+      dirty: false,
+      commitsAhead: 0,
+      unpushedCommits: null,
+    });
     assert.equal(await isDisposableWorktree(handle), true);
   });
 
@@ -148,7 +152,7 @@ describe('worktreeState / isDisposableWorktree', () => {
     assert.equal(await isDisposableWorktree(handle), false);
   });
 
-  it('a commit beyond base makes it non-disposable even when clean', async () => {
+  it('an unpushed commit beyond base makes it non-disposable even when clean', async () => {
     const handle = await addWorktree({
       repoRoot,
       branch: 'sandbox/committed',
@@ -160,7 +164,48 @@ describe('worktreeState / isDisposableWorktree', () => {
     const state = await worktreeState(handle);
     assert.equal(state.dirty, false);
     assert.equal(state.commitsAhead, 1);
+    // No remote ref for this branch → unpushed is unknown, treated as at-risk.
+    assert.equal(state.unpushedCommits, null);
     assert.equal(await isDisposableWorktree(handle), false);
+  });
+
+  it('a clean, fully-pushed branch IS disposable even with commits beyond base (Gap A)', async () => {
+    // Give the repo a bare origin so the branch can have a remote ref.
+    const originDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-wt-origin-'));
+    try {
+      await git(originDir, 'init', '--bare', '-b', 'main');
+      await git(repoRoot, 'remote', 'add', 'origin', originDir);
+      try {
+        const handle = await addWorktree({
+          repoRoot,
+          branch: 'sandbox/pushed',
+          dir: path.join(wtBase, 'pushed'),
+        });
+        await fs.writeFile(path.join(handle.path, 'feature.txt'), 'shipped\n');
+        await git(handle.path, 'add', '-A');
+        await git(handle.path, 'commit', '-m', 'pushed feature');
+        // Push so origin/sandbox/pushed exists and matches HEAD.
+        await git(handle.path, 'push', '-u', 'origin', 'sandbox/pushed');
+
+        const state = await worktreeState(handle);
+        assert.equal(state.dirty, false);
+        assert.equal(state.commitsAhead, 1, 'has a commit beyond base');
+        assert.equal(state.unpushedCommits, 0, 'but it is on the remote');
+        assert.equal(
+          await isDisposableWorktree(handle),
+          true,
+          'recoverable from remote → reclaimable',
+        );
+
+        const outcome = await teardownWorktree(handle);
+        assert.equal(outcome.removed, true);
+        assert.equal(outcome.branchDeleted, true);
+      } finally {
+        await git(repoRoot, 'remote', 'remove', 'origin').catch(() => {});
+      }
+    } finally {
+      await fs.rm(originDir, { recursive: true, force: true });
+    }
   });
 });
 

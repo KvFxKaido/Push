@@ -15,11 +15,13 @@
  * Git plumbing runs through `makeLocalGitExec` so it shares the CLI's escaped,
  * timeout-aware exec path rather than re-spawning git ad hoc.
  *
- * Lifecycle (decision: "clean if clean, keep if work exists"): on teardown a
- * worktree is removed only when it has no uncommitted changes AND no commits
- * beyond its base — otherwise it is kept and its path reported, so unpushed
- * work is never silently destroyed. Reads that fail are treated as "has work"
- * (fail-safe toward keeping), never as "safe to delete".
+ * Lifecycle (shared decision in `lib/git/worktree-disposal.ts`): on teardown a
+ * worktree is removed only when it is clean AND nothing is unpushed — no
+ * session commits, or every commit already on `origin/<branch>`. A clean,
+ * fully-pushed branch is reclaimable (recoverable from the remote); only
+ * uncommitted changes or unpushed commits keep it, with the path reported, so
+ * unpushed work is never silently destroyed. Reads that fail are treated as
+ * "has work" (fail-safe toward keeping), never as "safe to delete".
  */
 
 import { promises as fs } from 'node:fs';
@@ -29,6 +31,7 @@ import { createHash } from 'node:crypto';
 
 import { makeLocalGitExec } from './git-backend.js';
 import type { GitExec } from '../lib/git/backend.js';
+import { decideWorktreeDisposal } from '../lib/git/worktree-disposal.js';
 
 // Worktree git ops (add/remove/list/status) can touch a lot of refs on a big
 // repo; give them headroom over the 5s default the typed reads use.
@@ -150,12 +153,19 @@ export interface WorktreeState {
   dirty: boolean;
   /** Commits on the branch beyond its base SHA. */
   commitsAhead: number;
+  /**
+   * Commits on HEAD not present on the branch's remote ref (`origin/<branch>`),
+   * or `null` when the branch has no remote ref yet (never pushed). Lets
+   * teardown reclaim a clean branch whose work is already on the remote instead
+   * of keeping it forever just because it has commits beyond base.
+   */
+  unpushedCommits: number | null;
 }
 
 /**
- * Inspect a worktree's work state. On a read failure either signal is biased
- * toward "has work" (`dirty: true` / `commitsAhead: 1`) so an unreadable
- * worktree is kept, never deleted on uncertainty.
+ * Inspect a worktree's work state. On a read failure every signal is biased
+ * toward "has work" (`dirty: true` / `commitsAhead: 1` / `unpushedCommits: 1`)
+ * so an unreadable worktree is kept, never deleted on uncertainty.
  */
 export async function worktreeState(handle: WorktreeHandle): Promise<WorktreeState> {
   const exec = gitExecAt(handle.path);
@@ -166,13 +176,34 @@ export async function worktreeState(handle: WorktreeHandle): Promise<WorktreeSta
   const revlist = await exec(['rev-list', '--count', `${handle.baseSha}..HEAD`]);
   const commitsAhead = revlist.exitCode === 0 ? Number.parseInt(revlist.stdout.trim(), 10) || 0 : 1;
 
-  return { dirty, commitsAhead };
+  // Refs are shared across a repo's worktrees, so the remote-tracking ref
+  // resolves here even though the push happened from another worktree/process.
+  // Use the fully-qualified `refs/remotes/origin/<branch>` rather than the
+  // `origin/<branch>` shorthand: the shorthand follows git's disambiguation
+  // order (refs/, refs/tags/, refs/heads/, refs/remotes/), so a tag or local
+  // branch literally named `origin/<branch>` would shadow the real
+  // remote-tracking ref and could make unpushed work look pushed — exactly the
+  // false-positive that would let teardown delete it. A missing ref (never
+  // pushed) is `null`; a read failure on an existing ref biases to "unpushed"
+  // (1) so we keep rather than risk discarding unpushed commits.
+  const remoteRef = `refs/remotes/origin/${handle.branch}`;
+  const hasRemote = await exec(['rev-parse', '--verify', '--quiet', remoteRef]);
+  let unpushedCommits: number | null;
+  if (hasRemote.exitCode !== 0) {
+    unpushedCommits = null;
+  } else {
+    const ahead = await exec(['rev-list', '--count', `${remoteRef}..HEAD`]);
+    unpushedCommits = ahead.exitCode === 0 ? Number.parseInt(ahead.stdout.trim(), 10) || 0 : 1;
+  }
+
+  return { dirty, commitsAhead, unpushedCommits };
 }
 
-/** Disposable = no uncommitted changes AND no commits beyond base. */
+/** Disposable = the shared decision says the work area can be reclaimed: clean
+ *  with nothing unpushed (no session commits, or every commit already on the
+ *  remote). */
 export async function isDisposableWorktree(handle: WorktreeHandle): Promise<boolean> {
-  const state = await worktreeState(handle);
-  return !state.dirty && state.commitsAhead === 0;
+  return decideWorktreeDisposal(await worktreeState(handle)).action === 'remove';
 }
 
 export interface RemoveWorktreeResult {
@@ -229,16 +260,23 @@ export interface TeardownOutcome {
  * outcome so the caller emits one symmetric log line for kept vs removed.
  */
 export async function teardownWorktree(handle: WorktreeHandle): Promise<TeardownOutcome> {
-  if (!(await isDisposableWorktree(handle))) {
+  const decision = decideWorktreeDisposal(await worktreeState(handle));
+  if (decision.action === 'keep') {
     return {
       kept: true,
       removed: false,
       branchDeleted: false,
       path: handle.path,
       branch: handle.branch,
-      reason: 'has uncommitted changes or commits beyond base',
+      reason:
+        decision.reason === 'dirty'
+          ? 'has uncommitted changes'
+          : 'has commits not yet pushed to the remote',
     };
   }
+  // Safe to delete the local branch: removal only happens when clean and
+  // nothing is unpushed, so either there are no session commits or they are all
+  // recoverable from `origin/<branch>`.
   const res = await removeWorktree(handle, { deleteBranch: true });
   return {
     kept: !res.removed,
@@ -262,14 +300,20 @@ export async function formatWorktreeStatus(state: { worktree?: WorktreeHandle })
   }
   const wt = state.worktree;
   const s = await worktreeState(wt);
-  const disposable = !s.dirty && s.commitsAhead === 0;
+  const decision = decideWorktreeDisposal(s);
+  const unpushedLabel =
+    s.unpushedCommits === null
+      ? 'not pushed (no remote branch yet)'
+      : `${s.unpushedCommits} unpushed`;
   return [
     `Worktree sandbox: ${wt.path}`,
     `Branch: ${wt.branch} (from ${wt.baseSha.slice(0, 8)})`,
-    `State: ${s.dirty ? 'uncommitted changes' : 'clean'}, ${s.commitsAhead} commit(s) beyond base`,
-    disposable
-      ? 'On exit: removed automatically (nothing to keep).'
-      : `On exit: kept (has work) — commit/push, then \`git worktree remove ${wt.path}\`.`,
+    `State: ${s.dirty ? 'uncommitted changes' : 'clean'}, ${s.commitsAhead} commit(s) beyond base, ${unpushedLabel}`,
+    decision.action === 'remove'
+      ? 'On exit: removed automatically (nothing unpushed to keep).'
+      : decision.reason === 'dirty'
+        ? `On exit: kept (uncommitted changes) — commit + push, then \`git worktree remove ${wt.path}\`.`
+        : `On exit: kept (unpushed commits) — push, then \`git worktree remove ${wt.path}\`.`,
   ].join('\n');
 }
 
