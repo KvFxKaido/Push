@@ -19,6 +19,7 @@ import {
   REASONING_HEAVY_MODEL_MATCHERS,
   isSparseStreamingModel,
   effectiveActivityTimeoutMs,
+  effectiveFirstTokenGraceMs,
   SPARSE_STREAMING_MODEL_MATCHERS,
 } from '../../lib/reasoning-models.ts';
 
@@ -184,5 +185,28 @@ describe('effectiveActivityTimeoutMs (widen-only)', () => {
     // Even if a caller (hypothetically) passed a wall-clock below the activity
     // window, the relaxation must not tighten the window.
     assert.equal(effectiveActivityTimeoutMs('fugu', 60_000, 30_000), 60_000);
+  });
+});
+
+describe('effectiveFirstTokenGraceMs (widen-only)', () => {
+  const GRACE = 90_000;
+  const WALL_CLOCK = 180_000;
+
+  it('relaxes a sparse streamer to the wall-clock so a silent start is tolerated', () => {
+    // The Codex P2: a sparse round can stay silent BEFORE the first token (the
+    // grace window fires, not the activity timeout). Both must collapse onto the
+    // wall-clock for the wall-clock to be the genuine sole bound.
+    assert.equal(effectiveFirstTokenGraceMs('fugu', GRACE, WALL_CLOCK), WALL_CLOCK);
+    assert.equal(effectiveFirstTokenGraceMs('sakana/fugu', GRACE, WALL_CLOCK), WALL_CLOCK);
+  });
+
+  it('keeps the default grace for every other model', () => {
+    assert.equal(effectiveFirstTokenGraceMs('glm-5.1', GRACE, WALL_CLOCK), GRACE);
+    assert.equal(effectiveFirstTokenGraceMs('gpt-5.4', GRACE, WALL_CLOCK), GRACE);
+    assert.equal(effectiveFirstTokenGraceMs(null, GRACE, WALL_CLOCK), GRACE);
+  });
+
+  it('is widen-only — never returns less than the default grace', () => {
+    assert.equal(effectiveFirstTokenGraceMs('fugu', 90_000, 30_000), 90_000);
   });
 });

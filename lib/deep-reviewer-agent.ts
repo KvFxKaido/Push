@@ -33,6 +33,7 @@ import { iteratePushStreamText } from './stream-utils.js';
 import {
   REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
   effectiveActivityTimeoutMs,
+  effectiveFirstTokenGraceMs,
 } from './reasoning-models.js';
 import { parseStructured } from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
@@ -784,6 +785,20 @@ export async function runDeepReviewer<TCall, TCard>(
     const roundNum = round + 1;
     callbacks.onStatus('Deep review investigating...', `Round ${roundNum}`);
 
+    // Sparse streamers (Fugu) collapse both per-round windows onto the
+    // wall-clock; every other model keeps the defaults. Computed once per round
+    // so the timeout value and its diagnostic message stay in lockstep.
+    const roundActivityTimeoutMs = effectiveActivityTimeoutMs(
+      modelId,
+      DEEP_REVIEW_ROUND_TIMEOUT_MS,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    );
+    const roundFirstTokenGraceMs = effectiveFirstTokenGraceMs(
+      modelId,
+      DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    );
+
     const {
       error: streamError,
       text: rawAccumulated,
@@ -797,17 +812,14 @@ export async function runDeepReviewer<TCall, TCard>(
         systemPromptOverride: systemPrompt,
         hasSandbox: effectiveSandboxAvailable,
       },
-      // Sparse-streaming models (Fugu) relax the activity timeout to the
-      // wall-clock: their silent gaps are server-side orchestration, not a
-      // stall, so inter-token silence isn't a meaningful kill signal. The
-      // wall-clock below remains the per-round bound. Widen-only — every other
-      // model keeps the tight 60s window.
-      effectiveActivityTimeoutMs(
-        modelId,
-        DEEP_REVIEW_ROUND_TIMEOUT_MS,
-        DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
-      ),
-      `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
+      // Sparse-streaming models (Fugu) relax BOTH per-round windows — the
+      // activity timeout AND the first-token grace below — to the wall-clock:
+      // their silence (between tokens and, especially, before the first one) is
+      // server-side orchestration, not a stall, so neither is a meaningful kill
+      // signal. The wall-clock remains the sole bound. Widen-only — every other
+      // model keeps the tight 60s / 90s windows.
+      roundActivityTimeoutMs,
+      `Deep review round ${roundNum} timed out after ${roundActivityTimeoutMs / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
       // Count reasoning as activity (heavy reasoners stream thinking for >60s
@@ -816,7 +828,7 @@ export async function runDeepReviewer<TCall, TCard>(
       // context before its first token, and that's not exclusive to registry
       // reasoners (it killed a round-7 fugu review, #1242). The wall-clock cap
       // above still bounds endless reasoning.
-      { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: roundFirstTokenGraceMs },
     );
     addUsage(roundUsage);
     if (streamError) {
@@ -1069,8 +1081,10 @@ export async function runDeepReviewer<TCall, TCard>(
       hasSandbox: Boolean(sandboxId),
     },
     // Sparse-streaming relaxation (see the loop round above): the forced-output
-    // turn is the heaviest synthesis, so it's the most exposed to Fugu's silent
-    // orchestration gaps. Widen-only.
+    // turn is the heaviest synthesis and the most exposed to Fugu's silent
+    // orchestration gaps — especially a long silence BEFORE the first token,
+    // which the first-token grace below (not the activity timeout) bounds. Both
+    // windows collapse onto the wall-clock for sparse models. Widen-only.
     effectiveActivityTimeoutMs(
       modelId,
       DEEP_REVIEW_ROUND_TIMEOUT_MS,
@@ -1080,9 +1094,17 @@ export async function runDeepReviewer<TCall, TCard>(
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
     // Same allowance as the loop rounds: the forced-output turn is where the
-    // model works hardest (whole-investigation synthesis), so the unconditional
-    // first-token grace matters most here.
-    { reasoningResetsActivityTimer: true, firstTokenGraceMs: DEEP_REVIEW_FIRST_TOKEN_GRACE_MS },
+    // model works hardest (whole-investigation synthesis), so the first-token
+    // grace matters most here — and for a sparse streamer it widens to the
+    // wall-clock so a silent synthesis start isn't killed at the default 90s.
+    {
+      reasoningResetsActivityTimer: true,
+      firstTokenGraceMs: effectiveFirstTokenGraceMs(
+        modelId,
+        DEEP_REVIEW_FIRST_TOKEN_GRACE_MS,
+        DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+      ),
+    },
   );
   addUsage(finalUsage);
   const finalAccumulated = rawFinalAccumulated.trim();

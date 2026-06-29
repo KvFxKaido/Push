@@ -231,3 +231,25 @@ export function effectiveActivityTimeoutMs(
   if (!isSparseStreamingModel(modelId)) return defaultActivityMs;
   return Math.max(defaultActivityMs, wallClockMs);
 }
+
+/**
+ * The effective FIRST-TOKEN grace for a model — the companion to
+ * `effectiveActivityTimeoutMs`. `iteratePushStreamText` uses a *separate*
+ * window (`firstTokenGraceMs`) until the first activity, then the activity
+ * timeout between tokens. A sparse streamer's worst case is *silence before
+ * the first token* (it orchestrates server-side before emitting anything —
+ * the forced-output synthesis round especially), so relaxing only the
+ * post-first-token activity window leaves that quiet start bounded by the
+ * default grace. Widen the grace to the wall-clock too, so BOTH windows
+ * collapse onto the wall-clock and it's genuinely the sole per-round bound.
+ * **Widen-only** (same invariant as the activity helper): every other model
+ * keeps `defaultGraceMs`.
+ */
+export function effectiveFirstTokenGraceMs(
+  modelId: string | null | undefined,
+  defaultGraceMs: number,
+  wallClockMs: number,
+): number {
+  if (!isSparseStreamingModel(modelId)) return defaultGraceMs;
+  return Math.max(defaultGraceMs, wallClockMs);
+}
