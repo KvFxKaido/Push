@@ -35,7 +35,7 @@ export function useMergeDetectedBanner({
     const branch = chatBranch?.trim();
     const targetDefault = defaultBranch?.trim();
 
-    if (!repo || !chatId || !branch || !targetDefault || branch === targetDefault) {
+    if (!repo || !chatId || !branch || (targetDefault && branch === targetDefault)) {
       setMergeDetected(null);
       return;
     }
@@ -47,7 +47,7 @@ export function useMergeDetectedBanner({
     const pr = await detectStrandedMergedPR(repo, branch);
     if (seq !== requestSeqRef.current) return;
 
-    const candidate = mergeDetectedCandidate(branch, targetDefault, pr);
+    const candidate = mergeDetectedCandidate(branch, targetDefault ?? '', pr);
     setMergeDetected(visibleMergeDetectedBannerForChat(chatId, candidate));
   }, [activeChatId, chatBranch, defaultBranch, repoFullName]);
 

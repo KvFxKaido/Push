@@ -211,9 +211,9 @@ export async function executeBatchedToolCalls(
   // `sandbox_check_types` / `sandbox_run_tests` inside a batched turn —
   // those are read-only and land in the parallel slot, but the
   // pre-extraction code only handled `onSandboxUnreachable` here.
-  parallelRawResults.forEach((result) => {
-    applyPostExecutionSideEffects(result.call, result.raw, ctx);
-  });
+  await Promise.all(
+    parallelRawResults.map((result) => applyPostExecutionSideEffects(result.call, result.raw, ctx)),
+  );
 
   const allCards = parallelRawResults.flatMap((r) => r.cards);
   if (allCards.length > 0) {
@@ -404,7 +404,7 @@ export async function executeBatchedToolCalls(
       // trigger #1 (touched-files verification mutation) and #7
       // (sandbox-unreachable propagation) inside the helper; the remaining
       // checks no-op for this slot.
-      applyPostExecutionSideEffects(batchCall, batchOutcome.raw, ctx);
+      await applyPostExecutionSideEffects(batchCall, batchOutcome.raw, ctx);
 
       // Single state update per batch member: apply cards (if any)
       // and append the result message in one pass so React only
@@ -615,7 +615,7 @@ export async function executeBatchedToolCalls(
     // where `branchSwitch` (sandbox_create_branch / sandbox_switch_branch)
     // and `promotion` (promote_to_github) realistically appear in a
     // batched turn — pre-extraction those payloads were dropped here.
-    applyPostExecutionSideEffects(mutCall, mutOutcome.raw, ctx);
+    await applyPostExecutionSideEffects(mutCall, mutOutcome.raw, ctx);
 
     if (mutOutcome.cards.length > 0) {
       setConversations((prev) => {

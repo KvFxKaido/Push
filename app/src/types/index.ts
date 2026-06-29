@@ -431,7 +431,8 @@ export type BranchSwitchSource =
   | 'ui'
   | 'ui-merge'
   | 'branch_desync'
-  | 'merge_detected';
+  | 'merge_detected'
+  | 'merge_pr';
 
 /** Normalized payload for a branch transition reported by a tool result.
  *  `kind` is passive source context only; all branch changes now share the

@@ -39,6 +39,7 @@ import { executeTodoToolCall } from '@/lib/todo-tools';
 import { getToolName } from '@/lib/chat-tool-messages';
 import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { applySandboxExecBranchDesync } from '@/lib/branch-desync';
+import { switchMergedBaseInWorkspace } from '@/lib/fork-branch-in-workspace';
 import {
   recordVerificationArtifact,
   recordVerificationCommandResult,
@@ -554,11 +555,11 @@ export function createTurnRunContext(
 // corrupt state.
 // ---------------------------------------------------------------------------
 
-export function applyPostExecutionSideEffects(
+export async function applyPostExecutionSideEffects(
   call: AnyToolCall,
   result: ToolExecutionResult,
   ctx: SendLoopContext,
-): void {
+): Promise<void> {
   const {
     chatId,
     repoRef,
@@ -570,6 +571,7 @@ export function applyPostExecutionSideEffects(
     branchInfoRef,
     updateVerificationState,
     appendRunEvent,
+    sandboxIdRef,
   } = ctx;
 
   // 1+2. Workspace mutation tracking.
@@ -663,10 +665,38 @@ export function applyPostExecutionSideEffects(
     runtimeHandlersRef,
   });
 
-  // 7. Branch switch payload. The unified branch-change application lives in
-  // branch-fork-migration.ts so this helper stays small and the state update is
-  // testable in isolation. payload.kind is passive source context only.
+  // 7. Branch switch payload. Merged PRs first warm-switch the live sandbox to
+  // the base and FF-only it from origin; plain switches/forks just apply state.
   if (result.branchSwitch) {
+    if (result.branchSwitch.kind === 'merged' && sandboxIdRef.current) {
+      const sync = await switchMergedBaseInWorkspace(
+        sandboxIdRef.current,
+        result.branchSwitch.name,
+        {
+          from: result.branchSwitch.from,
+          prNumber: result.branchSwitch.prNumber,
+          source: result.branchSwitch.source,
+        },
+      );
+      if (!sync.ok) {
+        console.warn('[Push] merged PR branch follow failed', sync.errorMessage);
+        if (sync.errorMessage) {
+          result.text = `${result.text}\n\n[Workspace Follow Warning] ${sync.errorMessage}`;
+        }
+        if (sync.branchSwitch) {
+          applyBranchSwitchPayload(sync.branchSwitch, {
+            activeChatIdRef,
+            conversationsRef,
+            branchInfoRef,
+            setConversations,
+            dirtyConversationIdsRef,
+            runtimeHandlersRef,
+          });
+        }
+        return;
+      }
+    }
+
     applyBranchSwitchPayload(result.branchSwitch, {
       activeChatIdRef,
       conversationsRef,

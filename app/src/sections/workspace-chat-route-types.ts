@@ -88,13 +88,12 @@ export interface ChatRouteWorkspaceProps {
     branch: string,
   ) => Promise<import('@/lib/fork-branch-in-workspace').SwitchBranchInWorkspaceResult>;
   /** UI-initiated post-merge branch update. Dispatches a `kind: 'merged'`
-   *  BranchSwitchPayload through `applyBranchSwitchPayload`, so the active
-   *  chat records the default branch. Called by `MergeFlowSheet` after a
-   *  successful PR merge. */
+   *  BranchSwitchPayload through `applyBranchSwitchPayload` after warming the
+   *  sandbox onto the PR base and FF-only updating it from origin. */
   mergeBranchInUI: (
     toBranch: string,
     opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
-  ) => void;
+  ) => Promise<import('@/lib/fork-branch-in-workspace').SwitchMergedBaseInWorkspaceResult | void>;
   sandboxState: SandboxStateCardData | null;
   sandboxStateLoading: boolean;
   fetchSandboxState: (id: string) => void;

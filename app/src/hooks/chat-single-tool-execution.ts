@@ -280,7 +280,7 @@ export async function executeSingleToolCall(
   // Per-tool side effects (verification mutation/command/artifact tracking,
   // repo promotion, branch-switch state update, sandbox unreachable).
   // Shared with the batched branch — see chat-send-helpers.ts.
-  applyPostExecutionSideEffects(toolCall, toolExecResult, ctx);
+  await applyPostExecutionSideEffects(toolCall, toolExecResult, ctx);
 
   // Build result message with post-execution sandbox status
   invalidateSandboxStatus();

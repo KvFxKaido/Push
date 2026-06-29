@@ -19,8 +19,10 @@ import {
 import {
   forkBranchInWorkspace,
   switchBranchInWorkspace,
+  switchMergedBaseInWorkspace,
   type ForkBranchInWorkspaceResult,
   type SwitchBranchInWorkspaceResult,
+  type SwitchMergedBaseInWorkspaceResult,
 } from '@/lib/fork-branch-in-workspace';
 import type { BranchSwitchPayload, BranchSwitchSource } from '@/types';
 
@@ -41,7 +43,7 @@ export interface BranchSwitchActions {
   mergeBranchInUI: (
     toBranch: string,
     opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
-  ) => void;
+  ) => Promise<SwitchMergedBaseInWorkspaceResult | void>;
 }
 
 export function useBranchSwitchActions(deps: BranchSwitchActionsDeps): BranchSwitchActions {
@@ -100,19 +102,32 @@ export function useBranchSwitchActions(deps: BranchSwitchActionsDeps): BranchSwi
 
   // Post-merge branch update: emit kind:'merged' through the shared dispatcher.
   const mergeBranchInUI = useCallback(
-    (
+    async (
       toBranch: string,
       opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
-    ): void => {
-      applyBranchSwitchFromUI({
+    ): Promise<SwitchMergedBaseInWorkspaceResult | void> => {
+      const payload = {
         name: toBranch,
         kind: 'merged',
         from: opts?.from,
         prNumber: opts?.prNumber,
         source: opts?.source ?? 'ui-merge',
+      } as const;
+
+      if (!sandboxIdRef.current) {
+        applyBranchSwitchFromUI(payload);
+        return;
+      }
+
+      const result = await switchMergedBaseInWorkspace(sandboxIdRef.current, toBranch, {
+        from: opts?.from,
+        prNumber: opts?.prNumber,
+        source: opts?.source ?? 'ui-merge',
       });
+      if (result.branchSwitch) applyBranchSwitchFromUI(result.branchSwitch);
+      return result;
     },
-    [applyBranchSwitchFromUI],
+    [applyBranchSwitchFromUI, sandboxIdRef],
   );
 
   return { applyBranchSwitchFromUI, forkBranchFromUI, switchBranchFromUI, mergeBranchInUI };

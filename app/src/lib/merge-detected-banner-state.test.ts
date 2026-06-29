@@ -32,6 +32,7 @@ const mergedPR: MergedPRForBranch = {
 const candidate: MergeDetectedBannerState = {
   branch: 'feature/merged',
   defaultBranch: 'main',
+  baseBranch: 'main',
   pr: mergedPR,
 };
 
@@ -55,9 +56,18 @@ describe('mergeDetectedCandidate', () => {
     expect(mergeDetectedCandidate('feature/merged', 'main', mergedPR)).toEqual(candidate);
   });
 
-  it('returns null when the PR merged into a non-default base', () => {
+  it('builds a candidate when the PR merged into a non-default base', () => {
     const stacked: MergedPRForBranch = { ...mergedPR, baseBranch: 'develop' };
-    expect(mergeDetectedCandidate('feature/merged', 'main', stacked)).toBeNull();
+    expect(mergeDetectedCandidate('feature/merged', 'main', stacked)).toEqual({
+      branch: 'feature/merged',
+      defaultBranch: 'main',
+      baseBranch: 'develop',
+      pr: stacked,
+    });
+  });
+
+  it('returns null when the current branch already matches the PR base', () => {
+    expect(mergeDetectedCandidate('main', 'main', mergedPR)).toBeNull();
   });
 
   it('returns null when there is no merged PR', () => {

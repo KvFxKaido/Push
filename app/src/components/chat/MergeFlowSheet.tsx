@@ -43,7 +43,7 @@ import { getIsAuditorGateEnabled } from '@/hooks/useAuditorGate';
 import { fetchAuditorFileContexts, type AuditorFileContext } from '@/lib/auditor-file-context';
 import { parseDiffStats } from '@/lib/diff-utils';
 import { CARD_HEADER_BG_ERROR, CARD_HEADER_BG_SUCCESS, CARD_HEADER_BG_WARNING } from '@/lib/utils';
-import type { AIProviderType, ActiveRepo, AuditVerdictCardData } from '@/types';
+import type { AIProviderType, ActiveRepo, AuditVerdictCardData, BranchSwitchSource } from '@/types';
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -78,7 +78,10 @@ export interface MergeFlowSheetProps {
    *  filtered out by the auto-switch effect. Drives `setCurrentBranch`
    *  internally via the shared `applyBranchSwitchPayload` path — callers
    *  that pass this should NOT also call `setCurrentBranch`. */
-  mergeBranchInUI?: (toBranch: string, opts?: { from?: string; prNumber?: number }) => void;
+  mergeBranchInUI?: (
+    toBranch: string,
+    opts?: { from?: string; prNumber?: number; source?: BranchSwitchSource },
+  ) => Promise<{ ok: boolean; errorMessage?: string } | void> | void;
   lockedProvider?: AIProviderType | null;
   lockedModel?: string | null;
 }
@@ -664,12 +667,16 @@ function MergeFlowSheet({
   // no-callback case to preserve back-compat for any embedder that hasn't wired
   // the new callback yet.
 
-  const handleSwitchToMain = useCallback(() => {
+  const handleSwitchToMain = useCallback(async () => {
     if (mergeBranchInUI) {
-      mergeBranchInUI(defaultBranch, {
+      const result = await mergeBranchInUI(defaultBranch, {
         from: currentBranch,
         prNumber: prInfo?.number,
       });
+      if (result && result.ok === false) {
+        setError(result.errorMessage ?? `Could not switch to ${defaultBranch}.`);
+        return;
+      }
     } else {
       setCurrentBranch(defaultBranch);
     }
@@ -692,10 +699,15 @@ function MergeFlowSheet({
     }
 
     if (mergeBranchInUI) {
-      mergeBranchInUI(defaultBranch, {
+      const result = await mergeBranchInUI(defaultBranch, {
         from: currentBranch,
         prNumber: prInfo?.number,
       });
+      if (result && result.ok === false) {
+        setError(result.errorMessage ?? `Could not switch to ${defaultBranch}.`);
+        setDeletingBranch(false);
+        return;
+      }
     } else {
       setCurrentBranch(defaultBranch);
     }
