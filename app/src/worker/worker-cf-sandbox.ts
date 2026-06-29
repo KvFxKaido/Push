@@ -566,9 +566,81 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // never inspect history beyond the current commit, so the full pack is
       // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
       // still be fetched on demand if a tool needs it.
-      await time('clone', () =>
-        sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
-      );
+      try {
+        await time('clone', () =>
+          sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
+        );
+      } catch (branchCloneErr) {
+        // The requested branch may not exist on origin — e.g. a branch-on-first-
+        // prompt branch that only ever lived locally in a since-gone sandbox and
+        // was never pushed (gate-at-push keeps it local until the first commit).
+        // A `--branch <missing>` clone hard-fails, which used to strand the
+        // session entirely ("can't start a sandbox on this branch"). Recover by
+        // cloning the remote's default HEAD, but ONLY recreate the branch once
+        // we've confirmed it's genuinely absent on origin — a transient failure
+        // on a branch that *does* exist must not be silently recreated off the
+        // default HEAD, which would base the session branch on the wrong commit.
+        //
+        // A clone failure can leave the sandbox with a `.git/config` whose origin
+        // still carries the tokenized clone URL, so every throw below first
+        // destroys the container (fail-closed, mirroring the strip-failure path
+        // at #987) rather than orphaning a credential-bearing sandbox.
+        const failClosed = async (): Promise<never> => {
+          if (githubToken) await sandbox.destroy?.().catch(() => {});
+          throw branchCloneErr;
+        };
+
+        await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
+          () => {},
+        );
+        await time('clone', () =>
+          sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 }),
+        );
+
+        // Consult origin via the *configured* remote (token read from
+        // `.git/config`, never placed on the command line) to disambiguate
+        // "branch absent" from "transient clone failure".
+        const lsRemote = (await withExecDeadline(
+          sandbox.exec(`cd /workspace && git ls-remote --heads origin ${shellSingleQuote(branch)}`),
+        )) as { stdout?: string; exitCode?: number };
+        const branchOnOrigin =
+          (lsRemote.exitCode ?? 1) === 0 && (lsRemote.stdout ?? '').trim().length > 0;
+        if (branchOnOrigin) {
+          // The branch exists on origin — the `--branch` clone failed for a real
+          // or transient reason, not absence. Surface the original failure rather
+          // than recreate at the wrong base.
+          await failClosed();
+        }
+
+        // Genuinely absent on origin → recreate locally off the default HEAD.
+        // Skip the `checkout -b` only when the default checkout already *is* the
+        // requested branch — compared via `symbolic-ref HEAD` (the actual current
+        // branch) rather than `rev-parse <branch>`, which would also resolve a
+        // same-named tag and wrongly skip the create.
+        const recreate = (await withExecDeadline(
+          sandbox.exec(
+            `cd /workspace && (test "$(git symbolic-ref --short HEAD 2>/dev/null)" = ${shellSingleQuote(branch)} || ` +
+              `git checkout -b ${shellSingleQuote(branch)})`,
+          ),
+        )) as { exitCode?: number; stderr?: string };
+        if ((recreate.exitCode ?? 0) !== 0) {
+          // Couldn't recreate the branch on the default checkout — surface the
+          // original clone failure rather than a confusing secondary error.
+          await failClosed();
+        }
+        // The retry recovered, so the 'clone' phase is no longer a failure even
+        // though the first attempt threw and set it.
+        failedPhase = null;
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'cf_sandbox_branch_recreated',
+            sandbox_id: sandboxId,
+            repo: repoHash,
+            reason: 'branch_absent_on_origin',
+          }),
+        );
+      }
       if (githubToken) {
         // gitCheckout uses the tokenized URL for private clone auth. Immediately
         // rewrite origin to the public URL so raw sandbox_exec commands cannot

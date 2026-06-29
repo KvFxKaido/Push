@@ -232,6 +232,37 @@ origin ancestry** (which would let the sandbox continue against the *right* base
 stays **deferred** — revisit if the full-tree-vs-moved-HEAD diff causes real
 confusion in use.
 
+## Cold-start when the branch isn't on origin (recreate net, 2026-06-28)
+
+Every cold-clone recovery path above assumes `git clone --branch <branch>`
+succeeds. It doesn't when the session's branch isn't on origin — the common case
+being a **branch-on-first-prompt** branch that only ever lived locally in a
+since-gone sandbox (gate-at-push keeps it local until the first commit). The
+`--branch <missing>` clone hard-failed, so the sandbox create aborted and the
+session was stranded ("can't start a sandbox on this branch").
+
+`routeCreate` (`worker-cf-sandbox.ts`) now recovers: on a `--branch` clone failure
+it wipes `/workspace`, clones the remote's **default HEAD**, then **confirms the
+branch is genuinely absent on origin** before recreating it — `git ls-remote
+--heads origin <branch>` via the configured remote (token read from `.git/config`,
+never on the command line). Only on confirmed absence does it recreate the branch
+locally (`git checkout -b <branch>`, skipped only when `symbolic-ref HEAD` shows the
+default checkout already *is* that branch — `rev-parse` would also resolve a
+same-named **tag** and wrongly skip the create). If the branch **does** exist on
+origin, the `--branch` clone failed transiently/for real, so the original failure
+is surfaced rather than recreating the branch at the wrong base. Every throw on this
+path **fail-closes** (destroys the container) because the fallback clone used the
+tokenized URL — an unstripped origin must not linger in an orphaned sandbox (#987).
+Emits `cf_sandbox_branch_recreated`.
+
+Lossless for a never-pushed branch (no commits to lose); it restores the **branch
+identity**, not prior in-sandbox work — that's the cloud snapshot / native
+checkpoint's job (and only recoverable if one was captured). The repo/branch-indexed
+R2 snapshot is **not yet** consulted on this cold-start path (the client's
+localStorage-keyed restore still covers same-session reconnect); wiring
+index-restore here to recover unpushed work for a tokenless cold start is the
+natural follow-up.
+
 ## UI surfacing (to design in implementation)
 
 - On the APK, recovery should feel like one system, not two. The cloud
