@@ -17,6 +17,9 @@ import {
   reasoningHeavyStreamOpts,
   REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
   REASONING_HEAVY_MODEL_MATCHERS,
+  isSparseStreamingModel,
+  effectiveActivityTimeoutMs,
+  SPARSE_STREAMING_MODEL_MATCHERS,
 } from '../../lib/reasoning-models.ts';
 
 // Heavy reasoners — every id shape the catalogs use: bare, vendor-prefixed,
@@ -123,5 +126,63 @@ describe('reasoningHeavyStreamOpts', () => {
     assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts('gpt-5.4'), false);
     assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts('glm-4.7'), false);
     assert.equal('firstTokenGraceMs' in reasoningHeavyStreamOpts(undefined), false);
+  });
+});
+
+describe('sparse-streaming model registry', () => {
+  // Sakana Fugu id shapes the catalog ships: bare, ultra tier, vendor-prefixed.
+  const SPARSE = ['fugu', 'fugu-ultra', 'sakana/fugu', 'Fugu-Ultra'];
+  // A heavy reasoner streams its thinking (reasoning_delta), so it is NOT
+  // sparse — the two axes are distinct. Plus unrelated tokens must not match.
+  const NOT_SPARSE = ['glm-5.1', 'kimi-k2.6', 'deepseek-r1', 'gpt-5.4', 'fuguito', 'configure'];
+
+  it('flags every Fugu id shape', () => {
+    for (const id of SPARSE) {
+      assert.equal(isSparseStreamingModel(id), true, `expected sparse: ${id}`);
+    }
+  });
+
+  it('does not flag non-sparse models or unrelated tokens', () => {
+    for (const id of NOT_SPARSE) {
+      assert.equal(isSparseStreamingModel(id), false, `expected NOT sparse: ${id}`);
+    }
+  });
+
+  it('returns false for null/undefined/empty rather than throwing', () => {
+    assert.equal(isSparseStreamingModel(null), false);
+    assert.equal(isSparseStreamingModel(undefined), false);
+    assert.equal(isSparseStreamingModel(''), false);
+  });
+
+  it('every matcher carries a documenting note', () => {
+    for (const m of SPARSE_STREAMING_MODEL_MATCHERS) {
+      assert.ok(m.family.length > 0, 'family handle required');
+      assert.ok(m.note.length > 0, `matcher ${m.family} needs a note`);
+      assert.ok(m.pattern instanceof RegExp, `matcher ${m.family} needs a RegExp`);
+    }
+  });
+});
+
+describe('effectiveActivityTimeoutMs (widen-only)', () => {
+  const ACTIVITY = 60_000;
+  const WALL_CLOCK = 180_000;
+
+  it('relaxes a sparse streamer to the wall-clock', () => {
+    assert.equal(effectiveActivityTimeoutMs('fugu', ACTIVITY, WALL_CLOCK), WALL_CLOCK);
+    assert.equal(effectiveActivityTimeoutMs('sakana/fugu', ACTIVITY, WALL_CLOCK), WALL_CLOCK);
+  });
+
+  it('keeps the default tight window for every other model', () => {
+    // Liveness correctness must not depend on table completeness: an unlisted
+    // model (heavy reasoner, frontier, or null) keeps the tight activity window.
+    assert.equal(effectiveActivityTimeoutMs('glm-5.1', ACTIVITY, WALL_CLOCK), ACTIVITY);
+    assert.equal(effectiveActivityTimeoutMs('gpt-5.4', ACTIVITY, WALL_CLOCK), ACTIVITY);
+    assert.equal(effectiveActivityTimeoutMs(null, ACTIVITY, WALL_CLOCK), ACTIVITY);
+  });
+
+  it('is widen-only — never returns less than the default', () => {
+    // Even if a caller (hypothetically) passed a wall-clock below the activity
+    // window, the relaxation must not tighten the window.
+    assert.equal(effectiveActivityTimeoutMs('fugu', 60_000, 30_000), 60_000);
   });
 });

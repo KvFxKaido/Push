@@ -30,7 +30,10 @@ import { annotateDiffWithLineNumbers, REVIEWER_CRITERIA_BLOCK } from './reviewer
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { parseDiffStats, chunkDiffByFile, classifyFilePath } from './diff-utils.js';
 import { iteratePushStreamText } from './stream-utils.js';
-import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
+import {
+  REASONING_HEAVY_FIRST_TOKEN_GRACE_MS,
+  effectiveActivityTimeoutMs,
+} from './reasoning-models.js';
 import { parseStructured } from './structured-output.js';
 import { ReviewerResponseSchema } from './review-schema.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
@@ -794,7 +797,16 @@ export async function runDeepReviewer<TCall, TCard>(
         systemPromptOverride: systemPrompt,
         hasSandbox: effectiveSandboxAvailable,
       },
-      DEEP_REVIEW_ROUND_TIMEOUT_MS,
+      // Sparse-streaming models (Fugu) relax the activity timeout to the
+      // wall-clock: their silent gaps are server-side orchestration, not a
+      // stall, so inter-token silence isn't a meaningful kill signal. The
+      // wall-clock below remains the per-round bound. Widen-only — every other
+      // model keeps the tight 60s window.
+      effectiveActivityTimeoutMs(
+        modelId,
+        DEEP_REVIEW_ROUND_TIMEOUT_MS,
+        DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+      ),
       `Deep review round ${roundNum} timed out after ${DEEP_REVIEW_ROUND_TIMEOUT_MS / 1000}s.`,
       DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
       `Deep review round ${roundNum} exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
@@ -1056,7 +1068,14 @@ export async function runDeepReviewer<TCall, TCard>(
       systemPromptOverride: systemPrompt,
       hasSandbox: Boolean(sandboxId),
     },
-    DEEP_REVIEW_ROUND_TIMEOUT_MS,
+    // Sparse-streaming relaxation (see the loop round above): the forced-output
+    // turn is the heaviest synthesis, so it's the most exposed to Fugu's silent
+    // orchestration gaps. Widen-only.
+    effectiveActivityTimeoutMs(
+      modelId,
+      DEEP_REVIEW_ROUND_TIMEOUT_MS,
+      DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
+    ),
     'Deep review final output timed out.',
     DEEP_REVIEW_ROUND_WALL_CLOCK_MS,
     `Deep review final forced output exceeded ${DEEP_REVIEW_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap.`,
