@@ -62,10 +62,11 @@ const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 // what small models like kimi-k2.6 do when they loop) never trips it, and the
 // round's `for await` hangs forever. The wall-clock timer fires once per round
 // regardless of activity. Without it the autonomous webhook PrReviewJob DO sat
-// `status: running` indefinitely on a runaway stream. Mirrors
-// EXPLORER_ROUND_WALL_CLOCK_MS in explorer-agent.ts.
+// `status: running` indefinitely on a runaway stream.
 //
-// Sized at 180s (was 120s), matching the Coder kernel's per-round wall-clock. A
+// Sized at 180s (was 120s), matching the Coder kernel's per-round wall-clock
+// (CODER_ROUND_WALL_CLOCK_MS). Note this no longer mirrors the Explorer's 120s
+// cap — the Explorer streams shorter rounds; don't re-couple them. A
 // large multi-file diff makes round 1 legitimately long — read the diff, reason,
 // then emit the first tool call — and a heavy reasoner's first-token grace alone
 // (REASONING_HEAVY_FIRST_TOKEN_GRACE_MS, 90s) ate most of the old 120s before any
