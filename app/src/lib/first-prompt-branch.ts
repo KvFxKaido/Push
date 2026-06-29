@@ -42,6 +42,12 @@ export interface FirstPromptBranchInput {
   repoFullName: string | null;
   /** Live sandbox id — required, the fork runs git inside it. */
   sandboxId: string | null;
+  /**
+   * The branch the session is on. Must be the *raw* value (undefined when not
+   * yet known), not collapsed to the default branch — branching only fires when
+   * this is known and equals `defaultBranch`, so an undefined here means "leave
+   * the session where it is".
+   */
   currentBranch?: string;
   defaultBranch?: string;
 }
@@ -56,15 +62,25 @@ export interface FirstPromptBranchResult {
  * Decide whether a fresh session's first prompt should fork a work branch:
  * only when enabled, it is genuinely the first message, the workspace is
  * repo-backed (scratch/no-repo has no git), a sandbox exists to run the fork
- * in, and we are still on the default branch. Pure — exported for testing.
+ * in, and the session is *positively known* to be on the default branch. Pure
+ * — exported for testing.
+ *
+ * The branch must be known and equal to the default: an unknown current branch
+ * is treated as "not on the default branch" so a session the user deliberately
+ * started on an existing branch is never force-forked off it. (The earlier rule
+ * defaulted unknown → on-default, which auto-branched branch-started sessions
+ * the moment branch metadata hadn't loaded yet.) The commit-time fail-safe in
+ * `ensure-commit-target-branch.ts` still guards an actual commit landing on the
+ * default branch, so erring toward "don't branch" here loses no protection.
  */
 export function shouldBranchOnFirstPrompt(input: FirstPromptBranchInput): boolean {
   if (!input.enabled) return false;
   if (!input.isFirstMessage) return false;
   if (!input.repoFullName) return false;
   if (!input.sandboxId) return false;
+  if (!input.currentBranch) return false;
   const defaultBranch = input.defaultBranch ?? 'main';
-  return (input.currentBranch ?? defaultBranch) === defaultBranch;
+  return input.currentBranch === defaultBranch;
 }
 
 /**

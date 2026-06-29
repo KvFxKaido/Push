@@ -195,12 +195,16 @@ export async function prepareSendContext(
   // so the placeholder is always appended exactly once, last. Every other send
   // keeps the immediate single-render placeholder.
   const branchInfo = branchDeps?.branchInfoRef.current;
+  // Mirror `shouldBranchOnFirstPrompt`'s branch gate: only a session positively
+  // known to be on the default branch may fork. An unknown current branch is
+  // *not* treated as the default, so a branch-started session keeps its
+  // immediate placeholder instead of deferring for a fork that won't happen.
   const mayBranchOnFirstPrompt = Boolean(
     branchDeps &&
       isFirstMessage &&
       branchDeps.repoFullName &&
-      (branchInfo?.currentBranch ?? branchInfo?.defaultBranch ?? 'main') ===
-        (branchInfo?.defaultBranch ?? 'main'),
+      branchInfo?.currentBranch &&
+      branchInfo.currentBranch === (branchInfo.defaultBranch ?? 'main'),
   );
 
   callbacks.updateConversations((prev) => {
