@@ -735,8 +735,15 @@ export async function startInlineCoderTurn(
   // interleave it with that round's tool pairs at finalization. Keyed by the
   // kernel's own round number — not a tee-side `done` count — so a retried or
   // reconnected round overwrites its key instead of drifting out of alignment.
+  //
+  // Seed at -1, not 0: `turn_start` always fires before a round's deltas, so by
+  // the round's `done` `liveRound` already holds the real (0-based) index. The
+  // -1 sentinel only matters if that invariant is ever violated — a snapshot
+  // taken before any `turn_start` keys to a round with no tool events and is
+  // simply dropped at finalization, rather than being mis-attributed to round 0
+  // and interleaved at the wrong tool pair.
   const roundProse = new Map<number, string>();
-  let liveRound = 0;
+  let liveRound = -1;
 
   // --- Kernel bindings ---
   const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId, (visible) => {
