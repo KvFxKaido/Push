@@ -349,7 +349,13 @@ describe('handleCloudflareSandbox happy paths', () => {
     // branch locally rather than stranding the session.
     const sandbox = mockSandbox();
     mockUuid();
-    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    // `ls-remote` reports the branch ABSENT on origin (exit 0, empty stdout); all
+    // other execs succeed with the probe payload.
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: '', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
     sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
       if (opts && 'branch' in opts) {
         throw new Error('fatal: Remote branch feature/x not found in upstream origin');
@@ -377,6 +383,10 @@ describe('handleCloudflareSandbox happy paths', () => {
       'https://x-access-token:ghs_token@github.com/owner/repo.git',
       { targetDir: '/workspace', depth: 1 },
     );
+    // Absence is confirmed against origin before recreating.
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes('git ls-remote --heads origin')),
+    ).toBe(true);
     // The branch is recreated locally off the default checkout.
     expect(
       sandbox.exec.mock.calls.some((c) => String(c[0]).includes("git checkout -b 'feature/x'")),
@@ -387,6 +397,40 @@ describe('handleCloudflareSandbox happy paths', () => {
         .mocked(console.log)
         .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_branch_recreated')),
     ).toBe(true);
+  });
+
+  it('does NOT recreate when the branch exists on origin (transient clone failure)', async () => {
+    // P1: a `--branch` clone failing transiently on a branch that DOES exist on
+    // origin must not be recreated off the default HEAD (that would base the
+    // session branch on the wrong commit). The create surfaces the failure and
+    // fails closed (destroys the tokenized fallback container).
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: 'abc123\trefs/heads/feature/x', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) throw new Error('fatal: early EOF (transient)');
+      return { success: true };
+    });
+
+    const env = makeEnv();
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      env,
+    );
+
+    expect(response.status).toBe(500);
+    expect(JSON.stringify(await jsonBody(response))).not.toContain('ghs_token');
+    // No `checkout -b` — the existing branch must not be recreated at the wrong base.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).includes('git checkout -b'))).toBe(
+      false,
+    );
+    // Fail closed: the tokenized fallback clone's container is destroyed.
+    expect(sandbox.destroy).toHaveBeenCalled();
   });
 
   it('surfaces the original clone failure when the default-HEAD retry also fails', async () => {
