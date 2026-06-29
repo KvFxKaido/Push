@@ -937,7 +937,7 @@ Available tools:
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - git_commit(message, paths?) — stage and commit files (all files if paths not specified)
 - git_create_branch(name, from?) — create a new git branch and switch to it. Optional 'from' branches off a specific ref instead of HEAD.
-- git_switch_branch(branch, carry_chat?) — switch to an existing branch (fetches it for shallow clones if not present locally). Optional carry_chat documents intent to keep this conversation with the branch switch where the surface supports chat migration. Use git_create_branch for new branches.
+- git_switch_branch(branch) — switch to an existing branch (fetches it for shallow clones if not present locally). Use git_create_branch for new branches.
 - undo_edit(path) — restore a file from its most recent backup (created before each write/edit)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - save_memory(content) — persist learnings across sessions (stored in .push/memory.md). Save project patterns, build commands, conventions. Keep concise — this is loaded into every future session. Structured form: save_memory(type, content, tags?, files?) where type is decision|task|next|fact|blocker — stored in .push/memory.json as typed entries.

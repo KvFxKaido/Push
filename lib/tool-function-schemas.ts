@@ -56,7 +56,6 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   // booleans
   stat: 'boolean',
   private: 'boolean',
-  carry_chat: 'boolean',
   multiSelect: 'boolean',
   dryRun: 'boolean',
   diagnostics: 'boolean',

@@ -71,16 +71,6 @@ describe('git_switch_branch', () => {
     assert.equal(await currentBranch(repo), 'main');
   });
 
-  it('accepts carry_chat on the switch_branch alias without changing local git semantics', async () => {
-    const result = await executeToolCall(
-      { tool: 'switch_branch', args: { branch: 'feature/widget', carry_chat: true } },
-      repo,
-    );
-    assert.equal(result.ok, true, result.text);
-    assert.equal(result.meta?.branch, 'feature/widget');
-    assert.equal(await currentBranch(repo), 'feature/widget');
-  });
-
   it('git_create_branch accepts the create_branch / sandbox_create_branch aliases', async () => {
     let result = await executeToolCall(
       { tool: 'create_branch', args: { name: 'feature/alpha' } },
@@ -118,8 +108,7 @@ describe('git_switch_branch', () => {
   });
 
   it('is advertised in the tool protocol', () => {
-    assert.match(TOOL_PROTOCOL, /git_switch_branch\(branch, carry_chat\?\)/);
-    assert.match(TOOL_PROTOCOL, /carry_chat/);
+    assert.match(TOOL_PROTOCOL, /git_switch_branch\(branch\)/);
   });
 
   it('requires git:branch — same grant matrix as git_create_branch', () => {

@@ -11,7 +11,6 @@ import type { ActiveProvider } from '@/lib/orchestrator';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import type { NativeToolCall } from '@push/lib/provider-contract';
 import type { TodoItem } from '@/lib/todo-tools';
-import type { MigrationGuard } from '@/lib/chat-message';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
@@ -96,17 +95,11 @@ export interface SendLoopContext {
   runtimeContext: PushRuntimeContext;
   checkpointRefs: CheckpointRefs;
   processedContentRef: MutableRefObject<Set<string>>;
-  // Slice 2 conversation-fork migration. Set by chat-send when a 'forked'
-  // branchSwitch arrives; cleared by useChat's state-observed effect once the
-  // migration is observable. While set, useChat's auto-switch effect early-
-  // returns to suppress both auto-create AND chat-id-steal.
-  skipAutoCreateRef: MutableRefObject<MigrationGuard | null>;
-  // For stale-capture avoidance: read activeChatId at migration time, not at
-  // closure-capture time, so a chat switch between dispatch and resolution
-  // doesn't migrate the wrong conversation.
+  // For stale-capture avoidance: read activeChatId at branch-change time, not
+  // at closure-capture time.
   activeChatIdRef: MutableRefObject<string | null>;
-  // Used by applyBranchSwitchPayload to verify the target conversation
-  // exists BEFORE setting guards — see Codex P1 review feedback.
+  // Used by applyBranchSwitchPayload to update the active conversation's
+  // mutable branch state.
   conversationsRef: MutableRefObject<Record<string, Conversation>>;
   // State mutation
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;

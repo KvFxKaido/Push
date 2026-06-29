@@ -396,21 +396,13 @@ export interface ChatMessage {
   toolResults?: LlmToolResultBlock[];
   /** Provenance metadata — present on tool result messages for audit trail. */
   toolMeta?: ToolMeta;
-  /** Branch active when this message was authored. Currently stamped at
-   *  write time on (a) `branch_forked` system events via
-   *  `createBranchForkedMessage`, (b) delegate tool result messages via the
-   *  R11 originBranch propagation chain, and (c) messages constructed
-   *  through the `createMessage` factory in `lib/chat-message.ts`. Other
-   *  message-creation paths (user submit, model streaming, regular tool
-   *  results) currently leave this undefined and rely on the read-boundary
-   *  fallback in `effectiveMessageBranch`. Migrating those paths to use
-   *  `createMessage` so every new message stamps `branch` is a planned
-   *  follow-up; for now the fallback (`msg.branch ?? conv.branch ?? 'main'`)
-   *  preserves correctness for unstamped messages. */
+  /** Branch active when this message was authored. New persisted messages are
+   *  stamped at write time; legacy unstamped messages are backfilled during
+   *  conversation hydration before `conv.branch` mutates as session state. */
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */
-  kind?: 'branch_forked' | 'branch_merged' | 'branch_carried' | 'compaction';
+  kind?: 'branch_forked' | 'branch_merged' | 'compaction';
   /** Payload for `kind: 'compaction'` events. Records that the runtime
    *  trimmed the working context to fit the model's window at this point in
    *  the conversation. Rendered as a centered transcript divider; never
@@ -422,9 +414,6 @@ export interface ChatMessage {
   /** Payload for `kind: 'branch_merged'` events. Records the merge that
    *  caused the conversation to migrate to the default branch. */
   branchMergedMeta?: BranchMergedMeta;
-  /** Payload for `kind: 'branch_carried'` events. Records that the
-   *  existing conversation intentionally continued on another branch. */
-  branchCarriedMeta?: BranchCarriedMeta;
   /** When explicitly `false`, this message is transcript metadata only —
    *  filtered out of every prompt-pack path. Default behavior (undefined)
    *  is model-visible. Used for system events like `branch_forked` that
@@ -445,20 +434,12 @@ export type BranchSwitchSource =
   | 'merge_detected';
 
 /** Normalized payload for a branch transition reported by a tool result.
- *  `kind: 'forked'` means the tool just created a new branch and the active
- *  conversation should follow it (slice 2). `kind: 'switched'` means the
- *  branch changed but the conversation should NOT migrate — existing
- *  pre-slice-2 behavior (auto-select existing chat for the target branch
- *  via `useChat`'s filter, or auto-create one). `kind: 'merged'` means a PR
- *  was just merged and the workspace is switching back to the default
- *  branch: the active conversation migrates to the default branch (mirrors
- *  forked) so the user stays in the chat where the work shipped, instead of
- *  being bumped to a different chat or a fresh auto-created one. `kind:
- *  'carried'` means the model intentionally asked to continue this
- *  conversation on an existing branch. */
+ *  `kind` is passive source context only; all branch changes now share the
+ *  same app behavior: warm-follow the sandbox branch and update the active
+ *  conversation's mutable `branch` state in place. */
 export interface BranchSwitchPayload {
   name: string;
-  kind: 'forked' | 'switched' | 'merged' | 'carried';
+  kind: 'forked' | 'switched' | 'merged';
   /** Source branch (for forked: the base; for switched: optional context). */
   from?: string;
   /** Branch the sandbox was on immediately before this switch. Captured by
@@ -495,14 +476,6 @@ export interface BranchMergedMeta {
   from: string;
   to: string;
   prNumber?: number;
-  source?: BranchSwitchSource;
-}
-
-/** Payload for a `kind: 'branch_carried'` system event. Records that the
- *  conversation moved to an existing branch without claiming a fork or merge. */
-export interface BranchCarriedMeta {
-  from: string;
-  to: string;
   source?: BranchSwitchSource;
 }
 

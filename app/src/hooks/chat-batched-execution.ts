@@ -45,6 +45,7 @@ import {
   applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
   executeToolWithChatHooks,
+  getCurrentWriteBranch,
   getDelegateCompletionAgent,
   shouldEmitPeriodicPulse,
   type TurnRunContext,
@@ -101,6 +102,7 @@ export async function executeBatchedToolCalls(
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   } = turnCtx;
+  const currentWriteBranch = getCurrentWriteBranch(ctx);
 
   const parallelToolCalls = detected.readOnly;
   const fileMutationBatch = detected.fileMutations;
@@ -239,6 +241,7 @@ export async function executeBatchedToolCalls(
     (r) =>
       buildToolOutcome(r, parallelMetaLine, lockedProvider, {
         toolUseId: toolUseIdByCall.get(r.call),
+        currentBranch: currentWriteBranch,
       }).resultMessage,
   );
   parallelRawResults.forEach((result, index) => {
@@ -289,6 +292,7 @@ export async function executeBatchedToolCalls(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
       // Carry the turn's plain reasoning onto the wire copy (not just the
       // displayed message), same as the single-call path. DeepSeek thinking
       // mode 400s the continuation request unless the tool-call assistant turn
@@ -378,6 +382,7 @@ export async function executeBatchedToolCalls(
       );
       const batchOutcome = buildToolOutcome(batchRawResult, batchMetaLine, lockedProvider, {
         toolUseId: toolUseIdByCall.get(batchCall),
+        currentBranch: currentWriteBranch,
       });
       const isBatchError = batchOutcome.raw.text.includes('[Tool Error]');
       recordToolFailure(batchCall, isBatchError);
@@ -585,6 +590,7 @@ export async function executeBatchedToolCalls(
     );
     const mutOutcome = buildToolOutcome(mutRawResult, mutMetaLine, lockedProvider, {
       toolUseId: toolUseIdByCall.get(mutCall),
+      currentBranch: currentWriteBranch,
     });
     const isMutError = mutOutcome.raw.text.includes('[Tool Error]');
     recordToolFailure(mutCall, isMutError);

@@ -507,10 +507,10 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'sandbox',
     readOnly: false,
     statusLabel: 'Switching branch...',
-    protocolSignature: 'switch_branch(branch, carry_chat?)',
+    protocolSignature: 'switch_branch(branch)',
     protocolDescription:
-      'Switch the sandbox to an existing git branch. By default Push routes the conversation to the existing chat for that branch (or auto-creates one if none exists). Pass "carry_chat": true when the user intends to continue this same conversation on the target branch. Use create_branch to make a new branch instead.',
-    exampleJson: '{"tool": "switch_branch", "args": {"branch": "main", "carry_chat": true}}',
+      'Switch the sandbox to an existing git branch. Push keeps the current conversation and updates its active branch state in place. Use create_branch to make a new branch instead.',
+    exampleJson: '{"tool": "switch_branch", "args": {"branch": "main"}}',
   },
   {
     canonicalName: 'sandbox_commit',

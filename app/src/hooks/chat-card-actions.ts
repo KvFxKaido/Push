@@ -26,6 +26,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
+import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import {
@@ -103,12 +104,14 @@ export function useChatCardActions({
 
   const injectSyntheticMessage = useCallback(
     (chatId: string, content: string) => {
+      const branch = resolveMessageWriteBranch(branchInfoRef.current);
       const msg: ChatMessage = {
         id: createId(),
         role: 'assistant',
         content,
         timestamp: Date.now(),
         status: 'done',
+        ...(branch !== undefined ? { branch } : {}),
       };
       setConversations((prev) => {
         const conv = prev[chatId];
@@ -121,7 +124,7 @@ export function useChatCardActions({
         return updated;
       });
     },
-    [setConversations, dirtyConversationIdsRef],
+    [branchInfoRef, setConversations, dirtyConversationIdsRef],
   );
 
   const injectAssistantCardMessage = useCallback(
@@ -129,12 +132,14 @@ export function useChatCardActions({
       if (card.type === 'sandbox-state') {
         return;
       }
+      const branch = resolveMessageWriteBranch(branchInfoRef.current);
       const msg: ChatMessage = {
         id: createId(),
         role: 'assistant',
         content,
         timestamp: Date.now(),
         status: 'done',
+        ...(branch !== undefined ? { branch } : {}),
         cards: [card],
       };
       setConversations((prev) => {
@@ -148,7 +153,7 @@ export function useChatCardActions({
         return updated;
       });
     },
-    [setConversations, dirtyConversationIdsRef],
+    [branchInfoRef, setConversations, dirtyConversationIdsRef],
   );
 
   // Flip an already-injected approval card to a terminal status by approvalId.
@@ -587,12 +592,14 @@ export function useChatCardActions({
                       repo,
                     );
                     if (ciResult.card) {
+                      const branch = resolveMessageWriteBranch(branchInfoRef.current);
                       const ciMsg: ChatMessage = {
                         id: createId(),
                         role: 'assistant',
                         content: 'CI status after push:',
                         timestamp: Date.now(),
                         status: 'done',
+                        ...(branch !== undefined ? { branch } : {}),
                         cards: [ciResult.card],
                       };
                       setConversations((prev) => {
@@ -743,12 +750,14 @@ export function useChatCardActions({
                     repo,
                   );
                   if (ciResult.card) {
+                    const branch = resolveMessageWriteBranch(branchInfoRef.current);
                     const ciMsg: ChatMessage = {
                       id: createId(),
                       role: 'assistant',
                       content: 'CI status after push:',
                       timestamp: Date.now(),
                       status: 'done',
+                      ...(branch !== undefined ? { branch } : {}),
                       cards: [ciResult.card],
                     };
                     setConversations((prev) => {

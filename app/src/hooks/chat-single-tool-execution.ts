@@ -14,7 +14,7 @@
  *        - default         → executeTool (sandbox runtime)
  *   4. Post-execution side effects: workspace mutation tracking,
  *      verification command/artifact recording, repo promotion, branch-
- *      switch payload migration, sandbox-unreachable propagation.
+ *      switch state update, sandbox-unreachable propagation.
  *   5. Result message construction with post-execution sandbox status.
  *
  * Receives a `TurnRunContext` for shared per-turn state with the other
@@ -58,6 +58,7 @@ import {
   applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
   executeChatHookToolCall,
+  getCurrentWriteBranch,
   getDelegateCompletionAgent,
   shouldEmitPeriodicPulse,
   type TurnRunContext,
@@ -112,6 +113,7 @@ export async function executeSingleToolCall(
     getRoundSandboxStatus,
     invalidateSandboxStatus,
   } = turnCtx;
+  const currentWriteBranch = getCurrentWriteBranch(ctx);
 
   console.log(`[Push] Tool call detected:`, toolCall);
   const executionId = createId();
@@ -276,7 +278,7 @@ export async function executeSingleToolCall(
   }
 
   // Per-tool side effects (verification mutation/command/artifact tracking,
-  // repo promotion, branch-switch payload migration, sandbox unreachable).
+  // repo promotion, branch-switch state update, sandbox unreachable).
   // Shared with the batched branch — see chat-send-helpers.ts.
   applyPostExecutionSideEffects(toolCall, toolExecResult, ctx);
 
@@ -299,7 +301,10 @@ export async function executeSingleToolCall(
   let toolResultMsg: ChatMessage;
   let cardsToAttach: ChatCard[];
   if (singleRawResult) {
-    const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider, { toolUseId });
+    const outcome = buildToolOutcome(singleRawResult, metaLine, lockedProvider, {
+      toolUseId,
+      currentBranch: currentWriteBranch,
+    });
     toolResultMsg = outcome.resultMessage;
     cardsToAttach = outcome.cards;
     const isError = outcome.raw.text.includes('[Tool Error]');
@@ -347,6 +352,8 @@ export async function executeSingleToolCall(
           isError,
         }),
       ],
+      branch:
+        toolExecResult.originBranch ?? toolExecResult.branchSwitch?.name ?? currentWriteBranch,
     });
     cardsToAttach =
       toolExecResult.card && toolExecResult.card.type !== 'sandbox-state'
@@ -396,6 +403,7 @@ export async function executeSingleToolCall(
       content: accumulated,
       timestamp: Date.now(),
       status: 'done' as const,
+      ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
       // Carry the turn's plain reasoning text onto the wire copy, not just the
       // displayed message. DeepSeek thinking mode rejects the tool-result
       // continuation request unless the assistant turn that made the call

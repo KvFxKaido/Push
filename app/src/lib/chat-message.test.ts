@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import type { ChatMessage } from '@/types';
 import {
-  createBranchCarriedMessage,
   createBranchForkedMessage,
+  backfillConversationMessageBranches,
   createCompactionMessage,
   createMessage,
   effectiveMessageBranch,
@@ -90,30 +90,6 @@ describe('createBranchForkedMessage', () => {
   });
 });
 
-describe('createBranchCarriedMessage', () => {
-  it('produces a non-model-visible event stamped with the target branch', () => {
-    const msg = createBranchCarriedMessage({
-      from: 'feature/foo',
-      to: 'main',
-      source: 'sandbox_switch_branch',
-    });
-    expect(msg.kind).toBe('branch_carried');
-    expect(msg.visibleToModel).toBe(false);
-    expect(msg.branch).toBe('main');
-    expect(msg.branchCarriedMeta).toEqual({
-      from: 'feature/foo',
-      to: 'main',
-      source: 'sandbox_switch_branch',
-    });
-  });
-
-  it('uses assistant role and empty content (transcript metadata)', () => {
-    const msg = createBranchCarriedMessage({ from: 'feature/foo', to: 'main' });
-    expect(msg.role).toBe('assistant');
-    expect(msg.content).toBe('');
-  });
-});
-
 describe('createCompactionMessage', () => {
   it('produces a non-model-visible compaction marker with the net token figures', () => {
     const msg = createCompactionMessage({
@@ -196,8 +172,8 @@ describe('effectiveMessageBranch', () => {
     expect(effectiveMessageBranch({ branch: 'feature/foo' }, 'main')).toBe('feature/foo');
   });
 
-  it('falls back to conversation branch when message is unstamped', () => {
-    expect(effectiveMessageBranch({}, 'main')).toBe('main');
+  it('does not fall back to conversation branch when message is unstamped', () => {
+    expect(effectiveMessageBranch({}, 'feature/foo')).toBe('main');
   });
 
   it('falls back to "main" when both message and conversation branch are absent', () => {
@@ -208,6 +184,37 @@ describe('effectiveMessageBranch', () => {
     // Critical for R12: after a conversation migrates from main to feature/foo,
     // old stamped messages must keep their original branch.
     expect(effectiveMessageBranch({ branch: 'main' }, 'feature/foo')).toBe('main');
+  });
+});
+
+describe('backfillConversationMessageBranches', () => {
+  it('stamps unstamped persisted messages with the conversation branch', () => {
+    const stamped = { id: 'a', role: 'assistant', content: 'old', timestamp: 1, branch: 'main' };
+    const unstamped = { id: 'b', role: 'user', content: 'new', timestamp: 2 };
+    const result = backfillConversationMessageBranches({
+      id: 'c1',
+      title: 'Test',
+      messages: [stamped, unstamped] as ChatMessage[],
+      branch: 'feature/foo',
+      lastMessageAt: 2,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.conversation.messages[0].branch).toBe('main');
+    expect(result.conversation.messages[1].branch).toBe('feature/foo');
+  });
+
+  it('uses main for legacy repo conversations with no stored branch', () => {
+    const result = backfillConversationMessageBranches({
+      id: 'c1',
+      title: 'Test',
+      messages: [{ id: 'a', role: 'user', content: 'hi', timestamp: 1 }] as ChatMessage[],
+      repoFullName: 'owner/repo',
+      lastMessageAt: 1,
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.conversation.messages[0].branch).toBe('main');
   });
 });
 
@@ -247,18 +254,6 @@ describe('filterModelVisibleMessages', () => {
       createMessage({ role: 'user', content: 'hi', currentBranch: 'main' }),
       event,
       createMessage({ role: 'assistant', content: 'reply', currentBranch: 'feature/foo' }),
-    ];
-    const out = filterModelVisibleMessages(messages);
-    expect(out).toHaveLength(2);
-    expect(out.find((m) => m.id === event.id)).toBeUndefined();
-  });
-
-  it('strips a branch_carried transcript event', () => {
-    const event = createBranchCarriedMessage({ from: 'feature/foo', to: 'main' });
-    const messages = [
-      createMessage({ role: 'user', content: 'hi', currentBranch: 'feature/foo' }),
-      event,
-      createMessage({ role: 'assistant', content: 'reply', currentBranch: 'main' }),
     ];
     const out = filterModelVisibleMessages(messages);
     expect(out).toHaveLength(2);

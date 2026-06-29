@@ -92,7 +92,6 @@ function makeHarness(initialMessages: ChatMessage[] = [makeMessage()]): Harness 
     runtimeContext: createRuntimeContext({ correlation: { surface: 'web', chatId: 'chat-1' } }),
     checkpointRefs: { apiMessages: { current: [] } },
     processedContentRef: { current: new Set<string>() },
-    skipAutoCreateRef: { current: null },
     activeChatIdRef: { current: 'chat-1' },
     conversationsRef,
     setConversations: (updater) => {

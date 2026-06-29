@@ -385,7 +385,7 @@ describe('runInPageCoderKernel inline knobs', () => {
   it('tees branchSwitch payloads before the kernel result narrows them away', async () => {
     const payload = {
       name: 'main',
-      kind: 'carried' as const,
+      kind: 'switched' as const,
       from: 'feat/x',
       previous: 'feat/x',
       source: 'sandbox_switch_branch' as const,
@@ -410,7 +410,7 @@ describe('runInPageCoderKernel inline knobs', () => {
     const result = await options.toolExec(
       {
         source: 'sandbox',
-        call: { tool: 'sandbox_switch_branch', args: { branch: 'main', carry_chat: true } },
+        call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
       } as AnyToolCall,
       { round: 1 },
     );

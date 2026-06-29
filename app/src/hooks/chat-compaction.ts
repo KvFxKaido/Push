@@ -46,6 +46,7 @@ import {
   createCompactionMessage,
   filterModelVisibleMessages,
   nextCompactionCount,
+  resolveMessageWriteBranch,
 } from '@/lib/chat-message';
 import type { SendLoopContext } from './chat-send-types';
 
@@ -162,12 +163,17 @@ export async function maybeCompactBeforeTurn(
   // The model-visible result after compaction: everything except the hidden
   // span, plus the handoff. Estimate it for the marker / run event.
   const handoffContent = buildHandoffBlock(summary);
+  const currentWriteBranch = resolveMessageWriteBranch(
+    ctx.branchInfoRef?.current,
+    ctx.conversationsRef?.current?.[ctx.chatId]?.branch,
+  );
   const handoffMessage: ChatMessage = {
     id: `context-handoff-${Date.now()}`,
     role: 'user',
     content: handoffContent,
     timestamp: Date.now(),
     status: 'done',
+    ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
     // Hidden in the UI, still sent to the model (same trick as the digest /
     // goal-anchor synthetic messages). The compaction divider below is the
     // user-facing marker.
@@ -187,6 +193,7 @@ export async function maybeCompactBeforeTurn(
     phase: 'summarization',
     messagesDropped: spanMsgs.length,
     compactionCount,
+    branch: currentWriteBranch,
   });
 
   // Build the transform once and apply it to both the durable transcript and

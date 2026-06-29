@@ -153,12 +153,35 @@ describe('migrateConversationsToIndexedDB', () => {
   });
 
   it('returns existing IndexedDB data when already migrated', async () => {
-    const existing = makeConversation('c1', [makeMessage({ content: 'from idb' })]);
+    const existing = makeConversation('c1', [makeMessage({ content: 'from idb', branch: 'main' })]);
     mockGetAll.mockResolvedValue([existing]);
 
     const result = await migrateConversationsToIndexedDB();
 
     expect(result['c1'].messages[0].content).toBe('from idb');
+    expect(mockPutMany).not.toHaveBeenCalled();
+  });
+
+  it('backfills unstamped messages from existing IndexedDB conversations once', async () => {
+    const existing = makeConversation('c1', [
+      makeMessage({ content: 'legacy idb message' }),
+      makeMessage({ content: 'already stamped', branch: 'feature/old' }),
+    ]);
+    existing.branch = 'feature/current';
+    mockGetAll.mockResolvedValue([existing]);
+
+    const result = await migrateConversationsToIndexedDB();
+
+    expect(result['c1'].messages[0].branch).toBe('feature/current');
+    expect(result['c1'].messages[1].branch).toBe('feature/old');
+    expect(mockPutMany).toHaveBeenCalledTimes(1);
+    expect(mockPutMany.mock.calls[0][1][0].messages[0].branch).toBe('feature/current');
+
+    mockPutMany.mockClear();
+    mockGetAll.mockResolvedValue([result['c1']]);
+    const second = await migrateConversationsToIndexedDB();
+
+    expect(second['c1'].messages[0].branch).toBe('feature/current');
     expect(mockPutMany).not.toHaveBeenCalled();
   });
 

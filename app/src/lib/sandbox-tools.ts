@@ -1059,7 +1059,6 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_switch_branch': {
         const branch = call.args.branch;
-        const carryChat = call.args.carry_chat === true;
         if (isInvalidGitRef(branch)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',
@@ -1123,14 +1122,9 @@ async function executeSandboxToolCallInner(
 
         return {
           text: lines.join('\n'),
-          // 'switched' (not 'forked') — the foreground dispatcher routes the
-          // conversation to the existing chat for `branch` via useChat's
-          // per-branch filter, or auto-creates a fresh chat if none exists.
-          // Conversation does NOT migrate.
           branchSwitch: {
             name: branch,
-            kind: carryChat ? 'carried' : 'switched',
-            ...(carryChat && previous ? { from: previous } : {}),
+            kind: 'switched',
             ...(previous ? { previous } : {}),
             source: 'sandbox_switch_branch',
           },

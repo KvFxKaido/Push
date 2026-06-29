@@ -321,4 +321,31 @@ describe('chat-tool-execution: tool_result sidecar preserves runtime meta', () =
     );
     expect(outcome.resultMessage.toolResults).toBeUndefined();
   });
+
+  it('stamps regular tool results with the current write branch', () => {
+    const outcome = buildToolOutcome(
+      rawResult('x'),
+      '[meta] round=1',
+      'cloudflare' as ActiveProvider,
+      { currentBranch: 'feature/current' },
+    );
+
+    expect(outcome.resultMessage.branch).toBe('feature/current');
+  });
+
+  it('stamps branch-switch tool results with the target branch', () => {
+    const raw = rawResult('switched');
+    raw.raw.branchSwitch = {
+      name: 'feature/next',
+      kind: 'switched',
+      previous: 'main',
+      source: 'sandbox_switch_branch',
+    };
+
+    const outcome = buildToolOutcome(raw, '[meta] round=1', 'cloudflare' as ActiveProvider, {
+      currentBranch: 'main',
+    });
+
+    expect(outcome.resultMessage.branch).toBe('feature/next');
+  });
 });

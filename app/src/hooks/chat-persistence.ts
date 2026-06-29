@@ -2,6 +2,7 @@ import type { AIProviderType, ChatMessage, Conversation } from '@/types';
 import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
+import { backfillConversationMessageBranches } from '@/lib/chat-message';
 
 export { createId };
 
@@ -92,6 +93,11 @@ export function loadConversations(): Record<string, Conversation> {
         if ((conversation.model ?? null) !== normalizedModel) {
           migrated = true;
         }
+        const backfilled = backfillConversationMessageBranches(convs[id]);
+        if (backfilled.changed) {
+          convs[id] = backfilled.conversation;
+          migrated = true;
+        }
       }
 
       // Migration: stamp unscoped conversations with the current active repo
@@ -131,6 +137,10 @@ export function loadConversations(): Record<string, Conversation> {
             repoFullName: repoFullName || undefined,
           },
         };
+        const backfilled = backfillConversationMessageBranches(migrated[id]);
+        if (backfilled.changed) {
+          migrated[id] = backfilled.conversation;
+        }
         saveConversationsLegacy(migrated);
         saveActiveChatId(id);
         safeStorageRemove(OLD_STORAGE_KEY);

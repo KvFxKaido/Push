@@ -4730,17 +4730,17 @@ describe('create_artifact tool registry + capability drift', () => {
   });
 });
 
-describe('branch switch carry_chat registry + capability drift', () => {
-  it('documents carry_chat on the shared switch_branch tool spec', () => {
+describe('branch switch registry + capability drift', () => {
+  it('documents the shared switch_branch tool spec', () => {
     const spec = getToolSpec('switch_branch');
     assert.ok(spec, 'switch_branch must be registered in TOOL_SPECS');
     assert.equal(spec.canonicalName, 'sandbox_switch_branch');
     assert.equal(spec.publicName, 'switch_branch');
     assert.equal(spec.source, 'sandbox');
     assert.equal(spec.readOnly, false);
-    assert.match(spec.protocolSignature, /carry_chat\?/);
-    assert.match(spec.protocolDescription, /carry_chat/);
-    assert.match(spec.exampleJson, /carry_chat/);
+    assert.equal(spec.protocolSignature, 'switch_branch(branch)');
+    assert.match(spec.protocolDescription, /current conversation/);
+    assert.equal(spec.exampleJson, '{"tool": "switch_branch", "args": {"branch": "main"}}');
   });
 
   it('keeps typed branch tools grantable to the coder role used by the inline lead', () => {

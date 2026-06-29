@@ -271,7 +271,7 @@ export function useBackgroundCoderJob({
    *  text content and carries the card as its only payload; SSE
    *  terminal events update the card data in place. */
   const appendJobCardAsNewAssistantMessage = useCallback(
-    (chatId: string, card: ChatCard) => {
+    (chatId: string, card: ChatCard, branch?: string) => {
       setConversations((prev) => {
         const conv = prev[chatId];
         if (!conv) return prev;
@@ -280,6 +280,7 @@ export function useBackgroundCoderJob({
           role: 'assistant',
           content: '',
           timestamp: Date.now(),
+          ...(branch !== undefined ? { branch } : {}),
           cards: [card],
         };
         return {
@@ -504,7 +505,7 @@ export function useBackgroundCoderJob({
   const persistAndStart = useCallback(
     async (
       input: StartBackgroundJobInput,
-      placeCard: (chatId: string, card: ChatCard) => void,
+      placeCard: (chatId: string, card: ChatCard, branch?: string) => void,
       source: 'main-chat' | 'delegation',
     ): Promise<StartBackgroundJobResult> => {
       // Send exactly the fields the server contract expects. jobId +
@@ -589,7 +590,7 @@ export function useBackgroundCoderJob({
           latestStatusLine: 'Queued',
         },
       };
-      placeCard(input.chatId, initialCard);
+      placeCard(input.chatId, initialCard, input.branch);
 
       // Fire the SSE stream — don't await; the orchestrator turn ends
       // immediately and the job progresses asynchronously.

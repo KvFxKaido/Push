@@ -11,12 +11,14 @@
  */
 
 import { STORE, clear, getAll, get, put, del, putMany } from './app-db';
-import { safeStorageGet, safeStorageRemove } from './safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 import type { Conversation, ChatMessage } from '@/types';
 import { sanitizeConversationRuntimeState } from './chat-runtime-state';
+import { backfillConversationMessageBranches } from './chat-message';
 
 const LEGACY_CONVERSATIONS_KEY = 'diff_conversations';
 const MIGRATION_FLAG_KEY = 'push:idb-conversations-migrated';
+const MESSAGE_BRANCH_BACKFILL_KEY = 'push:message-branch-backfill-v1';
 
 // ---------------------------------------------------------------------------
 // Read
@@ -111,9 +113,36 @@ function sanitizeConversations(convs: Record<string, Conversation>): Record<stri
     const cleaned = (convs[id].messages || [])
       .map(sanitizeSandboxStateCards)
       .filter((m): m is ChatMessage => m !== null);
-    convs[id] = sanitizeConversationRuntimeState({ ...convs[id], messages: cleaned });
+    const sanitized = sanitizeConversationRuntimeState({ ...convs[id], messages: cleaned });
+    convs[id] = backfillConversationMessageBranches(sanitized).conversation;
   }
   return convs;
+}
+
+async function backfillPersistedMessageBranches(
+  convs: Record<string, Conversation>,
+): Promise<Record<string, Conversation>> {
+  if (safeStorageGet(MESSAGE_BRANCH_BACKFILL_KEY)) return convs;
+
+  const next: Record<string, Conversation> = {};
+  const changed: Conversation[] = [];
+  for (const [id, conv] of Object.entries(convs)) {
+    const backfilled = backfillConversationMessageBranches(conv);
+    next[id] = backfilled.conversation;
+    if (backfilled.changed) changed.push(backfilled.conversation);
+  }
+
+  if (changed.length > 0) {
+    try {
+      await putMany(STORE.conversations, changed);
+    } catch (err) {
+      console.warn('[ConversationStore] Message branch backfill failed', err);
+      return next;
+    }
+  }
+
+  safeStorageSet(MESSAGE_BRANCH_BACKFILL_KEY, '1');
+  return next;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,11 +167,11 @@ function loadConversationsFromLocalStorage(): Record<string, Conversation> {
 export async function migrateConversationsToIndexedDB(): Promise<Record<string, Conversation>> {
   // Check if already migrated
   if (safeStorageGet(MIGRATION_FLAG_KEY)) {
-    return loadAllConversations();
+    return backfillPersistedMessageBranches(await loadAllConversations());
   }
 
   // Check if IndexedDB already has data (e.g., partial migration)
-  const existing = await loadAllConversations();
+  const existing = await backfillPersistedMessageBranches(await loadAllConversations());
   if (Object.keys(existing).length > 0) {
     safeStorageRemove(LEGACY_CONVERSATIONS_KEY);
     return existing;

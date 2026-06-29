@@ -30,6 +30,7 @@ import {
   type ToolExecRawResult,
 } from '@/lib/chat-tool-execution';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
+import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import type { DelegationOutcome, ReasoningBlock } from '@/types';
 import { getActiveGitBackend } from '@/lib/git-session';
@@ -69,6 +70,15 @@ const TOOL_RESULT_PULSE_INTERVAL = 3;
 
 export function shouldEmitPeriodicPulse(round: number): boolean {
   return (round + 1) % TOOL_RESULT_PULSE_INTERVAL === 0;
+}
+
+export function getCurrentWriteBranch(
+  ctx: Pick<SendLoopContext, 'branchInfoRef' | 'conversationsRef' | 'chatId'>,
+): string | undefined {
+  return resolveMessageWriteBranch(
+    ctx.branchInfoRef.current,
+    ctx.conversationsRef.current[ctx.chatId]?.branch,
+  );
 }
 
 /**
@@ -448,6 +458,8 @@ export function createTurnRunContext(
   ): AssistantTurnResult | null => {
     const effects = collectPostToolPolicyEffects(results);
     if (effects.messages.length === 0) return null;
+    const branch = getCurrentWriteBranch(ctx);
+    const messages = effects.messages.map((message) => stampMessageBranch(message, branch));
 
     setConversations((prev) => {
       const conv = prev[chatId];
@@ -456,7 +468,7 @@ export function createTurnRunContext(
         ...prev,
         [chatId]: {
           ...conv,
-          messages: [...conv.messages, ...effects.messages],
+          messages: [...conv.messages, ...messages],
           lastMessageAt: Date.now(),
         },
       };
@@ -464,7 +476,7 @@ export function createTurnRunContext(
       return updated;
     });
 
-    const nextApiMessages = [...currentApiMessages, ...effects.messages];
+    const nextApiMessages = [...currentApiMessages, ...messages];
     checkpointRefs.apiMessages.current = nextApiMessages;
     flushCheckpoint();
 
@@ -533,7 +545,7 @@ export function createTurnRunContext(
 //   5. Repo promotion (`promotion.repo` → bind sandbox, update conversation,
 //      fire onSandboxPromoted)
 //   6. Branch-desync detection from sandbox_exec branch stamps
-//   7. Branch switch payload (forked / switched conversation migration)
+//   7. Branch switch payload (in-place conversation branch update)
 //   8. Sandbox unreachable structured-error propagation
 //
 // Helpers are idempotent at the runtime-handler layer — repeated calls during
@@ -556,7 +568,6 @@ export function applyPostExecutionSideEffects(
     activeChatIdRef,
     conversationsRef,
     branchInfoRef,
-    skipAutoCreateRef,
     updateVerificationState,
     appendRunEvent,
   } = ctx;
@@ -647,23 +658,19 @@ export function applyPostExecutionSideEffects(
     activeChatIdRef,
     conversationsRef,
     branchInfoRef,
-    skipAutoCreateRef,
     setConversations,
     dirtyConversationIdsRef,
     runtimeHandlersRef,
   });
 
-  // 7. Branch switch payload (Slice 2 conversation-fork migration).
-  // Migration logic lives in branch-fork-migration.ts so this helper stays
-  // small and the migration is testable in isolation. Dispatches on
-  // payload.kind: 'forked' migrates the active conversation; 'switched' or
-  // undefined falls through to the existing auto-switch behavior.
+  // 7. Branch switch payload. The unified branch-change application lives in
+  // branch-fork-migration.ts so this helper stays small and the state update is
+  // testable in isolation. payload.kind is passive source context only.
   if (result.branchSwitch) {
     applyBranchSwitchPayload(result.branchSwitch, {
       activeChatIdRef,
       conversationsRef,
       branchInfoRef,
-      skipAutoCreateRef,
       setConversations,
       dirtyConversationIdsRef,
       runtimeHandlersRef,
@@ -704,6 +711,7 @@ export function dispatchDroppedCandidatesError(
     apiMessages,
     lockedProvider,
     resolvedModel,
+    getCurrentWriteBranch(ctx),
   );
 
   appendRunEvent(chatId, {
@@ -963,6 +971,7 @@ export function handleLoopVerdict(
     reasoningBlocks,
     apiMessages,
     lockedProvider,
+    getCurrentWriteBranch(ctx),
   );
   appendRunEvent(chatId, {
     type: 'tool.call_malformed',

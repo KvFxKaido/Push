@@ -246,11 +246,9 @@ interface WorkspaceHubSheetProps {
   // Branch management
   branchProps: HubBranchProps;
   /** Slice 2.1 fork path. When the "Push to a new branch" flow creates a
-   *  branch, route through this so the active conversation migrates onto the
-   *  new branch instead of getting dropped (per-branch chat filter would
-   *  otherwise route the user to a different chat). Optional because the
-   *  chat-only surface gates `canCommitAndPush` off and never reaches the
-   *  new-branch path. */
+   *  branch, route through this so the active conversation updates its branch
+   *  state in place. Optional because the chat-only surface gates
+   *  `canCommitAndPush` off and never reaches the new-branch path. */
   forkBranchFromUI?: (name: string, from?: string) => Promise<ForkBranchInWorkspaceResult>;
   onFixReviewFinding: (prompt: string) => void;
   // Pinned artifacts (Kept)
@@ -754,10 +752,10 @@ export function WorkspaceHubSheet({
             setCommitError('New-branch flow is not available in this surface.');
             return;
           }
-          // Preflight existence check before the fork migrates the
-          // conversation. sandbox_create_branch (via forkBranchFromUI) catches
+          // Preflight existence check before the fork updates the conversation
+          // branch. sandbox_create_branch (via forkBranchFromUI) catches
           // local collisions on its own, but a remote-only collision would
-          // let us create the branch locally + migrate the chat, then either
+          // let us create the branch locally + move the chat branch, then either
           // silently fast-forward into someone else's branch or reject at
           // push after the user is already committed. Fail fast with a clear
           // message instead. ls-remote network failures fall through (the
@@ -774,13 +772,10 @@ export function WorkspaceHubSheet({
             setCommitError(`Branch "${target.branchName}" already exists.`);
             return;
           }
-          // Route through the slice 2 fork path (sandbox_create_branch +
-          // applyBranchSwitchPayload with kind: 'forked'). This atomically
-          // backfills the active conversation's existing messages with the
-          // OLD branch, sets conv.branch to the new branch, and inserts a
-          // branch_forked event — so the user stays in the same session and
-          // their chat follows onto the new branch instead of the per-branch
-          // filter routing them to a different chat.
+          // Route through the typed fork path (sandbox_create_branch +
+          // applyBranchSwitchPayload with kind: 'forked'). This updates the
+          // active conversation's mutable branch state in place so the user
+          // stays in the same session.
           const forkResult = await forkBranchFromUI(target.branchName);
           if (!forkResult.ok) {
             updateCommitPhase('error');
@@ -790,9 +785,9 @@ export function WorkspaceHubSheet({
         } else if (target.mode === 'current' && isOnMain && forkBranchFromUI) {
           // auto-branch-on-commit: a commit must never land on the default
           // branch. Fork to a model-named (deterministic-fallback) branch via
-          // the same typed path, migrating the chat onto it. The seam no-ops
-          // when the flag is off or HEAD is already off the default branch, so
-          // flag-off behaves exactly as before. (Protect-Main-on already
+          // the same typed path and update the chat branch in place. The seam
+          // no-ops when the flag is off or HEAD is already off the default
+          // branch, so flag-off behaves exactly as before. (Protect-Main-on already
           // blocks the mode==='current' path above; this covers the
           // Protect-Main-off case where committing to main would otherwise be
           // allowed.)
@@ -1430,8 +1425,8 @@ export function WorkspaceHubSheet({
                                 current branch — different semantics from
                                 "Create branch" (which is GitHub-side). This
                                 forks the current workspace state into a new
-                                branch and brings the active conversation
-                                along via the slice 2 migration handler. */}
+                                branch and updates the active conversation's
+                                branch state through the shared handler. */}
                             <button
                               onClick={() => {
                                 setBranchDropdownOpen(false);

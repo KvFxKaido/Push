@@ -1,183 +1,92 @@
 /**
- * Conversation-fork migration (slice 2).
+ * Unified branch-change application.
  *
- * When a tool emits a `'forked'` branchSwitch (today: sandbox_create_branch
- * only), migrate the active conversation to the new branch instead of letting
- * `useChat` auto-create a fresh one. This is the load-bearing behavior of
- * slice 2.
- *
- * The mechanism (per design doc D2, two council passes):
- * - Set BOTH guards before any state update — in-tab `skipAutoCreateRef` and
- *   cross-tab localStorage marker. Both are needed; neither alone covers
- *   every observation path.
- * - Atomic R12 backfill in one `setConversations` call: stamp existing
- *   messages with the OLD `conv.branch` (preserves provenance), set new
- *   `conv.branch`, append a typed `branch_forked` event.
- * - Trigger workspace branch update via the existing `onBranchSwitch`
- *   callback (which handles `skipBranchTeardownRef` + `setCurrentBranch`).
- * - Cross-tab marker is cleared in a `try/finally` so a crashed write path
- *   still releases observing tabs (in addition to the 5s stale fallback in
- *   `branch-migration-marker.ts`).
- * - The in-tab guard is NOT cleared here — `useChat`'s state-observed effect
- *   releases it once the migration is observable in render state. v2's
- *   `queueMicrotask` clear was rejected by both consultants because
- *   microtasks run before React commits the next render.
+ * Chats are repo-scoped now; branch changes no longer migrate transcripts
+ * between per-branch chats. A branch switch result simply warms the workspace
+ * follow path, updates the active conversation's mutable branch state, and
+ * appends a passive `branch_forked` / `branch_merged` timeline moment for the
+ * kinds that warrant one.
  */
 
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { BranchSwitchPayload, ChatMessage, Conversation, RunEventInput } from '@/types';
 import type { ChatRuntimeHandlers } from '@/hooks/chat-send';
-import {
-  createBranchCarriedMessage,
-  createBranchForkedMessage,
-  createBranchMergedMessage,
-  type MigrationGuard,
-} from './chat-message';
-import { setMigrationMarker } from './branch-migration-marker';
+import { createBranchForkedMessage, createBranchMergedMessage } from './chat-message';
 
 export interface BranchForkMigrationContext {
-  /** Optional origin chat id/event logger fields shared with the broader
-   *  branch-transition context object. The migration path does not currently
-   *  emit run events, but accepting the shared shape keeps inline/tool-side
-   *  callers from forking context assembly. */
+  /** Optional origin chat id/event logger fields shared with broader branch
+   *  transition context assembly. The unified path does not emit run events,
+   *  but accepting the shared shape avoids caller churn. */
   chatId?: string;
   appendRunEvent?: (chatId: string, event: RunEventInput) => void;
-  /** Active chat id at resolution time, read from a ref to avoid stale
-   *  capture. If null/missing or the conversation no longer exists, the
-   *  migration is skipped and only the workspace branch is synced. */
+  /** Active chat id at resolution time. The current chat is the one whose
+   *  mutable branch state follows sandbox HEAD. */
   activeChatIdRef: MutableRefObject<string | null>;
-  /** Current snapshot of conversations, read from a ref so we can verify the
-   *  target conversation exists BEFORE setting any guards (review feedback,
-   *  Codex P1: setting guards before checking existence left them stuck
-   *  permanently when the chat was deleted/missing — useBranchForkGuard's
-   *  state-observed clear can't fire if `conversations[guard.chatId]` is
-   *  undefined). */
+  /** Current conversation snapshot, used to avoid dirty writes for missing or
+   *  already-updated conversations. */
   conversationsRef: MutableRefObject<Record<string, Conversation>>;
-  /** Current branch on the workspace, used as the `from` fallback when the
-   *  tool result didn't supply one. */
+  /** Current branch info retained for shared context compatibility. */
   branchInfoRef: MutableRefObject<{ currentBranch?: string; defaultBranch?: string } | undefined>;
-  /** In-tab migration guard — set before writes, cleared by useChat's
-   *  state-observed effect after the migration is observable. */
-  skipAutoCreateRef: MutableRefObject<MigrationGuard | null>;
   /** Conversation state setter. */
   setConversations: Dispatch<SetStateAction<Record<string, Conversation>>>;
-  /** Dirty-tracking set so the next persistence flush picks up the migrated
-   *  conversation. */
+  /** Dirty-tracking set so the next persistence flush stores the branch update. */
   dirtyConversationIdsRef: MutableRefObject<Set<string>>;
-  /** Runtime handlers registry. The `onBranchSwitch` callback is invoked
-   *  after the conversation update to trigger the workspace's
-   *  `setCurrentBranch` + `skipBranchTeardownRef` coordination. */
+  /** Runtime handlers registry. `onBranchSwitch` owns the warm follow
+   *  coordination (`skipBranchTeardownRef` + `setCurrentBranch`). */
   runtimeHandlersRef: MutableRefObject<ChatRuntimeHandlers | undefined>;
 }
 
-/**
- * Apply a branch-switch tool-result payload to the active conversation.
- *
- * For `kind: 'forked'`, `kind: 'merged'`, or `kind: 'carried'`: migrates the
- * active conversation (or syncs branch silently if no active chat exists).
- * The three kinds share the same R10/R12 mitigation mechanism; only the
- * transcript event differs so the renderer can label the divider correctly.
- * For `kind: 'switched'`: just triggers the existing `onBranchSwitch` handler
- * — useChat's auto-switch effect handles the rest via its filter +
- * auto-select / auto-create path (existing pre-slice-2 behavior).
- */
 export function applyBranchSwitchPayload(
   payload: BranchSwitchPayload,
   ctx: BranchForkMigrationContext,
 ): void {
-  if (payload.kind !== 'forked' && payload.kind !== 'merged' && payload.kind !== 'carried') {
-    // Existing behavior for 'switched' (or any future kind): just sync the
-    // workspace branch. useChat's auto-switch effect picks it up.
-    ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
-    return;
-  }
+  ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
 
   const targetChatId = ctx.activeChatIdRef.current;
-  const fromBranch = payload.from ?? ctx.branchInfoRef.current?.currentBranch ?? 'main';
+  if (!targetChatId) return;
 
-  // Verify the target conversation exists BEFORE setting any guards. If we
-  // set the guard then hit `if (!conv) return prev` inside the updater, the
-  // useBranchForkGuard state-observed clear can't fire (its release condition
-  // requires `conversations[guard.chatId]` to be present and migrated), so
-  // the guard would stay stuck and permanently suppress useChat's auto-
-  // switch in this tab. Treat missing-conv same as no-active-chat fallback.
-  // (Review feedback: Codex P1 + Copilot converged.)
-  const targetConv = targetChatId ? ctx.conversationsRef.current[targetChatId] : undefined;
-  if (!targetChatId || !targetConv) {
-    ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
-    return;
-  }
+  const targetConv = ctx.conversationsRef.current[targetChatId];
+  if (!targetConv || targetConv.branch === payload.name) return;
 
-  // R10: cross-tab marker. Set BEFORE persistence updates so other tabs
-  // observing storage events suppress their own auto-create until this
-  // migration settles. The marker is NOT cleared here — useBranchForkGuard
-  // clears it alongside the in-tab guard once the migration is observable.
-  // (Review feedback: clearing in this `finally` raced with the async
-  // persistence flush, defeating R10's purpose.) Marker also has a 5s stale
-  // fallback so a crashed migrating tab doesn't permanently freeze observers.
-  setMigrationMarker({
-    chatId: targetChatId,
-    fromBranch,
-    toBranch: payload.name,
-  });
+  // The branch this transitioned *from*. Read the conversation's current branch
+  // (the value about to be overwritten) rather than `branchInfoRef`, which the
+  // `onBranchSwitch` above may already have advanced to the new branch.
+  const fromBranch = payload.from ?? targetConv.branch ?? 'main';
 
-  // In-tab guard with target state so useBranchForkGuard's state-observed
-  // clear effect can release it once the migration is observable.
-  ctx.skipAutoCreateRef.current = { chatId: targetChatId, toBranch: payload.name };
+  // Passive timeline moment for the kinds that warrant a divider: `forked` (a
+  // branch was created) and `merged` (a PR shipped). A plain `switched` (incl.
+  // the desync reconcile) leaves none — matching pre-refactor behavior, where
+  // only the heavy path appended a moment.
+  const moment: ChatMessage | null =
+    payload.kind === 'merged'
+      ? createBranchMergedMessage({
+          from: fromBranch,
+          to: payload.name,
+          prNumber: payload.prNumber,
+          source: payload.source,
+        })
+      : payload.kind === 'forked'
+        ? createBranchForkedMessage({
+            from: fromBranch,
+            to: payload.name,
+            sha: payload.sha,
+            source: payload.source,
+          })
+        : null;
 
-  // R12: atomic backfill + branch update + event insertion in one
-  // setConversations. Existing un-stamped messages get the OLD branch
-  // (preserving provenance); new conv.branch becomes the target; a typed
-  // event (branch_forked, branch_merged, or branch_carried) is appended to demarcate the
-  // transition for the renderer.
   ctx.setConversations((prev) => {
     const conv = prev[targetChatId];
-    if (!conv) return prev;
-    // Fall back to fromBranch when conv.branch is undefined (legacy chats
-    // from before per-conversation branches were tracked). Without this
-    // fallback the backfill writes `branch: undefined` onto pre-fork
-    // messages, then conv.branch becomes the new branch — read-side
-    // fallback then mis-attributes pre-fork messages to the new branch and
-    // erases provenance. (Review feedback: Codex P2.)
-    const oldBranch = conv.branch ?? fromBranch;
-    const backfilledMessages = conv.messages.map((m) =>
-      m.branch === undefined ? { ...m, branch: oldBranch } : m,
-    );
-    let transitionEvent: ChatMessage;
-    if (payload.kind === 'merged') {
-      transitionEvent = createBranchMergedMessage({
-        from: fromBranch,
-        to: payload.name,
-        prNumber: payload.prNumber,
-        source: payload.source,
-      });
-    } else if (payload.kind === 'carried') {
-      transitionEvent = createBranchCarriedMessage({
-        from: fromBranch,
-        to: payload.name,
-        source: payload.source,
-      });
-    } else {
-      transitionEvent = createBranchForkedMessage({
-        from: fromBranch,
-        to: payload.name,
-        sha: payload.sha,
-        source: payload.source,
-      });
-    }
+    if (!conv || conv.branch === payload.name) return prev;
     return {
       ...prev,
       [targetChatId]: {
         ...conv,
         branch: payload.name,
-        messages: [...backfilledMessages, transitionEvent],
-        lastMessageAt: transitionEvent.timestamp,
+        ...(moment
+          ? { messages: [...conv.messages, moment], lastMessageAt: moment.timestamp }
+          : {}),
       },
     };
   });
   ctx.dirtyConversationIdsRef.current.add(targetChatId);
-
-  // Trigger workspace branch update — runs the existing handler
-  // (skipBranchTeardownRef + setCurrentBranch).
-  ctx.runtimeHandlersRef.current?.onBranchSwitch?.(payload.name);
 }

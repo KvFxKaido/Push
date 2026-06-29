@@ -29,6 +29,7 @@ import {
 } from './local-daemon-sandbox-client';
 import type { RequestOptions, SessionResponse } from './local-daemon-binding';
 import type { LocalPcBinding, RelayBinding } from '@/types';
+import { canListenOnLoopback } from './test-environment';
 
 if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
   (globalThis as unknown as { WebSocket: typeof WsClient }).WebSocket = WsClient;
@@ -36,6 +37,8 @@ if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
 
 const VALID_TOKEN = 'pushd_test_client_token_xxxxxxxxxxxxxxxxxxxxxx';
 const SUBPROTOCOL_SELECTOR = 'pushd.v1';
+const loopbackAvailable = await canListenOnLoopback();
+const describeWithLoopback = loopbackAvailable ? describe : describe.skip;
 
 interface StubServer {
   port: number;
@@ -154,6 +157,7 @@ let server: StubServer;
 let binding: LocalPcBinding;
 
 beforeEach(async () => {
+  if (!loopbackAvailable) return;
   server = await startStubServer();
   binding = {
     port: server.port,
@@ -163,10 +167,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await server.close();
+  if (server) await server.close();
 });
 
-describe('execLocalDaemon', () => {
+describeWithLoopback('execLocalDaemon', () => {
   it("round-trips a command and returns the daemon's payload", async () => {
     const result = await execLocalDaemon(binding, 'echo hi');
     expect(result.exitCode).toBe(0);
@@ -281,7 +285,7 @@ describe('execLocalDaemon', () => {
   });
 });
 
-describe('readFileLocalDaemon', () => {
+describeWithLoopback('readFileLocalDaemon', () => {
   it('round-trips a read response payload', async () => {
     server.setResponseOverride('sandbox_read_file', {
       ok: true,
@@ -340,7 +344,7 @@ describe('readFileLocalDaemon', () => {
   });
 });
 
-describe('writeFileLocalDaemon', () => {
+describeWithLoopback('writeFileLocalDaemon', () => {
   it('round-trips a successful write response', async () => {
     server.setResponseOverride('sandbox_write_file', {
       ok: true,
@@ -398,7 +402,7 @@ describe('writeFileLocalDaemon', () => {
   });
 });
 
-describe('listDirLocalDaemon', () => {
+describeWithLoopback('listDirLocalDaemon', () => {
   it('returns directory entries', async () => {
     server.setResponseOverride('sandbox_list_dir', {
       ok: true,
@@ -449,7 +453,7 @@ describe('listDirLocalDaemon', () => {
   });
 });
 
-describe('getDiffLocalDaemon', () => {
+describeWithLoopback('getDiffLocalDaemon', () => {
   it('returns diff and git-status text', async () => {
     server.setResponseOverride('sandbox_diff', {
       ok: true,
@@ -476,7 +480,7 @@ describe('getDiffLocalDaemon', () => {
   });
 });
 
-describe('identifyLocalDaemon', () => {
+describeWithLoopback('identifyLocalDaemon', () => {
   it('returns the daemon identity payload', async () => {
     const id = await identifyLocalDaemon(binding);
     expect(id.tokenId).toBe('pdt_stub_id');
@@ -497,7 +501,7 @@ describe('identifyLocalDaemon', () => {
   });
 });
 
-describe('execLocalDaemon (Phase 1.f abortSignal)', () => {
+describeWithLoopback('execLocalDaemon (Phase 1.f abortSignal)', () => {
   // The base stub server in this file always responds immediately to
   // sandbox_exec; testing the cancel path needs a server that holds
   // the response until the client sends cancel_run, so each case

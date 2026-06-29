@@ -44,6 +44,7 @@ import {
 } from '@push/lib/loop-detection';
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import type { ChatMessage, ReasoningBlock, RunEventInput } from '@/types';
 import {
   createLoopLadderState,
@@ -97,6 +98,10 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
 
   const pending = dequeuePendingSteer(chatId);
   if (!pending) return { drained: false };
+  const currentWriteBranch = resolveMessageWriteBranch(
+    loopCtx.branchInfoRef.current,
+    loopCtx.conversationsRef.current[chatId]?.branch,
+  );
 
   // FIFO drain: the engine's hasPendingSteer flag tracks "is anything
   // queued?", not "did we just consume one?". After the dequeue we either
@@ -121,6 +126,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
     pending.text,
     pending.attachments,
     pending.options?.displayText,
+    currentWriteBranch,
   );
 
   let nextApiMessages: ChatMessage[];
@@ -169,6 +175,7 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
               content: accumulated,
               timestamp: Date.now(),
               status: 'done' as const,
+              ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
               ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
             },
           ]
@@ -203,12 +210,17 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
 
 function appendStreamingAssistantDraft(loopCtx: SendLoopContext): void {
   const { chatId } = loopCtx;
+  const currentWriteBranch = resolveMessageWriteBranch(
+    loopCtx.branchInfoRef.current,
+    loopCtx.conversationsRef.current[chatId]?.branch,
+  );
   const newAssistant: ChatMessage = {
     id: createId(),
     role: 'assistant',
     content: '',
     timestamp: Date.now(),
     status: 'streaming',
+    ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
   };
   loopCtx.setConversations((prev) => {
     const conv = prev[chatId];

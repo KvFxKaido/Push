@@ -1,22 +1,13 @@
 /**
  * Centralized factories for ChatMessage construction.
  *
- * Slice 2 (PR #TBD) introduces per-message branch attribution: each message
- * records the branch active at write time. To avoid scattering
- * `branch: currentBranch` stamps across every site that creates a message,
- * route new code through these factories — they capture branch (and any
- * other write-time provenance) in one place.
- *
- * Existing pre-slice-2 message creation sites are NOT migrated by this
- * commit; they continue to omit `branch`, and the read-boundary fallback
- * (`effectiveMessageBranch`) supplies `conv.branch` as the default when
- * messages are loaded. Slice 2's R12 mitigation backfills the field
- * atomically when a conversation is migrated to a new branch — see the
- * design doc for the invariant.
+ * Every message authored inside a branch-aware workspace records the branch
+ * active at write time. That per-message stamp is durable provenance: once a
+ * conversation's branch becomes mutable session state, read-time fallbacks to
+ * `conv.branch` would rewrite history.
  */
 
 import type {
-  BranchCarriedMeta,
   BranchForkedMeta,
   BranchMergedMeta,
   BranchSwitchSource,
@@ -36,8 +27,8 @@ interface CreateMessageInput {
   content: string;
   /** The branch active when this message is being created. Stamped onto the
    *  message at write time. Pass `undefined` for messages created outside a
-   *  branch context (the `effectiveMessageBranch` fallback handles read-side
-   *  defaulting). */
+   *  branch context; read-side defaulting no longer consults conversation
+   *  branch state. */
   currentBranch: string | undefined;
   /** Optional override for the auto-generated id (e.g. when reconstructing a
    *  message from a server-side identifier). */
@@ -59,6 +50,67 @@ export function createMessage(input: CreateMessageInput): ChatMessage {
     ...(input.currentBranch !== undefined ? { branch: input.currentBranch } : {}),
     ...input.extra,
   };
+}
+
+export interface BranchInfoLike {
+  currentBranch?: string;
+  defaultBranch?: string;
+}
+
+/** Resolve the branch to stamp on a newly-authored message. Prefer the live
+ *  sandbox-tracked branch; fall back to the conversation branch when a caller is
+ *  writing against persisted state; finally use the default branch when that is
+ *  the only branch context available. */
+export function resolveMessageWriteBranch(
+  branchInfo: BranchInfoLike | undefined,
+  conversationBranch?: string,
+): string | undefined {
+  return branchInfo?.currentBranch ?? conversationBranch ?? branchInfo?.defaultBranch;
+}
+
+/** Stamp a new message with branch provenance without clobbering a deliberate
+ *  branch already set by the caller (for example delegate originBranch). */
+export function stampMessageBranch<T extends { branch?: ChatMessage['branch'] }>(
+  message: T,
+  branch: string | undefined,
+): T {
+  if (message.branch !== undefined || branch === undefined) return message;
+  return { ...message, branch };
+}
+
+export function stampMessagesBranch<T extends { branch?: ChatMessage['branch'] }>(
+  messages: readonly T[],
+  branch: string | undefined,
+): T[] {
+  if (branch === undefined) return [...messages];
+  let changed = false;
+  const stamped = messages.map((message) => {
+    if (message.branch !== undefined) return message;
+    changed = true;
+    return { ...message, branch };
+  });
+  return changed ? stamped : [...messages];
+}
+
+export function backfillConversationMessageBranches<T extends ConversationLikeForBackfill>(
+  conversation: T,
+): { conversation: T; changed: boolean } {
+  const branch = conversation.branch ?? (conversation.repoFullName ? 'main' : undefined);
+  if (!branch) return { conversation, changed: false };
+  let changed = false;
+  const messages = conversation.messages.map((message) => {
+    if (message.branch !== undefined) return message;
+    changed = true;
+    return { ...message, branch };
+  });
+  if (!changed) return { conversation, changed: false };
+  return { conversation: { ...conversation, messages }, changed: true };
+}
+
+interface ConversationLikeForBackfill {
+  messages: ChatMessage[];
+  branch?: string;
+  repoFullName?: string;
 }
 
 interface CreateBranchForkedMessageInput {
@@ -147,38 +199,6 @@ export function createBranchMergedMessage(input: CreateBranchMergedMessageInput)
   };
 }
 
-interface CreateBranchCarriedMessageInput {
-  /** Source branch the conversation continued from. */
-  from: string;
-  /** Target branch the conversation continued on. */
-  to: string;
-  /** Producer that triggered the carry transition. */
-  source?: BranchSwitchSource;
-  id?: string;
-  timestamp?: number;
-}
-
-/** Create a typed `branch_carried` system event for insertion after an
- *  intentional carry-chat branch switch. Mirrors fork/merge events but keeps
- *  provenance honest: no branch was created and no PR was merged. */
-export function createBranchCarriedMessage(input: CreateBranchCarriedMessageInput): ChatMessage {
-  const meta: BranchCarriedMeta = {
-    from: input.from,
-    to: input.to,
-    ...(input.source ? { source: input.source } : {}),
-  };
-  return {
-    id: input.id ?? createMessageId(),
-    role: 'assistant',
-    content: '',
-    timestamp: input.timestamp ?? Date.now(),
-    branch: input.to,
-    kind: 'branch_carried',
-    branchCarriedMeta: meta,
-    visibleToModel: false,
-  };
-}
-
 /** Compaction count at/above which the UI surfaces the "multiple compactions can
  *  blur older context — consider a fresh branch" degradation nudge. The first
  *  compaction is routine; the second is when "multiple compactions" becomes true
@@ -227,18 +247,15 @@ export function createCompactionMessage(input: CreateCompactionMessageInput): Ch
   };
 }
 
-/** Read-boundary fallback: returns the branch that should be attributed to
- *  this message. Stamped messages return their own `branch`; legacy messages
- *  fall back to the parent conversation's branch, then to `'main'`.
- *
- *  Apply this once at the persistence load layer or where branch attribution
- *  is needed for display / filtering. Do NOT scatter the `??` chain across
- *  render sites — fallback policy lives here. */
+/** Read-boundary attribution for already-loaded messages. Persistence backfills
+ *  legacy messages before conversations can mutate branches, so conversation
+ *  branch is no longer a read-time fallback. */
 export function effectiveMessageBranch(
   msg: Pick<ChatMessage, 'branch'>,
-  conversationBranch: string | undefined,
+  conversationBranch?: string,
 ): string {
-  return msg.branch ?? conversationBranch ?? 'main';
+  void conversationBranch;
+  return msg.branch ?? 'main';
 }
 
 /** Centralized prompt-pack filter: strip messages explicitly marked
@@ -255,17 +272,4 @@ export function filterModelVisibleMessages<M extends Pick<ChatMessage, 'visibleT
   messages: readonly M[],
 ): M[] {
   return messages.filter((m) => m.visibleToModel !== false);
-}
-
-/** In-memory guard for an in-progress conversation-fork migration. Held in a
- *  ref by the migrating tab. Set immediately when a `'forked'` branchSwitch
- *  arrives; cleared by a state-observed effect once the migration is
- *  observable in the rendered state. While set, `useChat`'s auto-switch
- *  effect early-returns to avoid auto-creating or chat-id-stealing during
- *  the in-flight transition.
- *
- *  Cross-tab coordination is separate (see `branch-migration-marker.ts`). */
-export interface MigrationGuard {
-  chatId: string;
-  toBranch: string;
 }

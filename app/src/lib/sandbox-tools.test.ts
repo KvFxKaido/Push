@@ -4612,23 +4612,6 @@ describe('validateSandboxToolCall -- sandbox_switch_branch', () => {
     }
   });
 
-  it('accepts carry_chat only when explicitly true', () => {
-    const carried = validateSandboxToolCall({
-      tool: 'sandbox_switch_branch',
-      args: { branch: 'main', carry_chat: true },
-    });
-    expect(carried).toEqual({
-      tool: 'sandbox_switch_branch',
-      args: { branch: 'main', carry_chat: true },
-    });
-
-    const plain = validateSandboxToolCall({
-      tool: 'sandbox_switch_branch',
-      args: { branch: 'main', carry_chat: false },
-    });
-    expect(plain).toEqual({ tool: 'sandbox_switch_branch', args: { branch: 'main' } });
-  });
-
   it('rejects missing branch', () => {
     expect(validateSandboxToolCall({ tool: 'sandbox_switch_branch', args: {} })).toBeNull();
   });
@@ -4712,35 +4695,6 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     });
     expect(result.text).toContain('Switched to main');
     expect(result.text).not.toContain('Switched from');
-  });
-
-  it('returns kind:carried when carry_chat is true', async () => {
-    vi.mocked(sandboxClient.execInSandbox)
-      .mockResolvedValueOnce({
-        stdout: 'feat/old\n',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      })
-      .mockResolvedValueOnce({
-        stdout: '',
-        stderr: '',
-        exitCode: 0,
-        truncated: false,
-      });
-
-    const result = await executeSandboxToolCall(
-      { tool: 'sandbox_switch_branch', args: { branch: 'main', carry_chat: true } },
-      'sb-1',
-    );
-
-    expect(result.branchSwitch).toEqual({
-      name: 'main',
-      kind: 'carried',
-      from: 'feat/old',
-      previous: 'feat/old',
-      source: 'sandbox_switch_branch',
-    });
   });
 
   it('proceeds without previous when HEAD probe fails', async () => {
