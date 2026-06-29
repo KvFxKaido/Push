@@ -648,7 +648,7 @@ export function DaemonChatBody({
     return filtered;
   }, [conversations, mode]);
 
-  const drawerProps = useMemo(
+  const drawerProps = useMemo<React.ComponentProps<typeof RepoChatDrawer>>(
     () => ({
       open: drawerOpen,
       onOpenChange: handleDrawerOpenChange,
@@ -669,7 +669,6 @@ export function DaemonChatBody({
       resolveRepoAppearance: () => daemonAppearance,
       setRepoAppearance: (_: string, next: RepoAppearance) => setDaemonAppearance(next),
       clearRepoAppearance: () => resetDaemonAppearance(),
-      onSelectRepo: () => {},
       onResumeChat: (id: string) => {
         switchChat(id);
       },
@@ -948,6 +947,7 @@ export function DaemonChatBody({
           defaultBranch: undefined,
           availableBranches: [],
           branchesLoading: false,
+          branchesError: null,
           onSwitchBranch: () => {},
           onRefreshBranches: () => {},
           onShowBranchCreate: () => {},
