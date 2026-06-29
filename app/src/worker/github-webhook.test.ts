@@ -581,6 +581,29 @@ describe('handleGitHubWebhook — comment trigger', () => {
     });
   });
 
+  it('contains a rejecting reaction (inline-await path still acks 202)', async () => {
+    // The no-ctx path awaits the reaction, so a reject would otherwise throw into
+    // the handler and 500 the webhook. The .catch must contain it.
+    const deps = makeDeps({
+      addCommentReaction: vi.fn(async () => {
+        throw new Error('reaction endpoint boom');
+      }),
+    });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-reject',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(deps.addCommentReaction).toHaveBeenCalled();
+  });
+
   it('reacts on the inline review-comment endpoint kind', async () => {
     const deps = makeDeps();
     const res = await postComment(

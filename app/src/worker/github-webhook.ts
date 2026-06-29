@@ -563,6 +563,19 @@ async function handleCommentReviewTrigger(
             content,
           });
         }
+      })
+      .catch((err) => {
+        // addCommentReaction is contracted not to throw, but harden regardless:
+        // a best-effort ack must never reject into the deferred waitUntil task
+        // (an unhandled rejection) nor throw on the inline-await fallback (which
+        // would 500 the webhook). Contain it here so `posted` never rejects.
+        log('warn', 'webhook_comment_reaction_failed', {
+          deliveryId,
+          repo: req.repoFullName,
+          commentId: req.commentId,
+          content,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     if (ctx) ctx.waitUntil(posted);
     else await posted;
