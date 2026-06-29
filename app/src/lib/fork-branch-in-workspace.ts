@@ -240,7 +240,12 @@ export async function switchMergedBaseInWorkspace(
     sandboxId,
   );
 
-  if (ffResult.structuredError || /^\[Tool Error/i.test(ffResult.text)) {
+  const ffExitCode = sandboxExitCode(ffResult);
+  if (
+    ffResult.structuredError ||
+    /^\[Tool Error/i.test(ffResult.text) ||
+    (ffExitCode !== undefined && ffExitCode !== 0)
+  ) {
     return {
       ok: false,
       branchSwitch,

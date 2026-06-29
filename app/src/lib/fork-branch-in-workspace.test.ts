@@ -265,4 +265,64 @@ describe('switchMergedBaseInWorkspace', () => {
     });
     expect(result.errorMessage).toBe('Fast-forward failed — origin/main diverged');
   });
+
+  it('treats non-zero FF-only exits as failures even when sandbox_exec returns a normal result', async () => {
+    const ffRaw = {
+      text: [
+        '[Tool Result — sandbox_exec]',
+        'Exit code: 1',
+        'Stdout:',
+        'Your branch and origin/main have diverged.',
+        'Stderr:',
+        'fatal: Not possible to fast-forward, aborting.',
+      ].join('\n'),
+      card: {
+        type: 'sandbox' as const,
+        data: {
+          command: "git fetch origin 'main' && git pull --ff-only origin 'main'",
+          stdout: 'Your branch and origin/main have diverged.\n',
+          stderr: 'fatal: Not possible to fast-forward, aborting.\n',
+          exitCode: 1,
+          truncated: false,
+        },
+      },
+    };
+    sandboxTools.executeSandboxToolCall
+      .mockResolvedValueOnce({
+        text: '[Tool Result — sandbox_exec]\nExit code: 0',
+        card: {
+          type: 'sandbox' as const,
+          data: {
+            command: 'test -z "$(git status --porcelain)"',
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            truncated: false,
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        text: '[Tool Result — sandbox_switch_branch]\nSwitched to main.',
+        branchSwitch: { name: 'main', kind: 'switched' as const },
+      })
+      .mockResolvedValueOnce(ffRaw);
+
+    const result = await switchMergedBaseInWorkspace('sb-1', 'main', {
+      from: 'feature/merged',
+      prNumber: 42,
+      source: 'merge_pr',
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.branchSwitch).toEqual({
+      name: 'main',
+      kind: 'merged',
+      from: 'feature/merged',
+      prNumber: 42,
+      source: 'merge_pr',
+    });
+    expect(result.errorMessage).toContain('Exit code: 1');
+    expect(result.errorMessage).toContain('Not possible to fast-forward');
+    expect(result.raw).toBe(ffRaw);
+  });
 });

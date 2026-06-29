@@ -578,6 +578,11 @@ export async function executeBatchedToolCalls(
       });
     }
 
+    // Run side effects before building the committed result message. Merge PR
+    // follow-up can append a Workspace Follow Warning to raw.text, and that
+    // warning must reach both the transcript and the model-facing tool result.
+    await applyPostExecutionSideEffects(mutCall, mutRawResult.raw, ctx);
+
     invalidateSandboxStatus();
     const mutSandboxStatus = await getRoundSandboxStatus();
     const mutMetaLine = buildMetaLine(
@@ -610,12 +615,6 @@ export async function executeBatchedToolCalls(
       target: getToolStatusDetail(mutCall),
       ...(mutOutcome.raw.branch ? { branch: mutOutcome.raw.branch } : {}),
     });
-
-    // Per-tool side effects for the trailing mutation. This is the slot
-    // where `branchSwitch` (sandbox_create_branch / sandbox_switch_branch)
-    // and `promotion` (promote_to_github) realistically appear in a
-    // batched turn — pre-extraction those payloads were dropped here.
-    await applyPostExecutionSideEffects(mutCall, mutOutcome.raw, ctx);
 
     if (mutOutcome.cards.length > 0) {
       setConversations((prev) => {
