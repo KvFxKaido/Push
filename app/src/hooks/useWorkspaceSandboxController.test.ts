@@ -76,10 +76,20 @@ function renderController(
   branch: string,
   stopSandbox: () => Promise<void>,
   skipRef: { current: boolean },
+  overrides: {
+    sandbox?: {
+      sandboxId?: string | null;
+      status?: 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
+      start?: (repo: string, branch?: string) => Promise<string | null>;
+    };
+    setEnsureSandbox?: (fn: () => Promise<string | null>) => void;
+  } = {},
 ) {
   reactState.refIndex = 0;
   reactState.stateIndex = 0;
   reactState.effects = [];
+  const sandboxStart = overrides.sandbox?.start ?? vi.fn(async () => null);
+  const setEnsureSandbox = overrides.setEnsureSandbox ?? vi.fn();
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useWorkspaceSandboxController({
@@ -87,9 +97,9 @@ function renderController(
     workspaceRepo: repo(branch),
     isScratch: false,
     sandbox: {
-      sandboxId: null,
-      status: 'idle',
-      start: vi.fn(async () => null),
+      sandboxId: overrides.sandbox?.sandboxId ?? null,
+      status: overrides.sandbox?.status ?? 'idle',
+      start: sandboxStart,
       stop: stopSandbox,
     },
     snapshots: {
@@ -108,13 +118,15 @@ function renderController(
     onWorkspaceSessionChange: vi.fn(),
     onEndWorkspace: vi.fn(),
     onDisconnect: vi.fn(),
-    setEnsureSandbox: vi.fn(),
+    setEnsureSandbox,
     setSandboxId: vi.fn(),
     setWorkspaceSessionId: vi.fn(),
     skipBranchTeardownRef: skipRef,
   });
 
   for (const effect of reactState.effects) effect();
+
+  return { sandboxStart, setEnsureSandbox };
 }
 
 beforeEach(() => {
@@ -196,5 +208,49 @@ describe('useWorkspaceSandboxController branch teardown guard', () => {
 
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(skipRef.current).toBe(false);
+  });
+});
+
+describe('useWorkspaceSandboxController ensureSandbox', () => {
+  it('routes an error-state sandbox id through start instead of returning the stale id', async () => {
+    const stopSandbox = vi.fn(async () => {});
+    const skipRef = { current: false };
+    const sandboxStart = vi.fn(async () => 'sb-2');
+    const setEnsureSandbox = vi.fn();
+
+    renderController('main', stopSandbox, skipRef, {
+      sandbox: {
+        sandboxId: 'sb-1',
+        status: 'error',
+        start: sandboxStart,
+      },
+      setEnsureSandbox,
+    });
+
+    const ensureSandbox = setEnsureSandbox.mock.calls.at(-1)?.[0];
+    expect(ensureSandbox).toBeTypeOf('function');
+    await expect(ensureSandbox()).resolves.toBe('sb-2');
+    expect(sandboxStart).toHaveBeenCalledWith('owner/Push', 'main');
+  });
+
+  it('keeps returning a ready sandbox id without starting another sandbox', async () => {
+    const stopSandbox = vi.fn(async () => {});
+    const skipRef = { current: false };
+    const sandboxStart = vi.fn(async () => 'sb-2');
+    const setEnsureSandbox = vi.fn();
+
+    renderController('main', stopSandbox, skipRef, {
+      sandbox: {
+        sandboxId: 'sb-1',
+        status: 'ready',
+        start: sandboxStart,
+      },
+      setEnsureSandbox,
+    });
+
+    const ensureSandbox = setEnsureSandbox.mock.calls.at(-1)?.[0];
+    expect(ensureSandbox).toBeTypeOf('function');
+    await expect(ensureSandbox()).resolves.toBe('sb-1');
+    expect(sandboxStart).not.toHaveBeenCalled();
   });
 });

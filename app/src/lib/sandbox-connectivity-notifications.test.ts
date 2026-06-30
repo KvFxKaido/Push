@@ -6,12 +6,8 @@ import {
 } from './sandbox-connectivity-notifications';
 
 describe('getSandboxConnectivityToast', () => {
-  it('announces a failed reconnect that falls back to idle', () => {
-    expect(getSandboxConnectivityToast('reconnecting', 'idle', null, null)).toEqual({
-      kind: 'info',
-      message: "Couldn't reconnect to the sandbox. Code tools will start a new one when needed.",
-      options: { id: SANDBOX_CONNECTIVITY_TOAST_ID },
-    });
+  it('keeps reconnect fallback to idle quiet because tools can cold-start on demand', () => {
+    expect(getSandboxConnectivityToast('reconnecting', 'idle', null, null)).toBeNull();
   });
 
   it('announces an error even when the error message arrives after the status change', () => {

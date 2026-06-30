@@ -116,14 +116,14 @@ export function useWorkspaceSandboxController({
   }, [sandboxStatus, sandboxId, fetchSandboxState]);
 
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
-    if (sandboxId) return sandboxId;
+    if (sandboxId && sandboxStatus !== 'error') return sandboxId;
     if (isScratch) return sandboxStart('', 'main');
     if (!workspaceRepo) return null;
     return sandboxStart(
       workspaceRepo.full_name,
       workspaceRepo.current_branch || workspaceRepo.default_branch,
     );
-  }, [sandboxId, sandboxStart, isScratch, workspaceRepo]);
+  }, [sandboxId, sandboxStatus, sandboxStart, isScratch, workspaceRepo]);
 
   useEffect(() => {
     setEnsureSandbox(ensureSandbox);

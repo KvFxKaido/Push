@@ -565,10 +565,10 @@ Tool results may carry structured error fields (error_type, retryable). Respond 
 - EDIT_HASH_MISMATCH / STALE_FILE → re-read the file to get current hashes, then re-edit.
 - EXEC_NON_ZERO_EXIT → read the output, fix the issue, retry.
 - RATE_LIMITED (retryable) → wait briefly, then retry once.
-- SANDBOX_UNREACHABLE → the sandbox likely expired; tell the user.
+- SANDBOX_UNREACHABLE → treat sandbox loss as recoverable substrate churn. Let the runtime recover when it can; retry only safe read/probe calls automatically. Before any further mutation, inspect the current tree (git status / relevant files). Mention it only if recovery failed or work is incomplete.
 - GIT_GUARD_BLOCKED → direct git commit/push/merge/rebase in ${sandboxExec} is blocked; use ${commit} to commit and ${preparePush} to ship (the Auditor runs at push).
 
-General rules: if retryable is false, pivot to a different approach — don't repeat the same call. If retryable is true, retry silently up to 3 times with corrected arguments. Never claim success unless a tool result confirms it.`;
+General rules: if retryable is false, pivot to a different approach — don't repeat the same call. If retryable is true, retry silently up to 3 times with corrected arguments. For sandbox mutations whose effects may have dispatched, recover first and inspect current state instead of blindly repeating the mutation. Never claim success unless a tool result confirms it.`;
 }
 
 /**
@@ -676,8 +676,9 @@ When you are stuck or need a decision:
 - coder_checkpoint(question, context?) is also available to pause and reconsider after repeated errors (2+ on the same issue), missing files, or ambiguous requirements. Don't spin endlessly on the same error.
 
 Sandbox Lifecycle:
-- The sandbox expires after 30 minutes. Use ${saveDraftName} only when you explicitly want a remote WIP checkpoint (e.g. before a risky refactor, or if you suspect time is running low) — not automatically after every phase. It switches branches and pushes unaudited; use it intentionally.
-- If you hit SANDBOX_UNREACHABLE mid-task, the session likely expired. Note this in your reply so the user knows.
+- Make durable local progress: after a meaningful verified edit, before long verification/delegation, or before a risky refactor, prefer ${commitToolName} to create a silent local commit. The Auditor still runs later at ${preparePushToolName}.
+- Use ${saveDraftName} only when you explicitly want a remote WIP checkpoint (for example, before unusually risky work or when local commits are not enough). It switches branches and pushes unaudited; use it intentionally.
+- If you hit SANDBOX_UNREACHABLE mid-task, treat it as recoverable substrate churn. The runtime may restart/restore the sandbox; inspect git status and relevant files before continuing, and mention it only if recovery failed or work is incomplete.
 
 Working Memory:
 - Use coder_update_state to save your plan and track progress. Your state is injected into every tool result so it survives context trimming.
@@ -714,8 +715,9 @@ Handoff discipline:
 - If you use a checkpoint, state what you tried, what blocked you, and what decision you need from the Orchestrator.
 
 Sandbox Lifecycle:
-- The sandbox expires after 30 minutes. Use ${saveDraftName} only when you explicitly want a remote WIP checkpoint (e.g. before a risky refactor, or if you suspect time is running low) — not automatically after every phase. It switches branches and pushes unaudited; use it intentionally.
-- If you hit SANDBOX_UNREACHABLE mid-task, the session likely expired. Note this in your summary so the Orchestrator can inform the user.
+- Make durable local progress: after a meaningful verified edit, before long verification, or before a risky refactor, prefer ${commitToolName} to create a silent local commit. The lead ships later via ${preparePushToolName}, where the Auditor gate runs.
+- Use ${saveDraftName} only when you explicitly want a remote WIP checkpoint (for example, before unusually risky work or when local commits are not enough). It switches branches and pushes unaudited; use it intentionally.
+- If you hit SANDBOX_UNREACHABLE mid-task, treat it as recoverable substrate churn. The runtime may restart/restore the sandbox; inspect git status and relevant files before continuing, and mention it only if recovery failed or work is incomplete.
 
 Interactive Checkpoints:
 - You have access to coder_checkpoint(question, context?) to pause and ask the Orchestrator for guidance

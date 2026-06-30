@@ -345,6 +345,110 @@ describe('useSandbox.start', () => {
     expect(reactState.cells[1].value).toBe('error');
     expect(reactState.cells[2].value).toBe('network down');
   });
+
+  it('probes and reuses an error-state sandbox when it is still alive', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    syncRefsFromState();
+    sandboxClient.createSandbox.mockClear();
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-1');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-1', 'true');
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[1].value).toBe('ready');
+    expect(reactState.cells[2].value).toBeNull();
+  });
+
+  it('restores a saved snapshot before replacing a definitively-gone error sandbox', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.createSandbox.mockClear();
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+    sandboxSession.loadSandboxSession.mockReturnValue({
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+      repoFullName: 'owner/repo',
+      branch: 'main',
+      createdAt: 123,
+      snapshotId: 'snap-1',
+      restoreToken: 'restore-tok',
+    });
+    sandboxClient.restoreFromSnapshot.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-restored',
+      ownerToken: 'owner-restored',
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-restored');
+    expect(sandboxClient.restoreFromSnapshot).toHaveBeenCalledWith('snap-1', 'restore-tok', {
+      repoFullName: 'owner/repo',
+      branch: 'main',
+    });
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[0].value).toBe('sb-restored');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('cold-starts after retiring a definitively-gone error sandbox without a snapshot', async () => {
+    sandboxClient.createSandbox
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-1',
+        ownerToken: 'owner-tok',
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-2',
+        ownerToken: 'owner-tok-2',
+      });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-2');
+    expect(sandboxSession.clearSandboxSessionByStorageKey).toHaveBeenCalledWith(
+      'sbx:owner/repo:main',
+      'sb-1',
+    );
+    expect(cacheLib.clearFileVersionCache).toHaveBeenCalledWith('sb-1');
+    expect(sandboxClient.createSandbox).toHaveBeenCalledTimes(2);
+    expect(reactState.cells[0].value).toBe('sb-2');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
 });
 
 describe('useSandbox reconnect', () => {

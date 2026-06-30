@@ -62,11 +62,7 @@ export function getSandboxConnectivityToast(
 
   if (nextStatus === 'idle') {
     if (previousStatus === 'reconnecting') {
-      return {
-        kind: 'info',
-        message: "Couldn't reconnect to the sandbox. Code tools will start a new one when needed.",
-        options: { id: SANDBOX_CONNECTIVITY_TOAST_ID },
-      };
+      return null;
     }
     if (previousStatus === 'ready') {
       return {
