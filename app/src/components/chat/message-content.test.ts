@@ -32,6 +32,12 @@ describe('looksLikeToolCall', () => {
       true,
     );
   });
+
+  it('detects DeepSeek DSML tool-call envelopes', () => {
+    expect(
+      looksLikeToolCall('Checking.\n\n<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="issue">'),
+    ).toBe(true);
+  });
 });
 
 describe('stripToolCallPayload', () => {
@@ -121,5 +127,21 @@ describe('stripToolCallPayload', () => {
     const content =
       'repo_read", "args": {"repo": "a/b", "path": "AGENTS.md"}}\n```json\n{"tool":"repo_read","args":{"repo":"a/b","path":"AGENTS.md"}}\n```';
     expect(stripToolCallPayload(content)).toBe('');
+  });
+
+  it('strips DeepSeek DSML tool-call blocks while preserving preceding prose', () => {
+    const content = [
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+      '',
+      '<｜｜DSML｜｜tool_calls>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1260</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '</｜｜DSML｜｜tool_calls>',
+    ].join('\n');
+    expect(stripToolCallPayload(content)).toBe(
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+    );
   });
 });

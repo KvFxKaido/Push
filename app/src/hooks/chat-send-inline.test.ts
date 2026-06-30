@@ -403,6 +403,35 @@ describe('createInlineTranscriptMirror', () => {
     expect(lastAccumulated.text).toBe('Let me check the file.');
   });
 
+  it('never leaks a DeepSeek DSML tool-call envelope into the transcript', () => {
+    const { ctx, store, emitRunEngineEvent } = makeHarness();
+    const mirror = createInlineTranscriptMirror(ctx);
+
+    mirror({
+      type: 'text_delta',
+      text: "Let me pull up the open issues so I can give you a real read on what's ripe.",
+    } as PushStreamEvent);
+    mirror({ type: 'text_delta', text: '\n\n<｜｜DSML｜｜tool_calls>' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text:
+        '<｜｜DSML｜｜invoke name="issue">' +
+        '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+    } as PushStreamEvent);
+
+    expect(lastAssistant(store).content).toBe(
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+    );
+    expect(lastAssistant(store).content).not.toContain('DSML');
+    const lastAccumulated = emitRunEngineEvent.mock.calls
+      .map(([event]) => event)
+      .filter((e: { type: string }) => e.type === 'ACCUMULATED_UPDATED')
+      .at(-1);
+    expect(lastAccumulated.text).toBe(
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+    );
+  });
+
   it('strips a bare (unfenced) tool call and a coder_update_state blob', () => {
     const { ctx, store } = makeHarness();
     const mirror = createInlineTranscriptMirror(ctx);
@@ -452,6 +481,27 @@ describe('splitVisibleContent', () => {
     const { visible, toolCallActive } = splitVisibleContent('done {"tool":"x"}');
     expect(visible).toBe('done');
     expect(toolCallActive).toBe(true);
+  });
+
+  it('cuts a DeepSeek DSML tool-call envelope at the wrapper start', () => {
+    const { visible, toolCallActive } = splitVisibleContent(
+      'Checking now.\n\n<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="issue">',
+    );
+    expect(visible).toBe('Checking now.');
+    expect(toolCallActive).toBe(true);
+  });
+
+  it('keeps incomplete bare invoke prose visible while hiding complete bare invoke blocks', () => {
+    const incomplete = 'Example: <invoke name="read">';
+    expect(splitVisibleContent(incomplete)).toEqual({
+      visible: incomplete,
+      toolCallActive: false,
+    });
+
+    const complete = splitVisibleContent(
+      'Checking.\n<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+    );
+    expect(complete).toEqual({ visible: 'Checking.', toolCallActive: true });
   });
 
   it('provisionally hides a dangling unbalanced fence before the key arrives', () => {

@@ -350,6 +350,47 @@ describe('recoverXmlToolCalls — Shape D (namespace-token-wrapped invoke/parame
     expect(recovered[0]).toMatchObject({ tool: 'read', args: { path: '/workspace/README.md' } });
   });
 
+  it('recovers the doubled full-width DeepSeek V4 Pro DSML batch after an assistant preamble', () => {
+    const text = [
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+      '',
+      '<｜｜DSML｜｜tool_calls>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1260</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1226</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1190</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1169</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1048</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '</｜｜DSML｜｜tool_calls>',
+    ].join('\n');
+
+    const recovered = recoverXmlToolCalls(text);
+    expect(recovered).toHaveLength(5);
+    expect(recovered.map((r) => r.tool)).toEqual(['issue', 'issue', 'issue', 'issue', 'issue']);
+    expect(recovered.map((r) => r.args)).toEqual([
+      { repo: 'KvFxKaido/Push', issue_number: 1260 },
+      { repo: 'KvFxKaido/Push', issue_number: 1226 },
+      { repo: 'KvFxKaido/Push', issue_number: 1190 },
+      { repo: 'KvFxKaido/Push', issue_number: 1169 },
+      { repo: 'KvFxKaido/Push', issue_number: 1048 },
+    ]);
+    expect(recovered[0].offset).toBe(text.indexOf('<｜｜DSML｜｜invoke'));
+  });
+
   it('expands multiple namespaced invoke children of one tool_calls wrapper', () => {
     const text =
       '<|DSML|tool_calls>' +
@@ -387,6 +428,30 @@ describe('recoverXmlToolCalls — Shape D (namespace-token-wrapped invoke/parame
       'Do not run <|DSML|tool_calls><|DSML|invoke name="exec">' +
       '<|DSML|parameter name="command">rm -rf /</|DSML|parameter>' +
       '</|DSML|invoke></|DSML|tool_calls> in production.';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('keeps rejecting non-action prose before a wrapped namespaced block', () => {
+    const text =
+      'For example:\n\n<|DSML|tool_calls><|DSML|invoke name="exec">' +
+      '<|DSML|parameter name="command">rm -rf /</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects explanatory let-me prose before a wrapped namespaced block', () => {
+    const text =
+      'Let me explain the call I would use:\n\n<|DSML|tool_calls><|DSML|invoke name="exec">' +
+      '<|DSML|parameter name="command">rm -rf /</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects action preambles before non-namespaced function_calls blocks', () => {
+    const text =
+      'Let me check that.\n\n<function_calls><invoke name="read">' +
+      '<parameter name="path">/a</parameter>' +
+      '</invoke></function_calls>';
     expect(recoverXmlToolCalls(text)).toEqual([]);
   });
 
