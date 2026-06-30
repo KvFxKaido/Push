@@ -6,8 +6,29 @@
  * Completions-compatible `choices[0].delta` streams.
  */
 
-import type { PushStreamEvent, StreamUsage } from './provider-contract.js';
+import type { PushStreamEvent, StreamUsage, UrlCitation } from './provider-contract.js';
 import { parseNativeToolCallArgs } from './openai-sse-pump.js';
+
+/**
+ * Normalize a Responses `url_citation` annotation into a `UrlCitation`. The
+ * Responses shape is flat (`{ type, url, title, start_index, end_index }`),
+ * unlike the Chat Completions shape where the fields nest under `url_citation`.
+ * Returns null for anything that isn't a well-formed url_citation — a malformed
+ * citation is display-only metadata loss, never a reason to disturb the stream.
+ */
+function parseResponsesAnnotation(value: unknown): UrlCitation | null {
+  if (!value || typeof value !== 'object') return null;
+  const rec = value as Record<string, unknown>;
+  if (rec.type !== 'url_citation') return null;
+  if (typeof rec.url !== 'string' || !rec.url) return null;
+  return {
+    url: rec.url,
+    title: typeof rec.title === 'string' ? rec.title : rec.url,
+    content: typeof rec.content === 'string' ? rec.content : '',
+    startIndex: typeof rec.start_index === 'number' ? rec.start_index : 0,
+    endIndex: typeof rec.end_index === 'number' ? rec.end_index : 0,
+  };
+}
 
 export interface OpenAIResponsesSSEPumpOptions {
   body: ReadableStream<Uint8Array>;
@@ -229,6 +250,19 @@ export async function* openAIResponsesSSEPump(
     if (type === 'response.output_text.delta') {
       if (typeof parsed.delta === 'string' && parsed.delta) {
         yield { type: 'text_delta', text: parsed.delta };
+      }
+      return;
+    }
+
+    // Native web-search citations arrive as `url_citation` annotations on the
+    // output text. Additive to the `text_delta` channel — the grounded answer
+    // still streams as text; this carries the structured source for a "Sources"
+    // UI affordance. Consumers dedupe by url. Emitted one-at-a-time as each
+    // annotation lands.
+    if (type === 'response.output_text.annotation.added') {
+      const citation = parseResponsesAnnotation(parsed.annotation);
+      if (citation) {
+        yield { type: 'citations', citations: [citation] };
       }
       return;
     }

@@ -28,6 +28,7 @@ import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
 
 type FireworksLlmMessage = {
@@ -81,6 +82,15 @@ export async function* fireworksStream(
     emitContentBlocks: true,
   }) as FireworksLlmMessage[];
 
+  // Fireworks' `/v1/responses` does not implement OpenAI's built-in
+  // `web_search` tool (only function/MCP/SSE), so `isNativeWebSearchEnabled`
+  // returns false for it and this resolves off by default — Fireworks chats use
+  // the prompt-engineered web search path. The plumbing stays symmetric with
+  // the OpenAI/Sakana adapters and honors an explicit per-request override if
+  // Fireworks ever ships the tool.
+  const responsesWebSearch =
+    req.responsesWebSearch ?? isNativeWebSearchEnabled('fireworks', req.model);
+
   // 2. Typed Responses `input`-item body via the shared serializer.
   const body = toOpenAIResponses({
     provider: 'fireworks',
@@ -92,6 +102,7 @@ export async function* fireworksStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    responsesWebSearch,
   });
 
   // 3. Headers. The Worker prefers its own server-side FIREWORKS_API_KEY when

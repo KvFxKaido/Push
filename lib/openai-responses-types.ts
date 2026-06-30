@@ -47,6 +47,19 @@ export interface OpenAIResponsesFunctionTool {
   parameters: ToolFunctionSchema['input_schema'];
 }
 
+/**
+ * OpenAI's native server-side web search, expressed as a built-in tool. The
+ * provider runs the search upstream and feeds grounded, `url_citation`-annotated
+ * results back to the model. Supported by direct OpenAI and the Responses-native
+ * gateways (Sakana Fugu, Fireworks). Advanced options aren't sent — the bare
+ * `{ type: 'web_search' }` shape lets the model decide when to search.
+ */
+export interface OpenAIResponsesWebSearchTool {
+  type: 'web_search';
+}
+
+export type OpenAIResponsesTool = OpenAIResponsesFunctionTool | OpenAIResponsesWebSearchTool;
+
 export interface OpenAIResponsesTextFormat {
   type: 'json_schema';
   name: string;
@@ -68,6 +81,6 @@ export interface OpenAIResponsesRequest {
   top_p?: number;
   max_output_tokens?: number;
   text?: { format: OpenAIResponsesTextFormat };
-  tools?: OpenAIResponsesFunctionTool[];
+  tools?: OpenAIResponsesTool[];
   tool_choice?: 'auto' | 'none' | 'required';
 }

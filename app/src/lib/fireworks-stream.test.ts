@@ -24,6 +24,16 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file']),
 }));
 
+// Controllable native-web-search gate. Default off so the tool-serialization
+// tests below see only function tools; flip `nativeRef.value` to exercise the
+// `'auto'`-default path that turns on the server-side `web_search` tool.
+const { nativeRef } = vi.hoisted(() => ({ nativeRef: { value: false } }));
+vi.mock('./web-search-mode', () => ({
+  isNativeWebSearchEnabled: () => nativeRef.value,
+}));
+
+const WEB_SEARCH_TOOL = { type: 'web_search' };
+
 const baseRequest: PushStreamRequest<ChatMessage> = {
   provider: 'fireworks',
   model: 'accounts/fireworks/models/deepseek-v4-pro',
@@ -53,6 +63,7 @@ describe('fireworksStream', () => {
 
   beforeEach(() => {
     vi.resetModules();
+    nativeRef.value = false;
     // A response that completes immediately so the pump drains and the stream ends.
     fetchMock = vi.fn(
       async () =>
@@ -97,5 +108,37 @@ describe('fireworksStream', () => {
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.tools).toBeUndefined();
     expect(body.tool_choice).toBeUndefined();
+  });
+
+  // Fireworks' Responses API has no built-in web_search tool, so the gate
+  // (`isNativeWebSearchEnabled('fireworks')`) is false in production — modeled
+  // by `nativeRef` defaulting false. The stream still consults the gate and
+  // honors an explicit per-request override, exercised below.
+  it('leaves web_search off by default (no Fireworks built-in search)', async () => {
+    await drain(baseRequest);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
+  it('appends web_search when forced on via the explicit per-request flag', async () => {
+    await drain({ ...baseRequest, responsesWebSearch: true });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tools).toEqual([WEB_SEARCH_TOOL]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('merges web_search after native function tools (web search last)', async () => {
+    await drain({ ...baseRequest, tools: [sampleTool], responsesWebSearch: true });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tools).toEqual([responsesTool, WEB_SEARCH_TOOL]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('consults the native gate when no explicit flag is set', async () => {
+    nativeRef.value = true;
+    await drain(baseRequest);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tools).toEqual([WEB_SEARCH_TOOL]);
   });
 });

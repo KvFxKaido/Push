@@ -422,9 +422,10 @@ export function toLLMMessages(
     // skip the prompt-engineered `web_search` tool protocol. Anthropic's
     // native tool is also literally named `web_search`, so leaving both
     // active would create a name collision and a duplicate tool surface
-    // for the model; OpenRouter's `openrouter:web_search` server tool
-    // would likewise run a parallel search behind the model's back.
-    // Providers without a native tool (OpenAI, legacy ones) still get the
+    // for the model; OpenRouter's `openrouter:web_search` and the
+    // Responses providers' (OpenAI/Sakana/Fireworks) `web_search` server
+    // tool would likewise run a parallel search behind the model's back.
+    // Providers without a native tool (Ollama, legacy ones) still get the
     // prompt-engineered protocol as their only path.
     const nativeWebSearchActive =
       webSearchEnabled && isNativeWebSearchEnabled(providerType ?? '', providerModel);

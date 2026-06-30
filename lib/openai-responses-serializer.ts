@@ -21,6 +21,7 @@ import type {
   OpenAIResponsesInputItem,
   OpenAIResponsesRequest,
   OpenAIResponsesTextFormat,
+  OpenAIResponsesTool,
 } from './openai-responses-types.ts';
 
 export function toOpenAIResponsesTextFormat(spec: ResponseFormatSpec): OpenAIResponsesTextFormat {
@@ -187,6 +188,23 @@ export function toOpenAIResponses(
     typeof req.temperature === 'number' ? req.temperature : options?.temperatureDefault;
   const nativeTools = Array.isArray(req.tools) && req.tools.length > 0 ? req.tools : [];
 
+  // Native function tools and OpenAI's server-side `web_search` tool merge into
+  // one `tools` array (web search appended last). Web search alone is enough to
+  // emit `tools` even when no function schemas are attached — the model then
+  // decides per-turn whether to search. `tool_choice: 'auto'` keeps prose
+  // answers available when neither is needed.
+  //
+  // Suppress `web_search` when a strict JSON-schema output is requested:
+  // structured/verification turns force `text.format`, and the Responses API
+  // constrains combining a built-in tool with strict structured output — adding
+  // it there risks perturbing or rejecting the turn. Function tools still merge;
+  // only the server-side search is held back.
+  const webSearch = req.responsesWebSearch === true && !req.responseFormat;
+  const tools: OpenAIResponsesTool[] = [
+    ...nativeTools.map(flatToolToOpenAIResponsesTool),
+    ...(webSearch ? [{ type: 'web_search' as const }] : []),
+  ];
+
   return {
     model,
     input,
@@ -198,8 +216,6 @@ export function toOpenAIResponses(
     ...(req.responseFormat
       ? { text: { format: toOpenAIResponsesTextFormat(req.responseFormat) } }
       : {}),
-    ...(nativeTools.length > 0
-      ? { tools: nativeTools.map(flatToolToOpenAIResponsesTool), tool_choice: 'auto' }
-      : {}),
+    ...(tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
   };
 }

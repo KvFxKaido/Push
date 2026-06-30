@@ -96,6 +96,8 @@ import { ASK_USER_TOOL_PROTOCOL } from './ask-user-tools';
 import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
+import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import type { ActiveProvider } from './orchestrator';
 import type { ChatCard, ChatMessage, HarnessProfileSettings } from '@/types';
 import type {
   LlmMessage,
@@ -893,5 +895,58 @@ describe('runInlineVerificationCriteria', () => {
     const result = await runInlineVerificationCriteria('sbx', policy, controller.signal);
     expect(mockExecInSandbox).not.toHaveBeenCalled();
     expect(result.criteriaResults).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompt-engineered web-search gate (mirrors orchestrator.ts)
+// ---------------------------------------------------------------------------
+
+describe('inline lane web-search protocol gating', () => {
+  const harnessSettings = {
+    profile: 'frontier',
+    maxCoderRounds: 24,
+    contextResetsEnabled: true,
+    evaluateAfterCoder: true,
+  } as unknown as HarnessProfileSettings;
+
+  // Test env has no localStorage, so `getWebSearchMode()` resolves to its
+  // 'auto' default — native-capable providers suppress the prompt-engineered
+  // protocol, native-less ones keep it.
+  async function runWithProvider(provider: ActiveProvider): Promise<LibOptions> {
+    await runCoderAgent(
+      'Implement the fix',
+      'sb-1',
+      ['src/a.ts'],
+      () => {},
+      'AGENTS-MD-CONTENT',
+      undefined,
+      async () => 'checkpoint-answer',
+      [{ id: 'tests', check: 'npm test', description: 'tests pass' }],
+      () => {},
+      provider,
+      'model-x',
+      { intent: 'fix', deliverable: 'patch', harnessSettings, chatId: 'chat-1' },
+    );
+    return lastKernelCall().options;
+  }
+
+  it('suppresses the prompt-engineered protocol when native search is active', async () => {
+    // OpenAI + Sakana (this PR's Responses-native additions) + a pre-existing
+    // native provider. Fireworks is excluded — it has no built-in web_search.
+    const nativeProviders: ActiveProvider[] = ['openai', 'sakana', 'openrouter'];
+    for (const provider of nativeProviders) {
+      const options = await runWithProvider(provider);
+      expect(options.webSearchToolProtocol).toBe('');
+    }
+  });
+
+  it('keeps the prompt-engineered protocol for native-less providers', async () => {
+    // Fireworks speaks the Responses API but has no built-in web_search, so it
+    // stays on the prompt-engineered path like Ollama.
+    for (const provider of ['fireworks', 'ollama'] as ActiveProvider[]) {
+      const options = await runWithProvider(provider);
+      expect(options.webSearchToolProtocol).toBe(WEB_SEARCH_TOOL_PROTOCOL);
+    }
   });
 });

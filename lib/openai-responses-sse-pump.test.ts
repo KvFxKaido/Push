@@ -113,6 +113,61 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('surfaces url_citation annotations as citations events (native web search)', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.output_text.delta', delta: 'Per the latest docs, ' });
+    s.push({
+      type: 'response.output_text.annotation.added',
+      annotation: {
+        type: 'url_citation',
+        url: 'https://example.com/article',
+        title: 'The Article',
+        start_index: 4,
+        end_index: 20,
+      },
+    });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'text_delta', text: 'Per the latest docs, ' },
+      {
+        type: 'citations',
+        citations: [
+          {
+            url: 'https://example.com/article',
+            title: 'The Article',
+            content: '',
+            startIndex: 4,
+            endIndex: 20,
+          },
+        ],
+      },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('drops a malformed annotation without disturbing the text stream', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.output_text.delta', delta: 'hi' });
+    // Missing url — not a usable citation.
+    s.push({
+      type: 'response.output_text.annotation.added',
+      annotation: { type: 'url_citation', title: 'No URL' },
+    });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'text_delta', text: 'hi' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
   it('surfaces refusal deltas as text so a refused turn is not blank', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

@@ -144,6 +144,58 @@ describe('toOpenAIResponses', () => {
     });
   });
 
+  it('injects the server-side web_search tool when responsesWebSearch is set', () => {
+    const body = toOpenAIResponses(reqWith([llm('1', 'user', 'hi')], { responsesWebSearch: true }));
+    expect(body.tools).toEqual([{ type: 'web_search' }]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('merges web_search after native function tools (web search last)', () => {
+    const body = toOpenAIResponses(
+      reqWith([llm('1', 'user', 'hi')], {
+        responsesWebSearch: true,
+        tools: [
+          {
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            input_schema: { type: 'object', properties: {}, additionalProperties: false },
+          },
+        ],
+      }),
+    );
+    expect(body.tools).toEqual([
+      {
+        type: 'function',
+        name: 'sandbox_read_file',
+        description: 'Read a file',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      },
+      { type: 'web_search' },
+    ]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('omits the web_search tool when responsesWebSearch is unset or false', () => {
+    expect(toOpenAIResponses(reqWith([llm('1', 'user', 'hi')])).tools).toBeUndefined();
+    expect(
+      toOpenAIResponses(reqWith([llm('1', 'user', 'hi')], { responsesWebSearch: false })).tools,
+    ).toBeUndefined();
+  });
+
+  it('suppresses web_search on structured-output turns (responseFormat set)', () => {
+    const body = toOpenAIResponses(
+      reqWith([llm('1', 'user', 'hi')], {
+        responsesWebSearch: true,
+        responseFormat: { name: 'verdict', schema: { type: 'object' } },
+      }),
+    );
+    // The strict json_schema text.format is present; web_search is held back.
+    expect(body.text).toEqual({
+      format: { type: 'json_schema', name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+    expect(body.tools).toBeUndefined();
+  });
+
   it('serializes tool_use/tool_result blocks as Responses function items', () => {
     const body = toOpenAIResponses(
       reqWith([
