@@ -297,35 +297,32 @@ describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)
   it('DOES fail over from a Zen chat on a non-Anthropic model', async () => {
     mockFailoverState({ zenTransport: 'openai' });
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual([
-      'openrouter',
-      'azure',
-    ]);
+    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual(['azure']);
   });
 });
 
 describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #2)', () => {
-  it('returns same-shape configured providers incl. azure, excluding the locked one', async () => {
-    // azure is omitted from the initial fallback order but must be a failover
-    // target; ordering follows the provider-definition failover policy.
+  it('returns same-shape Responses providers, excluding the locked one', async () => {
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([
-      'azure',
+      'openai',
     ]);
   });
 
-  it('keeps direct OpenAI Responses out of the OpenAI-compatible failover bucket', async () => {
+  it('includes OpenRouter in direct OpenAI Responses failover', async () => {
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([]);
+    expect(resolveFailoverCandidates('openai', 'gpt-4o', new Set(['openai']))).toEqual([
+      'openrouter',
+    ]);
   });
 
-  it('excludes model-dependent Anthropic-transport targets from openai-compatible failover', async () => {
+  it('excludes model-dependent Anthropic-transport targets from Responses failover', async () => {
     mockFailoverState({ zen: true, zenTransport: 'anthropic' });
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([
-      'azure',
+      'openai',
     ]);
   });
 
@@ -363,7 +360,7 @@ describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #
     mockFailoverState();
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(
-      resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter', 'azure'])),
+      resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter', 'openai'])),
     ).toEqual([]);
   });
 
