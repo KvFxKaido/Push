@@ -26,6 +26,16 @@ const NATIVE_TOOL_ECHO_RE = /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/
 // Matches patterns like: ", "workdir": "/workspace"}}
 const ORPHANED_JSON_TAIL_RE = /",?\s*["']?[a-z_]+["']?\s*:\s*[^}]*\}\s*\}\s*$/s;
 
+const XML_TOOL_NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
+const XML_TOOL_NS_REQUIRED = String.raw`[|｜]{1,2}[\w.\-]+[|｜]{1,2}`;
+const XML_TOOL_CALL_BLOCK_PATTERN = String.raw`<${XML_TOOL_NS}(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}(?:function_calls|tool_calls)\s*>|<${XML_TOOL_NS}tool_call\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}tool_call\s*>|<${XML_TOOL_NS}invoke\b[^>]*?\bname\s*=[^>]*>[\s\S]*?<\/${XML_TOOL_NS}invoke\s*>`;
+const XML_TOOL_CALL_BLOCK_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'gi');
+const XML_TOOL_CALL_BLOCK_TEST_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'i');
+const XML_TOOL_CALL_START_RE = new RegExp(
+  String.raw`<(?:${XML_TOOL_NS_REQUIRED}(?:tool_call|function_calls|tool_calls|invoke)|${XML_TOOL_NS}(?:function_calls|tool_calls))\b`,
+  'i',
+);
+
 function stripBareToolCallJson(text: string): string {
   const ranges: Array<{ start: number; end: number }> = [];
   let i = 0;
@@ -109,6 +119,8 @@ export function looksLikeToolCall(text: string): boolean {
   if (BRACELESS_TOOL_WITH_ARGS_OBJECT.test(text)) return true;
   if (NATIVE_TOOL_ECHO_RE.test(text)) return true;
   if (ORPHANED_JSON_TAIL_RE.test(text)) return true;
+  if (XML_TOOL_CALL_BLOCK_TEST_RE.test(text)) return true;
+  if (XML_TOOL_CALL_START_RE.test(text)) return true;
   return false;
 }
 
@@ -170,6 +182,13 @@ export function stripToolCallPayload(content: string): string {
   stripped = stripped.replace(new RegExp(NATIVE_TOOL_ECHO_RE.source + '[\\s\\S]*$', 'i'), '');
 
   stripped = stripped.replace(new RegExp(ORPHANED_JSON_TAIL_RE.source), '');
+
+  // XML / DSML tool envelopes recovered by the dispatcher, including
+  // DeepSeek V4 Pro's doubled namespace delimiters. Complete blocks can
+  // appear in stored messages; the start regex handles a still-streaming
+  // namespaced block that reached render before the preview filter cut it.
+  stripped = stripped.replace(XML_TOOL_CALL_BLOCK_RE, '');
+  stripped = stripped.replace(new RegExp(XML_TOOL_CALL_START_RE.source + '[\\s\\S]*$', 'i'), '');
 
   // After all stripping, if only brackets/braces/commas/whitespace remain, return empty.
   // This catches array-wrapped tool calls like [\n  {"tool":...}\n] where the inner

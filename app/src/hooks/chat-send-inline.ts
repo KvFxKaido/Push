@@ -164,6 +164,12 @@ export function buildInlineTurnPreamble(
 // Streaming bridge — mirror kernel stream events into the placeholder
 // ---------------------------------------------------------------------------
 
+const XML_TOOL_NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
+const XML_TOOL_CALL_START_RE = new RegExp(
+  String.raw`<${XML_TOOL_NS}(?:tool_call|function_calls|tool_calls|invoke)\b`,
+  'i',
+);
+
 /**
  * Split a kernel round's accumulated content into the user-facing prefix
  * and a flag for whether a tool-call / state-update construct has begun.
@@ -206,6 +212,14 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
   // authoritative final render; this only trims the in-flight preview).
   const bareTool = /\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
   if (bareTool) mark(bareTool.index);
+
+  // XML / DSML wrapper forms recovered by `tool-call-xml-recovery.ts`,
+  // including DeepSeek V4 Pro's doubled full-width namespace delimiters
+  // (`<｜｜DSML｜｜tool_calls>`). The authoritative dispatcher still consumes
+  // the untouched accumulated text; this only keeps the raw envelope out
+  // of the streaming placeholder.
+  const xmlTool = XML_TOOL_CALL_START_RE.exec(text);
+  if (xmlTool) mark(xmlTool.index);
 
   // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
   // tool block forming before its key has streamed in. A completed prose

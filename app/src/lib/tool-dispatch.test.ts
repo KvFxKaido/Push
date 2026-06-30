@@ -1315,6 +1315,57 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
     expect(result.readOnly).toHaveLength(2);
     expect(result.readOnly.map((c) => c.call.tool)).toEqual(['sandbox_read_file', 'sandbox_diff']);
   });
+
+  it('dispatches doubled DeepSeek DSML issue batches after an assistant preamble', () => {
+    const text = [
+      "Let me pull up the open issues so I can give you a real read on what's ripe.",
+      '',
+      '<｜｜DSML｜｜tool_calls>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1260</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1226</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1190</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1169</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '<｜｜DSML｜｜invoke name="issue">',
+      '<｜｜DSML｜｜parameter name="repo" string="true">KvFxKaido/Push</｜｜DSML｜｜parameter>',
+      '<｜｜DSML｜｜parameter name="issue_number" string="true">1048</｜｜DSML｜｜parameter>',
+      '</｜｜DSML｜｜invoke>',
+      '</｜｜DSML｜｜tool_calls>',
+    ].join('\n');
+
+    const result = detectAllToolCalls(text);
+    expect(result.readOnly).toHaveLength(5);
+    const githubCalls = result.readOnly.map((c) => {
+      expect(c.source).toBe('github');
+      return c.source === 'github' ? c.call : null;
+    });
+    expect(githubCalls.map((c) => c?.tool)).toEqual([
+      'get_issue',
+      'get_issue',
+      'get_issue',
+      'get_issue',
+      'get_issue',
+    ]);
+    expect(githubCalls.map((c) => c?.args)).toEqual([
+      { repo: 'KvFxKaido/Push', issue_number: 1260 },
+      { repo: 'KvFxKaido/Push', issue_number: 1226 },
+      { repo: 'KvFxKaido/Push', issue_number: 1190 },
+      { repo: 'KvFxKaido/Push', issue_number: 1169 },
+      { repo: 'KvFxKaido/Push', issue_number: 1048 },
+    ]);
+    expect(result.droppedCandidates).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

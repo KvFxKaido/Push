@@ -61,12 +61,14 @@ export interface RecoveredXmlCall {
 //   </｜DSML｜invoke></｜DSML｜tool_calls>
 // where the delimiter `｜` is either the ASCII pipe `|` (U+007C) or the
 // full-width pipe `｜` (U+FF5C) common in open-weight templates. The
-// prefix sits between `<` (or `</`) and the tag name. We tolerate it
-// *in place* — woven into each tag regex rather than stripped in a
-// pre-pass — so recovered offsets stay anchored to the original text
-// (the dispatcher merges these against bare-JSON candidates by offset).
-// `NS` is optional, so every plain-tag shape below keeps matching too.
-const NS = String.raw`(?:[|｜][\w.\-]+[|｜])?`;
+// prefix sits between `<` (or `</`) and the tag name. DeepSeek V4 Pro
+// has also emitted the doubled delimiter form (`<｜｜DSML｜｜tool_calls>`).
+// We tolerate the prefix *in place* — woven into each tag regex rather
+// than stripped in a pre-pass — so recovered offsets stay anchored to
+// the original text (the dispatcher merges these against bare-JSON
+// candidates by offset). `NS` is optional, so every plain-tag shape
+// below keeps matching too.
+const NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
 
 // Match a `<tool_call>` element. The `\b[^>]*` allows attributes the
 // model occasionally adds (e.g. `<tool_call id="0">`) — we ignore the
@@ -159,6 +161,20 @@ const FENCED_BLOCK_REGEX = /(?:`{3,}|~{3,})[\s\S]*?(?:`{3,}|~{3,})/g;
 const NAMESPACED_TRACE_REGEX = /functions\.[a-zA-Z_]\w*\s*:\s*\w+(?:\s*(?:\{[\s\S]*?\}|null))?/g;
 function stripSiblingToolCallShapes(text: string): string {
   return text.replace(FENCED_BLOCK_REGEX, '').replace(NAMESPACED_TRACE_REGEX, '');
+}
+
+const MAX_ASSISTANT_PREAMBLE_CHARS = 320;
+const ACTION_PREAMBLE_REGEX =
+  /^(?:let me|i(?:'|’)?ll|i will|i(?:'|’)?m going to|i am going to|i(?:'|’)?m checking|i am checking|checking|fetching|pulling|looking up|reading|opening|searching)\b/i;
+const PASTED_EXAMPLE_PREAMBLE_REGEX =
+  /\b(?:do not|don't|dont|skip|ignore|example|for example|earlier|previously|literal|verbatim|documentation|docs?)\b/i;
+
+function isAssistantToolPreamble(slice: string): boolean {
+  const stripped = stripSiblingToolCallShapes(slice).trim();
+  if (!stripped || stripped.length > MAX_ASSISTANT_PREAMBLE_CHARS) return false;
+  if (stripped.includes('<') || stripped.includes('>')) return false;
+  if (PASTED_EXAMPLE_PREAMBLE_REGEX.test(stripped)) return false;
+  return ACTION_PREAMBLE_REGEX.test(stripped);
 }
 
 /**
@@ -293,7 +309,21 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
   // that executes does not.
   const isAllowedGap = (slice: string): boolean =>
     XML_GAP_REGEX.test(stripSiblingToolCallShapes(slice));
-  if (!isAllowedGap(text.slice(0, matches[0].blockStart))) return [];
+  const leadingGap = text.slice(0, matches[0].blockStart);
+  if (!isAllowedGap(leadingGap)) {
+    // Models sometimes emit a short action preamble, then the actual
+    // Anthropic-style call batch as the final artifact:
+    //
+    //   Let me check that.
+    //
+    //   <｜｜DSML｜｜tool_calls>...</｜｜DSML｜｜tool_calls>
+    //
+    // Keep the broad prose guard for plain `<tool_call>` and standalone
+    // `<invoke>` shapes; only the wrapped batch format gets this narrow
+    // terminal-preamble tolerance.
+    const onlyWrappedBatches = matches.every((m) => m.kind === 'function_calls');
+    if (!onlyWrappedBatches || !isAssistantToolPreamble(leadingGap)) return [];
+  }
   for (let i = 1; i < matches.length; i++) {
     if (!isAllowedGap(text.slice(matches[i - 1].blockEnd, matches[i].blockStart))) return [];
   }
