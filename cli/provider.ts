@@ -212,6 +212,23 @@ export function classifyCliStreamError(err: unknown): { retryable: boolean; stat
       status,
     };
   }
+  if (err && typeof err === 'object') {
+    const status = (err as { status?: unknown }).status;
+    const retryable = (err as { retryable?: unknown }).retryable;
+    if (typeof status === 'number' || typeof retryable === 'boolean') {
+      const numericStatus = typeof status === 'number' ? status : undefined;
+      return {
+        retryable:
+          typeof retryable === 'boolean'
+            ? retryable
+            : numericStatus === 408 ||
+              numericStatus === 425 ||
+              numericStatus === 429 ||
+              (numericStatus !== undefined && numericStatus >= 500),
+        ...(numericStatus !== undefined ? { status: numericStatus } : {}),
+      };
+    }
+  }
   return { retryable: true };
 }
 

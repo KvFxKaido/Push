@@ -23,6 +23,32 @@ interface PendingResponseToolCall {
   flushed: boolean;
 }
 
+export class OpenAIResponsesStreamError extends Error {
+  readonly code?: string;
+  readonly status?: number;
+  readonly retryable: boolean;
+
+  constructor(message: string, opts?: { code?: string; status?: number }) {
+    super(message);
+    this.name = 'OpenAIResponsesStreamError';
+    const status = opts?.status;
+    this.code = opts?.code;
+    this.status = status;
+    // Fail open on an unclassifiable code (no mapped status): an in-band error
+    // we can't pin to a status is at least as likely transient as a dead
+    // transport, which this module already treats as retryable. Only the
+    // *explicitly* classified terminal statuses (400/401/403/404) stay
+    // non-retryable — flipping this default back to false silently turns
+    // recoverable provider blips into hard turn failures.
+    this.retryable =
+      status === undefined ||
+      status === 408 ||
+      status === 425 ||
+      status === 429 ||
+      (status >= 500 && status <= 599);
+  }
+}
+
 export function mapOpenAIResponsesUsage(usage: {
   input_tokens?: number;
   output_tokens?: number;
@@ -38,15 +64,52 @@ export function mapOpenAIResponsesUsage(usage: {
   };
 }
 
-function errorMessageFromEvent(parsed: Record<string, unknown>): string {
+function errorRecordFromEvent(parsed: Record<string, unknown>): Record<string, unknown> | null {
   const error = parsed.error;
   if (error && typeof error === 'object') {
-    const rec = error as Record<string, unknown>;
-    const message = typeof rec.message === 'string' ? rec.message : undefined;
-    const code = typeof rec.code === 'string' ? rec.code : undefined;
-    if (message && code) return `${code}: ${message}`;
-    if (message) return message;
+    return error as Record<string, unknown>;
   }
+  const response =
+    parsed.response && typeof parsed.response === 'object'
+      ? (parsed.response as Record<string, unknown>)
+      : null;
+  const responseError = response?.error;
+  if (responseError && typeof responseError === 'object') {
+    return responseError as Record<string, unknown>;
+  }
+  return null;
+}
+
+function statusFromResponsesError(error: Record<string, unknown> | null): number | undefined {
+  if (!error) return undefined;
+  const raw = [error.code, error.type]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+  if (!raw) return undefined;
+  if (raw.includes('not_found') || raw.includes('not found')) return 404;
+  if (raw.includes('unauthorized') || raw.includes('authentication')) return 401;
+  if (raw.includes('forbidden') || raw.includes('permission')) return 403;
+  if (raw.includes('rate_limit') || raw.includes('rate limit')) return 429;
+  if (raw.includes('invalid_request') || raw.includes('bad_request')) return 400;
+  if (raw.includes('overloaded') || raw.includes('server_error')) return 500;
+  return undefined;
+}
+
+function errorCodeFromRecord(error: Record<string, unknown> | null): string | undefined {
+  return typeof error?.code === 'string'
+    ? error.code
+    : typeof error?.type === 'string'
+      ? error.type
+      : undefined;
+}
+
+function errorMessageFromEvent(parsed: Record<string, unknown>): string {
+  const error = errorRecordFromEvent(parsed);
+  const message = typeof error?.message === 'string' ? error.message : undefined;
+  const code = errorCodeFromRecord(error);
+  if (message && code) return `${code}: ${message}`;
+  if (message) return message;
   if (typeof parsed.message === 'string') return parsed.message;
   return 'unknown stream error';
 }
@@ -267,7 +330,11 @@ export async function* openAIResponsesSSEPump(
 
     if (type === 'response.failed' || type === 'error') {
       stopped = true;
-      throw new Error(`OpenAI Responses stream error: ${errorMessageFromEvent(parsed)}`);
+      const error = errorRecordFromEvent(parsed);
+      throw new OpenAIResponsesStreamError(
+        `OpenAI Responses stream error: ${errorMessageFromEvent(parsed)}`,
+        { code: errorCodeFromRecord(error), status: statusFromResponsesError(error) },
+      );
     }
   }
 

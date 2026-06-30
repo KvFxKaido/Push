@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PushStreamEvent } from './provider-contract.js';
-import { mapOpenAIResponsesUsage, openAIResponsesSSEPump } from './openai-responses-sse-pump.js';
+import {
+  mapOpenAIResponsesUsage,
+  OpenAIResponsesStreamError,
+  openAIResponsesSSEPump,
+} from './openai-responses-sse-pump.js';
 
 interface Controllable {
   body: ReadableStream<Uint8Array>;
@@ -131,6 +135,81 @@ describe('openAIResponsesSSEPump', () => {
         usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
       },
     ]);
+  });
+
+  it('throws a structured non-retryable 404 for nested response.failed errors', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.failed',
+      response: {
+        status: 'failed',
+        error: {
+          code: 'NOT_FOUND',
+          type: 'not_found_error',
+          message: 'model not found',
+        },
+      },
+    });
+    s.close();
+
+    await expect(events).rejects.toMatchObject({
+      name: 'OpenAIResponsesStreamError',
+      code: 'NOT_FOUND',
+      status: 404,
+      retryable: false,
+      message: expect.stringContaining('NOT_FOUND: model not found'),
+    });
+    await expect(events).rejects.toBeInstanceOf(OpenAIResponsesStreamError);
+  });
+
+  it('marks in-band rate-limit errors retryable', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'error',
+      error: {
+        code: 'rate_limit_exceeded',
+        type: 'rate_limit_error',
+        message: 'slow down',
+      },
+    });
+    s.close();
+
+    await expect(events).rejects.toMatchObject({
+      code: 'rate_limit_exceeded',
+      status: 429,
+      retryable: true,
+    });
+  });
+
+  it('fails open (retryable, no status) on an unclassifiable in-band error code', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.failed',
+      response: {
+        status: 'failed',
+        error: {
+          code: 'service_unavailable',
+          type: 'service_unavailable',
+          message: 'temporarily unavailable',
+        },
+      },
+    });
+    s.close();
+
+    // No status maps from the code, so the error must stay retryable rather
+    // than hard-failing the turn on a likely-transient blip.
+    await expect(events).rejects.toMatchObject({
+      name: 'OpenAIResponsesStreamError',
+      code: 'service_unavailable',
+      retryable: true,
+    });
+    await expect(events).rejects.toHaveProperty('status', undefined);
   });
 
   it('accumulates function call argument deltas into a native_tool_call', async () => {
