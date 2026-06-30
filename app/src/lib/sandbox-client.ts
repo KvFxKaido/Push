@@ -1314,6 +1314,51 @@ export async function execInSandbox(
   }
 }
 
+function isPingOwnerAuthFailure(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const lower = err.message.toLowerCase();
+  return lower.includes('owner token') && lower.includes('auth_failure');
+}
+
+export async function pingSandbox(sandboxId: string): Promise<void> {
+  let raw: {
+    ok?: boolean;
+    exit_code?: number;
+    error?: string;
+  };
+  try {
+    raw = await sandboxFetch<{
+      ok?: boolean;
+      exit_code?: number;
+      error?: string;
+    }>(
+      'ping',
+      withOwnerToken(
+        {
+          sandbox_id: sandboxId,
+          // Modal forwards `ping` to exec-command, so keep the payload valid for
+          // that backend. CF ignores these fields after its auth-gated route.
+          command: 'true',
+          workdir: '/workspace',
+        },
+        sandboxId,
+      ),
+    );
+  } catch (err) {
+    if (isPingOwnerAuthFailure(err)) {
+      throw new Error(`Sandbox not found or expired: ${(err as Error).message}`, { cause: err });
+    }
+    throw err;
+  }
+
+  if (raw.ok === false) {
+    throw new Error(raw.error || 'Sandbox ping failed');
+  }
+  if (typeof raw.exit_code === 'number' && raw.exit_code !== 0) {
+    throw new Error(raw.error || `Sandbox ping failed with exit code ${raw.exit_code}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Background execution (detached process + resumable cursor logs)
 //

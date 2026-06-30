@@ -18,7 +18,7 @@ import { toast } from 'sonner';
 import {
   createSandbox,
   cleanupSandbox,
-  execInSandbox,
+  pingSandbox,
   setSandboxOwnerToken,
   getSandboxOwnerToken,
   setActiveSandboxEnvironment,
@@ -64,7 +64,7 @@ import {
   touchSandboxSessionActivity,
   type PersistedSandboxSession,
 } from '@/lib/sandbox-session';
-import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
+import { isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 import type { SandboxUnreachableRecoveryPolicy } from '@/lib/sandbox-recovery-policy';
 
@@ -409,55 +409,33 @@ export function useSandbox(
     };
 
     suppressIdleTouch(); // Don't let reconnect probes reset idle clock
-    const reconnectPromise = execInSandbox(saved.sandboxId, 'true')
-      .then(async (result) => {
+    const reconnectPromise = pingSandbox(saved.sandboxId)
+      .then(async () => {
         if (cancelled) return null;
-        if (result.exitCode === 0) {
-          freshSandboxIdRef.current = null;
-          setFreshSandboxId(null);
-          snapshotRestoredSandboxIdRef.current = null;
-          setRestoredFromSnapshotSandboxId(null);
-          setSandboxId(saved.sandboxId);
-          sandboxIdRef.current = saved.sandboxId;
-          sessionStorageKeyRef.current = activeSessionStorageKey;
-          setActiveSandboxEnvironment(saved.sandboxId);
-          setStatus('ready');
-          lastReconnectAttemptRef.current = null; // reconnected — reset retry budget
-          // A successful probe is the strongest possible liveness proof, but it's
-          // suppressIdleTouch'd so it won't reset the in-memory clock (which would
-          // defeat hibernation). Persist the recency directly so a subsequent
-          // reload before any real call doesn't see Infinity + a stale
-          // lastActivityAt and discard this still-live container.
-          touchSandboxSessionActivity(
-            activeRepoFullName,
-            activeBranch,
-            saved.sandboxId,
-            Date.now(),
-          );
-          const symbolKey = saved.repoFullName
-            ? `${saved.repoFullName}:${saved.branch || 'main'}`
-            : 'scratch';
-          symbolLedger.setRepo(symbolKey);
-          void symbolLedger.hydrate();
-          probeSandboxEnvironment(saved.sandboxId).catch(() => {});
-          console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
-          return saved.sandboxId;
-        }
-        const reason = result.error || 'Sandbox is no longer reachable';
-        if (isDefinitivelyGoneMessage(reason)) {
-          console.debug(`[useSandbox] Reconnect: container gone for ${saved.sandboxId}: ${reason}`);
-          // Attempt snapshot restore before giving up.
-          const restored = await attemptSnapshotRestore();
-          if (restored) return restored;
-          clearTrackedSession(activeSessionStorageKey, saved.sandboxId);
-        } else {
-          console.debug(
-            `[useSandbox] Reconnect: transient failure for ${saved.sandboxId} (exit ${result.exitCode}): ${reason} — keeping session`,
-          );
-          scheduleReconnectRetry();
-        }
-        setStatus('idle');
-        return null;
+        freshSandboxIdRef.current = null;
+        setFreshSandboxId(null);
+        snapshotRestoredSandboxIdRef.current = null;
+        setRestoredFromSnapshotSandboxId(null);
+        setSandboxId(saved.sandboxId);
+        sandboxIdRef.current = saved.sandboxId;
+        sessionStorageKeyRef.current = activeSessionStorageKey;
+        setActiveSandboxEnvironment(saved.sandboxId);
+        setStatus('ready');
+        lastReconnectAttemptRef.current = null; // reconnected — reset retry budget
+        // A successful probe is the strongest possible liveness proof, but it's
+        // suppressIdleTouch'd so it won't reset the in-memory clock (which would
+        // defeat hibernation). Persist the recency directly so a subsequent
+        // reload before any real call doesn't see Infinity + a stale
+        // lastActivityAt and discard this still-live container.
+        touchSandboxSessionActivity(activeRepoFullName, activeBranch, saved.sandboxId, Date.now());
+        const symbolKey = saved.repoFullName
+          ? `${saved.repoFullName}:${saved.branch || 'main'}`
+          : 'scratch';
+        symbolLedger.setRepo(symbolKey);
+        void symbolLedger.hydrate();
+        probeSandboxEnvironment(saved.sandboxId).catch(() => {});
+        console.log('[useSandbox] Reconnected to saved sandbox:', saved.sandboxId);
+        return saved.sandboxId;
       })
       .catch(async (err: unknown) => {
         if (cancelled) return null;
@@ -718,27 +696,22 @@ export function useSandbox(
 
           suppressIdleTouch();
           try {
-            const result = await execInSandbox(existingId, 'true');
-            if (result.exitCode === 0) {
-              transientStrikesRef.current = 0;
-              setStatus('ready');
-              setError(null);
-              setActiveSandboxEnvironment(existingId);
-              // Quiet recovery: the error-state sandbox answered a probe, so it
-              // was a transient blip. Internal log only — no transcript/toast.
-              console.log(
-                JSON.stringify({
-                  level: 'info',
-                  event: 'sandbox_foreground_recovery',
-                  outcome: 'revived',
-                  sandboxId: existingId,
-                }),
-              );
-              return existingId;
-            }
-
-            const reason = result.error || 'Sandbox is no longer reachable';
-            if (!isDefinitivelyGoneMessage(reason)) return keepAsTransient(reason);
+            await pingSandbox(existingId);
+            transientStrikesRef.current = 0;
+            setStatus('ready');
+            setError(null);
+            setActiveSandboxEnvironment(existingId);
+            // Quiet recovery: the error-state sandbox answered a probe, so it
+            // was a transient blip. Internal log only — no transcript/toast.
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'sandbox_foreground_recovery',
+                outcome: 'revived',
+                sandboxId: existingId,
+              }),
+            );
+            return existingId;
           } catch (err) {
             // A missing owner token means the session token was already cleared
             // on a definitive-loss path (refresh's clearTrackedSession) while the
@@ -1092,9 +1065,9 @@ export function useSandbox(
    * No-op if no sandbox is active.
    *
    * IMPORTANT: the tracked session is only cleared when we have a
-   * *definitive* signal that the container is gone (exit_code === -1 from
-   * the backend, or a MODAL_NOT_FOUND-class error). Transient failures
-   * (timeouts, cold-starts, network blips, rate limits) leave the session
+   * *definitive* signal that the container is gone (for example a
+   * MODAL_NOT_FOUND/NOT_FOUND-class error). Transient failures (timeouts,
+   * cold-starts, network blips, rate limits) leave the session
    * intact so the next tool call can retry against the live container. The
    * earlier catch-all "clear on any error" behavior silently nuked healthy
    * sessions mid-chat, which surfaced as writes reporting success but the
@@ -1159,34 +1132,14 @@ export function useSandbox(
 
     try {
       suppressIdleTouch(); // Don't let refresh probes reset idle clock
-      const result = await execInSandbox(id, 'true');
+      await pingSandbox(id);
 
       if (sandboxIdRef.current !== id) return false;
 
-      if (result.exitCode === 0) {
-        transientStrikesRef.current = 0;
-        setStatus('ready');
-        console.debug(`[useSandbox] Refresh success for ${id}`);
-        return true;
-      }
-
-      // exit_code === -1 is overloaded on the backend — it's returned for
-      // "sandbox not found / expired" (which IS gone) but also for
-      // "unauthorized owner token", "command timed out", and generic
-      // container errors (which are all transient). So we gate teardown on
-      // the accompanying error text, not the numeric exit code alone.
-      const reason = result.error || 'Sandbox is no longer reachable';
-      if (isDefinitivelyGoneMessage(reason)) {
-        transientStrikesRef.current = 0;
-        setStatus('error');
-        setError(reason);
-        console.debug(`[useSandbox] Refresh: container gone for ${id}: ${reason}`);
-        clearTrackedSession(sessionStorageKeyRef.current, id);
-        retireDeadIdOnNative();
-      } else {
-        handleTransient(reason, `transient failure (exit ${result.exitCode})`);
-      }
-      return false;
+      transientStrikesRef.current = 0;
+      setStatus('ready');
+      console.debug(`[useSandbox] Refresh success for ${id}`);
+      return true;
     } catch (err) {
       if (sandboxIdRef.current !== id) return false;
       const msg = err instanceof Error ? err.message : String(err);

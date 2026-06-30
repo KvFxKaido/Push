@@ -280,6 +280,17 @@ describe('handleCloudflareSandbox route dispatch', () => {
 });
 
 describe('handleCloudflareSandbox happy paths', () => {
+  it('pings with only the owner-token auth gate, not a full exec/branch stamp', async () => {
+    const sandbox = mockSandbox();
+    const response = await callRoute('ping', { sandbox_id: 'sb-1' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+    expect(isOwnerTokenReadCommand(sandbox.exec.mock.calls[0]?.[0])).toBe(true);
+    expect(sandbox.exec.mock.calls.some((call) => isBranchStampCommand(call[0]))).toBe(false);
+  });
+
   it('creates a sandbox, clones the repo, seeds files, and returns environment details', async () => {
     const sandbox = mockSandbox();
     const sandboxId = mockUuid();

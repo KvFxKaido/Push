@@ -20,6 +20,7 @@ const sandboxClient = vi.hoisted(() => ({
   createSandbox: vi.fn(),
   cleanupSandbox: vi.fn(),
   execInSandbox: vi.fn(),
+  pingSandbox: vi.fn(),
   setSandboxOwnerToken: vi.fn(),
   getSandboxOwnerToken: vi.fn<() => string | null>(() => null),
   setActiveSandboxEnvironment: vi.fn(),
@@ -276,13 +277,8 @@ describe('useSandbox reconnect — survives self-induced re-render', () => {
     // A deferred probe so the status→'reconnecting' write (and the re-render
     // it triggers) lands BEFORE the probe resolves — the exact interleaving
     // that the old code self-cancelled on.
-    let resolveProbe!: (r: {
-      stdout: string;
-      stderr: string;
-      exitCode: number;
-      truncated: boolean;
-    }) => void;
-    sandboxClient.execInSandbox.mockReturnValue(
+    let resolveProbe!: (r: boolean) => void;
+    sandboxClient.pingSandbox.mockReturnValue(
       new Promise((res) => {
         resolveProbe = res;
       }),
@@ -293,7 +289,7 @@ describe('useSandbox reconnect — survives self-induced re-render', () => {
     // Mount: reconnect effect starts the probe and schedules the deferred
     // 'reconnecting' write.
     render();
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-saved', 'true');
+    expect(sandboxClient.pingSandbox).toHaveBeenCalledWith('sb-saved');
 
     // Fire the setTimeout(0): status → 'reconnecting', re-rendering the hook.
     // In the old code this re-ran the reconnect effect and cancelled the probe.
@@ -302,7 +298,7 @@ describe('useSandbox reconnect — survives self-induced re-render', () => {
     expect(hook.status).toBe('reconnecting');
 
     // The container is alive — the probe succeeds.
-    resolveProbe({ stdout: '', stderr: '', exitCode: 0, truncated: false });
+    resolveProbe(true);
     await flushMicrotasks();
     hook = render();
 

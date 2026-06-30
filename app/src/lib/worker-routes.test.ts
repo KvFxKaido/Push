@@ -8,6 +8,7 @@ import { SANDBOX_ROUTES, resolveModalSandboxBase } from './sandbox-routes';
 describe('SANDBOX_ROUTES — completeness', () => {
   const expectedRoutes = [
     'create',
+    'ping',
     'exec',
     'read',
     'write',

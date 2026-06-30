@@ -35,6 +35,7 @@ import {
   mapSandboxErrorCode,
   msSinceLastSandboxCall,
   parseEnvironmentProbe,
+  pingSandbox,
   SANDBOX_TS_ARROW_FUNCTION_REGEX,
   setSandboxOwnerToken,
   suppressIdleTouch,
@@ -300,6 +301,50 @@ describe('deleteFromSandbox', () => {
     expect(body.path).toBe('/workspace/old.txt');
     expect(body.expected_workspace_revision).toBe(11);
     expect(revision).toBe(12);
+  });
+});
+
+describe('pingSandbox', () => {
+  it('sends a lightweight ping request with owner auth and Modal-compatible command fields', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
+
+    await expect(pingSandbox('sb-123')).resolves.toBeUndefined();
+
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/ping');
+    expect(options.method).toBe('POST');
+    const body = JSON.parse(options.body);
+    expect(body).toMatchObject({
+      sandbox_id: 'sb-123',
+      owner_token: 'test-owner-token',
+      command: 'true',
+      workdir: '/workspace',
+    });
+  });
+
+  it('accepts Modal exec-command success shape', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
+    });
+
+    await expect(pingSandbox('sb-123')).resolves.toBeUndefined();
+  });
+
+  it('normalizes Cloudflare owner-token gate failures as definitive ping loss', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({ error: 'Owner token does not match', code: 'AUTH_FAILURE' }),
+        ),
+    });
+
+    await expect(pingSandbox('sb-123')).rejects.toThrow(/Sandbox not found or expired/);
   });
 });
 
