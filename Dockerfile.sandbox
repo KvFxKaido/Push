@@ -10,6 +10,9 @@
 # ca-certificates, matplotlib, numpy, pandas, ipython.
 
 FROM docker.io/cloudflare/sandbox:0.12.1-python
+ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
+ARG PUSH_SANDBOX_PNPM_VERSION=11.9.0
+ARG PUSH_SANDBOX_YARN_VERSION=4.17.0
 
 # ripgrep is required by Push tool execution. The other packages are small
 # readiness conveniences for common repo inspections and dev workflows.
@@ -58,16 +61,17 @@ RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
 # do not spend their first sandbox command downloading the manager itself. The
 # base image ships Node/npm but not always Corepack, so install the shim
 # explicitly. A repo's packageManager pin still wins when one is present.
-RUN npm install -g corepack \
+RUN npm install -g corepack@"${PUSH_SANDBOX_COREPACK_VERSION}" \
  && corepack enable \
- && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@latest --activate \
- && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare yarn@stable --activate
+ && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@"${PUSH_SANDBOX_PNPM_VERSION}" --activate \
+ && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare yarn@"${PUSH_SANDBOX_YARN_VERSION}" --activate
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
 RUN chmod 0755 /usr/local/bin/push-sandbox-doctor
 
 # Common dev-server ports. Cloudflare Sandbox uses EXPOSE metadata for local
-# `wrangler dev` port exposure.
+# `wrangler dev` port exposure. Keep in sync with EXPOSED_PORTS in
+# sandbox/bin/push-sandbox-doctor; worker-cf-sandbox.test enforces this.
 EXPOSE 3000 4173 5173 8000 8080
 
 WORKDIR /

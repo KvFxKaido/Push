@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
@@ -18,6 +19,8 @@ vi.mock('@cloudflare/sandbox', () => ({
 const getSandboxMock = vi.mocked(getSandbox);
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 const DEFAULT_OWNER_TOKEN = 'test-owner-token';
+const REPO_ROOT = new URL('../../..', import.meta.url);
+const DOCTOR_EXPOSED_PORTS = [3000, 4173, 5173, 8000, 8080];
 
 interface FakeSandbox {
   exec: ReturnType<typeof vi.fn>;
@@ -234,15 +237,15 @@ function doctorStdout(): string {
     readiness: {
       package_manager: 'npm',
       dependencies: 'installed',
-      test_command: 'vitest run',
-      typecheck_command: 'tsc -b',
+      test_command: 'npm test',
+      typecheck_command: 'npm run typecheck:all',
       test_runner: 'vitest',
     },
     cache: {
       root_node_modules: 'populated',
       app_node_modules: 'populated',
     },
-    exposed_ports: [3000, 4173, 5173, 8000, 8080],
+    exposed_ports: DOCTOR_EXPOSED_PORTS,
     image: { doctor: 'push-sandbox-doctor-v1' },
   });
 }
@@ -1438,12 +1441,30 @@ describe('handleCloudflareSandbox happy paths', () => {
         root_node_modules: 'populated',
         app_node_modules: 'populated',
       },
-      exposed_ports: [3000, 4173, 5173, 8000, 8080],
+      exposed_ports: DOCTOR_EXPOSED_PORTS,
       writable_root: '/workspace',
       workspace_writable: true,
     });
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
     expect(sandbox.exec.mock.calls[1][0]).toContain('push-sandbox-doctor --json');
+  });
+});
+
+describe('Cloudflare sandbox image contract', () => {
+  it('keeps doctor exposed_ports aligned with Dockerfile EXPOSE metadata', () => {
+    const dockerfile = readFileSync(new URL('Dockerfile.sandbox', REPO_ROOT), 'utf8');
+    const doctor = readFileSync(new URL('sandbox/bin/push-sandbox-doctor', REPO_ROOT), 'utf8');
+
+    const exposeMatch = dockerfile.match(/^EXPOSE\s+(.+)$/m);
+    const doctorMatch = doctor.match(/^EXPOSED_PORTS = \[(.+)\]$/m);
+
+    expect(exposeMatch?.[1].trim().split(/\s+/).map(Number)).toEqual(DOCTOR_EXPOSED_PORTS);
+    expect(
+      doctorMatch?.[1]
+        .split(',')
+        .map((port) => Number(port.trim()))
+        .filter((port) => !Number.isNaN(port)),
+    ).toEqual(DOCTOR_EXPOSED_PORTS);
   });
 });
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 WORKSPACE = Path(os.environ.get("PUSH_WORKSPACE", "/workspace"))
 CACHE_ROOT = Path("/opt/push-cache")
+# Keep in sync with Dockerfile.sandbox EXPOSE. The Worker tests compare both.
 EXPOSED_PORTS = [3000, 4173, 5173, 8000, 8080]
 PROJECT_MARKERS = [
     "package.json",
@@ -62,7 +63,7 @@ def load_json(path: Path) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def detect_package_manager(pkg: dict) -> str:
+def detect_package_manager(pkg: dict, has_package_json: bool) -> str:
     package_manager = pkg.get("packageManager")
     if isinstance(package_manager, str) and "@" in package_manager:
         return package_manager.split("@", 1)[0]
@@ -70,8 +71,30 @@ def detect_package_manager(pkg: dict) -> str:
         return "pnpm"
     if (WORKSPACE / "yarn.lock").exists():
         return "yarn"
-    if (WORKSPACE / "package-lock.json").exists():
+    if (WORKSPACE / "package-lock.json").exists() or has_package_json:
         return "npm"
+    return ""
+
+
+def build_script_command(package_manager: str, script_name: str) -> str:
+    if package_manager == "npm":
+        return "npm test" if script_name == "test" else f"npm run {script_name}"
+    if package_manager in {"pnpm", "yarn"}:
+        return f"{package_manager} {script_name}"
+    return ""
+
+
+def typecheck_script_name(scripts: dict[str, str]) -> str:
+    if "typecheck:all" in scripts:
+        return "typecheck:all"
+    if "typecheck" in scripts:
+        return "typecheck"
+    check_script = scripts.get("check", "")
+    if any(
+        token in check_script.lower()
+        for token in ("tsc", "typecheck", "type-check", "pyright", "mypy", "cargo test", "go test")
+    ):
+        return "check"
     return ""
 
 
@@ -134,7 +157,8 @@ def main() -> None:
     entries = {entry.name for entry in WORKSPACE.iterdir()} if WORKSPACE.exists() else set()
     project_markers = [marker for marker in PROJECT_MARKERS if marker in entries]
 
-    root_package = load_json(WORKSPACE / "package.json")
+    package_json_path = WORKSPACE / "package.json"
+    root_package = load_json(package_json_path)
     raw_scripts = root_package.get("scripts") if root_package else {}
     scripts = {
         key: raw_scripts[key]
@@ -142,9 +166,9 @@ def main() -> None:
         if isinstance(raw_scripts, dict) and isinstance(raw_scripts.get(key), str)
     }
 
-    package_manager = detect_package_manager(root_package)
+    package_manager = detect_package_manager(root_package, package_json_path.exists())
     dependencies = "unknown"
-    if root_package:
+    if package_json_path.exists():
         dependencies = "installed" if (WORKSPACE / "node_modules").exists() else "missing"
 
     readiness = {
@@ -153,11 +177,12 @@ def main() -> None:
     if package_manager:
         readiness["package_manager"] = package_manager
     if "test" in scripts:
-        readiness["test_command"] = scripts["test"]
-    if "typecheck:all" in scripts:
-        readiness["typecheck_command"] = scripts["typecheck:all"]
-    elif "typecheck" in scripts:
-        readiness["typecheck_command"] = scripts["typecheck"]
+        readiness["test_command"] = build_script_command(package_manager, "test") or scripts["test"]
+    typecheck_name = typecheck_script_name(scripts)
+    if typecheck_name:
+        readiness["typecheck_command"] = (
+            build_script_command(package_manager, typecheck_name) or scripts[typecheck_name]
+        )
     test_script = scripts.get("test", "")
     if "vitest" in test_script:
         readiness["test_runner"] = "vitest"
