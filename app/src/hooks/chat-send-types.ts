@@ -14,6 +14,7 @@ import type { TodoItem } from '@/lib/todo-tools';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
+import type { SandboxUnreachableRecoveryPolicy } from '@/lib/sandbox-recovery-policy';
 import type { PushRuntimeContext } from '@push/lib/runtime-context';
 import type {
   ActiveRepo,
@@ -54,7 +55,7 @@ export interface ChatRuntimeHandlers {
     reconciled: boolean;
   }) => void;
   /** Called when a tool result indicates the sandbox is unreachable. */
-  onSandboxUnreachable?: (reason: string) => void;
+  onSandboxUnreachable?: (reason: string, policy?: SandboxUnreachableRecoveryPolicy) => void;
 }
 
 // ---------------------------------------------------------------------------

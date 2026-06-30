@@ -87,6 +87,13 @@ interface RestoreBannerState {
   error: string | null;
 }
 
+interface ActiveRestoreScope {
+  sandboxId: string | null;
+  repoFullName: string | null;
+  branch: string | null;
+  enabled: boolean;
+}
+
 const initialBannerState: RestoreBannerState = {
   sandboxId: null,
   repoFullName: null,
@@ -128,6 +135,21 @@ export function useWorkspaceSandboxRestore({
   const planRef = useRef<RestoreDetectionPlanState>(INITIAL_RESTORE_DETECTION_PLAN_STATE);
   const detectRef = useRef(detect);
   const applyRef = useRef(apply);
+  const activeScopeRef = useRef<ActiveRestoreScope>({
+    sandboxId: null,
+    repoFullName: null,
+    branch: null,
+    enabled: false,
+  });
+
+  useEffect(() => {
+    activeScopeRef.current = {
+      sandboxId,
+      repoFullName,
+      branch: branch?.trim() ?? null,
+      enabled,
+    };
+  }, [sandboxId, branch, repoFullName, enabled]);
 
   useEffect(() => {
     detectRef.current = detect;
@@ -146,21 +168,33 @@ export function useWorkspaceSandboxRestore({
     planRef.current = plan.state;
     if (!plan.probe) return;
     const probe = plan.probe;
+    const scopeStillMatchesProbe = () => {
+      const current = activeScopeRef.current;
+      return (
+        current.enabled &&
+        current.sandboxId === probe.sandboxId &&
+        current.repoFullName === probe.repoFullName &&
+        current.branch === probe.branch
+      );
+    };
 
     let cancelled = false;
-    detectRef
-      .current({
+    void (async () => {
+      const input = {
         sandboxId: probe.sandboxId,
         branch: probe.branch,
         repoFullName: probe.repoFullName,
-      })
-      .then((availability: CheckpointRestoreAvailability) => {
+      };
+      try {
+        const availability = await detectRef.current(input);
         if (cancelled) return;
         if (!availability.available) {
           setBanner(initialBannerState);
           return;
         }
-        setBanner({
+        if (!scopeStillMatchesProbe()) return;
+
+        const offer: RestoreBannerState = {
           sandboxId: probe.sandboxId,
           repoFullName: probe.repoFullName,
           branch: probe.branch,
@@ -169,10 +203,71 @@ export function useWorkspaceSandboxRestore({
           checkpointId: availability.checkpointId,
           restoring: false,
           error: null,
+        };
+
+        let result: CheckpointRestoreResult;
+        try {
+          result = await applyRef.current({
+            ...input,
+            checkpointId: availability.checkpointId,
+          });
+        } catch (restoreErr) {
+          if (cancelled || !scopeStillMatchesProbe()) return;
+          const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+          setBanner({
+            ...offer,
+            error: message,
+          });
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'checkpoint_auto_restore_deferred',
+              sandboxId: probe.sandboxId,
+              repoFullName: probe.repoFullName,
+              branch: probe.branch,
+              checkpointId: availability.checkpointId,
+              status: 'failed',
+              reason: message,
+            }),
+          );
+          return;
+        }
+        if (cancelled || !scopeStillMatchesProbe()) return;
+        if (result.status === 'restored') {
+          // Successful recovery is intentionally UI-quiet: sandbox loss should
+          // feel like reconnecting. Skipped/failed restores surface the banner
+          // below because they need a decision or expose uncertainty.
+          setBanner(initialBannerState);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'checkpoint_auto_restore_restored',
+              sandboxId: probe.sandboxId,
+              repoFullName: probe.repoFullName,
+              branch: probe.branch,
+              checkpointId: result.checkpointId,
+            }),
+          );
+          return;
+        }
+        setBanner({
+          ...offer,
+          error: restoreErrorMessage(result),
         });
-      })
-      .catch((err: unknown) => {
-        if (cancelled) return;
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'checkpoint_auto_restore_deferred',
+            sandboxId: probe.sandboxId,
+            repoFullName: probe.repoFullName,
+            branch: probe.branch,
+            checkpointId: availability.checkpointId,
+            status: result.status,
+            reason: result.status === 'failed' ? result.reason : undefined,
+          }),
+        );
+      } catch (err: unknown) {
+        if (cancelled || !scopeStillMatchesProbe()) return;
         const message = err instanceof Error ? err.message : String(err);
         setBanner({
           ...initialBannerState,
@@ -181,7 +276,8 @@ export function useWorkspaceSandboxRestore({
           branch: probe.branch,
           error: message,
         });
-      });
+      }
+    })();
 
     return () => {
       cancelled = true;

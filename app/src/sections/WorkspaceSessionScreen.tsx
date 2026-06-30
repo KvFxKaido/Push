@@ -223,8 +223,8 @@ export function WorkspaceSessionScreen({
           );
         }
       },
-      onSandboxUnreachable: (reason) => {
-        sandbox.markUnreachable(reason);
+      onSandboxUnreachable: (reason, policy) => {
+        sandbox.markUnreachable(reason, policy);
       },
     },
     {

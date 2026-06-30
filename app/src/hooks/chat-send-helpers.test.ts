@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import {
+  applyPostExecutionSideEffects,
   recordGithubToolTurnUsage,
   shouldSkipDelegationOutcomeRecording,
 } from './chat-send-helpers';
@@ -9,6 +10,7 @@ import {
   GITHUB_TOOL_TURN_IDLE_EVENT,
   GITHUB_TOOL_TURN_USED_EVENT,
 } from '@push/lib/prompt-cost-telemetry';
+import type { ToolExecutionResult } from '@/types';
 
 // Pins the Codex P1 contract from PR #603: `plan_tasks` wrapper
 // outcomes carry agent='coder' or 'explorer' but the inner per-task
@@ -136,5 +138,72 @@ describe('recordGithubToolTurnUsage', () => {
       1,
     );
     expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+function minimalSideEffectContext(onSandboxUnreachable: ReturnType<typeof vi.fn>): SendLoopContext {
+  return {
+    chatId: 'chat-1',
+    repoRef: { current: 'owner/repo' },
+    setConversations: vi.fn(),
+    dirtyConversationIdsRef: { current: new Set<string>() },
+    runtimeHandlersRef: { current: { onSandboxUnreachable } },
+    activeChatIdRef: { current: 'chat-1' },
+    conversationsRef: { current: {} },
+    branchInfoRef: { current: { currentBranch: 'main', defaultBranch: 'main' } },
+    updateVerificationState: vi.fn(),
+    appendRunEvent: vi.fn(),
+    sandboxIdRef: { current: 'sb-1' },
+  } as unknown as SendLoopContext;
+}
+
+function unreachableResult(): ToolExecutionResult {
+  return {
+    text: '[Tool Error] Sandbox unreachable',
+    structuredError: {
+      type: 'SANDBOX_UNREACHABLE',
+      retryable: true,
+      message: 'Sandbox unreachable',
+    },
+  };
+}
+
+describe('applyPostExecutionSideEffects sandbox recovery policy', () => {
+  it('marks read-only sandbox loss as safe to retry after recovery', async () => {
+    const onSandboxUnreachable = vi.fn();
+    await applyPostExecutionSideEffects(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_read_file', args: { path: 'README.md' } },
+      } as unknown as AnyToolCall,
+      unreachableResult(),
+      minimalSideEffectContext(onSandboxUnreachable),
+    );
+
+    expect(onSandboxUnreachable).toHaveBeenCalledWith('Sandbox unreachable', {
+      action: 'safe-read-retry',
+      toolName: 'sandbox_read_file',
+      toolSource: 'sandbox',
+      reason: 'read_only_tool',
+    });
+  });
+
+  it('marks mutating sandbox loss as recover then inspect, not blind retry', async () => {
+    const onSandboxUnreachable = vi.fn();
+    await applyPostExecutionSideEffects(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'npm test' } },
+      } as unknown as AnyToolCall,
+      unreachableResult(),
+      minimalSideEffectContext(onSandboxUnreachable),
+    );
+
+    expect(onSandboxUnreachable).toHaveBeenCalledWith('Sandbox unreachable', {
+      action: 'recover-inspect',
+      toolName: 'sandbox_exec',
+      toolSource: 'sandbox',
+      reason: 'mutation_may_have_dispatched',
+    });
   });
 });

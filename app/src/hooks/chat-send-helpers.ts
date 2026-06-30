@@ -59,6 +59,7 @@ import { emitGithubToolTurnUsage } from '@push/lib/prompt-cost-telemetry';
 import { getToolSourceFromName } from '@push/lib/tool-registry';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import { classifySandboxUnreachableRecovery } from '@/lib/sandbox-recovery-policy';
 import type { ChatMessage, ToolExecutionResult } from '@/types';
 import type {
   AssistantTurnResult,
@@ -709,7 +710,10 @@ export async function applyPostExecutionSideEffects(
 
   // 8. Sandbox unreachable.
   if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-    runtimeHandlersRef.current?.onSandboxUnreachable?.(result.structuredError.message);
+    runtimeHandlersRef.current?.onSandboxUnreachable?.(
+      result.structuredError.message,
+      classifySandboxUnreachableRecovery(call),
+    );
   }
 }
 

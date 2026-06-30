@@ -1,15 +1,117 @@
-import { describe, expect, it } from 'vitest';
-import {
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+type Effect = () => void | (() => void);
+type RefCell = { current: unknown };
+type StateCell = { value: unknown };
+
+const reactState = vi.hoisted(() => ({
+  refs: [] as RefCell[],
+  refIndex: 0,
+  states: [] as StateCell[],
+  stateIndex: 0,
+  effects: [] as Effect[],
+}));
+
+vi.mock('react', () => ({
+  useCallback: <T extends (...args: never[]) => unknown>(fn: T) => fn,
+  useEffect: (fn: Effect) => {
+    reactState.effects.push(fn);
+  },
+  useRef: <T>(initial: T) => {
+    const i = reactState.refIndex++;
+    if (!reactState.refs[i]) reactState.refs[i] = { current: initial };
+    return reactState.refs[i] as { current: T };
+  },
+  useState: <T>(initial: T | (() => T)) => {
+    const i = reactState.stateIndex++;
+    if (!reactState.states[i]) {
+      const seed = typeof initial === 'function' ? (initial as () => T)() : initial;
+      reactState.states[i] = { value: seed };
+    }
+    const cell = reactState.states[i];
+    const setter = (value: T | ((prev: T) => T)) => {
+      cell.value = typeof value === 'function' ? (value as (prev: T) => T)(cell.value as T) : value;
+    };
+    return [cell.value as T, setter];
+  },
+}));
+
+const {
   INITIAL_RESTORE_DETECTION_PLAN_STATE,
   planAutoBackRestoreDetection,
-  type RestoreDetectionPlanState,
-} from './useWorkspaceSandboxRestore';
+  useWorkspaceSandboxRestore,
+} = await import('./useWorkspaceSandboxRestore');
+type RestoreDetectionPlanState = import('./useWorkspaceSandboxRestore').RestoreDetectionPlanState;
+type UseWorkspaceSandboxRestoreArgs =
+  import('./useWorkspaceSandboxRestore').UseWorkspaceSandboxRestoreArgs;
+type WorkspaceSandboxRestoreState =
+  import('./useWorkspaceSandboxRestore').WorkspaceSandboxRestoreState;
+type CheckpointRestoreAvailability =
+  import('@/lib/checkpoint/checkpoint-store').CheckpointRestoreAvailability;
 
 const REPO = 'owner/repo';
 const SEP = String.fromCharCode(0); // the planner joins the scope key on NUL
 const scopeKey = (sandboxId: string, branch: string): string =>
   `${sandboxId}${SEP}${REPO}${SEP}${branch}`;
 const SCOPE_X = scopeKey('sb-1', 'feature/x');
+
+function renderRestore(
+  overrides: Partial<UseWorkspaceSandboxRestoreArgs> = {},
+): WorkspaceSandboxRestoreState {
+  reactState.refIndex = 0;
+  reactState.stateIndex = 0;
+  reactState.effects = [];
+  // The hand-rolled React mock reuses ref/state cells by hook order between
+  // renderRestore calls. If the hook's useRef/useState order changes, update
+  // this harness deliberately instead of trusting positional reuse by accident.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  return useWorkspaceSandboxRestore({
+    sandboxId: 'sb-1',
+    branch: 'feature/x',
+    repoFullName: REPO,
+    enabled: true,
+    detect: vi.fn(async () => ({ available: false as const })),
+    apply: vi.fn(async () => ({ status: 'unsupported' as const })),
+    ...overrides,
+  });
+}
+
+async function runEffects(): Promise<void> {
+  const effects = reactState.effects.splice(0);
+  for (const effect of effects) effect();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+function startEffects(limit: number = reactState.effects.length): void {
+  const effects = reactState.effects.splice(0, limit);
+  for (const effect of effects) effect();
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+beforeEach(() => {
+  reactState.refs = [];
+  reactState.refIndex = 0;
+  reactState.states = [];
+  reactState.stateIndex = 0;
+  reactState.effects = [];
+  vi.spyOn(console, 'log').mockImplementation(() => {});
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('planAutoBackRestoreDetection', () => {
   it('schedules the first ready lane and marks its scope as probed', () => {
@@ -85,5 +187,120 @@ describe('planAutoBackRestoreDetection', () => {
       state,
       probe: null,
     });
+  });
+});
+
+describe('useWorkspaceSandboxRestore auto restore', () => {
+  it('quietly applies an available checkpoint and suppresses the banner on success', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+    }));
+    const apply = vi.fn(async () => ({
+      status: 'restored' as const,
+      checkpointId: 'checkpoint-1',
+    }));
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    const view = renderRestore({ detect, apply });
+
+    expect(detect).toHaveBeenCalledWith({
+      sandboxId: 'sb-1',
+      branch: 'feature/x',
+      repoFullName: REPO,
+    });
+    expect(apply).toHaveBeenCalledWith({
+      sandboxId: 'sb-1',
+      branch: 'feature/x',
+      repoFullName: REPO,
+      checkpointId: 'checkpoint-1',
+    });
+    expect(view.available).toBe(false);
+    expect(view.summary).toBe('');
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('checkpoint_auto_restore_restored'),
+    );
+  });
+
+  it('does not dispatch auto restore after the live lane scope changes', async () => {
+    const availability = deferred<CheckpointRestoreAvailability>();
+    const detect = vi.fn(() => availability.promise);
+    const apply = vi.fn(async () => ({
+      status: 'restored' as const,
+      checkpointId: 'checkpoint-1',
+    }));
+
+    renderRestore({ detect, apply });
+    startEffects();
+
+    // Warm branch switches can preserve the same sandbox. The stale detect
+    // result must not apply feature/x's checkpoint into feature/y.
+    renderRestore({ branch: 'feature/y', detect, apply });
+    startEffects(1);
+    availability.resolve({
+      available: true,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('shows the existing restore banner when auto restore refuses a dirty target', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+    }));
+    const apply = vi.fn(async () => ({ status: 'skipped-dirty' as const }));
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    const view = renderRestore({ detect, apply });
+
+    expect(view.available).toBe(true);
+    expect(view.summary).toBe('2 files changed');
+    expect(view.error).toBe('Restore skipped because the workspace changed.');
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining('checkpoint_auto_restore_deferred'),
+    );
+  });
+
+  it('shows the restore banner when auto restore throws after detection succeeds', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+    }));
+    const apply = vi.fn(async () => {
+      throw new Error('transport failed');
+    });
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    const view = renderRestore({ detect, apply });
+
+    expect(view.available).toBe(true);
+    expect(view.error).toBe('transport failed');
+  });
+
+  it('does not call restore when no checkpoint is available', async () => {
+    const detect = vi.fn(async () => ({ available: false as const, reason: 'no_checkpoint' }));
+    const apply = vi.fn(async () => ({
+      status: 'restored' as const,
+      checkpointId: 'checkpoint-1',
+    }));
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    const view = renderRestore({ detect, apply });
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(view.available).toBe(false);
   });
 });
