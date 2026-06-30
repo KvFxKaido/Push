@@ -374,11 +374,11 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   {
     id: 'fireworks',
     displayName: 'Fireworks AI',
-    streamShape: 'openai-compat',
+    streamShape: 'openai-responses',
     initialFallbackEligible: true,
     failoverEligible: true,
     adapterRouted: true,
-    baseUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
+    baseUrl: 'https://api.fireworks.ai/inference/v1/responses',
     defaultModel: FIREWORKS_DEFAULT_MODEL,
     models: FIREWORKS_MODELS,
     apiKeyEnvVars: ['PUSH_FIREWORKS_API_KEY', 'FIREWORKS_API_KEY', 'VITE_FIREWORKS_API_KEY'],
@@ -390,7 +390,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       fallbackText: 'FW',
     },
     settings: {
-      description: 'Fireworks AI — OpenAI-compatible serverless inference API',
+      description: 'Fireworks AI — OpenAI Responses-native serverless inference API',
       envKey: 'VITE_FIREWORKS_API_KEY',
       envUrl: 'https://api.fireworks.ai/inference/v1',
       modelContextWindow: 128_000,
@@ -399,11 +399,12 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       builtInOrder: 110,
       keyPlaceholder: 'Fireworks AI API key',
       keySaveLabel: 'Save Fireworks AI key',
-      keyHint: 'Fireworks AI API key from fireworks.ai.',
+      keyHint:
+        'Fireworks AI API key from fireworks.ai. Direct /v1/responses with MCP-style tool support.',
     },
     cli: {
       order: 60,
-      defaultUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
+      defaultUrl: 'https://api.fireworks.ai/inference/v1/responses',
       urlEnvVars: ['PUSH_FIREWORKS_URL'],
       modelEnvVar: 'PUSH_FIREWORKS_MODEL',
     },

@@ -788,19 +788,12 @@ export const handleKiloCodeModels = createJsonProxyHandler({
   timeoutError: 'Kilo Code model list timed out after 30 seconds',
 });
 
-// --- Fireworks AI (OpenAI-compatible gateway) ---
-
-export const handleFireworksChat = createStreamProxyHandler({
-  name: 'Fireworks AI API',
-  logTag: 'api/fireworks/chat',
-  upstreamUrl: 'https://api.fireworks.ai/inference/v1/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('FIREWORKS_API_KEY'),
-  keyMissingError:
-    'Fireworks AI API key not configured. Add it in Settings or set FIREWORKS_API_KEY on the Worker.',
-  timeoutError: 'Fireworks AI request timed out after 120 seconds',
-});
+// --- Fireworks AI (OpenAI Responses-native gateway) ---
+//
+// Fireworks exposes an OpenAI-compatible `/v1/responses` endpoint, so its chat
+// route is Responses-native like direct OpenAI and Sakana — `handleFireworksChat`
+// lives in the Responses section below and shares `handleResponsesProxy`. The
+// model list stays on the plain `/v1/models` JSON listing here.
 
 export const handleFireworksModels = createJsonProxyHandler({
   name: 'Fireworks AI API',
@@ -1612,11 +1605,12 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
   });
 }
 
-// --- OpenAI + Sakana (direct /v1/responses) ---
+// --- OpenAI + Sakana + Fireworks (direct /v1/responses) ---
 //
-// Both direct OpenAI and Sakana Fugu are Responses-native adapters sharing one
-// proxy (`handleResponsesProxy`), parameterized only by upstream URL, env
-// secret, and error labels. Do not route either through the generic Chat proxy:
+// Direct OpenAI, Sakana Fugu, and Fireworks AI are Responses-native adapters
+// sharing one proxy (`handleResponsesProxy`), parameterized only by upstream
+// URL, env secret, and error labels. Do not route any through the generic Chat
+// proxy:
 // that factory validates and normalizes Chat Completions fields (`messages`,
 // `response_format`, `max_completion_tokens`), while this path must preserve
 // Responses fields (`input`, `text.format`, `max_output_tokens`) for the
@@ -1624,6 +1618,7 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
 
 const OPENAI_RESPONSES_UPSTREAM_URL = 'https://api.openai.com/v1/responses';
 const SAKANA_RESPONSES_UPSTREAM_URL = 'https://api.sakana.ai/v1/responses';
+const FIREWORKS_RESPONSES_UPSTREAM_URL = 'https://api.fireworks.ai/inference/v1/responses';
 const RESPONSES_TIMEOUT_MS = 120_000;
 const RESPONSES_MAX_OUTPUT_TOKENS = 12_288;
 
@@ -1709,7 +1704,7 @@ function validateAndNormalizeResponsesRequest(
 
 interface ResponsesProxyOptions {
   providerLabel: string;
-  authSecret: 'OPENAI_API_KEY' | 'SAKANA_API_KEY';
+  authSecret: 'OPENAI_API_KEY' | 'SAKANA_API_KEY' | 'FIREWORKS_API_KEY';
   keyMissingError: string;
   upstreamUrl: string;
   route: string;
@@ -1718,7 +1713,7 @@ interface ResponsesProxyOptions {
 
 /**
  * Shared `/v1/responses` reverse proxy for the Responses-native providers
- * (direct OpenAI, Sakana Fugu). Runs the standard preamble (origin check +
+ * (direct OpenAI, Sakana Fugu, Fireworks AI). Runs the standard preamble (origin check +
  * rate-limit + auth), normalizes the Responses body (forces `stream:true` /
  * `store:false`, clamps `max_output_tokens`, type-checks numerics), then pipes
  * the typed Responses SSE stream back unchanged.
@@ -1846,6 +1841,18 @@ export async function handleSakanaChat(request: Request, env: Env): Promise<Resp
     upstreamUrl: SAKANA_RESPONSES_UPSTREAM_URL,
     route: 'api/sakana/chat',
     timeoutError: 'Sakana AI request timed out after 120 seconds',
+  });
+}
+
+export async function handleFireworksChat(request: Request, env: Env): Promise<Response> {
+  return handleResponsesProxy(request, env, {
+    providerLabel: 'Fireworks AI',
+    authSecret: 'FIREWORKS_API_KEY',
+    keyMissingError:
+      'Fireworks AI API key not configured. Add it in Settings or set FIREWORKS_API_KEY on the Worker.',
+    upstreamUrl: FIREWORKS_RESPONSES_UPSTREAM_URL,
+    route: 'api/fireworks/chat',
+    timeoutError: 'Fireworks AI request timed out after 120 seconds',
   });
 }
 

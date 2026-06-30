@@ -1,9 +1,11 @@
 /**
- * CLI direct OpenAI Responses PushStream.
+ * CLI OpenAI Responses PushStream.
  *
- * OpenAI-compatible CLI providers keep using `cli/openai-stream.ts`
- * (Chat Completions wire shape). This file is only for direct OpenAI's
- * `/v1/responses` contract.
+ * Chat-Completions CLI providers keep using `cli/openai-stream.ts`. This file
+ * serves every provider whose definition declares `streamShape:
+ * 'openai-responses'` — direct OpenAI plus the OpenAI-compatible Responses
+ * gateways (Sakana, Fireworks) — speaking the `/v1/responses` contract against
+ * `config.url`.
  */
 
 import type {

@@ -10,7 +10,7 @@ vi.mock('@/hooks/useFireworksConfig', () => ({
 
 vi.mock('./providers', () => ({
   PROVIDER_URLS: {
-    fireworks: { chat: 'https://fireworks.example/v1/chat/completions' },
+    fireworks: { chat: 'https://fireworks.example/v1/responses' },
   },
 }));
 
@@ -40,13 +40,12 @@ const sampleTool = {
     additionalProperties: false as const,
   },
 };
-const openAITool = {
+// Responses-API flat function-tool shape (no nested `function` wrapper).
+const responsesTool = {
   type: 'function',
-  function: {
-    name: sampleTool.name,
-    description: sampleTool.description,
-    parameters: sampleTool.input_schema,
-  },
+  name: sampleTool.name,
+  description: sampleTool.description,
+  parameters: sampleTool.input_schema,
 };
 
 describe('fireworksStream', () => {
@@ -76,10 +75,20 @@ describe('fireworksStream', () => {
     for await (const e of fireworksStream(req)) out.push(e);
   }
 
+  it('serializes a Responses `input`-item body (not Chat `messages`)', async () => {
+    await drain(baseRequest);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.messages).toBeUndefined();
+    expect(body.input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+    ]);
+    expect(body.stream).toBe(true);
+  });
+
   it('forwards native function tools + tool_choice into the request body', async () => {
     await drain({ ...baseRequest, tools: [sampleTool] });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.tools).toEqual([openAITool]);
+    expect(body.tools).toEqual([responsesTool]);
     expect(body.tool_choice).toBe('auto');
   });
 

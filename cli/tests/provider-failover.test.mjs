@@ -63,6 +63,37 @@ describe('classifyCliStreamError', () => {
   it('treats a transport-level error (no HTTP status) as transient', () => {
     assert.deepEqual(classifyCliStreamError(new Error('ECONNRESET')), { retryable: true });
   });
+
+  it('honors structured in-band stream errors from Responses providers', () => {
+    assert.deepEqual(
+      classifyCliStreamError(
+        Object.assign(new Error('OpenAI Responses stream error: NOT_FOUND: model not found'), {
+          status: 404,
+          retryable: false,
+        }),
+      ),
+      { retryable: false, status: 404 },
+    );
+    assert.deepEqual(
+      classifyCliStreamError(
+        Object.assign(new Error('OpenAI Responses stream error: rate_limit_exceeded: slow down'), {
+          status: 429,
+          retryable: true,
+        }),
+      ),
+      { retryable: true, status: 429 },
+    );
+    // Unclassifiable in-band code: no status maps, but the pump fails open so
+    // the turn retries/fails over instead of dying on a likely-transient blip.
+    assert.deepEqual(
+      classifyCliStreamError(
+        Object.assign(new Error('OpenAI Responses stream error: service_unavailable'), {
+          retryable: true,
+        }),
+      ),
+      { retryable: true },
+    );
+  });
 });
 
 // ─── cliStreamRetryDelayMs ──────────────────────────────────────
@@ -86,9 +117,11 @@ describe('resolveCliFailoverCandidates', () => {
       PUSH_ANTHROPIC_API_KEY: 'k-anthropic',
     });
     try {
-      // openai is Responses-native; anthropic (different shape) is excluded
-      // even though it has a key. Order follows PROVIDER_CONFIGS declaration.
-      assert.deepEqual(ids(resolveCliFailoverCandidates('openrouter', new Set(['openrouter']))), [
+      // openai + fireworks are both Responses-native, so a turn locked on
+      // openai fails over to fireworks. openrouter (openai-compat) and anthropic
+      // (different shape) are excluded even though they have keys. Order follows
+      // PROVIDER_CONFIGS declaration.
+      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), [
         'fireworks',
       ]);
     } finally {
