@@ -72,7 +72,7 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
     models: '/ollama/v1/models',
   },
   openrouter: {
-    chat: '/openrouter/api/v1/chat/completions',
+    chat: '/openrouter/api/v1/responses',
     models: '/openrouter/api/v1/models',
   },
   zen: {

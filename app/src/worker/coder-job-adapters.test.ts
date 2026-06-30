@@ -908,13 +908,23 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     });
   }
 
-  it('pumps OpenRouter SSE tokens through onToken and closes on [DONE]', async () => {
+  function responsesTextChunk(text: string, separator = '\n\n'): string {
+    return `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: text })}${separator}`;
+  }
+
+  function responsesCompletedChunk(
+    usage?: { input_tokens: number; output_tokens: number; total_tokens: number },
+    separator = '\n\n',
+  ): string {
+    return `data: ${JSON.stringify({
+      type: 'response.completed',
+      response: { status: 'completed', ...(usage ? { usage } : {}) },
+    })}${separator}`;
+  }
+
+  it('pumps OpenRouter Responses SSE tokens through onToken and closes on response.completed', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
-      sseResponse([
-        'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
-        'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
-        'data: [DONE]\n\n',
-      ]),
+      sseResponse([responsesTextChunk('Hel'), responsesTextChunk('lo'), responsesCompletedChunk()]),
     );
     const stream = createWebStreamAdapter({
       env: env(),
@@ -933,21 +943,19 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
     expect(req.url).toBe('https://push.example.test/api/openrouter/chat');
     expect(req.headers.get('Origin')).toBe('https://push.example.test');
-    const body = JSON.parse(await req.text()) as { messages: unknown; model: string };
+    const body = JSON.parse(await req.text()) as { input: unknown; model: string; stream: boolean };
     expect(body.model).toBe('sonnet-4.6');
-    expect(body.messages).toEqual([{ role: 'user', content: 'hi' }]);
+    expect(body.stream).toBe(true);
+    expect(body.input).toEqual([
+      { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
+    ]);
   });
 
-  it('requests usage (stream_options.include_usage) and emits it on the terminal done event', async () => {
-    // OpenAI-compatible sequence: content chunk, a finish_reason chunk, THEN a
-    // trailing usage chunk (`choices: []`), then `[DONE]`. The pump must read
-    // past finish_reason to capture the usage chunk.
+  it('emits Responses usage on the terminal done event', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
       sseResponse([
-        'data: {"choices":[{"delta":{"content":"hi"}}]}\n\n',
-        'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
-        'data: {"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":34,"total_tokens":154}}\n\n',
-        'data: [DONE]\n\n',
+        responsesTextChunk('hi'),
+        responsesCompletedChunk({ input_tokens: 120, output_tokens: 34, total_tokens: 154 }),
       ]),
     );
     const stream = createWebStreamAdapter({
@@ -973,13 +981,14 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(doneUsage).toEqual({ inputTokens: 120, outputTokens: 34, totalTokens: 154 });
 
     const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
-    const body = JSON.parse(await req.text()) as { stream_options?: { include_usage?: boolean } };
-    expect(body.stream_options).toEqual({ include_usage: true });
+    const body = JSON.parse(await req.text()) as { stream: boolean; stream_options?: unknown };
+    expect(body.stream).toBe(true);
+    expect(body.stream_options).toBeUndefined();
   });
 
   it('emits done with undefined usage when the provider reports none', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
-      sseResponse(['data: {"choices":[{"delta":{"content":"hi"}}]}\n\n', 'data: [DONE]\n\n']),
+      sseResponse([responsesTextChunk('hi'), responsesCompletedChunk()]),
     );
     const stream = createWebStreamAdapter({
       env: env(),
@@ -1037,11 +1046,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
 
   it('ignores malformed SSE chunks and keeps pumping', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
-      sseResponse([
-        'data: not-json\n\n',
-        'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n',
-        'data: [DONE]\n\n',
-      ]),
+      sseResponse(['data: not-json\n\n', responsesTextChunk('ok'), responsesCompletedChunk()]),
     );
     const stream = createWebStreamAdapter({
       env: env(),
@@ -1059,9 +1064,9 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
   it('splits CRLF-delimited SSE (providers that frame with \\r\\n\\r\\n)', async () => {
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
       sseResponse([
-        'data: {"choices":[{"delta":{"content":"hel"}}]}\r\n\r\n',
-        'data: {"choices":[{"delta":{"content":"lo"}}]}\r\n\r\n',
-        'data: [DONE]\r\n\r\n',
+        responsesTextChunk('hel', '\r\n\r\n'),
+        responsesTextChunk('lo', '\r\n\r\n'),
+        responsesCompletedChunk(undefined, '\r\n\r\n'),
       ]),
     );
     const stream = createWebStreamAdapter({

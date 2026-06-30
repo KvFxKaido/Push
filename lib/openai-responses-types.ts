@@ -1,9 +1,9 @@
 /**
  * Shared OpenAI Responses wire-shape types.
  *
- * Direct OpenAI uses these for `/v1/responses`. OpenAI-compatible providers
- * stay on `openai-chat-types.ts` because their contract is Chat Completions,
- * not Responses.
+ * Direct OpenAI and verified Responses-compatible gateways use these for
+ * `/v1/responses`. Generic Chat Completions-compatible providers stay on
+ * `openai-chat-types.ts`.
  */
 
 import type { ToolFunctionSchema } from './provider-contract.js';

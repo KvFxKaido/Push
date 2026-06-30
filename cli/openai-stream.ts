@@ -1,11 +1,11 @@
 /**
- * CLI native OpenAI-compatible PushStream.
+ * CLI native OpenAI-compatible Chat Completions PushStream.
  *
- * Every CLI provider in `PROVIDER_CONFIGS` (ollama, openrouter, zen, nvidia,
- * kilocode, fireworks) speaks the same OpenAI-shaped
- * `chat/completions` wire format, so they share one stream parameterized by
- * `ProviderConfig`. Per-provider extensions (OpenRouter's `HTTP-Referer`,
- * `X-Title`, `session_id`, `trace`) branch on `config.id`.
+ * Legacy/generic CLI providers (ollama, zen, nvidia, kilocode, plus
+ * OpenRouter when `PUSH_OPENROUTER_TRANSPORT=chat`) speak the same
+ * OpenAI-shaped `chat/completions` wire format, so they share one stream
+ * parameterized by `ProviderConfig`. Per-provider extensions (OpenRouter's
+ * `HTTP-Referer`, `X-Title`, `session_id`, `trace`) branch on `config.id`.
  *
  * Shape mirrors `app/src/lib/openrouter-stream.ts` on the web side: build
  * body, fetch, then `yield* openAISSEPump(...)`. The shared pump in

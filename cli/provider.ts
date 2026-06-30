@@ -30,7 +30,8 @@ const RETRY_BASE_DELAY_MS: number = 1_000;
  *  - `openai-compat`: OpenAI Chat Completions schema; consume via
  *    `cli/openai-stream.ts`. Default for generic gateways.
  *  - `openai-responses`: OpenAI Responses schema; consume via
- *    `cli/openai-responses-stream.ts`. Direct OpenAI only.
+ *    `cli/openai-responses-stream.ts`. Used by OpenRouter, direct OpenAI,
+ *    Sakana, and Fireworks.
  *  - `anthropic`: Anthropic Messages API; consume via
  *    `cli/anthropic-stream.ts` (translates via `lib/anthropic-bridge`).
  *  - `gemini`: Google Generative Language API; consume via
@@ -56,6 +57,8 @@ export interface ProviderListEntry {
   requiresKey: boolean;
   hasKey: boolean;
 }
+
+const OPENROUTER_LEGACY_CHAT_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 interface ChatMessage {
   role: string;
@@ -126,6 +129,22 @@ function firstLiveEnv(envVars: readonly string[]): string | undefined {
   return undefined;
 }
 
+function useOpenRouterLegacyChatTransport(): boolean {
+  const raw = process.env.PUSH_OPENROUTER_TRANSPORT?.trim().toLowerCase();
+  return raw === 'chat' || raw === 'chat-completions' || raw === 'legacy';
+}
+
+function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
+  if (config.id !== 'openrouter' || !useOpenRouterLegacyChatTransport()) {
+    return config;
+  }
+  return {
+    ...config,
+    url: process.env.PUSH_OPENROUTER_URL?.trim() || OPENROUTER_LEGACY_CHAT_URL,
+    streamShape: 'openai-compat',
+  };
+}
+
 function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
   const cli = def.cli;
   if (!cli) {
@@ -169,16 +188,19 @@ export function createProviderStream(
   apiKey: string,
   options: { sessionId?: string } = {},
 ): PushStream<LlmMessage> {
-  switch (config.streamShape) {
+  const effectiveConfig = resolveEffectiveProviderConfig(config);
+  switch (effectiveConfig.streamShape) {
     case 'openai-responses':
-      return createCliOpenAIResponsesStream(config, apiKey);
+      return createCliOpenAIResponsesStream(effectiveConfig, apiKey, {
+        sessionId: options.sessionId,
+      });
     case 'anthropic':
-      return createCliAnthropicStream(config, apiKey);
+      return createCliAnthropicStream(effectiveConfig, apiKey);
     case 'gemini':
-      return createCliGeminiStream(config, apiKey);
+      return createCliGeminiStream(effectiveConfig, apiKey);
     case 'openai-compat':
     case undefined:
-      return createCliProviderStream(config, apiKey, { sessionId: options.sessionId });
+      return createCliProviderStream(effectiveConfig, apiKey, { sessionId: options.sessionId });
   }
 }
 
@@ -233,7 +255,8 @@ export function classifyCliStreamError(err: unknown): { retryable: boolean; stat
 }
 
 function cliProviderShape(config: ProviderConfig): CliProviderStreamShape {
-  return config.streamShape ?? 'openai-compat';
+  const effectiveConfig = resolveEffectiveProviderConfig(config);
+  return effectiveConfig.streamShape ?? 'openai-compat';
 }
 
 /**
@@ -275,18 +298,19 @@ export function resolveCliFailoverCandidates(
  */
 export function getProviderList(): ProviderListEntry[] {
   return Object.values(PROVIDER_CONFIGS).map((cfg: ProviderConfig) => {
+    const effectiveCfg = resolveEffectiveProviderConfig(cfg);
     let hasKey: boolean = false;
     try {
-      resolveApiKey(cfg);
+      resolveApiKey(effectiveCfg);
       hasKey = true;
     } catch {
       /* key missing */
     }
     return {
-      id: cfg.id,
-      url: cfg.url,
-      defaultModel: cfg.defaultModel,
-      requiresKey: cfg.requiresKey,
+      id: effectiveCfg.id,
+      url: effectiveCfg.url,
+      defaultModel: effectiveCfg.defaultModel,
+      requiresKey: effectiveCfg.requiresKey,
       hasKey,
     };
   });

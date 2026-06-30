@@ -193,11 +193,11 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   {
     id: 'openrouter',
     displayName: 'OpenRouter',
-    streamShape: 'openai-compat',
+    streamShape: 'openai-responses',
     initialFallbackEligible: true,
     failoverEligible: true,
     adapterRouted: true,
-    baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+    baseUrl: 'https://openrouter.ai/api/v1/responses',
     defaultModel: OPENROUTER_DEFAULT_MODEL,
     models: OPENROUTER_MODELS,
     apiKeyEnvVars: ['PUSH_OPENROUTER_API_KEY', 'OPENROUTER_API_KEY', 'VITE_OPENROUTER_API_KEY'],
@@ -224,7 +224,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
     },
     cli: {
       order: 20,
-      defaultUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      defaultUrl: 'https://openrouter.ai/api/v1/responses',
       urlEnvVars: ['PUSH_OPENROUTER_URL'],
       modelEnvVar: 'PUSH_OPENROUTER_MODEL',
     },

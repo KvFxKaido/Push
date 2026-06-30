@@ -117,11 +117,12 @@ describe('resolveCliFailoverCandidates', () => {
       PUSH_ANTHROPIC_API_KEY: 'k-anthropic',
     });
     try {
-      // openai + fireworks are both Responses-native, so a turn locked on
-      // openai fails over to fireworks. openrouter (openai-compat) and anthropic
+      // openai + openrouter + fireworks are Responses-native, so a turn locked on
+      // openai can fail over to OpenRouter and Fireworks. anthropic
       // (different shape) are excluded even though they have keys. Order follows
       // PROVIDER_CONFIGS declaration.
       assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), [
+        'openrouter',
         'fireworks',
       ]);
     } finally {
@@ -129,13 +130,15 @@ describe('resolveCliFailoverCandidates', () => {
     }
   });
 
-  it('keeps direct OpenAI Responses out of the OpenAI-compatible failover bucket', () => {
+  it('includes OpenRouter in the Responses failover bucket', () => {
     const restore = withProviderKeys({
       PUSH_OPENAI_API_KEY: 'k-openai',
       PUSH_OPENROUTER_API_KEY: 'k-openrouter',
     });
     try {
-      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), []);
+      assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), [
+        'openrouter',
+      ]);
     } finally {
       restore();
     }
@@ -150,7 +153,7 @@ describe('resolveCliFailoverCandidates', () => {
     try {
       assert.deepEqual(
         ids(resolveCliFailoverCandidates('openrouter', new Set(['openrouter', 'fireworks']))),
-        [],
+        ['openai'],
       );
     } finally {
       restore();
@@ -160,7 +163,7 @@ describe('resolveCliFailoverCandidates', () => {
   it('skips same-shape providers that have no key configured', () => {
     const restore = withProviderKeys({ PUSH_OPENAI_API_KEY: 'k-openai' });
     try {
-      // Only openai has a key; every other openai-compat provider is keyless.
+      // Only openai has a key; every other Responses provider is keyless.
       assert.deepEqual(ids(resolveCliFailoverCandidates('openai', new Set(['openai']))), []);
     } finally {
       restore();

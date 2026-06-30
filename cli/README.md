@@ -241,7 +241,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships eleven providers. Five (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|

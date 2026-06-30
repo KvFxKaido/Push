@@ -21,8 +21,8 @@
  *   `text_delta` events for `choices[0].delta.content`. Malformed chunks
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
- *   Two exceptions: `openai`, `sakana`, and `fireworks` use the Responses-API
- *   pump, and the
+ *   Two exceptions: `openrouter`, `openai`, `sakana`, and `fireworks` use the
+ *   Responses-API pump, and the
  *   Anthropic-transport Zen-Go models (MiniMax / Qwen on `/v1/messages`)
  *   now stream raw Anthropic Messages SSE — the Worker stopped translating
  *   that route to OpenAI SSE — so they parse via `anthropicEventStream`.
@@ -209,11 +209,14 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error('Stream aborted before provider dispatch');
       }
 
-      // OpenAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
+      // OpenRouter, OpenAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
       // build the typed `input`-item body for any of them; everything else gets
       // the Chat Completions payload below.
       const isResponsesProvider =
-        args.provider === 'openai' || args.provider === 'sakana' || args.provider === 'fireworks';
+        args.provider === 'openrouter' ||
+        args.provider === 'openai' ||
+        args.provider === 'sakana' ||
+        args.provider === 'fireworks';
       const body = isResponsesProvider
         ? JSON.stringify(
             toOpenAIResponses({
@@ -294,7 +297,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
       // Messages SSE now that the Worker no longer translates that route to
       // OpenAI SSE; parse them natively. Everything else stays OpenAI-shaped
-      // (`openai`/`sakana`/`fireworks` via the Responses pump, the rest via
+      // (`openrouter`/`openai`/`sakana`/`fireworks` via the Responses pump, the rest via
       // `pumpSseBody`).
       const isZenGoAnthropic =
         zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';

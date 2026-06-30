@@ -201,6 +201,7 @@ describe('ProviderDefinition', () => {
 
   it('exposes provider route defaults from the registry', () => {
     assert.equal(getProviderStreamShape('deepseek'), 'anthropic');
+    assert.equal(getProviderStreamShape('openrouter'), 'openai-responses');
     assert.equal(getProviderStreamShape('openai'), 'openai-responses');
     assert.equal(providerConsumesContentBlocksByDefault('anthropic'), true);
     assert.equal(providerConsumesContentBlocksByDefault('google'), true);
