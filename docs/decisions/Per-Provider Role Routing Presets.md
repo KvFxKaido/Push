@@ -5,8 +5,10 @@ Reviewed: 2026-06-28
 Validated: 2026-06-30 against `main` @ `5b78db0e` — see [Validation](#validation--2026-06-30). Core web-seam claims hold; the real scope is reconciling with the CLI's **already-built** `roleRouting`, not a single-function add.
 
 A design note for a user-selectable, capability-tagged **routing preset** that
-fans Push's internal roles out to the best-fit model *within a single provider*
-in one selection — Zen Go first. This is the Push-native, governed answer to the
+fans Push's internal roles out to the best-fit model for a primary provider,
+with explicit per-role provider overrides for judge roles. Zen is the first
+shared-catalog target; Zen Go can use the same shape once its Go-tier catalog is
+available to both web and CLI. This is the Push-native, governed answer to the
 per-stage model-assignment workflows people hand-build on top of OpenCode Go
 (Orchestrator→big model, Explore→flash, Apply→code model, etc.).
 
@@ -30,12 +32,17 @@ semantics (Agent Runtime Decisions; CLAUDE.md "Provider routing") then layer on
 top: the chat locks Orchestrator on first send, Coder/Explorer inherit, Reviewer
 keeps a sticky pick, Auditor follows the lock.
 
-A routing preset is therefore a **single-function change in shape**: when a
-preset is active for the provider, `getModelForRole` returns the *preset's
-per-role model* instead of the one shared stored model. Everything downstream
-(`coder-agent.ts:206`, `explorer-agent.ts:152`, `inline-coder-run.ts:463`,
-`auditor-agent.ts`) already calls `getModelForRole` / takes a model override, so
-no call site changes.
+For the web, a routing preset is therefore a **single-seam change in shape**:
+when a preset is active for the provider, `getModelForRole` returns the
+*preset's per-role model* instead of the one shared stored model. The production
+caller set is broader than the first-pass shorthand: `coder-agent.ts:206`
+(Coder), `explorer-agent.ts:152` (Explorer), `inline-coder-run.ts:467`
+(Orchestrator, not Coder), `auditor-agent.ts:49`, `WorkspaceHubSheet.tsx` (×2,
+Orchestrator), `HubReviewTab.tsx` (×2, Reviewer), and
+`ensure-commit-target-branch.ts:201` (Orchestrator) all already go through the
+seam or take its resolved override. Those callers should not need custom routing
+logic, but the product work is not only this function because the CLI already
+has a separate `roleRouting` map to reconcile.
 
 ## 2. Capability tags, not pinned model IDs
 
@@ -56,32 +63,50 @@ type RoleRoutingIntent =
   | 'independent-judge'; // verification (Reviewer/Auditor)
 
 interface RoleRoutingPreset {
-  id: string;                 // 'zen-go-auto'
-  provider: RealProviderId;   // 'zen'
-  label: string;              // 'Zen Go — Auto'
-  // Ordered candidate intents per role; first resolvable wins.
-  roles: Record<AgentRole, RoleRoutingIntent>;
+  id: string;               // 'zen-auto'
+  provider: RealProviderId; // default provider, e.g. 'zen'
+  label: string;            // 'Zen — Auto'
+  // Ordered candidate intent per role; provider defaults to preset.provider.
+  roles: Record<
+    AgentRole,
+    {
+      intent: RoleRoutingIntent;
+      provider?: RealProviderId; // cross-provider judge override
+      fallbackModel?: string;    // declared fallback if metadata is cold/stale
+    }
+  >;
 }
+
+type ResolvedRoleRoutingPreset = Record<
+  AgentRole,
+  { provider: RealProviderId; model: string }
+>;
 ```
 
-Resolution reuses what already exists in `model-catalog.ts`:
+Resolution reuses the catalog-capability primitives from `model-catalog.ts`:
 `getModelCapabilities(provider, id)` (reasoning/toolCall/context) +
-`resolvePushCapabilityProfile`. An intent picks the best live model from the
-provider's curated list (`ZEN_GO_MODELS`) matching the capability shape, with a
+`resolvePushCapabilityProfile`. The web seam file (`providers.ts`) currently
+imports a different helper from `./model-capabilities`, so wiring this into
+`getModelForRole` means introducing an explicit catalog-capability import/alias,
+not treating the existing import as sufficient. An intent picks the best live
+model from the provider's shared curated list (`ZEN_MODELS` in
+`lib/provider-models.ts` for v1) matching the capability shape, with a
 **declared fallback id** per intent so a cold metadata cache or a retired model
-never dead-ends. When a preset can't resolve a role to a live model, it falls
-back to the provider's default model and emits a structured log (see §6) — never
-a silent substitution.
+never dead-ends. If the v1 target remains Zen Go, first move the Go-tier
+`ZEN_GO_MODELS` list out of `app/src/lib/zen-go.ts` into shared `lib/` so the
+CLI and drift tests resolve the same catalog. When a preset can't resolve a role
+to a live model, it falls back to the provider's default model and emits a
+structured log (see §6) — never a silent substitution.
 
-### Starter preset — Zen Go (illustrative, resolved at runtime)
+### Starter preset — Zen shared catalog (illustrative, resolved at runtime)
 
-| Role | Intent | Resolves to (today's `ZEN_GO_MODELS`) | Why |
+| Role | Intent | Resolves to (today's `ZEN_MODELS`) | Why |
 |---|---|---|---|
-| Orchestrator | `strong-reason` | `glm-5.2` / `minimax-m3` | lead turn, planning |
+| Orchestrator | `strong-reason` | `glm-5.1` / `deepseek-v4-pro` | lead turn, planning |
 | Explorer | `cheap-fast` | `deepseek-v4-flash` | high-volume read-only scans |
-| Coder | `strong-code` | `kimi-k2.7-code` | edits + native tool calling |
-| Reviewer | `independent-judge` | `qwen3.7-max` (≠ Coder) | independent attribution |
-| Auditor | `independent-judge` | `glm-5.2` | gate; distinct from Coder |
+| Coder | `strong-code` | `kimi-k2.6` | edits + native tool calling |
+| Reviewer | `independent-judge` | `qwen3.6-plus` (≠ Coder) | independent attribution |
+| Auditor | `independent-judge` | `glm-5.1` / `minimax-m3-free` | gate; distinct from Coder |
 
 The IDs are *outputs of resolution*, shown for review only — the preset stores
 intents, not these strings.
@@ -92,7 +117,7 @@ Open contract question to settle before code (this is why it's a decision note,
 not just a PR). Today the lock pins one provider+model. With a preset:
 
 - **Decision:** the lock pins the **provider + active preset id** (not a single
-  model). On first send, the chat records `{ provider: 'zen', preset: 'zen-go-auto' }`.
+  model). On first send, the chat records `{ provider: 'zen', preset: 'zen-auto' }`.
   Delegated Coder/Explorer resolve their role through the *locked preset*, so a
   mid-chat settings change can't repoint a running chat's roles — same
   stability guarantee the model lock gives today.
@@ -100,20 +125,20 @@ not just a PR). Today the lock pins one provider+model. With a preset:
   the user has set one (preset is the default, not a mandate).
 - Failover (`orchestrator-provider-routing.ts:resolveFailoverCandidates`) keys
   on the *resolved* model's wire shape per role, unchanged — the preset resolves
-  to a concrete id before failover runs, so the Anthropic-transport isolation
-  (Zen Go MiniMax/Qwen) still holds per role.
+  to a concrete id before failover runs, so provider-specific transport
+  isolation still holds per role.
 
 ## 4. Keep the audit gate escapable cross-provider
 
-A single-provider preset fans every role into one provider — which **weakens the
-one gate where model diversity matters most**. Reviewer/Auditor exist partly so a
-*different* model catches the Coder's mistakes. So:
+A default-provider preset can fan every role into one provider — which
+**weakens the one gate where model diversity matters most**. Reviewer/Auditor
+exist partly so a *different* model catches the Coder's mistakes. So:
 
 - A preset MAY set `independent-judge` roles to a different *provider* (e.g. Zen
-  Go Coder, Anthropic Auditor) — the preset is not constrained to its own
+  Coder, Anthropic Auditor) — the preset is not constrained to its own default
   provider for the judge roles. The `provider` field becomes the *default*
   provider; per-role entries may override it.
-- The default Zen Go preset keeps Auditor on a Zen model *distinct from* the
+- The default Zen preset keeps Auditor on a Zen model *distinct from* the
   Coder model at minimum; a "diversity on" variant points it cross-provider when
   a second key is configured.
 
@@ -122,7 +147,7 @@ one gate where model diversity matters most**. Reviewer/Auditor exist partly so 
 - **No synthetic "model" entry in the provider dropdown.** It can't be called as
   a model, can't be used outside the role system, and lies about what the user
   is talking to. The preset is a **separate picker** ("Routing: Single model /
-  Zen Go Auto"), not a row in the model list. This also keeps `makeRoleModels`
+  Zen Auto"), not a row in the model list. This also keeps `makeRoleModels`
   (which already emits one entry per role) untouched.
 - **No new provider.** Zen is already wired (`zenStream`, `zen-go.ts`,
   `useZenConfig`). This rides existing transport.
@@ -153,15 +178,22 @@ one gate where model diversity matters most**. Reviewer/Auditor exist partly so 
 
 ## 7. Build order
 
-1. `lib/role-routing-preset.ts` — types, intent→capability resolver, Zen Go
-   preset, fallbacks. Pure; unit-tested in isolation.
-2. Thread an optional active-preset lookup into `getModelForRole` (web). The CLI
-   has **no `getModelForRole` twin** — per-role routing already exists there as
-   `entry.state.roleRouting.{coder,explorer}` (set via the `configure_role_routing`
-   verb, resolved in `cli/pushd.ts`). So the CLI step is *populating that existing
-   structure* from the resolved preset, not threading a new lookup. Default off →
-   byte-identical behavior on both surfaces. (See [Validation](#validation--2026-06-30);
-   this is the crux of obligation §6.2.)
+1. `lib/role-routing-preset.ts` — types, intent→capability resolver, Zen shared
+   catalog preset, fallbacks. Pure; unit-tested in isolation. If the product
+   wants Zen Go as the first named preset, this step includes moving the Go-tier
+   model list into shared `lib/` before the drift test lands.
+2. Reconcile the resolver output with the CLI's existing `entry.state.roleRouting`
+   shape before adding a web-only path. The CLI has **no `getModelForRole` twin**:
+   per-role routing already exists via `configure_role_routing` and accepts all
+   `VALID_AGENT_ROLES`, while delegation currently reads Coder, Explorer, and
+   Reviewer (Reviewer is shared by `delegate_reviewer` and the deep reviewer).
+   The CLI step is therefore *populating that existing structure* from the
+   resolved preset — at minimum Coder, Explorer, and Reviewer, with any stored
+   Auditor/Orchestrator entries documented until daemon consumers exist — not
+   threading a new lookup. Then teach the web to consume the same resolved map
+   inside `getModelForRole`. Default off → byte-identical behavior on both
+   surfaces. (See [Validation](#validation--2026-06-30); this is the crux of
+   obligation §6.2.)
 3. Persist preset selection (durable key) + lock it alongside the Orchestrator
    provider on first send.
 4. Settings UI: a "Routing" selector next to the provider/model picker.
@@ -191,13 +223,15 @@ routing through a different mechanism this note never mentions**.
   resolves `(provider, role)`, but the getter is keyed by **provider only**
   (`MODEL_NAME_GETTERS[type]`, :447) — `resolvedId = getter()` (:478) returns one
   stored id for all five roles. Per-role resolution genuinely localizes here.
-  §1/§2 are correct.
+  §1/§2 are correct after folding in the call-site and resolved-map corrections
+  above.
 - **Capability primitives exist.** `getModelCapabilities` and
   `resolvePushCapabilityProfile` (`app/src/lib/model-catalog.ts:411 / :723`)
   return the `toolCalling`/`reasoning`/`context` shape an intent matches on — the
   resolver is buildable as described. *Caveat:* there are **two**
   `getModelCapabilities` (`model-catalog.ts` and `model-capabilities.ts`); the
-  resolver must use the catalog one.
+  resolver must use the catalog one, and `providers.ts` currently imports the
+  other one for display-model capabilities.
 - **"No call-site changes" holds** — every consumer goes through the seam.
 
 ### Corrections
@@ -215,14 +249,16 @@ routing through a different mechanism this note never mentions**.
 
 ### The load-bearing gap: the CLI already does this (differently)
 
-`cli/pushd.ts` resolves `entry.state.roleRouting.{coder,explorer}` as independent
-`{provider, model}` per role (`:4974`, `:4994`), set via the
-**`configure_role_routing`** protocol verb (schema-pinned in
+`cli/pushd.ts` resolves `entry.state.roleRouting.{coder,explorer,reviewer}` as
+independent `{provider, model}` per role (`:4974`, explorer block, reviewer
+block), set via the **`configure_role_routing`** protocol verb (schema-pinned in
 `lib/protocol-schema.ts` + `protocol-json-schema.ts`, capability
-`delegation_coder_v1`, with a TUI surface). It already supports **cross-provider
-per role** — the §4 "escapable judge" capability this note frames as future. The
-**web consumes none of it** (`roleRouting` appears in `app/src` only inside the
-shared schema validators).
+`delegation_coder_v1`, with a TUI surface). `VALID_AGENT_ROLES` accepts all five
+roles, and both `delegate_reviewer` and the deep reviewer read
+`roleRouting.reviewer`, so it already supports **cross-provider per role** for
+the §4 "escapable judge" capability this note frames as future. The **web
+consumes none of it** (`roleRouting` appears in `app/src` only inside the shared
+schema validators).
 
 So per-role routing is **not greenfield**: two mechanisms already exist (the web's
 single-model `getModelForRole`, the CLI's explicit `roleRouting`), which makes
@@ -235,7 +271,7 @@ Have `lib/role-routing-preset.ts` resolve intent →
 `Record<AgentRole, {provider, model}>`, then:
 
 - **CLI** consumes it by *populating `entry.state.roleRouting`* — the structure
-  already exists and is already read on delegation.
+  already exists and is already read on Coder, Explorer, and Reviewer delegation.
 - **Web** learns to consume the same resolved map inside `getModelForRole`.
 
 This makes "one source of truth" real: the resolver feeds the CLI's existing
