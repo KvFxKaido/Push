@@ -560,7 +560,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     mockUuid();
     sandbox.exec.mockImplementation(async (command: string) => {
       if (command.includes('rev-parse HEAD')) return { stdout: 'abc123def456', exitCode: 0 };
-      if (command.includes('cat-file -e')) return { stdout: '', exitCode: 0 }; // origin tip present
+      if (command.includes('merge-base --is-ancestor')) return { stdout: '', exitCode: 0 }; // origin tip reachable
       return { stdout: probeStdout(), stderr: '', exitCode: 0 };
     });
     const r2 = makeR2({
@@ -588,7 +588,9 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(response.status).toBe(200);
     expect(r2.get).toHaveBeenCalledWith('cf-snapshots/snap-1');
     // Hydrated, and the divergence guard ran and passed.
-    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).includes('cat-file -e'))).toBe(true);
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes('merge-base --is-ancestor')),
+    ).toBe(true);
     expect(
       vi
         .mocked(console.log)
@@ -606,7 +608,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     mockUuid();
     sandbox.exec.mockImplementation(async (command: string) => {
       if (command.includes('rev-parse HEAD')) return { stdout: 'abc123def456', exitCode: 0 };
-      if (command.includes('cat-file -e')) return { stdout: '', exitCode: 1 }; // origin tip ABSENT
+      if (command.includes('merge-base --is-ancestor')) return { stdout: '', exitCode: 1 }; // origin tip NOT reachable
       return { stdout: probeStdout(), stderr: '', exitCode: 0 };
     });
     const r2 = makeR2({

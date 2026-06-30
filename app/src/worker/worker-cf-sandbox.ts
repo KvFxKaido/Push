@@ -2130,14 +2130,19 @@ async function restoreUnpushedWorkOverClone(
       );
       return 'needs-reclone';
     }
-    // Guard: the restored history must still contain origin's current tip. `^{commit}`
-    // forces commit resolution; a missing object exits non-zero.
-    const contains = (await withExecDeadline(
+    // Guard: origin's current tip must be REACHABLE from the restored HEAD —
+    // i.e. an ancestor of it — not merely present in the object database. A
+    // snapshot whose sandbox had `git fetch`ed the advanced origin (so the new
+    // tip is a loose object) without merging it would pass an existence check
+    // (`cat-file -e`) while still hiding that commit; `merge-base --is-ancestor`
+    // tests history membership. Non-zero (not an ancestor, or unresolvable on a
+    // shallow graft) ⇒ treat as diverged and keep the fresh clone.
+    const reachable = (await withExecDeadline(
       sandbox.exec(
-        `git -C /workspace cat-file -e ${shellSingleQuote(`${originTip}^{commit}`)} 2>/dev/null`,
+        `git -C /workspace merge-base --is-ancestor ${shellSingleQuote(originTip)} HEAD 2>/dev/null`,
       ),
     )) as { exitCode?: number };
-    if ((contains.exitCode ?? 1) !== 0) {
+    if ((reachable.exitCode ?? 1) !== 0) {
       console.log(
         JSON.stringify({
           level: 'info',

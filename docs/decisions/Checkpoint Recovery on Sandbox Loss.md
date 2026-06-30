@@ -283,10 +283,14 @@ successful `--branch` clone, `routeCreate` now also tries
 clone to recover that work. The hard part is doing it without shadowing origin (the
 absent-branch case had no origin to shadow; this one does — you may have pushed from
 another device, or a merge landed). The guard: the fresh clone gives origin's current
-tip for free (`git rev-parse HEAD`); after hydrating the snapshot we verify it still
-**contains that commit** (`git cat-file -e <originTip>^{commit}`). If it does, the
-snapshot is "origin's tip + your unpushed work" and restoring loses nothing
-(`cf_sandbox_unpushed_work_restored`). If it doesn't, origin advanced past the
+tip for free (`git rev-parse HEAD`); after hydrating the snapshot we verify that tip
+is **reachable from the restored HEAD** — an ancestor of it — via `git merge-base
+--is-ancestor <originTip> HEAD`. Reachability, not mere object existence: a
+`cat-file -e` check would pass for a snapshot whose sandbox had `git fetch`ed the
+advanced origin (new tip present as a loose object) without merging it, silently
+hiding that commit. If origin's tip is reachable, the snapshot is "origin's tip +
+your unpushed work" and restoring loses nothing
+(`cf_sandbox_unpushed_work_restored`). If it isn't, origin advanced past the
 snapshot, so we **discard the restore and re-clone** the fresh tip
 (`cf_sandbox_cold_restore_diverged`) rather than silently drop real commits.
 
