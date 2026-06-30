@@ -31,6 +31,7 @@ import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
 
 type SakanaLlmMessage = {
@@ -82,6 +83,13 @@ export async function* sakanaStream(
     emitContentBlocks: true,
   }) as SakanaLlmMessage[];
 
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) turns on OpenAI's server-side `web_search` tool so
+  // Fugu chats search the web without the user opting in. Mirrors the
+  // OpenRouter / Anthropic native-search adapters.
+  const responsesWebSearch =
+    req.responsesWebSearch ?? isNativeWebSearchEnabled('sakana', req.model);
+
   const body = toOpenAIResponses({
     provider: 'sakana',
     model: req.model,
@@ -92,6 +100,7 @@ export async function* sakanaStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    responsesWebSearch,
   });
 
   // The Worker prefers its own server-side SAKANA_API_KEY when set and

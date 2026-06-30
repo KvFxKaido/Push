@@ -100,6 +100,7 @@ import {
   WEB_SEARCH_TOOL_PROTOCOL,
   type WebSearchToolCall,
 } from './web-search-tools';
+import { getWebSearchMode, isNativeWebSearchEnabled } from './web-search-mode';
 import { MEMORY_TOOL_PROTOCOL } from './memory-tools';
 import {
   SCRATCHPAD_TOOL_PROTOCOL,
@@ -1080,6 +1081,29 @@ export async function runInPageCoderKernel(
     surface: 'full',
   });
   const capabilityProfile = resolvePushCapabilityProfile(spec.provider, spec.modelId);
+  // Web-search surface gate, resolved once per run. Suppress the prompt-
+  // engineered `web_search` protocol when the provider's native server-side
+  // search is active (the provider stream injects its own tool — advertising
+  // both creates a duplicate surface / name collision, e.g. Anthropic's native
+  // tool is also literally `web_search`) or when web search is turned off.
+  // Mirrors the Orchestrator loop's gate in `orchestrator.ts` so both lanes of
+  // the lead behave identically. Web surface → `console.log` per CLAUDE.md.
+  const webSearchEnabled = getWebSearchMode() !== 'off';
+  const nativeWebSearchActive =
+    webSearchEnabled && isNativeWebSearchEnabled(spec.provider, spec.modelId);
+  const webSearchProtocol =
+    webSearchEnabled && !nativeWebSearchActive ? WEB_SEARCH_TOOL_PROTOCOL : '';
+  if (!webSearchProtocol) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'inline_prompt_web_search_suppressed',
+        provider: spec.provider,
+        model: spec.modelId,
+        reason: !webSearchEnabled ? 'mode_off' : 'native_active',
+      }),
+    );
+  }
   // Native-FC gate decision, resolved once per run. The lead surface attaches
   // native tool schemas only when the model is native-capable; otherwise the
   // run silently lands on the text-dispatch `[TOOL_RESULT]` path. That fallback
@@ -1150,7 +1174,7 @@ export async function runInPageCoderKernel(
           })
       : undefined,
     detectAnyToolCall: detectCoderToolCall,
-    webSearchToolProtocol: WEB_SEARCH_TOOL_PROTOCOL,
+    webSearchToolProtocol: webSearchProtocol,
     sandboxToolProtocol: getSandboxToolProtocol(),
     // Advertise memory tools only when scope was threaded (so executeMemory
     // is wired) — keeps advertising aligned with executor support (LCM).

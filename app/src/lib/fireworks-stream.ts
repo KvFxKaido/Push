@@ -28,6 +28,7 @@ import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
 
 type FireworksLlmMessage = {
@@ -81,6 +82,13 @@ export async function* fireworksStream(
     emitContentBlocks: true,
   }) as FireworksLlmMessage[];
 
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) turns on OpenAI's server-side `web_search` tool so
+  // chats search the web without the user opting in. Mirrors the OpenRouter /
+  // Anthropic native-search adapters.
+  const responsesWebSearch =
+    req.responsesWebSearch ?? isNativeWebSearchEnabled('fireworks', req.model);
+
   // 2. Typed Responses `input`-item body via the shared serializer.
   const body = toOpenAIResponses({
     provider: 'fireworks',
@@ -92,6 +100,7 @@ export async function* fireworksStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    responsesWebSearch,
   });
 
   // 3. Headers. The Worker prefers its own server-side FIREWORKS_API_KEY when

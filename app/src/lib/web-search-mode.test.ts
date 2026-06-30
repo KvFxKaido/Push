@@ -92,26 +92,36 @@ describe('getWebSearchModeUnavailableReason', () => {
 
 describe('isNativeWebSearchEnabled', () => {
   it('enables native search on "auto" for providers that have a native tool', () => {
-    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter']) {
+    for (const provider of [
+      'google',
+      'anthropic',
+      'vertex',
+      'openrouter',
+      // Responses-native providers — OpenAI's server-side `web_search` tool.
+      'openai',
+      'sakana',
+      'fireworks',
+    ]) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(true);
     }
   });
 
   it('leaves native-less providers on the prompt-engineered path under "auto"', () => {
-    for (const provider of ['openai', 'ollama', 'zen', 'fireworks']) {
+    for (const provider of ['ollama', 'zen', 'kilocode', 'nvidia']) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(false);
     }
   });
 
   it('suppresses native search for every provider when mode is "off"', () => {
-    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter']) {
+    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter', 'openai', 'sakana']) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'off')).toBe(false);
     }
   });
 
-  it('does not enable OpenRouter native search under explicit non-native backends', () => {
+  it('does not enable native search under explicit non-native backends', () => {
     for (const mode of ['tavily', 'duckduckgo', 'ollama'] as const) {
       expect(isNativeWebSearchEnabled('openrouter', undefined, mode)).toBe(false);
+      expect(isNativeWebSearchEnabled('sakana', undefined, mode)).toBe(false);
     }
   });
 });
@@ -122,10 +132,13 @@ describe('getAutoNativeSearchLabel', () => {
     expect(getAutoNativeSearchLabel('anthropic')).toBe('Anthropic');
     expect(getAutoNativeSearchLabel('google')).toBe('Google');
     expect(getAutoNativeSearchLabel('vertex')).toBe('Vertex');
+    expect(getAutoNativeSearchLabel('openai')).toBe('OpenAI');
+    expect(getAutoNativeSearchLabel('sakana')).toBe('Sakana');
+    expect(getAutoNativeSearchLabel('fireworks')).toBe('Fireworks');
   });
 
   it('returns null for providers without a native tool (Auto falls back to prompt-engineered)', () => {
-    for (const provider of ['openai', 'ollama', 'zen', 'kilocode', 'fireworks']) {
+    for (const provider of ['ollama', 'zen', 'kilocode', 'nvidia']) {
       expect(getAutoNativeSearchLabel(provider)).toBeNull();
     }
   });
@@ -137,8 +150,10 @@ describe('getAutoNativeSearchLabel', () => {
       'google',
       'vertex',
       'openai',
-      'ollama',
+      'sakana',
       'fireworks',
+      'ollama',
+      'zen',
     ]) {
       const hasNative = isNativeWebSearchEnabled(provider, undefined, 'auto');
       expect(getAutoNativeSearchLabel(provider) !== null).toBe(hasNative);

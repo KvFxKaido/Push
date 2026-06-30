@@ -31,6 +31,7 @@ import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { PROVIDER_URLS } from './providers';
 import { toLLMMessages } from './orchestrator';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
+import { isNativeWebSearchEnabled } from './web-search-mode';
 import { ProviderStreamError } from './stream-error';
 
 type OpenAILlmMessage = {
@@ -82,6 +83,13 @@ export async function* openaiStream(
     emitContentBlocks: true,
   }) as OpenAILlmMessage[];
 
+  // Per-request flag wins; otherwise the Web Search menu's mode decides.
+  // `'auto'` (the default) turns on OpenAI's server-side `web_search` tool so
+  // chats search the web without the user opting in. Mirrors the OpenRouter /
+  // Anthropic native-search adapters.
+  const responsesWebSearch =
+    req.responsesWebSearch ?? isNativeWebSearchEnabled('openai', req.model);
+
   const body = toOpenAIResponses({
     provider: 'openai',
     model: req.model,
@@ -92,6 +100,7 @@ export async function* openaiStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    responsesWebSearch,
   });
 
   // The Worker prefers its own server-side OPENAI_API_KEY when set and

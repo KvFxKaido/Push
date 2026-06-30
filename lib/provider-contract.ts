@@ -483,6 +483,11 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    *  native provider search when available, else Exa) and feeds grounded,
    *  cited results back to the model. */
   openrouterWebSearch?: boolean;
+  /** Responses-API flag to enable OpenAI's native `web_search` server tool on
+   *  the `/v1/responses` adapters (direct OpenAI, Sakana Fugu, Fireworks). The
+   *  provider runs the search server-side and feeds grounded, `url_citation`-
+   *  annotated results back to the model. */
+  responsesWebSearch?: boolean;
   /**
    * Constrain the response to a JSON Schema. Honored by provider adapters whose
    * capability profile advertises structured outputs; ignored by adapters that

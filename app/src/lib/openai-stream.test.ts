@@ -24,6 +24,16 @@ vi.mock('./tool-dispatch', () => ({
   KNOWN_TOOL_NAMES: new Set(['sandbox_write_file', 'sandbox_read_file']),
 }));
 
+// Controllable native-web-search gate. Default off so the tool-serialization
+// tests below see only function tools; flip `nativeRef.value` to exercise the
+// `'auto'`-default path that turns on the server-side `web_search` tool.
+const { nativeRef } = vi.hoisted(() => ({ nativeRef: { value: false } }));
+vi.mock('./web-search-mode', () => ({
+  isNativeWebSearchEnabled: () => nativeRef.value,
+}));
+
+const WEB_SEARCH_TOOL = { type: 'web_search' };
+
 interface ControllableStream {
   response: Response;
   push(frame: string): void;
@@ -107,6 +117,7 @@ describe('openaiStream', () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    nativeRef.value = false;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     collect = async (stream) => {
@@ -162,6 +173,38 @@ describe('openaiStream', () => {
     installStreamFetch(fetchMock);
     const { openaiStream } = await import('./openai-stream');
     const iter = openaiStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
+  it('appends the server-side web_search tool when "auto" enables native search', async () => {
+    nativeRef.value = true;
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const iter = openaiStream(baseRequest);
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tools).toEqual([WEB_SEARCH_TOOL]);
+    expect(body.tool_choice).toBe('auto');
+  });
+
+  it('lets an explicit responsesWebSearch=false override the auto default', async () => {
+    nativeRef.value = true;
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const iter = openaiStream({ ...baseRequest, responsesWebSearch: false });
     void iter[Symbol.asyncIterator]()
       .next()
       .catch(() => {});

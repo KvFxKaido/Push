@@ -67,8 +67,10 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  *
  * `'auto'` (the default) opts each provider into its own native search
  * tool — that's how Gemini gets `googleSearch` grounding, Anthropic gets
- * `web_search_20250305`, and OpenRouter gets its `openrouter:web_search`
- * server tool without the user having to know any of them exist. Explicit
+ * `web_search_20250305`, OpenRouter gets its `openrouter:web_search`
+ * server tool, and the Responses-native providers (OpenAI, Sakana Fugu,
+ * Fireworks) get OpenAI's `web_search` server tool — all without the user
+ * having to know any of them exist. Explicit
  * non-native backends (`'tavily'`, `'duckduckgo'`,
  * `'ollama'`) suppress native — the user has chosen a specific
  * client-side backend and we don't want the provider running a parallel
@@ -103,7 +105,12 @@ export function isNativeWebSearchEnabled(
         provider === 'google' ||
         provider === 'anthropic' ||
         provider === 'vertex' ||
-        provider === 'openrouter'
+        provider === 'openrouter' ||
+        // Responses-native providers — OpenAI's server-side `web_search` tool
+        // ships free on `/v1/responses` (direct OpenAI, Sakana Fugu, Fireworks).
+        provider === 'openai' ||
+        provider === 'sakana' ||
+        provider === 'fireworks'
       );
     case 'google-grounding':
       return provider === 'google';
@@ -133,6 +140,12 @@ export function getAutoNativeSearchLabel(provider: string): string | null {
       return 'Google';
     case 'vertex':
       return 'Vertex';
+    case 'openai':
+      return 'OpenAI';
+    case 'sakana':
+      return 'Sakana';
+    case 'fireworks':
+      return 'Fireworks';
     default:
       return null;
   }
