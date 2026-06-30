@@ -46,6 +46,12 @@ function isBranchStampCommand(command: unknown): command is string {
   );
 }
 
+// The workspace-liveness probe fired by the owner-token rehydrate path when the
+// in-container token file is missing (`test -e /workspace/.git && printf alive`).
+function isWorkspaceProbeCommand(command: unknown): command is string {
+  return typeof command === 'string' && command.includes('/workspace/.git');
+}
+
 function withOwnerTokenAuthExec(
   sandbox: FakeSandbox,
   handler: (command: string, options?: unknown) => ExecResult | Promise<ExecResult>,
@@ -2531,5 +2537,89 @@ describe('background execution routes', () => {
 
     expect(response.status).toBe(404);
     expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+  });
+
+  it('re-mints the owner token and authorizes when the workspace survived a token-file loss', async () => {
+    // A container can lose its ephemeral /tmp owner-token file (any container
+    // restart wipes /tmp) while the Durable Object and the cloned /workspace
+    // survive. The missing file reads as "Sandbox not found or expired", which
+    // the client treats as a fatal loss and retires the LIVE session over —
+    // discarding uncommitted work. When the KV token (durable truth) matches
+    // the caller and /workspace is intact, re-mint the file and continue.
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return {
+          stdout: '',
+          stderr: 'head: /tmp/push-owner-token: No such file or directory',
+          exitCode: 1,
+        };
+      }
+      if (isWorkspaceProbeCommand(command)) {
+        return { stdout: 'alive', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('diff', { sandbox_id: 'sb1' });
+
+    expect(response.status).not.toBe(404);
+    expect(sandbox.writeFile).toHaveBeenCalledWith(OWNER_TOKEN_PATH, DEFAULT_OWNER_TOKEN);
+  });
+
+  it('declines to re-mint and returns NOT_FOUND when the workspace is gone (full recycle)', async () => {
+    // Both /tmp AND /workspace are wiped on a full container recycle. Re-minting
+    // onto a blank container would report a healthy session over an empty
+    // workspace — a silent work loss worse than the visible death. Decline and
+    // fall through to NOT_FOUND so the client's snapshot-restore recovery runs.
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return {
+          stdout: '',
+          stderr: 'head: /tmp/push-owner-token: No such file or directory',
+          exitCode: 1,
+        };
+      }
+      if (isWorkspaceProbeCommand(command)) {
+        return { stdout: '', stderr: '', exitCode: 1 }; // no /workspace/.git
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+
+    const response = await callRoute('diff', { sandbox_id: 'sb1' });
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(OWNER_TOKEN_PATH, expect.anything());
+  });
+
+  it('does not re-mint for a caller whose token does not match the KV record', async () => {
+    // The rehydrate is gated on a timing-safe match against the durable KV
+    // token. A caller without the real token must not be able to re-establish a
+    // session — even when the workspace is intact (probe never runs).
+    const sandbox = mockSandbox();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (isOwnerTokenReadCommand(command)) {
+        return {
+          stdout: '',
+          stderr: 'head: /tmp/push-owner-token: No such file or directory',
+          exitCode: 1,
+        };
+      }
+      if (isWorkspaceProbeCommand(command)) {
+        return { stdout: 'alive', stderr: '', exitCode: 0 };
+      }
+      return { stdout: '', stderr: '', exitCode: 0 };
+    });
+    const env = makeEnv({
+      SANDBOX_TOKENS: makeTokensKV('a-different-kv-token') as unknown as Env['SANDBOX_TOKENS'],
+    });
+
+    const response = await callRoute('diff', { sandbox_id: 'sb1' }, env);
+
+    expect(response.status).toBe(404);
+    expect((await jsonBody(response)).code).toBe('NOT_FOUND');
+    expect(sandbox.writeFile).not.toHaveBeenCalledWith(OWNER_TOKEN_PATH, expect.anything());
   });
 });
