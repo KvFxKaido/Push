@@ -817,7 +817,7 @@ export function dispatchToolBudgetBlockError(
   appendRunEvent(chatId, {
     type: 'tool.call_malformed',
     round,
-    reason: errorAction.runtimeIntervention?.reason ?? 'multiple_mutating_calls',
+    reason: runtimeIntervention?.reason ?? 'multiple_mutating_calls',
     toolName: errorAction.assistantUpdate.toolMeta.toolName,
     preview: summarizeToolResultPreview(errorAction.errorMessage.content),
   });

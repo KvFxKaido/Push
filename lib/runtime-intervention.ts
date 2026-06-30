@@ -29,34 +29,14 @@ export interface RuntimeIntervention<TContext = unknown> {
   readonly context?: TContext;
 }
 
-export type RuntimeInterventionInput<TContext = unknown> = RuntimeIntervention<TContext>;
-
-export function createRuntimeIntervention<TContext>(
-  input: RuntimeInterventionInput<TContext>,
-): RuntimeIntervention<TContext> {
-  return { ...input };
-}
-
 export function createSteerIntervention<TContext>(
-  input: Omit<RuntimeInterventionInput<TContext>, 'mode'>,
+  input: Omit<RuntimeIntervention<TContext>, 'mode'>,
 ): RuntimeIntervention<TContext> {
-  return createRuntimeIntervention({ ...input, mode: 'steer' });
+  return { ...input, mode: 'steer' };
 }
 
 export function createBlockIntervention<TContext>(
-  input: Omit<RuntimeInterventionInput<TContext>, 'mode'>,
+  input: Omit<RuntimeIntervention<TContext>, 'mode'>,
 ): RuntimeIntervention<TContext> {
-  return createRuntimeIntervention({ ...input, mode: 'block' });
-}
-
-export function isSteerIntervention(
-  intervention: RuntimeIntervention | null | undefined,
-): intervention is RuntimeIntervention {
-  return intervention?.mode === 'steer';
-}
-
-export function isBlockIntervention(
-  intervention: RuntimeIntervention | null | undefined,
-): intervention is RuntimeIntervention {
-  return intervention?.mode === 'block';
+  return { ...input, mode: 'block' };
 }
