@@ -954,8 +954,8 @@ export async function startInlineCoderTurn(
         // seam (applyPostExecutionSideEffects #8) fires the recovery handler
         // off it, but that seam never runs for kernel-led turns — so route
         // it from the kernel's executor tee instead.
-        onSandboxUnreachable: (message) => {
-          ctx.runtimeHandlersRef.current?.onSandboxUnreachable?.(message);
+        onSandboxUnreachable: (message, policy) => {
+          ctx.runtimeHandlersRef.current?.onSandboxUnreachable?.(message, policy);
         },
       },
     );

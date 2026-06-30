@@ -124,6 +124,10 @@ import {
   detectNativeToolCalls,
   type AnyToolCall,
 } from './tool-dispatch';
+import {
+  classifySandboxUnreachableRecovery,
+  type SandboxUnreachableRecoveryPolicy,
+} from './sandbox-recovery-policy';
 import { fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
@@ -775,7 +779,7 @@ export interface InPageCoderKernelCallbacks {
    * executors instead. Inline lane only — the delegated arc reconciles through
    * its own dispatch path.
    */
-  onSandboxUnreachable?: (message: string) => void;
+  onSandboxUnreachable?: (message: string, policy?: SandboxUnreachableRecoveryPolicy) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -927,7 +931,10 @@ export async function runInPageCoderKernel(
         callbacks.onBranchSwitchPayload?.(result.branchSwitch);
       }
       if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-        callbacks.onSandboxUnreachable?.(result.structuredError.message);
+        callbacks.onSandboxUnreachable?.(
+          result.structuredError.message,
+          classifySandboxUnreachableRecovery({ source: 'sandbox', call }),
+        );
       }
       return result;
     },
@@ -1039,7 +1046,10 @@ export async function runInPageCoderKernel(
             executionMode: 'cloud',
           });
           if (result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
-            callbacks.onSandboxUnreachable?.(result.structuredError.message);
+            callbacks.onSandboxUnreachable?.(
+              result.structuredError.message,
+              classifySandboxUnreachableRecovery(call),
+            );
           }
           return {
             text: result.text,

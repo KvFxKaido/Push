@@ -11,6 +11,7 @@ import type { TodoItem } from '@/lib/todo-tools';
 import type { SnapshotManager } from '@/hooks/useSnapshotManager';
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import type { WorkspaceSandboxRestoreState } from '@/hooks/useWorkspaceSandboxRestore';
+import type { SandboxUnreachableRecoveryPolicy } from '@/lib/sandbox-recovery-policy';
 import type { RunHostAttachHandle } from '@/hooks/useRunHostAttach';
 import type {
   ActiveRepo,
@@ -53,7 +54,7 @@ export interface ChatRouteWorkspaceProps {
     start: (repo: string, branch?: string) => Promise<string | null>;
     stop: () => Promise<void>;
     refresh: () => Promise<boolean>;
-    markUnreachable: (reason: string) => void;
+    markUnreachable: (reason: string, policy?: SandboxUnreachableRecoveryPolicy) => void;
     hibernate: () => Promise<boolean>;
     forgetSnapshot: () => void;
     snapshotInfo: { snapshotId: string; createdAt: number } | null;

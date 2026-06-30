@@ -66,6 +66,7 @@ import {
 } from '@/lib/sandbox-session';
 import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
+import type { SandboxUnreachableRecoveryPolicy } from '@/lib/sandbox-recovery-policy';
 
 export type SandboxStatus = 'idle' | 'reconnecting' | 'creating' | 'ready' | 'error';
 
@@ -1171,9 +1172,10 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   }, []);
 
   /**
-   * Transition sandbox to error state from outside (e.g. tool dispatch
-   * detected SANDBOX_UNREACHABLE). Does not ping — just updates UI state
-   * so the user can see the error and act on it.
+   * Transition sandbox to a recoverable error state from outside (e.g. tool
+   * dispatch detected SANDBOX_UNREACHABLE). Does not retry the failed tool; it
+   * records the retry policy, updates the sandbox state, and lets the next
+   * sandbox ensure/start prove liveness or recover before more work routes.
    *
    * On the native shell this is also a strand risk: a reported-unreachable
    * container keeps its dead id (like refresh's gone-path), and `ensureSandbox`
@@ -1185,8 +1187,20 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
    * the error surface stands and reconnect/cloud snapshot recover (Increment 2).
    */
   const markUnreachable = useCallback(
-    (reason: string) => {
+    (reason: string, policy?: SandboxUnreachableRecoveryPolicy) => {
       if (statusRef.current === 'error') return; // already in error
+      if (policy) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'sandbox_unreachable_recovery_policy',
+            action: policy.action,
+            reason: policy.reason,
+            toolName: policy.toolName,
+            toolSource: policy.toolSource,
+          }),
+        );
+      }
       setStatus('error');
       setError(reason);
       if (nativeCheckpointsActive()) {
