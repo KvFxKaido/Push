@@ -54,6 +54,11 @@ import {
   MAX_PARALLEL_TOOL_CALLS,
 } from '@push/lib/tool-call-grouping';
 import {
+  buildToolLedgerFromGroupedCalls,
+  type ToolLedgerCallDescriptor,
+  type ToolLedgerSnapshot,
+} from '@push/lib/tool-ledger';
+import {
   createToolDispatcher,
   type ParsedToolObject,
   stableInvocationKey,
@@ -185,6 +190,8 @@ export interface DetectedToolCalls {
 }
 
 export type { DroppedToolCallCandidate } from '@push/lib/deep-reviewer-agent';
+
+export type DetectedToolCallLedger = ToolLedgerSnapshot<AnyToolCall>;
 
 /**
  * Scan assistant output for ALL tool calls and group them into a single
@@ -890,6 +897,38 @@ function classifyDetectedCalls(
     fileMutations: splitFileMutations.accepted,
     extraMutations: [...splitFileMutations.rejected, ...grouped.extraMutations],
     droppedCandidates: [],
+  };
+}
+
+export function buildDetectedToolLedger(detected: DetectedToolCalls): DetectedToolCallLedger {
+  return buildToolLedgerFromGroupedCalls(
+    {
+      readOnly: detected.readOnly,
+      parallelDelegations: detected.parallelDelegations ?? [],
+      fileMutations: detected.fileMutations,
+      mutating: detected.mutating,
+      batchOverflow: detected.batchOverflow,
+      extraMutations: detected.extraMutations,
+    },
+    { describeCall: describeLedgerToolCall },
+  );
+}
+
+function describeLedgerToolCall(toolCall: AnyToolCall): ToolLedgerCallDescriptor {
+  const toolName = getToolCallName(toolCall);
+  let sideEffect: ToolLedgerCallDescriptor['sideEffect'] = 'side_effect';
+  if (isParallelDelegationToolCall(toolCall)) {
+    sideEffect = 'delegation';
+  } else if (isReadOnlyToolCall(toolCall)) {
+    sideEffect = 'read';
+  } else if (isFileMutationToolCall(toolCall)) {
+    sideEffect = 'file_mutation';
+  }
+  return {
+    toolName,
+    source: toolCall.source,
+    argsKey: getCanonicalInvocationKey(toolCall),
+    sideEffect,
   };
 }
 

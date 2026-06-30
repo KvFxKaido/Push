@@ -17,6 +17,7 @@ import {
   PUBLIC_SANDBOX_TOOL_NAMES,
   type ToolCallDiagnosis,
 } from './tool-call-diagnosis.js';
+import { createSteerIntervention, type RuntimeIntervention } from './runtime-intervention.js';
 import { getToolPublicName, getToolSpec, type ToolRegistrySource } from './tool-registry.js';
 import { escapeToolResultBoundaries } from './untrusted-content.js';
 
@@ -121,27 +122,35 @@ export interface ToolCallRecoveryFeedback {
   markMalformed: boolean;
 }
 
+export interface ToolCallRecoveryInterventionContext {
+  feedbackMode: ToolCallRecoveryFeedback['mode'];
+  toolName: string;
+  source: ToolRegistrySource;
+  diagnosisReason?: string;
+}
+
+interface ToolCallRecoveryResultBase {
+  nextState: ToolCallRecoveryState;
+  runtimeIntervention?: RuntimeIntervention<ToolCallRecoveryInterventionContext>;
+}
+
 export type ToolCallRecoveryResult =
-  | {
+  | (ToolCallRecoveryResultBase & {
       kind: 'none';
-      nextState: ToolCallRecoveryState;
-    }
-  | {
+    })
+  | (ToolCallRecoveryResultBase & {
       kind: 'telemetry_only';
       diagnosis: ToolCallDiagnosis;
-      nextState: ToolCallRecoveryState;
-    }
-  | {
+    })
+  | (ToolCallRecoveryResultBase & {
       kind: 'feedback';
       feedback: ToolCallRecoveryFeedback;
       diagnosis?: ToolCallDiagnosis;
-      nextState: ToolCallRecoveryState;
-    }
-  | {
+    })
+  | (ToolCallRecoveryResultBase & {
       kind: 'diagnosis_exhausted';
       diagnosis: ToolCallDiagnosis;
-      nextState: ToolCallRecoveryState;
-    };
+    });
 
 /** The body the `[TOOL_RESULT]` envelope wraps: the runtime metaLine
  *  (`[meta]` / `[pulse]` / `[CODER_STATE]` / `[FILE_AWARENESS]`) prepended to
@@ -251,6 +260,25 @@ export function buildToolCallRecoveryText(
   return `[TOOL_CALL_PARSE_ERROR] You failed to form a valid "${toolName}" tool call after ${maxRetries} attempts. Abandon this tool call and respond in plain text — summarize what you were trying to do and what you found so far. You may still use other tools.`;
 }
 
+function createToolCallRecoveryIntervention(
+  feedback: ToolCallRecoveryFeedback,
+  diagnosis?: ToolCallDiagnosis,
+): RuntimeIntervention<ToolCallRecoveryInterventionContext> {
+  return createSteerIntervention({
+    point: 'after_model',
+    source: 'tool_call_recovery',
+    reason: diagnosis?.reason ?? feedback.mode,
+    message: `Steering model to recover tool call: ${feedback.toolName}.`,
+    guidance: feedback.content,
+    context: {
+      feedbackMode: feedback.mode,
+      toolName: feedback.toolName,
+      source: feedback.source,
+      ...(diagnosis?.reason ? { diagnosisReason: diagnosis.reason } : {}),
+    },
+  });
+}
+
 export function resolveToolCallRecovery(
   text: string,
   state: ToolCallRecoveryState,
@@ -263,17 +291,19 @@ export function resolveToolCallRecovery(
   const unimplementedTool = detectUnimplementedToolCall(text);
 
   if (unimplementedTool) {
+    const feedback: ToolCallRecoveryFeedback = {
+      mode: 'unimplemented_tool',
+      toolName: unimplementedTool,
+      source: getToolSource(unimplementedTool),
+      content: formatToolResultEnvelope(
+        buildUnimplementedToolErrorText(unimplementedTool, options?.unimplementedToolOptions),
+      ),
+      markMalformed: false,
+    };
     return {
       kind: 'feedback',
-      feedback: {
-        mode: 'unimplemented_tool',
-        toolName: unimplementedTool,
-        source: getToolSource(unimplementedTool),
-        content: formatToolResultEnvelope(
-          buildUnimplementedToolErrorText(unimplementedTool, options?.unimplementedToolOptions),
-        ),
-        markMalformed: false,
-      },
+      feedback,
+      runtimeIntervention: createToolCallRecoveryIntervention(feedback),
       nextState: state,
     };
   }
@@ -295,27 +325,29 @@ export function resolveToolCallRecovery(
   }
 
   if (state.diagnosisRetries < maxDiagnosisRetries) {
+    const feedback: ToolCallRecoveryFeedback = {
+      mode: 'retry_tool_call',
+      toolName: diagnosis.toolName || 'unknown',
+      source: diagnosis.source || 'sandbox',
+      content: formatToolResultEnvelope(
+        buildToolCallParseErrorBlock({
+          errorType: diagnosis.reason,
+          detectedTool: diagnosis.toolName,
+          problem: diagnosis.errorMessage,
+          // Signature-only: `diagnosis.errorMessage` already embeds the
+          // example for known tools, so adding the full schema (with example)
+          // would double-print it. The signature still adds the complete arg
+          // list, including optionals the example omits.
+          hint: buildToolSignatureHint(diagnosis.toolName) ?? undefined,
+        }),
+      ),
+      markMalformed: true,
+    };
     return {
       kind: 'feedback',
-      feedback: {
-        mode: 'retry_tool_call',
-        toolName: diagnosis.toolName || 'unknown',
-        source: diagnosis.source || 'sandbox',
-        content: formatToolResultEnvelope(
-          buildToolCallParseErrorBlock({
-            errorType: diagnosis.reason,
-            detectedTool: diagnosis.toolName,
-            problem: diagnosis.errorMessage,
-            // Signature-only: `diagnosis.errorMessage` already embeds the
-            // example for known tools, so adding the full schema (with example)
-            // would double-print it. The signature still adds the complete arg
-            // list, including optionals the example omits.
-            hint: buildToolSignatureHint(diagnosis.toolName) ?? undefined,
-          }),
-        ),
-        markMalformed: true,
-      },
+      feedback,
       diagnosis,
+      runtimeIntervention: createToolCallRecoveryIntervention(feedback, diagnosis),
       nextState: {
         ...state,
         diagnosisRetries: state.diagnosisRetries + 1,
@@ -324,18 +356,20 @@ export function resolveToolCallRecovery(
   }
 
   if (!state.recoveryAttempted) {
+    const feedback: ToolCallRecoveryFeedback = {
+      mode: 'recover_plain_text',
+      toolName: diagnosis.toolName || 'unknown',
+      source: diagnosis.source || 'sandbox',
+      content: formatToolResultEnvelope(
+        buildToolCallRecoveryText(diagnosis.toolName || 'unknown', maxDiagnosisRetries),
+      ),
+      markMalformed: true,
+    };
     return {
       kind: 'feedback',
-      feedback: {
-        mode: 'recover_plain_text',
-        toolName: diagnosis.toolName || 'unknown',
-        source: diagnosis.source || 'sandbox',
-        content: formatToolResultEnvelope(
-          buildToolCallRecoveryText(diagnosis.toolName || 'unknown', maxDiagnosisRetries),
-        ),
-        markMalformed: true,
-      },
+      feedback,
       diagnosis,
+      runtimeIntervention: createToolCallRecoveryIntervention(feedback, diagnosis),
       nextState: {
         ...state,
         recoveryAttempted: true,

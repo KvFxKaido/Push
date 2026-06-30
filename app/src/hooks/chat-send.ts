@@ -21,9 +21,6 @@
  */
 
 import { detectAllToolCalls, detectAnyToolCall, detectNativeToolCalls } from '@/lib/tool-dispatch';
-import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
-import { summarizeToolResultPreview } from '@/lib/chat-run-events';
-import { handleMultipleMutationsError } from '@/lib/chat-tool-execution';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import {
@@ -36,7 +33,7 @@ import {
   createLoopLadderState,
   createTurnRunContext,
   dispatchDroppedCandidatesError,
-  getCurrentWriteBranch,
+  dispatchToolBudgetBlockError,
   handleLoopVerdict,
   recordGithubToolTurnUsage,
   type LoopLadderState,
@@ -103,8 +100,6 @@ export async function processAssistantTurn(
   loopLadder: LoopLadderState = createLoopLadderState(),
   nativeToolCalls: readonly NativeToolCall[] = [],
 ): Promise<AssistantTurnResult> {
-  const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
-
   const detected =
     nativeToolCalls.length > 0
       ? detectNativeToolCalls(nativeToolCalls)
@@ -153,42 +148,16 @@ export async function processAssistantTurn(
   // lists or batch overflow (e.g. 9+ file mutations in one turn) would
   // silently drop the overflow without surfacing a model-facing error.
   if (detected.batchOverflow.length > 0 || detected.extraMutations.length > 0) {
-    const errorAction = handleMultipleMutationsError(
+    return dispatchToolBudgetBlockError(
       detected,
+      round,
       accumulated,
       thinkingAccumulated,
       reasoningBlocks,
       apiMessages,
-      lockedProvider,
-      getCurrentWriteBranch(ctx),
+      recoveryState,
+      ctx,
     );
-
-    appendRunEvent(chatId, {
-      type: 'tool.call_malformed',
-      round,
-      reason: 'multiple_mutating_calls',
-      toolName: errorAction.assistantUpdate.toolMeta.toolName,
-      preview: summarizeToolResultPreview(errorAction.errorMessage.content),
-    });
-
-    setConversations((prev) => {
-      const conv = prev[chatId];
-      if (!conv) return prev;
-      const msgs = markLastAssistantToolCall(conv.messages, {
-        content: errorAction.assistantUpdate.content,
-        thinking: errorAction.assistantUpdate.thinking,
-        malformed: true,
-        toolMeta: errorAction.assistantUpdate.toolMeta,
-      });
-      return { ...prev, [chatId]: { ...conv, messages: [...msgs, errorAction.errorMessage] } };
-    });
-
-    return {
-      nextApiMessages: errorAction.apiMessages,
-      nextRecoveryState: recoveryState,
-      loopAction: 'continue',
-      loopCompletedNormally: false,
-    };
   }
 
   // --- Set up the per-turn run context shared by the three branch handlers.
