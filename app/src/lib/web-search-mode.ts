@@ -68,9 +68,9 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * `'auto'` (the default) opts each provider into its own native search
  * tool — that's how Gemini gets `googleSearch` grounding, Anthropic gets
  * `web_search_20250305`, OpenRouter gets its `openrouter:web_search`
- * server tool, and the Responses-native providers (OpenAI, Sakana Fugu,
- * Fireworks) get OpenAI's `web_search` server tool — all without the user
- * having to know any of them exist. Explicit
+ * server tool, and the Responses-native providers that implement it
+ * (OpenAI, Sakana Fugu) get OpenAI's `web_search` server tool — all
+ * without the user having to know any of them exist. Explicit
  * non-native backends (`'tavily'`, `'duckduckgo'`,
  * `'ollama'`) suppress native — the user has chosen a specific
  * client-side backend and we don't want the provider running a parallel
@@ -106,11 +106,14 @@ export function isNativeWebSearchEnabled(
         provider === 'anthropic' ||
         provider === 'vertex' ||
         provider === 'openrouter' ||
-        // Responses-native providers — OpenAI's server-side `web_search` tool
-        // ships free on `/v1/responses` (direct OpenAI, Sakana Fugu, Fireworks).
+        // Responses-native providers that implement OpenAI's server-side
+        // `web_search` built-in tool: direct OpenAI (broad model support) and
+        // Sakana Fugu (every Fugu model ships it). Fireworks is deliberately
+        // excluded — its `/v1/responses` supports only function/MCP/SSE tools,
+        // not the built-in `web_search`, so defaulting it on would 400 every
+        // chat. Fireworks stays on the prompt-engineered path (Tavily/DDG).
         provider === 'openai' ||
-        provider === 'sakana' ||
-        provider === 'fireworks'
+        provider === 'sakana'
       );
     case 'google-grounding':
       return provider === 'google';
@@ -144,8 +147,6 @@ export function getAutoNativeSearchLabel(provider: string): string | null {
       return 'OpenAI';
     case 'sakana':
       return 'Sakana';
-    case 'fireworks':
-      return 'Fireworks';
     default:
       return null;
   }

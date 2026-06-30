@@ -182,6 +182,20 @@ describe('toOpenAIResponses', () => {
     ).toBeUndefined();
   });
 
+  it('suppresses web_search on structured-output turns (responseFormat set)', () => {
+    const body = toOpenAIResponses(
+      reqWith([llm('1', 'user', 'hi')], {
+        responsesWebSearch: true,
+        responseFormat: { name: 'verdict', schema: { type: 'object' } },
+      }),
+    );
+    // The strict json_schema text.format is present; web_search is held back.
+    expect(body.text).toEqual({
+      format: { type: 'json_schema', name: 'verdict', strict: true, schema: { type: 'object' } },
+    });
+    expect(body.tools).toBeUndefined();
+  });
+
   it('serializes tool_use/tool_result blocks as Responses function items', () => {
     const body = toOpenAIResponses(
       reqWith([

@@ -97,17 +97,18 @@ describe('isNativeWebSearchEnabled', () => {
       'anthropic',
       'vertex',
       'openrouter',
-      // Responses-native providers — OpenAI's server-side `web_search` tool.
+      // Responses-native providers that implement OpenAI's `web_search` tool.
       'openai',
       'sakana',
-      'fireworks',
     ]) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(true);
     }
   });
 
   it('leaves native-less providers on the prompt-engineered path under "auto"', () => {
-    for (const provider of ['ollama', 'zen', 'kilocode', 'nvidia']) {
+    // Fireworks speaks the Responses API but does NOT implement the built-in
+    // `web_search` tool, so it must stay off the native path.
+    for (const provider of ['fireworks', 'ollama', 'zen', 'kilocode', 'nvidia']) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(false);
     }
   });
@@ -134,11 +135,11 @@ describe('getAutoNativeSearchLabel', () => {
     expect(getAutoNativeSearchLabel('vertex')).toBe('Vertex');
     expect(getAutoNativeSearchLabel('openai')).toBe('OpenAI');
     expect(getAutoNativeSearchLabel('sakana')).toBe('Sakana');
-    expect(getAutoNativeSearchLabel('fireworks')).toBe('Fireworks');
   });
 
   it('returns null for providers without a native tool (Auto falls back to prompt-engineered)', () => {
-    for (const provider of ['ollama', 'zen', 'kilocode', 'nvidia']) {
+    // Fireworks included: Responses-API, but no built-in web_search tool.
+    for (const provider of ['fireworks', 'ollama', 'zen', 'kilocode', 'nvidia']) {
       expect(getAutoNativeSearchLabel(provider)).toBeNull();
     }
   });

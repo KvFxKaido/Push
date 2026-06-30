@@ -82,10 +82,12 @@ export async function* fireworksStream(
     emitContentBlocks: true,
   }) as FireworksLlmMessage[];
 
-  // Per-request flag wins; otherwise the Web Search menu's mode decides.
-  // `'auto'` (the default) turns on OpenAI's server-side `web_search` tool so
-  // chats search the web without the user opting in. Mirrors the OpenRouter /
-  // Anthropic native-search adapters.
+  // Fireworks' `/v1/responses` does not implement OpenAI's built-in
+  // `web_search` tool (only function/MCP/SSE), so `isNativeWebSearchEnabled`
+  // returns false for it and this resolves off by default — Fireworks chats use
+  // the prompt-engineered web search path. The plumbing stays symmetric with
+  // the OpenAI/Sakana adapters and honors an explicit per-request override if
+  // Fireworks ever ships the tool.
   const responsesWebSearch =
     req.responsesWebSearch ?? isNativeWebSearchEnabled('fireworks', req.model);
 

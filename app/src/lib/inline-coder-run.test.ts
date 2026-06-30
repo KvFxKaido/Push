@@ -932,8 +932,9 @@ describe('inline lane web-search protocol gating', () => {
   }
 
   it('suppresses the prompt-engineered protocol when native search is active', async () => {
-    // Responses-native (this PR) + a pre-existing native provider.
-    const nativeProviders: ActiveProvider[] = ['openai', 'sakana', 'fireworks', 'openrouter'];
+    // OpenAI + Sakana (this PR's Responses-native additions) + a pre-existing
+    // native provider. Fireworks is excluded — it has no built-in web_search.
+    const nativeProviders: ActiveProvider[] = ['openai', 'sakana', 'openrouter'];
     for (const provider of nativeProviders) {
       const options = await runWithProvider(provider);
       expect(options.webSearchToolProtocol).toBe('');
@@ -941,7 +942,11 @@ describe('inline lane web-search protocol gating', () => {
   });
 
   it('keeps the prompt-engineered protocol for native-less providers', async () => {
-    const options = await runWithProvider('ollama');
-    expect(options.webSearchToolProtocol).toBe(WEB_SEARCH_TOOL_PROTOCOL);
+    // Fireworks speaks the Responses API but has no built-in web_search, so it
+    // stays on the prompt-engineered path like Ollama.
+    for (const provider of ['fireworks', 'ollama'] as ActiveProvider[]) {
+      const options = await runWithProvider(provider);
+      expect(options.webSearchToolProtocol).toBe(WEB_SEARCH_TOOL_PROTOCOL);
+    }
   });
 });

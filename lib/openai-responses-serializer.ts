@@ -193,9 +193,16 @@ export function toOpenAIResponses(
   // emit `tools` even when no function schemas are attached — the model then
   // decides per-turn whether to search. `tool_choice: 'auto'` keeps prose
   // answers available when neither is needed.
+  //
+  // Suppress `web_search` when a strict JSON-schema output is requested:
+  // structured/verification turns force `text.format`, and the Responses API
+  // constrains combining a built-in tool with strict structured output — adding
+  // it there risks perturbing or rejecting the turn. Function tools still merge;
+  // only the server-side search is held back.
+  const webSearch = req.responsesWebSearch === true && !req.responseFormat;
   const tools: OpenAIResponsesTool[] = [
     ...nativeTools.map(flatToolToOpenAIResponsesTool),
-    ...(req.responsesWebSearch === true ? [{ type: 'web_search' as const }] : []),
+    ...(webSearch ? [{ type: 'web_search' as const }] : []),
   ];
 
   return {

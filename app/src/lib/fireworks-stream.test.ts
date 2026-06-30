@@ -110,27 +110,35 @@ describe('fireworksStream', () => {
     expect(body.tool_choice).toBeUndefined();
   });
 
-  it('appends the server-side web_search tool when "auto" enables native search', async () => {
-    nativeRef.value = true;
+  // Fireworks' Responses API has no built-in web_search tool, so the gate
+  // (`isNativeWebSearchEnabled('fireworks')`) is false in production — modeled
+  // by `nativeRef` defaulting false. The stream still consults the gate and
+  // honors an explicit per-request override, exercised below.
+  it('leaves web_search off by default (no Fireworks built-in search)', async () => {
     await drain(baseRequest);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tools).toBeUndefined();
+    expect(body.tool_choice).toBeUndefined();
+  });
+
+  it('appends web_search when forced on via the explicit per-request flag', async () => {
+    await drain({ ...baseRequest, responsesWebSearch: true });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.tools).toEqual([WEB_SEARCH_TOOL]);
     expect(body.tool_choice).toBe('auto');
   });
 
   it('merges web_search after native function tools (web search last)', async () => {
-    nativeRef.value = true;
-    await drain({ ...baseRequest, tools: [sampleTool] });
+    await drain({ ...baseRequest, tools: [sampleTool], responsesWebSearch: true });
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
     expect(body.tools).toEqual([responsesTool, WEB_SEARCH_TOOL]);
     expect(body.tool_choice).toBe('auto');
   });
 
-  it('lets an explicit responsesWebSearch=false override the auto default', async () => {
+  it('consults the native gate when no explicit flag is set', async () => {
     nativeRef.value = true;
-    await drain({ ...baseRequest, responsesWebSearch: false });
+    await drain(baseRequest);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
-    expect(body.tools).toBeUndefined();
-    expect(body.tool_choice).toBeUndefined();
+    expect(body.tools).toEqual([WEB_SEARCH_TOOL]);
   });
 });
