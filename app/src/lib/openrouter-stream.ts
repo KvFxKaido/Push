@@ -76,8 +76,8 @@ function openRouterRequestUrl(transport: OpenRouterTransport): string {
 function contentFallbackText(content: OpenRouterLlmMessage['content']): string {
   if (typeof content === 'string') return content;
   return content
-    .map((part) => (part.type === 'text' ? part.text : ''))
-    .filter(Boolean)
+    .filter((part): part is Extract<LlmContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
     .join('\n');
 }
 
@@ -86,8 +86,11 @@ function toNeutralMessages(messages: OpenRouterLlmMessage[]): LlmMessage[] {
     id: `openrouter-${index}`,
     role: message.role,
     content: contentFallbackText(message.content),
-    ...(message.contentBlocks ? { contentBlocks: message.contentBlocks } : {}),
     timestamp: 0,
+    ...(Array.isArray(message.content) ? { contentParts: message.content } : {}),
+    ...(message.contentBlocks && message.contentBlocks.length > 0
+      ? { contentBlocks: message.contentBlocks }
+      : {}),
   }));
 }
 
@@ -173,17 +176,22 @@ async function* openrouterResponsesStream(
   // constraint can't be lost mid-route. Web search alone doesn't need it (the
   // server tool gates its own routing), so it stays off the web-search-only path.
   const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
-  const baseBody = toOpenAIResponses({
-    provider: 'openrouter',
-    model: req.model,
-    messages: toNeutralMessages(llmMessages as OpenRouterLlmMessage[]),
-    maxTokens: req.maxTokens,
-    temperature: req.temperature,
-    topP: req.topP,
-    signal: req.signal,
-    responseFormat: req.responseFormat,
-    tools: nativeTools,
-  }) as unknown as Record<string, unknown>;
+  const baseBody = toOpenAIResponses(
+    {
+      provider: 'openrouter',
+      model: req.model,
+      messages: toNeutralMessages(llmMessages as OpenRouterLlmMessage[]),
+      maxTokens: req.maxTokens,
+      temperature: req.temperature,
+      topP: req.topP,
+      signal: req.signal,
+      responseFormat: req.responseFormat,
+      tools: nativeTools,
+    },
+    {
+      geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
+    },
+  ) as unknown as Record<string, unknown>;
   const responseTools = Array.isArray(baseBody.tools)
     ? [...(baseBody.tools as Record<string, unknown>[])]
     : [];

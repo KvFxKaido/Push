@@ -18,6 +18,7 @@ import type {
 import { toOpenAIResponses } from '../lib/openai-responses-serializer.ts';
 import { openAIResponsesSSEPump } from '../lib/openai-responses-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
+import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import type { ProviderConfig } from './provider.ts';
 import { CliProviderError, type CliProviderStreamOptions } from './openai-stream.ts';
 
@@ -56,6 +57,11 @@ async function* cliOpenAIResponsesStream(
   const baseBody = toOpenAIResponses(req, {
     modelOverride: model,
     temperatureDefault: 0.1,
+    geminiThoughtSignatureFallback:
+      config.id === 'openrouter' &&
+      Array.isArray(req.tools) &&
+      req.tools.length > 0 &&
+      isGeminiModelId(model),
   }) as unknown as Record<string, unknown>;
   const responseTools = Array.isArray(baseBody.tools)
     ? [...(baseBody.tools as Record<string, unknown>[])]

@@ -10,6 +10,7 @@ import {
   MAX_RETRIES,
 } from '../provider.ts';
 import { createCliProviderStream } from '../openai-stream.ts';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '../../lib/gemini-thought-signature.ts';
 
 // ─── Env helper ─────────────────────────────────────────────────
 
@@ -903,6 +904,60 @@ describe('streamCompletion', () => {
       assert.deepEqual(capturedBody.tools, [responsesTool, { type: 'openrouter:web_search' }]);
       assert.equal(capturedBody.tool_choice, 'auto');
       assert.deepEqual(capturedBody.provider, { require_parameters: true });
+    });
+
+    it('backfills Gemini thought signatures on OpenRouter Responses tool history', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildResponsesSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createProviderStream(orConfig, 'key');
+      for await (const _ of stream({
+        provider: 'openrouter',
+        model: 'google/gemini-3-pro-preview',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            timestamp: 0,
+            contentBlocks: [
+              {
+                type: 'tool_use',
+                id: 'call_1',
+                name: 'sandbox_read_file',
+                input: { path: 'a.ts' },
+              },
+            ],
+          },
+        ],
+        tools: [sampleTool],
+        openrouterWebSearch: false,
+      })) {
+        // drain
+      }
+
+      assert.deepEqual(capturedBody.input[0], {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'sandbox_read_file',
+        arguments: '{"path":"a.ts"}',
+        status: 'completed',
+        thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+        extra_content: {
+          google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+        },
+        function: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      });
     });
 
     it('omits the web_search tool when PUSH_OPENROUTER_WEB_SEARCH=0', async () => {

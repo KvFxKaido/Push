@@ -27,6 +27,15 @@ export interface OpenAIResponsesFunctionCallItem {
   name: string;
   arguments: string;
   status?: 'in_progress' | 'completed' | 'incomplete';
+  /**
+   * Gemini-fronting Responses gateways can require the signed-reasoning
+   * `thoughtSignature` to replay tool history. These provider-private fields
+   * mirror the compat chat serializer's three tolerated wire shapes and are
+   * emitted only by callers that opt into Gemini replay support.
+   */
+  thoughtSignature?: string;
+  extra_content?: { google?: { thought_signature?: string } };
+  function?: { thought_signature?: string };
 }
 
 export interface OpenAIResponsesFunctionCallOutputItem {

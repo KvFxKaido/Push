@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '@push/lib/gemini-thought-signature';
 
 vi.mock('@/hooks/useOpenRouterConfig', () => ({
   getOpenRouterKey: () => 'test-key',
@@ -27,7 +28,7 @@ vi.mock('./orchestrator', async () => {
   const { materializeToolContentBlocks } = await import('@push/lib/content-blocks');
   return {
     toLLMMessages: (
-      messages: Array<ChatMessage & { contentBlocks?: unknown }>,
+      messages: Array<ChatMessage & { contentBlocks?: unknown; contentParts?: unknown }>,
       opts?: { emitContentBlocks?: boolean },
     ) => {
       const prepared = opts?.emitContentBlocks
@@ -35,7 +36,7 @@ vi.mock('./orchestrator', async () => {
         : messages;
       return prepared.map((m) => ({
         role: m.role,
-        content: m.content,
+        content: Array.isArray(m.contentParts) ? m.contentParts : m.content,
         ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
       }));
     },
@@ -315,6 +316,40 @@ describe('openrouterStream', () => {
     expect(body.max_tokens).toBeUndefined();
   });
 
+  it('preserves multimodal content parts in the Responses body', async () => {
+    const body = await pullRequestBody(fetchMock, {
+      ...baseRequest,
+      openrouterWebSearch: false,
+      messages: [
+        {
+          id: '1',
+          role: 'user',
+          content: 'what is this?',
+          contentParts: [
+            { type: 'text', text: 'what is this?' },
+            { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+          ],
+          timestamp: 0,
+        } as unknown as ChatMessage,
+      ],
+    });
+
+    expect(body.input).toEqual([
+      {
+        type: 'message',
+        role: 'user',
+        content: [
+          { type: 'input_text', text: 'what is this?' },
+          {
+            type: 'input_image',
+            image_url: 'data:image/png;base64,iVBORw0KGgo=',
+            detail: 'auto',
+          },
+        ],
+      },
+    ]);
+  });
+
   it('serializes responseFormat as Responses text.format json_schema', async () => {
     const body = await pullRequestBody(fetchMock, {
       ...baseRequest,
@@ -421,6 +456,26 @@ describe('openrouterStream', () => {
       },
       { type: 'function_call_output', call_id: 'toolu_1', output: 'file body' },
     ]);
+  });
+
+  it('backfills Gemini thought signatures on OpenRouter Responses tool history', async () => {
+    const body = await pullRequestBody(fetchMock, {
+      ...baseRequest,
+      model: 'google/gemini-3-pro-preview',
+      openrouterWebSearch: false,
+      messages: toolHistory(),
+      tools: [sampleTool],
+    });
+
+    expect((body.input as Array<Record<string, unknown>>)[0]).toMatchObject({
+      type: 'function_call',
+      call_id: 'toolu_1',
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      extra_content: {
+        google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      },
+      function: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+    });
   });
 
   it('leaves tool history as plain message items when no native tools are attached', async () => {

@@ -9,27 +9,6 @@
 import type { PushStreamEvent, StreamUsage, UrlCitation } from './provider-contract.js';
 import { parseNativeToolCallArgs } from './openai-sse-pump.js';
 
-/**
- * Normalize a Responses `url_citation` annotation into a `UrlCitation`. The
- * Responses shape is flat (`{ type, url, title, start_index, end_index }`),
- * unlike the Chat Completions shape where the fields nest under `url_citation`.
- * Returns null for anything that isn't a well-formed url_citation — a malformed
- * citation is display-only metadata loss, never a reason to disturb the stream.
- */
-function parseResponsesAnnotation(value: unknown): UrlCitation | null {
-  if (!value || typeof value !== 'object') return null;
-  const rec = value as Record<string, unknown>;
-  if (rec.type !== 'url_citation') return null;
-  if (typeof rec.url !== 'string' || !rec.url) return null;
-  return {
-    url: rec.url,
-    title: typeof rec.title === 'string' ? rec.title : rec.url,
-    content: typeof rec.content === 'string' ? rec.content : '',
-    startIndex: typeof rec.start_index === 'number' ? rec.start_index : 0,
-    endIndex: typeof rec.end_index === 'number' ? rec.end_index : 0,
-  };
-}
-
 export interface OpenAIResponsesSSEPumpOptions {
   body: ReadableStream<Uint8Array>;
   signal?: AbortSignal;
@@ -136,6 +115,58 @@ function errorMessageFromEvent(parsed: Record<string, unknown>): string {
   return 'unknown stream error';
 }
 
+function parseResponseUrlCitation(value: unknown): UrlCitation | null {
+  if (!value || typeof value !== 'object') return null;
+  const rec = value as Record<string, unknown>;
+  if (rec.type !== 'url_citation') return null;
+  // Responses streaming annotations are flat, while some compatible gateways
+  // place final message annotations under `url_citation` like Chat Completions.
+  // Accept both and drop malformed citations without disturbing text output.
+  const source =
+    rec.url_citation && typeof rec.url_citation === 'object'
+      ? (rec.url_citation as Record<string, unknown>)
+      : rec;
+  if (typeof source.url !== 'string' || !source.url) return null;
+  return {
+    url: source.url,
+    title: typeof source.title === 'string' ? source.title : '',
+    content: typeof source.content === 'string' ? source.content : '',
+    startIndex: typeof source.start_index === 'number' ? source.start_index : 0,
+    endIndex: typeof source.end_index === 'number' ? source.end_index : 0,
+  };
+}
+
+function parseResponseUrlCitations(value: unknown): UrlCitation[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => {
+      const citation = parseResponseUrlCitation(entry);
+      return citation ? [citation] : [];
+    });
+  }
+  const citation = parseResponseUrlCitation(value);
+  return citation ? [citation] : [];
+}
+
+function responseOutputAnnotations(response: Record<string, unknown>): UrlCitation[] {
+  if (!Array.isArray(response.output)) return [];
+  const citations: UrlCitation[] = [];
+  for (const item of response.output) {
+    if (!item || typeof item !== 'object') continue;
+    const record = item as Record<string, unknown>;
+    citations.push(...parseResponseUrlCitations(record.annotations));
+    citations.push(...parseResponseUrlCitations(record.annotation));
+
+    if (!Array.isArray(record.content)) continue;
+    for (const content of record.content) {
+      if (!content || typeof content !== 'object') continue;
+      const contentRecord = content as Record<string, unknown>;
+      citations.push(...parseResponseUrlCitations(contentRecord.annotations));
+      citations.push(...parseResponseUrlCitations(contentRecord.annotation));
+    }
+  }
+  return citations;
+}
+
 export async function* openAIResponsesSSEPump(
   opts: OpenAIResponsesSSEPumpOptions,
 ): AsyncIterable<PushStreamEvent> {
@@ -146,7 +177,19 @@ export async function* openAIResponsesSSEPump(
   let stopped = false;
   let pendingUsage: StreamUsage | undefined;
   let emittedToolCall = false;
+  const emittedCitationKeys = new Set<string>();
   const pendingToolCalls = new Map<number, PendingResponseToolCall>();
+
+  function newCitations(citations: UrlCitation[]): UrlCitation[] {
+    const out: UrlCitation[] = [];
+    for (const citation of citations) {
+      const key = `${citation.url}\n${citation.startIndex}\n${citation.endIndex}\n${citation.title}`;
+      if (emittedCitationKeys.has(key)) continue;
+      emittedCitationKeys.add(key);
+      out.push(citation);
+    }
+    return out;
+  }
 
   function* flushToolCall(index: number): Generator<PushStreamEvent> {
     const call = pendingToolCalls.get(index);
@@ -257,12 +300,12 @@ export async function* openAIResponsesSSEPump(
     // Native web-search citations arrive as `url_citation` annotations on the
     // output text. Additive to the `text_delta` channel — the grounded answer
     // still streams as text; this carries the structured source for a "Sources"
-    // UI affordance. Consumers dedupe by url. Emitted one-at-a-time as each
-    // annotation lands.
+    // UI affordance. Deduped when providers repeat the same annotation in a
+    // later completed-response payload.
     if (type === 'response.output_text.annotation.added') {
-      const citation = parseResponsesAnnotation(parsed.annotation);
-      if (citation) {
-        yield { type: 'citations', citations: [citation] };
+      const citations = newCitations(parseResponseUrlCitations(parsed.annotation));
+      if (citations.length > 0) {
+        yield { type: 'citations', citations };
       }
       return;
     }
@@ -341,6 +384,10 @@ export async function* openAIResponsesSSEPump(
       pendingUsage = usage ?? pendingUsage;
       if (response) {
         upsertToolCallsFromCompletedResponse(response);
+        const citations = newCitations(responseOutputAnnotations(response));
+        if (citations.length > 0) {
+          yield { type: 'citations', citations };
+        }
       }
       yield* flushAllToolCalls();
       const incompleteReason =

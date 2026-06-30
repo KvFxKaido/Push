@@ -197,6 +197,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/responses`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key (BYOK-compatible; provider-native keys stay in OpenRouter) |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6:nitro`) |
+| `PUSH_OPENROUTER_WEB_SEARCH` | OpenRouter native web search on Responses transport (default: on; set `0`, `false`, `no`, or `off` to disable) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
