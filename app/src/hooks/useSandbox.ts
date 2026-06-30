@@ -139,7 +139,11 @@ function clearTrackedSession(sessionStorageKey?: string | null, sandboxId?: stri
   setSandboxOwnerToken(null);
 }
 
-export function useSandbox(activeRepoFullName?: string | null, activeBranch?: string | null) {
+export function useSandbox(
+  activeRepoFullName?: string | null,
+  activeBranch?: string | null,
+  activeDefaultBranch?: string | null,
+) {
   const [sandboxId, setSandboxId] = useState<string | null>(null);
   const [status, setStatus] = useState<SandboxStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -811,7 +815,16 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
             return null;
           }
 
-          const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
+          const defaultBranchForCreate = activeDefaultBranch || undefined;
+          const session = defaultBranchForCreate
+            ? await createSandbox(
+                repo,
+                branch,
+                token,
+                getGitHubAppCommitIdentity(),
+                defaultBranchForCreate,
+              )
+            : await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
 
           if (session.status === 'error') {
             freshSandboxIdRef.current = null;
@@ -862,7 +875,7 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         }
       });
     },
-    [restoreSavedSessionSnapshot, retireSandboxState],
+    [activeDefaultBranch, restoreSavedSessionSnapshot, retireSandboxState],
   );
 
   const stop = useCallback(async () => {

@@ -43,6 +43,8 @@ export interface SandboxManifest {
   repo: string;
   /** Branch to check out. Defaults to "main". */
   branch?: string;
+  /** Repository default branch, when known. Lets providers identify default-branch starts. */
+  defaultBranch?: string;
   /** GitHub PAT for private repo access. */
   githubToken?: string;
   /** Git commit identity for the sandbox. */

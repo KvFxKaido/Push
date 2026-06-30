@@ -500,6 +500,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
 
   const repo = str(body.repo) ?? '';
   const branch = str(body.branch) ?? 'main';
+  const defaultBranch = str(body.default_branch);
   const githubToken = str(body.github_token);
   const githubIdentity = body.github_identity as { name?: string; email?: string } | undefined;
   const seedFiles = (body.seed_files as Array<{ path: string; content: string }> | undefined) ?? [];
@@ -684,10 +685,14 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // it). If it's an ancestor, the snapshot is "origin's tip + your unpushed
       // work" and restoring loses nothing. If it isn't, origin advanced past the
       // snapshot (you pushed elsewhere, a merge landed, …) and restoring would
-      // silently shadow real commits — so we keep the fresh clone instead. This
-      // makes the default branch self-exclude whenever it has moved, with no need
-      // to special-case it.
-      if (directCloneSucceeded && env.SNAPSHOTS && env.SNAPSHOT_INDEX) {
+      // silently shadow real commits — so we keep the fresh clone instead.
+      // Default-branch sessions should cold-start from origin. On-origin snapshot
+      // recovery is for feature branches with local-only work; running it on
+      // `main`/`master` makes every ordinary startup hydrate, guard, and often
+      // re-clone a stale snapshot before the sandbox can become ready.
+      const branchLooksDefault =
+        branch === defaultBranch || (!defaultBranch && (branch === 'main' || branch === 'master'));
+      if (directCloneSucceeded && !branchLooksDefault && env.SNAPSHOTS && env.SNAPSHOT_INDEX) {
         const tipResult = (await withExecDeadline(
           sandbox.exec('git -C /workspace rev-parse HEAD'),
         ).catch(() => ({ stdout: '', exitCode: 1 }))) as { stdout?: string; exitCode?: number };

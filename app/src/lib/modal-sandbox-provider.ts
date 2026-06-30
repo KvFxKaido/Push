@@ -145,6 +145,7 @@ export class ModalSandboxProvider implements SandboxProvider {
         manifest.branch,
         manifest.githubToken,
         manifest.gitIdentity,
+        manifest.defaultBranch,
       );
 
       if (session.status === 'error') {

@@ -133,11 +133,15 @@ vi.mock('react', () => ({
 
 const { useSandbox } = await import('./useSandbox');
 
-function render(repo: string | null = null, branch: string | null = null) {
+function render(
+  repo: string | null = null,
+  branch: string | null = null,
+  defaultBranch: string | null = null,
+) {
   reactState.index = 0;
   reactState.refIndex = 0;
   // eslint-disable-next-line react-hooks/rules-of-hooks
-  return useSandbox(repo, branch);
+  return useSandbox(repo, branch, defaultBranch);
 }
 
 async function runEffects(limit: number = reactState.effects.length): Promise<Array<() => void>> {
@@ -250,6 +254,27 @@ describe('useSandbox.start', () => {
     expect(reactState.cells[0].value).toBe('sb-new');
     expect(reactState.cells[1].value).toBe('ready');
     expect(sandboxSession.saveSandboxSession).toHaveBeenCalled();
+  });
+
+  it('threads the active default branch into sandbox creation', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-new',
+      ownerToken: 'owner-tok',
+    });
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'gh-token', kind: 'app' });
+    const hook = render('owner/repo', 'develop', 'develop');
+
+    const id = await hook.start('owner/repo', 'develop');
+
+    expect(id).toBe('sb-new');
+    expect(sandboxClient.createSandbox).toHaveBeenCalledWith(
+      'owner/repo',
+      'develop',
+      'gh-token',
+      undefined,
+      'develop',
+    );
   });
 
   it('does not send a GitHub token when repo is empty (scratch mode)', async () => {
