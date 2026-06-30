@@ -137,7 +137,8 @@ exist partly so a *different* model catches the Coder's mistakes. So:
 - A preset MAY set `independent-judge` roles to a different *provider* (e.g. Zen
   Coder, Anthropic Auditor) — the preset is not constrained to its own default
   provider for the judge roles. The `provider` field becomes the *default*
-  provider; per-role entries may override it.
+  provider, and the §2 role-entry shape carries `provider?: RealProviderId` so
+  those per-role overrides resolve into the final `{provider, model}` map.
 - The default Zen preset keeps Auditor on a Zen model *distinct from* the
   Coder model at minimum; a "diversity on" variant points it cross-provider when
   a second key is configured.
