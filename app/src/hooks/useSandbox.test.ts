@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { GitHubTokenKind } from '@/lib/github-auth';
 import { USER_TOKEN_GATE_MESSAGE, formatRepoNotCoveredMessage } from '@/lib/sandbox-auth-gate';
 
@@ -880,5 +880,99 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
     await Promise.resolve();
     expect(reactState.cells[0].value).toBe('sb-1');
     expect(reactState.cells[1].value).toBe('ready');
+  });
+});
+
+describe('useSandbox — keep-warm snapshot on background (page-hide)', () => {
+  // Env is `node` (no DOM). The hook's visibility effect calls
+  // document.addEventListener; stub a minimal document with a dispatch registry
+  // so we can drive a real `visibilitychange` through the hook's handler.
+  type FakeDoc = {
+    hidden: boolean;
+    addEventListener: (type: string, fn: () => void) => void;
+    removeEventListener: (type: string, fn: () => void) => void;
+    dispatch: (type: string) => void;
+  };
+  function installFakeDocument(): FakeDoc {
+    const listeners: Record<string, Array<() => void>> = {};
+    const doc: FakeDoc = {
+      hidden: false,
+      addEventListener: (type, fn) => {
+        (listeners[type] ??= []).push(fn);
+      },
+      removeEventListener: (type, fn) => {
+        listeners[type] = (listeners[type] ?? []).filter((f) => f !== fn);
+      },
+      dispatch: (type) => (listeners[type] ?? []).forEach((f) => f()),
+    };
+    vi.stubGlobal('document', doc);
+    return doc;
+  }
+
+  async function startReadySandbox(repo = 'owner/repo', branch = 'main') {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.getSandboxOwnerToken.mockReturnValue('tok');
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'gh-token', kind: 'app' });
+    const hook = render(repo, branch);
+    await hook.start(repo, branch);
+    return hook;
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('snapshots the live container when the app is backgrounded', async () => {
+    sandboxClient.hibernateSandbox.mockResolvedValue({
+      ok: true,
+      snapshotId: 'snap-hidden',
+      restoreToken: 'rt-1',
+      keptWarm: true,
+    });
+    const doc = installFakeDocument();
+    await startReadySandbox();
+    const cleanups = await runEffects();
+    // runEffects replays the hook's ref-sync effect with the render-time status
+    // ('idle'); re-align refs to the post-start 'ready' state the handler reads.
+    syncRefsFromState();
+
+    doc.hidden = true;
+    doc.dispatch('visibilitychange');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A fresh restore point is captured at the moment of backgrounding — the
+    // window where a platform recycle would otherwise lose uncommitted work
+    // with no snapshot yet taken (the idle reaper wouldn't fire for 45 min).
+    expect(sandboxClient.hibernateSandbox).toHaveBeenCalledWith(
+      'sb-1',
+      { repoFullName: 'owner/repo', branch: 'main' },
+      { keepWarm: true },
+    );
+
+    cleanups.forEach((c) => c());
+  });
+
+  it('does not snapshot on hide on the native shell (WIP never leaves the device)', async () => {
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    const doc = installFakeDocument();
+    await startReadySandbox();
+    const cleanups = await runEffects();
+    // runEffects replays the hook's ref-sync effect with the render-time status
+    // ('idle'); re-align refs to the post-start 'ready' state the handler reads.
+    syncRefsFromState();
+
+    doc.hidden = true;
+    doc.dispatch('visibilitychange');
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+
+    cleanups.forEach((c) => c());
   });
 });

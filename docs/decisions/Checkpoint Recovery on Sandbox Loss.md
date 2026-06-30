@@ -307,6 +307,50 @@ origin advanced — the guard correctly drops the unpushed work (a fresh origin 
 is the safe choice; an auto-rebase/merge would be the only way to keep both, and
 that's out of scope).
 
+## Container recycle: token loss vs workspace loss (2026-06-30)
+
+The cold-start paths above all assume the sandbox **id** is gone and a *new*
+container is created. A subtler loss is the container being recycled (platform
+eviction / OOM / a reconnect landing on a fresh instance) while the Durable
+Object — and its **id** — survive. Container local disk is fully ephemeral
+(stock SDK `Sandbox`, no persistent volume, no stop/sleep snapshot hook), so a
+recycle wipes both `/tmp` (the owner-token file) and `/workspace`.
+
+Two distinct failure modes fall out of that, fixed in tandem:
+
+1. **False death on token loss.** Every exec — including the client's 60s silent
+   health probe — runs the owner-token auth gate, which reads
+   `/tmp/push-owner-token` *inside the container*. A recycled-but-id-alive
+   container returns "Sandbox not found or expired", which the client's
+   `isDefinitivelyGoneMessage` treats as fatal and retires the session over —
+   **bypassing the 3-strike grace**. When the KV-stored token (the durable
+   source of truth) still matches the caller, the caller IS the owner:
+   `verifySandboxOwnerToken` now **re-mints the token file onto the container**
+   and continues (`cf_sandbox_token_rehydrated`) — but *only* when `/workspace`
+   is intact (probed via `test -e /workspace/.git`). If the workspace is gone
+   too, re-minting would report a healthy session over an empty tree (silent
+   loss worse than the visible death), so it declines
+   (`cf_sandbox_token_rehydrate_declined_no_workspace`) and falls through to
+   NOT_FOUND, which routes into the snapshot-restore recovery above. Re-mint is
+   gated on a timing-safe match against the KV token, so a non-owner can't
+   trigger it; the token is only written server-side, never returned.
+
+2. **Unprotected loss window.** The keep-warm safety snapshot only fired after
+   **45 min idle** (`IDLE_HIBERNATE_MS`), sized around the 1h sleep ceiling. A
+   recycle minutes in has no snapshot to restore from. The keep-warm snapshot
+   logic is now shared (`captureKeepWarmSnapshot`) and **also fires on page-hide**
+   (the app backgrounding) — the dominant mobile loss window, since the screen
+   timing out is exactly when a platform recycle can hit. The dirty-tree guard
+   keeps it to one snapshot per background-after-activity; the hide-path is
+   best-effort (a suspended tab may not land the R2 PUT), but it shrinks the
+   window from "45 min" to "the moment of backgrounding".
+
+**Still residual:** a mid-session full recycle (workspace gone) with no
+recent snapshot — the user still cold-starts and loses uncommitted work back to
+the last snapshot. Closing it fully would need either confirmation of the actual
+recycle trigger (device capture) or an opt-in periodic dirty-snapshot, weighed
+against R2/CPU cost.
+
 ## UI surfacing (to design in implementation)
 
 - On the APK, recovery should feel like one system, not two. The cloud

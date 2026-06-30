@@ -503,58 +503,41 @@ export function useSandbox(
     restoreSavedSessionSnapshot,
   ]);
 
-  // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
-  // The snapshot preserves the full working tree so restore is fast. Without this,
-  // the container silently dies at the 1-hour Modal timeout and the user loses
-  // all uncommitted state. "Idle" means no completed call AND nothing in flight —
-  // a long-running exec must not get the container hibernated out from under it.
-  useEffect(() => {
-    if (status !== 'ready') return;
-    const id = sandboxIdRef.current;
-    if (!id) return;
-
-    const timer = setInterval(() => {
-      const idle = msSinceLastSandboxCall();
-
-      // Keep the persisted activity timestamp ≤1 tick stale so a reconnect after
-      // a full reload/eviction (which clears the in-memory clock) can still tell
-      // this recently-active, still-live container from a stale one. Skip when
-      // `idle` is Infinity (no call since page load) — the persisted value is the
-      // better record then, so don't clobber it with a fabricated "just now".
-      if (Number.isFinite(idle)) {
-        touchSandboxSessionActivity(activeRepoFullName, activeBranch, id, Date.now() - idle);
-      }
-
-      // On the native shell, WIP never leaves the device — no keep-warm snapshot
-      // to Modal. Gate ONLY the snapshot, after the activity bookkeeping above,
-      // so warm-reattach recency still works (Increment 2). A lost container is
-      // recovered from the on-device checkpoint, not a cloud snapshot.
+  // Take a keep-warm safety snapshot of the LIVE container (tar /workspace → R2)
+  // without terminating it, then persist it as the restore point for a later
+  // reclaim. Guarded so we never snapshot a busy container, double-snapshot, or
+  // re-snapshot an unchanged tree. Shared by two triggers:
+  //   - the idle reaper (after IDLE_HIBERNATE_MS of no tool calls), and
+  //   - page-hide (the app backgrounding), where the container can be reclaimed
+  //     long before the idle timer would fire — the dominant mobile loss window,
+  //     since CF's sleepAfter is the only *ceiling* but a platform recycle/OOM
+  //     can drop the container at any time with NO snapshot taken yet.
+  // The hide-path snapshot is best-effort: a backgrounding tab may be suspended
+  // before the R2 PUT lands. A captured-most-of-the-time snapshot still strictly
+  // beats the prior "nothing until 45 min idle" — it shrinks the unprotected
+  // window from the full idle interval to ~the moment of backgrounding.
+  const captureKeepWarmSnapshot = useCallback(
+    (trigger: 'idle' | 'hidden'): void => {
+      // On the native shell, WIP never leaves the device — no keep-warm snapshot.
       if (nativeCheckpointsActive()) return;
-
-      if (idle < IDLE_HIBERNATE_MS) return;
-
-      // Status may have changed between ticks.
-      if (statusRef.current !== 'ready') return;
+      const id = sandboxIdRef.current;
+      if (!id || statusRef.current !== 'ready') return;
 
       if (hasInFlightSandboxCalls()) {
-        console.log(
-          `[useSandbox] Idle ${Math.round(idle / 1000)}s but a sandbox call is in flight — deferring keep-warm snapshot`,
-        );
+        console.log(`[useSandbox] ${trigger} keep-warm deferred — a sandbox call is in flight`);
         return;
       }
 
-      // A snapshot from a prior tick may still be pending — it's suppressed
+      // A snapshot from a prior trigger may still be pending — it's suppressed
       // (invisible to the in-flight counter), so guard explicitly against
       // launching a second one.
       if (idleHibernatePendingRef.current) return;
 
-      // Keep-warm cadence: take ONE safety snapshot per idle period. Unlike the
-      // old reaper (which terminated → status 'idle' → the interval stopped),
-      // keep-warm leaves the container 'ready', so this interval keeps ticking.
-      // Re-arm only after real activity advances the last-call time past our
-      // last snapshot — otherwise we'd re-snapshot an unchanged tree every tick.
-      // `idle` is Infinity until the first sandbox call; the `> 0` guard still
-      // lets that first idle snapshot through (lastCallAt would be -Infinity).
+      // Dirty-tree guard: re-snapshot only when activity advanced past our last
+      // snapshot, so repeated idle ticks (or repeated backgrounds) of an
+      // unchanged tree don't re-tar it. `idle` is Infinity until the first call
+      // → lastCallAt 0, which still lets the first snapshot through.
+      const idle = msSinceLastSandboxCall();
       const lastCallAt = Number.isFinite(idle) ? Date.now() - idle : 0;
       if (
         lastKeepWarmSnapshotAtRef.current > 0 &&
@@ -568,13 +551,11 @@ export function useSandbox(
       // session-change/unmount teardown clears it (and swaps sandboxId), so the
       // late `.then` must not persist a session with a stale/empty token.
       const ownerToken = getSandboxOwnerToken(id) || '';
-      console.log(
-        `[useSandbox] Idle for ${Math.round(idle / 1000)}s — keep-warm snapshot of ${id} (container stays live)`,
-      );
+      console.log(`[useSandbox] ${trigger} keep-warm snapshot of ${id} (container stays live)`);
 
-      // The reaper's own snapshot is maintenance, not activity: don't stamp the
-      // idle clock (a FAILED attempt would otherwise slip the 60s-tick retry out
-      // by a full idle window).
+      // The snapshot is maintenance, not activity: don't stamp the idle clock (a
+      // FAILED attempt would otherwise slip the 60s-tick retry out by a full
+      // idle window).
       suppressIdleTouch();
       const snapshotAt = Date.now();
       hibernateSandbox(
@@ -584,7 +565,7 @@ export function useSandbox(
       )
         .then((result) => {
           if (!result.ok || !result.snapshotId) {
-            console.debug('[useSandbox] Idle keep-warm snapshot failed:', result.error);
+            console.debug('[useSandbox] keep-warm snapshot failed:', result.error);
             return;
           }
           // A concurrent teardown may have swapped/cleared the session while we
@@ -599,9 +580,9 @@ export function useSandbox(
           // (and for snapshot restore on reconnect). Preserve the original
           // createdAt — it's the container's real age, which the reconnect probe
           // window keys off; only the snapshot timestamp is fresh. Also preserve
-          // lastActivityAt (the interval stamped it just above): without it a
-          // later forgetSnapshot would have nothing to carry forward, so a reload
-          // of the still-live snapshot-less container would discard it on age.
+          // lastActivityAt: without it a later forgetSnapshot would have nothing
+          // to carry forward, so a reload of the still-live snapshot-less
+          // container would discard it on age.
           if (activeRepoFullName != null && activeBranch) {
             const existing = loadSandboxSession(activeRepoFullName, activeBranch);
             saveSandboxSession(activeRepoFullName, activeBranch, {
@@ -648,15 +629,54 @@ export function useSandbox(
           }
         })
         .catch((err: unknown) => {
-          console.debug('[useSandbox] Idle keep-warm error:', err);
+          console.debug('[useSandbox] keep-warm error:', err);
         })
         .finally(() => {
           idleHibernatePendingRef.current = false;
         });
+    },
+    [activeRepoFullName, activeBranch],
+  );
+
+  // Idle hibernation timer — snapshot the sandbox after IDLE_HIBERNATE_MS of no
+  // tool calls. The snapshot preserves the full working tree so restore is fast.
+  // Without this, the container silently dies at its idle-sleep ceiling and the
+  // user loses all uncommitted state. "Idle" means no completed call AND nothing
+  // in flight — a long-running exec must not get the container hibernated out
+  // from under it (the in-flight guard lives in captureKeepWarmSnapshot).
+  useEffect(() => {
+    if (status !== 'ready') return;
+    const id = sandboxIdRef.current;
+    if (!id) return;
+
+    const timer = setInterval(() => {
+      const idle = msSinceLastSandboxCall();
+
+      // Keep the persisted activity timestamp ≤1 tick stale so a reconnect after
+      // a full reload/eviction (which clears the in-memory clock) can still tell
+      // this recently-active, still-live container from a stale one. Skip when
+      // `idle` is Infinity (no call since page load) — the persisted value is the
+      // better record then, so don't clobber it with a fabricated "just now".
+      if (Number.isFinite(idle)) {
+        touchSandboxSessionActivity(activeRepoFullName, activeBranch, id, Date.now() - idle);
+      }
+
+      // On the native shell, WIP never leaves the device — no keep-warm snapshot
+      // to Modal. Gate ONLY the snapshot, after the activity bookkeeping above,
+      // so warm-reattach recency still works (Increment 2). A lost container is
+      // recovered from the on-device checkpoint, not a cloud snapshot.
+      if (nativeCheckpointsActive()) return;
+
+      if (idle < IDLE_HIBERNATE_MS) return;
+
+      // Status may have changed between ticks.
+      if (statusRef.current !== 'ready') return;
+
+      captureKeepWarmSnapshot('idle');
     }, IDLE_CHECK_INTERVAL_MS);
 
     return () => clearInterval(timer);
-  }, [activeBranch, activeRepoFullName, status]);
+  }, [activeBranch, activeRepoFullName, status, captureKeepWarmSnapshot]);
 
   const start = useCallback(
     async (repo: string, branch?: string): Promise<string | null> => {
@@ -1232,8 +1252,14 @@ export function useSandbox(
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.hidden) {
-        // Page hidden — record timestamp
+        // Page hidden — record timestamp, and grab a fresh restore point before a
+        // possible background reclaim (the container can be recycled while we're
+        // suspended, long before the idle reaper would fire). Best-effort: the
+        // PUT may not land if we're suspended first, but it shrinks the loss
+        // window to the moment of backgrounding. No-op when the tree is unchanged
+        // since the last snapshot (dirty-tree guard inside).
         hiddenAtRef.current = Date.now();
+        captureKeepWarmSnapshot('hidden');
         return;
       }
 
@@ -1251,7 +1277,7 @@ export function useSandbox(
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [refresh]);
+  }, [refresh, captureKeepWarmSnapshot]);
 
   // Periodic health check while sandbox is ready (catches expiration while tab is visible but idle)
   useEffect(() => {
