@@ -185,7 +185,7 @@ describe('openAIResponsesSSEPump', () => {
     });
   });
 
-  it('fails open (retryable, no status) on an unclassifiable in-band error code', async () => {
+  it('maps in-band service unavailable errors to a retryable 503', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));
 
@@ -202,11 +202,36 @@ describe('openAIResponsesSSEPump', () => {
     });
     s.close();
 
+    await expect(events).rejects.toMatchObject({
+      name: 'OpenAIResponsesStreamError',
+      code: 'service_unavailable',
+      status: 503,
+      retryable: true,
+    });
+  });
+
+  it('fails open (retryable, no status) on an unclassifiable in-band error code', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.failed',
+      response: {
+        status: 'failed',
+        error: {
+          code: 'provider_sideways',
+          type: 'provider_sideways',
+          message: 'temporarily sideways',
+        },
+      },
+    });
+    s.close();
+
     // No status maps from the code, so the error must stay retryable rather
     // than hard-failing the turn on a likely-transient blip.
     await expect(events).rejects.toMatchObject({
       name: 'OpenAIResponsesStreamError',
-      code: 'service_unavailable',
+      code: 'provider_sideways',
       retryable: true,
     });
     await expect(events).rejects.toHaveProperty('status', undefined);

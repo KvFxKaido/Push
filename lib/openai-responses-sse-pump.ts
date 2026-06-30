@@ -92,6 +92,7 @@ function statusFromResponsesError(error: Record<string, unknown> | null): number
   if (raw.includes('forbidden') || raw.includes('permission')) return 403;
   if (raw.includes('rate_limit') || raw.includes('rate limit')) return 429;
   if (raw.includes('invalid_request') || raw.includes('bad_request')) return 400;
+  if (raw.includes('service_unavailable') || raw.includes('unavailable')) return 503;
   if (raw.includes('overloaded') || raw.includes('server_error')) return 500;
   return undefined;
 }
