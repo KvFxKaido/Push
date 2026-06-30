@@ -87,6 +87,23 @@ function makeOpenAIResponsesRequest(body: Record<string, unknown> = {}): Request
   });
 }
 
+function makeOpenRouterResponsesRequest(body: Record<string, unknown> = {}): Request {
+  return new Request('https://push.example.test/api/openrouter/chat', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://push.example.test',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'test-model',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+      stream: true,
+      store: false,
+      ...body,
+    }),
+  });
+}
+
 function makeModelsRequest(): Request {
   return new Request('https://push.example.test/api/models', {
     method: 'GET',
@@ -143,7 +160,34 @@ describe('WORKER_PROVIDER_API_ROUTES', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleOpenRouterChat', () => {
-  it('posts to openrouter.ai/api/v1/chat/completions with OPENROUTER_API_KEY', async () => {
+  it('posts Responses requests to openrouter.ai/api/v1/responses with OPENROUTER_API_KEY', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(captured?.url).toBe('https://openrouter.ai/api/v1/responses');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-or');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'test-model',
+      stream: true,
+      store: false,
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    });
+  });
+
+  it('keeps legacy Chat Completions bodies on the legacy upstream', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -157,8 +201,9 @@ describe('handleOpenRouterChat', () => {
     );
     await handleOpenRouterChat(makeChatRequest(), makeEnv({ OPENROUTER_API_KEY: 'sk-or' }));
     expect(captured?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
-    const headers = captured?.init.headers as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer sk-or');
+    const body = JSON.parse(captured?.init.body as string);
+    expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
+    expect(body.input).toBeUndefined();
   });
 
   it('attaches OpenRouter-specific HTTP-Referer and X-Title headers', async () => {
@@ -173,7 +218,10 @@ describe('handleOpenRouterChat', () => {
         });
       }),
     );
-    await handleOpenRouterChat(makeChatRequest(), makeEnv({ OPENROUTER_API_KEY: 'sk-or' }));
+    await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
     expect(captured['HTTP-Referer']).toBe('https://push.example.test');
     expect(captured['X-Title']).toBe('Push');
   });
@@ -181,7 +229,7 @@ describe('handleOpenRouterChat', () => {
   it('returns 401 when OPENROUTER_API_KEY is not configured and the client supplies no Authorization', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
-    const response = await handleOpenRouterChat(makeChatRequest(), makeEnv());
+    const response = await handleOpenRouterChat(makeOpenRouterResponsesRequest(), makeEnv());
     expect(response.status).toBe(401);
     const body = await response.json();
     expect(body.error).toMatch(/OpenRouter API key not configured/i);
@@ -194,7 +242,7 @@ describe('handleOpenRouterChat', () => {
       vi.fn(async () => new Response('upstream broke', { status: 500 })),
     );
     const response = await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
     );
     expect(response.status).toBe(500);
@@ -219,7 +267,7 @@ describe('handleOpenRouterChat', () => {
       ),
     );
     const response = await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
     );
     expect(response.status).toBe(401);
@@ -243,7 +291,7 @@ describe('handleOpenRouterChat', () => {
       ),
     );
     const response = await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
     );
     expect(response.status).toBe(503);
@@ -263,7 +311,7 @@ describe('handleOpenRouterChat', () => {
       }),
     );
     const response = await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
     );
     expect(response.status).toBe(504);
@@ -737,15 +785,18 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
 
   it('leaves the URL unchanged when gateway env is unset', async () => {
     const captured = captureFetch();
-    await handleOpenRouterChat(makeChatRequest(), makeEnv({ OPENROUTER_API_KEY: 'sk-or' }));
-    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest(),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
   });
 
   it('rewrites the URL through the gateway when account + slug are set', async () => {
     const captured = captureFetch();
     await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({
         OPENROUTER_API_KEY: 'sk-or',
         CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
@@ -753,7 +804,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
       }),
     );
     expect(captured.current?.url).toBe(
-      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/openrouter/chat/completions',
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/openrouter/responses',
     );
     // Provider auth still flows untouched — the gateway forwards it to OpenRouter.
     expect(captured.current?.headers.Authorization).toBe('Bearer sk-or');
@@ -762,7 +813,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
   it('attaches cf-aig-authorization when CF_AI_GATEWAY_TOKEN is set', async () => {
     const captured = captureFetch();
     await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({
         OPENROUTER_API_KEY: 'sk-or',
         CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
@@ -778,7 +829,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
   it('omits cf-aig-authorization when the token is unset', async () => {
     const captured = captureFetch();
     await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({
         OPENROUTER_API_KEY: 'sk-or',
         CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
@@ -794,10 +845,10 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     // gateway header to a direct-to-OpenRouter call.
     const captured = captureFetch();
     await handleOpenRouterChat(
-      makeChatRequest(),
+      makeOpenRouterResponsesRequest(),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or', CF_AI_GATEWAY_TOKEN: 'aig-secret' }),
     );
-    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/chat/completions');
+    expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
   });
 });

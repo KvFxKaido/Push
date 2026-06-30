@@ -23,6 +23,11 @@ import type {
   OpenAIResponsesTextFormat,
   OpenAIResponsesTool,
 } from './openai-responses-types.ts';
+import {
+  resolveGeminiReplaySignature,
+  toolCallFunctionThoughtSignatureField,
+  toolCallThoughtSignatureFields,
+} from './gemini-thought-signature.ts';
 
 export function toOpenAIResponsesTextFormat(spec: ResponseFormatSpec): OpenAIResponsesTextFormat {
   return {
@@ -97,9 +102,14 @@ function pushMessageItem(
   });
 }
 
-function appendBlocksAsResponsesItems(out: OpenAIResponsesInputItem[], message: LlmMessage): void {
+function appendBlocksAsResponsesItems(
+  out: OpenAIResponsesInputItem[],
+  message: LlmMessage,
+  options?: { geminiThoughtSignatureFallback?: boolean },
+): void {
   const blocks = message.contentBlocks ?? [];
   let visible: LlmContentBlock[] = [];
+  let seenToolCall = false;
 
   const flushVisible = () => {
     if (visible.length === 0) return;
@@ -122,12 +132,29 @@ function appendBlocksAsResponsesItems(out: OpenAIResponsesInputItem[], message: 
         );
       }
       flushVisible();
+      const ownSignature =
+        typeof block.thoughtSignature === 'string' && block.thoughtSignature
+          ? block.thoughtSignature
+          : undefined;
+      const replaySignature = options?.geminiThoughtSignatureFallback
+        ? resolveGeminiReplaySignature({ ownSignature, isFirstCallInTurn: !seenToolCall })
+        : undefined;
+      seenToolCall = true;
+      const thoughtSignatureFields = replaySignature
+        ? {
+            ...toolCallThoughtSignatureFields(replaySignature),
+            function: {
+              ...toolCallFunctionThoughtSignatureField(replaySignature),
+            },
+          }
+        : {};
       out.push({
         type: 'function_call',
         call_id: block.id,
         name: block.name,
         arguments: JSON.stringify(block.input),
         status: 'completed',
+        ...thoughtSignatureFields,
       });
       continue;
     }
@@ -146,6 +173,7 @@ function appendBlocksAsResponsesItems(out: OpenAIResponsesInputItem[], message: 
         call_id: block.tool_use_id,
         output: block.content,
       });
+      seenToolCall = false;
       continue;
     }
 
@@ -162,6 +190,7 @@ export interface ToOpenAIResponsesOptions {
   modelOverride?: string;
   temperatureDefault?: number;
   stream?: boolean;
+  geminiThoughtSignatureFallback?: boolean;
 }
 
 export function toOpenAIResponses(
@@ -178,7 +207,9 @@ export function toOpenAIResponses(
 
   for (const message of reqMessages) {
     if (message.contentBlocks && message.contentBlocks.length > 0) {
-      appendBlocksAsResponsesItems(input, message);
+      appendBlocksAsResponsesItems(input, message, {
+        geminiThoughtSignatureFallback: options?.geminiThoughtSignatureFallback,
+      });
       continue;
     }
     pushMessageItem(input, message.role, [{ type: 'input_text', text: message.content }]);

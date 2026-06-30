@@ -149,6 +149,60 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('normalizes final response output annotations into citations', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        output: [
+          {
+            type: 'message',
+            content: [
+              {
+                type: 'output_text',
+                text: 'answer',
+                annotations: [
+                  {
+                    type: 'url_citation',
+                    url_citation: {
+                      url: 'https://example.com/b',
+                      title: 'Example B',
+                      content: 'excerpt B',
+                      start_index: 0,
+                      end_index: 6,
+                    },
+                  },
+                  { type: 'file_citation', file_id: 'file_1' },
+                  { type: 'url_citation', url_citation: { title: 'no url' } },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      {
+        type: 'citations',
+        citations: [
+          {
+            url: 'https://example.com/b',
+            title: 'Example B',
+            content: 'excerpt B',
+            startIndex: 0,
+            endIndex: 6,
+          },
+        ],
+      },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
   it('drops a malformed annotation without disturbing the text stream', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

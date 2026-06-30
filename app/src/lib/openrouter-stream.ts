@@ -2,21 +2,30 @@
  * OpenRouter PushStream implementation.
  *
  * Hits the existing Worker proxy at `/api/openrouter/chat` (or the Vite dev
- * passthrough at `/openrouter/api/v1/chat/completions`), then delegates SSE
- * parsing to the shared `openAISSEPump` in `lib/`.
+ * passthrough at `/openrouter/api/v1/responses`), then delegates SSE parsing
+ * to the shared Responses pump in `lib/`. Legacy Chat Completions remains
+ * available behind VITE_OPENROUTER_TRANSPORT=chat.
  *
  * Runs client-side. Timer/abort safety comes from `createProviderStreamAdapter`
  * wrapping this stream — no timer machinery lives here.
  */
 
 import type { ChatMessage } from '@/types';
-import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
+import type {
+  LlmContentBlock,
+  LlmContentPart,
+  LlmMessage,
+  PushStreamEvent,
+  PushStreamRequest,
+} from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
+import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import {
   expandToolMessagesForOpenAICompat,
   flatToolToOpenAITool,
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
+import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -44,7 +53,59 @@ import { ProviderStreamError } from './stream-error';
  */
 const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
 
+type OpenRouterTransport = 'responses' | 'chat';
+
+type OpenRouterLlmMessage = {
+  role: LlmMessage['role'];
+  content: string | LlmContentPart[];
+  contentBlocks?: LlmContentBlock[];
+};
+
+function resolveOpenRouterTransport(): OpenRouterTransport {
+  const raw = (import.meta.env.VITE_OPENROUTER_TRANSPORT ?? '').trim().toLowerCase();
+  return raw === 'chat' || raw === 'chat-completions' || raw === 'legacy' ? 'chat' : 'responses';
+}
+
+function openRouterRequestUrl(transport: OpenRouterTransport): string {
+  if (transport === 'chat' && import.meta.env.DEV) {
+    return '/openrouter/api/v1/chat/completions';
+  }
+  return PROVIDER_URLS.openrouter.chat;
+}
+
+function contentFallbackText(content: OpenRouterLlmMessage['content']): string {
+  if (typeof content === 'string') return content;
+  return content
+    .filter((part): part is Extract<LlmContentPart, { type: 'text' }> => part.type === 'text')
+    .map((part) => part.text)
+    .join('\n');
+}
+
+function toNeutralMessages(messages: OpenRouterLlmMessage[]): LlmMessage[] {
+  return messages.map((message, index) => ({
+    id: `openrouter-${index}`,
+    role: message.role,
+    content: contentFallbackText(message.content),
+    timestamp: 0,
+    ...(Array.isArray(message.content) ? { contentParts: message.content } : {}),
+    ...(message.contentBlocks && message.contentBlocks.length > 0
+      ? { contentBlocks: message.contentBlocks }
+      : {}),
+  }));
+}
+
 export async function* openrouterStream(
+  req: PushStreamRequest<ChatMessage>,
+): AsyncIterable<PushStreamEvent> {
+  if (resolveOpenRouterTransport() === 'chat') {
+    yield* openrouterChatCompletionsStream(req);
+    return;
+  }
+
+  yield* openrouterResponsesStream(req);
+}
+
+async function* openrouterResponsesStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
   // 1. Compose messages via the shared prompt builder. Runtime context
@@ -79,17 +140,10 @@ export async function* openrouterStream(
     linkedLibraryContent: req.linkedLibraryContent,
     emitContentBlocks: nativeFcActive,
   });
-  // OpenRouter routes `google/gemini-*` to Gemini, which 400s on the replay turn
-  // unless the prior call's first functionCall carries a thought_signature;
-  // backfill the documented placeholder when none was captured.
-  const wireMessages = nativeFcActive
-    ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
-    : llmMessages;
 
   // 2. Layer in OpenRouter-specific body extensions (reasoning effort,
-  //    Push session id, trace flags). These were previously injected via the
-  //    legacy `bodyTransform` slot on `StreamProviderConfig`; that slot is
-  //    gone post-Phase-9c, so the wire shape now lives here directly.
+  //    Push session id, trace flags). OpenRouter mirrors OpenAI Responses for
+  //    the core body and extends it with routing/session fields.
   const supportsReasoning = openRouterModelSupportsReasoning(req.model);
   const effort = getReasoningEffort('openrouter');
   const useReasoning = supportsReasoning && effort !== 'off';
@@ -106,15 +160,13 @@ export async function* openrouterStream(
   // Native function calling: when the caller attached function schemas (gated on
   // model support via `providerModelSupportsNativeToolCalling`), forward them so
   // OpenRouter routes through the model's constrained tool-calling path. Additive
-  // to text-dispatch — `openai-sse-pump` emits native `tool_calls` as structured
-  // events, while prompt-described text tools keep using fenced JSON.
+  // to text-dispatch — the Responses SSE pump emits native `function_call`
+  // output as structured events, while prompt-described text tools keep using fenced JSON.
   // `tool_choice: 'auto'` keeps prose answers available when no tool is needed.
   // OpenRouter accepts a mixed `tools` array,
   // so native function schemas and the `openrouter:web_search` server tool merge
   // (web search appended last) when both are active.
   const nativeTools = nativeFcActive ? (req.tools ?? []) : [];
-  const openAITools = nativeTools.map(flatToolToOpenAITool);
-  const toolsArray = [...openAITools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
   // `provider.require_parameters` is load-bearing whenever we send native tools
   // or a `response_format` constraint: by default OpenRouter may route to an
   // endpoint that doesn't honor those params and silently drops them — dropping
@@ -124,23 +176,32 @@ export async function* openrouterStream(
   // constraint can't be lost mid-route. Web search alone doesn't need it (the
   // server tool gates its own routing), so it stays off the web-search-only path.
   const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
+  const baseBody = toOpenAIResponses(
+    {
+      provider: 'openrouter',
+      model: req.model,
+      messages: toNeutralMessages(llmMessages as OpenRouterLlmMessage[]),
+      maxTokens: req.maxTokens,
+      temperature: req.temperature,
+      topP: req.topP,
+      signal: req.signal,
+      responseFormat: req.responseFormat,
+      tools: nativeTools,
+    },
+    {
+      geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
+    },
+  ) as unknown as Record<string, unknown>;
+  const responseTools = Array.isArray(baseBody.tools)
+    ? [...(baseBody.tools as Record<string, unknown>[])]
+    : [];
+  const toolsArray = [...responseTools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
 
   const body: Record<string, unknown> = {
-    model: req.model,
-    messages: wireMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...baseBody,
     ...(useReasoning ? { reasoning: { effort } } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
     ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
-    ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
-    // Native structured outputs: when the caller attached a JSON-Schema
-    // constraint (and gated it on model support), forward it so OpenRouter
-    // constrains generation server-side. Same wire builder the CLI/OpenAI-compat
-    // path uses, so the two can't drift.
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
     ...(requireParameters ? { provider: { require_parameters: true } } : {}),
     trace,
   };
@@ -162,7 +223,104 @@ export async function* openrouterStream(
   injectTraceHeaders(headers);
 
   // 4. POST + stream response.
-  const response = await fetch(PROVIDER_URLS.openrouter.chat, {
+  const response = await fetch(openRouterRequestUrl('responses'), {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: req.signal,
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    let detail: string;
+    try {
+      const parsed = JSON.parse(errBody);
+      detail = parseProviderError(parsed, errBody.slice(0, 200), true);
+    } catch {
+      detail = errBody ? errBody.slice(0, 200) : 'empty body';
+    }
+    throw new ProviderStreamError(`OpenRouter ${response.status}: ${detail}`, {
+      status: response.status,
+    });
+  }
+
+  if (!response.body) {
+    throw new Error('OpenRouter response had no body');
+  }
+
+  yield* openAIResponsesSSEPump({
+    body: response.body,
+    signal: req.signal,
+    isKnownToolName: (name) => KNOWN_TOOL_NAMES.has(name),
+  });
+}
+
+async function* openrouterChatCompletionsStream(
+  req: PushStreamRequest<ChatMessage>,
+): AsyncIterable<PushStreamEvent> {
+  const workspaceContext = req.workspaceContext as WorkspaceContext | undefined;
+  const nativeFcActive = Array.isArray(req.tools) && req.tools.length > 0;
+  const llmMessages = toLLMMessages(req.messages, {
+    workspaceContext,
+    hasSandbox: req.hasSandbox,
+    systemPromptOverride: req.systemPromptOverride,
+    scratchpadContent: req.scratchpadContent,
+    providerType: 'openrouter',
+    providerModel: req.model,
+    onPreCompact: req.onPreCompact,
+    todoContent: req.todoContent,
+    sessionDigestOptions: {
+      records: req.sessionDigestRecords,
+      prior: req.priorSessionDigest,
+      onEmit: req.onSessionDigestEmitted,
+    },
+    linkedLibraryContent: req.linkedLibraryContent,
+    emitContentBlocks: nativeFcActive,
+  });
+  // OpenRouter routes `google/gemini-*` to Gemini, which 400s on the replay turn
+  // unless the prior call's first functionCall carries a thought_signature;
+  // backfill the documented placeholder when none was captured.
+  const wireMessages = nativeFcActive
+    ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
+    : llmMessages;
+
+  const supportsReasoning = openRouterModelSupportsReasoning(req.model);
+  const effort = getReasoningEffort('openrouter');
+  const useReasoning = supportsReasoning && effort !== 'off';
+  const sessionId = getOpenRouterSessionId();
+  const trace = buildOpenRouterTrace();
+  const webSearch = req.openrouterWebSearch ?? isNativeWebSearchEnabled('openrouter', req.model);
+  const nativeTools = nativeFcActive ? (req.tools ?? []) : [];
+  const openAITools = nativeTools.map(flatToolToOpenAITool);
+  const toolsArray = [...openAITools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
+  const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
+
+  const body: Record<string, unknown> = {
+    model: req.model,
+    messages: wireMessages,
+    stream: true,
+    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+    ...(useReasoning ? { reasoning: { effort } } : {}),
+    ...(sessionId ? { session_id: sessionId } : {}),
+    ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
+    ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
+    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
+    ...(requireParameters ? { provider: { require_parameters: true } } : {}),
+    trace,
+  };
+
+  const apiKey = (getOpenRouterKey() ?? '').trim();
+  const requestId = createRequestId('chat');
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    [REQUEST_ID_HEADER]: requestId,
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+  };
+  injectTraceHeaders(headers);
+
+  const response = await fetch(openRouterRequestUrl('chat'), {
     method: 'POST',
     headers,
     body: JSON.stringify(body),

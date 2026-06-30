@@ -4098,7 +4098,10 @@ describe('delegate_coder', needsLoopback, () => {
     const ROUTED_ONLY_TOKEN = 'ROUTED_CODER_PROVIDER_DID_APPEAR';
 
     const sessionMock = await startMockProviderServer({ tokens: [SESSION_ONLY_TOKEN] });
-    const routedMock = await startMockProviderServer({ tokens: [ROUTED_ONLY_TOKEN] });
+    const routedMock = await startMockProviderServer({
+      tokens: [ROUTED_ONLY_TOKEN],
+      streamShape: 'responses',
+    });
     const restoreSession = patchProviderConfig('ollama', {
       url: sessionMock.url,
       apiKey: 'session-mock-key',

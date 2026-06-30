@@ -1,4 +1,4 @@
-import type { Env } from './worker-middleware';
+import type { AiGatewayBinding, Env } from './worker-middleware';
 import type { AiModelsSearchObject } from '@cloudflare/workers-types';
 import { asRecord } from '../lib/utils';
 import {
@@ -7,6 +7,8 @@ import {
   standardAuth,
   passthroughAuth,
   buildVertexPreambleAuth,
+  buildAiGatewayUrl,
+  getAiGatewayAuthHeader,
   runPreamble,
   wlog,
   hasVertexNativeCredentials,
@@ -683,20 +685,24 @@ export const handleOllamaChat = createStreamProxyHandler({
 
 // --- OpenRouter ---
 
-export const handleOpenRouterChat = createStreamProxyHandler({
+const OPENROUTER_KEY_MISSING_ERROR =
+  'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.';
+
+const openRouterExtraFetchHeaders = (request: Request): Record<string, string> => ({
+  'HTTP-Referer': new URL(request.url).origin,
+  'X-Title': 'Push',
+});
+
+const handleOpenRouterChatLegacy = createStreamProxyHandler({
   name: 'OpenRouter',
   logTag: 'api/openrouter/chat',
   upstreamUrl: 'https://openrouter.ai/api/v1/chat/completions',
   timeoutMs: 120_000,
   maxOutputTokens: 12_288,
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
-  keyMissingError:
-    'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  keyMissingError: OPENROUTER_KEY_MISSING_ERROR,
   timeoutError: 'OpenRouter request timed out after 120 seconds',
-  extraFetchHeaders: (request) => ({
-    'HTTP-Referer': new URL(request.url).origin,
-    'X-Title': 'Push',
-  }),
+  extraFetchHeaders: openRouterExtraFetchHeaders,
   // OpenRouter returns structured errors like
   // `{"error":{"message":"User not found.","code":401}}`. The default proxy
   // formatter just dumps the JSON body via `slice(0, 200)`, which surfaces as
@@ -715,6 +721,31 @@ export const handleOpenRouterChat = createStreamProxyHandler({
   gateway: { provider: 'openrouter', pathSuffix: '/chat/completions' },
 });
 
+async function openRouterRequestUsesResponses(request: Request): Promise<boolean> {
+  const bodyText = await request
+    .clone()
+    .text()
+    .catch(() => '');
+  try {
+    const parsed = JSON.parse(bodyText);
+    return (
+      Boolean(parsed) &&
+      typeof parsed === 'object' &&
+      !Array.isArray(parsed) &&
+      Object.prototype.hasOwnProperty.call(parsed, 'input')
+    );
+  } catch {
+    return false;
+  }
+}
+
+export async function handleOpenRouterChat(request: Request, env: Env): Promise<Response> {
+  if (await openRouterRequestUsesResponses(request)) {
+    return handleOpenRouterResponses(request, env);
+  }
+  return handleOpenRouterChatLegacy(request, env);
+}
+
 export const handleOpenRouterModels = createJsonProxyHandler({
   name: 'OpenRouter',
   logTag: 'api/openrouter/models',
@@ -722,8 +753,7 @@ export const handleOpenRouterModels = createJsonProxyHandler({
   method: 'GET',
   timeoutMs: 30_000,
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
-  keyMissingError:
-    'OpenRouter API key not configured. Add it in Settings or set OPENROUTER_API_KEY on the Worker.',
+  keyMissingError: OPENROUTER_KEY_MISSING_ERROR,
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
 });
 
@@ -1605,9 +1635,9 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
   });
 }
 
-// --- OpenAI + Sakana + Fireworks (direct /v1/responses) ---
+// --- OpenRouter + OpenAI + Sakana + Fireworks (/v1/responses) ---
 //
-// Direct OpenAI, Sakana Fugu, and Fireworks AI are Responses-native adapters
+// OpenRouter, direct OpenAI, Sakana Fugu, and Fireworks AI are Responses-native adapters
 // sharing one proxy (`handleResponsesProxy`), parameterized only by upstream
 // URL, env secret, and error labels. Do not route any through the generic Chat
 // proxy:
@@ -1617,6 +1647,7 @@ export async function handleVertexModels(request: Request, env: Env): Promise<Re
 // provider-native contract.
 
 const OPENAI_RESPONSES_UPSTREAM_URL = 'https://api.openai.com/v1/responses';
+const OPENROUTER_RESPONSES_UPSTREAM_URL = 'https://openrouter.ai/api/v1/responses';
 const SAKANA_RESPONSES_UPSTREAM_URL = 'https://api.sakana.ai/v1/responses';
 const FIREWORKS_RESPONSES_UPSTREAM_URL = 'https://api.fireworks.ai/inference/v1/responses';
 const RESPONSES_TIMEOUT_MS = 120_000;
@@ -1704,19 +1735,22 @@ function validateAndNormalizeResponsesRequest(
 
 interface ResponsesProxyOptions {
   providerLabel: string;
-  authSecret: 'OPENAI_API_KEY' | 'SAKANA_API_KEY' | 'FIREWORKS_API_KEY';
+  authSecret: 'OPENAI_API_KEY' | 'OPENROUTER_API_KEY' | 'SAKANA_API_KEY' | 'FIREWORKS_API_KEY';
   keyMissingError: string;
   upstreamUrl: string;
   route: string;
   timeoutError: string;
+  extraFetchHeaders?: Record<string, string> | ((request: Request) => Record<string, string>);
+  gateway?: AiGatewayBinding;
 }
 
 /**
  * Shared `/v1/responses` reverse proxy for the Responses-native providers
- * (direct OpenAI, Sakana Fugu, Fireworks AI). Runs the standard preamble (origin check +
- * rate-limit + auth), normalizes the Responses body (forces `stream:true` /
- * `store:false`, clamps `max_output_tokens`, type-checks numerics), then pipes
- * the typed Responses SSE stream back unchanged.
+ * (OpenRouter, direct OpenAI, Sakana Fugu, Fireworks AI). Runs the standard
+ * preamble (origin check + rate-limit + auth), normalizes the Responses body
+ * (forces `stream:true` / `store:false`, clamps `max_output_tokens`,
+ * type-checks numerics), then pipes the typed Responses SSE stream back
+ * unchanged.
  */
 async function handleResponsesProxy(
   request: Request,
@@ -1752,15 +1786,25 @@ async function handleResponsesProxy(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), RESPONSES_TIMEOUT_MS);
   const upstreamCtx = createChildContext(spanCtx);
+  const gatewayUrl = opts.gateway ? buildAiGatewayUrl(env, opts.gateway) : null;
+  const upstreamUrl = gatewayUrl ?? opts.upstreamUrl;
+  const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
+  const gatewayHeaders: Record<string, string> = aigAuth ? { 'cf-aig-authorization': aigAuth } : {};
+  const extraHeaders =
+    typeof opts.extraFetchHeaders === 'function'
+      ? opts.extraFetchHeaders(request)
+      : (opts.extraFetchHeaders ?? {});
   let upstream: Response;
   try {
-    upstream = await fetch(opts.upstreamUrl, {
+    upstream = await fetch(upstreamUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: authHeader,
         [REQUEST_ID_HEADER]: requestId,
         traceparent: buildTraceparent(upstreamCtx),
+        ...extraHeaders,
+        ...gatewayHeaders,
       },
       body: normalized.bodyText,
       signal: controller.signal,
@@ -1817,6 +1861,19 @@ async function handleResponsesProxy(
       'X-Push-Span-Id': spanCtx.spanId,
       'X-Accel-Buffering': 'no',
     },
+  });
+}
+
+export async function handleOpenRouterResponses(request: Request, env: Env): Promise<Response> {
+  return handleResponsesProxy(request, env, {
+    providerLabel: 'OpenRouter',
+    authSecret: 'OPENROUTER_API_KEY',
+    keyMissingError: OPENROUTER_KEY_MISSING_ERROR,
+    upstreamUrl: OPENROUTER_RESPONSES_UPSTREAM_URL,
+    route: 'api/openrouter/chat',
+    timeoutError: 'OpenRouter request timed out after 120 seconds',
+    extraFetchHeaders: openRouterExtraFetchHeaders,
+    gateway: { provider: 'openrouter', pathSuffix: '/responses' },
   });
 }
 

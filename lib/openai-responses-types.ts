@@ -1,9 +1,9 @@
 /**
  * Shared OpenAI Responses wire-shape types.
  *
- * Direct OpenAI uses these for `/v1/responses`. OpenAI-compatible providers
- * stay on `openai-chat-types.ts` because their contract is Chat Completions,
- * not Responses.
+ * Direct OpenAI and verified Responses-compatible gateways use these for
+ * `/v1/responses`. Generic Chat Completions-compatible providers stay on
+ * `openai-chat-types.ts`.
  */
 
 import type { ToolFunctionSchema } from './provider-contract.js';
@@ -27,6 +27,15 @@ export interface OpenAIResponsesFunctionCallItem {
   name: string;
   arguments: string;
   status?: 'in_progress' | 'completed' | 'incomplete';
+  /**
+   * Gemini-fronting Responses gateways can require the signed-reasoning
+   * `thoughtSignature` to replay tool history. These provider-private fields
+   * mirror the compat chat serializer's three tolerated wire shapes and are
+   * emitted only by callers that opt into Gemini replay support.
+   */
+  thoughtSignature?: string;
+  extra_content?: { google?: { thought_signature?: string } };
+  function?: { thought_signature?: string };
 }
 
 export interface OpenAIResponsesFunctionCallOutputItem {

@@ -1,9 +1,10 @@
 /**
  * Reusable in-process mock provider for Phase 6 daemon tests.
  *
- * Serves OpenAI-compatible `chat/completions` SSE so the real
- * `streamCompletion` + daemon ProviderStreamFn adapter exercise their
- * full fetch/parse path without a network round-trip. Two modes:
+ * Serves OpenAI-compatible `chat/completions` SSE by default, or Responses SSE
+ * when `streamShape: 'responses'` is passed, so the real `streamCompletion` +
+ * daemon ProviderStreamFn adapter exercise their full fetch/parse path without
+ * a network round-trip. Two token modes:
  *
  *   - tokens: []    — responds 200 + SSE token deltas + [DONE]
  *   - responses: [[...],[...]] — one token-set PER request, in order (the Nth
@@ -29,11 +30,11 @@ import http from 'node:http';
 import { PROVIDER_CONFIGS } from '../provider.ts';
 
 /**
- * @param {{ tokens?: string[], responses?: string[][], hang?: boolean }} [opts]
+ * @param {{ tokens?: string[], responses?: string[][], hang?: boolean, streamShape?: 'chat' | 'responses' }} [opts]
  * @returns {Promise<{ url: string, port: number, requestCount: () => number, stop: () => Promise<void> }>}
  */
 export async function startMockProviderServer(opts = {}) {
-  const { tokens = [], responses = null, hang = false } = opts;
+  const { tokens = [], responses = null, hang = false, streamShape = 'chat' } = opts;
   let requestCount = 0;
 
   const server = http.createServer((req, res) => {
@@ -72,12 +73,24 @@ export async function startMockProviderServer(opts = {}) {
         : tokens;
 
       for (const token of activeTokens) {
-        const chunk = `data: ${JSON.stringify({
-          choices: [{ delta: { content: token } }],
-        })}\n\n`;
+        const chunk =
+          streamShape === 'responses'
+            ? `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: token })}\n\n`
+            : `data: ${JSON.stringify({
+                choices: [{ delta: { content: token } }],
+              })}\n\n`;
         res.write(chunk);
       }
-      res.write('data: [DONE]\n\n');
+      if (streamShape === 'responses') {
+        res.write(
+          `data: ${JSON.stringify({
+            type: 'response.completed',
+            response: { status: 'completed' },
+          })}\n\n`,
+        );
+      } else {
+        res.write('data: [DONE]\n\n');
+      }
       res.end();
     });
   });
@@ -90,7 +103,9 @@ export async function startMockProviderServer(opts = {}) {
   const port = addr.port;
 
   return {
-    url: `http://127.0.0.1:${port}/v1/chat/completions`,
+    url: `http://127.0.0.1:${port}/v1/${
+      streamShape === 'responses' ? 'responses' : 'chat/completions'
+    }`,
     port,
     /** Number of completed requests the mock has served so far. */
     requestCount: () => requestCount,

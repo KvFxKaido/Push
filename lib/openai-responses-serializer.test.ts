@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { LlmMessage, PushStreamRequest } from './provider-contract.ts';
 import { toOpenAIResponses, toOpenAIResponsesTextFormat } from './openai-responses-serializer.ts';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from './gemini-thought-signature.ts';
 
 function llm(
   id: string,
@@ -225,5 +226,28 @@ describe('toOpenAIResponses', () => {
       },
       { type: 'function_call_output', call_id: 'call_1', output: 'file text' },
     ]);
+  });
+
+  it('can backfill Gemini thought signatures on Responses function_call history', () => {
+    const body = toOpenAIResponses(
+      reqWith([
+        llm('1', 'assistant', '', {
+          contentBlocks: [
+            { type: 'tool_use', id: 'call_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+          ],
+        }),
+      ]),
+      { geminiThoughtSignatureFallback: true },
+    );
+
+    expect(body.input[0]).toMatchObject({
+      type: 'function_call',
+      call_id: 'call_1',
+      thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+      extra_content: {
+        google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      },
+      function: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+    });
   });
 });

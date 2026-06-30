@@ -4,10 +4,11 @@
  * Chat-Completions CLI providers keep using `cli/openai-stream.ts`. This file
  * serves every provider whose definition declares `streamShape:
  * 'openai-responses'` — direct OpenAI plus the OpenAI-compatible Responses
- * gateways (Sakana, Fireworks) — speaking the `/v1/responses` contract against
- * `config.url`.
+ * gateways (OpenRouter, Sakana, Fireworks) — speaking the `/v1/responses`
+ * contract against `config.url`.
  */
 
+import process from 'node:process';
 import type {
   LlmMessage,
   PushStream,
@@ -16,30 +17,74 @@ import type {
 } from '../lib/provider-contract.ts';
 import { toOpenAIResponses } from '../lib/openai-responses-serializer.ts';
 import { openAIResponsesSSEPump } from '../lib/openai-responses-sse-pump.ts';
+import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
+import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import type { ProviderConfig } from './provider.ts';
-import { CliProviderError } from './openai-stream.ts';
+import { CliProviderError, type CliProviderStreamOptions } from './openai-stream.ts';
+
+const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
+
+function resolveOpenRouterWebSearch(req: PushStreamRequest<LlmMessage>): boolean {
+  if (typeof req.openrouterWebSearch === 'boolean') return req.openrouterWebSearch;
+  const env = process.env.PUSH_OPENROUTER_WEB_SEARCH?.trim().toLowerCase();
+  if (!env) return true;
+  return !(env === '0' || env === 'false' || env === 'no' || env === 'off');
+}
 
 export function createCliOpenAIResponsesStream(
   config: ProviderConfig,
   apiKey: string,
+  options: CliProviderStreamOptions = {},
 ): PushStream<LlmMessage> {
   return (req: PushStreamRequest<LlmMessage>): AsyncIterable<PushStreamEvent> =>
-    cliOpenAIResponsesStream(config, apiKey, req);
+    cliOpenAIResponsesStream(config, apiKey, options, req);
 }
 
 async function* cliOpenAIResponsesStream(
   config: ProviderConfig,
   apiKey: string,
+  options: CliProviderStreamOptions,
   req: PushStreamRequest<LlmMessage>,
 ): AsyncIterable<PushStreamEvent> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+  if (config.id === 'openrouter') {
+    headers['HTTP-Referer'] = process.env.PUSH_OPENROUTER_REFERER || 'https://push.local';
+    headers['X-Title'] = 'Push CLI';
+  }
 
   const model = req.model && req.model.trim() ? req.model : config.defaultModel;
-  const body = toOpenAIResponses(req, {
+  const baseBody = toOpenAIResponses(req, {
     modelOverride: model,
     temperatureDefault: 0.1,
-  });
+    geminiThoughtSignatureFallback:
+      config.id === 'openrouter' &&
+      Array.isArray(req.tools) &&
+      req.tools.length > 0 &&
+      isGeminiModelId(model),
+  }) as unknown as Record<string, unknown>;
+  const responseTools = Array.isArray(baseBody.tools)
+    ? [...(baseBody.tools as Record<string, unknown>[])]
+    : [];
+  const openRouterWebSearch = config.id === 'openrouter' && resolveOpenRouterWebSearch(req);
+  const openRouterTools = [
+    ...responseTools,
+    ...(openRouterWebSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : []),
+  ];
+  const openRouterRequireParameters = responseTools.length > 0 || Boolean(baseBody.text);
+
+  const body =
+    config.id === 'openrouter'
+      ? {
+          ...baseBody,
+          ...(options.sessionId
+            ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+            : {}),
+          ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
+          ...(openRouterRequireParameters ? { provider: { require_parameters: true } } : {}),
+          trace: { generation_name: 'push-cli-responses', trace_name: 'push-cli' },
+        }
+      : baseBody;
 
   const response = await fetch(config.url, {
     method: 'POST',

@@ -194,9 +194,10 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
-| `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/chat/completions`) |
+| `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/responses`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key (BYOK-compatible; provider-native keys stay in OpenRouter) |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6:nitro`) |
+| `PUSH_OPENROUTER_WEB_SEARCH` | OpenRouter native web search on Responses transport (default: on; set `0`, `false`, `no`, or `off` to disable) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
@@ -241,7 +242,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships eleven providers. Five (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`). `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|

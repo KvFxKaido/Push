@@ -10,6 +10,7 @@ import {
   MAX_RETRIES,
 } from '../provider.ts';
 import { createCliProviderStream } from '../openai-stream.ts';
+import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '../../lib/gemini-thought-signature.ts';
 
 // ─── Env helper ─────────────────────────────────────────────────
 
@@ -300,6 +301,18 @@ describe('streamCompletion', () => {
       body += `data: ${JSON.stringify({ choices: [{ delta: { content: token } }] })}\n\n`;
     }
     body += 'data: [DONE]\n\n';
+    return body;
+  }
+
+  function buildResponsesSSE(tokens) {
+    let body = '';
+    for (const token of tokens) {
+      body += `data: ${JSON.stringify({ type: 'response.output_text.delta', delta: token })}\n\n`;
+    }
+    body += `data: ${JSON.stringify({
+      type: 'response.completed',
+      response: { status: 'completed' },
+    })}\n\n`;
     return body;
   }
 
@@ -775,10 +788,16 @@ describe('streamCompletion', () => {
   describe('OpenRouter-specific behavior', () => {
     const orConfig = {
       id: 'openrouter',
-      url: 'http://test.invalid/v1/chat/completions',
+      url: 'http://test.invalid/v1/responses',
       defaultModel: 'openrouter-model',
       apiKeyEnv: ['TEST_OR_KEY'],
       requiresKey: false,
+      streamShape: 'openai-responses',
+    };
+    const orChatConfig = {
+      ...orConfig,
+      url: 'http://test.invalid/v1/chat/completions',
+      streamShape: 'openai-compat',
     };
     const sampleTool = {
       name: 'read_file',
@@ -790,7 +809,13 @@ describe('streamCompletion', () => {
         additionalProperties: false,
       },
     };
-    const openAITool = {
+    const responsesTool = {
+      type: 'function',
+      name: sampleTool.name,
+      description: sampleTool.description,
+      parameters: sampleTool.input_schema,
+    };
+    const openAIChatTool = {
       type: 'function',
       function: {
         name: sampleTool.name,
@@ -806,7 +831,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -828,7 +853,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -854,7 +879,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -862,7 +887,7 @@ describe('streamCompletion', () => {
       };
 
       try {
-        const stream = createCliProviderStream(orConfig, 'key');
+        const stream = createProviderStream(orConfig, 'key');
         for await (const _ of stream({
           provider: 'openrouter',
           model: 'model',
@@ -876,9 +901,63 @@ describe('streamCompletion', () => {
         else process.env.PUSH_OPENROUTER_WEB_SEARCH = prev;
       }
 
-      assert.deepEqual(capturedBody.tools, [openAITool, { type: 'openrouter:web_search' }]);
+      assert.deepEqual(capturedBody.tools, [responsesTool, { type: 'openrouter:web_search' }]);
       assert.equal(capturedBody.tool_choice, 'auto');
       assert.deepEqual(capturedBody.provider, { require_parameters: true });
+    });
+
+    it('backfills Gemini thought signatures on OpenRouter Responses tool history', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildResponsesSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createProviderStream(orConfig, 'key');
+      for await (const _ of stream({
+        provider: 'openrouter',
+        model: 'google/gemini-3-pro-preview',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: '',
+            timestamp: 0,
+            contentBlocks: [
+              {
+                type: 'tool_use',
+                id: 'call_1',
+                name: 'sandbox_read_file',
+                input: { path: 'a.ts' },
+              },
+            ],
+          },
+        ],
+        tools: [sampleTool],
+        openrouterWebSearch: false,
+      })) {
+        // drain
+      }
+
+      assert.deepEqual(capturedBody.input[0], {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'sandbox_read_file',
+        arguments: '{"path":"a.ts"}',
+        status: 'completed',
+        thoughtSignature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER,
+        extra_content: {
+          google: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+        },
+        function: { thought_signature: GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER },
+      });
     });
 
     it('omits the web_search tool when PUSH_OPENROUTER_WEB_SEARCH=0', async () => {
@@ -890,7 +969,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -933,7 +1012,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -953,7 +1032,7 @@ describe('streamCompletion', () => {
 
       assert.equal(capturedBody.session_id, 'sess-123');
       assert.ok(capturedBody.trace);
-      assert.equal(capturedBody.trace.generation_name, 'push-cli-chat');
+      assert.equal(capturedBody.trace.generation_name, 'push-cli-responses');
     });
 
     it('does NOT include session_id for non-openrouter providers', async () => {
@@ -992,7 +1071,7 @@ describe('streamCompletion', () => {
         return {
           ok: true,
           status: 200,
-          body: stringToStream(buildSSE(['ok'])),
+          body: stringToStream(buildResponsesSSE(['ok'])),
           headers: new Headers(),
           text: async () => '',
           json: async () => ({}),
@@ -1012,6 +1091,45 @@ describe('streamCompletion', () => {
       );
 
       assert.ok(capturedBody.session_id.length <= 256);
+    });
+
+    it('routes the registry OpenRouter provider through legacy Chat when PUSH_OPENROUTER_TRANSPORT=chat', async () => {
+      const restore = withEnv({
+        PUSH_OPENROUTER_TRANSPORT: 'chat',
+        PUSH_OPENROUTER_URL: undefined,
+        PUSH_OPENROUTER_WEB_SEARCH: '0',
+      });
+      let capturedUrl;
+      let capturedBody;
+      globalThis.fetch = async (url, opts) => {
+        capturedUrl = url;
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['legacy'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      try {
+        const text = await streamCompletion(
+          PROVIDER_CONFIGS.openrouter,
+          'key',
+          'model',
+          testMessages,
+          null,
+        );
+
+        assert.equal(text, 'legacy');
+        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hello' }]);
+        assert.equal(capturedBody.input, undefined);
+      } finally {
+        restore();
+      }
     });
 
     // ─── Prompt caching (cacheBreakpointIndices: Hermes system_and_3) ─
@@ -1036,9 +1154,18 @@ describe('streamCompletion', () => {
         { role: 'assistant', content: 'reply' },
         { role: 'user', content: 'last' },
       ];
-      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        cacheBreakpointIndices: [1, 2, 3],
-      });
+      await streamCompletion(
+        orChatConfig,
+        'key',
+        'model',
+        messages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        {
+          cacheBreakpointIndices: [1, 2, 3],
+        },
+      );
 
       // 4 markers total: system + 3 tail entries. Anthropic's per-request cap.
       assert.deepEqual(capturedBody.messages[0], {
@@ -1083,9 +1210,18 @@ describe('streamCompletion', () => {
         { role: 'system', content: 'sys' },
         { role: 'user', content: 'only-user' },
       ];
-      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        cacheBreakpointIndices: [1],
-      });
+      await streamCompletion(
+        orChatConfig,
+        'key',
+        'model',
+        messages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        {
+          cacheBreakpointIndices: [1],
+        },
+      );
 
       assert.deepEqual(capturedBody.messages[0], {
         role: 'system',
@@ -1115,7 +1251,7 @@ describe('streamCompletion', () => {
         { role: 'system', content: 'sys' },
         { role: 'user', content: 'first' },
       ];
-      await streamCompletion(orConfig, 'key', 'model', messages, null);
+      await streamCompletion(orChatConfig, 'key', 'model', messages, null);
 
       assert.equal(typeof capturedBody.messages[0].content, 'string');
       assert.equal(typeof capturedBody.messages[1].content, 'string');
@@ -1136,7 +1272,7 @@ describe('streamCompletion', () => {
       };
 
       await streamCompletion(
-        orConfig,
+        orChatConfig,
         'key',
         'model',
         [{ role: 'system', content: 'sys' }],
@@ -1180,10 +1316,19 @@ describe('streamCompletion', () => {
         { role: 'assistant', content: 'a2' },
         { role: 'user', content: 'u3' },
       ];
-      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        // Caller passes 5 indices — the slice should keep only the last 3.
-        cacheBreakpointIndices: [1, 2, 3, 4, 5],
-      });
+      await streamCompletion(
+        orChatConfig,
+        'key',
+        'model',
+        messages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        {
+          // Caller passes 5 indices — the slice should keep only the last 3.
+          cacheBreakpointIndices: [1, 2, 3, 4, 5],
+        },
+      );
 
       const markerCount = capturedBody.messages.filter(
         (m) => Array.isArray(m.content) && m.content.some((p) => p.cache_control),
@@ -1224,9 +1369,18 @@ describe('streamCompletion', () => {
         { role: 'user', content: 'first' },
         { role: 'assistant', content: 'reply' },
       ];
-      await streamCompletion(orConfig, 'key', 'model', messages, null, DEFAULT_TIMEOUT_MS, null, {
-        cacheBreakpointIndices: [0, 1],
-      });
+      await streamCompletion(
+        orChatConfig,
+        'key',
+        'model',
+        messages,
+        null,
+        DEFAULT_TIMEOUT_MS,
+        null,
+        {
+          cacheBreakpointIndices: [0, 1],
+        },
+      );
 
       // Both indices tagged — no system at index 0 to skip.
       assert.ok(Array.isArray(capturedBody.messages[0].content));
@@ -1249,7 +1403,7 @@ describe('streamCompletion', () => {
         };
       };
 
-      const stream = createCliProviderStream(orConfig, 'key');
+      const stream = createCliProviderStream(orChatConfig, 'key');
       const events = stream({
         provider: 'openrouter',
         model: 'model',
