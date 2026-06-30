@@ -677,13 +677,16 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // *pushed* tip but not any work the prior sandbox left unpushed (local
       // commits / uncommitted tree). If a durable R2 snapshot exists for this
       // repo+branch, restore it OVER the clone to recover that work — but only
-      // when it's safe. The guard: the snapshot must still contain origin's
-      // current tip (`git cat-file -e <originTip>`). If it does, the snapshot is
-      // "origin's tip + your unpushed work" and restoring loses nothing. If it
-      // doesn't, origin advanced past the snapshot (you pushed elsewhere, a merge
-      // landed, …) and restoring would silently shadow real commits — so we keep
-      // the fresh clone instead. This makes the default branch self-exclude
-      // whenever it has moved, with no need to special-case it.
+      // when it's safe. The guard: origin's current tip must be *reachable from*
+      // the restored HEAD — `git merge-base --is-ancestor <originTip> HEAD`, i.e.
+      // history membership, not mere object existence (a bare `cat-file -e` would
+      // pass if the new tip is only in the object DB while HEAD doesn't contain
+      // it). If it's an ancestor, the snapshot is "origin's tip + your unpushed
+      // work" and restoring loses nothing. If it isn't, origin advanced past the
+      // snapshot (you pushed elsewhere, a merge landed, …) and restoring would
+      // silently shadow real commits — so we keep the fresh clone instead. This
+      // makes the default branch self-exclude whenever it has moved, with no need
+      // to special-case it.
       if (directCloneSucceeded && env.SNAPSHOTS && env.SNAPSHOT_INDEX) {
         const tipResult = (await withExecDeadline(
           sandbox.exec('git -C /workspace rev-parse HEAD'),
@@ -2071,9 +2074,11 @@ type OverCloneRestoreOutcome = 'restored' | 'kept' | 'needs-reclone';
  * Recover unpushed work for an ON-ORIGIN branch by restoring its R2 snapshot over
  * the fresh clone — but only when doing so cannot shadow origin. The caller passes
  * `originTip` (the freshly-cloned HEAD sha); after hydrating the snapshot we verify
- * it still contains that commit (`git cat-file -e`). If it does, the snapshot is
- * origin's tip plus the prior sandbox's unpushed commits/tree, so restoring loses
- * nothing. If it doesn't, origin advanced past the snapshot and restoring would
+ * that commit is reachable from the restored HEAD — `git merge-base --is-ancestor`,
+ * i.e. an ancestor of HEAD, not merely present in the object DB (a bare `cat-file
+ * -e` can pass while HEAD still hides the commit). If it's an ancestor, the snapshot
+ * is origin's tip plus the prior sandbox's unpushed commits/tree, so restoring loses
+ * nothing. If it isn't, origin advanced past the snapshot and restoring would
  * silently drop real commits — so we report `needs-reclone` and let the caller
  * restore the fresh clone. Best-effort: every failure degrades to keeping/re-
  * cloning, never to a corrupt tree.
