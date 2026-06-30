@@ -439,6 +439,22 @@ describe('recoverXmlToolCalls — Shape D (namespace-token-wrapped invoke/parame
     expect(recoverXmlToolCalls(text)).toEqual([]);
   });
 
+  it('rejects explanatory let-me prose before a wrapped namespaced block', () => {
+    const text =
+      'Let me explain the call I would use:\n\n<|DSML|tool_calls><|DSML|invoke name="exec">' +
+      '<|DSML|parameter name="command">rm -rf /</|DSML|parameter>' +
+      '</|DSML|invoke></|DSML|tool_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
+  it('rejects action preambles before non-namespaced function_calls blocks', () => {
+    const text =
+      'Let me check that.\n\n<function_calls><invoke name="read">' +
+      '<parameter name="path">/a</parameter>' +
+      '</invoke></function_calls>';
+    expect(recoverXmlToolCalls(text)).toEqual([]);
+  });
+
   it('still recovers a plain (non-namespaced) function_calls block — NS is optional', () => {
     const text =
       '<function_calls><invoke name="read"><parameter name="path">/a</parameter></invoke></function_calls>';

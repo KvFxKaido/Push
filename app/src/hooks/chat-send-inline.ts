@@ -165,8 +165,11 @@ export function buildInlineTurnPreamble(
 // ---------------------------------------------------------------------------
 
 const XML_TOOL_NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
+const XML_TOOL_NS_REQUIRED = String.raw`[|｜]{1,2}[\w.\-]+[|｜]{1,2}`;
+const XML_TOOL_CALL_BLOCK_PATTERN = String.raw`<${XML_TOOL_NS}(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}(?:function_calls|tool_calls)\s*>|<${XML_TOOL_NS}tool_call\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}tool_call\s*>|<${XML_TOOL_NS}invoke\b[^>]*?\bname\s*=[^>]*>[\s\S]*?<\/${XML_TOOL_NS}invoke\s*>`;
+const XML_TOOL_CALL_BLOCK_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'i');
 const XML_TOOL_CALL_START_RE = new RegExp(
-  String.raw`<${XML_TOOL_NS}(?:tool_call|function_calls|tool_calls|invoke)\b`,
+  String.raw`<(?:${XML_TOOL_NS_REQUIRED}(?:tool_call|function_calls|tool_calls|invoke)|${XML_TOOL_NS}(?:function_calls|tool_calls))\b`,
   'i',
 );
 
@@ -216,8 +219,12 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
   // XML / DSML wrapper forms recovered by `tool-call-xml-recovery.ts`,
   // including DeepSeek V4 Pro's doubled full-width namespace delimiters
   // (`<｜｜DSML｜｜tool_calls>`). The authoritative dispatcher still consumes
-  // the untouched accumulated text; this only keeps the raw envelope out
-  // of the streaming placeholder.
+  // the untouched accumulated text; this only keeps raw envelopes out
+  // of the streaming placeholder. Complete bare `<tool_call>` / `<invoke>`
+  // blocks are hidden, while incomplete bare mentions stay visible so
+  // streaming and final render agree.
+  const xmlBlock = XML_TOOL_CALL_BLOCK_RE.exec(text);
+  if (xmlBlock) mark(xmlBlock.index);
   const xmlTool = XML_TOOL_CALL_START_RE.exec(text);
   if (xmlTool) mark(xmlTool.index);
 

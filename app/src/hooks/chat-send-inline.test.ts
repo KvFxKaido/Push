@@ -491,6 +491,19 @@ describe('splitVisibleContent', () => {
     expect(toolCallActive).toBe(true);
   });
 
+  it('keeps incomplete bare invoke prose visible while hiding complete bare invoke blocks', () => {
+    const incomplete = 'Example: <invoke name="read">';
+    expect(splitVisibleContent(incomplete)).toEqual({
+      visible: incomplete,
+      toolCallActive: false,
+    });
+
+    const complete = splitVisibleContent(
+      'Checking.\n<invoke name="read"><parameter name="path">/a</parameter></invoke>',
+    );
+    expect(complete).toEqual({ visible: 'Checking.', toolCallActive: true });
+  });
+
   it('provisionally hides a dangling unbalanced fence before the key arrives', () => {
     const { visible, toolCallActive } = splitVisibleContent('prefix\n```json\n');
     expect(visible).toBe('prefix');

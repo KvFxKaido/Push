@@ -165,9 +165,13 @@ function stripSiblingToolCallShapes(text: string): string {
 
 const MAX_ASSISTANT_PREAMBLE_CHARS = 320;
 const ACTION_PREAMBLE_REGEX =
-  /^(?:let me|i(?:'|’)?ll|i will|i(?:'|’)?m going to|i am going to|i(?:'|’)?m checking|i am checking|checking|fetching|pulling|looking up|reading|opening|searching)\b/i;
+  /^(?:(?:let me|i(?:'|’)?ll|i will|i(?:'|’)?m going to|i am going to)\s+(?:pull up|check|fetch|open|read|search|look up|look into|inspect)\b|(?:checking|fetching|pulling|looking up|reading|opening|searching|inspecting)\b)/i;
 const PASTED_EXAMPLE_PREAMBLE_REGEX =
   /\b(?:do not|don't|dont|skip|ignore|example|for example|earlier|previously|literal|verbatim|documentation|docs?)\b/i;
+const NAMESPACED_TOOL_CALLS_WRAPPER_START_REGEX = new RegExp(
+  String.raw`^<[|｜]{1,2}[\w.\-]+[|｜]{1,2}tool_calls\b`,
+  'i',
+);
 
 function isAssistantToolPreamble(slice: string): boolean {
   const stripped = stripSiblingToolCallShapes(slice).trim();
@@ -175,6 +179,12 @@ function isAssistantToolPreamble(slice: string): boolean {
   if (stripped.includes('<') || stripped.includes('>')) return false;
   if (PASTED_EXAMPLE_PREAMBLE_REGEX.test(stripped)) return false;
   return ACTION_PREAMBLE_REGEX.test(stripped);
+}
+
+function startsWithNamespacedToolCallsWrapper(text: string, start: number): boolean {
+  const closeIdx = text.indexOf('>', start);
+  if (closeIdx === -1) return false;
+  return NAMESPACED_TOOL_CALLS_WRAPPER_START_REGEX.test(text.slice(start, closeIdx + 1));
 }
 
 /**
@@ -319,10 +329,16 @@ export function recoverXmlToolCalls(text: string): RecoveredXmlCall[] {
     //   <｜｜DSML｜｜tool_calls>...</｜｜DSML｜｜tool_calls>
     //
     // Keep the broad prose guard for plain `<tool_call>` and standalone
-    // `<invoke>` shapes; only the wrapped batch format gets this narrow
-    // terminal-preamble tolerance.
+    // `<invoke>` shapes; only namespace-wrapped `tool_calls` batches get
+    // this narrow terminal-preamble tolerance.
     const onlyWrappedBatches = matches.every((m) => m.kind === 'function_calls');
-    if (!onlyWrappedBatches || !isAssistantToolPreamble(leadingGap)) return [];
+    if (
+      !onlyWrappedBatches ||
+      !startsWithNamespacedToolCallsWrapper(text, matches[0].blockStart) ||
+      !isAssistantToolPreamble(leadingGap)
+    ) {
+      return [];
+    }
   }
   for (let i = 1; i < matches.length; i++) {
     if (!isAllowedGap(text.slice(matches[i - 1].blockEnd, matches[i].blockStart))) return [];
