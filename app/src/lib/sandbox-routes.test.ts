@@ -5,6 +5,7 @@ describe('sandbox-routes — SANDBOX_ROUTES table', () => {
   it('maps every sandbox action to a concrete Modal function path', () => {
     expect(SANDBOX_ROUTES).toMatchObject({
       create: 'create',
+      ping: 'exec-command',
       exec: 'exec-command',
       read: 'file-ops',
       write: 'file-ops',

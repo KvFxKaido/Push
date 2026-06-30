@@ -50,6 +50,7 @@ const ROUTES = new Set([
   'create',
   'connect',
   'cleanup',
+  'ping',
   'exec',
   'exec-start',
   'exec-status',
@@ -388,6 +389,8 @@ async function runSandboxRoute(
         return await routeConnect(env, body);
       case 'cleanup':
         return await routeCleanup(env, body);
+      case 'ping':
+        return routePing();
       case 'exec':
         return await routeExec(env, body);
       case 'exec-start':
@@ -923,6 +926,14 @@ async function routeCleanup(env: Env, body: Json): Promise<Response> {
   // destroy throws, we keep the token so the caller can retry without
   // losing auth. KV's TTL still cleans up eventually.
   await revokeToken(env.SANDBOX_TOKENS, sandboxId);
+  return Response.json({ ok: true });
+}
+
+function routePing(): Response {
+  // The dispatch-level owner-token gate already touched the sandbox via the
+  // in-container token file and rehydrated it from KV when possible. For health
+  // checks, that is the cheap liveness signal we want: no user shell wrapper,
+  // no branch stamp, no extra environment probe.
   return Response.json({ ok: true });
 }
 

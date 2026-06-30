@@ -1,5 +1,8 @@
 export const SANDBOX_ROUTES: Record<string, string> = {
   create: 'create',
+  // Lightweight liveness check. CF implements this as an auth-gated no-op; Modal
+  // forwards to exec-command and the client supplies `command: true`.
+  ping: 'exec-command',
   exec: 'exec-command',
   read: 'file-ops',
   write: 'file-ops',

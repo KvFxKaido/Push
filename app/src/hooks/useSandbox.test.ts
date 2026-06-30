@@ -6,6 +6,7 @@ const sandboxClient = vi.hoisted(() => ({
   createSandbox: vi.fn(),
   cleanupSandbox: vi.fn(),
   execInSandbox: vi.fn(),
+  pingSandbox: vi.fn(),
   setSandboxOwnerToken: vi.fn(),
   getSandboxOwnerToken: vi.fn<() => string | null>(() => null),
   setActiveSandboxEnvironment: vi.fn(),
@@ -390,12 +391,12 @@ describe('useSandbox.start', () => {
     hook.markUnreachable('SANDBOX_UNREACHABLE');
     syncRefsFromState();
     sandboxClient.createSandbox.mockClear();
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    sandboxClient.pingSandbox.mockResolvedValue(true);
 
     const id = await hook.start('owner/repo', 'main');
 
     expect(id).toBe('sb-1');
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-1', 'true');
+    expect(sandboxClient.pingSandbox).toHaveBeenCalledWith('sb-1');
     expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
     expect(reactState.cells[1].value).toBe('ready');
     expect(reactState.cells[2].value).toBeNull();
@@ -414,10 +415,7 @@ describe('useSandbox.start', () => {
     hook.markUnreachable('Sandbox not found');
     syncRefsFromState();
     sandboxClient.createSandbox.mockClear();
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'Sandbox not found',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
     sandboxSession.loadSandboxSession.mockReturnValue({
       sandboxId: 'sb-1',
       ownerToken: 'owner-tok',
@@ -463,10 +461,7 @@ describe('useSandbox.start', () => {
 
     hook.markUnreachable('Sandbox not found');
     syncRefsFromState();
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'Sandbox not found',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
 
     const id = await hook.start('owner/repo', 'main');
 
@@ -495,7 +490,7 @@ describe('useSandbox.start', () => {
     syncRefsFromState();
     sandboxClient.createSandbox.mockClear();
     // Non-definitive failure (timeout-style) — not "gone", not token-missing.
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
 
     const id = await hook.start('owner/repo', 'main');
 
@@ -520,7 +515,7 @@ describe('useSandbox.start', () => {
 
     hook.markUnreachable('SANDBOX_UNREACHABLE');
     syncRefsFromState();
-    sandboxClient.execInSandbox.mockRejectedValue(
+    sandboxClient.pingSandbox.mockRejectedValue(
       new Error('Sandbox access token missing. Start or reconnect the sandbox session.'),
     );
 
@@ -543,6 +538,7 @@ describe('useSandbox reconnect', () => {
       createdAt: Date.now(),
       lastActivityAt: Date.now(),
     });
+    sandboxClient.pingSandbox.mockResolvedValue(true);
     sandboxClient.execInSandbox.mockResolvedValue({
       stdout: '',
       stderr: '',
@@ -555,9 +551,9 @@ describe('useSandbox reconnect', () => {
 
     expect(sandboxClient.setSandboxOwnerToken).toHaveBeenCalledWith('owner-tok');
     expect(sandboxClient.setSandboxOwnerToken).toHaveBeenCalledWith('owner-tok', 'sb-saved');
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-saved', 'true');
+    expect(sandboxClient.pingSandbox).toHaveBeenCalledWith('sb-saved');
     expect(sandboxClient.setSandboxOwnerToken.mock.invocationCallOrder[0]).toBeLessThan(
-      sandboxClient.execInSandbox.mock.invocationCallOrder[0],
+      sandboxClient.pingSandbox.mock.invocationCallOrder[0],
     );
 
     cleanups.forEach((cleanup) => cleanup());
@@ -612,7 +608,7 @@ describe('useSandbox.refresh', () => {
     const hook = render();
     const ok = await hook.refresh();
     expect(ok).toBe(false);
-    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
+    expect(sandboxClient.pingSandbox).not.toHaveBeenCalled();
   });
 
   it('transitions to ready when the sandbox ping succeeds', async () => {
@@ -621,7 +617,7 @@ describe('useSandbox.refresh', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    sandboxClient.pingSandbox.mockResolvedValue(true);
     const hook = render();
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -636,10 +632,7 @@ describe('useSandbox.refresh', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'Sandbox not found',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
     const hook = render();
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -650,8 +643,8 @@ describe('useSandbox.refresh', () => {
   });
 
   it('keeps a SILENT transient probe at ready (single strike does not flip the chip)', async () => {
-    // The 60s health check is a silent probe. A single transient blip (overloaded
-    // exit -1: timeout / owner-token KV-lag / hiccup) on a live container must NOT
+    // The 60s health check is a silent probe. A single transient blip (timeout /
+    // owner-token KV-lag / hiccup) on a live container must NOT
     // flip to 'error' — that hard-errored a healthy sandbox and stopped the
     // health-check loop (the "dies after ~2 min idle" report). Session is kept too.
     sandboxClient.createSandbox.mockResolvedValue({
@@ -659,10 +652,7 @@ describe('useSandbox.refresh', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'command timed out',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
     const hook = render();
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -679,10 +669,7 @@ describe('useSandbox.refresh', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'command timed out',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
     const hook = render();
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -707,15 +694,15 @@ describe('useSandbox.refresh', () => {
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
 
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
     await hook.refresh({ silent: true }); // strike 1
     await hook.refresh({ silent: true }); // strike 2
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    sandboxClient.pingSandbox.mockResolvedValue(true);
     await hook.refresh({ silent: true }); // success → resets counter
     expect(reactState.cells[1].value).toBe('ready');
     // Counter reset: two fresh transient strikes still hold at ready (would be
     // 'error' at strike >= 3 if the success hadn't reset it).
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
     await hook.refresh({ silent: true }); // strike 1 (post-reset)
     await hook.refresh({ silent: true }); // strike 2 (post-reset)
     expect(reactState.cells[1].value).toBe('ready');
@@ -727,10 +714,7 @@ describe('useSandbox.refresh', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'command timed out',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('command timed out'));
     const hook = render();
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -797,10 +781,7 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'Sandbox not found',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
     const hook = render('owner/repo', 'main');
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -822,10 +803,7 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({
-      exitCode: -1,
-      error: 'Sandbox not found',
-    });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
     const hook = render('owner/repo', 'main');
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -845,7 +823,7 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'Sandbox not found' });
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
     const hook = render('owner/repo', 'main');
     await hook.start('owner/repo', 'main');
     syncRefsFromState();
@@ -855,7 +833,7 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
-    expect(sandboxClient.execInSandbox).toHaveBeenCalled();
+    expect(sandboxClient.pingSandbox).toHaveBeenCalledWith('sb-1');
     expect(reactState.cells[0].value).toBeNull();
     expect(reactState.cells[1].value).toBe('idle');
   });
@@ -869,7 +847,7 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
       sandboxId: 'sb-1',
       ownerToken: 'tok',
     });
-    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+    sandboxClient.pingSandbox.mockResolvedValue(true);
     const hook = render('owner/repo', 'main');
     await hook.start('owner/repo', 'main');
     syncRefsFromState();

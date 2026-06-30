@@ -1314,6 +1314,34 @@ export async function execInSandbox(
   }
 }
 
+export async function pingSandbox(sandboxId: string): Promise<boolean> {
+  const raw = await sandboxFetch<{
+    ok?: boolean;
+    exit_code?: number;
+    error?: string;
+  }>(
+    'ping',
+    withOwnerToken(
+      {
+        sandbox_id: sandboxId,
+        // Modal forwards `ping` to exec-command, so keep the payload valid for
+        // that backend. CF ignores these fields after its auth-gated route.
+        command: 'true',
+        workdir: '/workspace',
+      },
+      sandboxId,
+    ),
+  );
+
+  if (raw.ok === false) {
+    throw new Error(raw.error || 'Sandbox ping failed');
+  }
+  if (typeof raw.exit_code === 'number' && raw.exit_code !== 0) {
+    throw new Error(raw.error || `Sandbox ping failed with exit code ${raw.exit_code}`);
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Background execution (detached process + resumable cursor logs)
 //
