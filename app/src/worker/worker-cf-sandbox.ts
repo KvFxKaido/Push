@@ -566,10 +566,12 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // never inspect history beyond the current commit, so the full pack is
       // pure cold-start tax. `depth: 1` is SDK-supported; deeper history can
       // still be fetched on demand if a tool needs it.
+      let directCloneSucceeded = false;
       try {
         await time('clone', () =>
           sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
         );
+        directCloneSucceeded = true;
       } catch (branchCloneErr) {
         // The requested branch may not exist on origin — e.g. a branch-on-first-
         // prompt branch that only ever lived locally in a since-gone sandbox and
@@ -669,6 +671,48 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
             reason: 'branch_absent_on_origin',
           }),
         );
+      }
+
+      // On-origin branch (the `--branch` clone succeeded): the fresh clone has the
+      // *pushed* tip but not any work the prior sandbox left unpushed (local
+      // commits / uncommitted tree). If a durable R2 snapshot exists for this
+      // repo+branch, restore it OVER the clone to recover that work — but only
+      // when it's safe. The guard: the snapshot must still contain origin's
+      // current tip (`git cat-file -e <originTip>`). If it does, the snapshot is
+      // "origin's tip + your unpushed work" and restoring loses nothing. If it
+      // doesn't, origin advanced past the snapshot (you pushed elsewhere, a merge
+      // landed, …) and restoring would silently shadow real commits — so we keep
+      // the fresh clone instead. This makes the default branch self-exclude
+      // whenever it has moved, with no need to special-case it.
+      if (directCloneSucceeded && env.SNAPSHOTS && env.SNAPSHOT_INDEX) {
+        const tipResult = (await withExecDeadline(
+          sandbox.exec('git -C /workspace rev-parse HEAD'),
+        ).catch(() => ({ stdout: '', exitCode: 1 }))) as { stdout?: string; exitCode?: number };
+        const originTip = (tipResult.stdout ?? '').trim();
+        if (originTip) {
+          const outcome = await time('clone', () =>
+            restoreUnpushedWorkOverClone(env, sandbox, repo, branch, originTip),
+          );
+          if (outcome === 'restored') {
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'cf_sandbox_unpushed_work_restored',
+                sandbox_id: sandboxId,
+                repo: repoHash,
+              }),
+            );
+          } else if (outcome === 'needs-reclone') {
+            // A snapshot was hydrated then rejected (diverged) or failed to
+            // extract, emptying /workspace — re-establish the fresh clone.
+            await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
+              () => {},
+            );
+            await time('clone', () =>
+              sandbox.gitCheckout(cloneUrl, { branch, targetDir: '/workspace', depth: 1 }),
+            );
+          }
+        }
       }
       if (githubToken) {
         // gitCheckout uses the tokenized URL for private clone auth. Immediately
@@ -2008,6 +2052,113 @@ async function restoreSnapshotIntoSandbox(
       }),
     );
     return 'wiped';
+  }
+}
+
+/**
+ * Outcome of an over-the-clone restore for a branch that IS on origin:
+ *  - `restored`: the snapshot was hydrated and verified to contain origin's tip;
+ *                `/workspace` now holds the recovered tree (incl. unpushed work).
+ *  - `kept`:     nothing was restored and `/workspace` is untouched (the caller's
+ *                fresh clone is intact) — no snapshot, too large, or object gone.
+ *  - `needs-reclone`: a snapshot was hydrated then rejected (origin diverged) or
+ *                failed to extract, so `/workspace` no longer holds the clone and
+ *                the caller must re-clone.
+ */
+type OverCloneRestoreOutcome = 'restored' | 'kept' | 'needs-reclone';
+
+/**
+ * Recover unpushed work for an ON-ORIGIN branch by restoring its R2 snapshot over
+ * the fresh clone — but only when doing so cannot shadow origin. The caller passes
+ * `originTip` (the freshly-cloned HEAD sha); after hydrating the snapshot we verify
+ * it still contains that commit (`git cat-file -e`). If it does, the snapshot is
+ * origin's tip plus the prior sandbox's unpushed commits/tree, so restoring loses
+ * nothing. If it doesn't, origin advanced past the snapshot and restoring would
+ * silently drop real commits — so we report `needs-reclone` and let the caller
+ * restore the fresh clone. Best-effort: every failure degrades to keeping/re-
+ * cloning, never to a corrupt tree.
+ */
+async function restoreUnpushedWorkOverClone(
+  env: Env,
+  sandbox: SandboxStub,
+  repoFullName: string,
+  branch: string,
+  originTip: string,
+): Promise<OverCloneRestoreOutcome> {
+  if (!env.SNAPSHOTS || !env.SNAPSHOT_INDEX) return 'kept';
+  try {
+    const entry = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch);
+    if (!entry?.imageId) return 'kept';
+    if (entry.sizeBytes != null && entry.sizeBytes > MAX_ARCHIVE_BYTES) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'snapshot_too_large',
+          sizeBytes: entry.sizeBytes,
+        }),
+      );
+      return 'kept';
+    }
+    const object = await env.SNAPSHOTS.get(entry.imageId);
+    if (!object) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_sandbox_cold_restore_miss',
+          reason: 'snapshot_object_absent',
+        }),
+      );
+      return 'kept';
+    }
+    const archive = await object.text();
+    // Clean slate so the snapshot tree/.git can't blend with the clone. If the
+    // wipe fails the clone survives, so keep it rather than hydrate over it.
+    const wipe = (await withExecDeadline(
+      sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
+    ).catch(() => ({ exitCode: 1 }))) as { exitCode?: number };
+    if ((wipe.exitCode ?? 0) !== 0) return 'kept';
+    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
+    if (!hydrated.ok) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'hydrate_failed',
+          error: hydrated.error,
+        }),
+      );
+      return 'needs-reclone';
+    }
+    // Guard: the restored history must still contain origin's current tip. `^{commit}`
+    // forces commit resolution; a missing object exits non-zero.
+    const contains = (await withExecDeadline(
+      sandbox.exec(
+        `git -C /workspace cat-file -e ${shellSingleQuote(`${originTip}^{commit}`)} 2>/dev/null`,
+      ),
+    )) as { exitCode?: number };
+    if ((contains.exitCode ?? 1) !== 0) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_sandbox_cold_restore_diverged',
+          reason: 'origin_advanced_past_snapshot',
+        }),
+      );
+      return 'needs-reclone';
+    }
+    await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
+    return 'restored';
+  } catch (err) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'cf_sandbox_cold_restore_failed',
+        reason: 'exception',
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return 'needs-reclone';
   }
 }
 

@@ -551,6 +551,101 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
   });
 
+  it('restores unpushed work over an on-origin clone when the snapshot contains origin tip', async () => {
+    // The branch IS on origin (clone succeeds), but the prior sandbox left
+    // unpushed work captured in a snapshot. Since the snapshot still contains
+    // origin's current tip, restoring it recovers the work without shadowing
+    // origin.
+    const sandbox = mockSandbox(); // default gitCheckout resolves → clone succeeds
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('rev-parse HEAD')) return { stdout: 'abc123def456', exitCode: 0 };
+      if (command.includes('cat-file -e')) return { stdout: '', exitCode: 0 }; // origin tip present
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    const r2 = makeR2({
+      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
+    });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/snap-1',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'feature/x',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(r2.get).toHaveBeenCalledWith('cf-snapshots/snap-1');
+    // Hydrated, and the divergence guard ran and passed.
+    expect(sandbox.exec.mock.calls.some((c) => String(c[0]).includes('cat-file -e'))).toBe(true);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_unpushed_work_restored')),
+    ).toBe(true);
+    // No re-clone: the single `--branch` clone is kept under the restore.
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the fresh clone and re-clones when origin diverged past the snapshot', async () => {
+    // The snapshot no longer contains origin's current tip → origin advanced
+    // (pushed elsewhere / merge landed). Restoring would shadow real commits, so
+    // the fresh clone must win: discard the restore and re-clone.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('rev-parse HEAD')) return { stdout: 'abc123def456', exitCode: 0 };
+      if (command.includes('cat-file -e')) return { stdout: '', exitCode: 1 }; // origin tip ABSENT
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    const r2 = makeR2({
+      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
+    });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/snap-1',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'feature/x',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      { repo: 'owner/repo', branch: 'feature/x', github_token: 'ghs_token' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_cold_restore_diverged')),
+    ).toBe(true);
+    // The discarded restore is re-cloned: initial `--branch` clone + the reclone.
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_unpushed_work_restored')),
+    ).toBe(false);
+  });
+
   it('does NOT recreate when the branch exists on origin (transient clone failure)', async () => {
     // P1: a `--branch` clone failing transiently on a branch that DOES exist on
     // origin must not be recreated off the default HEAD (that would base the
