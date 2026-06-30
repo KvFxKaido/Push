@@ -103,7 +103,6 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     validatedUser,
     snapshots,
     ensureSandbox,
-    setCurrentBranch,
   } = props;
 
   const pinnedArtifacts = usePinnedArtifacts(activeRepo?.full_name ?? null);
@@ -250,15 +249,6 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     handleCreateNewChatRequest,
     deleteChat,
     renameChat,
-    currentBranch: undefined,
-    defaultBranch: undefined,
-    setCurrentBranch,
-    switchBranchFromUI: props.switchBranchFromUI,
-    displayBranches: [],
-    repoBranchesLoading: false,
-    repoBranchesError: null,
-    loadRepoBranches: () => {},
-    handleDeleteBranch: async () => false,
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,
@@ -390,6 +380,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
               defaultBranch: undefined,
               availableBranches: [],
               branchesLoading: false,
+              branchesError: null,
               onSwitchBranch: () => {},
               onRefreshBranches: () => {},
               onShowBranchCreate: () => {},

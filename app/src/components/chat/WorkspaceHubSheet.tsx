@@ -166,8 +166,9 @@ interface CommitPushTarget {
 export interface HubBranchProps {
   currentBranch: string | undefined;
   defaultBranch: string | undefined;
-  availableBranches: Array<{ name: string; isDefault: boolean }>;
+  availableBranches: Array<{ name: string; isDefault: boolean; isProtected?: boolean }>;
   branchesLoading: boolean;
+  branchesError: string | null;
   onSwitchBranch: (branch: string) => void;
   onWarmSwitchBranch?: (branch: string) => Promise<SwitchBranchInWorkspaceResult>;
   onRefreshBranches: () => void;
@@ -1460,6 +1461,15 @@ export function WorkspaceHubSheet({
                                     <Loader2 className="h-3 w-3 animate-spin" /> Loading...
                                   </div>
                                 )}
+                              {/* Failed-fetch surface — the drawer's branch
+                                  switcher used to be the only place this showed;
+                                  it moved here when the drawer de-branched. The
+                                  Refresh button above doubles as retry. */}
+                              {!branchProps.branchesLoading && branchProps.branchesError && (
+                                <div className="px-3 py-2 text-xs text-red-400">
+                                  Failed to load branches
+                                </div>
+                              )}
                               {branchProps.availableBranches.map((branch) => {
                                 const isActive = branch.name === branchProps.currentBranch;
                                 return (
@@ -1468,7 +1478,9 @@ export function WorkspaceHubSheet({
                                     name={branch.name}
                                     isDefault={branch.isDefault}
                                     isActive={isActive}
-                                    canDelete={!isActive && !branch.isDefault}
+                                    canDelete={
+                                      !isActive && !branch.isDefault && !branch.isProtected
+                                    }
                                     isDeleting={deletingBranch === branch.name}
                                     anyDeleting={deletingBranch !== null}
                                     onSwitch={() => handleBranchSwitch(branch.name)}

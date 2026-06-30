@@ -1,17 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Menu,
-  Palette,
-  Pencil,
-  Plus,
-  Search,
-  Trash2,
-  X,
-  Loader2,
-} from 'lucide-react';
+import { Check, ChevronRight, Menu, Palette, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -19,21 +7,9 @@ import {
   SheetTitle,
   SheetDescription,
 } from '@/components/ui/sheet';
-import {
-  BranchWaveIcon,
-  HistoryStackIcon,
-  PushMarkIcon,
-} from '@/components/icons/push-custom-icons';
+import { HistoryStackIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { RepoAppearanceBadge } from '@/components/repo/repo-appearance';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import {
   GLASS_ACTIVE_CLASS,
   GLASS_FILL_FAINT,
@@ -44,9 +20,8 @@ import {
   HUB_GLASS_PANEL_CLASS,
 } from '@/components/chat/hub-styles';
 import { CliSessionRow } from '@/components/chat/drawer-cli-row';
-import { DrawerBranchListItem } from '@/components/chat/DrawerBranchListItem';
+import { chatDrawerRepoTag } from '@/components/chat/repo-chat-drawer-utils';
 import type { RepoAppearance } from '@/lib/repo-appearance';
-import type { SwitchBranchInWorkspaceResult } from '@/lib/fork-branch-in-workspace';
 import type { ActiveRepo, Conversation, DaemonCliSession, RepoWithActivity } from '@/types';
 
 interface RepoChatDrawerProps {
@@ -67,15 +42,6 @@ interface RepoChatDrawerProps {
   onNewChat: () => void;
   onDeleteChat: (id: string) => void;
   onRenameChat: (id: string, title: string) => void;
-  currentBranch?: string;
-  defaultBranch?: string;
-  setCurrentBranch?: (branch: string) => void;
-  switchBranchFromUI?: (branch: string) => Promise<SwitchBranchInWorkspaceResult>;
-  availableBranches?: { name: string; isDefault: boolean; isProtected: boolean }[];
-  branchesLoading?: boolean;
-  branchesError?: string | null;
-  onRefreshBranches?: () => void;
-  onDeleteBranch?: (branch: string) => Promise<boolean>;
   /**
    * Sessions discovered on the paired daemon via `list_sessions` that
    * weren't started from this device. Optional — non-daemon callers
@@ -93,6 +59,12 @@ interface RepoChatDrawerProps {
 
 const EMPTY_CHATS: Conversation[] = [];
 const EMPTY_CLI_SESSIONS: DaemonCliSession[] = [];
+
+// The cross-repo Recents lane leads the drawer with recency rather than
+// branch — branch is mutable session state now (repo-scoped chats), not a
+// drawer-organizing axis. Capped so it stays a "what was I just in" surface,
+// not a second full chat list; the repo cards below carry the long tail.
+const RECENTS_LIMIT = 6;
 
 import { timeAgoCompact } from '@/lib/utils';
 
@@ -123,15 +95,6 @@ export function RepoChatDrawer({
   onNewChat,
   onDeleteChat,
   onRenameChat,
-  currentBranch,
-  defaultBranch,
-  setCurrentBranch,
-  switchBranchFromUI,
-  availableBranches = [],
-  branchesLoading = false,
-  branchesError = null,
-  onRefreshBranches,
-  onDeleteBranch,
   cliSessions = EMPTY_CLI_SESSIONS,
   cliSessionsLabel,
 }: RepoChatDrawerProps) {
@@ -139,10 +102,6 @@ export function RepoChatDrawer({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
-  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
-  const [deletingBranch, setDeletingBranch] = useState<string | null>(null);
-  const [pendingSwitchBranch, setPendingSwitchBranch] = useState<string | null>(null);
-  const [switchError, setSwitchError] = useState<string | null>(null);
   const [appearanceRepo, setAppearanceRepoState] = useState<RepoWithActivity | null>(null);
 
   useEffect(() => {
@@ -151,25 +110,10 @@ export function RepoChatDrawer({
       setSearchQuery('');
       setEditingChatId(null);
       setEditingTitle('');
-      setBranchMenuOpen(false);
-      setDeletingBranch(null);
       setAppearanceRepoState(null);
     }, 0);
     return () => clearTimeout(id);
   }, [open]);
-
-  const drawerBranchOptions = useMemo(() => {
-    if (!currentBranch) return availableBranches;
-    if (availableBranches.some((b) => b.name === currentBranch)) return availableBranches;
-    return [
-      {
-        name: currentBranch,
-        isDefault: currentBranch === (defaultBranch || 'main'),
-        isProtected: false,
-      },
-      ...availableBranches,
-    ];
-  }, [availableBranches, currentBranch, defaultBranch]);
 
   const chatsByRepo = useMemo(() => {
     const grouped = new Map<string, Conversation[]>();
@@ -188,6 +132,29 @@ export function RepoChatDrawer({
   const repoRows = useMemo(
     () => repos.map((repo) => ({ repo, chats: chatsByRepo.get(repo.full_name) || [] })),
     [repos, chatsByRepo],
+  );
+
+  // repoFullName → short repo name, so cross-repo Recents rows can carry a
+  // repo tag (the disambiguator that replaces the dropped branch stamp; chat
+  // titles duplicate hard, e.g. "What changed recently in Push?" ×4).
+  const repoNameByFullName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const repo of repos) map.set(repo.full_name, repo.name);
+    return map;
+  }, [repos]);
+
+  const repoTagForChat = useCallback(
+    (chat: Conversation): string => chatDrawerRepoTag(chat, repoNameByFullName),
+    [repoNameByFullName],
+  );
+
+  const recentChats = useMemo(
+    () =>
+      Object.values(conversations)
+        .slice()
+        .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+        .slice(0, RECENTS_LIMIT),
+    [conversations],
   );
 
   const allUnscopedChats = chatsByRepo.get('__unscoped__') ?? EMPTY_CHATS;
@@ -298,60 +265,31 @@ export function RepoChatDrawer({
     cancelRename();
   };
 
-  // Single-tap delete — the reveal (hover / focus / long-press in
-  // DrawerBranchListItem) is the deliberate guard, so there's no separate
-  // confirm step, matching the workspace BranchListItem.
-  const deleteBranch = async (branchName: string) => {
-    if (!onDeleteBranch || deletingBranch) return;
-    setDeletingBranch(branchName);
-    try {
-      await onDeleteBranch(branchName);
-    } finally {
-      setDeletingBranch((prev) => (prev === branchName ? null : prev));
-    }
-  };
-
-  const switchActiveRepoBranch = useCallback(
-    async (branchName: string) => {
-      if (branchName === currentBranch || pendingSwitchBranch) return;
-      setPendingSwitchBranch(branchName);
-      setSwitchError(null);
-      try {
-        if (switchBranchFromUI) {
-          const result = await switchBranchFromUI(branchName);
-          if (!result.ok) {
-            // No sandbox → nothing to keep warm; the plain state write is the
-            // correct path (doc writer table: "plain write otherwise"). Any
-            // other failure (checkout conflict, transport) surfaces inline —
-            // a silent console.error reads as "the tap did nothing".
-            if (result.noSandbox && setCurrentBranch) {
-              setCurrentBranch(branchName);
-              setBranchMenuOpen(false);
-              return;
-            }
-            setSwitchError(result.errorMessage || 'Failed to switch branches.');
-            return;
-          }
-        } else if (setCurrentBranch) {
-          setCurrentBranch(branchName);
-        }
-        setBranchMenuOpen(false);
-      } finally {
-        setPendingSwitchBranch((prev) => (prev === branchName ? null : prev));
-      }
-    },
-    [currentBranch, pendingSwitchBranch, setCurrentBranch, switchBranchFromUI],
-  );
-
-  const renderChatRow = (chat: Conversation) => {
+  // `showRepoTag` swaps the message-count subtitle for a repo tag — used by the
+  // cross-repo Recents lane, where "which repo" matters more than the count and
+  // the rows aren't already nested under a repo card. `keyPrefix` keeps React
+  // keys distinct when the same chat appears in both Recents and its repo card.
+  // `actions: false` makes the row open-only (Recents): rename/delete live on
+  // the canonical repo-card copy, which also avoids both copies of a duplicated
+  // chat entering rename mode at once (edit state is keyed by chat.id).
+  const renderChatRow = (
+    chat: Conversation,
+    opts?: { showRepoTag?: boolean; keyPrefix?: string; actions?: boolean },
+  ) => {
+    const showActions = opts?.actions !== false;
     const isActiveChat = chat.id === activeChatId;
-    const isEditing = editingChatId === chat.id;
+    // Gate edit mode on showActions too — otherwise an open-only Recents row
+    // would still render the rename *form* (not just the trigger) whenever its
+    // repo-card twin is being renamed, since edit state is keyed by chat.id.
+    const isEditing = showActions && editingChatId === chat.id;
     const messageCount = chat.messages.filter((m) => !m.isToolResult).length;
-    const branchLabel = chat.repoFullName ? chat.branch : null;
+    const subtitle = opts?.showRepoTag
+      ? `${repoTagForChat(chat)} · ${timeAgoCompact(chat.lastMessageAt)}`
+      : `${messageCount} msg${messageCount !== 1 ? 's' : ''} · ${timeAgoCompact(chat.lastMessageAt)}`;
 
     return (
       <div
-        key={chat.id}
+        key={`${opts?.keyPrefix ?? ''}${chat.id}`}
         className={`flex items-center gap-1 rounded-xl border border-transparent transition-colors duration-200 ${
           isActiveChat
             ? 'border-push-accent/40 bg-push-accent/10'
@@ -413,32 +351,32 @@ export function RepoChatDrawer({
               >
                 {chat.title}
               </p>
-              <p className="mt-0.5 text-push-2xs text-push-fg-muted">
-                {messageCount} msg{messageCount !== 1 ? 's' : ''} ·{' '}
-                {branchLabel ? `${branchLabel} · ` : ''}
-                {timeAgoCompact(chat.lastMessageAt)}
-              </p>
+              <p className="mt-0.5 text-push-2xs text-push-fg-muted">{subtitle}</p>
             </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                startRename(chat);
-              }}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-hover hover:text-push-fg-secondary"
-              aria-label={`Rename ${chat.title}`}
-            >
-              <Pencil className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDeleteChat(chat.id);
-              }}
-              className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-hover hover:text-red-400"
-              aria-label={`Delete ${chat.title}`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            {showActions && (
+              <>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    startRename(chat);
+                  }}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-hover hover:text-push-fg-secondary"
+                  aria-label={`Rename ${chat.title}`}
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDeleteChat(chat.id);
+                  }}
+                  className="mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-push-fg-muted transition-colors hover:bg-push-surface-hover hover:text-red-400"
+                  aria-label={`Delete ${chat.title}`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </>
+            )}
           </>
         )}
       </div>
@@ -505,6 +443,26 @@ export function RepoChatDrawer({
 
               <div className="flex-1 overflow-y-auto p-3">
                 <div className="space-y-2 stagger-in">
+                  {/* Recents — cross-repo, recency-first entry point. Hidden
+                      while searching (the repo rows already filter), so it
+                      stays a quick-resume lane rather than a second result set. */}
+                  {!isSearching && recentChats.length > 0 && (
+                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
+                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-fg-secondary">
+                        Recents
+                      </div>
+                      <div className="space-y-1 px-0 pb-0">
+                        {recentChats.map((chat) =>
+                          renderChatRow(chat, {
+                            showRepoTag: true,
+                            keyPrefix: 'recent-',
+                            actions: false,
+                          }),
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {filteredRepoRows.map(({ repo, chats }) => {
                     const isExpanded =
                       isSearching ||
@@ -557,125 +515,6 @@ export function RepoChatDrawer({
 
                         {isExpanded && (
                           <div className="space-y-1 px-0 pb-0">
-                            {isActiveRepo && setCurrentBranch && (
-                              <DropdownMenu
-                                open={branchMenuOpen}
-                                onOpenChange={(open) => {
-                                  setBranchMenuOpen(open);
-                                  if (!open) {
-                                    setDeletingBranch(null);
-                                  }
-                                  if (
-                                    open &&
-                                    onRefreshBranches &&
-                                    !branchesLoading &&
-                                    drawerBranchOptions.length === 0
-                                  ) {
-                                    onRefreshBranches();
-                                  }
-                                }}
-                              >
-                                <DropdownMenuTrigger
-                                  className={`mb-2 flex h-9 w-full items-center gap-1.5 px-3 text-left text-xs text-push-fg-secondary ${DRAWER_CONTROL_SURFACE_CLASS} ${DRAWER_CONTROL_INTERACTIVE_CLASS}`}
-                                >
-                                  <BranchWaveIcon className="h-3 w-3 text-push-fg-dim" />
-                                  <span className="min-w-0 flex-1 truncate">
-                                    {currentBranch || defaultBranch || 'main'}
-                                  </span>
-                                  <ChevronDown
-                                    className={`h-3 w-3 text-push-fg-dim transition-transform ${branchMenuOpen ? 'rotate-180' : ''}`}
-                                  />
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent
-                                  align="start"
-                                  sideOffset={6}
-                                  className="w-[230px] rounded-xl border border-push-edge bg-push-grad-card shadow-[0_18px_40px_rgba(0,0,0,0.62)]"
-                                >
-                                  <DropdownMenuLabel className="px-3 py-1.5 text-push-2xs font-medium uppercase tracking-wider text-push-fg-dim">
-                                    Switch Branch
-                                  </DropdownMenuLabel>
-                                  <DropdownMenuSeparator className="bg-push-edge" />
-
-                                  {branchesLoading && (
-                                    <DropdownMenuItem
-                                      disabled
-                                      className="mx-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-push-fg-dim"
-                                    >
-                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                      Loading branches...
-                                    </DropdownMenuItem>
-                                  )}
-
-                                  {switchError && (
-                                    <DropdownMenuItem
-                                      disabled
-                                      className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400"
-                                    >
-                                      {switchError}
-                                    </DropdownMenuItem>
-                                  )}
-                                  {!branchesLoading && branchesError && (
-                                    <>
-                                      <DropdownMenuItem
-                                        disabled
-                                        className="mx-1 rounded-lg px-3 py-2 text-xs text-red-400"
-                                      >
-                                        Failed to load branches
-                                      </DropdownMenuItem>
-                                      {onRefreshBranches && (
-                                        <DropdownMenuItem
-                                          onSelect={(e) => {
-                                            e.preventDefault();
-                                            onRefreshBranches();
-                                          }}
-                                          className="mx-1 rounded-lg px-3 py-2 text-xs text-push-link hover:bg-push-surface-hover"
-                                        >
-                                          Retry
-                                        </DropdownMenuItem>
-                                      )}
-                                    </>
-                                  )}
-
-                                  {!branchesLoading &&
-                                    !branchesError &&
-                                    drawerBranchOptions.length === 0 && (
-                                      <DropdownMenuItem
-                                        disabled
-                                        className="mx-1 rounded-lg px-3 py-2 text-xs text-push-fg-dim"
-                                      >
-                                        No branches found
-                                      </DropdownMenuItem>
-                                    )}
-
-                                  {!branchesLoading &&
-                                    !branchesError &&
-                                    drawerBranchOptions.map((branch) => {
-                                      const isActiveBranch = branch.name === currentBranch;
-                                      const canDeleteBranch =
-                                        Boolean(onDeleteBranch) &&
-                                        !isActiveBranch &&
-                                        !branch.isDefault &&
-                                        !branch.isProtected;
-                                      return (
-                                        <DrawerBranchListItem
-                                          key={branch.name}
-                                          name={branch.name}
-                                          isDefault={branch.isDefault}
-                                          isProtected={branch.isProtected}
-                                          isActive={isActiveBranch}
-                                          canDelete={canDeleteBranch}
-                                          isDeleting={deletingBranch === branch.name}
-                                          anyDeleting={Boolean(deletingBranch)}
-                                          isSwitching={pendingSwitchBranch === branch.name}
-                                          onSwitch={() => void switchActiveRepoBranch(branch.name)}
-                                          onDelete={() => void deleteBranch(branch.name)}
-                                        />
-                                      );
-                                    })}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-
                             {chats.length === 0 ? (
                               <div className="rounded-xl border border-push-edge/70 bg-push-surface/20 px-3 py-2.5 text-push-xs text-push-fg-muted">
                                 No chats yet

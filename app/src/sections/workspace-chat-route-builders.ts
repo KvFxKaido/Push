@@ -21,6 +21,11 @@ type RepoLauncherSheetProps = ComponentProps<
   typeof import('@/components/launcher/RepoLauncherSheet').RepoLauncherSheet
 >;
 
+// Branch-option shape, owned here now that the drawer is out of the branch
+// business (it no longer renders a switcher). The Workspace hub is the
+// canonical branch surface; this type feeds its branch props.
+type BranchOption = { name: string; isDefault: boolean; isProtected: boolean };
+
 export function buildSettingsAuth(
   props: ChatRouteProps,
   onDisconnect: () => void,
@@ -269,8 +274,9 @@ export function buildWorkspaceHubReviewModelOptions(
 
 export function buildWorkspaceHubBranchProps(args: {
   activeRepo: ChatRouteProps['activeRepo'];
-  displayBranches: RepoChatDrawerProps['availableBranches'];
+  displayBranches: BranchOption[] | undefined;
   repoBranchesLoading: boolean;
+  repoBranchesError: string | null;
   loadRepoBranches: (repoFullName: string) => Promise<void> | void;
   setCurrentBranch: ChatRouteProps['setCurrentBranch'];
   switchBranchFromUI: ChatRouteProps['switchBranchFromUI'];
@@ -286,6 +292,7 @@ export function buildWorkspaceHubBranchProps(args: {
     defaultBranch: args.activeRepo?.default_branch,
     availableBranches: args.displayBranches ?? [],
     branchesLoading: args.repoBranchesLoading,
+    branchesError: args.repoBranchesError,
     // A firmer tap on a branch switch — a committed context change (no-op on web).
     onSwitchBranch: (branch) => {
       hapticMedium();
@@ -321,18 +328,7 @@ export function buildRepoChatDrawerProps(args: {
   handleCreateNewChatRequest: () => void;
   deleteChat: ChatRouteProps['deleteChat'];
   renameChat: ChatRouteProps['renameChat'];
-  currentBranch: string | undefined;
-  defaultBranch: string | undefined;
-  setCurrentBranch: ChatRouteProps['setCurrentBranch'];
-  switchBranchFromUI: ChatRouteProps['switchBranchFromUI'];
-  displayBranches: RepoChatDrawerProps['availableBranches'];
-  repoBranchesLoading: boolean;
-  repoBranchesError: string | null;
-  loadRepoBranches: (repoFullName: string) => Promise<void> | void;
-  handleDeleteBranch: RepoChatDrawerProps['onDeleteBranch'];
 }): RepoChatDrawerProps {
-  const activeRepoFullName = args.activeRepo?.full_name;
-
   // ChatSurfaceRoute and WorkspaceChatRoute route taps through
   // `App.handleResumeChatFromDrawer`, which only handles chat / scratch
   // / repo conversations. local-pc / relay chats fall through to a
@@ -361,19 +357,6 @@ export function buildRepoChatDrawerProps(args: {
     onNewChat: args.handleCreateNewChatRequest,
     onDeleteChat: args.deleteChat,
     onRenameChat: args.renameChat,
-    currentBranch: args.currentBranch,
-    defaultBranch: args.defaultBranch,
-    setCurrentBranch: args.setCurrentBranch,
-    switchBranchFromUI: args.switchBranchFromUI,
-    availableBranches: args.displayBranches,
-    branchesLoading: args.repoBranchesLoading,
-    branchesError: args.repoBranchesError,
-    onRefreshBranches: activeRepoFullName
-      ? () => {
-          void args.loadRepoBranches(activeRepoFullName);
-        }
-      : undefined,
-    onDeleteBranch: args.handleDeleteBranch,
   };
 }
 

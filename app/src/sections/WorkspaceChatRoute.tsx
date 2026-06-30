@@ -615,6 +615,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     activeRepo,
     displayBranches,
     repoBranchesLoading,
+    repoBranchesError,
     loadRepoBranches: loadRepoBranchesWithMergeDetection,
     setCurrentBranch,
     switchBranchFromUI,
@@ -637,15 +638,6 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleCreateNewChatRequest,
     deleteChat,
     renameChat,
-    currentBranch: activeRepo?.current_branch || activeRepo?.default_branch,
-    defaultBranch: activeRepo?.default_branch,
-    setCurrentBranch,
-    switchBranchFromUI,
-    displayBranches,
-    repoBranchesLoading,
-    repoBranchesError,
-    loadRepoBranches: loadRepoBranchesWithMergeDetection,
-    handleDeleteBranch,
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,
