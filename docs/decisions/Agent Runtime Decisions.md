@@ -1,7 +1,7 @@
 # Agent Runtime Decisions
 
 Status: **Current**
-Reviewed: 2026-06-21
+Reviewed: 2026-06-30
 
 This is the live decision surface for Push's agent runtime. Archived source
 notes live in [`../archive/decisions/`](../archive/decisions/README.md).
@@ -546,6 +546,66 @@ tiered compaction should extend the adopted `createContextManager` seam, not
 resurrect a speculative parallel. The async LLM handoff (`lib/llm-compaction.ts`)
 is structurally unchanged — now keyed off `handoffTokens` (above).
 
+### 15. Runtime interventions use steer/block vocabulary over one tool ledger
+
+Status: **Current direction** (doc decision for [#1260](https://github.com/KvFxKaido/Push/issues/1260); implementation pending).
+
+Push already intervenes in agent turns, but the live paths historically named
+their choices locally: tool-call recovery injects corrective messages, the
+mutation transaction refuses unsafe ordering, loop detection skips/halts repeated
+work, sandbox recovery changes retry guidance, and `prepare_push` gates delivery
+through the Auditor. These are one runtime concept and should share vocabulary:
+
+- **Steer** means the runtime does not execute the missing/invalid action yet; it
+  gives the model concrete, runtime-generated guidance and continues the loop.
+  Examples: malformed tool-call feedback, tool-call-in-reasoning nudges,
+  announced-action-without-tool-call nudges, ungrounded-completion verification
+  prompts, and retry guidance after recoverable tool errors.
+- **Block** means the runtime refuses an action or stops a run because continuing
+  would violate a hard boundary. Examples: role/capability denial, a second
+  trailing side effect in one turn, file-mutation overflow/ordering violations,
+  repeated-call loop breakers, unsafe Auditor verdicts, and unrunnable required
+  gates at the push boundary.
+
+The intervention type belongs in shared `lib/` code as a small data contract, not
+as a hook/plugin framework. A useful shape names the lifecycle point
+(`after_model`, `before_tool`, `after_tool`, `delivery_gate`), the mode
+(`steer` / `block`), the source policy, a stable reason code, the affected tool
+call when one exists, and any model-facing guidance. Steer payloads must be
+runtime-generated and traceable to deterministic state; prompts may explain the
+contract, but they are not the control plane.
+
+The shared state source is a **tool ledger**, not another grouping state machine.
+`lib/tool-call-grouping.ts` already owns the read-prefix -> file-mutation batch ->
+single trailing side-effect classifier and caps. The ledger should sit beside the
+turn/run execution path and record what happened: emitted calls, accepted calls,
+rejected/overflow calls, source, tool name, normalized args key, phase slot,
+execution start/end, duration, error/retryability, structured error type,
+postconditions, and side-effect class. Budget enforcement, loop/intervention
+decisions, Auditor context, and future steer handlers should query that ledger
+instead of re-deriving history from transcript text or local arrays.
+
+Intervention points are intentionally few:
+
+1. **After model output, before tool execution** — recover malformed/misplaced
+   calls or steer false completions.
+2. **Before tool execution** — enforce capabilities, role boundaries, tool-order
+   budgets, approval gates, and sensitive-path guards.
+3. **After tool execution** — record results, update verification/sandbox state,
+   steer recoverable failures, and trigger loop breakers.
+4. **Delivery boundary** — run secret/Auditor gates over the pushed diff; steer
+   through review-card feedback when safe to continue, block when the gate is
+   unsafe or required and unrunnable.
+
+Non-goals stay explicit: no Graph/Swarm adoption, no generic hook framework, no
+MCP expansion beyond the current CLI-scoped posture, and no new agent capability.
+This is consolidation of existing runtime behavior under a named contract.
+
+Source notes:
+[#1260](https://github.com/KvFxKaido/Push/issues/1260),
+[`strands-agents/harness-sdk`](https://github.com/strands-agents/harness-sdk),
+[`Strands steering`](https://strandsagents.com/docs/user-guide/concepts/plugins/steering/).
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -559,6 +619,7 @@ is structurally unchanged — now keyed off `handoffTokens` (above).
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
 11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web + CLI)** — toggle removed, `lib/llm-compaction.ts` engine, `app/src/hooks/chat-compaction.ts` (web) + `cli/lead-compaction.ts` (CLI lead) coordinators wired pre-turn, three web visibility surfaces + the CLI `context_compacted` event. Remaining: graduate the run-event `phase` vocabulary if ops need to distinguish heuristic- from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema), and a Worker-side background-coder integration if those long jobs need it.
+12. Unify runtime intervention machinery (§15 / #1260): add the shared steer/block contract and execution tool ledger in `lib/`, then route existing recovery, budget, loop, and Auditor gate decisions through that contract without changing agent capability.
 
 ## Archived Context Worth Knowing
 
