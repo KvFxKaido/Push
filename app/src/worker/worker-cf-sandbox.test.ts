@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
@@ -18,6 +19,8 @@ vi.mock('@cloudflare/sandbox', () => ({
 const getSandboxMock = vi.mocked(getSandbox);
 const OWNER_TOKEN_PATH = '/tmp/push-owner-token';
 const DEFAULT_OWNER_TOKEN = 'test-owner-token';
+const REPO_ROOT = new URL('../../..', import.meta.url);
+const DOCTOR_EXPOSED_PORTS = [3000, 4173, 5173, 8000, 8080];
 
 interface FakeSandbox {
   exec: ReturnType<typeof vi.fn>;
@@ -207,6 +210,44 @@ function probeStdout(workspaceEntries: string[] = ['package.json']): string {
     '__df__42G',
     ...workspaceEntries,
   ].join('\n');
+}
+
+function doctorStdout(): string {
+  return JSON.stringify({
+    tools: {
+      node: 'v20.11.0',
+      npm: '10.2.4',
+      pnpm: '10.17.1',
+      yarn: '4.9.2',
+      git: 'git version 2.43.0',
+      ripgrep: 'ripgrep 14.1.0',
+      sqlite3: '3.45.0',
+    },
+    package_managers: {
+      npm: '10.2.4',
+      pnpm: '10.17.1',
+      yarn: '4.9.2',
+    },
+    project_markers: ['package.json'],
+    scripts: { test: 'vitest run', 'typecheck:all': 'tsc -b' },
+    git_available: true,
+    disk_free: '41G',
+    writable_root: '/workspace',
+    workspace_writable: true,
+    readiness: {
+      package_manager: 'npm',
+      dependencies: 'installed',
+      test_command: 'npm test',
+      typecheck_command: 'npm run typecheck:all',
+      test_runner: 'vitest',
+    },
+    cache: {
+      root_node_modules: 'populated',
+      app_node_modules: 'populated',
+    },
+    exposed_ports: DOCTOR_EXPOSED_PORTS,
+    image: { doctor: 'push-sandbox-doctor-v1' },
+  });
 }
 
 function mockUuid(value = '00000000-0000-4000-8000-000000000001'): string {
@@ -1342,7 +1383,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.listFiles).toHaveBeenCalledWith('/workspace');
   });
 
-  it('probes the sandbox environment', async () => {
+  it('probes the sandbox environment with the legacy marker fallback', async () => {
     const sandbox = mockSandbox();
     withOwnerTokenAuthExec(sandbox, async () => ({
       stdout: probeStdout(['Cargo.toml']),
@@ -1366,6 +1407,64 @@ describe('handleCloudflareSandbox happy paths', () => {
     });
     expect(sandbox.exec).toHaveBeenCalledTimes(2);
     expect(sandbox.exec.mock.calls[1][0]).toContain('__node__');
+  });
+
+  it('prefers the sandbox doctor JSON contract when present', async () => {
+    const sandbox = mockSandbox();
+    withOwnerTokenAuthExec(sandbox, async () => ({
+      stdout: doctorStdout(),
+      stderr: '',
+      exitCode: 0,
+    }));
+
+    const response = await callRoute('probe', { sandbox_id: 'sb-1' });
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      tools: {
+        node: 'v20.11.0',
+        pnpm: '10.17.1',
+        sqlite3: '3.45.0',
+      },
+      package_managers: {
+        npm: '10.2.4',
+        pnpm: '10.17.1',
+        yarn: '4.9.2',
+      },
+      project_markers: ['package.json'],
+      readiness: {
+        package_manager: 'npm',
+        dependencies: 'installed',
+        test_runner: 'vitest',
+      },
+      cache: {
+        root_node_modules: 'populated',
+        app_node_modules: 'populated',
+      },
+      exposed_ports: DOCTOR_EXPOSED_PORTS,
+      writable_root: '/workspace',
+      workspace_writable: true,
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(2);
+    expect(sandbox.exec.mock.calls[1][0]).toContain('push-sandbox-doctor --json');
+  });
+});
+
+describe('Cloudflare sandbox image contract', () => {
+  it('keeps doctor exposed_ports aligned with Dockerfile EXPOSE metadata', () => {
+    const dockerfile = readFileSync(new URL('Dockerfile.sandbox', REPO_ROOT), 'utf8');
+    const doctor = readFileSync(new URL('sandbox/bin/push-sandbox-doctor', REPO_ROOT), 'utf8');
+
+    const exposeMatch = dockerfile.match(/^EXPOSE\s+(.+)$/m);
+    const doctorMatch = doctor.match(/^EXPOSED_PORTS = \[(.+)\]$/m);
+
+    expect(exposeMatch?.[1].trim().split(/\s+/).map(Number)).toEqual(DOCTOR_EXPOSED_PORTS);
+    expect(
+      doctorMatch?.[1]
+        .split(',')
+        .map((port) => Number(port.trim()))
+        .filter((port) => !Number.isNaN(port)),
+    ).toEqual(DOCTOR_EXPOSED_PORTS);
   });
 });
 

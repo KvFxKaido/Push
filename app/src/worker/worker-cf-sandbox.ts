@@ -2537,9 +2537,7 @@ async function routeProbe(env: Env, body: Json): Promise<Response> {
 type SandboxStub = ReturnType<typeof getSandbox>;
 
 async function probeEnvironment(sandbox: SandboxStub): Promise<Json> {
-  // Single exec dumps versions for the tools we care about. Missing tools
-  // surface as empty strings; we parse and filter below.
-  const script =
+  const legacyProbeScript =
     'echo "__node__$(node -v 2>/dev/null || echo "")" && ' +
     'echo "__npm__$(npm -v 2>/dev/null || echo "")" && ' +
     'echo "__python__$(python3 --version 2>/dev/null || echo "")" && ' +
@@ -2550,11 +2548,42 @@ async function probeEnvironment(sandbox: SandboxStub): Promise<Json> {
     'echo "__pytest__$(pytest --version 2>/dev/null | head -1 || echo "")" && ' +
     'echo "__df__$(df -h /workspace 2>/dev/null | tail -1 | awk "{print \\$4}")" && ' +
     'ls /workspace 2>/dev/null';
+  // Prefer the image-baked doctor contract. Keep the marker fallback so old
+  // containers stay probeable during a rolling image update.
+  const script =
+    'if command -v push-sandbox-doctor >/dev/null 2>&1; then ' +
+    `push-sandbox-doctor --json || { ${legacyProbeScript}; }; ` +
+    `else ${legacyProbeScript}; fi`;
 
   const result = (await withExecDeadline(sandbox.exec(script)).catch(() => ({ stdout: '' }))) as {
     stdout?: string;
   };
   const out = result.stdout ?? '';
+  const doctorEnvironment = parseDoctorEnvironment(out);
+  if (doctorEnvironment) return doctorEnvironment;
+
+  return parseLegacyProbeEnvironment(out);
+}
+
+function parseDoctorEnvironment(out: string): Json | null {
+  const trimmed = out.trim();
+  if (!trimmed.startsWith('{')) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (!isJsonRecord(parsed)) return null;
+  if (!isJsonRecord(parsed.tools)) parsed.tools = {};
+  return parsed;
+}
+
+function isJsonRecord(value: unknown): value is Json {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseLegacyProbeEnvironment(out: string): Json {
   const tools: Record<string, string> = {};
   const markerCandidates = [
     'package.json',
