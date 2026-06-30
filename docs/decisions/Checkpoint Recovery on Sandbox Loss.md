@@ -294,15 +294,18 @@ your unpushed work" and restoring loses nothing
 snapshot, so we **discard the restore and re-clone** the fresh tip
 (`cf_sandbox_cold_restore_diverged`) rather than silently drop real commits.
 
-This `cat-file` guard turned out to **subsume the `default_branch` scoping** this doc
-originally predicted: a stale default-branch snapshot fails the guard automatically
-(the default branch has almost always moved since capture → origin tip not in the
-snapshot → discard), so no surface needs to thread `default_branch` and the path is
-worker-only. Best-effort throughout — no snapshot / too large / object reaped keeps
-the clean clone; a wipe or hydrate failure re-clones. **Still deferred:** the
-true-divergence case where you have unpushed commits *and* origin advanced — the
-guard correctly drops the unpushed work (a fresh origin clone is the safe choice; an
-auto-rebase/merge would be the only way to keep both, and that's out of scope).
+Default-branch sessions **skip this over-clone restore path** and cold-start from
+origin. The guard is still required for feature branches, but it is too expensive
+to use as the default-branch filter: a stale or large default-branch snapshot can
+make every ordinary startup hydrate, guard, and often re-clone before the sandbox
+is usable. For compatibility with older clients that do not send `default_branch`,
+the worker treats `main`/`master` as default-looking and also honors an explicit
+`default_branch` hint when present. Best-effort throughout — no snapshot / too
+large / object reaped keeps the clean clone; a wipe or hydrate failure re-clones.
+**Still deferred:** the true-divergence case where you have unpushed commits *and*
+origin advanced — the guard correctly drops the unpushed work (a fresh origin clone
+is the safe choice; an auto-rebase/merge would be the only way to keep both, and
+that's out of scope).
 
 ## UI surfacing (to design in implementation)
 
