@@ -73,6 +73,7 @@ export interface SandboxManifest {
 
 export interface SandboxEnvironment {
   tools: Record<string, string>;
+  package_managers?: Record<string, string>;
   project_markers?: string[];
   warnings?: string[];
   disk_free?: string;
@@ -81,6 +82,10 @@ export interface SandboxEnvironment {
   container_ttl?: string;
   uptime_seconds?: number;
   writable_root?: string;
+  workspace_writable?: boolean;
+  cache?: Record<string, string>;
+  exposed_ports?: number[];
+  image?: Record<string, string>;
   readiness?: {
     package_manager?: string;
     dependencies?: 'installed' | 'missing' | 'unknown';

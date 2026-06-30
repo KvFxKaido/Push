@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Emit a compact JSON readiness report for a Push sandbox image."""
+
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+WORKSPACE = Path(os.environ.get("PUSH_WORKSPACE", "/workspace"))
+CACHE_ROOT = Path("/opt/push-cache")
+EXPOSED_PORTS = [3000, 4173, 5173, 8000, 8080]
+PROJECT_MARKERS = [
+    "package.json",
+    "requirements.txt",
+    "Cargo.toml",
+    "go.mod",
+    "pyproject.toml",
+]
+SCRIPT_KEYS = [
+    "test",
+    "test:cli",
+    "test:mcp:github",
+    "typecheck",
+    "typecheck:all",
+    "lint",
+    "format",
+    "build",
+    "check",
+]
+
+
+def run(cmd: list[str], timeout: int = 5) -> str:
+    if shutil.which(cmd[0]) is None:
+        return ""
+    try:
+        result = subprocess.run(
+            cmd,
+            check=False,
+            cwd="/tmp",
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip()
+
+
+def first_line(text: str) -> str:
+    return text.splitlines()[0].strip() if text else ""
+
+
+def load_json(path: Path) -> dict:
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def detect_package_manager(pkg: dict) -> str:
+    package_manager = pkg.get("packageManager")
+    if isinstance(package_manager, str) and "@" in package_manager:
+        return package_manager.split("@", 1)[0]
+    if (WORKSPACE / "pnpm-lock.yaml").exists():
+        return "pnpm"
+    if (WORKSPACE / "yarn.lock").exists():
+        return "yarn"
+    if (WORKSPACE / "package-lock.json").exists():
+        return "npm"
+    return ""
+
+
+def workspace_writable() -> bool:
+    try:
+        WORKSPACE.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=WORKSPACE, prefix=".push-doctor-", delete=True):
+            return True
+    except OSError:
+        return False
+
+
+def disk_free() -> str:
+    output = run(["df", "-h", str(WORKSPACE)])
+    lines = output.splitlines()
+    if len(lines) < 2:
+        return ""
+    columns = lines[-1].split()
+    return columns[3] if len(columns) >= 4 else ""
+
+
+def cache_status(workspace_dir: Path, cache_dir: Path) -> str:
+    ws_lock = workspace_dir / "package-lock.json"
+    cache_lock = cache_dir / "package-lock.json"
+    cache_modules = cache_dir / "node_modules"
+    ws_modules = workspace_dir / "node_modules"
+    if not ws_lock.exists():
+        return "absent"
+    if not cache_lock.exists() or not cache_modules.exists():
+        return "missing-cache"
+    try:
+        lock_matches = ws_lock.read_bytes() == cache_lock.read_bytes()
+    except OSError:
+        lock_matches = False
+    if not lock_matches:
+        return "ineligible"
+    return "populated" if ws_modules.exists() else "eligible"
+
+
+def main() -> None:
+    tools = {
+        "node": first_line(run(["node", "-v"])),
+        "npm": first_line(run(["npm", "-v"])),
+        "pnpm": first_line(run(["pnpm", "-v"])),
+        "yarn": first_line(run(["yarn", "-v"])),
+        "python": first_line(run(["python3", "--version"])),
+        "git": first_line(run(["git", "--version"])),
+        "git_lfs": first_line(run(["git", "lfs", "version"])),
+        "ripgrep": first_line(run(["rg", "--version"])),
+        "jq": first_line(run(["jq", "--version"])),
+        "ruff": first_line(run(["ruff", "--version"])),
+        "pytest": first_line(run(["pytest", "--version"])),
+        "file": first_line(run(["file", "--version"])),
+        "rsync": first_line(run(["rsync", "--version"])),
+        "tree": first_line(run(["tree", "--version"])),
+        "sqlite3": first_line(run(["sqlite3", "--version"])),
+    }
+    tools = {key: value for key, value in tools.items() if value}
+
+    entries = {entry.name for entry in WORKSPACE.iterdir()} if WORKSPACE.exists() else set()
+    project_markers = [marker for marker in PROJECT_MARKERS if marker in entries]
+
+    root_package = load_json(WORKSPACE / "package.json")
+    raw_scripts = root_package.get("scripts") if root_package else {}
+    scripts = {
+        key: raw_scripts[key]
+        for key in SCRIPT_KEYS
+        if isinstance(raw_scripts, dict) and isinstance(raw_scripts.get(key), str)
+    }
+
+    package_manager = detect_package_manager(root_package)
+    dependencies = "unknown"
+    if root_package:
+        dependencies = "installed" if (WORKSPACE / "node_modules").exists() else "missing"
+
+    readiness = {
+        "dependencies": dependencies,
+    }
+    if package_manager:
+        readiness["package_manager"] = package_manager
+    if "test" in scripts:
+        readiness["test_command"] = scripts["test"]
+    if "typecheck:all" in scripts:
+        readiness["typecheck_command"] = scripts["typecheck:all"]
+    elif "typecheck" in scripts:
+        readiness["typecheck_command"] = scripts["typecheck"]
+    test_script = scripts.get("test", "")
+    if "vitest" in test_script:
+        readiness["test_runner"] = "vitest"
+    elif "jest" in test_script:
+        readiness["test_runner"] = "jest"
+    elif "pytest" in tools:
+        readiness["test_runner"] = "pytest"
+
+    writable = workspace_writable()
+    report = {
+        "tools": tools,
+        "package_managers": {
+            key: tools[key] for key in ("npm", "pnpm", "yarn") if key in tools
+        },
+        "project_markers": project_markers,
+        "warnings": [] if writable else ["Workspace is not writable"],
+        "disk_free": disk_free(),
+        "scripts": scripts,
+        "git_available": "git" in tools,
+        "writable_root": str(WORKSPACE) if writable else "",
+        "workspace_writable": writable,
+        "readiness": readiness,
+        "cache": {
+            "root_node_modules": cache_status(WORKSPACE, CACHE_ROOT),
+            "app_node_modules": cache_status(WORKSPACE / "app", CACHE_ROOT / "app"),
+        },
+        "exposed_ports": EXPOSED_PORTS,
+        "image": {"doctor": "push-sandbox-doctor-v1"},
+    }
+    print(json.dumps(report, sort_keys=True, separators=(",", ":")))
+
+
+if __name__ == "__main__":
+    main()

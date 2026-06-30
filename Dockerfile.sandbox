@@ -11,9 +11,17 @@
 
 FROM docker.io/cloudflare/sandbox:0.12.1-python
 
-# ripgrep is not in the default image — required by Push tool execution.
+# ripgrep is required by Push tool execution. The other packages are small
+# readiness conveniences for common repo inspections and dev workflows.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ripgrep \
+ && apt-get install -y --no-install-recommends \
+      file \
+      git-lfs \
+      ripgrep \
+      rsync \
+      sqlite3 \
+      tree \
+ && git lfs install --system --skip-repo \
  && rm -rf /var/lib/apt/lists/*
 
 # Python tooling used by agent workloads (lint/test of user Python code).
@@ -45,5 +53,21 @@ RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
 WORKDIR /opt/push-cache/app
 COPY app/package.json app/package-lock.json ./
 RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
+
+# Enable Corepack shims and prefetch common package managers so pnpm/yarn repos
+# do not spend their first sandbox command downloading the manager itself. The
+# base image ships Node/npm but not always Corepack, so install the shim
+# explicitly. A repo's packageManager pin still wins when one is present.
+RUN npm install -g corepack \
+ && corepack enable \
+ && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@latest --activate \
+ && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare yarn@stable --activate
+
+COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
+RUN chmod 0755 /usr/local/bin/push-sandbox-doctor
+
+# Common dev-server ports. Cloudflare Sandbox uses EXPOSE metadata for local
+# `wrangler dev` port exposure.
+EXPOSE 3000 4173 5173 8000 8080
 
 WORKDIR /

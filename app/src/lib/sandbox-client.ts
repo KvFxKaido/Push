@@ -40,6 +40,7 @@ import { notifyWorkspaceMutation } from './sandbox-mutation-signal';
 
 export interface SandboxEnvironment {
   tools: Record<string, string>; // e.g. { node: "v20.18.1", npm: "10.8.2" }
+  package_managers?: Record<string, string>; // e.g. { npm: "10.8.2", pnpm: "10.0.0" }
   project_markers?: string[]; // e.g. ["package.json", "requirements.txt"]
   warnings?: string[]; // e.g. ["Low disk space: 450M"]
   disk_free?: string; // e.g. "45000M"
@@ -48,6 +49,10 @@ export interface SandboxEnvironment {
   container_ttl?: string; // e.g. "30m"
   uptime_seconds?: number; // seconds since sandbox start
   writable_root?: string; // e.g. "/workspace"
+  workspace_writable?: boolean;
+  cache?: Record<string, string>; // e.g. { root_node_modules: "populated" }
+  exposed_ports?: number[];
+  image?: Record<string, string>;
   readiness?: {
     package_manager?: string;
     dependencies?: 'installed' | 'missing' | 'unknown';
