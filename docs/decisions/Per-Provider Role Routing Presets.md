@@ -2,6 +2,7 @@
 
 Status: **Draft**
 Reviewed: 2026-06-28
+Validated: 2026-06-30 against `main` @ `5b78db0e` — see [Validation](#validation--2026-06-30). Core web-seam claims hold; the real scope is reconciling with the CLI's **already-built** `roleRouting`, not a single-function add.
 
 A design note for a user-selectable, capability-tagged **routing preset** that
 fans Push's internal roles out to the best-fit model *within a single provider*
@@ -143,13 +144,24 @@ one gate where model diversity matters most**. Reviewer/Auditor exist partly so 
    `role_routing_resolved` ↔ `role_routing_intent_unmet` (fell back to provider
    default) ↔ `role_routing_preset_missing`. `console.log` on web/worker;
    `console.error` in the shared `lib/` module so CLI stdout stays clean.
+   *(Build-time, post-#1272: the `RuntimeIntervention` contract in
+   `lib/runtime-intervention.ts` is the emerging idiom for runtime-generated
+   events with stable `source`/`reason` codes — routing resolution isn't a loop
+   intervention so these stay plain structured logs, but weigh giving the
+   `intent_unmet` event a `source: 'role_routing'` shape for run-event
+   consistency.)*
 
 ## 7. Build order
 
 1. `lib/role-routing-preset.ts` — types, intent→capability resolver, Zen Go
    preset, fallbacks. Pure; unit-tested in isolation.
-2. Thread an optional active-preset lookup into `getModelForRole` (web) and the
-   CLI equivalent; default off → byte-identical behavior to today.
+2. Thread an optional active-preset lookup into `getModelForRole` (web). The CLI
+   has **no `getModelForRole` twin** — per-role routing already exists there as
+   `entry.state.roleRouting.{coder,explorer}` (set via the `configure_role_routing`
+   verb, resolved in `cli/pushd.ts`). So the CLI step is *populating that existing
+   structure* from the resolved preset, not threading a new lookup. Default off →
+   byte-identical behavior on both surfaces. (See [Validation](#validation--2026-06-30);
+   this is the crux of obligation §6.2.)
 3. Persist preset selection (durable key) + lock it alongside the Orchestrator
    provider on first send.
 4. Settings UI: a "Routing" selector next to the provider/model picker.
@@ -165,3 +177,75 @@ one gate where model diversity matters most**. Reviewer/Auditor exist partly so 
   curated-only with user authoring as a follow-up? (Leaning: curated-only v1.)
 - Intent vocabulary size — is 4 intents enough, or do we need a `long-context`
   intent distinct from `strong-reason` for big-repo Explorer scans?
+
+## Validation — 2026-06-30
+
+Traced against `main` @ `5b78db0e`. The web-seam analysis holds; the headline
+"single-function change / mostly already built" is accurate for the **web in
+isolation** but undersells scope, because the **CLI already implements per-role
+routing through a different mechanism this note never mentions**.
+
+### Confirmed
+
+- **`getModelForRole` is the single web seam.** `app/src/lib/providers.ts:470`
+  resolves `(provider, role)`, but the getter is keyed by **provider only**
+  (`MODEL_NAME_GETTERS[type]`, :447) — `resolvedId = getter()` (:478) returns one
+  stored id for all five roles. Per-role resolution genuinely localizes here.
+  §1/§2 are correct.
+- **Capability primitives exist.** `getModelCapabilities` and
+  `resolvePushCapabilityProfile` (`app/src/lib/model-catalog.ts:411 / :723`)
+  return the `toolCalling`/`reasoning`/`context` shape an intent matches on — the
+  resolver is buildable as described. *Caveat:* there are **two**
+  `getModelCapabilities` (`model-catalog.ts` and `model-capabilities.ts`); the
+  resolver must use the catalog one.
+- **"No call-site changes" holds** — every consumer goes through the seam.
+
+### Corrections
+
+- **§1's call-site list is incomplete and slightly mislabeled.** Production
+  callers are ~7, not 4: add `WorkspaceHubSheet.tsx` (×2, orchestrator),
+  `HubReviewTab.tsx` (×2, reviewer), and `ensure-commit-target-branch.ts:201`
+  (orchestrator). And `inline-coder-run.ts:467` resolves **`orchestrator`**, not
+  Coder. Harmless — they'd render preset-resolved models for free — but the count
+  should be right.
+- **§3's lock is a thread, not a record.** `lockedProvider`/`lockedModel`
+  (strings) already run through `chat-prepare-send.ts`, `CommitPushSheet`,
+  `SettingsSheet`, and `settings-built-in-provider-builder`. Pinning a preset id
+  touches that payload at every site.
+
+### The load-bearing gap: the CLI already does this (differently)
+
+`cli/pushd.ts` resolves `entry.state.roleRouting.{coder,explorer}` as independent
+`{provider, model}` per role (`:4974`, `:4994`), set via the
+**`configure_role_routing`** protocol verb (schema-pinned in
+`lib/protocol-schema.ts` + `protocol-json-schema.ts`, capability
+`delegation_coder_v1`, with a TUI surface). It already supports **cross-provider
+per role** — the §4 "escapable judge" capability this note frames as future. The
+**web consumes none of it** (`roleRouting` appears in `app/src` only inside the
+shared schema validators).
+
+So per-role routing is **not greenfield**: two mechanisms already exist (the web's
+single-model `getModelForRole`, the CLI's explicit `roleRouting`), which makes
+§6.2's "one source of truth, consumed by web and CLI" the *hardest* obligation,
+not a checkbox — a second source is already there.
+
+### Recommended reframe — preset as a generator, not a third system
+
+Have `lib/role-routing-preset.ts` resolve intent →
+`Record<AgentRole, {provider, model}>`, then:
+
+- **CLI** consumes it by *populating `entry.state.roleRouting`* — the structure
+  already exists and is already read on delegation.
+- **Web** learns to consume the same resolved map inside `getModelForRole`.
+
+This makes "one source of truth" real: the resolver feeds the CLI's existing
+structure and a mirrored web structure of identical shape, instead of standing up
+a parallel preset path the CLI then duplicates. **Add a step 0 to §7:** reconcile
+the resolver's output type with `entry.state.roleRouting` so the CLI consumes
+presets by writing the structure it already reads.
+
+### Verdict
+
+The bones are *better* than the note claims — the CLI half is largely built — but
+in a place the note didn't look. This moves the work from "single-function change"
+to **small-but-genuine cross-surface reconciliation**. Still worth doing.
