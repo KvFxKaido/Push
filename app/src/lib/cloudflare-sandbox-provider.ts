@@ -157,6 +157,7 @@ export class CloudflareSandboxProvider implements SandboxProvider {
     }>('create', {
       repo: manifest.repo,
       branch: manifest.branch,
+      default_branch: manifest.defaultBranch,
       github_token: manifest.githubToken,
       github_identity: manifest.gitIdentity,
       seed_files: manifest.seedFiles,

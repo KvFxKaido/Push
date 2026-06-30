@@ -822,6 +822,25 @@ describe('parseEnvironmentProbe', () => {
 });
 
 describe('sandbox lifecycle events', () => {
+  it('sends the repo default branch when creating a sandbox', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ sandbox_id: 'sb-created', owner_token: 'owner-token' }),
+    });
+
+    const session = await createSandbox('owner/repo', 'develop', undefined, undefined, 'develop');
+
+    expect(session.status).toBe('ready');
+    const [url, options] = mockFetch.mock.calls[0];
+    expect(url).toBe('/api/sandbox/create');
+    const body = JSON.parse(options.body);
+    expect(body).toMatchObject({
+      repo: 'owner/repo',
+      branch: 'develop',
+      default_branch: 'develop',
+    });
+  });
+
   it('records workspace creation even when readiness metadata exists', async () => {
     mockFetch.mockResolvedValue({
       ok: true,

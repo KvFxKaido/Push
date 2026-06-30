@@ -642,6 +642,50 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.gitCheckout).toHaveBeenCalledTimes(1);
   });
 
+  it('skips over-clone snapshot restore when default_branch matches a non-main branch', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('merge-base --is-ancestor')) {
+        throw new Error('default_branch hint should skip the over-clone guard');
+      }
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    const r2 = makeR2({
+      'cf-snapshots/develop-snap': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
+    });
+    const indexKV = makeSnapshotIndexKV({
+      v: 1,
+      imageId: 'cf-snapshots/develop-snap',
+      restoreToken: 'rt',
+      repoFullName: 'owner/repo',
+      branch: 'develop',
+      createdAt: 1,
+      lastAccessedAt: 1,
+    });
+
+    const response = await callRoute(
+      'create',
+      {
+        repo: 'owner/repo',
+        branch: 'develop',
+        default_branch: 'develop',
+        github_token: 'ghs_token',
+      },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(r2.get).not.toHaveBeenCalled();
+    expect(
+      sandbox.exec.mock.calls.some((c) => String(c[0]).includes('merge-base --is-ancestor')),
+    ).toBe(false);
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the fresh clone and re-clones when origin diverged past the snapshot', async () => {
     // The snapshot no longer contains origin's current tip → origin advanced
     // (pushed elsewhere / merge landed). Restoring would shadow real commits, so

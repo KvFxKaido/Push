@@ -1169,6 +1169,7 @@ export async function createSandbox(
   branch?: string,
   githubToken?: string,
   githubIdentity?: GitCommitIdentity,
+  defaultBranch?: string,
 ): Promise<SandboxSession> {
   // Defense in depth: the React `useSandbox.start` path gates durable
   // user-scoped tokens before it ever reaches here, but `createSandbox` is also
@@ -1229,6 +1230,7 @@ export async function createSandbox(
   }>('create', {
     repo,
     branch: branch || 'main',
+    default_branch: defaultBranch,
     github_token: githubToken || '',
     github_identity: githubIdentity
       ? { name: githubIdentity.name, email: githubIdentity.email }

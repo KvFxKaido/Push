@@ -95,6 +95,7 @@ export function WorkspaceSessionScreen({
       : isScratch
         ? 'main'
         : workspaceRepo?.current_branch || workspaceRepo?.default_branch || null,
+    isChat || isScratch ? null : (workspaceRepo?.default_branch ?? null),
   );
   const repoBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch || null;
 

@@ -49,6 +49,29 @@ describe('CloudflareSandboxProvider background execution', () => {
     expect(provider.capabilities.backgroundExec).toBe(true);
   });
 
+  it('includes the repo default branch in create requests', async () => {
+    const calls = stubFetch({
+      sandbox_id: 'sb-cf',
+      owner_token: 'owner-token',
+      status: 'ready',
+    });
+    const provider = new CloudflareSandboxProvider();
+
+    const session = await provider.create({
+      repo: 'owner/repo',
+      branch: 'develop',
+      defaultBranch: 'develop',
+    });
+
+    expect(session.sandboxId).toBe('sb-cf');
+    expect(calls[0].url).toContain('/api/sandbox-cf/create');
+    expect(calls[0].body).toMatchObject({
+      repo: 'owner/repo',
+      branch: 'develop',
+      default_branch: 'develop',
+    });
+  });
+
   it('execBackground posts exec-start and maps the handle', async () => {
     const calls = stubFetch({
       process_id: 'proc_9',
