@@ -916,7 +916,7 @@ function withOwnerToken(
   return { ...body, owner_token: token };
 }
 
-function isMissingOwnerTokenError(err: unknown): boolean {
+export function isMissingOwnerTokenError(err: unknown): boolean {
   return (
     err instanceof Error &&
     err.message === 'Sandbox access token missing. Start or reconnect the sandbox session.'

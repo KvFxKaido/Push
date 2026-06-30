@@ -29,6 +29,7 @@ import {
   msSinceLastSandboxCall,
   hasInFlightSandboxCalls,
   suppressIdleTouch,
+  isMissingOwnerTokenError,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -187,7 +188,18 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   const retireSandboxState = useCallback((id: string, storageKey?: string | null): void => {
     clearTrackedSession(storageKey, id);
     fileLedger.reset();
-    void symbolLedger.clearRepo();
+    // Fire-and-forget, but keep the failure observable rather than swallowed
+    // (REVIEW.md fire-and-forget rule) — this runs during retirement cleanup.
+    symbolLedger.clearRepo().catch((err) => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'sandbox_retire_symbol_clear_failed',
+          sandboxId: id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    });
     symbolLedger.reset();
     clearFileVersionCache(id);
     clearSandboxWorkspaceRevision(id);
@@ -657,6 +669,28 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
         if (existingId) {
           if (statusRef.current !== 'error') return existingId;
 
+          // Re-mark the error-state sandbox as alive after a transient blip.
+          // Crucially clears 'error' status: ensureSandbox's guard re-enters
+          // start() whenever status is 'error', so leaving it would fire a probe
+          // on every tool call (the wedged-but-not-gone re-probe storm). Setting
+          // 'ready' lets the 60s health-check loop own re-verification instead.
+          const keepAsTransient = (reason: string): string => {
+            transientStrikesRef.current = 0;
+            setStatus('ready');
+            setError(null);
+            setActiveSandboxEnvironment(existingId);
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'sandbox_foreground_recovery',
+                outcome: 'transient_kept',
+                sandboxId: existingId,
+                reason,
+              }),
+            );
+            return existingId;
+          };
+
           suppressIdleTouch();
           try {
             const result = await execInSandbox(existingId, 'true');
@@ -679,30 +713,14 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
             }
 
             const reason = result.error || 'Sandbox is no longer reachable';
-            if (!isDefinitivelyGoneMessage(reason)) {
-              console.log(
-                JSON.stringify({
-                  level: 'info',
-                  event: 'sandbox_foreground_recovery',
-                  outcome: 'transient_kept',
-                  sandboxId: existingId,
-                  reason,
-                }),
-              );
-              return existingId;
-            }
+            if (!isDefinitivelyGoneMessage(reason)) return keepAsTransient(reason);
           } catch (err) {
-            if (!isDefinitivelyGoneError(err)) {
-              console.log(
-                JSON.stringify({
-                  level: 'info',
-                  event: 'sandbox_foreground_recovery',
-                  outcome: 'transient_kept',
-                  sandboxId: existingId,
-                  reason: err instanceof Error ? err.message : String(err),
-                }),
-              );
-              return existingId;
+            // A missing owner token means the session token was already cleared
+            // on a definitive-loss path (refresh's clearTrackedSession) while the
+            // id lingered — the sandbox is unusable from here, not transient. Fall
+            // through to restore/cold-start instead of handing back the corpse.
+            if (!isDefinitivelyGoneError(err) && !isMissingOwnerTokenError(err)) {
+              return keepAsTransient(err instanceof Error ? err.message : String(err));
             }
           }
 
