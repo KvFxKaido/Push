@@ -46,6 +46,8 @@ type UseWorkspaceSandboxRestoreArgs =
   import('./useWorkspaceSandboxRestore').UseWorkspaceSandboxRestoreArgs;
 type WorkspaceSandboxRestoreState =
   import('./useWorkspaceSandboxRestore').WorkspaceSandboxRestoreState;
+type CheckpointRestoreAvailability =
+  import('@/lib/checkpoint/checkpoint-store').CheckpointRestoreAvailability;
 
 const REPO = 'owner/repo';
 const SEP = String.fromCharCode(0); // the planner joins the scope key on NUL
@@ -59,6 +61,9 @@ function renderRestore(
   reactState.refIndex = 0;
   reactState.stateIndex = 0;
   reactState.effects = [];
+  // The hand-rolled React mock reuses ref/state cells by hook order between
+  // renderRestore calls. If the hook's useRef/useState order changes, update
+  // this harness deliberately instead of trusting positional reuse by accident.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   return useWorkspaceSandboxRestore({
     sandboxId: 'sb-1',
@@ -77,6 +82,21 @@ async function runEffects(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function startEffects(limit: number = reactState.effects.length): void {
+  const effects = reactState.effects.splice(0, limit);
+  for (const effect of effects) effect();
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 beforeEach(() => {
@@ -202,6 +222,33 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('checkpoint_auto_restore_restored'),
     );
+  });
+
+  it('does not dispatch auto restore after the live lane scope changes', async () => {
+    const availability = deferred<CheckpointRestoreAvailability>();
+    const detect = vi.fn(() => availability.promise);
+    const apply = vi.fn(async () => ({
+      status: 'restored' as const,
+      checkpointId: 'checkpoint-1',
+    }));
+
+    renderRestore({ detect, apply });
+    startEffects();
+
+    // Warm branch switches can preserve the same sandbox. The stale detect
+    // result must not apply feature/x's checkpoint into feature/y.
+    renderRestore({ branch: 'feature/y', detect, apply });
+    startEffects(1);
+    availability.resolve({
+      available: true,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it('shows the existing restore banner when auto restore refuses a dirty target', async () => {

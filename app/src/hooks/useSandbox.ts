@@ -1174,8 +1174,9 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
   /**
    * Transition sandbox to a recoverable error state from outside (e.g. tool
    * dispatch detected SANDBOX_UNREACHABLE). Does not retry the failed tool; it
-   * records the retry policy, updates the sandbox state, and lets the next
-   * sandbox ensure/start prove liveness or recover before more work routes.
+   * logs the retry policy for diagnostics, updates the sandbox state, and lets
+   * the next sandbox ensure/start prove liveness or recover before more work
+   * routes.
    *
    * On the native shell this is also a strand risk: a reported-unreachable
    * container keeps its dead id (like refresh's gone-path), and `ensureSandbox`

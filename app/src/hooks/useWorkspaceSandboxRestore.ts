@@ -87,6 +87,13 @@ interface RestoreBannerState {
   error: string | null;
 }
 
+interface ActiveRestoreScope {
+  sandboxId: string | null;
+  repoFullName: string | null;
+  branch: string | null;
+  enabled: boolean;
+}
+
 const initialBannerState: RestoreBannerState = {
   sandboxId: null,
   repoFullName: null,
@@ -128,6 +135,21 @@ export function useWorkspaceSandboxRestore({
   const planRef = useRef<RestoreDetectionPlanState>(INITIAL_RESTORE_DETECTION_PLAN_STATE);
   const detectRef = useRef(detect);
   const applyRef = useRef(apply);
+  const activeScopeRef = useRef<ActiveRestoreScope>({
+    sandboxId: null,
+    repoFullName: null,
+    branch: null,
+    enabled: false,
+  });
+
+  useEffect(() => {
+    activeScopeRef.current = {
+      sandboxId,
+      repoFullName,
+      branch: branch?.trim() ?? null,
+      enabled,
+    };
+  }, [sandboxId, branch, repoFullName, enabled]);
 
   useEffect(() => {
     detectRef.current = detect;
@@ -146,6 +168,15 @@ export function useWorkspaceSandboxRestore({
     planRef.current = plan.state;
     if (!plan.probe) return;
     const probe = plan.probe;
+    const scopeStillMatchesProbe = () => {
+      const current = activeScopeRef.current;
+      return (
+        current.enabled &&
+        current.sandboxId === probe.sandboxId &&
+        current.repoFullName === probe.repoFullName &&
+        current.branch === probe.branch
+      );
+    };
 
     let cancelled = false;
     void (async () => {
@@ -161,6 +192,7 @@ export function useWorkspaceSandboxRestore({
           setBanner(initialBannerState);
           return;
         }
+        if (!scopeStillMatchesProbe()) return;
 
         const offer: RestoreBannerState = {
           sandboxId: probe.sandboxId,
@@ -180,7 +212,7 @@ export function useWorkspaceSandboxRestore({
             checkpointId: availability.checkpointId,
           });
         } catch (restoreErr) {
-          if (cancelled) return;
+          if (cancelled || !scopeStillMatchesProbe()) return;
           const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
           setBanner({
             ...offer,
@@ -200,8 +232,11 @@ export function useWorkspaceSandboxRestore({
           );
           return;
         }
-        if (cancelled) return;
+        if (cancelled || !scopeStillMatchesProbe()) return;
         if (result.status === 'restored') {
+          // Successful recovery is intentionally UI-quiet: sandbox loss should
+          // feel like reconnecting. Skipped/failed restores surface the banner
+          // below because they need a decision or expose uncertainty.
           setBanner(initialBannerState);
           console.log(
             JSON.stringify({
@@ -232,7 +267,7 @@ export function useWorkspaceSandboxRestore({
           }),
         );
       } catch (err: unknown) {
-        if (cancelled) return;
+        if (cancelled || !scopeStillMatchesProbe()) return;
         const message = err instanceof Error ? err.message : String(err);
         setBanner({
           ...initialBannerState,
