@@ -97,6 +97,7 @@ import { ARTIFACT_TOOL_PROTOCOL } from './artifact-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
+import type { ActiveProvider } from './orchestrator';
 import type { ChatCard, ChatMessage, HarnessProfileSettings } from '@/types';
 import type {
   LlmMessage,
@@ -912,7 +913,7 @@ describe('inline lane web-search protocol gating', () => {
   // Test env has no localStorage, so `getWebSearchMode()` resolves to its
   // 'auto' default — native-capable providers suppress the prompt-engineered
   // protocol, native-less ones keep it.
-  async function runWithProvider(provider: string): Promise<LibOptions> {
+  async function runWithProvider(provider: ActiveProvider): Promise<LibOptions> {
     await runCoderAgent(
       'Implement the fix',
       'sb-1',
@@ -932,7 +933,8 @@ describe('inline lane web-search protocol gating', () => {
 
   it('suppresses the prompt-engineered protocol when native search is active', async () => {
     // Responses-native (this PR) + a pre-existing native provider.
-    for (const provider of ['openai', 'sakana', 'fireworks', 'openrouter']) {
+    const nativeProviders: ActiveProvider[] = ['openai', 'sakana', 'fireworks', 'openrouter'];
+    for (const provider of nativeProviders) {
       const options = await runWithProvider(provider);
       expect(options.webSearchToolProtocol).toBe('');
     }
