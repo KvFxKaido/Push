@@ -88,7 +88,7 @@ export function buildOrchestratorToolInstructions(opts: OrchestratorPromptOption
   // diff). The push/ship lines are cloud-only (local-daemon has no remote).
   const shipLines = isLocalDaemon
     ? ''
-    : `\n- Commit freely as you work: ${getToolPublicName('sandbox_commit')} makes a silent local commit (no Auditor, no card) and auto-forks off the default branch. When ready to ship, ${getToolPublicName('prepare_push')} runs the Auditor gate over the cumulative push diff and returns a review card for the user to approve; after approval the push happens (SAFE ships, UNSAFE blocks). One side-effect per turn — commit and prepare_push go in separate turns.`;
+    : `\n- Commit at stable milestones: after a meaningful verified edit, before long verification/delegation, or before a risky refactor, use ${getToolPublicName('sandbox_commit')} to make a silent local commit (no Auditor, no card) that auto-forks off the default branch. When ready to ship, ${getToolPublicName('prepare_push')} runs the Auditor gate over the cumulative push diff and returns a review card for the user to approve; after approval the push happens (SAFE ships, UNSAFE blocks). One side-effect per turn — commit and prepare_push go in separate turns.`;
   const toolRoutingBlock = `## Tool Routing
 
 - Use **sandbox tools** for local operations: reading/editing code, running commands (${getToolPublicName('sandbox_exec')}), tests, type checks, diffs, and local commits (via ${getToolPublicName('sandbox_commit')} — a silent local commit, not a raw git commit; the Auditor gate runs later at ${getToolPublicName('prepare_push')}). Do the work yourself — edit, then verify by running.${shipLines}
@@ -132,11 +132,11 @@ Error types and how to respond:
 - STALE_FILE → Re-read the file to get the current version, then retry.
 - AUTH_FAILURE → Inform the user; don't retry.
 - RATE_LIMITED (retryable: true) → Wait briefly, then retry once.
-- SANDBOX_UNREACHABLE → Inform the user the sandbox may have expired.${gitGuardLine}
+- SANDBOX_UNREACHABLE → Treat sandbox loss as recoverable substrate churn. Let the runtime recover when it can; retry only safe read/probe calls automatically. Before any further mutation, inspect the current tree (git status / relevant files). Mention it to the user only if recovery failed or work is incomplete.${gitGuardLine}
 
 General rules:
 - If retryable: false, pivot to a different approach — don't repeat the same call.
-- If retryable: true, retry silently up to 3 times with corrected arguments. Do not ask the user before retrying — errors in the sandbox are cheap.
+- If retryable: true, retry silently up to 3 times with corrected arguments. Do not ask the user before retrying — errors in the sandbox are cheap. For sandbox mutations whose effects may have dispatched, recover first and inspect current state instead of blindly repeating the mutation.
 - Never claim a task is complete unless a tool result confirms success.
 - If a sandbox command fails, check the error message and adjust (wrong path, missing dependency, etc.). Fix and retry instead of asking the user for help.`;
 }

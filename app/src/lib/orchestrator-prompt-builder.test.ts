@@ -34,6 +34,11 @@ describe('orchestrator-prompt-builder (shared lib)', () => {
     expect(text).toContain('## Tool Routing');
     expect(text).toContain('## Error Handling');
     expect(text).toContain('EDIT_HASH_MISMATCH');
+    expect(text).toContain('SANDBOX_UNREACHABLE → Treat sandbox loss as recoverable');
+    expect(text).toContain('inspect the current tree');
+    expect(text).not.toContain('Inform the user the sandbox may have expired');
+    expect(text).toContain('Commit at stable milestones');
+    expect(text).toContain('after a meaningful verified edit');
 
     // Scope the placement-section assertions to the slice between its
     // heading and the next `##` header — otherwise a regression that

@@ -350,6 +350,9 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(lead).toContain('## Tool Call Placement');
     expect(lead).toContain('## Tool Routing');
     expect(lead).toContain('## Error Handling');
+    expect(lead).toContain('SANDBOX_UNREACHABLE → treat sandbox loss as recoverable');
+    expect(lead).toContain('inspect the current tree');
+    expect(lead).not.toContain('the sandbox likely expired; tell the user');
     expect(lead).toContain('GIT_GUARD_BLOCKED');
 
     // CLI-style lead: leadMode without the web tool-guidance opt-in. The
@@ -400,6 +403,8 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(sandbox).not.toContain('inspect PRs / commits / CI');
     expect(sandbox).not.toMatch(/open or merge a PR/);
     expect(sandbox).toContain('cannot open or merge PRs, promote to GitHub, create artifacts');
+    expect(sandbox).toContain('after a meaningful verified edit');
+    expect(sandbox).not.toContain('session likely expired');
   });
 
   it('lead hitting the round cap closes gracefully — no Coder / round count / tool name', async () => {

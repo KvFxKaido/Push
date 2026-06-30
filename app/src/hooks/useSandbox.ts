@@ -29,6 +29,7 @@ import {
   msSinceLastSandboxCall,
   hasInFlightSandboxCalls,
   suppressIdleTouch,
+  isMissingOwnerTokenError,
 } from '@/lib/sandbox-client';
 import type { GitCommitIdentity } from '@/lib/sandbox-client';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -61,6 +62,7 @@ import {
   saveSandboxSession,
   shouldRetryReconnect,
   touchSandboxSessionActivity,
+  type PersistedSandboxSession,
 } from '@/lib/sandbox-session';
 import { isDefinitivelyGoneMessage, isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
@@ -183,6 +185,109 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     [activeRepoFullName, activeBranch],
   );
 
+  const retireSandboxState = useCallback((id: string, storageKey?: string | null): void => {
+    clearTrackedSession(storageKey, id);
+    fileLedger.reset();
+    // Fire-and-forget, but keep the failure observable rather than swallowed
+    // (REVIEW.md fire-and-forget rule) — this runs during retirement cleanup.
+    symbolLedger.clearRepo().catch((err) => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'sandbox_retire_symbol_clear_failed',
+          sandboxId: id,
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+    });
+    symbolLedger.reset();
+    clearFileVersionCache(id);
+    clearSandboxWorkspaceRevision(id);
+    clearSandboxEnvironment(id);
+    setActiveSandboxEnvironment(null);
+    setSandboxId(null);
+    sandboxIdRef.current = null;
+    sessionStorageKeyRef.current = null;
+    freshSandboxIdRef.current = null;
+    setFreshSandboxId(null);
+    snapshotRestoredSandboxIdRef.current = null;
+    setRestoredFromSnapshotSandboxId(null);
+    setStatus('idle');
+    setError(null);
+  }, []);
+
+  const restoreSavedSessionSnapshot = useCallback(
+    async (
+      saved: PersistedSandboxSession,
+      storageKey: string | null,
+      isCancelled?: () => boolean,
+    ): Promise<string | null> => {
+      // On the native shell the on-device checkpoint is the sole recovery path —
+      // no cloud restore. Returning null lets the caller cold-start so the native
+      // checkpoint offer can attach to the fresh sandbox.
+      if (nativeCheckpointsActive()) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'sandbox_cloud_restore_skipped_native',
+            sandboxId: saved.sandboxId,
+            reason: 'native_checkpoints_active',
+          }),
+        );
+        return null;
+      }
+      if (!saved.snapshotId || !saved.restoreToken) return null;
+
+      console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
+      setStatus('reconnecting');
+      try {
+        const session = await restoreFromSnapshot(saved.snapshotId, saved.restoreToken, {
+          repoFullName: saved.repoFullName,
+          branch: saved.branch,
+        });
+        if (isCancelled?.()) return null;
+        if (session.status !== 'ready') {
+          toast.error(RESTORE_FAILED_MESSAGE);
+          return null;
+        }
+        fileLedger.reset();
+        clearFileVersionCache(saved.sandboxId);
+        clearSandboxWorkspaceRevision(saved.sandboxId);
+        clearSandboxEnvironment(saved.sandboxId);
+        freshSandboxIdRef.current = null;
+        setFreshSandboxId(null);
+        snapshotRestoredSandboxIdRef.current = session.sandboxId;
+        setRestoredFromSnapshotSandboxId(session.sandboxId);
+        setSandboxId(session.sandboxId);
+        sandboxIdRef.current = session.sandboxId;
+        sessionStorageKeyRef.current = storageKey;
+        setActiveSandboxEnvironment(session.sandboxId);
+        setStatus('ready');
+        lastReconnectAttemptRef.current = null; // restored — reset retry budget
+        const symbolKey = saved.repoFullName
+          ? `${saved.repoFullName}:${saved.branch || 'main'}`
+          : 'scratch';
+        symbolLedger.setRepo(symbolKey);
+        void symbolLedger.hydrate();
+        // Persist the new sandbox ID (snapshot consumed).
+        saveSandboxSession(saved.repoFullName, saved.branch, {
+          sandboxId: session.sandboxId,
+          ownerToken: session.ownerToken || '',
+          repoFullName: saved.repoFullName,
+          branch: saved.branch,
+          createdAt: Date.now(),
+        });
+        console.log(`[useSandbox] Restored from snapshot → ${session.sandboxId}`);
+        return session.sandboxId;
+      } catch (restoreErr) {
+        console.debug('[useSandbox] Snapshot restore failed:', restoreErr);
+        if (!isCancelled?.()) toast.error(RESTORE_FAILED_MESSAGE);
+        return null;
+      }
+    },
+    [],
+  );
+
   // Keep ref in sync for cleanup
   useEffect(() => {
     sandboxIdRef.current = sandboxId;
@@ -270,66 +375,8 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       setActiveSandboxEnvironment(null);
     }, 0);
 
-    const attemptSnapshotRestore = async (): Promise<string | null> => {
-      // On the native shell the on-device checkpoint is the sole recovery path —
-      // no cloud restore. Returning null here drops the reconnect through to
-      // clearTrackedSession + idle, so the controller cold-starts a fresh
-      // sandbox and the native restore offer fires against it (Increment 2).
-      if (nativeCheckpointsActive()) {
-        console.log(
-          JSON.stringify({
-            level: 'info',
-            event: 'sandbox_cloud_restore_skipped_native',
-            sandboxId: saved.sandboxId,
-            reason: 'native_checkpoints_active',
-          }),
-        );
-        return null;
-      }
-      if (!saved.snapshotId || !saved.restoreToken) return null;
-      console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
-      setStatus('reconnecting');
-      try {
-        const session = await restoreFromSnapshot(saved.snapshotId, saved.restoreToken, {
-          repoFullName: saved.repoFullName,
-          branch: saved.branch,
-        });
-        if (cancelled) return null;
-        if (session.status !== 'ready') {
-          toast.error(RESTORE_FAILED_MESSAGE);
-          return null;
-        }
-        freshSandboxIdRef.current = null;
-        setFreshSandboxId(null);
-        snapshotRestoredSandboxIdRef.current = session.sandboxId;
-        setRestoredFromSnapshotSandboxId(session.sandboxId);
-        setSandboxId(session.sandboxId);
-        sandboxIdRef.current = session.sandboxId;
-        sessionStorageKeyRef.current = activeSessionStorageKey;
-        setActiveSandboxEnvironment(session.sandboxId);
-        setStatus('ready');
-        lastReconnectAttemptRef.current = null; // restored — reset retry budget
-        const symbolKey = saved.repoFullName
-          ? `${saved.repoFullName}:${saved.branch || 'main'}`
-          : 'scratch';
-        symbolLedger.setRepo(symbolKey);
-        void symbolLedger.hydrate();
-        // Persist the new sandbox ID (snapshot consumed).
-        saveSandboxSession(saved.repoFullName, saved.branch, {
-          sandboxId: session.sandboxId,
-          ownerToken: session.ownerToken || '',
-          repoFullName: saved.repoFullName,
-          branch: saved.branch,
-          createdAt: Date.now(),
-        });
-        console.log(`[useSandbox] Restored from snapshot → ${session.sandboxId}`);
-        return session.sandboxId;
-      } catch (restoreErr) {
-        console.debug('[useSandbox] Snapshot restore failed:', restoreErr);
-        if (!cancelled) toast.error(RESTORE_FAILED_MESSAGE);
-        return null;
-      }
-    };
+    const attemptSnapshotRestore = (): Promise<string | null> =>
+      restoreSavedSessionSnapshot(saved, activeSessionStorageKey, () => cancelled);
 
     // After a transient probe failure, schedule exactly one backoff retry so a
     // container that's genuinely coming back reconnects on its own — then stop,
@@ -443,7 +490,13 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
       reconnectingRef.current = false;
       reconnectPromiseRef.current = null;
     };
-  }, [activeBranch, activeRepoFullName, activeSessionStorageKey, reconnectNonce]);
+  }, [
+    activeBranch,
+    activeRepoFullName,
+    activeSessionStorageKey,
+    reconnectNonce,
+    restoreSavedSessionSnapshot,
+  ]);
 
   // Idle hibernation timer — snapshot the sandbox after 8 min of no tool calls.
   // The snapshot preserves the full working tree so restore is fast. Without this,
@@ -600,123 +653,216 @@ export function useSandbox(activeRepoFullName?: string | null, activeBranch?: st
     return () => clearInterval(timer);
   }, [activeBranch, activeRepoFullName, status]);
 
-  const start = useCallback(async (repo: string, branch?: string): Promise<string | null> => {
-    if (startPromiseRef.current) return startPromiseRef.current;
-    if (statusRef.current === 'creating') return null;
+  const start = useCallback(
+    async (repo: string, branch?: string): Promise<string | null> => {
+      if (startPromiseRef.current) return startPromiseRef.current;
+      if (statusRef.current === 'creating') return null;
 
-    const startPromise = (async () => {
-      // If reconnection is in progress, wait for it
-      if (reconnectingRef.current && reconnectPromiseRef.current) {
-        const reconnectedId = await reconnectPromiseRef.current;
-        if (reconnectedId) return reconnectedId;
-      }
-
-      if (sandboxIdRef.current) return sandboxIdRef.current;
-
-      setStatus('creating');
-      setError(null);
-      setActiveSandboxEnvironment(null);
-      setSandboxOwnerToken(null);
-      freshSandboxIdRef.current = null;
-      setFreshSandboxId(null);
-      snapshotRestoredSandboxIdRef.current = null;
-      setRestoredFromSnapshotSandboxId(null);
-
-      try {
-        // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
-        const { token, kind: tokenKind } = repo
-          ? getActiveGitHubTokenInfo()
-          : { token: '', kind: 'none' as const };
-
-        // Repo-auth gate (auth rework step 2). For the App-installation path
-        // (the default), confirm the installation actually covers this repo
-        // before we spin up a sandbox — so a not-covered repo gets an actionable
-        // install/update prompt instead of a cryptic clone failure. Coverage is
-        // only probed for the installation-token path; a durable legacy token
-        // still rides the one-time acknowledgment. Fail-open on a flaky probe.
-        let coverage: RepoCoverage = 'unknown';
-        let coverageInstallUrl: string | undefined;
-        if (repo && isInstallationToken(tokenKind)) {
-          const probe = await checkRepoCoverage(repo);
-          coverage = probe.coverage;
-          coverageInstallUrl = probe.installUrl;
+      const startPromise = (async () => {
+        // If reconnection is in progress, wait for it
+        if (reconnectingRef.current && reconnectPromiseRef.current) {
+          const reconnectedId = await reconnectPromiseRef.current;
+          if (reconnectedId) return reconnectedId;
         }
 
-        const gate = evaluateRepoAuth({
-          kind: tokenKind,
-          hasRepo: Boolean(repo),
-          coverage,
-          acknowledged: hasAcknowledgedUserTokenInjection(),
-        });
-        if (!gate.allow) {
+        const existingId = sandboxIdRef.current;
+        if (existingId) {
+          if (statusRef.current !== 'error') return existingId;
+
+          // Re-mark the error-state sandbox as alive after a transient blip.
+          // Crucially clears 'error' status: ensureSandbox's guard re-enters
+          // start() whenever status is 'error', so leaving it would fire a probe
+          // on every tool call (the wedged-but-not-gone re-probe storm). Setting
+          // 'ready' lets the 60s health-check loop own re-verification instead.
+          const keepAsTransient = (reason: string): string => {
+            transientStrikesRef.current = 0;
+            setStatus('ready');
+            setError(null);
+            setActiveSandboxEnvironment(existingId);
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'sandbox_foreground_recovery',
+                outcome: 'transient_kept',
+                sandboxId: existingId,
+                reason,
+              }),
+            );
+            return existingId;
+          };
+
+          suppressIdleTouch();
+          try {
+            const result = await execInSandbox(existingId, 'true');
+            if (result.exitCode === 0) {
+              transientStrikesRef.current = 0;
+              setStatus('ready');
+              setError(null);
+              setActiveSandboxEnvironment(existingId);
+              // Quiet recovery: the error-state sandbox answered a probe, so it
+              // was a transient blip. Internal log only — no transcript/toast.
+              console.log(
+                JSON.stringify({
+                  level: 'info',
+                  event: 'sandbox_foreground_recovery',
+                  outcome: 'revived',
+                  sandboxId: existingId,
+                }),
+              );
+              return existingId;
+            }
+
+            const reason = result.error || 'Sandbox is no longer reachable';
+            if (!isDefinitivelyGoneMessage(reason)) return keepAsTransient(reason);
+          } catch (err) {
+            // A missing owner token means the session token was already cleared
+            // on a definitive-loss path (refresh's clearTrackedSession) while the
+            // id lingered — the sandbox is unusable from here, not transient. Fall
+            // through to restore/cold-start instead of handing back the corpse.
+            if (!isDefinitivelyGoneError(err) && !isMissingOwnerTokenError(err)) {
+              return keepAsTransient(err instanceof Error ? err.message : String(err));
+            }
+          }
+
+          const normalizedExistingBranch = branch || 'main';
+          const storageKey =
+            sessionStorageKeyRef.current ??
+            buildSandboxSessionStorageKey(repo, normalizedExistingBranch);
+          const saved = loadSandboxSession(repo, normalizedExistingBranch);
+          if (saved?.sandboxId === existingId) {
+            const restored = await restoreSavedSessionSnapshot(saved, storageKey);
+            if (restored) {
+              console.log(
+                JSON.stringify({
+                  level: 'info',
+                  event: 'sandbox_foreground_recovery',
+                  outcome: 'restored',
+                  sandboxId: existingId,
+                  restoredSandboxId: restored,
+                }),
+              );
+              return restored;
+            }
+          }
+          // Definitively gone and unrestorable — retire the dead ID and fall
+          // through to a fresh cold-start below.
           console.log(
             JSON.stringify({
-              level: 'warn',
-              event: 'sandbox_create_blocked',
-              reason: gate.reason,
-              tokenKind,
+              level: 'info',
+              event: 'sandbox_foreground_recovery',
+              outcome: 'retired_coldstart',
+              sandboxId: existingId,
             }),
           );
-          setStatus('error');
-          setError(
-            gate.reason === 'app_repo_not_covered'
-              ? formatRepoNotCoveredMessage(repo, coverageInstallUrl)
-              : USER_TOKEN_GATE_MESSAGE,
-          );
-          return null;
+          retireSandboxState(existingId, storageKey);
         }
 
-        const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
-
-        if (session.status === 'error') {
-          freshSandboxIdRef.current = null;
-          setFreshSandboxId(null);
-          setStatus('error');
-          setError(session.error || 'Sandbox creation failed');
-          return null;
-        }
-
-        freshSandboxIdRef.current = session.sandboxId;
-        setFreshSandboxId(session.sandboxId);
+        setStatus('creating');
+        setError(null);
+        setActiveSandboxEnvironment(null);
+        setSandboxOwnerToken(null);
+        freshSandboxIdRef.current = null;
+        setFreshSandboxId(null);
         snapshotRestoredSandboxIdRef.current = null;
         setRestoredFromSnapshotSandboxId(null);
-        setSandboxId(session.sandboxId);
-        setStatus('ready');
-        setActiveSandboxEnvironment(session.sandboxId);
-        setSandboxOwnerToken(session.ownerToken || null);
 
-        const normalizedBranch = branch || 'main';
+        try {
+          // Empty repo = sandbox mode (ephemeral workspace, no clone, no token needed)
+          const { token, kind: tokenKind } = repo
+            ? getActiveGitHubTokenInfo()
+            : { token: '', kind: 'none' as const };
 
-        // Hydrate the symbol persistence ledger scoped to repo+branch
-        const symbolRepoKey = repo ? `${repo}:${normalizedBranch}` : 'scratch';
-        symbolLedger.setRepo(symbolRepoKey);
-        void symbolLedger.hydrate();
-        saveSandboxSession(repo, normalizedBranch, {
-          sandboxId: session.sandboxId,
-          ownerToken: session.ownerToken || '',
-          repoFullName: repo,
-          branch: normalizedBranch,
-          createdAt: Date.now(),
-        });
-        sessionStorageKeyRef.current = buildSandboxSessionStorageKey(repo, normalizedBranch);
+          // Repo-auth gate (auth rework step 2). For the App-installation path
+          // (the default), confirm the installation actually covers this repo
+          // before we spin up a sandbox — so a not-covered repo gets an actionable
+          // install/update prompt instead of a cryptic clone failure. Coverage is
+          // only probed for the installation-token path; a durable legacy token
+          // still rides the one-time acknowledgment. Fail-open on a flaky probe.
+          let coverage: RepoCoverage = 'unknown';
+          let coverageInstallUrl: string | undefined;
+          if (repo && isInstallationToken(tokenKind)) {
+            const probe = await checkRepoCoverage(repo);
+            coverage = probe.coverage;
+            coverageInstallUrl = probe.installUrl;
+          }
 
-        return session.sandboxId;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setStatus('error');
-        setError(msg);
-        return null;
-      }
-    })();
+          const gate = evaluateRepoAuth({
+            kind: tokenKind,
+            hasRepo: Boolean(repo),
+            coverage,
+            acknowledged: hasAcknowledgedUserTokenInjection(),
+          });
+          if (!gate.allow) {
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'sandbox_create_blocked',
+                reason: gate.reason,
+                tokenKind,
+              }),
+            );
+            setStatus('error');
+            setError(
+              gate.reason === 'app_repo_not_covered'
+                ? formatRepoNotCoveredMessage(repo, coverageInstallUrl)
+                : USER_TOKEN_GATE_MESSAGE,
+            );
+            return null;
+          }
 
-    startPromiseRef.current = startPromise;
+          const session = await createSandbox(repo, branch, token, getGitHubAppCommitIdentity());
 
-    return startPromise.finally(() => {
-      if (startPromiseRef.current === startPromise) {
-        startPromiseRef.current = null;
-      }
-    });
-  }, []);
+          if (session.status === 'error') {
+            freshSandboxIdRef.current = null;
+            setFreshSandboxId(null);
+            setStatus('error');
+            setError(session.error || 'Sandbox creation failed');
+            return null;
+          }
+
+          freshSandboxIdRef.current = session.sandboxId;
+          setFreshSandboxId(session.sandboxId);
+          snapshotRestoredSandboxIdRef.current = null;
+          setRestoredFromSnapshotSandboxId(null);
+          setSandboxId(session.sandboxId);
+          setStatus('ready');
+          setActiveSandboxEnvironment(session.sandboxId);
+          setSandboxOwnerToken(session.ownerToken || null);
+
+          const normalizedBranch = branch || 'main';
+
+          // Hydrate the symbol persistence ledger scoped to repo+branch
+          const symbolRepoKey = repo ? `${repo}:${normalizedBranch}` : 'scratch';
+          symbolLedger.setRepo(symbolRepoKey);
+          void symbolLedger.hydrate();
+          saveSandboxSession(repo, normalizedBranch, {
+            sandboxId: session.sandboxId,
+            ownerToken: session.ownerToken || '',
+            repoFullName: repo,
+            branch: normalizedBranch,
+            createdAt: Date.now(),
+          });
+          sessionStorageKeyRef.current = buildSandboxSessionStorageKey(repo, normalizedBranch);
+
+          return session.sandboxId;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          setStatus('error');
+          setError(msg);
+          return null;
+        }
+      })();
+
+      startPromiseRef.current = startPromise;
+
+      return startPromise.finally(() => {
+        if (startPromiseRef.current === startPromise) {
+          startPromiseRef.current = null;
+        }
+      });
+    },
+    [restoreSavedSessionSnapshot, retireSandboxState],
+  );
 
   const stop = useCallback(async () => {
     const id = sandboxIdRef.current;

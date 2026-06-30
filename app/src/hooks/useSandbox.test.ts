@@ -16,6 +16,12 @@ const sandboxClient = vi.hoisted(() => ({
   msSinceLastSandboxCall: vi.fn(() => 0),
   hasInFlightSandboxCalls: vi.fn(() => false),
   suppressIdleTouch: vi.fn(),
+  // Real predicate (pure string check) — the recovery branch relies on it to
+  // classify a token-missing probe error as unrecoverable, mirroring the real
+  // (unmocked) isDefinitivelyGone* classifiers.
+  isMissingOwnerTokenError: (err: unknown) =>
+    err instanceof Error &&
+    err.message === 'Sandbox access token missing. Start or reconnect the sandbox session.',
 }));
 
 const safeStorage = vi.hoisted(() => ({
@@ -344,6 +350,161 @@ describe('useSandbox.start', () => {
     expect(id).toBeNull();
     expect(reactState.cells[1].value).toBe('error');
     expect(reactState.cells[2].value).toBe('network down');
+  });
+
+  it('probes and reuses an error-state sandbox when it is still alive', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    syncRefsFromState();
+    sandboxClient.createSandbox.mockClear();
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: 0 });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-1');
+    expect(sandboxClient.execInSandbox).toHaveBeenCalledWith('sb-1', 'true');
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[1].value).toBe('ready');
+    expect(reactState.cells[2].value).toBeNull();
+  });
+
+  it('restores a saved snapshot before replacing a definitively-gone error sandbox', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.createSandbox.mockClear();
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+    sandboxSession.loadSandboxSession.mockReturnValue({
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+      repoFullName: 'owner/repo',
+      branch: 'main',
+      createdAt: 123,
+      snapshotId: 'snap-1',
+      restoreToken: 'restore-tok',
+    });
+    sandboxClient.restoreFromSnapshot.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-restored',
+      ownerToken: 'owner-restored',
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-restored');
+    expect(sandboxClient.restoreFromSnapshot).toHaveBeenCalledWith('snap-1', 'restore-tok', {
+      repoFullName: 'owner/repo',
+      branch: 'main',
+    });
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    expect(reactState.cells[0].value).toBe('sb-restored');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('cold-starts after retiring a definitively-gone error sandbox without a snapshot', async () => {
+    sandboxClient.createSandbox
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-1',
+        ownerToken: 'owner-tok',
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-2',
+        ownerToken: 'owner-tok-2',
+      });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.execInSandbox.mockResolvedValue({
+      exitCode: -1,
+      error: 'Sandbox not found',
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-2');
+    expect(sandboxSession.clearSandboxSessionByStorageKey).toHaveBeenCalledWith(
+      'sbx:owner/repo:main',
+      'sb-1',
+    );
+    expect(cacheLib.clearFileVersionCache).toHaveBeenCalledWith('sb-1');
+    expect(sandboxClient.createSandbox).toHaveBeenCalledTimes(2);
+    expect(reactState.cells[0].value).toBe('sb-2');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('keeps the id and clears error status on a transient (non-gone) probe failure', async () => {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    syncRefsFromState();
+    sandboxClient.createSandbox.mockClear();
+    // Non-definitive failure (timeout-style) — not "gone", not token-missing.
+    sandboxClient.execInSandbox.mockResolvedValue({ exitCode: -1, error: 'command timed out' });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-1');
+    expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
+    // Status resets to 'ready' so ensureSandbox's guard won't re-probe every call.
+    expect(reactState.cells[1].value).toBe('ready');
+    expect(reactState.cells[2].value).toBeNull();
+  });
+
+  it('retires and cold-starts when the probe throws a missing-owner-token error', async () => {
+    // The web definitive-loss path clears the owner token but leaves the id, so
+    // the recovery probe throws the local missing-token error. That is NOT
+    // transient — it must fall through to restore/cold-start, not hand back the
+    // corpse (Codex P1).
+    sandboxClient.createSandbox
+      .mockResolvedValueOnce({ status: 'ready', sandboxId: 'sb-1', ownerToken: 'owner-tok' })
+      .mockResolvedValueOnce({ status: 'ready', sandboxId: 'sb-2', ownerToken: 'owner-tok-2' });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('SANDBOX_UNREACHABLE');
+    syncRefsFromState();
+    sandboxClient.execInSandbox.mockRejectedValue(
+      new Error('Sandbox access token missing. Start or reconnect the sandbox session.'),
+    );
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-2');
+    expect(sandboxClient.createSandbox).toHaveBeenCalledTimes(2);
+    expect(reactState.cells[0].value).toBe('sb-2');
+    expect(reactState.cells[1].value).toBe('ready');
   });
 });
 
