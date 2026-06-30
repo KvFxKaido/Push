@@ -38,6 +38,7 @@ import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import {
   issueToken,
   MAX_TOKEN_BYTES,
+  readOwnerToken,
   revokeToken,
   timingSafeEqual,
   verifyToken,
@@ -2626,21 +2627,21 @@ async function verifySandboxOwnerToken(
     | { __error: unknown };
   if ('__error' in tokenRead) {
     if (isMissingSessionCode(classifyCfError(tokenRead.__error))) {
-      return { ok: false, status: 404, code: 'NOT_FOUND' };
+      return rehydrateOrNotFound(env, sandbox, sandboxId, providedToken);
     }
     throw tokenRead.__error;
   }
   if ((tokenRead.exitCode ?? 0) !== 0) {
     const stderr = typeof tokenRead.stderr === 'string' ? tokenRead.stderr : '';
     if (isMissingSessionCode(classifyCfError(stderr))) {
-      return { ok: false, status: 404, code: 'NOT_FOUND' };
+      return rehydrateOrNotFound(env, sandbox, sandboxId, providedToken);
     }
     throw new Error(stderr || 'Failed to read sandbox owner token');
   }
 
   const storedToken = typeof tokenRead.stdout === 'string' ? tokenRead.stdout : '';
   if (!storedToken) {
-    return { ok: false, status: 404, code: 'NOT_FOUND' };
+    return rehydrateOrNotFound(env, sandbox, sandboxId, providedToken);
   }
   if (storedToken.length > MAX_TOKEN_BYTES) {
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };
@@ -2649,6 +2650,92 @@ async function verifySandboxOwnerToken(
     return { ok: false, status: 403, code: 'AUTH_FAILURE' };
   }
   return { ok: true };
+}
+
+/**
+ * The in-container owner-token file (`/tmp/push-owner-token`) is gone but the
+ * caller still presented a token. Attempt to re-establish the session against
+ * the KV-stored token (the durable source of truth) before declaring the
+ * sandbox lost. Returns `{ ok: true }` only when the session was rehydrated;
+ * otherwise the original NOT_FOUND so the caller's recovery path runs.
+ */
+async function rehydrateOrNotFound(
+  env: Env,
+  sandbox: ReturnType<typeof sandboxFor>,
+  sandboxId: string,
+  providedToken: string,
+): Promise<VerifyResult> {
+  if (await tryRehydrateOwnerToken(env, sandbox, sandboxId, providedToken)) {
+    return { ok: true };
+  }
+  return { ok: false, status: 404, code: 'NOT_FOUND' };
+}
+
+/**
+ * A container can lose its ephemeral owner-token file (`/tmp` is wiped on any
+ * container restart) while the Durable Object — and, crucially, the cloned
+ * `/workspace` — survive. The missing file then reads as "Sandbox not found
+ * or expired", which the client classifies as a fatal loss and retires the
+ * live session over (`isDefinitivelyGoneMessage`), discarding uncommitted
+ * work the container still holds.
+ *
+ * When the KV-stored token still matches the caller's, the caller IS the
+ * owner: re-mint the token file onto the container so the session continues —
+ * but ONLY when `/workspace` is actually intact. If the workspace is gone too
+ * (a full recycle wipes `/tmp` AND `/workspace`), re-minting would hand back a
+ * live-but-empty container reporting a healthy status — a silent work loss
+ * worse than the visible death. In that case we decline and let the caller
+ * fall through to NOT_FOUND, which routes into the snapshot-restore recovery
+ * path (cold-start + R2 keep-warm restore).
+ *
+ * Security: re-mint is gated on a timing-safe match against the KV token, so a
+ * caller without the real token cannot trigger it; the token is only written
+ * server-side onto the container, never returned to the client.
+ */
+async function tryRehydrateOwnerToken(
+  env: Env,
+  sandbox: ReturnType<typeof sandboxFor>,
+  sandboxId: string,
+  providedToken: string,
+): Promise<boolean> {
+  const kvToken = await readOwnerToken(env.SANDBOX_TOKENS, sandboxId).catch(() => null);
+  if (!kvToken || !timingSafeEqual(kvToken, providedToken)) {
+    // No durable record, or the caller isn't the owner — not our case to heal.
+    return false;
+  }
+
+  // Workspace-liveness gate: only re-mint when the clone survived. A recycled
+  // container has neither `/tmp` nor `/workspace`; `.git` proves the repo is
+  // still present and uncommitted work is recoverable in place.
+  let workspaceIntact: boolean;
+  try {
+    const probe = (await withExecDeadline(
+      sandbox.exec('test -e /workspace/.git && printf alive'),
+    )) as { stdout?: string; exitCode?: number };
+    workspaceIntact = (probe.exitCode ?? 1) === 0 && (probe.stdout ?? '').includes('alive');
+  } catch (err) {
+    wlog('warn', 'cf_sandbox_token_rehydrate_probe_failed', {
+      sandbox_id: sandboxId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+  if (!workspaceIntact) {
+    wlog('info', 'cf_sandbox_token_rehydrate_declined_no_workspace', { sandbox_id: sandboxId });
+    return false;
+  }
+
+  try {
+    await sandbox.writeFile(OWNER_TOKEN_PATH, kvToken);
+  } catch (err) {
+    wlog('warn', 'cf_sandbox_token_rehydrate_write_failed', {
+      sandbox_id: sandboxId,
+      message: err instanceof Error ? err.message : String(err),
+    });
+    return false;
+  }
+  wlog('info', 'cf_sandbox_token_rehydrated', { sandbox_id: sandboxId });
+  return true;
 }
 
 // Shell-safe quoting for arguments interpolated into `sandbox.exec` commands.
