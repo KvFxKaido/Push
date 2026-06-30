@@ -39,6 +39,7 @@ import {
 import { recordMalformedToolCallMetric } from '@/lib/tool-call-metrics';
 import { getToolSource } from '@push/lib/tool-call-diagnosis';
 import { buildToolResultBlock } from '@push/lib/tool-blocks';
+import type { RuntimeIntervention } from '@push/lib/runtime-intervention';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from '@/lib/tracing';
 import {
   correlationToSpanAttributes,
@@ -530,6 +531,8 @@ export interface MultipleMutationsErrorAction {
   errorMessage: ChatMessage;
   /** Updated apiMessages with assistant + error appended. */
   apiMessages: ChatMessage[];
+  /** Typed runtime intervention that produced this corrective action, if any. */
+  runtimeIntervention?: RuntimeIntervention;
   /** Info for updating the assistant message in conversation state. */
   assistantUpdate: {
     content: string;
@@ -669,6 +672,7 @@ export function handleMultipleMutationsError(
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
   currentBranch?: string,
+  runtimeIntervention?: RuntimeIntervention,
 ): MultipleMutationsErrorAction {
   // `mutating` ONLY counts as a rejected ordering call when actual
   // ordering extras are present (i.e. the model emitted a second
@@ -757,6 +761,7 @@ export function handleMultipleMutationsError(
       },
       errorMessage,
     ],
+    ...(runtimeIntervention ? { runtimeIntervention } : {}),
     assistantUpdate: {
       content: accumulated,
       thinking: thinkingAccumulated,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildDetectedToolLedger,
   detectAllToolCalls,
   detectNativeToolCalls,
   diagnoseToolCallFailure,
@@ -683,6 +684,17 @@ describe('detectAllToolCalls', () => {
     if (detected.extraMutations[0]?.source === 'sandbox') {
       expect(detected.extraMutations[0].call.tool).toBe('sandbox_write_file');
     }
+
+    const ledger = buildDetectedToolLedger(detected);
+    expect(ledger.counts).toMatchObject({ total: 3, accepted: 2, rejected: 1 });
+    expect(ledger.entries.map((entry) => [entry.phase, entry.disposition, entry.toolName])).toEqual(
+      [
+        ['read', 'accepted', 'sandbox_read_file'],
+        ['trailing_side_effect', 'accepted', 'sandbox_exec'],
+        ['tool_order_violation', 'rejected', 'sandbox_write_file'],
+      ],
+    );
+    expect(ledger.rejected[0]?.rejectionReason).toBe('tool_order_violation');
   });
 
   it('batches multiple file mutations with no side effect', () => {
@@ -858,6 +870,15 @@ describe('detectAllToolCalls', () => {
     ) {
       expect(detected.batchOverflow[1].call.args.path).toBe('/workspace/file9.md');
     }
+
+    const ledger = buildDetectedToolLedger(detected);
+    expect(ledger.counts).toMatchObject({ total: 10, accepted: 8, rejected: 2 });
+    expect(ledger.counts.byPhase.file_mutation).toBe(8);
+    expect(ledger.counts.byPhase.file_mutation_batch_overflow).toBe(2);
+    expect(ledger.rejected.map((entry) => [entry.rejectionReason, entry.toolName])).toEqual([
+      ['file_mutation_batch_overflow', 'sandbox_write_file'],
+      ['file_mutation_batch_overflow', 'sandbox_write_file'],
+    ]);
   });
 
   it('rejects a read emitted after the mutation batch starts', () => {

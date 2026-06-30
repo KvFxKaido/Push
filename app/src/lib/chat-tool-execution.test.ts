@@ -8,6 +8,7 @@ import {
   handleMultipleMutationsError,
   handleRecoveryResult,
 } from './chat-tool-execution';
+import { createBlockIntervention } from '@push/lib/runtime-intervention';
 
 // Minimal AnyToolCall constructor for tests that need to populate the
 // rejection lists. Tool name and source are the only fields the error
@@ -205,6 +206,33 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     expect(action.errorMessage.content).toContain('MULTI_MUTATION_NOT_ALLOWED');
     expect(action.errorMessage.content).toContain('Reorder or split');
     expect(action.errorMessage.content).not.toContain('FILE_MUTATION_BATCH_OVERFLOW');
+  });
+
+  it('handleMultipleMutationsError carries the runtime intervention metadata', () => {
+    const apiMessages: ChatMessage[] = [userMessage('write then exec then exec')];
+    const intervention = createBlockIntervention({
+      point: 'before_tool',
+      source: 'tool_budget',
+      reason: 'multiple_mutating_calls',
+    });
+
+    const action = handleMultipleMutationsError(
+      {
+        mutating: sandboxCall('sandbox_exec', { command: 'npm test' }),
+        batchOverflow: [],
+        extraMutations: [sandboxCall('sandbox_exec', { command: 'npm run build' })],
+      },
+      'assistant',
+      '',
+      [],
+      apiMessages,
+      'zen',
+      undefined,
+      intervention,
+    );
+
+    expect(action.runtimeIntervention).toBe(intervention);
+    expect(action.errorMessage.content).toContain('MULTI_MUTATION_NOT_ALLOWED');
   });
 
   it('handleMultipleMutationsError does NOT classify a valid trailing exec as ordering when only batch overflowed', () => {

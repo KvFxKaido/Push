@@ -117,6 +117,16 @@ describe('tool-call-recovery', () => {
     expect(result.feedback.mode).toBe('unimplemented_tool');
     expect(result.feedback.toolName).toBe('sandbox_not_real');
     expect(result.feedback.markMalformed).toBe(false);
+    expect(result.runtimeIntervention).toMatchObject({
+      mode: 'steer',
+      point: 'after_model',
+      source: 'tool_call_recovery',
+      reason: 'unimplemented_tool',
+      context: {
+        feedbackMode: 'unimplemented_tool',
+        toolName: 'sandbox_not_real',
+      },
+    });
     expect(result.nextState).toEqual({ diagnosisRetries: 1, recoveryAttempted: false });
   });
 
@@ -143,6 +153,16 @@ describe('tool-call-recovery', () => {
     expect(result.feedback.mode).toBe('retry_tool_call');
     expect(result.feedback.markMalformed).toBe(true);
     expect(result.feedback.content).toContain('error_type: natural_language_intent');
+    expect(result.runtimeIntervention).toMatchObject({
+      mode: 'steer',
+      point: 'after_model',
+      source: 'tool_call_recovery',
+      reason: 'natural_language_intent',
+      context: {
+        feedbackMode: 'retry_tool_call',
+        diagnosisReason: 'natural_language_intent',
+      },
+    });
     expect(result.nextState).toEqual({ diagnosisRetries: 1, recoveryAttempted: false });
   });
 
