@@ -311,7 +311,7 @@ describe('pingSandbox', () => {
       json: () => Promise.resolve({ ok: true }),
     });
 
-    await expect(pingSandbox('sb-123')).resolves.toBe(true);
+    await expect(pingSandbox('sb-123')).resolves.toBeUndefined();
 
     const [url, options] = mockFetch.mock.calls[0];
     expect(url).toBe('/api/sandbox/ping');
@@ -331,7 +331,20 @@ describe('pingSandbox', () => {
       json: () => Promise.resolve({ stdout: '', stderr: '', exit_code: 0, truncated: false }),
     });
 
-    await expect(pingSandbox('sb-123')).resolves.toBe(true);
+    await expect(pingSandbox('sb-123')).resolves.toBeUndefined();
+  });
+
+  it('normalizes Cloudflare owner-token gate failures as definitive ping loss', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: () =>
+        Promise.resolve(
+          JSON.stringify({ error: 'Owner token does not match', code: 'AUTH_FAILURE' }),
+        ),
+    });
+
+    await expect(pingSandbox('sb-123')).rejects.toThrow(/Sandbox not found or expired/);
   });
 });
 
