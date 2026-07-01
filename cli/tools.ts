@@ -42,6 +42,7 @@ import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provide
 import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
 import { createCliGitHubRuntime, hasEnvGitHubToken, resolveGitHubToken } from './github-runtime.js';
+import { commandMightBeDangerous, isSinglePlainCommand } from '../lib/command-policy.ts';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -227,7 +228,9 @@ const HIGH_RISK_PATTERNS = [
 ];
 
 export function isHighRiskCommand(command) {
-  return HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command));
+  return (
+    HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command)) || commandMightBeDangerous(command)
+  );
 }
 
 /**
@@ -284,6 +287,7 @@ function parseUserSafePattern(pattern) {
  */
 export function isSafeCommand(command, userPatterns = []) {
   if (BUILTIN_SAFE_PATTERNS.some((p) => p.test(command))) return true;
+  if (!isSinglePlainCommand(command)) return false;
 
   for (const raw of userPatterns) {
     const matcher = parseUserSafePattern(raw);

@@ -19,6 +19,18 @@ Included or adapted portions:
 - lib/llm-compaction.ts adapts the Codex context compaction prompt/prefix idea
   from codex-rs/prompts/templates/compact/prompt.md and
   codex-rs/prompts/templates/compact/summary_prefix.md.
+- lib/codex-derived/command-safety.ts adapts Codex's conservative
+  shell-wrapper parser and known-safe/known-dangerous command classifiers
+  from codex-rs/shell-command/src/command_safety/is_safe_command.rs,
+  codex-rs/shell-command/src/command_safety/is_dangerous_command.rs, and
+  codex-rs/shell-command/src/bash.rs. lib/command-policy.ts builds on these
+  primitives but is Push-native (MIT): its git-mutation guards and find/rg
+  high-risk escalation have no upstream Codex counterpart.
+- cli/tests/command-policy.test.mjs adapts Codex command-safety test cases
+  for the codex-derived parser/safe/rm-dangerous classifiers from
+  codex-rs/shell-command/src/command_safety/is_safe_command.rs and
+  codex-rs/shell-command/src/command_safety/is_dangerous_command.rs; its
+  "dangerous command policy" suite covers Push-native behavior instead.
 
 Vercel AI Elements attribution:
 
