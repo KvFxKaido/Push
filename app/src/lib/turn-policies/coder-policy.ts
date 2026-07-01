@@ -16,7 +16,10 @@ import type { ChatMessage } from '@/types';
 import type { TurnPolicy, TurnContext } from '../turn-policy';
 import { isVerificationPhase } from '../turn-policy';
 import { MAX_TRAILING_INTENT_NUDGES } from '../tool-call-recovery';
-import { detectTrailingActionIntent } from './orchestrator-policy';
+import {
+  ANNOUNCED_NO_ACTION_POLICY_MARKER,
+  detectTrailingActionIntent,
+} from './orchestrator-policy';
 
 // ---------------------------------------------------------------------------
 // Drift detection (extracted from coder-agent.ts)
@@ -303,7 +306,7 @@ export function createCoderPolicy(): TurnPolicy {
             id: `policy-announced-no-action-${ctx.round}`,
             role: 'user' as const,
             content: [
-              '[POLICY: ANNOUNCED_NO_ACTION]',
+              ANNOUNCED_NO_ACTION_POLICY_MARKER,
               'You described an action you were about to take (e.g. reading or searching a file) but did not emit a tool call, so nothing actually happened.',
               'If you intended to act, emit the tool-call JSON now. If you are actually finished, state your conclusion directly without describing further steps.',
               '[/POLICY]',

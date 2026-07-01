@@ -498,7 +498,7 @@ export function toOpenAIChat(
     // OpenAI-compatible Worker paths (Vertex Gemini, Zen-Go) and the CLI
     // OpenAI-compat adapters; all ignore the field when no caller sets `tools`.
     ...(nativeTools.length > 0
-      ? { tools: nativeTools.map(flatToolToOpenAITool), tool_choice: 'auto' }
+      ? { tools: nativeTools.map(flatToolToOpenAITool), tool_choice: req.toolChoice ?? 'auto' }
       : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };

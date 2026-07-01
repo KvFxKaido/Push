@@ -96,7 +96,7 @@ export async function* ollamaStream(
     ...(supportsReasoning ? { reasoning_effort: reasoningEffort } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
     // pump emits native tool_calls as structured events for dispatch.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
   };
 
   // 4. Headers. Ollama Cloud uses a straight Bearer token; the Worker proxy

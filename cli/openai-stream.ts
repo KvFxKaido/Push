@@ -150,7 +150,7 @@ async function* cliProviderStream(
           // `auto`) and feeds grounded, cited results back to the model.
           // The text-based dispatcher never sees it as a client tool call.
           ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
-          ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
+          ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
           ...(openRouterRequireParameters ? { provider: { require_parameters: true } } : {}),
           // See: https://openrouter.ai/docs/guides/features/broadcast/overview
           trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },

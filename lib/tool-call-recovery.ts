@@ -101,6 +101,17 @@ export function promoteReasoningAnswer(
  */
 export const MAX_TRAILING_INTENT_NUDGES = 3;
 
+/**
+ * Marker prefix on the corrective message injected when `detectTrailingActionIntent`
+ * (`app/src/lib/turn-policies/orchestrator-policy.ts`) fires — both the
+ * Orchestrator's `chat-no-tool-path.ts` and `coder-policy.ts` use it
+ * verbatim. Lives here (root `lib/`, not the app-side policy module) so
+ * server-side consumers of `CoderAfterModelResult` — `coder-agent-bindings.ts`'s
+ * `buildCoderEvaluateAfterModel` — can recognize the nudge and escalate the
+ * next request's `tool_choice` to `'required'` without importing app-side code.
+ */
+export const ANNOUNCED_NO_ACTION_POLICY_MARKER = '[POLICY: ANNOUNCED_NO_ACTION]';
+
 export interface UnimplementedToolErrorOptions {
   availableTools?: readonly string[];
   availableToolsLabel?: string;

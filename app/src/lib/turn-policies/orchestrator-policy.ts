@@ -10,6 +10,12 @@
 
 import type { ChatMessage } from '@/types';
 import type { TurnPolicy, TurnContext } from '../turn-policy';
+import { ANNOUNCED_NO_ACTION_POLICY_MARKER } from '../tool-call-recovery';
+
+// Re-exported so existing consumers (`chat-no-tool-path.ts`, `coder-policy.ts`)
+// keep importing it from this module — the value's canonical home is
+// `lib/tool-call-recovery.ts` so root-`lib/` consumers can read it too.
+export { ANNOUNCED_NO_ACTION_POLICY_MARKER };
 
 /**
  * Detect whether an Orchestrator response claims task completion.

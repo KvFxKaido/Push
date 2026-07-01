@@ -33,6 +33,7 @@ import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { markLastAssistantToolCall } from '@/lib/chat-tool-messages';
 import { handleRecoveryResult } from '@/lib/chat-tool-execution';
 import {
+  ANNOUNCED_NO_ACTION_POLICY_MARKER,
   createOrchestratorPolicy,
   detectTrailingActionIntent,
   hasArtifactInResponse,
@@ -366,7 +367,7 @@ export async function processNoToolPath(
           id: createId(),
           role: 'user',
           content: [
-            '[POLICY: ANNOUNCED_NO_ACTION]',
+            ANNOUNCED_NO_ACTION_POLICY_MARKER,
             'You described an action you were about to take (e.g. reading or searching a file) but did not emit a tool call, so nothing actually happened.',
             'If you intended to act, emit the tool-call JSON now. If you are actually finished, state your conclusion directly without describing further steps.',
             '[/POLICY]',

@@ -82,6 +82,7 @@ export async function* zenStream(
         temperature: req.temperature,
         topP: req.topP,
         ...(nativeTools ? { tools: nativeTools } : {}),
+        ...(nativeTools && req.toolChoice ? { toolChoice: req.toolChoice } : {}),
         ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
       })
     : {
@@ -91,7 +92,7 @@ export async function* zenStream(
         ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
         ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
         ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-        ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+        ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
         ...(req.responseFormat
           ? { response_format: toOpenAIResponseFormat(req.responseFormat) }
           : {}),

@@ -8,7 +8,13 @@ import {
   type CoderLoopMessage,
 } from './coder-agent.js';
 import { toGeminiGenerateContent } from './gemini-bridge.js';
-import type { LlmContentPart, PushStream, PushStreamEvent } from './provider-contract.js';
+import { ANNOUNCED_NO_ACTION_POLICY_MARKER } from './tool-call-recovery.js';
+import type {
+  LlmContentPart,
+  PushStream,
+  PushStreamEvent,
+  ToolFunctionSchema,
+} from './provider-contract.js';
 
 type Call = { call: { tool: string; args: Record<string, unknown> }; thoughtSignature?: string };
 
@@ -197,6 +203,128 @@ describe('resolveLeadRoundOptions', () => {
     expect(foreground.persona).toBe(background.persona);
     expect(foreground.harnessMaxRounds).toBe(background.harnessMaxRounds);
     expect(foreground.leadToolScope).not.toBe(background.leadToolScope);
+  });
+});
+
+describe('runCoderAgent (PushStream consumer) — forceToolChoiceNextRound escalation', () => {
+  // A model that announces a tool action but never emits one (the "let me
+  // actually run the tools now" symptom) keeps dead-ending even after a
+  // text-only nudge — the model just re-announces. When
+  // `evaluateAfterModel` signals `forceToolChoiceNextRound` (the
+  // announced-no-action nudge), the NEXT round's request must force
+  // `tool_choice: 'required'` so the API itself can't return prose-only,
+  // then clear the escalation so it doesn't stick on every later round.
+  const NATIVE_TOOLS: ToolFunctionSchema[] = [
+    { name: 'sandbox_read_file', description: 'Read a file', input_schema: { type: 'object' } },
+  ];
+
+  it('forces tool_choice: required on the round after the announced-no-action nudge, then clears it', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'let me actually run the tools now' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'let me actually run the tools now, again' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done, no further action needed.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let calls = 0;
+    const evaluateAfterModel = async () => {
+      calls += 1;
+      if (calls <= 2) {
+        return {
+          action: 'inject' as const,
+          content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
+          forceToolChoiceNextRound: true,
+        };
+      }
+      return { action: 'halt' as const, summary: 'done' };
+    };
+
+    await runCoderAgent(
+      { ...baseCoderOptions({ stream, evaluateAfterModel }), nativeToolSchemas: NATIVE_TOOLS },
+      { onStatus: () => {} },
+    );
+
+    const requests = capturedRequests as Array<{ toolChoice?: string }>;
+    expect(requests).toHaveLength(3);
+    // Round 0: nothing to force yet.
+    expect(requests[0]?.toolChoice).toBeUndefined();
+    // Round 1: forced after round 0's nudge fired.
+    expect(requests[1]?.toolChoice).toBe('required');
+    // Round 2: round 1 re-triggered the nudge, so still forced.
+    expect(requests[2]?.toolChoice).toBe('required');
+  });
+
+  it('does not force tool_choice when no native tools are attached (nothing to force)', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'let me actually run the tools now' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let calls = 0;
+    const evaluateAfterModel = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          action: 'inject' as const,
+          content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
+          forceToolChoiceNextRound: true,
+        };
+      }
+      return { action: 'halt' as const, summary: 'done' };
+    };
+
+    await runCoderAgent(baseCoderOptions({ stream, evaluateAfterModel }), { onStatus: () => {} });
+
+    const requests = capturedRequests as Array<{ toolChoice?: string }>;
+    expect(requests[1]?.toolChoice).toBeUndefined();
+  });
+
+  it('does not force tool_choice for unrelated inject nudges (e.g. drift correction)', async () => {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'drifting response' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let calls = 0;
+    const evaluateAfterModel = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          action: 'inject' as const,
+          content: '[POLICY: DRIFT_DETECTED]\nRe-read your task.',
+          forceToolChoiceNextRound: false,
+        };
+      }
+      return { action: 'halt' as const, summary: 'done' };
+    };
+
+    await runCoderAgent(
+      { ...baseCoderOptions({ stream, evaluateAfterModel }), nativeToolSchemas: NATIVE_TOOLS },
+      { onStatus: () => {} },
+    );
+
+    const requests = capturedRequests as Array<{ toolChoice?: string }>;
+    expect(requests[1]?.toolChoice).toBeUndefined();
   });
 });
 

@@ -506,6 +506,18 @@ export interface PushStreamRequest<M extends LlmMessage = LlmMessage> {
    */
   tools?: ToolFunctionSchema[];
   /**
+   * Escalation for native function-calling requests: forces the model to emit
+   * a structured tool call instead of a free-text reply. Defaults to `'auto'`
+   * (prose answers remain available) when unset. Set to `'required'` for one
+   * round after a model announces an imminent tool action but emits no call
+   * (`detectTrailingActionIntent`) — a text-only re-prompt can't stop a model
+   * from repeating the same announce-without-act pattern, but `tool_choice:
+   * 'required'` closes that loophole at the API level. Ignored by adapters
+   * whose wire has no `tools` attached (nothing to force) or that don't
+   * support the field.
+   */
+  toolChoice?: 'auto' | 'required';
+  /**
    * Pause-turn continuation blocks for the neutral wire. Anthropic's server-side
    * sampling loop can return `stop_reason: pause_turn` (web search hitting its
    * iteration cap); the client replays the paused assistant content[] verbatim
