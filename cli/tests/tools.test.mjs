@@ -331,6 +331,12 @@ describe('isHighRiskCommand', () => {
     assert.equal(isHighRiskCommand('psql -c "DROP TABLE users"'), true);
   });
 
+  it('detects parser-derived destructive commands', () => {
+    assert.equal(isHighRiskCommand('find . -name "*.tmp" -delete'), true);
+    assert.equal(isHighRiskCommand('rg --pre ./helper TODO src'), true);
+    assert.equal(isHighRiskCommand("bash -lc 'git status && rm -rf /'"), true);
+  });
+
   it('allows safe commands', () => {
     assert.equal(isHighRiskCommand('ls -la'), false);
     assert.equal(isHighRiskCommand('git status'), false);
@@ -541,6 +547,21 @@ describe('exec headless hardening', () => {
     }
   });
 
+  it('blocks parser-derived high-risk commands with allowExec but no approvalFn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'find . -name "*.tmp" -delete' } },
+        root,
+        { allowExec: true },
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError.code, 'APPROVAL_REQUIRED');
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
+
   it('allows exec with approvalFn (interactive backward compat)', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
     try {
@@ -651,6 +672,10 @@ describe('isSafeCommand', () => {
   it('user prefix patterns work', () => {
     assert.equal(isSafeCommand('npm run build', ['npm run ']), true);
     assert.equal(isSafeCommand('npm publish', ['npm run ']), false);
+  });
+
+  it('user prefix patterns do not bypass chained shell commands', () => {
+    assert.equal(isSafeCommand('npm run test && rm -rf /', ['npm run ']), false);
   });
 
   it('user regex patterns (in /slashes/) work', () => {

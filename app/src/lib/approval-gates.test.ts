@@ -197,6 +197,8 @@ describe('destructive-sandbox-exec gate', () => {
     ['find . -name "*.log" -delete'],
     ['find /tmp -delete'],
     ['find /tmp -delete -print'],
+    ['bash -lc "find . -delete"'],
+    ['rg --pre ./helper TODO src'],
     ['truncate -s 0 app.log'],
     ['cat secret > /dev/null'],
   ])('asks for approval in supervised mode for destructive command: %s', async (command) => {

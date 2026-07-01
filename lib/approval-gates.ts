@@ -17,6 +17,7 @@
  */
 
 import { getToolCapabilities, CAPABILITY_LABELS, type Capability } from './capabilities.ts';
+import { commandMightBeDangerous } from './command-policy.ts';
 import type { ToolHookContext } from './tool-hooks.ts';
 
 // ---------------------------------------------------------------------------
@@ -84,7 +85,7 @@ const DESTRUCTIVE_PATTERNS = [
 
 function isDestructiveCommand(command: unknown): boolean {
   if (typeof command !== 'string') return false;
-  return DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
+  return commandMightBeDangerous(command) || DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
 }
 
 // ---------------------------------------------------------------------------
