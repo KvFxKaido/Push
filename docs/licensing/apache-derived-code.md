@@ -217,7 +217,12 @@ source unless the architecture changes substantially:
    adapted from Apache-licensed source, list it in `NOTICE` and mark the local
    file.
 
-7. Avoid trademark drift.
+7. Keep `NOTICE` current, not speculative.
+   `NOTICE` is for material actually included in Push. Future candidates belong
+   in this draft's candidate register until code, tests, prompts, or component
+   APIs are copied, translated, or substantially adapted.
+
+8. Avoid trademark drift.
    Use OpenAI and Codex names only for factual attribution, not product naming
    or endorsement.
 
@@ -239,6 +244,18 @@ source unless the architecture changes substantially:
 
 Use `SPDX-License-Identifier: Apache-2.0` for derived files. Push-native wrapper
 files can remain MIT.
+
+## Prompt-Only Adaptations
+
+If only a prompt, template, or small component API shape is adapted inside an
+otherwise Push-native file, do not automatically label the whole file as
+Apache-derived. Prefer a focused source comment near the adapted material plus a
+path-level entry in `NOTICE`.
+
+That is the deliberate treatment for `lib/llm-compaction.ts`: the compaction
+prompt and handoff-prefix idea are attributed, while the surrounding runtime
+implementation remains Push-native. A full Apache SPDX header is reserved for
+files that are copied, translated, or substantially derived as source files.
 
 ## Suggested Layout
 

@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 // (https://ai-sdk.dev/elements, Apache-2.0). The compound API is preserved so
 // the surface reads the same as upstream; the shadcn palette is swapped for
 // Push design tokens (push-*) per DESIGN.md so it matches the rest of the app.
+// Attribution for the adapted component API is tracked in the root NOTICE.
 // Used by the Agent Console (`HubConsoleTab`) to render `sandbox_exec` runs as
 // collapsible, tabbed code/console cards.
 

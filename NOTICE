@@ -20,12 +20,19 @@ Included or adapted portions:
   from codex-rs/prompts/templates/compact/prompt.md and
   codex-rs/prompts/templates/compact/summary_prefix.md.
 
-Candidate future derived areas:
+Vercel AI Elements attribution:
 
-- Command safety and shell/git command classification.
-- Command-safety test cases.
-- Context compaction tests, event semantics, and configuration shape, where
-  copied or substantially translated from OpenAI Codex source.
+Vercel AI
+Copyright 2023 Vercel, Inc.
+
+Source: https://github.com/vercel/ai
+Elements documentation: https://ai-sdk.dev/elements
+License: Apache License, Version 2.0. See third_party/licenses/Apache-2.0.txt.
+
+Included or adapted portions:
+
+- app/src/components/cards/sandbox-console.tsx adapts Vercel AI Elements'
+  "Sandbox" component shape and compound API to Push's design system.
 
 Before adding another copied or derived module:
 
