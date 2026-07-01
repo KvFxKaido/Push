@@ -303,4 +303,26 @@ describe('detectTrailingActionIntent', () => {
       detectTrailingActionIntent('The fix lives in orchestrator-policy.ts and is ready.'),
     ).toBe(false);
   });
+
+  // Regression tests from PR #1285 review (Codex + fugu): checking only the
+  // LAST sentence dropped the announced intent whenever a second sentence
+  // followed it on the same line. Fixed by checking every sentence in the
+  // line instead of just the last one.
+  it('still fires on a compound plan split into two sentences (not just comma-joined)', () => {
+    expect(
+      detectTrailingActionIntent("I'll read the config first. Then delegate to Coder to fix it."),
+    ).toBe(true);
+  });
+
+  it('still fires when the announced action is followed by a closing remark', () => {
+    expect(detectTrailingActionIntent('Let me read the config. That should clarify things.')).toBe(
+      true,
+    );
+  });
+
+  it('fires on a lowercase continuation sentence after the first', () => {
+    // Models don't reliably capitalize a second sentence — the splitter must
+    // not require it to isolate the intent-bearing continuation.
+    expect(detectTrailingActionIntent('Found the bug. let me verify the fix.')).toBe(true);
+  });
 });
