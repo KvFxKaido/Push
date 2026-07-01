@@ -1,0 +1,41 @@
+Push
+
+Copyright (c) 2026 Shawn Montgomery
+
+This NOTICE file collects attribution notices for third-party code or prompt
+material that is included in source form or substantially derived into Push.
+
+OpenAI Codex attribution:
+
+OpenAI Codex
+Copyright 2025 OpenAI
+
+Source: https://github.com/openai/codex
+Inspected revision: db887d03e1f907467e33271572dffb73bceecd6b
+License: Apache License, Version 2.0. See third_party/licenses/Apache-2.0.txt.
+
+Included or adapted portions:
+
+- lib/llm-compaction.ts adapts the Codex context compaction prompt/prefix idea
+  from codex-rs/prompts/templates/compact/prompt.md and
+  codex-rs/prompts/templates/compact/summary_prefix.md.
+
+Vercel AI Elements attribution:
+
+Vercel AI
+Copyright 2023 Vercel, Inc.
+
+Source: https://github.com/vercel/ai
+Elements documentation: https://ai-sdk.dev/elements
+License: Apache License, Version 2.0. See third_party/licenses/Apache-2.0.txt.
+
+Included or adapted portions:
+
+- app/src/components/cards/sandbox-console.tsx adapts Vercel AI Elements'
+  "Sandbox" component shape and compound API to Push's design system.
+
+Before adding another copied or derived module:
+
+- List each derived Push path and the upstream Codex path/revision.
+- Mark each modified derived source file with a prominent modification notice.
+- Keep OpenAI/Codex names limited to source attribution, not endorsement.

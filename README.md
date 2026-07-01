@@ -137,4 +137,8 @@ Push stands on the shoulders of a few open projects:
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+Push's original code is MIT licensed; see [LICENSE](LICENSE).
+
+Third-party or derived portions may carry their own permissive license terms and
+attribution requirements. See [NOTICE](NOTICE) and `third_party/licenses/` for
+any included third-party notices and license texts.

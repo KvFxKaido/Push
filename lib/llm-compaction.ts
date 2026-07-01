@@ -36,7 +36,9 @@ import type { LlmMessage, PushStream } from './provider-contract.ts';
  * System prompt for the summarizer call. Adapted from Codex's compaction
  * template (`templates/compact/prompt.md`) with the community cumulative-
  * history mitigation (Codex issue #14347) folded in so repeated compactions
- * don't progressively forget earlier decisions.
+ * don't progressively forget earlier decisions. OpenAI Codex attribution for
+ * the prompt adaptation is tracked in the root NOTICE; the surrounding
+ * implementation is Push-native.
  */
 export const COMPACTION_SYSTEM_PROMPT = [
   'You are performing a CONTEXT CHECKPOINT COMPACTION.',
@@ -66,7 +68,8 @@ export const COMPACTION_SYSTEM_PROMPT = [
  * Prefix wrapped around the model-produced summary when it is injected back
  * into the working context. Frames compaction as a relay handoff rather than
  * amnesia (Codex's `summary_prefix.md` insight) — the receiving model treats
- * it as prior work to build on, not its own truncated memory.
+ * it as prior work to build on, not its own truncated memory. OpenAI Codex
+ * attribution for the prompt-prefix adaptation is tracked in the root NOTICE.
  */
 export const COMPACTION_HANDOFF_PREFIX = [
   '[CONTEXT HANDOFF]',
