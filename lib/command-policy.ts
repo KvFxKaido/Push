@@ -33,6 +33,20 @@ export {
   splitShellWords,
 };
 
+const RAW_DANGEROUS_PATTERNS = [
+  /\brm\b[^;&|\n]*\s(?:-[^\s-]*f[^\s]*|--force)(?=\s|$|[<>])/,
+  /\bfind\b[^;&|\n]*(?:^|\s)(?:-exec|-execdir|-ok|-okdir|-delete|-fls|-fprint|-fprint0|-fprintf)(?=\s|$|[<>])/,
+  /\brg\b[^;&|\n]*\s(?:--pre|--hostname-bin)(?:=|\s|$)/,
+  /\bgit\b[^;&|\n]*\breset\b[^;&|\n]*\s--hard(?=\s|$|[<>])/,
+  /\bgit\b[^;&|\n]*\bclean\b[^;&|\n]*\s(?:-[^\s-]*f[^\s]*|--force)(?=\s|$|[<>])/,
+  /\bgit\b[^;&|\n]*\bpush\b[^;&|\n]*\s(?:-f|--force|--force-with-lease)(?:=|\s|$)/,
+  /\bgit\b[^;&|\n]*\b(?:checkout|restore)\b[^;&|\n]*(?:^|\s)\.(?=\s|$|[<>])/,
+];
+
+function rawCommandMightBeDangerous(command: string): boolean {
+  return RAW_DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
+}
+
 function isDangerousGitCommand(command: string[]): boolean {
   const match = findGitSubcommand(command, ['reset', 'clean', 'push', 'checkout', 'restore']);
   if (!match) return false;
@@ -43,7 +57,14 @@ function isDangerousGitCommand(command: string[]): boolean {
     return args.some((arg) => shortOptionIncludes(arg, 'f') || arg === '--force');
   }
   if (match.subcommand === 'push') {
-    return args.some((arg) => arg === '-f' || arg === '--force' || arg.startsWith('--force='));
+    return args.some(
+      (arg) =>
+        arg === '-f' ||
+        arg === '--force' ||
+        arg.startsWith('--force=') ||
+        arg === '--force-with-lease' ||
+        arg.startsWith('--force-with-lease='),
+    );
   }
   if (match.subcommand === 'checkout' || match.subcommand === 'restore') {
     return args.some((arg) => arg === '.');
@@ -87,13 +108,14 @@ function commandWordsMightBeDangerous(command: string[]): boolean {
   const shellScript = extractShellScript(command);
   if (!shellScript) return false;
   const nestedCommands = parsePlainCommandSequence(shellScript);
-  return (
-    Array.isArray(nestedCommands) &&
-    nestedCommands.some((nestedCommand) => isDangerousToCallWithExec(nestedCommand))
-  );
+  if (Array.isArray(nestedCommands)) {
+    return nestedCommands.some((nestedCommand) => isDangerousToCallWithExec(nestedCommand));
+  }
+  return rawCommandMightBeDangerous(shellScript);
 }
 
 export function commandMightBeDangerous(command: string): boolean {
   const commands = parsePlainCommandSequence(command);
-  return Array.isArray(commands) && commands.some((words) => commandWordsMightBeDangerous(words));
+  if (Array.isArray(commands)) return commands.some((words) => commandWordsMightBeDangerous(words));
+  return rawCommandMightBeDangerous(command);
 }

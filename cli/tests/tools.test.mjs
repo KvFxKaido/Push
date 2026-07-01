@@ -333,8 +333,12 @@ describe('isHighRiskCommand', () => {
 
   it('detects parser-derived destructive commands', () => {
     assert.equal(isHighRiskCommand('find . -name "*.tmp" -delete'), true);
+    assert.equal(isHighRiskCommand('find . -name "*.tmp" -delete > deleted.log'), true);
     assert.equal(isHighRiskCommand('rg --pre ./helper TODO src'), true);
+    assert.equal(isHighRiskCommand('rg --pre ./helper TODO src > out'), true);
     assert.equal(isHighRiskCommand("bash -lc 'git status && rm -rf /'"), true);
+    assert.equal(isHighRiskCommand("bash -lc 'rg --pre ./helper TODO src > out'"), true);
+    assert.equal(isHighRiskCommand('git push origin main --force-with-lease'), true);
   });
 
   it('allows safe commands', () => {

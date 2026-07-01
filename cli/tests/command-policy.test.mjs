@@ -98,8 +98,10 @@ describe('dangerous command policy', () => {
   it('detects destructive commands directly and through shell wrappers', () => {
     assert.equal(commandMightBeDangerous('rm -rf /'), true);
     assert.equal(commandMightBeDangerous('find . -name "*.tmp" -delete'), true);
+    assert.equal(commandMightBeDangerous('find . -name "*.tmp" -delete > deleted.log'), true);
     assert.equal(commandMightBeDangerous("bash -lc 'git status && rm -rf /'"), true);
     assert.equal(commandMightBeDangerous("bash -lc 'find . -delete'"), true);
+    assert.equal(commandMightBeDangerous("bash -lc 'find . -delete > deleted.log'"), true);
   });
 
   it('detects dangerous git and rg invocations', () => {
@@ -107,9 +109,18 @@ describe('dangerous command policy', () => {
     assert.equal(commandMightBeDangerous('git clean -fdx'), true);
     assert.equal(commandMightBeDangerous('git push origin main --force'), true);
     assert.equal(commandMightBeDangerous('git push origin main -f'), true);
+    assert.equal(commandMightBeDangerous('git push origin main --force-with-lease'), true);
+    assert.equal(commandMightBeDangerous('git push origin main --force-with-lease=main:abc'), true);
     assert.equal(commandMightBeDangerous('git checkout .'), true);
     assert.equal(commandMightBeDangerous('git restore .'), true);
     assert.equal(commandMightBeDangerous('rg --pre ./helper TODO src'), true);
+    assert.equal(commandMightBeDangerous('rg --pre ./helper TODO src > out'), true);
+    assert.equal(commandMightBeDangerous("bash -lc 'rg --pre ./helper TODO src > out'"), true);
+  });
+
+  it('does not scan harmless parsed string arguments as dangerous commands', () => {
+    assert.equal(commandMightBeDangerous('echo "rm -rf /"'), false);
+    assert.equal(commandMightBeDangerous('bash -lc \'echo "find . -delete"\''), false);
   });
 
   it('does not flag non-mutating git checkout/restore of a specific file', () => {
