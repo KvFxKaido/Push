@@ -111,8 +111,6 @@ export interface LlmCompactionPolicy extends LlmCompactionTrigger {
   preserveTailTokens: number;
   /** Minimum eligible middle span before spending a model call. */
   minSummarizeTokens: number;
-  preserveTailRatio: number;
-  preserveTailCap: number;
 }
 
 const DEFAULT_PRESERVE_TAIL_RATIO = 0.4;
@@ -143,8 +141,6 @@ export function resolveLlmCompactionPolicy(args: {
       Math.floor(triggerTokens * DEFAULT_PRESERVE_TAIL_RATIO),
     ),
     minSummarizeTokens: DEFAULT_MIN_SUMMARIZE_TOKENS,
-    preserveTailRatio: DEFAULT_PRESERVE_TAIL_RATIO,
-    preserveTailCap: DEFAULT_PRESERVE_TAIL_CAP,
   };
 }
 
