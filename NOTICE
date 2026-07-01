@@ -1,0 +1,34 @@
+Push
+
+Copyright (c) 2026 Shawn Montgomery
+
+This NOTICE file collects attribution notices for third-party code or prompt
+material that is included in source form or substantially derived into Push.
+
+OpenAI Codex attribution:
+
+OpenAI Codex
+Copyright 2025 OpenAI
+
+Source: https://github.com/openai/codex
+Inspected revision: db887d03e1f907467e33271572dffb73bceecd6b
+License: Apache License, Version 2.0. See third_party/licenses/Apache-2.0.txt.
+
+Included or adapted portions:
+
+- lib/llm-compaction.ts adapts the Codex context compaction prompt/prefix idea
+  from codex-rs/prompts/templates/compact/prompt.md and
+  codex-rs/prompts/templates/compact/summary_prefix.md.
+
+Candidate future derived areas:
+
+- Command safety and shell/git command classification.
+- Command-safety test cases.
+- Context compaction tests, event semantics, and configuration shape, where
+  copied or substantially translated from OpenAI Codex source.
+
+Before adding another copied or derived module:
+
+- List each derived Push path and the upstream Codex path/revision.
+- Mark each modified derived source file with a prominent modification notice.
+- Keep OpenAI/Codex names limited to source attribution, not endorsement.
