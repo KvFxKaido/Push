@@ -38,7 +38,7 @@ import type {
   CoderToolExecResult,
   DetectedToolCalls,
 } from './coder-agent.js';
-import { ANNOUNCED_NO_ACTION_POLICY_MARKER } from './tool-call-recovery.js';
+import { isAnnouncedNoActionPolicyMessage } from './tool-call-recovery.js';
 
 // ---------------------------------------------------------------------------
 // Structural duck-types — match the Web shim's concrete types without
@@ -387,9 +387,7 @@ export function buildCoderEvaluateAfterModel<
     return {
       action: 'inject',
       content: result.message.content,
-      forceToolChoiceNextRound: result.message.content.startsWith(
-        ANNOUNCED_NO_ACTION_POLICY_MARKER,
-      ),
+      forceToolChoiceNextRound: isAnnouncedNoActionPolicyMessage(result.message.content),
     };
   };
 }

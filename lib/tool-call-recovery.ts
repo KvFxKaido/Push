@@ -112,6 +112,16 @@ export const MAX_TRAILING_INTENT_NUDGES = 3;
  */
 export const ANNOUNCED_NO_ACTION_POLICY_MARKER = '[POLICY: ANNOUNCED_NO_ACTION]';
 
+/**
+ * True when `content` is the announced-no-action nudge message. Centralizes
+ * the marker check (vs. a bare `.startsWith`) so a future producer that adds
+ * leading whitespace or a preamble line doesn't silently break the
+ * `forceToolChoiceNextRound` escalation in `buildCoderEvaluateAfterModel`.
+ */
+export function isAnnouncedNoActionPolicyMessage(content: string): boolean {
+  return content.trimStart().startsWith(ANNOUNCED_NO_ACTION_POLICY_MARKER);
+}
+
 export interface UnimplementedToolErrorOptions {
   availableTools?: readonly string[];
   availableToolsLabel?: string;

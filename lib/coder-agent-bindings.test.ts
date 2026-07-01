@@ -190,6 +190,17 @@ describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation',
     });
   });
 
+  it('tolerates leading whitespace before the marker (isAnnouncedNoActionPolicyMessage trims)', async () => {
+    const evaluateAfterModel = buildCoderEvaluateAfterModel(
+      makeEvalServices({
+        action: 'inject',
+        message: { content: `  \n${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.` },
+      }),
+    );
+    const result = await evaluateAfterModel('let me actually run the tools now', 0);
+    expect(result).toMatchObject({ forceToolChoiceNextRound: true });
+  });
+
   it('does not set forceToolChoiceNextRound for other inject nudges (e.g. drift correction)', async () => {
     const evaluateAfterModel = buildCoderEvaluateAfterModel(
       makeEvalServices({
