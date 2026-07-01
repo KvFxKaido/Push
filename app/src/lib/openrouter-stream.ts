@@ -187,6 +187,7 @@ async function* openrouterResponsesStream(
       signal: req.signal,
       responseFormat: req.responseFormat,
       tools: nativeTools,
+      toolChoice: req.toolChoice,
     },
     {
       geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
