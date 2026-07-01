@@ -75,17 +75,21 @@ interface StubRelay {
   port: number;
   /** Every `kind: 'request'` envelope the client sent, in arrival order. */
   capturedRequests: Array<{ type: string; sessionId: string | null; payload: unknown }>;
+  /** Relay-control envelopes the client sent, such as `relay_attach`. */
+  capturedRelayEnvelopes: Array<Record<string, unknown>>;
   /** Override the next response for a given request type (failure-path tests). */
   setResponseOverride: (
     type: string,
     override: { ok: boolean; payload?: unknown; error?: unknown },
   ) => void;
+  emit: (frame: string) => void;
   close: () => Promise<void>;
 }
 
 async function startStubRelay(): Promise<StubRelay> {
   const overrides = new Map<string, { ok: boolean; payload?: unknown; error?: unknown }>();
   const captured: StubRelay['capturedRequests'] = [];
+  const capturedRelayEnvelopes: StubRelay['capturedRelayEnvelopes'] = [];
   const wss = new WebSocketServer({
     port: 0,
     // The browser-side binding sends `[push.relay.v1, bearer.<token>]`;
@@ -107,6 +111,10 @@ async function startStubRelay(): Promise<StubRelay> {
           sessionId?: string | null;
           payload?: unknown;
         };
+        if (typeof parsed.kind === 'string' && parsed.kind.startsWith('relay_')) {
+          capturedRelayEnvelopes.push(parsed as Record<string, unknown>);
+          continue;
+        }
         if (parsed.kind !== 'request' || !parsed.requestId || !parsed.type) continue;
         captured.push({
           type: parsed.type,
@@ -134,13 +142,30 @@ async function startStubRelay(): Promise<StubRelay> {
   return {
     port,
     capturedRequests: captured,
+    capturedRelayEnvelopes,
     setResponseOverride: (type, override) => overrides.set(type, override),
+    emit: (frame: string) => {
+      for (const c of clients) c.send(frame);
+    },
     close: () =>
       new Promise<void>((resolve) => {
         for (const c of clients) c.close();
         wss.close(() => resolve());
       }),
   };
+}
+
+async function waitForCondition(
+  predicate: () => boolean,
+  label: string,
+  timeoutMs = 1_000,
+): Promise<void> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (predicate()) return;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error(`timed out waiting for ${label}`);
 }
 
 describeWithLoopback('createRelayDaemonBinding — targeted attach_session', () => {
@@ -164,6 +189,68 @@ describeWithLoopback('createRelayDaemonBinding — targeted attach_session', () 
     });
     return { result, resolve };
   }
+
+  it('sends relay_attach with lastSeq once the WS opens', async () => {
+    let resolveOpen!: () => void;
+    const opened = new Promise<void>((r) => {
+      resolveOpen = r;
+    });
+    const handle = createRelayDaemonBinding({
+      deploymentUrl: `http://127.0.0.1:${server.port}`,
+      sessionId: 'sess_relay_xyz',
+      token: VALID_TOKEN,
+      lastSeq: 42,
+      allowAnyHost: true,
+      onStatus: (status) => {
+        if (status.state === 'open') resolveOpen();
+      },
+    });
+
+    await opened;
+    await waitForCondition(
+      () => server.capturedRelayEnvelopes.some((e) => e.kind === 'relay_attach'),
+      'relay_attach envelope',
+    );
+
+    const attach = server.capturedRelayEnvelopes.find((e) => e.kind === 'relay_attach');
+    expect(attach).toMatchObject({
+      v: PROTOCOL_VERSION,
+      kind: 'relay_attach',
+      lastSeq: 42,
+    });
+    expect(typeof attach?.ts).toBe('number');
+    handle.close();
+  });
+
+  it('surfaces relay_replay_unavailable control frames', async () => {
+    let sent = false;
+    let resolveReplay!: (reason: string) => void;
+    const replayUnavailable = new Promise<string>((r) => {
+      resolveReplay = r;
+    });
+    const handle = createRelayDaemonBinding({
+      deploymentUrl: `http://127.0.0.1:${server.port}`,
+      sessionId: 'sess_relay_xyz',
+      token: VALID_TOKEN,
+      allowAnyHost: true,
+      onStatus: (status) => {
+        if (sent || status.state !== 'open') return;
+        sent = true;
+        server.emit(
+          `${JSON.stringify({
+            v: PROTOCOL_VERSION,
+            kind: 'relay_replay_unavailable',
+            ts: Date.now(),
+            reason: 'BUFFER_GAP',
+          })}\n`,
+        );
+      },
+      onReplayUnavailable: resolveReplay,
+    });
+
+    await expect(replayUnavailable).resolves.toBe('BUFFER_GAP');
+    handle.close();
+  });
 
   it('issues attach_session with the target IDs once the WS opens', async () => {
     const attach = awaitAttach();
