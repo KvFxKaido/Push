@@ -342,12 +342,37 @@ export async function processNoToolPath(
   // unbounded nudge loop. Mutually exclusive with the ungrounded-completion
   // guard above via the `!responseClaimsCompletion` check.
   const trailingIntentNudges = nextRecoveryState.trailingIntentNudges ?? 0;
-  if (
+  const trailingIntentDetected =
     action.loopAction === 'break' &&
-    trailingIntentNudges < MAX_TRAILING_INTENT_NUDGES &&
     !responseClaimsCompletion(accumulated) &&
-    detectTrailingActionIntent(accumulated)
-  ) {
+    detectTrailingActionIntent(accumulated);
+
+  if (trailingIntentDetected && trailingIntentNudges >= MAX_TRAILING_INTENT_NUDGES) {
+    // Symmetric structured log — the cap-hit branch, greppable against
+    // orchestrator_trailing_intent_nudged below. Without this, a dead-ended
+    // turn (model announces an action, never emits it, nudge budget spent)
+    // is indistinguishable in the logs from any other normal loop break.
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'orchestrator_trailing_intent_cap_exhausted',
+        chatId,
+        round,
+        maxNudges: MAX_TRAILING_INTENT_NUDGES,
+      }),
+    );
+  }
+
+  if (trailingIntentDetected && trailingIntentNudges < MAX_TRAILING_INTENT_NUDGES) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'orchestrator_trailing_intent_nudged',
+        chatId,
+        round,
+        nudgeCount: trailingIntentNudges + 1,
+      }),
+    );
     setConversations((prev) => {
       const conv = prev[chatId];
       if (!conv) return prev;

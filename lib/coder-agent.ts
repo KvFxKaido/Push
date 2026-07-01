@@ -1578,6 +1578,19 @@ export async function runCoderAgent<TCall, TCard>(
     // doesn't keep forcing tool_choice forever.
     const applyForcedToolChoice =
       forceToolChoiceNextRound && nativeToolSchemas && nativeToolSchemas.length > 0;
+    if (applyForcedToolChoice) {
+      // Symmetric structured log — greppable confirmation that a prior
+      // announced-no-action nudge actually escalated to tool_choice:
+      // 'required' rather than hoping the model complies with text alone.
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'coder_tool_choice_forced',
+          round,
+          model: coderModelId ?? '',
+        }),
+      );
+    }
     forceToolChoiceNextRound = false;
 
     // Stream Coder response via the active provider, with a per-round timeout

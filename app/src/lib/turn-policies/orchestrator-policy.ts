@@ -88,8 +88,14 @@ export function responseClaimsCompletion(response: string): boolean {
  *     an announced action as the last thing said, not an incidental mention
  *     mid-message — so prose that merely *describes* tools (e.g. explaining
  *     `create_branch` / `switch_branch`) earlier in the turn can't trip it.
- *   - The intent phrase must anchor at the start of that line, immediately
- *     followed by an investigative/tool action verb.
+ *   - Within that line, only the FINAL sentence is checked against the
+ *     intent regex. Models routinely lead with a comment before announcing
+ *     the action ("That's a big commit — 24 files. Let me read the full
+ *     diff…"), so anchoring to the whole line would miss it; anchoring to
+ *     the last sentence catches it while still requiring the intent be the
+ *     last thing said, not an incidental earlier mention.
+ *   - The intent phrase must anchor at the start of that sentence,
+ *     immediately followed by an investigative/tool action verb.
  *   - Questions and offers ("should I read X?", "let me know if…") return
  *     false: the model is handing control back, not forgetting to act.
  *   - Ambiguous verbs are constrained to their tool sense so conversational
@@ -145,7 +151,17 @@ export function detectTrailingActionIntent(response: string): boolean {
   const trailingIntent =
     /^(?:(?:so|now|next|then|first|finally|ok(?:ay)?|alright)\b(?:[,:]|\s+[—–-])?\s+)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|actually|really|just|go\s+ahead\s+and))*\s+(?:(?:re-?read|read|open|view|inspect|examine|verify|confirm|search|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|execute|diff|cat)\b|dig\s+(?:in|into)\b|check(?!\s+(?:in|back|on)\b)\b|find(?!\s+out\b)\b|run(?!\s+through\b)\b|look\s+(?:at|for|into)\b)/i;
 
-  return trailingIntent.test(cleaned);
+  // Split on a sentence boundary (terminal punctuation + whitespace + a
+  // capital letter/quote/paren/backtick starting the next sentence) and
+  // check only the last sentence, so a leading comment on the same line
+  // doesn't shield the announced action that follows it. Deliberately
+  // simple: it under-splits on abbreviations (fine — worst case we check a
+  // longer trailing clause, which the regex already tolerates) and never
+  // over-splits inside the sentence we end up testing.
+  const sentences = cleaned.split(/(?<=[.!?])\s+(?=[A-Z(`"'])/);
+  const lastSentence = sentences[sentences.length - 1]?.trim() || cleaned;
+
+  return trailingIntent.test(lastSentence);
 }
 
 /**

@@ -272,4 +272,35 @@ describe('detectTrailingActionIntent', () => {
       ),
     ).toBe(true);
   });
+
+  it('fires when a leading comment on the same line precedes the announced action', () => {
+    // Observed in production: the model opens with a one-off remark before
+    // announcing the action, all on one line with no newline in between. The
+    // old line-anchored regex missed this because "Let me read…" isn't at
+    // position 0 of the line.
+    expect(
+      detectTrailingActionIntent(
+        "That's a big commit — 24 files. Let me read the full diff to understand the migration and spot what went wrong.",
+      ),
+    ).toBe(true);
+  });
+
+  it('fires through a file-path-adjacent lead-in sentence', () => {
+    // Guards against the sentence splitter tripping on the period in a
+    // filename like README.md — it must still land on the true last
+    // sentence, not stop early inside the file reference.
+    expect(
+      detectTrailingActionIntent(
+        'I already checked README.md for accuracy. Let me verify the config next.',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT fire when the leading sentence is the only thing left after stripping punctuation false-splits', () => {
+    // A period inside a filename (lowercase continuation) must not be treated
+    // as a sentence boundary, since nothing tool-shaped follows it.
+    expect(
+      detectTrailingActionIntent('The fix lives in orchestrator-policy.ts and is ready.'),
+    ).toBe(false);
+  });
 });

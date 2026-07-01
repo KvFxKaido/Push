@@ -295,11 +295,35 @@ export function createCoderPolicy(): TurnPolicy {
         // flip cannot regress into prompt-only cooperation.
         const trimmed = response.trim();
         if (!trimmed) return null;
-        if (trailingIntentNudges >= MAX_TRAILING_INTENT_NUDGES) return null;
         if (/\{\s*"tool"\s*:/.test(trimmed)) return null;
         if (!detectTrailingActionIntent(trimmed)) return null;
 
+        if (trailingIntentNudges >= MAX_TRAILING_INTENT_NUDGES) {
+          // Symmetric structured log — paired with the nudge log below. Logged
+          // only once the response is confirmed to be a genuine dead-end
+          // (checked above), not on every round after the cap is hit.
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'coder_trailing_intent_cap_exhausted',
+              round: ctx.round,
+              allowedRepo: ctx.allowedRepo,
+              maxNudges: MAX_TRAILING_INTENT_NUDGES,
+            }),
+          );
+          return null;
+        }
+
         trailingIntentNudges++;
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'coder_trailing_intent_nudged',
+            round: ctx.round,
+            allowedRepo: ctx.allowedRepo,
+            nudgeCount: trailingIntentNudges,
+          }),
+        );
         return {
           action: 'inject' as const,
           message: {
