@@ -70,7 +70,7 @@ export const ToolCallSummary = memo(function ToolCallSummary({
                     </span>
                     {target && (
                       <span
-                        className={`${CARD_BADGE_INFO} truncate rounded-md px-1.5 py-0.5 text-push-2xs max-w-[200px]`}
+                        className={`${CARD_BADGE_INFO} min-w-0 max-w-[200px] truncate rounded-md px-1.5 py-0.5 text-push-2xs`}
                       >
                         {target}
                       </span>
