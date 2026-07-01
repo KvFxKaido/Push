@@ -31,6 +31,7 @@ import {
   buildHandoffBlock,
   isHandoffBlock,
   partitionForLlmCompaction,
+  resolveLlmCompactionPolicy,
   shouldRunLlmCompaction,
   summarizeContextViaModel,
   renderSpanForSummary,
@@ -55,13 +56,6 @@ export interface MaybeCompactArgs {
   provider: ActiveProvider;
   model: string | undefined;
 }
-
-/** Fraction of the budget's summarize threshold preserved verbatim as the
- *  recent tail after compaction. */
-const PRESERVE_TAIL_RATIO = 0.4;
-const PRESERVE_TAIL_CAP = 24_000;
-/** Don't spend a model round-trip on a span smaller than this. */
-const MIN_SUMMARIZE_TOKENS = 4_000;
 
 function log(event: string, ctx: Record<string, unknown>): void {
   console.log(JSON.stringify({ level: 'info', event, ...ctx }));
@@ -90,10 +84,8 @@ export async function maybeCompactBeforeTurn(
   if (ctx.abortRef.current) return apiMessages;
 
   const budget = getContextBudget(provider, model);
-  // Patient, window-aware handoff trigger — split from the eager, lossless
-  // `summarizeTokens` compression knob (Agent Runtime Decisions §14). The LLM
-  // collapse busts the prompt cache, so we fill the window before paying for it.
-  const triggerTokens = budget.handoffTokens;
+  const policy = resolveLlmCompactionPolicy({ surface: 'web', budget });
+  const triggerTokens = policy.triggerTokens;
 
   // Partition (and all downstream token math) runs over ONLY the model-visible
   // subset. A prior compaction's folded span is still in `apiMessages` with
@@ -108,11 +100,8 @@ export async function maybeCompactBeforeTurn(
 
   const partition = partitionForLlmCompaction(visible.map(asCompactable), {
     estimateMessageTokens: (m) => estimateMessageTokens(m as ChatMessage),
-    preserveTailTokens: Math.min(
-      PRESERVE_TAIL_CAP,
-      Math.floor(triggerTokens * PRESERVE_TAIL_RATIO),
-    ),
-    minSummarizeTokens: MIN_SUMMARIZE_TOKENS,
+    preserveTailTokens: policy.preserveTailTokens,
+    minSummarizeTokens: policy.minSummarizeTokens,
   });
   if (partition.summarize.length === 0) {
     log('llm_compaction_skipped', { reason: 'span_too_small', totalTokens, triggerTokens });

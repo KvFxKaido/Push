@@ -27,6 +27,7 @@
 
 import { iteratePushStreamText } from './stream-utils.ts';
 import type { LlmMessage, PushStream } from './provider-contract.ts';
+import type { ContextBudget } from './context-budget.ts';
 
 // ---------------------------------------------------------------------------
 // Prompt (the feature, not a band-aid — this IS the compaction instruction)
@@ -97,6 +98,54 @@ export interface LlmCompactionTrigger {
    *  the heuristic's hard ceiling so the model-written summary is the primary
    *  mechanism and the heuristic only ever catches the overflow. */
   triggerTokens: number;
+}
+
+export type LlmCompactionSurface = 'web' | 'cli-lead';
+
+export type LlmCompactionTriggerSource = 'handoffTokens' | 'summarizeTokens';
+
+export interface LlmCompactionPolicy extends LlmCompactionTrigger {
+  /** Which context-budget threshold drives this surface. */
+  triggerSource: LlmCompactionTriggerSource;
+  /** Recent-tail budget kept verbatim after compaction. */
+  preserveTailTokens: number;
+  /** Minimum eligible middle span before spending a model call. */
+  minSummarizeTokens: number;
+  preserveTailRatio: number;
+  preserveTailCap: number;
+}
+
+const DEFAULT_PRESERVE_TAIL_RATIO = 0.4;
+const DEFAULT_PRESERVE_TAIL_CAP = 24_000;
+const DEFAULT_MIN_SUMMARIZE_TOKENS = 4_000;
+
+/**
+ * Resolve the async LLM-handoff policy for each surface.
+ *
+ * Web sends the model its full visible transcript, so it can wait for the
+ * patient `handoffTokens` threshold before paying a cache-busting summary call.
+ * The CLI lead feeds a bounded preamble, so it must fire at the eager
+ * `summarizeTokens` threshold; otherwise older turns can fall outside the
+ * preamble before a handoff exists to carry them forward.
+ */
+export function resolveLlmCompactionPolicy(args: {
+  surface: LlmCompactionSurface;
+  budget: Pick<ContextBudget, 'summarizeTokens' | 'handoffTokens'>;
+}): LlmCompactionPolicy {
+  const triggerSource: LlmCompactionTriggerSource =
+    args.surface === 'cli-lead' ? 'summarizeTokens' : 'handoffTokens';
+  const triggerTokens = args.budget[triggerSource];
+  return {
+    triggerTokens,
+    triggerSource,
+    preserveTailTokens: Math.min(
+      DEFAULT_PRESERVE_TAIL_CAP,
+      Math.floor(triggerTokens * DEFAULT_PRESERVE_TAIL_RATIO),
+    ),
+    minSummarizeTokens: DEFAULT_MIN_SUMMARIZE_TOKENS,
+    preserveTailRatio: DEFAULT_PRESERVE_TAIL_RATIO,
+    preserveTailCap: DEFAULT_PRESERVE_TAIL_CAP,
+  };
 }
 
 export interface PartitionOptions<M> {
