@@ -272,4 +272,57 @@ describe('detectTrailingActionIntent', () => {
       ),
     ).toBe(true);
   });
+
+  it('fires when a leading comment on the same line precedes the announced action', () => {
+    // Observed in production: the model opens with a one-off remark before
+    // announcing the action, all on one line with no newline in between. The
+    // old line-anchored regex missed this because "Let me read…" isn't at
+    // position 0 of the line.
+    expect(
+      detectTrailingActionIntent(
+        "That's a big commit — 24 files. Let me read the full diff to understand the migration and spot what went wrong.",
+      ),
+    ).toBe(true);
+  });
+
+  it('fires through a file-path-adjacent lead-in sentence', () => {
+    // Guards against the sentence splitter tripping on the period in a
+    // filename like README.md — it must still land on the true last
+    // sentence, not stop early inside the file reference.
+    expect(
+      detectTrailingActionIntent(
+        'I already checked README.md for accuracy. Let me verify the config next.',
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT fire when the leading sentence is the only thing left after stripping punctuation false-splits', () => {
+    // A period inside a filename (lowercase continuation) must not be treated
+    // as a sentence boundary, since nothing tool-shaped follows it.
+    expect(
+      detectTrailingActionIntent('The fix lives in orchestrator-policy.ts and is ready.'),
+    ).toBe(false);
+  });
+
+  // Regression tests from PR #1285 review (Codex + fugu): checking only the
+  // LAST sentence dropped the announced intent whenever a second sentence
+  // followed it on the same line. Fixed by checking every sentence in the
+  // line instead of just the last one.
+  it('still fires on a compound plan split into two sentences (not just comma-joined)', () => {
+    expect(
+      detectTrailingActionIntent("I'll read the config first. Then delegate to Coder to fix it."),
+    ).toBe(true);
+  });
+
+  it('still fires when the announced action is followed by a closing remark', () => {
+    expect(detectTrailingActionIntent('Let me read the config. That should clarify things.')).toBe(
+      true,
+    );
+  });
+
+  it('fires on a lowercase continuation sentence after the first', () => {
+    // Models don't reliably capitalize a second sentence — the splitter must
+    // not require it to isolate the intent-bearing continuation.
+    expect(detectTrailingActionIntent('Found the bug. let me verify the fix.')).toBe(true);
+  });
 });
