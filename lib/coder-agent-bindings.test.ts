@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCoderDetectors,
+  buildCoderEvaluateAfterModel,
   CODER_INTERNAL_TOOL_NAMES,
   isCoderInternalToolName,
 } from './coder-agent-bindings.js';
+import { ANNOUNCED_NO_ACTION_POLICY_MARKER } from './tool-call-recovery.js';
 
 // Pins the contract from PR #605: Coder-internal tool names — handled
 // outside the source-detector pipeline by detectUpdateStateCall /
@@ -156,5 +158,71 @@ describe('buildCoderDetectors — memory source (LCM)', () => {
   it('detectAnyToolCall recovers a memory-source call (single-call path)', () => {
     const { detectAnyToolCall } = buildCoderDetectors(makeServices({ anyCall: memCall }));
     expect(detectAnyToolCall('anything')).toEqual(memCall);
+  });
+});
+
+describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation', () => {
+  // A model that announces a tool action but never emits one keeps dead-ending
+  // even after the text-only nudge (#1283 fixed detection, not compliance).
+  // The bindings layer must flag the announce-without-act nudge specifically so
+  // the round loop can force tool_choice: 'required' on the next request —
+  // recognizing it purely from the injected message's marker prefix, with no
+  // policy-internal coupling.
+  function makeEvalServices(policyResult: unknown) {
+    return {
+      policy: { evaluateAfterModel: async () => policyResult },
+      turnCtx: { round: 0 },
+    } as never;
+  }
+
+  it('sets forceToolChoiceNextRound when the injected message is the announced-no-action nudge', async () => {
+    const evaluateAfterModel = buildCoderEvaluateAfterModel(
+      makeEvalServices({
+        action: 'inject',
+        message: { content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.` },
+      }),
+    );
+    const result = await evaluateAfterModel('let me actually run the tools now', 0);
+    expect(result).toEqual({
+      action: 'inject',
+      content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
+      forceToolChoiceNextRound: true,
+    });
+  });
+
+  it('tolerates leading whitespace before the marker (isAnnouncedNoActionPolicyMessage trims)', async () => {
+    const evaluateAfterModel = buildCoderEvaluateAfterModel(
+      makeEvalServices({
+        action: 'inject',
+        message: { content: `  \n${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.` },
+      }),
+    );
+    const result = await evaluateAfterModel('let me actually run the tools now', 0);
+    expect(result).toMatchObject({ forceToolChoiceNextRound: true });
+  });
+
+  it('does not set forceToolChoiceNextRound for other inject nudges (e.g. drift correction)', async () => {
+    const evaluateAfterModel = buildCoderEvaluateAfterModel(
+      makeEvalServices({
+        action: 'inject',
+        message: { content: '[POLICY: DRIFT_DETECTED]\nRe-read your task.' },
+      }),
+    );
+    const result = await evaluateAfterModel('unrelated drifting response', 0);
+    expect(result).toEqual({
+      action: 'inject',
+      content: '[POLICY: DRIFT_DETECTED]\nRe-read your task.',
+      forceToolChoiceNextRound: false,
+    });
+  });
+
+  it('passes through halt and null unchanged', async () => {
+    const haltEval = buildCoderEvaluateAfterModel(
+      makeEvalServices({ action: 'halt', summary: 'stopped' }),
+    );
+    expect(await haltEval('anything', 0)).toEqual({ action: 'halt', summary: 'stopped' });
+
+    const nullEval = buildCoderEvaluateAfterModel(makeEvalServices(null));
+    expect(await nullEval('anything', 0)).toBeNull();
   });
 });

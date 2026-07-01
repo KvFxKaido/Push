@@ -57,7 +57,7 @@ export async function* nvidiaStream(
     ...(req.topP !== undefined ? { top_p: req.topP } : {}),
     // Native function calling: gated upstream by model support. The shared SSE
     // pump emits native tool_calls as structured events for dispatch.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
     // Native structured outputs: forward the caller's JSON-Schema constraint so
     // the OpenAI-compatible endpoint constrains generation server-side. Shared
     // wire builder with the CLI/OpenRouter paths. No `provider.require_parameters`

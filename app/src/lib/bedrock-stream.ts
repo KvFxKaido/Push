@@ -70,7 +70,7 @@ export async function* bedrockStream(
     // Native function calling. Bedrock's OpenAI-compatible proxy accepts the
     // same tools/tool_choice shape as the other OpenAI-compatible adapters, and
     // the shared SSE pump emits native tool_calls as structured events.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
   };
 
   // 3. Headers. The Worker reads `X-Push-Upstream-Base` to pick the upstream

@@ -80,7 +80,7 @@ export async function* cloudflareStream(
     // which the Worker forwards as structured tool-call frames. Additive to the
     // prompt-described tool path. `tool_choice: 'auto'` keeps prose answers
     // available when no tool is needed.
-    ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+    ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
   };
 
   // 3. Headers. No Authorization — the Worker uses its `env.AI` binding for

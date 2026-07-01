@@ -816,7 +816,20 @@ export interface CoderAgentCallbacks<TCard = unknown> {
  * `ChatMessage`.
  */
 export type CoderAfterModelResult =
-  | { action: 'inject'; content: string }
+  | {
+      action: 'inject';
+      content: string;
+      /**
+       * Set when this inject is the "announced an action but emitted no tool
+       * call" nudge (`ANNOUNCED_NO_ACTION_POLICY_MARKER`). A text-only
+       * re-prompt can't stop a model from repeating the same
+       * announce-without-act pattern, so the round loop forces the NEXT
+       * round's request to `tool_choice: 'required'` — closing the loophole
+       * at the API level instead of hoping the model complies. One-shot:
+       * consumed and cleared before the round after next.
+       */
+      forceToolChoiceNextRound?: boolean;
+    }
   | { action: 'halt'; summary: string }
   | null;
 
@@ -1441,6 +1454,13 @@ export async function runCoderAgent<TCall, TCard>(
     return `${prefixNewline ? '\n' : ''}[FILE_AWARENESS] ${awarenessSummary} [/FILE_AWARENESS]`;
   };
 
+  // One-shot escalation: set when `evaluateAfterModel` returns the
+  // "announced an action but emitted no tool call" nudge, consumed by the
+  // NEXT round's `iteratePushStreamText` call (forces `tool_choice:
+  // 'required'` instead of hoping the model complies with the text nudge
+  // alone), then cleared before that round's own policy evaluation.
+  let forceToolChoiceNextRound = false;
+
   for (let round = resumeState?.round ?? 0; ; round++) {
     if (callbacks.signal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
@@ -1552,6 +1572,14 @@ export async function runCoderAgent<TCall, TCard>(
       }
     }
 
+    // One-shot escalation consumed here: only meaningful when native tool
+    // schemas are actually attached (nothing to force otherwise). Cleared
+    // immediately so a round whose response doesn't re-trigger the nudge
+    // doesn't keep forcing tool_choice forever.
+    const applyForcedToolChoice =
+      forceToolChoiceNextRound && nativeToolSchemas && nativeToolSchemas.length > 0;
+    forceToolChoiceNextRound = false;
+
     // Stream Coder response via the active provider, with a per-round timeout
     const {
       error: streamError,
@@ -1575,6 +1603,7 @@ export async function runCoderAgent<TCall, TCard>(
         ...(priorSessionDigest ? { priorSessionDigest } : {}),
         ...(onSessionDigestEmitted ? { onSessionDigestEmitted } : {}),
         ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
+        ...(applyForcedToolChoice ? { toolChoice: 'required' as const } : {}),
       },
       CODER_ROUND_TIMEOUT_MS,
       `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
@@ -1789,6 +1818,7 @@ export async function runCoderAgent<TCall, TCard>(
           content,
           timestamp: Date.now(),
         });
+        forceToolChoiceNextRound = policyResult.forceToolChoiceNextRound === true;
         finishRound('continued');
         continue;
       }

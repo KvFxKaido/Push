@@ -110,6 +110,12 @@ describe('fireworksStream', () => {
     expect(body.tool_choice).toBeUndefined();
   });
 
+  it('forwards req.toolChoice = "required" into the request body', async () => {
+    await drain({ ...baseRequest, tools: [sampleTool], toolChoice: 'required' });
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.tool_choice).toBe('required');
+  });
+
   // Fireworks' Responses API has no built-in web_search tool, so the gate
   // (`isNativeWebSearchEnabled('fireworks')`) is false in production — modeled
   // by `nativeRef` defaulting false. The stream still consults the gate and

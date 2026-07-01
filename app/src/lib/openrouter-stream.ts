@@ -187,6 +187,7 @@ async function* openrouterResponsesStream(
       signal: req.signal,
       responseFormat: req.responseFormat,
       tools: nativeTools,
+      toolChoice: req.toolChoice,
     },
     {
       geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
@@ -305,7 +306,7 @@ async function* openrouterChatCompletionsStream(
     ...(useReasoning ? { reasoning: { effort } } : {}),
     ...(sessionId ? { session_id: sessionId } : {}),
     ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
-    ...(nativeTools.length > 0 ? { tool_choice: 'auto' } : {}),
+    ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
     ...(requireParameters ? { provider: { require_parameters: true } } : {}),
     trace,

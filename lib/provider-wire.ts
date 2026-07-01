@@ -80,6 +80,15 @@ export interface PushStreamRequestWire {
    */
   tools?: ToolFunctionSchema[];
   /**
+   * Escalation for native function calling — forces a structured tool call
+   * instead of a free-text reply. See `PushStreamRequest.toolChoice`. Carried
+   * so the flipped Zen Go client can force compliance after a model announces
+   * a tool action without emitting one; the Worker forwards it to
+   * `toOpenAIChat`'s `tool_choice`. Ignored by the Anthropic transport (no
+   * `tools`-shaped forcing path wired for it yet).
+   */
+  toolChoice?: 'auto' | 'required';
+  /**
    * Native structured-output JSON-Schema constraint. Carried so the flipped
    * Zen Go client keeps structured outputs the legacy passthrough used to
    * preserve; Workers re-serialize it to each transport's native shape
@@ -129,6 +138,7 @@ export interface ToPushStreamWireOptions {
   anthropicWebSearch?: boolean;
   googleSearchGrounding?: boolean;
   tools?: ToolFunctionSchema[];
+  toolChoice?: 'auto' | 'required';
   responseFormat?: ResponseFormatSpec;
   replayAssistantTurns?: Array<Array<Record<string, unknown>>>;
 }
@@ -184,6 +194,7 @@ export function toPushStreamWire(
     ...(options.anthropicWebSearch ? { anthropicWebSearch: true } : {}),
     ...(options.googleSearchGrounding ? { googleSearchGrounding: true } : {}),
     ...(options.tools && options.tools.length > 0 ? { tools: options.tools } : {}),
+    ...(options.toolChoice ? { toolChoice: options.toolChoice } : {}),
     ...(options.responseFormat ? { responseFormat: options.responseFormat } : {}),
     ...(options.replayAssistantTurns && options.replayAssistantTurns.length > 0
       ? { replayAssistantTurns: options.replayAssistantTurns }

@@ -169,6 +169,20 @@ describe('openaiStream', () => {
     expect(body.tool_choice).toBe('auto');
   });
 
+  it('forwards req.toolChoice = "required" into the request body', async () => {
+    installStreamFetch(fetchMock);
+    const { openaiStream } = await import('./openai-stream');
+    const iter = openaiStream({ ...baseRequest, tools: [sampleTool], toolChoice: 'required' });
+    void iter[Symbol.asyncIterator]()
+      .next()
+      .catch(() => {});
+    await new Promise((r) => setTimeout(r, 0));
+
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string);
+    expect(body.tool_choice).toBe('required');
+  });
+
   it('omits tools / tool_choice when no native tools are attached', async () => {
     installStreamFetch(fetchMock);
     const { openaiStream } = await import('./openai-stream');

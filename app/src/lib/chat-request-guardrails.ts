@@ -921,6 +921,18 @@ export function validateAndNormalizeWireRequest(
     tools = raw as ToolFunctionSchema[];
   }
 
+  // Escalation for native function calling — forces a structured tool call
+  // instead of a free-text reply. See `PushStreamRequest.toolChoice`.
+  let toolChoice: 'auto' | 'required' | undefined;
+  if (parsed.toolChoice !== undefined) {
+    if (parsed.toolChoice !== 'auto' && parsed.toolChoice !== 'required') {
+      return validationError(
+        `${policy.routeLabel} request field "toolChoice" must be "auto" or "required".`,
+      );
+    }
+    toolChoice = parsed.toolChoice;
+  }
+
   // Native structured-output constraint. Shape-check `{ name, schema }` so the
   // provider serializer (`toOpenAIResponseFormat`) gets a well-formed spec.
   let responseFormat: ResponseFormatSpec | undefined;
@@ -973,6 +985,7 @@ export function validateAndNormalizeWireRequest(
       ? { googleSearchGrounding: parsed.googleSearchGrounding }
       : {}),
     ...(tools ? { tools } : {}),
+    ...(toolChoice ? { toolChoice } : {}),
     ...(responseFormat ? { responseFormat } : {}),
     ...(replayAssistantTurns ? { replayAssistantTurns } : {}),
   };

@@ -189,7 +189,7 @@ export async function* vertexStream(
         ...(req.topP !== undefined ? { top_p: req.topP } : {}),
         ...(anthropicWebSearch ? { anthropic_web_search: true } : {}),
         ...(googleSearchGrounding ? { google_search_grounding: true } : {}),
-        ...(openAITools ? { tools: openAITools, tool_choice: 'auto' } : {}),
+        ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
       };
 
   // 5. POST + stream response. Anthropic-transport models (Claude on Vertex)

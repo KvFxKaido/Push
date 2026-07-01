@@ -212,7 +212,7 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
   // presence here is the signal to forward it.
   if (req.tools && req.tools.length > 0) {
     input.tools = req.tools.map(flatToolToOpenAITool);
-    input.tool_choice = 'auto';
+    input.tool_choice = req.toolChoice ?? 'auto';
   }
 
   // Workers AI binding routes through AI Gateway natively when given a

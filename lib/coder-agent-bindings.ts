@@ -38,6 +38,7 @@ import type {
   CoderToolExecResult,
   DetectedToolCalls,
 } from './coder-agent.js';
+import { isAnnouncedNoActionPolicyMessage } from './tool-call-recovery.js';
 
 // ---------------------------------------------------------------------------
 // Structural duck-types — match the Web shim's concrete types without
@@ -383,7 +384,11 @@ export function buildCoderEvaluateAfterModel<
     if (result.action === 'halt') {
       return { action: 'halt', summary: result.summary };
     }
-    return { action: 'inject', content: result.message.content };
+    return {
+      action: 'inject',
+      content: result.message.content,
+      forceToolChoiceNextRound: isAnnouncedNoActionPolicyMessage(result.message.content),
+    };
   };
 }
 

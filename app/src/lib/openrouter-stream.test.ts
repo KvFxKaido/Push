@@ -407,6 +407,17 @@ describe('openrouterStream', () => {
     expect(body.provider).toEqual({ require_parameters: true });
   });
 
+  it('forwards req.toolChoice = "required" into the Responses request body', async () => {
+    const body = await pullRequestBody(fetchMock, {
+      ...baseRequest,
+      openrouterWebSearch: false,
+      tools: [sampleTool],
+      toolChoice: 'required',
+    });
+
+    expect(body.tool_choice).toBe('required');
+  });
+
   it('merges native function tools with the web_search server tool', async () => {
     const body = await pullRequestBody(fetchMock, {
       ...baseRequest,

@@ -100,6 +100,7 @@ export async function* sakanaStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    toolChoice: req.toolChoice,
     responsesWebSearch,
   });
 

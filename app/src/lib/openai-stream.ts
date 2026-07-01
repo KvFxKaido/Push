@@ -100,6 +100,7 @@ export async function* openaiStream(
     signal: req.signal,
     responseFormat: req.responseFormat,
     tools: req.tools,
+    toolChoice: req.toolChoice,
     responsesWebSearch,
   });
 
