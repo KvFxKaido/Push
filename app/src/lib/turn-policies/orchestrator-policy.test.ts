@@ -157,6 +157,18 @@ describe('detectTrailingActionIntent', () => {
     );
   });
 
+  it('fires on "let me actually run the tools now" (filler adverb before the verb)', () => {
+    expect(detectTrailingActionIntent('Alright, let me actually run the tools now.')).toBe(true);
+  });
+
+  it('fires on "let me actually dig in" through an em-dash lead-in', () => {
+    expect(
+      detectTrailingActionIntent(
+        "Alright — let me actually dig in. I'll pull recent commits and look at the OpenRouter provider code in parallel.",
+      ),
+    ).toBe(true);
+  });
+
   it('does NOT fire on a plain conclusion', () => {
     expect(
       detectTrailingActionIntent(

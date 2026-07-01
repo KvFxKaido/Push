@@ -135,7 +135,7 @@ export function detectTrailingActionIntent(response: string): boolean {
   // ("check in", "look forward", "run through", "find out") don't match while
   // their tool sense ("check the logs", "look at X", "run the tests") does.
   const trailingIntent =
-    /^(?:so,?\s+|now,?\s+|next,?\s+|then,?\s+|first,?\s+|finally,?\s+|ok(?:ay)?,?\s+|alright,?\s+)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|go\s+ahead\s+and))?\s+(?:(?:re-?read|read|open|view|inspect|examine|verify|confirm|search|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|execute|diff|cat)\b|check(?!\s+(?:in|back|on)\b)\b|find(?!\s+out\b)\b|run(?!\s+through\b)\b|look\s+(?:at|for|into)\b)/i;
+    /^(?:so,?\s+|now,?\s+|next,?\s+|then,?\s+|first,?\s+|finally,?\s+|ok(?:ay)?,?\s+|alright[,:]?\s*(?:[—–-]\s*)?)?(?:let'?s|let\s+me|i'?ll|i\s+will|i\s+am\s+going\s+to|i'?m\s+going\s+to|i\s+need\s+to|i\s+should|i\s+want\s+to|we'?ll|we\s+will|we\s+should|we\s+need\s+to)\b(?:\s+(?:now|then|also|quickly|first|next|actually|really|just|go\s+ahead\s+and))*\s+(?:(?:re-?read|read|open|view|inspect|examine|verify|confirm|search|grep|scan|list|fetch|pull|retrieve|explore|investigate|trace|review|execute|diff|cat|dig(?:\s+into)?)\b|check(?!\s+(?:in|back|on)\b)\b|find(?!\s+out\b)\b|run(?!\s+through\b)\b|look\s+(?:at|for|into)\b)/i;
 
   return trailingIntent.test(cleaned);
 }
