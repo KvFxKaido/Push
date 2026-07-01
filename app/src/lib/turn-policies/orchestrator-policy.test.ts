@@ -157,6 +157,36 @@ describe('detectTrailingActionIntent', () => {
     );
   });
 
+  it('fires on "let me actually run the tools now" (filler adverb before the verb)', () => {
+    expect(detectTrailingActionIntent('Alright, let me actually run the tools now.')).toBe(true);
+  });
+
+  it('fires on "let me actually dig in" through an em-dash lead-in', () => {
+    expect(
+      detectTrailingActionIntent(
+        "Alright — let me actually dig in. I'll pull recent commits and look at the OpenRouter provider code in parallel.",
+      ),
+    ).toBe(true);
+  });
+
+  it('fires on any leading marker through an em-dash, not just "alright"', () => {
+    expect(detectTrailingActionIntent("So — let's check the release notes.")).toBe(true);
+  });
+
+  it('does NOT fire on a filler adverb with a non-tool verb ("get back to you")', () => {
+    expect(detectTrailingActionIntent("I'll actually get back to you shortly.")).toBe(false);
+  });
+
+  it('does NOT fire on bare "dig" used metaphorically', () => {
+    expect(
+      detectTrailingActionIntent('I need to dig myself out of this scheduling mess first.'),
+    ).toBe(false);
+  });
+
+  it('does NOT fire on "dig up" (only "dig in"/"dig into" are treated as tool intent)', () => {
+    expect(detectTrailingActionIntent("I'll dig up some more examples for you.")).toBe(false);
+  });
+
   it('does NOT fire on a plain conclusion', () => {
     expect(
       detectTrailingActionIntent(
