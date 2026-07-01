@@ -5,6 +5,7 @@ import {
   isHandoffBlock,
   partitionForLlmCompaction,
   renderSpanForSummary,
+  resolveLlmCompactionPolicy,
   shouldRunLlmCompaction,
   summarizeContextViaModel,
   type CompactableMessage,
@@ -27,6 +28,36 @@ describe('shouldRunLlmCompaction', () => {
   });
   it('stays quiet below the trigger', () => {
     expect(shouldRunLlmCompaction(99, { triggerTokens: 100 })).toBe(false);
+  });
+});
+
+describe('resolveLlmCompactionPolicy', () => {
+  const budget = {
+    summarizeTokens: 88_000,
+    handoffTokens: 400_000,
+  };
+
+  it('uses patient handoff tokens for web', () => {
+    const policy = resolveLlmCompactionPolicy({ surface: 'web', budget });
+    expect(policy.triggerSource).toBe('handoffTokens');
+    expect(policy.triggerTokens).toBe(400_000);
+    expect(policy.preserveTailTokens).toBe(24_000);
+    expect(policy.minSummarizeTokens).toBe(4_000);
+  });
+
+  it('uses eager summarize tokens for the bounded CLI lead preamble', () => {
+    const policy = resolveLlmCompactionPolicy({ surface: 'cli-lead', budget });
+    expect(policy.triggerSource).toBe('summarizeTokens');
+    expect(policy.triggerTokens).toBe(88_000);
+    expect(policy.preserveTailTokens).toBe(24_000);
+  });
+
+  it('derives tail preservation from the trigger before the cap applies', () => {
+    const policy = resolveLlmCompactionPolicy({
+      surface: 'web',
+      budget: { summarizeTokens: 10_000, handoffTokens: 20_000 },
+    });
+    expect(policy.preserveTailTokens).toBe(8_000);
   });
 });
 

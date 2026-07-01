@@ -31,6 +31,7 @@ import {
   isHandoffBlock,
   partitionForLlmCompaction,
   renderSpanForSummary,
+  resolveLlmCompactionPolicy,
   shouldRunLlmCompaction,
   summarizeContextViaModel,
   type CompactableMessage,
@@ -47,10 +48,6 @@ import { createProviderStream } from './provider.js';
 import type { ProviderConfig } from './provider.js';
 import { rewriteMessagesLog } from './session-store.js';
 import type { SessionState } from './session-store.js';
-
-const PRESERVE_TAIL_RATIO = 0.4;
-const PRESERVE_TAIL_CAP = 24_000;
-const MIN_SUMMARIZE_TOKENS = 4_000;
 
 function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, event, ...ctx }));
@@ -97,27 +94,16 @@ export async function maybeCompactLeadHistory(
 
   const messages = (Array.isArray(state.messages) ? state.messages : []) as Message[];
   const budget = getContextBudget(providerConfig.id as AIProviderType, model);
-  // CLI lead stays on the EAGER `summarizeTokens` trigger — NOT the patient
-  // `handoffTokens` the web uses (Agent Runtime Decisions §14). The web sends the
-  // model its full message array, so deferring the handoff only delays a shrink
-  // the model never needed yet. The CLI lead instead feeds a bounded preamble
-  // (`buildLeadTurnPreamble` — last PRIOR_TURNS_MAX turns), so the `[CONTEXT
-  // HANDOFF]` summary is the ONLY thing carrying older context forward. Deferring
-  // it to a window-aware 400k would let a long session (esp. 1M-window DeepSeek/
-  // Gemini/Claude) drop every turn beyond the preamble with no summary. The
-  // bounded preamble can't be patient — collapse eagerly or lose context.
-  const triggerTokens = budget.summarizeTokens;
+  const policy = resolveLlmCompactionPolicy({ surface: 'cli-lead', budget });
+  const triggerTokens = policy.triggerTokens;
 
   const totalTokens = estimateContextTokens(messages);
   if (!shouldRunLlmCompaction(totalTokens, { triggerTokens })) return false;
 
   const partition = partitionForLlmCompaction(messages.map(asCompactable), {
     estimateMessageTokens: (m) => estimateMessageTokens(m as Message),
-    preserveTailTokens: Math.min(
-      PRESERVE_TAIL_CAP,
-      Math.floor(triggerTokens * PRESERVE_TAIL_RATIO),
-    ),
-    minSummarizeTokens: MIN_SUMMARIZE_TOKENS,
+    preserveTailTokens: policy.preserveTailTokens,
+    minSummarizeTokens: policy.minSummarizeTokens,
   });
   if (partition.summarize.length === 0) {
     log('info', 'cli_llm_compaction_skipped', {
