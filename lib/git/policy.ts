@@ -60,7 +60,11 @@ export type GitAllowFamily = 'restore-file' | 'mutate';
 export type GitRouteTarget = 'create_branch' | 'switch_branch' | 'commit' | 'push';
 
 /** Hard-blocked operations (no typed tool, forbidden outright). */
-export type GitBlockReason = 'no-local-merge' | 'history-rewrite' | 'remote-mutation';
+export type GitBlockReason =
+  | 'no-local-merge'
+  | 'history-rewrite'
+  | 'remote-mutation'
+  | 'branch-rename';
 
 export interface GitPassthroughDecision {
   kind: 'passthrough';
@@ -506,6 +510,24 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
       };
     }
     return classifyCheckoutOrSwitch(subcommand, rest);
+  }
+
+  // `git branch -m/-M/--move` renames a branch. Renaming the checked-out
+  // branch moves sandbox HEAD's name out from under Push's tracked branch
+  // state (`conv.branch`, upstream, any open PR base) — the same state-sync
+  // class that forces checkout/switch through the typed tools. This pure
+  // oracle has no branch context, so it can't tell "rename current" from
+  // "rename other"; fail safe and block every move form. There is no typed
+  // rename tool — the supported recipe is create-at-same-commit
+  // (`sandbox_create_branch`) + optional delete of the old name. Flags after
+  // `--` are positionals per git's parser, so they don't trigger the block.
+  // All other `git branch` forms (list / create / delete / upstream) keep
+  // today's allow-mutate fallthrough.
+  if (subcommand === 'branch') {
+    const flags = takeFlagsBeforeDoubleDash(rest);
+    if (flags.some((f) => f === '-m' || f === '-M' || f === '--move')) {
+      return { kind: 'block', reason: 'branch-rename', label: 'git branch -m' };
+    }
   }
 
   // `git remote <mutation>` (set-url / add / rename / …) repoints or rewrites
