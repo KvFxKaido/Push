@@ -38,9 +38,13 @@ import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
  * delivers exactly what `resolvePushCapabilityProfile(provider, model)` promises
  * for that column. The profile is the contract; the serializer is the proof.
  *
- * Status: skeleton + two exemplar columns (`toolCalling`, `structuredOutput`).
- * The remaining columns sit on the explicit `PENDING_COLUMNS` backlog (visible
- * `it.todo`s, not counted as covered) until their fill-in lands; tracked on #1169.
+ * Status: `toolCalling`, `structuredOutput`, and `reasoningBlocks` are
+ * executably covered. `streamingTools`, `multimodal`, `contentBlocks`, and
+ * `context` sit on the explicit `PENDING_COLUMNS` backlog (visible `it.todo`s,
+ * not counted as covered) until their fill-in lands; tracked on #1169.
+ * `multimodal` additionally has real (non-gate-registered) delivery + model-
+ * axis coverage in a plain `describe` — see the block above the pending list
+ * for why that doesn't close the column yet.
  */
 
 // --- drift-gate registration -------------------------------------------------
@@ -256,6 +260,82 @@ conformanceColumn('reasoningBlocks', () => {
   });
 });
 
+// === multimodal (delivery + model axis proven; degrade path still pending) ===
+// Native multimodal routes (Anthropic, Gemini) translate an image content part
+// into their provider-native block shape. Support is also a MODEL axis within
+// a provider — `modelSupportsMultimodal` resolves per (provider, model), not
+// as a blanket per-provider constant (an OpenAI vision model vs. a text-only
+// one) — matching the model-axis principle the `structuredOutput` column
+// established. Ported from the existing `toAnthropicMessages`/
+// `toGeminiGenerateContent` multimodal-contentParts suites.
+//
+// This is a plain `describe`, NOT `conformanceColumn` — it does not close the
+// `multimodal` column (still in PENDING_COLUMNS below). Codex review on this
+// PR (#1292) caught that the owed assertion has a second half — "text-only
+// routes degrade clearly" — that isn't actually implemented anywhere:
+// `multimodal` is never consulted as a gate, so a route resolved
+// multimodal:false still gets the image serialized and sent with no clear
+// failure mode. Pinning "no gate exists" (below) documents that gap; it is
+// not the same as proving "degrades clearly", so it doesn't earn the column.
+describe('conformance · multimodal (delivery + model axis; degrade path pending)', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const withImage = (provider: string, model: string) =>
+    req(provider, model, {
+      messages: [
+        {
+          id: 'a1',
+          role: 'user',
+          content: 'see image',
+          timestamp: 0,
+          contentParts: [
+            { type: 'text', text: 'see image' },
+            { type: 'image_url', image_url: { url: PNG } },
+          ],
+        },
+      ],
+    });
+
+  it('multimodal-tier Anthropic serializes the image as a base64 source block', () => {
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-opus-4-7').multimodal).toBe(true);
+    const body = toAnthropicMessages(withImage('anthropic', 'claude-opus-4-7')) as {
+      messages: Array<{ content?: Array<Record<string, unknown>> }>;
+    };
+    expect(body.messages[0]?.content).toContainEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+    });
+  });
+
+  it('multimodal-tier Gemini serializes the image as inline_data', () => {
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.1-pro-preview').multimodal).toBe(true);
+    const body = toGeminiGenerateContent(withImage('google', 'gemini-3.1-pro-preview')) as {
+      contents: Array<{ parts?: Array<Record<string, unknown>> }>;
+    };
+    expect(body.contents[0]?.parts).toContainEqual({
+      inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' },
+    });
+  });
+
+  it('resolves multimodal per model within one provider, not a blanket true/false', () => {
+    expect(resolvePushCapabilityProfile('openai', 'gpt-4o').multimodal).toBe(true);
+    expect(resolvePushCapabilityProfile('openai', 'gpt-3.5-turbo').multimodal).toBe(false);
+  });
+
+  it('documents the gap: a route resolved multimodal:false still gets the image passed through, unfiltered', () => {
+    // NOT "degrades clearly" — this is "doesn't degrade at all". The image is
+    // serialized and sent as-is; whether the provider API then rejects it is
+    // outside Push's control. Kept as a plain `describe` (not
+    // `conformanceColumn`) specifically so the drift gate still demands a
+    // real decision — add gating, or explicitly ratify passthrough-by-design
+    // — before `multimodal` can be marked covered.
+    const body = toOpenAIChat(withImage('openai', 'gpt-3.5-turbo'));
+    expect(body.messages?.[0]?.content).toContainEqual({
+      type: 'image_url',
+      image_url: { url: PNG },
+    });
+  });
+});
+
 // === remaining columns: explicit pending placeholders ========================
 // Visible `it.todo` backlog. These do NOT count as covered — the gate accounts
 // for them via PENDING_COLUMNS, so they can't masquerade as parity assertions.
@@ -267,7 +347,7 @@ pendingColumn(
 );
 pendingColumn(
   'multimodal',
-  'image blocks reach multimodal routes (Gemini inline_data / Anthropic image source); text-only routes degrade clearly',
+  'text-only routes (multimodal:false) gate or clearly degrade image content instead of passing it through unfiltered — delivery to multimodal-tier routes and the per-model resolution axis are already proven in the plain `describe` block above, not registered as covered pending this decision',
 );
 pendingColumn(
   'contentBlocks',
