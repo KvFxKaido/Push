@@ -1089,7 +1089,7 @@ async function runInteractive(
       if (line === '/help') {
         process.stdout.write(
           `Commands:\n` +
-            `  ${fmt.bold('/new')}                 Start a new session (same provider/model/cwd)\n` +
+            `  ${fmt.bold('/new')} | ${fmt.bold('/clear')}        Start a new session (same provider/model/cwd)\n` +
             `  ${fmt.bold('/model')}               Show current model + available models\n` +
             `  ${fmt.bold('/model')} <name|#>      Switch model\n` +
             `  ${fmt.bold('/provider')}            Show all providers with status\n` +
@@ -1107,7 +1107,7 @@ async function runInteractive(
         );
         continue;
       }
-      if (line === '/new') {
+      if (line === '/new' || line === '/clear') {
         const previousSessionId = state.sessionId;
         await ensureSessionPersisted(); // flush any unpersisted current session before switching
         await saveSessionState(state);
@@ -1186,7 +1186,10 @@ async function runInteractive(
                   : skill.source === 'claude'
                     ? fmt.dim(' (claude)')
                     : '';
-              process.stdout.write(`  ${fmt.bold('/' + name)}  ${skill.description}${tag}\n`);
+              const hint = skill.argumentHint ? ` ${fmt.dim(skill.argumentHint)}` : '';
+              process.stdout.write(
+                `  ${fmt.bold('/' + name)}${hint}  ${skill.description}${tag}\n`,
+              );
             }
             const hidden = skills.size - visibleSkills.size;
             if (hidden > 0) {

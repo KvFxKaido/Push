@@ -62,7 +62,7 @@ Bare `./push` and `./push --session` open the full-screen TUI by default. The de
 Shared in-session commands:
 
 - `/help` — show commands
-- `/new` — start a fresh session in the same workspace/provider/model
+- `/new` or `/clear` — start a fresh session in the same workspace/provider/model
 - `/model` — show current model and curated list for the active provider
 - `/model <name|#>` — switch model by name or list number
 - `/provider` — show providers with key status
@@ -81,6 +81,9 @@ Skill discovery:
 - Nested Claude command paths are flattened to hyphenated names (example: `.claude/commands/git/pr-review.md` -> `/git-pr-review`).
 - If names collide, `.push/skills` overrides Claude commands, and Claude commands override built-ins.
 - Skills are loaded at startup; run `/skills reload` in REPL/TUI to refresh without restarting.
+- Argument substitution in skill templates follows the Claude Code contract plus Push-native `{{args}}`: `{{args}}` and `$ARGUMENTS` expand to the full text typed after the command; `$0`–`$9` and `$ARGUMENTS[N]` expand to individual arguments (0-based — `$0` is the first; missing positions become empty; multi-digit `$NN` is left untouched, use `$ARGUMENTS[N]`). Indexed arguments use shell-style quoting, so `/my-skill "hello world" second` makes `$0` = `hello world`. Escape a token to keep it literal — `\$1` renders as `$1` (a doubled backslash `\\$1` keeps both backslashes and still expands; a backslash before any other `$` is unchanged). If a template references no argument token, non-empty input is appended as `ARGUMENTS: <value>` instead of being dropped. Substitution is a single pass, so token-shaped text inside your arguments is never re-expanded.
+- Optional frontmatter: `description` (overrides the `# Heading`), `argument-hint` (short usage hint shown in `/skills`, e.g. `"[issue-number] [priority]"`), `requires_capabilities`, and `platforms`.
+- Skills cannot shadow built-in commands — a file whose name matches a reserved command is dropped with a `reserved-name` error visible via `/skills lint`. Newly reserved as of the interactive-mode alignment: `clear`, `resume`, `remote`, `daemon`, `debug` (previously these loaded but were uninvokable in the TUI and shadowed the built-in in the REPL). Rename e.g. `.claude/commands/debug.md` to `diagnose.md` to keep it available.
 - Invalid skill files are skipped silently at load time. To see *why* a skill didn't appear, run `/skills lint` in REPL/TUI or `./push skills --lint` (add `--json` for machine output). It reports dropped files (bad name, reserved name, missing heading/body, unreadable) as errors and ignored frontmatter (typo'd capability/platform, malformed fence) as warnings. The headless command exits non-zero when any file is dropped, so it can gate CI.
 
 ### Headless
@@ -482,7 +485,7 @@ Options:
 Interactive slash commands:
 
 ```
-/new                      Start a new session (same provider/model/cwd)
+/new | /clear             Start a new session (same provider/model/cwd)
 /model                    Show model list for current provider
 /model <name|#>           Switch model
 /provider                 Show providers and current status
@@ -495,6 +498,21 @@ Interactive slash commands:
 ## Future
 
 Items not yet implemented:
+
+Interactive-mode pattern gaps (flagged against the slash-command conventions of peer agent CLIs — Command Code, Claude Code — for possible addition later):
+
+- **`/status`** — One-shot overview of auth, model, git branch/dirty state, workspace, and skills. Pieces exist across `/config`, `/debug runtime`, and `/worktree` (TUI-only); no unified read.
+- **`/rewind` for the local engine** — `/revert` / `/unrevert` only work against the daemon; the non-daemon engine has no turn-rewind.
+- **`!` bash-mode and `#` memory-note input sigils** — Only `/` (commands) and `@` (file refs) are special in the composer.
+- **`model:` frontmatter on skills** — Per-command model override. Needs a decision on how it interacts with the chat-lock provider-routing model before implementing.
+- **Named skill arguments (`$name` + `arguments:` frontmatter)** — Claude Code also supports declaring `arguments: [issue, branch]` and referencing `$issue` / `$branch`; Push currently supports only positional and full-string tokens.
+- **`allowed-tools` frontmatter** — Execution-time tool scoping per skill. `requires_capabilities` gates *visibility* only; nothing narrows what a skill run may do.
+- **Shared command table for TUI + REPL** — The two dispatch switches and `/help` texts are maintained independently; the REPL supports a subset (`/config`, `/theme`, `/copy`, `/resume`, `/remote`, `/daemon`, `/debug` are TUI-only). One table would end the drift.
+- **Command descriptions in the completion palette** — The TUI palette lists names only; peer CLIs show each command's description inline in the `/` menu.
+- **`/share` conversation links** — No conversation export/share surface.
+- **User-scoped (`~/.push/skills`) commands** — Skills load from the workspace and built-ins only; no personal cross-repo command directory.
+
+CLI flags and plumbing:
 
 - **`--verbose` / `--quiet`** — No verbosity control. Tool status lines always go to stdout in interactive mode.
 - **Subcommand-level help** — `push config --help` doesn't show config-specific options.

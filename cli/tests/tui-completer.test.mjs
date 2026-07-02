@@ -81,18 +81,24 @@ describe('createTabCompleter', () => {
     assert.equal(result.text, '/new ');
   });
 
-  it('completes /resume command when provided as extra command', () => {
-    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['resume'] });
+  it('completes /resume command (reserved built-in)', () => {
     const result = tc.tab('/res', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/resume ');
   });
 
-  it('completes /debug command when provided as extra command', () => {
-    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['debug'] });
+  it('completes /debug command (reserved built-in)', () => {
+    tc.reset();
     const result = tc.tab('/deb', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/debug ');
+  });
+
+  it('completes commands provided via extraCommands', () => {
+    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['zzz-extra'] });
+    const result = tc.tab('/zzz', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/zzz-extra ');
   });
 
   it('completes skill names', () => {
@@ -127,10 +133,17 @@ describe('createTabCompleter', () => {
   });
 
   it('completes debug subcommands', () => {
-    tc = createTabCompleter({ ...makeDeps(), extraCommands: ['debug'] });
+    tc.reset();
     const result = tc.tab('/debug ru', false);
     assert.notEqual(result, null);
     assert.equal(result.text, '/debug runtime');
+  });
+
+  it('completes /skills lint subcommand', () => {
+    tc.reset();
+    const result = tc.tab('/skills li', false);
+    assert.notEqual(result, null);
+    assert.equal(result.text, '/skills lint');
   });
 
   it('completes /theme command name', () => {

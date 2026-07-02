@@ -161,6 +161,13 @@ describe('createCompleter', () => {
     assert.equal(sub, 're');
   });
 
+  it('/skills + partial subcommand → lint completion', () => {
+    const c = makeCompleter();
+    const [hits, sub] = c('/skills li');
+    assert.deepEqual(hits, ['lint']);
+    assert.equal(sub, 'li');
+  });
+
   it('unknown /foo with no matching skill → empty', () => {
     const c = makeCompleter();
     const [hits, sub] = c('/foo');
