@@ -1,6 +1,7 @@
 import type { AIProviderType, ChatCard, ChatMessage, ToolMeta } from '@/types';
 import type { LlmToolResultBlock, LlmToolUseBlock } from '@push/lib/provider-contract';
 import { estimateContextTokens, getContextBudget, type ActiveProvider } from './orchestrator';
+import { stripToolCallPayload } from './message-content';
 import { fileLedger } from './file-awareness-ledger';
 import { getSandboxEnvironment } from './sandbox-client';
 import type { AnyToolCall } from './tool-dispatch';
@@ -199,6 +200,41 @@ export function markLastAssistantToolCall(
     ...(options.toolMeta ? { toolMeta: options.toolMeta } : {}),
     ...(options.toolUses && options.toolUses.length > 0 ? { toolUses: [...options.toolUses] } : {}),
   };
+
+  // Interleaved-prose split: the narration the model streamed before its tool
+  // call ("Let me check the config…") used to vanish when this message folded
+  // into the collapsed ToolCallSummary group — MessageBubble force-clears
+  // isToolCall text and the group renderer never reads callMsg.content. Split
+  // it into its own settled, display-only message so it stays visible between
+  // tool groups (and naturally breaks consecutive rounds into separate
+  // groups). Display-only (`visibleToModel: false`): the tool-call message
+  // keeps the full content for the wire transcript, so the model-facing
+  // history is unchanged. Malformed rounds keep the old behavior — their
+  // leftover text is protocol garbage, not narration.
+  if (!options.malformed) {
+    const previous = lastIndex > 0 ? nextMessages[lastIndex - 1] : undefined;
+    // Re-marks of the same round (the batched path marks once per state
+    // update) must not stack duplicates — the id link makes the split
+    // idempotent per tool-call message.
+    const alreadySplit =
+      previous?.kind === 'tool_prose' && previous.toolProseFor === lastMessage.id;
+    if (!alreadySplit) {
+      const prose = stripToolCallPayload(options.content);
+      if (prose) {
+        nextMessages.splice(lastIndex, 0, {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: prose,
+          timestamp: lastMessage.timestamp,
+          status: 'done',
+          kind: 'tool_prose',
+          toolProseFor: lastMessage.id,
+          visibleToModel: false,
+          ...(lastMessage.branch !== undefined ? { branch: lastMessage.branch } : {}),
+        });
+      }
+    }
+  }
   return nextMessages;
 }
 

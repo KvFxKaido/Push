@@ -454,6 +454,27 @@ describe('createInlineTranscriptMirror', () => {
     mirror({ type: 'text_delta', text: 'late token' } as PushStreamEvent);
     expect(lastAssistant(store).content).toBe('');
   });
+
+  it('stashes each settled round narration in the prose sink, dropping it if unconsumed', () => {
+    const { ctx } = makeHarness();
+    const sink = { pending: '' };
+    const mirror = createInlineTranscriptMirror(ctx, undefined, undefined, sink);
+
+    // Round 1: prose then a tool construct — only the visible prefix lands
+    // in the sink when the round's stream settles.
+    mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '\n{"tool":"sandbox_read_file","args":{}}',
+    } as PushStreamEvent);
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+    expect(sink.pending).toBe('Let me check the file.');
+
+    // A new round starting before any tool consumed the stash drops it —
+    // recovery/nudge rounds have no disclosure to anchor the narration to.
+    mirror({ type: 'text_delta', text: 'Retrying with valid JSON.' } as PushStreamEvent);
+    expect(sink.pending).toBe('');
+  });
 });
 
 describe('splitVisibleContent', () => {
@@ -1241,6 +1262,133 @@ describe('card routing: disclosure vs. final message', () => {
     const callMsg = messages.find((m) => m.isToolCall);
     expect(callMsg?.cards).toBeUndefined();
     expect(lastAssistant(store).cards).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Interleaved narration + live tool disclosure
+// ---------------------------------------------------------------------------
+
+describe('interleaved round narration + live tool disclosure', () => {
+  it('splices each round narration above its tool pair, so groups break per round', async () => {
+    const { ctx, store } = makeHarness();
+    mockRunInPageCoderKernel.mockImplementation(
+      async (_spec: unknown, callbacks: { onRunEvent?: (e: unknown) => void }) => {
+        // The mirror this turn wired into the tee — drive it like the
+        // provider stream would.
+        const mirror = mockTeePushStream.mock.calls[0][1] as (e: PushStreamEvent) => void;
+
+        // Round 1: narration + tool JSON, stream settles, tool completes.
+        mirror({ type: 'text_delta', text: 'Let me read the config.' } as PushStreamEvent);
+        mirror({
+          type: 'text_delta',
+          text: '\n{"tool":"sandbox_read_file","args":{"path":"a.ts"}}',
+        } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round: 1,
+          executionId: 'e1',
+          toolName: 'sandbox_read_file',
+          toolSource: 'coder',
+          durationMs: 3,
+          isError: false,
+          preview: 'read a.ts',
+        });
+
+        // Consuming the narration also clears the placeholder's streamed
+        // copy, so the same text never renders twice while the tool runs.
+        const midRun = store.current['chat-1'].messages;
+        expect(midRun[midRun.length - 1].content).toBe('');
+
+        // Round 2: fresh narration, second tool.
+        mirror({ type: 'text_delta', text: 'Now running the tests.' } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round: 2,
+          executionId: 'e2',
+          toolName: 'sandbox_exec',
+          toolSource: 'coder',
+          durationMs: 9,
+          isError: false,
+          preview: 'ran npm test',
+        });
+
+        return { summary: 'All green.', cards: [], rounds: 2, checkpoints: 0 };
+      },
+    );
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const shape = store.current['chat-1'].messages.map((m) =>
+      m.kind === 'tool_prose'
+        ? `prose:${m.content}`
+        : m.isToolCall
+          ? `call:${m.toolMeta?.toolName}`
+          : m.isToolResult
+            ? 'result'
+            : `${m.role}:${m.content}`,
+    );
+    // Narration interleaves with the disclosures instead of dying with the
+    // placeholder reset — and the prose messages break what used to be one
+    // adjacent call/result block into per-round groups in groupChatMessages.
+    expect(shape).toEqual([
+      'user:do the thing',
+      'prose:Let me read the config.',
+      'call:sandbox_read_file',
+      'result',
+      'prose:Now running the tests.',
+      'call:sandbox_exec',
+      'result',
+      'assistant:All green.',
+    ]);
+
+    // Narration is display-only: settled, linked to its call message, and
+    // never re-enters the model context (visibleToModel gates every
+    // prompt-pack path; buildInlineTurnPreamble also filters on it).
+    const proseMessages = store.current['chat-1'].messages.filter((m) => m.kind === 'tool_prose');
+    const callIds = store.current['chat-1'].messages.filter((m) => m.isToolCall).map((m) => m.id);
+    expect(proseMessages.map((m) => m.toolProseFor)).toEqual(callIds);
+    for (const m of proseMessages) {
+      expect(m.visibleToModel).toBe(false);
+      expect(m.status).toBe('done');
+    }
+  });
+
+  it('drops narration from rounds that complete no tool (recovery rounds) instead of misplacing it', async () => {
+    const { ctx, store } = makeHarness();
+    mockRunInPageCoderKernel.mockImplementation(
+      async (_spec: unknown, callbacks: { onRunEvent?: (e: unknown) => void }) => {
+        const mirror = mockTeePushStream.mock.calls[0][1] as (e: PushStreamEvent) => void;
+
+        // Round 1 settles with narration but its call was malformed — no
+        // execution event fires before round 2 begins.
+        mirror({ type: 'text_delta', text: 'Bad round narration.' } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'stop' } as PushStreamEvent);
+
+        // Round 2 executes for real.
+        mirror({ type: 'text_delta', text: 'Second attempt.' } as PushStreamEvent);
+        mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent?.({
+          type: 'tool.execution_complete',
+          round: 2,
+          executionId: 'e1',
+          toolName: 'sandbox_exec',
+          toolSource: 'coder',
+          durationMs: 2,
+          isError: false,
+          preview: 'ok',
+        });
+
+        return { summary: 'Done.', cards: [], rounds: 2, checkpoints: 0 };
+      },
+    );
+
+    await startInlineCoderTurn(ctx, laneArgs());
+
+    const prose = store.current['chat-1'].messages.filter((m) => m.kind === 'tool_prose');
+    expect(prose.map((m) => m.content)).toEqual(['Second attempt.']);
   });
 });
 

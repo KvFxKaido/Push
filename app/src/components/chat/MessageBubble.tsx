@@ -36,7 +36,7 @@ import {
   ONLY_BRACKETS_RE,
   stripToolCallPayload,
   stripToolResultEnvelopes,
-} from './message-content';
+} from '@/lib/message-content';
 
 // Streamdown adapter is loaded only when the flag is on, so the markdown
 // library (and its lazy Shiki/Mermaid chunks) never enters the default bundle.

@@ -402,7 +402,13 @@ export interface ChatMessage {
   branch?: string;
   /** Discriminator for synthetic message kinds. Plain user/assistant messages
    *  leave this undefined. */
-  kind?: 'branch_forked' | 'branch_merged' | 'compaction';
+  kind?: 'branch_forked' | 'branch_merged' | 'compaction' | 'tool_prose';
+  /** For `kind: 'tool_prose'` — id of the assistant tool-call message this
+   *  narration preceded. The prose the model streams before a tool call is
+   *  split into its own display-only message at write time (so it stays
+   *  visible between collapsed tool groups); this link is what makes the
+   *  split idempotent when the same round is re-marked. */
+  toolProseFor?: string;
   /** Payload for `kind: 'compaction'` events. Records that the runtime
    *  trimmed the working context to fit the model's window at this point in
    *  the conversation. Rendered as a centered transcript divider; never
