@@ -6,6 +6,7 @@ import { BranchSwitchConfirm } from '@/components/chat/BranchSwitchConfirm';
 import { formatSnapshotAge, isSnapshotStale } from '@/hooks/useSnapshotManager';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 import { useBackHandler } from '@/hooks/useBackHandler';
+import { useConnectedCliSessions } from '@/hooks/useConnectedCliSessions';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useMergeDetectedBanner } from '@/hooks/useMergeDetectedBanner';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
@@ -624,6 +625,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     setShowMergeFlow: setShowMergeFlowWithMount,
     handleDeleteBranch,
   });
+  // Paired remote daemon (CLI/TUI) sessions for the drawer's Connected
+  // section — dialed lazily while the drawer is open. See /handoff.
+  const { sessions: connectedCliSessions } = useConnectedCliSessions(isChatsDrawerOpen);
   const drawerProps = buildRepoChatDrawerProps({
     open: isChatsDrawerOpen,
     setOpen: setIsChatsDrawerOpen,
@@ -638,6 +642,8 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleCreateNewChatRequest,
     deleteChat,
     renameChat,
+    cliSessions: connectedCliSessions,
+    cliSessionsLabel: 'relay',
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,

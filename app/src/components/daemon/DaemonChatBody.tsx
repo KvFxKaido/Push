@@ -276,10 +276,31 @@ export function DaemonChatBody({
     }
     setHubOpenState(open);
   }, []);
-  const handleDrawerOpenChange = useCallback((open: boolean) => {
-    if (open) setHubOpenState(false);
-    setDrawerOpenState(open);
-  }, []);
+  // CLI/TUI sessions the daemon already knows about, fetched once per
+  // `connecting → open` transition and refreshed on every drawer open
+  // (below). Surfaced in the drawer's Connected section so the user
+  // sees sessions started outside this device. Read-only:
+  // tap-to-resume needs an attach + replay pipeline that's
+  // intentionally out of scope here. Declared before
+  // `handleDrawerOpenChange` so the refresh callback is initialized
+  // when that useCallback closes over it.
+  const { sessions: cliSessions, refresh: refreshCliSessions } = useDaemonCliSessions(
+    request,
+    status,
+  );
+  const handleDrawerOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        setHubOpenState(false);
+        // Repaint the Connected (CLI/TUI) section on every open so a
+        // session started in the terminal after we attached — e.g. a
+        // fresh /handoff — pops up without a reconnect.
+        refreshCliSessions();
+      }
+      setDrawerOpenState(open);
+    },
+    [refreshCliSessions],
+  );
 
   // Per-mode appearance — local-pc and relay each persist their own
   // palette so the user can keep the two visually distinct without
@@ -294,12 +315,6 @@ export function DaemonChatBody({
   const scratchpad = useScratchpad(null);
   const todo = useTodo(null);
   const pinnedArtifacts = usePinnedArtifacts(null);
-  // CLI/TUI sessions the daemon already knows about, fetched once
-  // per `connecting → open` transition. Surfaced in the drawer's
-  // Local PC / Remote section so the user sees sessions started
-  // outside this device. Read-only: tap-to-resume needs an
-  // attach + replay pipeline that's intentionally out of scope here.
-  const { sessions: cliSessions } = useDaemonCliSessions(request, status);
   const decideApproval = useCallback(
     (decision: 'approve' | 'deny') => {
       // Read the head from the ref (a synchronous mirror of the

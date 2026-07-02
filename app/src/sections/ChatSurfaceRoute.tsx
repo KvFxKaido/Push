@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useState } from 'react';
 import { Toaster } from '@/components/ui/sonner';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useChatModeAppearance } from '@/hooks/useChatModeAppearance';
+import { useConnectedCliSessions } from '@/hooks/useConnectedCliSessions';
 import { useWorkspaceChatComposerController } from '@/hooks/useWorkspaceChatComposerController';
 import { useWorkspaceChatPanelsController } from '@/hooks/useWorkspaceChatPanelsController';
 import { getRepoAppearanceColorHex } from '@/lib/repo-appearance';
@@ -235,6 +236,9 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
   const settingsWorkspace = buildSettingsWorkspace(props);
   const settingsData = buildSettingsData(props);
   const reviewModelOptions = buildWorkspaceHubReviewModelOptions(catalog);
+  // Paired remote daemon (CLI/TUI) sessions for the drawer's Connected
+  // section — dialed lazily while the drawer is open. See /handoff.
+  const { sessions: connectedCliSessions } = useConnectedCliSessions(isChatsDrawerOpen);
   const drawerProps = buildRepoChatDrawerProps({
     open: isChatsDrawerOpen,
     setOpen: setIsChatsDrawerOpen,
@@ -249,6 +253,8 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     handleCreateNewChatRequest,
     deleteChat,
     renameChat,
+    cliSessions: connectedCliSessions,
+    cliSessionsLabel: 'relay',
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,

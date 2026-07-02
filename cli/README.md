@@ -462,6 +462,10 @@ TUI Remote flow:
   /remote setup <deployment-url> <pushd_relay_...>
                                     Enable relay + mint a phone bundle for this TUI session
   /remote pair                      Mint a fresh phone bundle for this TUI session
+  /handoff [pair]                   One-shot: make this session reachable on your phone —
+                                    re-enables the relay from saved config, mints a pairing
+                                    bundle if no phone is paired, otherwise confirms the
+                                    session is listed under Connected on the phone
 
 Options:
   --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
@@ -508,7 +512,7 @@ Interactive-mode pattern gaps (flagged against the slash-command conventions of 
 - **`model:` frontmatter on skills** — Per-command model override. Needs a decision on how it interacts with the chat-lock provider-routing model before implementing.
 - **Named skill arguments (`$name` + `arguments:` frontmatter)** — Claude Code also supports declaring `arguments: [issue, branch]` and referencing `$issue` / `$branch`; Push currently supports only positional and full-string tokens.
 - **`allowed-tools` frontmatter** — Execution-time tool scoping per skill. `requires_capabilities` gates *visibility* only; nothing narrows what a skill run may do.
-- **Shared command table for TUI + REPL** — The two dispatch switches and `/help` texts are maintained independently; the REPL supports a subset (`/config`, `/theme`, `/copy`, `/resume`, `/remote`, `/daemon`, `/debug` are TUI-only). One table would end the drift.
+- **Shared command table for TUI + REPL** — The two dispatch switches and `/help` texts are maintained independently; the REPL supports a subset (`/config`, `/theme`, `/copy`, `/resume`, `/remote`, `/handoff`, `/daemon`, `/debug` are TUI-only). One table would end the drift.
 - **Command descriptions in the completion palette** — The TUI palette lists names only; peer CLIs show each command's description inline in the `/` menu.
 - **`/share` conversation links** — No conversation export/share surface.
 - **User-scoped (`~/.push/skills`) commands** — Skills load from the workspace and built-ins only; no personal cross-repo command directory.
