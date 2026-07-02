@@ -335,4 +335,52 @@ describe('handleApplyPatchset', () => {
     expect(result.text).toContain('const x = 3;');
     expect(result.structuredError?.detail).toContain('Fresh hashline anchors');
   });
+
+  it('caps stale patchset anchor reads', async () => {
+    const paths = Array.from({ length: 6 }, (_, index) => `/workspace/src/f${index + 1}.ts`);
+    const ctx = makeContext({
+      readResults: [
+        ...paths.map(
+          () =>
+            ({
+              content: 'const x = 1;\n',
+              version: 'v1',
+              truncated: false,
+            }) as FileReadResult,
+        ),
+        ...Array.from(
+          { length: 4 },
+          () =>
+            ({
+              content: 'const x = 3;\n',
+              version: 'v9',
+              truncated: false,
+            }) as FileReadResult,
+        ),
+      ],
+      batchResult: {
+        ok: false,
+        results: paths.map((path) => ({
+          path,
+          ok: false,
+          code: 'STALE_FILE',
+          expected_version: 'v1',
+          current_version: 'v9',
+        })),
+      },
+    });
+
+    const result = await handleApplyPatchset(ctx, {
+      edits: paths.map((path) => ({
+        path,
+        start_line: 1,
+        end_line: 1,
+        content: 'const x = 99;',
+      })),
+    });
+
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(ctx.readFromSandbox).toHaveBeenCalledTimes(paths.length + 4);
+    expect(result.text).toContain('2 stale file(s) omitted');
+  });
 });

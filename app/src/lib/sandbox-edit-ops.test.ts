@@ -35,6 +35,7 @@ import {
   buildHashlineRetryHints,
   buildPatchsetFailureDetail,
   buildRangeReplaceHashlineOps,
+  buildStaleFileAnchorHints,
   clearPrefetchedEditFileCache,
   invalidateWorkspaceSnapshots,
   isUnknownSymbolGuardReason,
@@ -170,6 +171,93 @@ describe('buildPatchsetFailureDetail', () => {
     const detail = buildPatchsetFailureDetail(long);
     expect(detail.length).toBeLessThanOrEqual(PATCHSET_DETAIL_MAX_CHARS + 3); // '…' tail
     expect(detail.endsWith('...')).toBe(true);
+  });
+});
+
+describe('buildStaleFileAnchorHints', () => {
+  it('reports an empty current file without inventing line anchors', async () => {
+    const hints = await buildStaleFileAnchorHints('', '/workspace/empty.ts', {
+      currentVersion: 'v2',
+      proposedContent: 'hello\n',
+    });
+
+    expect(hints).toContain('Current file version for retry: v2');
+    expect(hints).toContain(
+      'Fresh hashline anchors for /workspace/empty.ts: current file is empty.',
+    );
+    expect(hints.some((hint) => /^- \d+:[a-f0-9]{7}/.test(hint))).toBe(false);
+  });
+
+  it('anchors a single-line file without a trailing newline', async () => {
+    const current = 'const value = 2;';
+    const hash = await calculateLineHash(current, 7);
+    const hints = await buildStaleFileAnchorHints(current, '/workspace/one.ts', {
+      proposedContent: 'const value = 1;',
+    });
+
+    expect(hints).toContain(
+      'Fresh hashline anchors for /workspace/one.ts current lines 1-1 (changed span 1-1):',
+    );
+    expect(hints).toContain(`- 1:${hash} const value = 2;`);
+  });
+
+  it('hashes uniform CRLF content the same as trimmed LF lines', async () => {
+    const hash = await calculateLineHash('beta', 7);
+    const hints = await buildStaleFileAnchorHints('alpha\r\nbeta\r\n', '/workspace/crlf.ts', {
+      proposedContent: 'alpha\r\nBETA\r\n',
+    });
+
+    expect(hints).toContain(`- 2:${hash} beta`);
+  });
+
+  it('omits middle anchors when the selected span exceeds maxAnchors', async () => {
+    const current = Array.from({ length: 12 }, (_, index) => `line ${index + 1}`).join('\n');
+    const hints = await buildStaleFileAnchorHints(current, '/workspace/many.ts', {
+      affectedLines: Array.from({ length: 12 }, (_, index) => index + 1),
+      maxAnchors: 4,
+    });
+
+    expect(hints).toContain(
+      'Fresh hashline anchors for /workspace/many.ts current lines 1-12 (changed span 1-12):',
+    );
+    expect(hints.some((hint) => hint.includes('8 line(s) omitted'))).toBe(true);
+    expect(hints.some((hint) => hint.includes('line 1'))).toBe(true);
+    expect(hints.some((hint) => hint.includes('line 12'))).toBe(true);
+  });
+
+  it('prefers content diff over stale affected line numbers', async () => {
+    const hints = await buildStaleFileAnchorHints('a\nfresh\nc\n', '/workspace/shifted.ts', {
+      proposedContent: 'a\nold\nc\n',
+      affectedLines: [3],
+    });
+
+    expect(hints[0]).toContain('changed span 2-2');
+  });
+
+  it('keeps anchors for truncated reads when the changed span is visible', async () => {
+    const hints = await buildStaleFileAnchorHints('a\nb\nc\n', '/workspace/truncated.ts', {
+      proposedContent: 'a\nB\nc\n',
+      affectedLines: [2],
+      truncated: true,
+    });
+
+    expect(hints).toContain(
+      'Current-file anchor read was truncated; re-read a narrower range if the target is outside the anchors below.',
+    );
+    expect(hints.some((hint) => /^- 2:[a-f0-9]{7} b$/.test(hint))).toBe(true);
+  });
+
+  it('suppresses anchors for truncated reads when the target is outside visible content', async () => {
+    const hints = await buildStaleFileAnchorHints('a\nb\nc\n', '/workspace/truncated.ts', {
+      proposedContent: 'a\nb\nc\nchanged later\n',
+      affectedLines: [5000],
+      truncated: true,
+    });
+
+    expect(hints).toContain(
+      'Fresh anchors unavailable: stale affected lines fall outside the current visible file; re-read the current file/range before retrying.',
+    );
+    expect(hints.some((hint) => /^- \d+:[a-f0-9]{7}/.test(hint))).toBe(false);
   });
 });
 

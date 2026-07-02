@@ -70,6 +70,8 @@ type ApplyPatchsetArgs = Extract<SandboxToolCall, { tool: 'sandbox_apply_patchse
 
 type ModifiedBy = MutationProvenance['modifiedBy'];
 
+const STALE_PATCHSET_ANCHOR_BLOCK_LIMIT = 4;
+
 export interface WriteHandlerContext {
   sandboxId: string;
 
@@ -239,6 +241,52 @@ async function buildStaleWriteAnchorLines(
 
 function formatStaleAnchorBlock(path: string, anchorLines: readonly string[]): string {
   return [`${path}:`, ...anchorLines.map((line) => `  ${line}`)].join('\n');
+}
+
+interface StalePatchsetAnchorRequest {
+  path: string;
+  proposedContent: string;
+  currentVersion?: string | null;
+  affectedLines?: readonly number[];
+}
+
+function queueStalePatchsetAnchorRequest(
+  requests: StalePatchsetAnchorRequest[],
+  request: StalePatchsetAnchorRequest,
+): boolean {
+  if (requests.length >= STALE_PATCHSET_ANCHOR_BLOCK_LIMIT) return false;
+  requests.push(request);
+  return true;
+}
+
+async function buildStalePatchsetAnchorBlocks(
+  ctx: WriteHandlerContext,
+  requests: readonly StalePatchsetAnchorRequest[],
+  skippedCount: number,
+): Promise<string[]> {
+  const blocks = (
+    await Promise.all(
+      requests.map(async (request) => {
+        const anchorLines = await buildStaleWriteAnchorLines(
+          ctx,
+          request.path,
+          request.proposedContent,
+          {
+            currentVersion: request.currentVersion,
+            affectedLines: request.affectedLines,
+          },
+        );
+        return anchorLines.length > 0 ? formatStaleAnchorBlock(request.path, anchorLines) : null;
+      }),
+    )
+  ).filter((block): block is string => Boolean(block));
+
+  if (skippedCount > 0) {
+    blocks.push(
+      `... ${skippedCount} stale file(s) omitted; re-read failed files for additional anchors.`,
+    );
+  }
+  return blocks;
 }
 
 function buildPatchsetStructuredDetail(
@@ -969,7 +1017,8 @@ export async function handleApplyPatchset(
     { bytesWritten?: number; versionAfter?: string | null }
   >();
   let staleFailureCount = 0;
-  const staleAnchorBlocks: string[] = [];
+  const staleAnchorRequests: StalePatchsetAnchorRequest[] = [];
+  let skippedStaleAnchorCount = 0;
 
   const editResultsByPath = new Map(editResults.map((r) => [r.path, r]));
 
@@ -1062,17 +1111,15 @@ export async function handleApplyPatchset(
         if (entry.code === 'STALE_FILE') {
           const staleEntry = entry as BatchWriteResultEntry;
           staleFailureCount += 1;
-          const anchorLines = await buildStaleWriteAnchorLines(
-            ctx,
-            staleEntry.path,
-            editInfo?.content ?? '',
-            {
+          if (
+            !queueStalePatchsetAnchorRequest(staleAnchorRequests, {
+              path: staleEntry.path,
+              proposedContent: editInfo?.content ?? '',
               currentVersion: staleEntry.current_version,
               affectedLines: editInfo?.resolvedLines,
-            },
-          );
-          if (anchorLines.length > 0) {
-            staleAnchorBlocks.push(formatStaleAnchorBlock(staleEntry.path, anchorLines));
+            })
+          ) {
+            skippedStaleAnchorCount += 1;
           }
           writeFailures.push(
             recordPatchsetStaleConflict(
@@ -1120,12 +1167,15 @@ export async function handleApplyPatchset(
         if (!writeResult.ok) {
           if (writeResult.code === 'STALE_FILE') {
             staleFailureCount += 1;
-            const anchorLines = await buildStaleWriteAnchorLines(ctx, r.path, r.content, {
-              currentVersion: writeResult.current_version,
-              affectedLines: r.resolvedLines,
-            });
-            if (anchorLines.length > 0) {
-              staleAnchorBlocks.push(formatStaleAnchorBlock(r.path, anchorLines));
+            if (
+              !queueStalePatchsetAnchorRequest(staleAnchorRequests, {
+                path: r.path,
+                proposedContent: r.content,
+                currentVersion: writeResult.current_version,
+                affectedLines: r.resolvedLines,
+              })
+            ) {
+              skippedStaleAnchorCount += 1;
             }
             writeFailures.push(
               recordPatchsetStaleConflict(
@@ -1165,6 +1215,11 @@ export async function handleApplyPatchset(
   }
 
   if (writeFailures.length > 0) {
+    const staleAnchorBlocks = await buildStalePatchsetAnchorBlocks(
+      ctx,
+      staleAnchorRequests,
+      skippedStaleAnchorCount,
+    );
     const detail = buildPatchsetStructuredDetail(writeFailures, staleAnchorBlocks);
     const err: StructuredToolError =
       staleFailureCount > 0

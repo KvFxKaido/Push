@@ -233,7 +233,18 @@ const STALE_FILE_ANCHOR_CONTEXT_LINES = 1;
 const STALE_FILE_ANCHOR_MAX_LINES = 8;
 const STALE_FILE_ANCHOR_PREVIEW_CHARS = 96;
 
+interface StaleFileAnchorSpan {
+  start: number;
+  end: number;
+}
+
+interface StaleFileAnchorSpanResult {
+  span: StaleFileAnchorSpan | null;
+  unsafeReason?: string;
+}
+
 function visibleContentLines(content: string): string[] {
+  if (content.length === 0) return [];
   const rawLines = content.split('\n');
   return content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
 }
@@ -245,9 +256,12 @@ function clampLine(line: number, visibleLineCount: number): number {
 function changedSpanFromContentDiff(
   currentContent: string,
   proposedContent: string,
-): { start: number; end: number } | null {
+  options: { currentContentTruncated?: boolean } = {},
+): StaleFileAnchorSpanResult {
   const currentLines = visibleContentLines(currentContent);
   const proposedLines = visibleContentLines(proposedContent);
+  if (currentLines.length === 0) return { span: null };
+
   let prefix = 0;
   while (
     prefix < currentLines.length &&
@@ -256,7 +270,14 @@ function changedSpanFromContentDiff(
   ) {
     prefix += 1;
   }
-  if (prefix === currentLines.length && prefix === proposedLines.length) return null;
+  if (prefix === currentLines.length && prefix === proposedLines.length) return { span: null };
+  if (options.currentContentTruncated && prefix >= currentLines.length) {
+    return {
+      span: null,
+      unsafeReason:
+        'Fresh anchors unavailable: current-file read is truncated before the changed span; re-read around the intended target lines before retrying.',
+    };
+  }
 
   let currentSuffix = currentLines.length - 1;
   let proposedSuffix = proposedLines.length - 1;
@@ -269,29 +290,42 @@ function changedSpanFromContentDiff(
     proposedSuffix -= 1;
   }
 
-  if (currentLines.length === 0) return null;
   if (currentSuffix < prefix) {
     const anchorLine = clampLine(prefix, currentLines.length);
-    return { start: anchorLine, end: anchorLine };
+    return { span: { start: anchorLine, end: anchorLine } };
   }
   return {
-    start: clampLine(prefix + 1, currentLines.length),
-    end: clampLine(currentSuffix + 1, currentLines.length),
+    span: {
+      start: clampLine(prefix + 1, currentLines.length),
+      end: clampLine(currentSuffix + 1, currentLines.length),
+    },
   };
 }
 
 function spanFromAffectedLines(
   affectedLines: readonly number[] | undefined,
   visibleLineCount: number,
-): { start: number; end: number } | null {
-  if (!affectedLines || affectedLines.length === 0 || visibleLineCount === 0) return null;
-  const normalized = affectedLines
+): StaleFileAnchorSpanResult {
+  if (!affectedLines || affectedLines.length === 0 || visibleLineCount === 0) {
+    return { span: null };
+  }
+  const candidateLines = affectedLines
     .filter((line) => Number.isFinite(line))
-    .map((line) => clampLine(Math.trunc(line), visibleLineCount));
-  if (normalized.length === 0) return null;
+    .map((line) => Math.trunc(line));
+  if (candidateLines.length === 0) return { span: null };
+  const inRange = candidateLines.filter((line) => line >= 1 && line <= visibleLineCount);
+  if (inRange.length !== candidateLines.length) {
+    return {
+      span: null,
+      unsafeReason:
+        'Fresh anchors unavailable: stale affected lines fall outside the current visible file; re-read the current file/range before retrying.',
+    };
+  }
   return {
-    start: Math.min(...normalized),
-    end: Math.max(...normalized),
+    span: {
+      start: Math.min(...inRange),
+      end: Math.max(...inRange),
+    },
   };
 }
 
@@ -331,11 +365,25 @@ export async function buildStaleFileAnchorHints(
     return hints;
   }
 
-  const affectedSpan =
-    spanFromAffectedLines(options.affectedLines, visibleLines.length) ??
-    (options.proposedContent !== undefined
-      ? changedSpanFromContentDiff(currentContent, options.proposedContent)
-      : null);
+  const affectedLineSpan = spanFromAffectedLines(options.affectedLines, visibleLines.length);
+  if (options.truncated && affectedLineSpan.unsafeReason) {
+    hints.push(affectedLineSpan.unsafeReason);
+    return hints;
+  }
+
+  const contentDiffSpan =
+    options.proposedContent !== undefined
+      ? changedSpanFromContentDiff(currentContent, options.proposedContent, {
+          currentContentTruncated: Boolean(options.truncated),
+        })
+      : null;
+
+  const spanResult = contentDiffSpan ?? affectedLineSpan;
+  if (spanResult?.unsafeReason) {
+    hints.push(spanResult.unsafeReason);
+    return hints;
+  }
+  const affectedSpan = spanResult?.span ?? null;
 
   if (!affectedSpan) {
     hints.push(
