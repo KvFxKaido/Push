@@ -224,6 +224,7 @@ describe('verbForActivity', () => {
       'list_dir',
       'search_files',
       'web_search',
+      'fetch_url',
       'write_file',
       'edit_file',
       'exec',
