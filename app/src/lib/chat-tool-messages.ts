@@ -14,6 +14,8 @@ export interface ToolResultMetaSnapshot {
   branch?: string;
   head?: string;
   changedFiles?: string[];
+  /** Local commits not yet on the upstream tracking ref. */
+  ahead?: number;
 }
 
 export interface BuildToolResultMetaLineOptions {
@@ -143,6 +145,7 @@ export function buildToolResultMetaLine(
       dirty: sandboxStatusCache.dirty,
       files: sandboxStatusCache.files,
       changedFiles: sandboxStatusCache.changedFiles?.slice(0, 6) ?? [],
+      ahead: sandboxStatusCache.ahead ?? 0,
       warnings: sandboxEnv?.warnings?.slice(0, 2) ?? [],
     };
     lines.push(`[pulse] ${JSON.stringify(pulsePayload)}`);

@@ -197,6 +197,7 @@ describe('chat-tool-messages', () => {
         branch: 'feature/runtime-contract',
         head: 'abc1234',
         changedFiles: ['src/a.ts', 'src/b.ts'],
+        ahead: 3,
       },
       { includePulse: true, pulseReason: 'mutation' },
     );
@@ -206,7 +207,23 @@ describe('chat-tool-messages', () => {
     expect(metaLine).toContain('"branch":"feature/runtime-contract"');
     expect(metaLine).toContain('"head":"abc1234"');
     expect(metaLine).toContain('"changedFiles":["src/a.ts","src/b.ts"]');
+    expect(metaLine).toContain('"ahead":3');
     expect(metaLine).toContain('"warnings":["Low disk space: 420M"]');
+  });
+
+  it('defaults pulse ahead-of-origin to 0 when the round status omits it', () => {
+    mockGetSandboxEnvironment.mockReturnValue({ tools: {}, warnings: [] });
+
+    const metaLine = buildToolResultMetaLine(
+      1,
+      [assistantMessage({ content: 'Inspect repo state' })],
+      'openrouter',
+      'claude-sonnet-4.6:nitro',
+      { dirty: false, files: 0 },
+      { includePulse: true, pulseReason: 'periodic' },
+    );
+
+    expect(metaLine).toContain('"ahead":0');
   });
 
   it('builds tool result messages with wrapped content and tool metadata', () => {
