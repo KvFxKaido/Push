@@ -876,7 +876,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     try {
       for await (const event of stream({
         provider: 'openrouter',
-        model: 'sonnet-4.6',
+        model: 'anthropic/claude-sonnet-4.6:nitro',
         messages,
         signal: options.signal,
       })) {
@@ -930,7 +930,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
 
@@ -944,7 +944,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(req.url).toBe('https://push.example.test/api/openrouter/chat');
     expect(req.headers.get('Origin')).toBe('https://push.example.test');
     const body = JSON.parse(await req.text()) as { input: unknown; model: string; stream: boolean };
-    expect(body.model).toBe('sonnet-4.6');
+    expect(body.model).toBe('anthropic/claude-sonnet-4.6:nitro');
     expect(body.stream).toBe(true);
     expect(body.input).toEqual([
       { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
@@ -962,7 +962,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-usage-1',
     });
 
@@ -970,7 +970,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     let text = '';
     for await (const event of stream({
       provider: 'openrouter',
-      model: 'sonnet-4.6',
+      model: 'anthropic/claude-sonnet-4.6:nitro',
       messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
     })) {
       if (event.type === 'text_delta') text += event.text;
@@ -994,7 +994,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-usage-2',
     });
 
@@ -1002,7 +1002,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     let doneUsage: unknown = 'unset';
     for await (const event of stream({
       provider: 'openrouter',
-      model: 'sonnet-4.6',
+      model: 'anthropic/claude-sonnet-4.6:nitro',
       messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
     })) {
       if (event.type === 'done') {
@@ -1022,7 +1022,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
     const { errors } = await drain(stream);
@@ -1052,7 +1052,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
     const { tokens, doneCalled, errors } = await drain(stream);
@@ -1073,12 +1073,52 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
     const { tokens, doneCalled } = await drain(stream);
     expect(tokens.join('')).toBe('hello');
     expect(doneCalled).toBe(true);
+  });
+
+  it('builds a Chat Completions body for an OpenRouter model outside the /responses allowlist', async () => {
+    // Same per-model gate as the web client and CLI: a non-allowlisted model
+    // (the minimax case that motivated the allowlist) gets a `messages` body
+    // and the chat SSE pump — never a Responses body the legacy endpoint
+    // would 400 on.
+    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
+      sseResponse([
+        `data: ${JSON.stringify({ choices: [{ delta: { content: 'chat-path' } }] })}\n\n`,
+        'data: [DONE]\n\n',
+      ]),
+    );
+    const stream = createWebStreamAdapter({
+      env: env(),
+      origin: 'https://push.example.test',
+      provider: 'openrouter',
+      modelId: 'minimax/minimax-m3',
+      jobId: 'job-chat-path-1',
+    });
+
+    const tokens: string[] = [];
+    for await (const event of stream({
+      provider: 'openrouter',
+      model: 'minimax/minimax-m3',
+      messages: [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+    })) {
+      if (event.type === 'text_delta') tokens.push(event.text);
+    }
+
+    expect(tokens.join('')).toBe('chat-path');
+    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
+    const body = JSON.parse(await req.text()) as {
+      model: string;
+      messages?: unknown;
+      input?: unknown;
+    };
+    expect(body.model).toBe('minimax/minimax-m3');
+    expect(body.messages).toBeDefined();
+    expect(body.input).toBeUndefined();
   });
 
   it('stamps X-Forwarded-For with job:<jobId> so jobs get distinct rate-limit buckets', async () => {
@@ -1087,7 +1127,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-rate-limit-1',
     });
     await drain(stream);
@@ -1102,7 +1142,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
     const { errors } = await drain(stream, { signal: controller.signal });
@@ -1117,7 +1157,7 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
       env: env(),
       origin: 'https://push.example.test/',
       provider: 'openrouter',
-      modelId: 'sonnet-4.6',
+      modelId: 'anthropic/claude-sonnet-4.6:nitro',
       jobId: 'job-test-1',
     });
     await drain(stream);

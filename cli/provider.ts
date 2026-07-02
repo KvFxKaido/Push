@@ -13,6 +13,7 @@ import {
   type ProviderStreamShape,
 } from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
+import { openRouterModelUsesResponses } from '../lib/provider-models.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
@@ -129,20 +130,37 @@ function firstLiveEnv(envVars: readonly string[]): string | undefined {
   return undefined;
 }
 
-function useOpenRouterLegacyChatTransport(): boolean {
+/** All-models transport override for OpenRouter, in either direction:
+ *  `chat`/`chat-completions`/`legacy` forces Chat Completions everywhere;
+ *  `responses` forces the /responses beta everywhere (e.g. to trial a model
+ *  before allowlisting it). `null` (unset/unknown value) means per-model
+ *  dispatch via `OPENROUTER_RESPONSES_MODELS` — see createProviderStream. */
+function openRouterTransportOverride(): 'chat' | 'responses' | null {
   const raw = process.env.PUSH_OPENROUTER_TRANSPORT?.trim().toLowerCase();
-  return raw === 'chat' || raw === 'chat-completions' || raw === 'legacy';
+  if (raw === 'chat' || raw === 'chat-completions' || raw === 'legacy') return 'chat';
+  if (raw === 'responses') return 'responses';
+  return null;
+}
+
+function useOpenRouterLegacyChatTransport(): boolean {
+  return openRouterTransportOverride() === 'chat';
+}
+
+/** The Chat Completions variant of the OpenRouter config — the same swap
+ *  `resolveEffectiveProviderConfig` applies under the `chat` override. */
+function openRouterLegacyChatConfig(config: ProviderConfig): ProviderConfig {
+  return {
+    ...config,
+    url: process.env.PUSH_OPENROUTER_URL?.trim() || OPENROUTER_LEGACY_CHAT_URL,
+    streamShape: 'openai-compat',
+  };
 }
 
 function resolveEffectiveProviderConfig(config: ProviderConfig): ProviderConfig {
   if (config.id !== 'openrouter' || !useOpenRouterLegacyChatTransport()) {
     return config;
   }
-  return {
-    ...config,
-    url: process.env.PUSH_OPENROUTER_URL?.trim() || OPENROUTER_LEGACY_CHAT_URL,
-    streamShape: 'openai-compat',
-  };
+  return openRouterLegacyChatConfig(config);
 }
 
 function buildProviderConfig(def: ProviderDefinition): ProviderConfig {
@@ -188,6 +206,26 @@ export function createProviderStream(
   apiKey: string,
   options: { sessionId?: string } = {},
 ): PushStream<LlmMessage> {
+  // OpenRouter with no all-models override: transport is per-MODEL, decided
+  // at request time — /responses is a beta not implemented for every model,
+  // and a Responses body can't ride /chat/completions, so the body shape has
+  // to be picked where the body is built. Both underlying streams are
+  // constructed lazily-cheap here; each request dispatches on its own model
+  // (falling back to the config default), with unknown models taking the
+  // Chat Completions path every OpenRouter model serves.
+  if (config.id === 'openrouter' && openRouterTransportOverride() === null) {
+    const responsesStream = createCliOpenAIResponsesStream(config, apiKey, {
+      sessionId: options.sessionId,
+    });
+    const chatStream = createCliProviderStream(openRouterLegacyChatConfig(config), apiKey, {
+      sessionId: options.sessionId,
+    });
+    return (req) => {
+      const model = req.model?.trim() || config.defaultModel;
+      return openRouterModelUsesResponses(model) ? responsesStream(req) : chatStream(req);
+    };
+  }
+
   const effectiveConfig = resolveEffectiveProviderConfig(config);
   switch (effectiveConfig.streamShape) {
     case 'openai-responses':

@@ -786,6 +786,20 @@ describe('streamCompletion', () => {
   });
 
   describe('OpenRouter-specific behavior', () => {
+    // These tests pin the RESPONSES-path machinery with fixture models that
+    // aren't in the /responses beta allowlist — force the transport so the
+    // per-model default (chat for unknown models) doesn't reroute them. The
+    // per-model dispatch itself is covered in its own describe below.
+    let prevTransport;
+    beforeEach(() => {
+      prevTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'responses';
+    });
+    afterEach(() => {
+      if (prevTransport === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+      else process.env.PUSH_OPENROUTER_TRANSPORT = prevTransport;
+    });
+
     const orConfig = {
       id: 'openrouter',
       url: 'http://test.invalid/v1/responses',
@@ -1130,6 +1144,118 @@ describe('streamCompletion', () => {
       } finally {
         restore();
       }
+    });
+
+    // ─── Per-model transport dispatch (no PUSH_OPENROUTER_TRANSPORT) ─
+    // OpenRouter's /responses is a beta not implemented for every model, and
+    // a Responses body can't ride /chat/completions — so with no all-models
+    // override the transport is picked per request from the model's presence
+    // in OPENROUTER_RESPONSES_MODELS.
+
+    describe('per-model transport dispatch', () => {
+      let prevPerModelTransport;
+      beforeEach(() => {
+        // The outer describe forces `responses`; the default per-model
+        // behavior needs the override ABSENT.
+        prevPerModelTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
+        delete process.env.PUSH_OPENROUTER_TRANSPORT;
+      });
+      afterEach(() => {
+        if (prevPerModelTransport === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+        else process.env.PUSH_OPENROUTER_TRANSPORT = prevPerModelTransport;
+      });
+
+      it('sends an allowlisted model to the Responses endpoint with an input body', async () => {
+        let capturedUrl;
+        let capturedBody;
+        globalThis.fetch = async (url, opts) => {
+          capturedUrl = String(url);
+          capturedBody = JSON.parse(opts.body);
+          return {
+            ok: true,
+            status: 200,
+            body: stringToStream(buildResponsesSSE(['beta'])),
+            headers: new Headers(),
+            text: async () => '',
+            json: async () => ({}),
+          };
+        };
+
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'openai/gpt-5.4',
+          messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
+          openrouterWebSearch: false,
+        })) {
+          // drain
+        }
+
+        assert.equal(capturedUrl, 'http://test.invalid/v1/responses');
+        assert.ok(capturedBody.input);
+        assert.equal(capturedBody.messages, undefined);
+      });
+
+      it('sends a non-allowlisted model to Chat Completions with a messages body', async () => {
+        let capturedUrl;
+        let capturedBody;
+        globalThis.fetch = async (url, opts) => {
+          capturedUrl = String(url);
+          capturedBody = JSON.parse(opts.body);
+          return {
+            ok: true,
+            status: 200,
+            body: stringToStream(buildSSE(['chat'])),
+            headers: new Headers(),
+            text: async () => '',
+            json: async () => ({}),
+          };
+        };
+
+        const stream = createProviderStream(orConfig, 'key');
+        const tokens = [];
+        for await (const event of stream({
+          provider: 'openrouter',
+          // The model that motivated the allowlist — /chat/completions only.
+          model: 'minimax/minimax-m3',
+          messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
+        })) {
+          if (event.type === 'text_delta') tokens.push(event.text);
+        }
+
+        assert.equal(tokens.join(''), 'chat');
+        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hello' }]);
+        assert.equal(capturedBody.input, undefined);
+      });
+
+      it('falls back to the config default model for the dispatch decision', async () => {
+        let capturedUrl;
+        globalThis.fetch = async (url, opts) => {
+          capturedUrl = String(url);
+          return {
+            ok: true,
+            status: 200,
+            body: stringToStream(buildSSE(['ok'])),
+            headers: new Headers(),
+            text: async () => '',
+            json: async () => ({}),
+          };
+        };
+
+        // orConfig.defaultModel ('openrouter-model') is not allowlisted, so a
+        // request with no model rides Chat Completions.
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: '',
+          messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
+        })) {
+          // drain
+        }
+
+        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+      });
     });
 
     // ─── Prompt caching (cacheBreakpointIndices: Hermes system_and_3) ─

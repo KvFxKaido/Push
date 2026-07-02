@@ -183,6 +183,12 @@ describe('openrouterStream', () => {
 
   beforeEach(async () => {
     vi.resetModules();
+    // Most of this suite exercises the Responses-path machinery with fixture
+    // models that aren't in the /responses beta allowlist — force the
+    // transport so those tests stay pinned to the Responses body/pump.
+    // Per-model routing (the default, no override) has its own describe
+    // block below; the legacy test re-stubs `chat` and wins over this.
+    vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'responses');
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
     collect = async (stream) => {
@@ -675,5 +681,84 @@ describe('openrouterStream', () => {
     expect(body.input).toBeUndefined();
     expect(body.max_tokens).toBe(42);
     expect(body.max_output_tokens).toBeUndefined();
+  });
+
+  // Per-model routing — the DEFAULT behavior with no transport override.
+  // OpenRouter's /responses is a beta not implemented for every model, and a
+  // Responses body can't ride /chat/completions, so the body shape must be
+  // decided per model where the body is built (#1296 case 3's real fix; the
+  // worker-side allowlist gate alone would forward a Responses body to
+  // /chat/completions for a non-allowlisted model — a guaranteed 400).
+  describe('per-model transport (no override)', () => {
+    it('routes an allowlisted model to the Responses body shape', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'openai/gpt-5.4',
+          openrouterWebSearch: false,
+        }),
+      );
+
+      push(textFrame('hello'));
+      push(completedFrame());
+      close();
+      await events;
+
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('openai/gpt-5.4');
+      expect(body.input).toBeDefined();
+      expect(body.messages).toBeUndefined();
+    });
+
+    it('routes a non-allowlisted model to the Chat Completions body shape', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          // The model that motivated the allowlist: on OpenRouter it serves
+          // /chat/completions only.
+          model: 'minimax/minimax-m3',
+          openrouterWebSearch: false,
+        }),
+      );
+
+      push(chatContentFrame('hi from chat'));
+      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      close();
+      const out = await events;
+
+      expect(out.some((e) => e.type === 'text_delta' && e.text === 'hi from chat')).toBe(true);
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('minimax/minimax-m3');
+      expect(body.messages).toBeDefined();
+      expect(body.input).toBeUndefined();
+    });
+
+    it('VITE_OPENROUTER_TRANSPORT=responses forces the beta path for a non-allowlisted model', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'responses');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'minimax/minimax-m3',
+          openrouterWebSearch: false,
+        }),
+      );
+
+      push(textFrame('forced'));
+      push(completedFrame());
+      close();
+      await events;
+
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.input).toBeDefined();
+      expect(body.messages).toBeUndefined();
+    });
   });
 });

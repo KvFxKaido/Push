@@ -33,6 +33,7 @@ import { parseProviderError } from './orchestrator-streaming';
 import { buildOpenRouterTrace, getOpenRouterSessionId } from './openrouter-session';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { openRouterModelSupportsReasoning, getReasoningEffort } from './model-catalog';
+import { openRouterModelUsesResponses } from '@push/lib/provider-models';
 import { PROVIDER_URLS } from './providers';
 import type { WorkspaceContext } from '@/types';
 import { toLLMMessages } from './orchestrator';
@@ -61,9 +62,21 @@ type OpenRouterLlmMessage = {
   contentBlocks?: LlmContentBlock[];
 };
 
-function resolveOpenRouterTransport(): OpenRouterTransport {
+/**
+ * Per-request transport pick. The env var is an all-models override in either
+ * direction (`chat` forces legacy everywhere; `responses` forces the beta
+ * endpoint everywhere, e.g. to trial a model before allowlisting it). With no
+ * override, the decision is per-model via `OPENROUTER_RESPONSES_MODELS` —
+ * OpenRouter's /responses beta is not implemented for every model, and a
+ * Responses body cannot ride /chat/completions, so the body shape MUST be
+ * decided where the body is built. Unknown/missing model → chat, which every
+ * OpenRouter model serves.
+ */
+export function resolveOpenRouterTransport(model?: string): OpenRouterTransport {
   const raw = (import.meta.env.VITE_OPENROUTER_TRANSPORT ?? '').trim().toLowerCase();
-  return raw === 'chat' || raw === 'chat-completions' || raw === 'legacy' ? 'chat' : 'responses';
+  if (raw === 'chat' || raw === 'chat-completions' || raw === 'legacy') return 'chat';
+  if (raw === 'responses') return 'responses';
+  return openRouterModelUsesResponses(model) ? 'responses' : 'chat';
 }
 
 function openRouterRequestUrl(transport: OpenRouterTransport): string {
@@ -97,7 +110,7 @@ function toNeutralMessages(messages: OpenRouterLlmMessage[]): LlmMessage[] {
 export async function* openrouterStream(
   req: PushStreamRequest<ChatMessage>,
 ): AsyncIterable<PushStreamEvent> {
-  if (resolveOpenRouterTransport() === 'chat') {
+  if (resolveOpenRouterTransport(req.model) === 'chat') {
     yield* openrouterChatCompletionsStream(req);
     return;
   }

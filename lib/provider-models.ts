@@ -122,14 +122,27 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5-turbo',
 ];
 
-// OpenRouter's `/v1/responses` endpoint is in beta. The Worker only routes to it
-// when the requested model is in this set, even if the client sent a Responses
-// body — that keeps `openRouterRequestUsesResponses` from sniffing the body
-// shape alone and forwarding to an endpoint the model doesn't support. Curated
-// against the OpenRouter Responses Beta docs (2026-07 refresh): the OpenAI 5.x
-// family, Anthropic Claude 4.x, and Google Gemini 2.5+ / 3.x. New entries need
-// manual verification that `/v1/responses` returns 200 for the model — until
-// then it rides the legacy Chat Completions path and is correct by construction.
+// OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
+// every model. This set is the single source of truth for "may use
+// /responses", consumed at BOTH layers of the decision:
+//
+//   - Body construction (web `openrouter-stream.ts`, background
+//     `coder-job-stream-adapter.ts`, CLI `provider.ts`): a model in the set
+//     gets a Responses body (`input`); anything else gets a Chat Completions
+//     body (`messages`). This is the layer that actually fixes the routing —
+//     the Worker cannot rescue a Responses body it must send to
+//     /chat/completions.
+//   - Worker routing (`openRouterRequestUsesResponses`): defense-in-depth.
+//     With the clients gating body shape on the same set, body shape and
+//     endpoint always agree; the model check here just refuses to forward a
+//     Responses body to /responses for a model that can't serve it.
+//
+// Curated against the OpenRouter Responses Beta docs (2026-07 refresh): the
+// OpenAI 5.x family, Anthropic Claude 4.x, and Google Gemini 2.5+ / 3.x. New
+// entries need manual verification that `/v1/responses` returns 200 for the
+// model — until then it rides the legacy Chat Completions path and is correct
+// by construction. (A per-model capability flag should eventually replace
+// this pinned-ID set — same maintenance concern as the Ollama FC denylist.)
 export const OPENROUTER_RESPONSES_MODELS = new Set<string>([
   'openai/gpt-5-mini',
   'openai/gpt-5.2-codex',
@@ -149,6 +162,14 @@ export const OPENROUTER_RESPONSES_MODELS = new Set<string>([
   'google/gemini-3.1-pro-preview-customtools:nitro',
   'google/gemini-3.5-flash:nitro',
 ]);
+
+/** Per-model transport predicate for OpenRouter — see the set's doc above.
+ *  An unknown/missing model resolves to Chat Completions, which every
+ *  OpenRouter model serves; failing toward /responses would 404/400 on
+ *  models outside the beta. */
+export function openRouterModelUsesResponses(model: string | null | undefined): boolean {
+  return Boolean(model && OPENROUTER_RESPONSES_MODELS.has(model.trim()));
+}
 
 export const CLOUDFLARE_MODELS: string[] = [
   CLOUDFLARE_DEFAULT_MODEL,
