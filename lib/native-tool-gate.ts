@@ -26,8 +26,8 @@ export const VERTEX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(VE
  * path stalls (~20s) and returns empty after the first `role: "tool"` result
  * (ollama/ollama#16389) — fatal to Push's multi-round tool loop, while
  * text-dispatch works fine. Both the hosted-catalog id and the `:cloud` tag a
- * local install registers are listed. Remove entries when the upstream fix
- * lands.
+ * local install registers are listed. Removal is tracked in #1289 — remove
+ * entries there once the upstream fix lands.
  */
 export const OLLAMA_NATIVE_TOOL_CALLING_DENYLIST: ReadonlySet<string> = new Set([
   'minimax-m3',
