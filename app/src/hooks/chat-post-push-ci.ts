@@ -45,18 +45,22 @@ export function buildPostPushCIContent(toolText: string): string {
 }
 
 /**
- * Fetch CI checks for HEAD and shape the injectable message parts. Returns
- * null when the fetch fails or returns an error result — post-push CI is
- * best-effort and must never turn a successful push into a failure.
+ * Fetch CI checks for the pushed ref and shape the injectable message parts.
+ * Returns null when the fetch fails or returns an error result — post-push CI
+ * is best-effort and must never turn a successful push into a failure.
+ *
+ * `ref` must be the branch that was just pushed: fetch_checks is a GitHub
+ * API read, and a bare `HEAD` resolves to the DEFAULT branch's head on the
+ * GitHub side — not the sandbox's local HEAD — so a feature-branch push
+ * would report main's checks (Codex P2 on #1302; the old inline sites had
+ * this bug).
  */
 export async function fetchPostPushCIStatus(
   repo: string,
+  ref: string,
 ): Promise<{ content: string; card: ChatCard | null } | null> {
   try {
-    const result = await executeToolCall(
-      { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
-      repo,
-    );
+    const result = await executeToolCall({ tool: 'fetch_checks', args: { repo, ref } }, repo);
     // The github-tools error arms emit the `[Tool Error]` text marker today
     // and don't set `structuredError`; check the structured field first so
     // this gate survives if they ever grow one (Push-reviewer suggestion on
@@ -98,7 +102,13 @@ export async function fetchPostPushCIStatus(
 export function schedulePostPushCIStatus(deps: PostPushCIDeps, opts?: { delayMs?: number }): void {
   const { chatId, repo, setConversations, dirtyConversationIdsRef, branchInfoRef } = deps;
   setTimeout(async () => {
-    const status = await fetchPostPushCIStatus(repo);
+    // Resolve the ref at fire time (the branch may have settled since the
+    // push). Same resolution ladder as useCIPoller: active branch first,
+    // default branch as the guess when it's unknown, `HEAD` only as the
+    // last resort (which GitHub reads as the default branch anyway).
+    const ref =
+      branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch || 'HEAD';
+    const status = await fetchPostPushCIStatus(repo, ref);
     if (!status) return;
 
     const msg: ChatMessage = {

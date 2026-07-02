@@ -86,11 +86,11 @@ describe('buildPostPushCIContent', () => {
 });
 
 describe('fetchPostPushCIStatus', () => {
-  it('returns model-visible content plus the ci-status card', async () => {
+  it('returns model-visible content plus the ci-status card, fetching the given ref', async () => {
     mockedExecute.mockResolvedValueOnce(checksResult());
-    const status = await fetchPostPushCIStatus('owner/repo');
+    const status = await fetchPostPushCIStatus('owner/repo', 'feat/x');
     expect(mockedExecute).toHaveBeenCalledWith(
-      { tool: 'fetch_checks', args: { repo: 'owner/repo', ref: 'HEAD' } },
+      { tool: 'fetch_checks', args: { repo: 'owner/repo', ref: 'feat/x' } },
       'owner/repo',
     );
     expect(status?.content).toContain('CI status after push:');
@@ -100,19 +100,27 @@ describe('fetchPostPushCIStatus', () => {
 
   it('still returns the summary content when no card came back', async () => {
     mockedExecute.mockResolvedValueOnce(checksResult({ card: undefined }));
-    const status = await fetchPostPushCIStatus('owner/repo');
+    const status = await fetchPostPushCIStatus('owner/repo', 'feat/x');
     expect(status?.content).toContain('CI Status for owner/repo@abc1234: PENDING');
     expect(status?.card).toBeNull();
   });
 
   it('returns null on a tool-error result', async () => {
     mockedExecute.mockResolvedValueOnce({ text: '[Tool Error] rate limited' });
-    expect(await fetchPostPushCIStatus('owner/repo')).toBeNull();
+    expect(await fetchPostPushCIStatus('owner/repo', 'feat/x')).toBeNull();
+  });
+
+  it('returns null on a structured-error result even without the text marker', async () => {
+    mockedExecute.mockResolvedValueOnce({
+      text: 'rate limited',
+      structuredError: { type: 'RATE_LIMITED', retryable: true, message: 'rate limited' },
+    } as ToolExecutionResult);
+    expect(await fetchPostPushCIStatus('owner/repo', 'feat/x')).toBeNull();
   });
 
   it('returns null when the fetch throws', async () => {
     mockedExecute.mockRejectedValueOnce(new Error('network down'));
-    expect(await fetchPostPushCIStatus('owner/repo')).toBeNull();
+    expect(await fetchPostPushCIStatus('owner/repo', 'feat/x')).toBeNull();
   });
 });
 
@@ -125,6 +133,13 @@ describe('schedulePostPushCIStatus', () => {
     expect(mockedExecute).not.toHaveBeenCalled();
 
     await vi.advanceTimersByTimeAsync(POST_PUSH_CI_DELAY_MS);
+
+    // The fetch targets the pushed branch, not `HEAD` (which GitHub reads
+    // as the default branch — Codex P2 on #1302).
+    expect(mockedExecute).toHaveBeenCalledWith(
+      { tool: 'fetch_checks', args: { repo: 'owner/repo', ref: 'feat/x' } },
+      'owner/repo',
+    );
 
     const messages = conversations['chat-1'].messages;
     expect(messages).toHaveLength(1);
