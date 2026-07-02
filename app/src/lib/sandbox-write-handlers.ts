@@ -46,6 +46,7 @@ import {
   buildRangeReplaceHashlineOps,
   buildStaleFileAnchorHints,
   isUnknownSymbolGuardReason,
+  PATCHSET_DETAIL_MAX_CHARS,
   readFullFileByChunks,
   recordPatchsetStaleConflict,
   runPatchsetDiagnostics,
@@ -238,6 +239,17 @@ async function buildStaleWriteAnchorLines(
 
 function formatStaleAnchorBlock(path: string, anchorLines: readonly string[]): string {
   return [`${path}:`, ...anchorLines.map((line) => `  ${line}`)].join('\n');
+}
+
+function buildPatchsetStructuredDetail(
+  writeFailures: readonly string[],
+  staleAnchorBlocks: readonly string[],
+): string {
+  const failureDetail = buildPatchsetFailureDetail([...writeFailures]);
+  if (staleAnchorBlocks.length === 0) return failureDetail;
+  const detail = [failureDetail, 'Fresh anchors for stale files:', ...staleAnchorBlocks].join('\n');
+  if (detail.length <= PATCHSET_DETAIL_MAX_CHARS) return detail;
+  return `${detail.slice(0, PATCHSET_DETAIL_MAX_CHARS)}...`;
 }
 
 // --- Handlers ---
@@ -1153,11 +1165,7 @@ export async function handleApplyPatchset(
   }
 
   if (writeFailures.length > 0) {
-    const failureDetail = buildPatchsetFailureDetail(writeFailures);
-    const detail =
-      staleAnchorBlocks.length > 0
-        ? [failureDetail, 'Fresh anchors for stale files:', ...staleAnchorBlocks].join('\n')
-        : failureDetail;
+    const detail = buildPatchsetStructuredDetail(writeFailures, staleAnchorBlocks);
     const err: StructuredToolError =
       staleFailureCount > 0
         ? {
