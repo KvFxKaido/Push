@@ -2,11 +2,14 @@
  * Skill loader — discovers and parses .md skill files from built-in and workspace directories.
  *
  * A skill is a .md file: filename = skill name, first # heading = description, body = prompt template.
- * {{args}} in the template is replaced with user input at invocation time.
+ * At invocation time `{{args}}` and `$ARGUMENTS` are replaced with the full user input, and
+ * `$1`–`$9` with individual whitespace-split words of it (missing positions become empty).
+ * Substitution is a single pass, so tokens inside the user's own input are never re-expanded.
  *
  * Skills may optionally declare YAML frontmatter to constrain visibility:
  *   ---
  *   description: Optional override for the # heading text
+ *   argument-hint: "[file] [notes]"   # shown in /skills next to the command name
  *   requires_capabilities: [repo:write, sandbox:exec]
  *   platforms: [linux, macos]
  *   ---
@@ -41,7 +44,9 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'exit',
   'quit',
   'new',
+  'clear',
   'session',
+  'resume',
   'model',
   'provider',
   'skills',
@@ -55,6 +60,9 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'revert',
   'unrevert',
   'children',
+  'remote',
+  'daemon',
+  'debug',
 ]);
 
 type SkillSource = 'builtin' | 'workspace' | 'claude';
@@ -134,6 +142,8 @@ export interface Skill {
   promptTemplateLoaded?: boolean;
   source: SkillSource;
   filePath: string;
+  /** Short usage hint for the command's arguments, e.g. "[file] [notes]". Display-only. */
+  argumentHint?: string;
   /** Capabilities the skill's workflow expects; if any is missing from the runtime, hide it. */
   requiresCapabilities?: Capability[];
   /** OS platforms this skill is valid on; if the current platform isn't listed, hide it. */
@@ -153,6 +163,7 @@ interface ScanOptions {
 
 interface SkillFrontmatter {
   description?: string;
+  argumentHint?: string;
   requiresCapabilities?: Capability[];
   platforms?: SkillPlatform[];
 }
@@ -212,6 +223,8 @@ function parseFrontmatter(
 
     if (key === 'description') {
       fm.description = unquote(value);
+    } else if (key === 'argument-hint' || key === 'argument_hint') {
+      fm.argumentHint = unquote(value);
     } else if (key === 'requires_capabilities' || key === 'requires-capabilities') {
       const arr = parseInlineArray(value);
       if (!arr) {
@@ -366,6 +379,9 @@ function parseSkillFile(
   }
 
   const skill: Skill = { name, description, source, filePath };
+  if (frontmatter?.argumentHint) {
+    skill.argumentHint = frontmatter.argumentHint;
+  }
   if (frontmatter?.requiresCapabilities && frontmatter.requiresCapabilities.length > 0) {
     skill.requiresCapabilities = frontmatter.requiresCapabilities;
   }
@@ -589,16 +605,29 @@ export async function getSkillPromptTemplate(skill: Skill): Promise<string> {
   }
 
   skill.description = parsed.description;
+  skill.argumentHint = parsed.argumentHint;
   skill.promptTemplate = parsed.promptTemplate;
   skill.promptTemplateLoaded = true;
   return skill.promptTemplate;
 }
 
 /**
- * Replace {{args}} in a skill template with the given arguments string.
+ * Substitute argument tokens in a skill template with the given arguments string.
+ *
+ * `{{args}}` (Push-native) and `$ARGUMENTS` (Claude Code convention — `.claude/commands`
+ * files are loaded verbatim, so their tokens must work here too) both expand to the full
+ * argument string. `$1`–`$9` expand to individual whitespace-split words; positions beyond
+ * the supplied words become empty. Everything happens in one pass over the template, so
+ * token-shaped text inside the user's own arguments is never re-expanded.
  */
 export function interpolateSkill(template: string, args: string): string {
-  return template.replace(/\{\{args\}\}/g, args || '').trim();
+  const argString = args || '';
+  const words = argString.split(/\s+/).filter((w) => w.length > 0);
+  return template
+    .replace(/\{\{args\}\}|\$ARGUMENTS\b|\$([1-9])(?!\d)/g, (_match, digit?: string) =>
+      digit ? (words[Number(digit) - 1] ?? '') : argString,
+    )
+    .trim();
 }
 
 /**

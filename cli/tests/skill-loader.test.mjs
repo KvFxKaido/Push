@@ -145,20 +145,20 @@ describe('loadSkills — Claude command auto-detect', () => {
     const claudeDir = path.join(tmpDir, '.claude', 'commands');
     await fs.mkdir(claudeDir, { recursive: true });
     await fs.writeFile(
-      path.join(claudeDir, 'debug.md'),
-      '# Debug\n\nInspect the issue.\n\n{{args}}\n',
+      path.join(claudeDir, 'diagnose.md'),
+      '# Diagnose\n\nInspect the issue.\n\n{{args}}\n',
     );
 
     const skills = await loadSkills(tmpDir);
-    const debugSkill = skills.get('debug');
-    assert.equal(debugSkill.source, 'claude');
-    assert.equal(debugSkill.promptTemplateLoaded, false);
-    assert.equal(debugSkill.promptTemplate, undefined);
+    const diagnoseSkill = skills.get('diagnose');
+    assert.equal(diagnoseSkill.source, 'claude');
+    assert.equal(diagnoseSkill.promptTemplateLoaded, false);
+    assert.equal(diagnoseSkill.promptTemplate, undefined);
 
-    const prompt = await getSkillPromptTemplate(debugSkill);
+    const prompt = await getSkillPromptTemplate(diagnoseSkill);
     assert.ok(prompt.includes('Inspect the issue.'));
-    assert.equal(debugSkill.promptTemplateLoaded, true);
-    assert.ok(debugSkill.promptTemplate.includes('{{args}}'));
+    assert.equal(diagnoseSkill.promptTemplateLoaded, true);
+    assert.ok(diagnoseSkill.promptTemplate.includes('{{args}}'));
   });
 });
 
@@ -228,6 +228,11 @@ describe('RESERVED_COMMANDS', () => {
       'exit',
       'quit',
       'new',
+      'clear',
+      'resume',
+      'remote',
+      'daemon',
+      'debug',
       'session',
       'model',
       'provider',
@@ -271,6 +276,41 @@ describe('interpolateSkill', () => {
   it('trims result', () => {
     const result = interpolateSkill('  \n\nHello.\n\n  ', '');
     assert.equal(result, 'Hello.');
+  });
+
+  it('replaces $ARGUMENTS with the full argument string', () => {
+    const result = interpolateSkill('Review $ARGUMENTS carefully.', 'src/main.ts --strict');
+    assert.equal(result, 'Review src/main.ts --strict carefully.');
+  });
+
+  it('does not replace $ARGUMENTS when embedded in a longer word', () => {
+    const result = interpolateSkill('Keep $ARGUMENTSX intact.', 'foo');
+    assert.equal(result, 'Keep $ARGUMENTSX intact.');
+  });
+
+  it('replaces positional $1/$2 with whitespace-split words', () => {
+    const result = interpolateSkill('Fix issue $1 with priority $2.', '123 high');
+    assert.equal(result, 'Fix issue 123 with priority high.');
+  });
+
+  it('missing positional arguments become empty', () => {
+    const result = interpolateSkill('First: $1, second: $2.', 'only');
+    assert.equal(result, 'First: only, second: .');
+  });
+
+  it('leaves $10 and beyond untouched', () => {
+    const result = interpolateSkill('Value: $10', 'a b c');
+    assert.equal(result, 'Value: $10');
+  });
+
+  it('does not re-expand tokens inside the argument string (single pass)', () => {
+    const result = interpolateSkill('Full: {{args}} | first: $1', '$ARGUMENTS {{args}}');
+    assert.equal(result, 'Full: $ARGUMENTS {{args}} | first: $ARGUMENTS');
+  });
+
+  it('mixes {{args}}, $ARGUMENTS, and positionals in one template', () => {
+    const result = interpolateSkill('{{args}} / $ARGUMENTS / $2', 'one two');
+    assert.equal(result, 'one two / one two / two');
   });
 });
 
@@ -323,6 +363,41 @@ describe('loadSkills — frontmatter parsing', () => {
 
     const skills = await loadSkills(tmpDir);
     assert.equal(skills.get('hello').description, 'From heading');
+  });
+
+  it('parses argument-hint (and argument_hint) from frontmatter', async () => {
+    const skillDir = path.join(tmpDir, '.push', 'skills');
+    await fs.mkdir(skillDir, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDir, 'triage.md'),
+      ['---', 'argument-hint: "[issue-number] [priority]"', '---', '# Triage', '', 'Body.'].join(
+        '\n',
+      ),
+    );
+    await fs.writeFile(
+      path.join(skillDir, 'triage2.md'),
+      ['---', 'argument_hint: <file>', '---', '# Triage 2', '', 'Body.'].join('\n'),
+    );
+
+    const skills = await loadSkills(tmpDir);
+    assert.equal(skills.get('triage').argumentHint, '[issue-number] [priority]');
+    assert.equal(skills.get('triage2').argumentHint, '<file>');
+  });
+
+  it('argument-hint survives lazy template loading', async () => {
+    const cmdDir = path.join(tmpDir, '.claude', 'commands');
+    await fs.mkdir(cmdDir, { recursive: true });
+    await fs.writeFile(
+      path.join(cmdDir, 'lazy.md'),
+      ['---', 'argument-hint: [target]', '---', '# Lazy', '', 'Do $ARGUMENTS.'].join('\n'),
+    );
+
+    const skills = await loadSkills(tmpDir);
+    const lazy = skills.get('lazy');
+    assert.equal(lazy.promptTemplateLoaded, false);
+    assert.equal(lazy.argumentHint, '[target]');
+    await getSkillPromptTemplate(lazy);
+    assert.equal(lazy.argumentHint, '[target]');
   });
 
   it('skills without frontmatter load unchanged (backward compat)', async () => {

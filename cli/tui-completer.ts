@@ -150,7 +150,7 @@ export function createTabCompleter({
     }
 
     if (cmd === 'skills') {
-      const subs = ['reload'];
+      const subs = ['reload', 'lint'];
       const resolved = subs.filter((s: string) => s.startsWith(arg)).map((s: string) => prefix + s);
       lastResolvedText = text;
       lastResolvedCandidates = resolved;

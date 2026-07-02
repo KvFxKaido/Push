@@ -101,7 +101,7 @@ export function createCompleter({
     }
 
     if (cmd === 'skills') {
-      const subs: string[] = ['reload'];
+      const subs: string[] = ['reload', 'lint'];
       const hits: string[] = subs.filter((s: string) => s.startsWith(arg));
       return [hits, arg];
     }

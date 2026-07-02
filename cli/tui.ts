@@ -3613,7 +3613,6 @@ export async function runTUI(options = {}) {
       getCuratedModels,
       getProviderList,
       workspaceRoot: state.cwd,
-      extraCommands: ['resume', 'compact', 'debug'],
     });
   }
 
@@ -5714,7 +5713,7 @@ export async function runTUI(options = {}) {
           'status',
           [
             'Commands:',
-            '  /new                 Start a new session (same provider/model/cwd)',
+            '  /new | /clear        Start a new session (same provider/model/cwd)',
             '  /model               Open navigable model picker',
             '  /model <name|#>      Switch model',
             '  /provider            Open navigable provider picker',
@@ -5788,6 +5787,7 @@ export async function runTUI(options = {}) {
         return true;
 
       case 'new':
+      case 'clear':
         await startNewSession();
         return true;
 
@@ -5872,7 +5872,8 @@ export async function runTUI(options = {}) {
                   : skill.source === 'claude'
                     ? ' (claude)'
                     : '';
-              lines.push(`  /${name}  ${skill.description}${tag}`);
+              const hint = skill.argumentHint ? ` ${skill.argumentHint}` : '';
+              lines.push(`  /${name}${hint}  ${skill.description}${tag}`);
             }
             const hidden = skills.size - visibleSkills.size;
             if (hidden > 0) {
