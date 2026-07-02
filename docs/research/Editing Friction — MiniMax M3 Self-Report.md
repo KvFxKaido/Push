@@ -56,12 +56,19 @@ so a model that ends its turn there describes reality.
 re-runs the gate on retry — three round-trips for what feels like one action.
 M3's #1 ask: a single-step `commit_and_push` with the Auditor gated inline.
 
-**Push status (verified):** Accurate. There is no single-step path:
-`sandbox_commit` is a silent local commit, `prepare_push` audits the
-cumulative diff and returns a review card that "does NOT push on its own,"
-and `sandbox_push` is the retry-after-approval arm that re-runs the push-time
-Auditor gate (`app/src/lib/sandbox-tools.ts` dispatch arms;
-`sandbox-git-release-handlers.ts`).
+**Push status (verified):** Accurate on the round-trip count; one correction
+to M3's telling. There is no single-step path: `sandbox_commit` is a silent
+local commit and `prepare_push` audits the cumulative diff and returns a
+review card that "does NOT push on its own"
+(`app/src/lib/sandbox-tools.ts` dispatch arms;
+`sandbox-git-release-handlers.ts`). But approving the card does **not**
+call `sandbox_push` or re-run the Auditor — the approval handler pushes
+directly and re-runs only the cheap deterministic gates (Protect Main +
+secret scan), deliberately, so an already-approved SAFE verdict can't flip
+(`app/src/hooks/chat-card-actions.ts`). `sandbox_push` is the *direct* arm
+that bypasses `prepare_push`, and only there does the push-time Auditor gate
+run. M3's "push() re-runs the gate" describes the direct-retry path, not the
+approval flow.
 
 **Assessment:** The round-trip count is real, but the split is the
 **Gate-at-Push design, not an accident** — the silent local commit exists
@@ -176,18 +183,26 @@ report applied to the *error* channel.
 **Report:** Renaming a branch while keeping history required commit → create
 new branch at the same commit → push; the old name lingers.
 
-**Push status (verified):** Accurate. Typed tools are `create_branch` /
-`switch_branch` only; no rename exists anywhere
-(`app/src/lib/sandbox-tools.ts`), and raw `git branch -m` is unreachable
-because branch-mutating git is blocked in `sandbox_exec`.
+**Push status (verified):** Accurate that no typed rename exists —
+`create_branch` / `switch_branch` are the only branch tools
+(`app/src/lib/sandbox-tools.ts`). But raw `git branch -m` is **not** blocked:
+`classifyGitCommand` special-cases only `checkout`/`switch` (and remote
+mutations); `branch` falls through to the default allow-mutate arm
+(`lib/git/policy.ts` `classifySegment`), so `sandbox_exec` will run a rename
+today. That is the opposite of a safe recipe — renaming the current branch
+out from under Push desyncs the tracked branch (`conv.branch`, upstream,
+any open PR base) with none of the sync the typed tools provide.
 
-**Assessment:** Real gap, low frequency. A rename is a state-sync-sensitive
-operation (tracked branch, upstream, any open PR base), so if it lands it
-must be a typed tool like the other branch ops — never an exec carve-out.
+**Assessment:** Two gaps, not one: the missing capability (no typed rename)
+and an unguarded desync path (`git branch -m` passes the exec policy). The
+second is the same state-sync class that motivated blocking bare
+`checkout`/`switch`, and it's the more urgent half.
 
-**Follow-up:** Optional `rename_branch` typed tool, or document
-create-at-same-commit + delete-old as the supported recipe. Triage by
-observed demand.
+**Follow-up:** Route or block `git branch -m/-M/--move` in
+`lib/git/policy.ts` (same treatment as `checkout`/`switch`); then either a
+typed `rename_branch` tool or document create-at-same-commit + delete-old as
+the supported recipe. Triage the tool by observed demand; the policy gap
+shouldn't wait for it.
 
 ### 8. Push-complete signal with CI status
 
@@ -219,7 +234,7 @@ message body, not just the card.
 | 4 | Patch partial-failure diagnostics | Diagnostics already per-entry; atomicity is intentional | None (watch for recurrence) |
 | 5 | edit/edit_range/replace hint | Shipped verbatim | None — provider teaching signal |
 | 6 | Auto-refresh stale versions | Shipped for hashline mismatch; gap on `STALE_FILE` | Fresh anchors in `STALE_FILE` errors |
-| 7 | Branch rename | Real gap, low frequency | Typed `rename_branch` or documented recipe; demand-triaged |
+| 7 | Branch rename | No typed rename — and `git branch -m` passes the exec policy (desync gap) | Route/block `branch -m` in `lib/git/policy.ts`; typed `rename_branch` demand-triaged |
 | 8 | Push-complete + CI signal | Shipped on approval path | Direct-push parity + richer model-visible check summary |
 
 Two meta-observations:
