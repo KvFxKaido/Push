@@ -475,6 +475,26 @@ describe('createInlineTranscriptMirror', () => {
     mirror({ type: 'text_delta', text: 'Retrying with valid JSON.' } as PushStreamEvent);
     expect(sink.pending).toBe('');
   });
+
+  it('strips native tool-call echoes from the stashed narration (Codex P2 on #1294)', () => {
+    const { ctx } = makeHarness();
+    const sink = { pending: '' };
+    const mirror = createInlineTranscriptMirror(ctx, undefined, undefined, sink);
+
+    // Some providers echo the native call's arguments into delta.content
+    // without the `{"tool": "` prefix, ahead of (or instead of) a fenced
+    // form. `splitVisibleContent` has no marker to cut on for the echo, so
+    // the stash must run the full stripToolCallPayload pass — otherwise raw
+    // protocol text persists into a settled tool_prose message.
+    mirror({ type: 'text_delta', text: 'Checking the repo.' } as PushStreamEvent);
+    mirror({
+      type: 'text_delta',
+      text: '\nrepo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}',
+    } as PushStreamEvent);
+    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+
+    expect(sink.pending).toBe('Checking the repo.');
+  });
 });
 
 describe('splitVisibleContent', () => {

@@ -72,6 +72,7 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
+import { stripToolCallPayload } from '@/lib/message-content';
 import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
@@ -284,7 +285,17 @@ export function createInlineTranscriptMirror(
     if (event.type === 'done') {
       roundSettled = true;
       if (proseSink) {
-        proseSink.pending = splitVisibleContent(accumulated).visible.trim();
+        // `splitVisibleContent` only cuts at tool-call constructs it can see
+        // per delta (fenced/bare JSON, XML envelopes). A native tool-call
+        // echo — `repo_read", "args": {...}}` content some providers emit
+        // alongside delta.tool_calls — has none of those markers, so it
+        // survives the cut and would persist into a settled tool_prose
+        // message (Codex P2 on this PR; pre-stash it only flashed in the
+        // placeholder and died with the round reset). The full
+        // stripToolCallPayload pass covers echoes + orphaned JSON tails and
+        // is cheap here: once per round on settled content, not per delta.
+        // Its output is already trimmed; the splicer owns the final trim.
+        proseSink.pending = stripToolCallPayload(splitVisibleContent(accumulated).visible);
       }
       return;
     }
