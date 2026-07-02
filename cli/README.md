@@ -196,7 +196,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
-| `PUSH_OLLAMA_MODEL` | Ollama model (default: `gemini-3-flash-preview`) |
+| `PUSH_OLLAMA_MODEL` | Ollama model (default: `minimax-m3`) |
 | `PUSH_OPENROUTER_URL` | OpenRouter endpoint (default: `https://openrouter.ai/api/v1/responses`) |
 | `PUSH_OPENROUTER_API_KEY` | OpenRouter API key (BYOK-compatible; provider-native keys stay in OpenRouter) |
 | `PUSH_OPENROUTER_MODEL` | OpenRouter model (default: `anthropic/claude-sonnet-4.6:nitro`) |
@@ -249,7 +249,7 @@ The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) spe
 
 | Provider | Default model | Requires key |
 |---|---|---|
-| `ollama` | `gemini-3-flash-preview` | Yes |
+| `ollama` | `minimax-m3` | Yes |
 | `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |

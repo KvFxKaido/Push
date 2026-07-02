@@ -25,7 +25,10 @@ export type SharedProviderModelId =
   | 'anthropic'
   | 'google';
 
-export const OLLAMA_DEFAULT_MODEL = 'gemini-3-flash-preview';
+// Ollama Cloud is retiring `gemini-3-flash-preview` (deprecation notice
+// 2026-07; recommended replacement: minimax-m3). The retired id stays
+// callable via free-text entry until Ollama removes it.
+export const OLLAMA_DEFAULT_MODEL = 'minimax-m3';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
@@ -59,7 +62,10 @@ export const GOOGLE_DEFAULT_MODEL = 'gemini-3.5-flash';
 
 export const OLLAMA_MODELS: string[] = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
-  // cover account-specific availability beyond this baseline.
+  // cover account-specific availability beyond this baseline. This list also
+  // doubles as the CLI native-FC allowlist (cli/native-tool-gate.ts) —
+  // `gemini-3-flash-preview` is intentionally absent, so a free-text pick of
+  // it rides the text-dispatch path until Ollama retires the id.
   OLLAMA_DEFAULT_MODEL,
 ];
 

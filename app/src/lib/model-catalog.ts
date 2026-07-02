@@ -68,16 +68,20 @@ export const MIN_CONTEXT_TOKENS = 64000;
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
 const NVIDIA_PRIORITY_MODELS: readonly string[] = NVIDIA_MODELS;
+// Refreshed against Ollama Cloud's 2026-07 retirement notice: dropped
+// gemini-3-flash-preview, glm-5, qwen3-coder-next, qwen3-coder:480b,
+// deepseek-v3.2, devstral-2:123b, gemma3:27b in favor of Ollama's
+// recommended replacements. Priority only orders the live `/models`
+// response, so ids not yet on an account simply don't surface.
 const OLLAMA_PRIORITY_MODELS = [
-  'gemini-3-flash-preview',
-  'glm-5',
-  'qwen3-coder-next',
-  'qwen3-coder:480b',
+  'minimax-m3',
+  'glm-5.2',
+  'qwen3.5:397b',
   'kimi-k2.5',
-  'deepseek-v3.2',
-  'devstral-2:123b',
+  'deepseek-v4-flash',
+  'mistral-large-3:675b',
   'qwen3-vl:235b-instruct',
-  'gemma3:27b',
+  'gemma4:31b',
   'nemotron-3-super',
   'minimax-m2.5',
 ] as const;

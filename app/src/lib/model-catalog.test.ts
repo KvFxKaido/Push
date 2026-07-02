@@ -479,27 +479,27 @@ describe('buildCuratedOllamaModelList', () => {
   it('prefers priority chat models and excludes image-output or embedding models', () => {
     const curated = buildCuratedOllamaModelList(
       [
-        'gemini-3-flash-preview',
-        'glm-5',
-        'qwen3-coder:480b',
+        'minimax-m3',
+        'glm-5.2',
+        'qwen3.5:397b',
         'qwen3-vl:235b-instruct',
         'nomic-embed-text',
         'flux.1-dev',
       ],
       {
-        'gemini-3-flash-preview': {
-          id: 'gemini-3-flash-preview',
+        'minimax-m3': {
+          id: 'minimax-m3',
           attachment: true,
-          reasoning: false,
+          reasoning: true,
           toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image'],
+          structuredOutput: false,
+          openWeights: true,
+          inputModalities: ['text', 'image', 'video'],
           outputModalities: ['text'],
-          contextLimit: 1_000_000,
+          contextLimit: 512_000,
         },
-        'glm-5': {
-          id: 'glm-5',
+        'glm-5.2': {
+          id: 'glm-5.2',
           attachment: true,
           reasoning: true,
           toolCall: true,
@@ -509,8 +509,8 @@ describe('buildCuratedOllamaModelList', () => {
           outputModalities: ['text'],
           contextLimit: 128_000,
         },
-        'qwen3-coder:480b': {
-          id: 'qwen3-coder:480b',
+        'qwen3.5:397b': {
+          id: 'qwen3.5:397b',
           attachment: false,
           reasoning: true,
           toolCall: true,
@@ -556,9 +556,9 @@ describe('buildCuratedOllamaModelList', () => {
       },
     );
 
-    expect(curated[0]).toBe('gemini-3-flash-preview');
-    expect(curated).toContain('glm-5');
-    expect(curated).toContain('qwen3-coder:480b');
+    expect(curated[0]).toBe('minimax-m3');
+    expect(curated).toContain('glm-5.2');
+    expect(curated).toContain('qwen3.5:397b');
     expect(curated).toContain('qwen3-vl:235b-instruct');
     expect(curated).not.toContain('nomic-embed-text');
     expect(curated).not.toContain('flux.1-dev');
@@ -566,23 +566,18 @@ describe('buildCuratedOllamaModelList', () => {
 
   it('allows non-priority models with missing context metadata via fail-open', () => {
     const curated = buildCuratedOllamaModelList(
-      [
-        'gemini-3-flash-preview',
-        'some-new-model',
-        'google/nanobanana-preview',
-        'black-forest-labs/flux.1-dev',
-      ],
+      ['minimax-m3', 'some-new-model', 'google/nanobanana-preview', 'black-forest-labs/flux.1-dev'],
       {
-        'gemini-3-flash-preview': {
-          id: 'gemini-3-flash-preview',
+        'minimax-m3': {
+          id: 'minimax-m3',
           attachment: true,
-          reasoning: false,
+          reasoning: true,
           toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text', 'image'],
+          structuredOutput: false,
+          openWeights: true,
+          inputModalities: ['text', 'image', 'video'],
           outputModalities: ['text'],
-          contextLimit: 1_000_000,
+          contextLimit: 512_000,
         },
         // Metadata record exists but context was missing → coerced to 0
         'some-new-model': {
@@ -599,7 +594,7 @@ describe('buildCuratedOllamaModelList', () => {
       },
     );
 
-    expect(curated).toContain('gemini-3-flash-preview');
+    expect(curated).toContain('minimax-m3');
     // contextLimit 0 is treated as "missing" → Ollama's fail-open allows it
     expect(curated).toContain('some-new-model');
     expect(curated).not.toContain('google/nanobanana-preview');

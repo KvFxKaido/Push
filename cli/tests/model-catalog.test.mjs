@@ -122,7 +122,7 @@ describe('DEFAULT_MODELS', () => {
   // Hardcoded expected values — not cross-referencing PROVIDER_CONFIGS
   // because those are env-overridable at import time.
   const EXPECTED = {
-    ollama: 'gemini-3-flash-preview',
+    ollama: 'minimax-m3',
     openrouter: 'anthropic/claude-sonnet-4.6:nitro',
     zen: 'big-pickle',
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',

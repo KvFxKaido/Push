@@ -56,7 +56,7 @@ const PROVIDER_CONFIGS = {
   },
   ollama: {
     url: 'http://localhost:11434/v1/chat/completions',
-    model: 'gemini-3-flash-preview',
+    model: 'minimax-m3',
     envKey: 'VITE_OLLAMA_API_KEY',
   },
 } as const;
