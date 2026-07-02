@@ -57,13 +57,17 @@ export async function fetchPostPushCIStatus(
       { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
       repo,
     );
-    if (result.text.includes('[Tool Error]')) {
+    // The github-tools error arms emit the `[Tool Error]` text marker today
+    // and don't set `structuredError`; check the structured field first so
+    // this gate survives if they ever grow one (Push-reviewer suggestion on
+    // #1302) without coupling solely to the human-readable prefix.
+    if (result.structuredError || result.text.includes('[Tool Error]')) {
       console.log(
         JSON.stringify({
           level: 'warn',
           event: 'post_push_ci_fetch_failed',
           repo,
-          message: result.text.slice(0, 200),
+          message: result.structuredError?.message ?? result.text.slice(0, 200),
         }),
       );
       return null;
