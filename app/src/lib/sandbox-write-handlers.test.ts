@@ -162,6 +162,13 @@ describe('handleWriteFile', () => {
 
   it('surfaces stale-file write with STALE_FILE error', async () => {
     const ctx = makeContext({
+      readResults: [
+        {
+          content: 'const x = 2;\nconst y = 3;\n',
+          version: 'v9',
+          truncated: false,
+        } as FileReadResult,
+      ],
       writeResult: {
         ok: false,
         code: 'STALE_FILE',
@@ -182,6 +189,10 @@ describe('handleWriteFile', () => {
       expect.objectContaining({ outcome: 'stale', errorCode: 'STALE_FILE' }),
     );
     expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(result.text).toContain('Fresh hashline anchors');
+    expect(result.text).toMatch(/1:[a-f0-9]{7}/);
+    expect(result.text).toContain('const x = 2;');
+    expect(result.structuredError?.detail).toContain('Fresh hashline anchors');
   });
 
   it('surfaces workspace-changed write with WORKSPACE_CHANGED error', async () => {
@@ -276,5 +287,52 @@ describe('handleApplyPatchset', () => {
     expect(ctx.batchWriteToSandbox).not.toHaveBeenCalled();
     expect(result.text).toContain('(dry run)');
     expect(result.text).toContain('1 op(s) would apply');
+  });
+
+  it('surfaces fresh anchors for stale patchset write failures', async () => {
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: 'const x = 1;\nconst y = 2;\n',
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+        {
+          content: 'const x = 3;\nconst y = 2;\n',
+          version: 'v9',
+          truncated: false,
+        } as FileReadResult,
+      ],
+      batchResult: {
+        ok: false,
+        results: [
+          {
+            path: '/workspace/src/app.ts',
+            ok: false,
+            code: 'STALE_FILE',
+            expected_version: 'v1',
+            current_version: 'v9',
+          },
+        ],
+      },
+    });
+
+    const result = await handleApplyPatchset(ctx, {
+      edits: [
+        {
+          path: '/workspace/src/app.ts',
+          start_line: 1,
+          end_line: 1,
+          content: 'const x = 99;',
+        },
+      ],
+    });
+
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(result.text).toContain('Fresh anchors for stale files:');
+    expect(result.text).toContain('/workspace/src/app.ts:');
+    expect(result.text).toMatch(/1:[a-f0-9]{7}/);
+    expect(result.text).toContain('const x = 3;');
+    expect(result.structuredError?.detail).toContain('Fresh hashline anchors');
   });
 });

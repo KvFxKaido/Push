@@ -38,6 +38,7 @@ import { fileVersionKey } from './sandbox-file-version-cache';
 import {
   buildHashlineRetryHints,
   buildRangeReplaceHashlineOps,
+  buildStaleFileAnchorHints,
   isUnknownSymbolGuardReason,
   parseLineQualifiedRef,
   readFullFileByChunks,
@@ -131,6 +132,35 @@ export interface EditHandlerContext {
 
   // Symbol ledger
   invalidateSymbolLedger: (path: string) => void;
+}
+
+async function buildStaleEditAnchorLines(
+  ctx: EditHandlerContext,
+  path: string,
+  proposedContent: string,
+  options: {
+    currentVersion?: string | null;
+    affectedLines?: readonly number[];
+  } = {},
+): Promise<string[]> {
+  try {
+    const latest = (await ctx.readFromSandbox(ctx.sandboxId, path)) as FileReadResult & {
+      error?: string;
+    };
+    if (latest.error) {
+      return [`Fresh anchors unavailable: current-file read failed (${latest.error}).`];
+    }
+    ctx.syncReadSnapshot(ctx.sandboxId, path, latest);
+    return buildStaleFileAnchorHints(latest.content, path, {
+      currentVersion: latest.version ?? options.currentVersion,
+      proposedContent,
+      affectedLines: options.affectedLines,
+      truncated: Boolean(latest.truncated),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return [`Fresh anchors unavailable: current-file read threw (${msg}).`];
+  }
 }
 
 export async function handleEditFile(
@@ -521,11 +551,15 @@ export async function handleEditFile(
       ctx.invalidateSymbolLedger(path);
       const expected = editWriteResult.expected_version || editWriteVersion || 'unknown';
       const current = editWriteResult.current_version || 'missing';
+      const anchorLines = await buildStaleEditAnchorLines(ctx, path, editResult.content, {
+        currentVersion: editWriteResult.current_version,
+        affectedLines: editResult.resolvedLines,
+      });
       const staleErr: StructuredToolError = {
         type: 'STALE_FILE',
         retryable: false,
         message: `Stale write rejected for ${path}.`,
-        detail: `expected=${expected} current=${current}`,
+        detail: [`expected=${expected} current=${current}`, ...anchorLines].join('\n'),
       };
       return {
         text: formatStructuredError(
@@ -535,7 +569,8 @@ export async function handleEditFile(
             `Stale write rejected for ${path}.`,
             `Expected version: ${expected}`,
             `Current version: ${current}`,
-            `Re-read the file with sandbox_read_file, then retry the edit.`,
+            ...anchorLines,
+            `Use the fresh anchors above for the retry, or re-read the file/range if you need more context.`,
           ].join('\n'),
         ),
         structuredError: staleErr,

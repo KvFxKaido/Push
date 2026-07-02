@@ -44,6 +44,7 @@ import {
   buildHashlineRetryHints,
   buildPatchsetFailureDetail,
   buildRangeReplaceHashlineOps,
+  buildStaleFileAnchorHints,
   isUnknownSymbolGuardReason,
   readFullFileByChunks,
   recordPatchsetStaleConflict,
@@ -204,6 +205,39 @@ function buildPatchsetTouchedFiles(
   }
 
   return touchedFiles;
+}
+
+async function buildStaleWriteAnchorLines(
+  ctx: WriteHandlerContext,
+  path: string,
+  proposedContent: string,
+  options: {
+    currentVersion?: string | null;
+    affectedLines?: readonly number[];
+  } = {},
+): Promise<string[]> {
+  try {
+    const latest = (await ctx.readFromSandbox(ctx.sandboxId, path)) as FileReadResult & {
+      error?: string;
+    };
+    if (latest.error) {
+      return [`Fresh anchors unavailable: current-file read failed (${latest.error}).`];
+    }
+    ctx.syncReadSnapshot(ctx.sandboxId, path, latest);
+    return buildStaleFileAnchorHints(latest.content, path, {
+      currentVersion: latest.version ?? options.currentVersion,
+      proposedContent,
+      affectedLines: options.affectedLines,
+      truncated: Boolean(latest.truncated),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return [`Fresh anchors unavailable: current-file read threw (${msg}).`];
+  }
+}
+
+function formatStaleAnchorBlock(path: string, anchorLines: readonly string[]): string {
+  return [`${path}:`, ...anchorLines.map((line) => `  ${line}`)].join('\n');
 }
 
 // --- Handlers ---
@@ -416,11 +450,14 @@ export async function handleWriteFile(
         });
         const expected = result.expected_version || freshVersion || 'unknown';
         const current = result.current_version || 'missing';
+        const anchorLines = await buildStaleWriteAnchorLines(ctx, args.path, args.content, {
+          currentVersion: result.current_version,
+        });
         const err: StructuredToolError = {
           type: 'STALE_FILE',
           retryable: false,
           message: `Stale write rejected for ${args.path}.`,
-          detail: `expected=${expected} current=${current}`,
+          detail: [`expected=${expected} current=${current}`, ...anchorLines].join('\n'),
         };
         return {
           text: formatStructuredError(
@@ -430,7 +467,8 @@ export async function handleWriteFile(
               `Stale write rejected for ${args.path}.`,
               `Expected version: ${expected}`,
               `Current version: ${current}`,
-              `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
+              ...anchorLines,
+              `Use the fresh anchors above for a targeted sandbox_edit_file/sandbox_edit_range retry, or re-read the file before retrying sandbox_write_file.`,
             ].join('\n'),
           ),
           structuredError: err,
@@ -919,6 +957,7 @@ export async function handleApplyPatchset(
     { bytesWritten?: number; versionAfter?: string | null }
   >();
   let staleFailureCount = 0;
+  const staleAnchorBlocks: string[] = [];
 
   const editResultsByPath = new Map(editResults.map((r) => [r.path, r]));
 
@@ -1011,6 +1050,18 @@ export async function handleApplyPatchset(
         if (entry.code === 'STALE_FILE') {
           const staleEntry = entry as BatchWriteResultEntry;
           staleFailureCount += 1;
+          const anchorLines = await buildStaleWriteAnchorLines(
+            ctx,
+            staleEntry.path,
+            editInfo?.content ?? '',
+            {
+              currentVersion: staleEntry.current_version,
+              affectedLines: editInfo?.resolvedLines,
+            },
+          );
+          if (anchorLines.length > 0) {
+            staleAnchorBlocks.push(formatStaleAnchorBlock(staleEntry.path, anchorLines));
+          }
           writeFailures.push(
             recordPatchsetStaleConflict(
               ctx.sandboxId,
@@ -1057,6 +1108,13 @@ export async function handleApplyPatchset(
         if (!writeResult.ok) {
           if (writeResult.code === 'STALE_FILE') {
             staleFailureCount += 1;
+            const anchorLines = await buildStaleWriteAnchorLines(ctx, r.path, r.content, {
+              currentVersion: writeResult.current_version,
+              affectedLines: r.resolvedLines,
+            });
+            if (anchorLines.length > 0) {
+              staleAnchorBlocks.push(formatStaleAnchorBlock(r.path, anchorLines));
+            }
             writeFailures.push(
               recordPatchsetStaleConflict(
                 ctx.sandboxId,
@@ -1095,7 +1153,11 @@ export async function handleApplyPatchset(
   }
 
   if (writeFailures.length > 0) {
-    const detail = buildPatchsetFailureDetail(writeFailures);
+    const failureDetail = buildPatchsetFailureDetail(writeFailures);
+    const detail =
+      staleAnchorBlocks.length > 0
+        ? [failureDetail, 'Fresh anchors for stale files:', ...staleAnchorBlocks].join('\n')
+        : failureDetail;
     const err: StructuredToolError =
       staleFailureCount > 0
         ? {
@@ -1119,11 +1181,19 @@ export async function handleApplyPatchset(
     }
     lines.push(`${writeFailures.length} file(s) failed:`);
     lines.push(...writeFailures.map((f) => `  ✗ ${f}`));
+    if (staleAnchorBlocks.length > 0) {
+      lines.push('Fresh anchors for stale files:');
+      lines.push(...staleAnchorBlocks);
+    }
     if (guardWarnings.length > 0) {
       lines.push('Guard warnings:');
       lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
     }
-    lines.push('Re-read failed files before retrying to avoid stale or partial-overwrite risk.');
+    lines.push(
+      staleAnchorBlocks.length > 0
+        ? 'Use the fresh anchors above for stale files, or re-read failed files before retrying if you need full context.'
+        : 'Re-read failed files before retrying to avoid stale or partial-overwrite risk.',
+    );
     const partialPostconditions =
       successfulWrites.size > 0
         ? ({

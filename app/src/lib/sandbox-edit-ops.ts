@@ -229,6 +229,159 @@ export async function buildHashlineRetryHints(
   return hints;
 }
 
+const STALE_FILE_ANCHOR_CONTEXT_LINES = 1;
+const STALE_FILE_ANCHOR_MAX_LINES = 8;
+const STALE_FILE_ANCHOR_PREVIEW_CHARS = 96;
+
+function visibleContentLines(content: string): string[] {
+  const rawLines = content.split('\n');
+  return content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
+}
+
+function clampLine(line: number, visibleLineCount: number): number {
+  return Math.min(Math.max(line, 1), visibleLineCount);
+}
+
+function changedSpanFromContentDiff(
+  currentContent: string,
+  proposedContent: string,
+): { start: number; end: number } | null {
+  const currentLines = visibleContentLines(currentContent);
+  const proposedLines = visibleContentLines(proposedContent);
+  let prefix = 0;
+  while (
+    prefix < currentLines.length &&
+    prefix < proposedLines.length &&
+    currentLines[prefix] === proposedLines[prefix]
+  ) {
+    prefix += 1;
+  }
+  if (prefix === currentLines.length && prefix === proposedLines.length) return null;
+
+  let currentSuffix = currentLines.length - 1;
+  let proposedSuffix = proposedLines.length - 1;
+  while (
+    currentSuffix >= prefix &&
+    proposedSuffix >= prefix &&
+    currentLines[currentSuffix] === proposedLines[proposedSuffix]
+  ) {
+    currentSuffix -= 1;
+    proposedSuffix -= 1;
+  }
+
+  if (currentLines.length === 0) return null;
+  if (currentSuffix < prefix) {
+    const anchorLine = clampLine(prefix, currentLines.length);
+    return { start: anchorLine, end: anchorLine };
+  }
+  return {
+    start: clampLine(prefix + 1, currentLines.length),
+    end: clampLine(currentSuffix + 1, currentLines.length),
+  };
+}
+
+function spanFromAffectedLines(
+  affectedLines: readonly number[] | undefined,
+  visibleLineCount: number,
+): { start: number; end: number } | null {
+  if (!affectedLines || affectedLines.length === 0 || visibleLineCount === 0) return null;
+  const normalized = affectedLines
+    .filter((line) => Number.isFinite(line))
+    .map((line) => clampLine(Math.trunc(line), visibleLineCount));
+  if (normalized.length === 0) return null;
+  return {
+    start: Math.min(...normalized),
+    end: Math.max(...normalized),
+  };
+}
+
+function selectAnchorLines(start: number, end: number, maxLines: number): number[] {
+  const all = Array.from({ length: end - start + 1 }, (_, index) => start + index);
+  if (all.length <= maxLines) return all;
+  const headCount = Math.ceil(maxLines / 2);
+  const tailCount = Math.floor(maxLines / 2);
+  return [...all.slice(0, headCount), ...all.slice(all.length - tailCount)];
+}
+
+export interface StaleFileAnchorHintsOptions {
+  currentVersion?: string | null;
+  proposedContent?: string;
+  affectedLines?: readonly number[];
+  truncated?: boolean;
+  maxAnchors?: number;
+}
+
+export async function buildStaleFileAnchorHints(
+  currentContent: string,
+  path: string,
+  options: StaleFileAnchorHintsOptions = {},
+): Promise<string[]> {
+  const visibleLines = visibleContentLines(currentContent);
+  const hints: string[] = [];
+  if (options.currentVersion) {
+    hints.push(`Current file version for retry: ${options.currentVersion}`);
+  }
+  if (options.truncated) {
+    hints.push(
+      'Current-file anchor read was truncated; re-read a narrower range if the target is outside the anchors below.',
+    );
+  }
+  if (visibleLines.length === 0) {
+    hints.push(`Fresh hashline anchors for ${path}: current file is empty.`);
+    return hints;
+  }
+
+  const affectedSpan =
+    spanFromAffectedLines(options.affectedLines, visibleLines.length) ??
+    (options.proposedContent !== undefined
+      ? changedSpanFromContentDiff(currentContent, options.proposedContent)
+      : null);
+
+  if (!affectedSpan) {
+    hints.push(
+      `Fresh hashline anchors for ${path}: current content already matches the attempted write.`,
+    );
+    return hints;
+  }
+
+  const contextStart = clampLine(
+    affectedSpan.start - STALE_FILE_ANCHOR_CONTEXT_LINES,
+    visibleLines.length,
+  );
+  const contextEnd = clampLine(
+    affectedSpan.end + STALE_FILE_ANCHOR_CONTEXT_LINES,
+    visibleLines.length,
+  );
+  const maxAnchors = Math.max(1, options.maxAnchors ?? STALE_FILE_ANCHOR_MAX_LINES);
+  const selectedLines = selectAnchorLines(contextStart, contextEnd, maxAnchors);
+  const hashes = await Promise.all(
+    selectedLines.map((lineNo) => calculateLineHash(visibleLines[lineNo - 1], 7)),
+  );
+  const shown = selectedLines.length;
+  const total = contextEnd - contextStart + 1;
+
+  hints.push(
+    `Fresh hashline anchors for ${path} current lines ${contextStart}-${contextEnd} (changed span ${affectedSpan.start}-${affectedSpan.end}):`,
+  );
+  selectedLines.forEach((lineNo, index) => {
+    const preview = visibleLines[lineNo - 1].trim();
+    const clipped =
+      preview.length > STALE_FILE_ANCHOR_PREVIEW_CHARS
+        ? `${preview.slice(0, STALE_FILE_ANCHOR_PREVIEW_CHARS)}...`
+        : preview;
+    hints.push(`- ${lineNo}:${hashes[index]}${clipped ? ` ${clipped}` : ''}`);
+  });
+  if (shown < total) {
+    hints.push(
+      `- ... ${total - shown} line(s) omitted; use sandbox_read_file start_line=${contextStart} end_line=${contextEnd} for full context.`,
+    );
+  }
+  hints.push(
+    'Retry with sandbox_edit_file or sandbox_edit_range against the current anchors above.',
+  );
+  return hints;
+}
+
 export interface SameLineHashRefreshResult {
   edits: HashlineOp[];
   refreshedCount: number;
