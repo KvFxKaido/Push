@@ -108,6 +108,29 @@ model recalls it via `memory_expand` `refs` (scope-guarded). Only the **Worker
 durable backend** remains deferred — it has no consumer until a Worker-side typed
 store exists; tracked in **#1063**.
 
+**Draft — session-summary records (2026-07-02).** The typed store captures
+artifacts (decisions, findings, verification output) but nothing captures
+session-level narrative — "a previous chat diagnosed and fixed X" — so a fresh
+chat has no grounded way to reference prior efforts. (The motivating incident:
+a stale repo-scoped [TODO] block leaked into a new chat and the model
+confabulated first-person continuity; the leak is fixed by clearing the todo
+list on chat mint, but the *legitimate* version of that continuity is this
+draft.) Proposal: a `session_summary` record kind (extend `MEMORY_RECORD_KINDS`
+in `lib/runtime-contract.ts` — already the single source of truth the
+validators iterate), written **by the runtime, not by model choice** (behavior
+lives in code, not prompts) at the effort-ship boundary — the Gate-at-Push
+moment on web (`prepare_push` / `sandbox_push` success), the commit-gate
+equivalent on CLI. Content is an LLM-written narrative of the effort (what was
+diagnosed, what shipped, what's still open) via the existing
+`lib/llm-compaction.ts` summarization engine; scope is repo-level (no `branch`
+so it survives `expireBranchScopedMemory`; `chatId` recorded as provenance
+only); retrieval rides the existing packing with its retrieved-memory framing,
+so the model says "a previous session fixed this" instead of claiming lived
+history. Persistence policy caps freshness to the last few summaries per repo
+(`lib/memory-persistence-policy.ts` is the home for that call). Kernel goes in
+`lib/` per the cross-surface checklist. Design-in-motion; needs roadmap
+promotion before implementation.
+
 Source notes:
 [`Context Memory and Retrieval Architecture`](<../archive/decisions/Context Memory and Retrieval Architecture.md>),
 [`Lossless Verbatim Memory Retrieval`](<../archive/decisions/Lossless Verbatim Memory Retrieval (LCM).md>).
