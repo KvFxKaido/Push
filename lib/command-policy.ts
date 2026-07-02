@@ -25,6 +25,7 @@ import {
   UNSAFE_FIND_OPTIONS,
   UNSAFE_RG_OPTIONS_WITH_ARGS,
 } from './codex-derived/command-safety.ts';
+import { classifyGitArgv, classifyGitCommand, type GitDecision } from './git/policy.ts';
 
 export {
   isKnownSafeReadOnlyCommand,
@@ -45,6 +46,258 @@ const RAW_DANGEROUS_PATTERNS = [
 
 function rawCommandMightBeDangerous(command: string): boolean {
   return RAW_DANGEROUS_PATTERNS.some((pattern) => pattern.test(command));
+}
+
+function splitShellSegmentsForApprovalFallback(command: string): string[] {
+  const segments: string[] = [];
+  let current = '';
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  const pushSegment = () => {
+    const trimmed = current.trim();
+    if (trimmed) segments.push(trimmed);
+    current = '';
+  };
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    if (escaping) {
+      current += ch;
+      escaping = false;
+      continue;
+    }
+
+    if (quote) {
+      current += ch;
+      if (ch === '\\' && quote === '"') {
+        escaping = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+
+    if (ch === '\\') {
+      current += ch;
+      escaping = true;
+      continue;
+    }
+
+    if (ch === '&') {
+      if (command[i + 1] === '&') {
+        pushSegment();
+        i++;
+        continue;
+      }
+      if (command[i - 1] === '<' || command[i - 1] === '>' || command[i + 1] === '>') {
+        current += ch;
+        continue;
+      }
+      pushSegment();
+      continue;
+    }
+
+    if (ch === '|') {
+      pushSegment();
+      if (command[i + 1] === '|') i++;
+      continue;
+    }
+
+    if (ch === ';' || ch === '\n') {
+      pushSegment();
+      continue;
+    }
+
+    current += ch;
+  }
+
+  pushSegment();
+  return segments;
+}
+
+function stripShellSyntaxForApprovalFallback(command: string): string {
+  let result = '';
+  let quote: "'" | '"' | null = null;
+  let escaping = false;
+
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+
+    if (escaping) {
+      result += ch;
+      escaping = false;
+      continue;
+    }
+
+    if (quote) {
+      result += ch;
+      if (ch === '\\' && quote === '"') {
+        escaping = true;
+      } else if (ch === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      result += ch;
+      continue;
+    }
+
+    if (ch === '\\') {
+      result += ch;
+      escaping = true;
+      continue;
+    }
+
+    if (ch === '(' || ch === ')' || ch === '{' || ch === '}') {
+      result += ' ';
+      continue;
+    }
+
+    if (ch === '&' && (command[i + 1] === '>' || command[i + 1] === '<')) {
+      i += 1;
+      while (command[i + 1] === '>' || command[i + 1] === '<' || command[i + 1] === '&') i++;
+      i = skipRedirectTarget(command, i + 1);
+      result += ' ';
+      continue;
+    }
+
+    if (ch === '<' || ch === '>') {
+      while (command[i + 1] === '<' || command[i + 1] === '>' || command[i + 1] === '&') i++;
+      i = skipRedirectTarget(command, i + 1);
+      result += ' ';
+      continue;
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
+function skipRedirectTarget(command: string, index: number): number {
+  let i = index;
+  while (i < command.length && /\s/.test(command[i])) i++;
+  if (i >= command.length) return i - 1;
+
+  const quote = command[i] === "'" || command[i] === '"' ? command[i] : null;
+  if (quote) {
+    i++;
+    let escaping = false;
+    for (; i < command.length; i++) {
+      const ch = command[i];
+      if (escaping) {
+        escaping = false;
+        continue;
+      }
+      if (ch === '\\' && quote === '"') {
+        escaping = true;
+        continue;
+      }
+      if (ch === quote) return i;
+    }
+    return command.length - 1;
+  }
+
+  for (; i < command.length; i++) {
+    const ch = command[i];
+    if (/\s/.test(ch) || ch === ';' || ch === '|' || ch === '&' || ch === ')' || ch === '}') {
+      return i - 1;
+    }
+  }
+  return command.length - 1;
+}
+
+function trimTrailingShellOperators(command: string): string {
+  return command
+    .trim()
+    .replace(/(?:&&|\|\|?|;|&)+\s*$/g, '')
+    .trim();
+}
+
+const ELEVATION_OPTION_VALUE_ARGS = new Set([
+  '-u',
+  '--user',
+  '-g',
+  '--group',
+  '-h',
+  '--host',
+  '-p',
+  '--prompt',
+  '-C',
+  '--close-from',
+  '-T',
+  '--command-timeout',
+  '-D',
+  '--chdir',
+  '-a',
+  '--auth-type',
+  '--config',
+]);
+
+const ELEVATION_OPTION_VALUE_PREFIXES = Array.from(ELEVATION_OPTION_VALUE_ARGS)
+  .filter((option) => option.startsWith('--'))
+  .map((option) => `${option}=`);
+
+const ELEVATION_SHORT_OPTIONS_WITH_VALUE = new Set(['u', 'g', 'h', 'p', 'C', 'T', 'D', 'a']);
+
+function unwrapElevatedCommand(command: string[]): string[] | null {
+  const executable = executableNameLookupKey(command[0] ?? '');
+  if (executable !== 'sudo' && executable !== 'doas') return null;
+
+  let index = 1;
+  while (index < command.length) {
+    const arg = command[index];
+    if (!arg) break;
+    if (arg === '--') {
+      index += 1;
+      break;
+    }
+    if (!arg.startsWith('-') || arg === '-') break;
+
+    if (ELEVATION_OPTION_VALUE_ARGS.has(arg)) {
+      index += 2;
+      continue;
+    }
+    if (ELEVATION_OPTION_VALUE_PREFIXES.some((prefix) => arg.startsWith(prefix))) {
+      index += 1;
+      continue;
+    }
+
+    const attachedValueShort = Array.from(ELEVATION_SHORT_OPTIONS_WITH_VALUE).some(
+      (option) => arg.startsWith(`-${option}`) && arg.length > 2,
+    );
+    if (attachedValueShort) {
+      index += 1;
+      continue;
+    }
+
+    const shortCluster = /^-[A-Za-z]+$/.test(arg) ? arg.slice(1) : '';
+    if (shortCluster) {
+      const valueOptionIndex = Array.from(shortCluster).findIndex((option) =>
+        ELEVATION_SHORT_OPTIONS_WITH_VALUE.has(option),
+      );
+      if (valueOptionIndex >= 0) {
+        index += valueOptionIndex === shortCluster.length - 1 ? 2 : 1;
+        continue;
+      }
+    }
+
+    index += 1;
+  }
+
+  const unwrapped = command.slice(index);
+  return unwrapped.length > 0 ? unwrapped : null;
 }
 
 function isDangerousGitCommand(command: string[]): boolean {
@@ -79,8 +332,9 @@ function isDangerousToCallWithExec(command: string[]): boolean {
 
   const executable = executableNameLookupKey(cmd0);
 
-  if (executable === 'sudo' || executable === 'doas') {
-    return isDangerousToCallWithExec(command.slice(1));
+  const elevatedCommand = unwrapElevatedCommand(command);
+  if (elevatedCommand) {
+    return isDangerousToCallWithExec(elevatedCommand);
   }
 
   if (isDangerousRmInvocation(command)) return true;
@@ -118,4 +372,82 @@ export function commandMightBeDangerous(command: string): boolean {
   const commands = parsePlainCommandSequence(command);
   if (Array.isArray(commands)) return commands.some((words) => commandWordsMightBeDangerous(words));
   return rawCommandMightBeDangerous(command);
+}
+
+function gitDecisionRequiresApproval(decision: GitDecision): boolean {
+  return decision.kind === 'block' || decision.kind === 'route';
+}
+
+function commandWordsStartWithGit(command: string[]): boolean {
+  const elevatedCommand = unwrapElevatedCommand(command);
+  const words = elevatedCommand ?? command;
+  return executableNameLookupKey(words[0] ?? '') === 'git';
+}
+
+function commandWordsRequireGitFlowApproval(command: string[]): boolean {
+  const cmd0 = command[0];
+  if (!cmd0) return false;
+
+  const executable = executableNameLookupKey(cmd0);
+
+  const elevatedCommand = unwrapElevatedCommand(command);
+  if (elevatedCommand) {
+    return commandWordsRequireGitFlowApproval(elevatedCommand);
+  }
+
+  if (executable === 'git') {
+    return gitDecisionRequiresApproval(classifyGitArgv(command));
+  }
+
+  const shellScript = extractShellScript(command);
+  if (!shellScript) return false;
+  const nestedCommands = parsePlainCommandSequence(shellScript);
+  if (Array.isArray(nestedCommands)) {
+    if (nestedCommands.some((nestedCommand) => commandWordsRequireGitFlowApproval(nestedCommand))) {
+      return true;
+    }
+    return shellScriptRequiresGitFlowApproval(shellScript);
+  }
+  return shellScriptRequiresGitFlowApproval(shellScript);
+}
+
+function shellScriptRequiresGitFlowApproval(command: string): boolean {
+  const stripped = trimTrailingShellOperators(stripShellSyntaxForApprovalFallback(command));
+  if (stripped) {
+    const commands = parsePlainCommandSequence(stripped);
+    if (
+      Array.isArray(commands) &&
+      commands.some((words) => commandWordsRequireGitFlowApproval(words))
+    ) {
+      return true;
+    }
+  }
+
+  return splitShellSegmentsForApprovalFallback(command).some((segment) => {
+    const normalized = trimTrailingShellOperators(stripShellSyntaxForApprovalFallback(segment));
+    if (!normalized) return false;
+    const words = splitShellWords(normalized);
+    if (!Array.isArray(words) || !commandWordsStartWithGit(words)) return false;
+    return gitDecisionRequiresApproval(classifyGitCommand(normalized));
+  });
+}
+
+/**
+ * Approval-level policy: true when a command either performs a destructive
+ * operation or tries to use a raw git operation that Push routes/blocks on the
+ * `sandbox_exec` path (commit, push, branch create/switch, merge/rebase,
+ * remote-identity rewrites, etc.).
+ *
+ * This intentionally sits above `commandMightBeDangerous`: not every routed git
+ * operation is destructive, but all of them need an explicit approval boundary
+ * when issued as a free-form CLI exec command.
+ */
+export function commandRequiresApproval(command: string): boolean {
+  if (commandMightBeDangerous(command)) return true;
+  const commands = parsePlainCommandSequence(command);
+  if (Array.isArray(commands)) {
+    if (commands.some((words) => commandWordsRequireGitFlowApproval(words))) return true;
+    return shellScriptRequiresGitFlowApproval(command);
+  }
+  return shellScriptRequiresGitFlowApproval(command);
 }

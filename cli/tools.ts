@@ -42,7 +42,7 @@ import { PROVIDER_CONFIGS, resolveApiKey, createProviderStream } from './provide
 import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
 import { createCliGitHubRuntime, hasEnvGitHubToken, resolveGitHubToken } from './github-runtime.js';
-import { commandMightBeDangerous, isSinglePlainCommand } from '../lib/command-policy.ts';
+import { commandRequiresApproval, isSinglePlainCommand } from '../lib/command-policy.ts';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -228,6 +228,7 @@ const HIGH_RISK_PATTERNS = [
   /\b(curl|wget)\s+.*\|\s*(ba)?sh/,
   />\s*\/dev\/sd[a-z]/,
   /\bsudo\b/,
+  /\bdoas\b/,
   /\bnpm\s+publish\b/,
   /\bdropdb\b/,
   /\bdrop\s+database\b/i,
@@ -237,7 +238,7 @@ const HIGH_RISK_PATTERNS = [
 
 export function isHighRiskCommand(command) {
   return (
-    HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command)) || commandMightBeDangerous(command)
+    HIGH_RISK_PATTERNS.some((pattern) => pattern.test(command)) || commandRequiresApproval(command)
   );
 }
 

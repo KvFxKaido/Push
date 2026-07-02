@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { classifyGitCommand, detectBlockedGitCommand, type GitDecision } from './policy.ts';
+import {
+  classifyGitArgv,
+  classifyGitCommand,
+  detectBlockedGitCommand,
+  type GitDecision,
+} from './policy.ts';
 
 /**
  * Drift snapshot for the git policy oracle.
@@ -438,4 +443,19 @@ describe('detectBlockedGitCommand — legacy label parity', () => {
       expect(detectBlockedGitCommand(command)).toBe(label);
     });
   }
+});
+
+describe('classifyGitArgv — parsed argv safety', () => {
+  it('classifies git argv without scanning non-executable arguments', () => {
+    expect(classifyGitArgv(['git', 'push', 'origin', 'main'])).toEqual({
+      kind: 'route',
+      to: 'push',
+      args: {},
+      label: 'git push',
+    });
+    expect(classifyGitArgv(['echo', 'git push origin main'])).toEqual({
+      kind: 'passthrough',
+      family: 'non-git',
+    });
+  });
 });

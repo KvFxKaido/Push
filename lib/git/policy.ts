@@ -584,6 +584,19 @@ export function classifyGitCommand(command: string): GitDecision {
 }
 
 /**
+ * Classify an already-tokenized argv vector whose executable is `git` (or a
+ * path ending in `/git`). Unlike `classifyGitCommand`, this does not scan later
+ * argv entries for a `git` token, so callers that already used a shell parser
+ * can safely avoid false positives like `echo "git push"`.
+ */
+export function classifyGitArgv(argv: readonly string[]): GitDecision {
+  const first = argv[0];
+  if (!first || !isGitToken(first)) return { kind: 'passthrough', family: 'non-git' };
+  const invocation = parseGitInvocation([...argv]);
+  return invocation ? classifySegment(invocation) : { kind: 'passthrough', family: 'non-git' };
+}
+
+/**
  * Legacy adapter: the guard label (`"git commit"`, `"git checkout
  * <branch>"`, …) for a blocked/routed command, or null when allowed
  * through. Equivalent to the old `git-mutation-detection.detectBlockedGitCommand`
