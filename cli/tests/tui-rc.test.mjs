@@ -22,12 +22,20 @@ const RELAY_PERSISTED = {
   enabledAt: 1719900000000,
 };
 
-function relayStatusResponse({ running = true, allowlistSize = 0, state = 'connected' } = {}) {
+function relayStatusResponse({
+  running = true,
+  allowlistSize = 0,
+  state = 'open',
+  exhausted = false,
+  fatal = false,
+  closeCode = null,
+  closeReason = '',
+} = {}) {
   return {
     ok: true,
     payload: {
       persisted: RELAY_PERSISTED,
-      live: { running, state, allowlistSize },
+      live: { running, state, allowlistSize, exhausted, fatal, closeCode, closeReason },
     },
   };
 }
@@ -143,6 +151,38 @@ describe('TUI /rc (headless characterization)', () => {
     );
     try {
       assert.equal(h.requestsOfType('mint_remote_pair_bundle').length, 1);
+    } finally {
+      await h.stop();
+    }
+  });
+
+  it('running-but-disconnected relay → reports the state instead of confirming', async () => {
+    // Codex P2 on #1309: `running: true` alone doesn't mean the phone can
+    // reach us — a closed/exhausted client still holds activeRelayClient.
+    // With no saved relay config in the isolated test home, the re-dial is
+    // skipped and the health gate must refuse to mint or confirm.
+    const h = await runRemoteControl(
+      '/rc',
+      {
+        relay_status: relayStatusResponse({
+          allowlistSize: 2,
+          state: 'closed',
+          exhausted: true,
+          closeCode: 1006,
+          closeReason: 'abnormal closure',
+        }),
+      },
+      { waitText: 'Remote relay is not connected' },
+    );
+    try {
+      assert.equal(
+        h.requestsOfType('mint_remote_pair_bundle').length,
+        0,
+        'must not mint over a dead relay',
+      );
+      const text = transcriptText(h);
+      assert.ok(text.includes('state: closed'), 'surfaces the real relay state');
+      assert.ok(!text.includes('reachable from your phone'), 'must not claim reachability');
     } finally {
       await h.stop();
     }

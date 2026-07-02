@@ -5336,7 +5336,11 @@ export async function runTUI(options = {}) {
    * phone's Chats drawer":
    *
    *   - relay never configured        → point at the one-time /remote setup
-   *   - relay configured, not dialing → re-enable from the saved config
+   *   - relay stopped / disconnected /
+   *     given up (exhausted, fatal)   → re-enable from the saved config;
+   *                                     if still not open/connecting after
+   *                                     the re-dial, report the real state
+   *                                     instead of confirming
    *   - no phone paired yet           → mint + render a pairing bundle
    *   - phone already paired          → confirm reachability (the phone's
    *                                     Connected list shows this session)
@@ -5394,10 +5398,22 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    // Config exists but the relay client is not dialing (daemon restarted
-    // with the client stopped, fatal close, …) — re-enable from the saved
-    // config so the phone can reach us again.
-    if (!live?.running) {
+    // "Healthy" = the relay client is connected or actively dialing on
+    // its own. `running` alone is NOT enough: a client whose socket
+    // closed (`state: 'closed' | 'unreachable'`) — or that gave up
+    // (`exhausted` / `fatal`) — still reports `running: true` because
+    // the daemon holds an activeRelayClient. Confirming reachability in
+    // that state would be a lie (Codex P2 on #1309).
+    const relayLiveHealthy = (l) =>
+      Boolean(l?.running) &&
+      !l.exhausted &&
+      !l.fatal &&
+      (l.state === 'open' || l.state === 'connecting');
+
+    // Relay client stopped, disconnected, or given up — re-enable from
+    // the saved config so the phone can reach us again (relay_enable
+    // restarts the client with an immediate dial).
+    if (!relayLiveHealthy(live)) {
       const { readRelayConfig } = await import('./pushd-relay-config.js');
       const cfg = await readRelayConfig();
       if (cfg) {
@@ -5417,6 +5433,22 @@ export async function runTUI(options = {}) {
         }
         const refreshed = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 2000 });
         if (refreshed.ok) live = refreshed.payload?.live || live;
+      }
+      // Still not healthy after the re-dial attempt: report the real
+      // state instead of minting a bundle or claiming reachability the
+      // relay can't deliver.
+      if (!relayLiveHealthy(live)) {
+        const closeInfo =
+          live?.closeCode !== null && live?.closeCode !== undefined
+            ? ` (last close: ${live.closeCode}${live.closeReason ? ` ${live.closeReason}` : ''})`
+            : '';
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Remote relay is not connected (state: ${live?.state || 'unknown'})${closeInfo}. Check /remote status, then /rc again.`,
+        );
+        scheduler.flush();
+        return;
       }
     }
 

@@ -19,13 +19,21 @@
  *   - No pairing → permanent no-op. The IndexedDB read re-runs on each
  *     activation, so pairing a phone takes effect on the next drawer
  *     open without a reload.
+ *   - Rows are cleared on deactivate AND on every failure path. The
+ *     `CliSessionRow` green "Connected" indicator is honest by
+ *     construction only if rows never outlive the connection that
+ *     justified them — so no retain-on-close, at the cost of a brief
+ *     empty window on reopen while the re-dial + list round-trips.
  *   - Errors degrade to an empty list (the section simply doesn't
  *     render) — a broken relay must not make the chats drawer feel
  *     broken. Symmetric structured logs cover the invisible branches.
  *
- * Deps are injectable for tests; production callers pass none.
+ * The connection lifecycle lives in `createConnectedCliSessionsController`,
+ * a plain (non-React) controller so the generation guards, the
+ * synchronous-open edge, and every failure branch are unit-testable
+ * without a DOM renderer; the hook is thin effect glue around it.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import type { LocalDaemonBinding } from '@/lib/local-daemon-binding';
 import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
@@ -49,6 +57,13 @@ export interface ConnectedCliSessionsDeps {
   ) => LocalDaemonBinding;
 }
 
+export interface ConnectedCliSessionsController {
+  /** Dial the stored pairing and emit rows once listed. Supersedes any prior activation. */
+  activate(): void;
+  /** Close the connection and emit an empty list (Connected rows must not outlive it). */
+  deactivate(): void;
+}
+
 function defaultCreateBinding(
   record: PairedRemoteRecord,
   handlers: { onOpen: () => void; onDead: () => void },
@@ -64,102 +79,109 @@ function defaultCreateBinding(
   });
 }
 
-export function useConnectedCliSessions(
-  active: boolean,
-  deps: ConnectedCliSessionsDeps = {},
-): UseConnectedCliSessionsResult {
-  const [sessions, setSessions] = useState<DaemonCliSession[]>([]);
-  // Generation counter: each activation owns one connection attempt.
-  // Callbacks from a superseded attempt (slow open, late response)
-  // check the generation before touching state.
-  const genRef = useRef(0);
-  const bindingRef = useRef<LocalDaemonBinding | null>(null);
-  // Destructured so the effect can depend on the individual functions:
-  // production passes no deps (both stay `undefined`, a stable value),
-  // and tests pass module-stable fakes — either way the effect only
-  // re-runs on `active` flips.
-  const { loadPairedRemote: loadPairedRemoteDep, createBinding: createBindingDep } = deps;
+/**
+ * Non-React core of the hook. Each `activate()` bumps a generation
+ * counter that every async callback re-checks before emitting, so a
+ * superseded attempt (slow IDB read, late WS open, late list response)
+ * can never clobber the current one.
+ */
+export function createConnectedCliSessionsController(opts: {
+  loadPairedRemote: () => Promise<PairedRemoteRecord | null>;
+  createBinding: (
+    record: PairedRemoteRecord,
+    handlers: { onOpen: () => void; onDead: () => void },
+  ) => LocalDaemonBinding;
+  onSessions: (rows: DaemonCliSession[]) => void;
+}): ConnectedCliSessionsController {
+  let gen = 0;
+  let binding: LocalDaemonBinding | null = null;
 
-  useEffect(() => {
-    if (!active) {
-      // Deactivate: drop the connection but keep the last rows — the
-      // drawer is closed (nothing renders), and keeping them avoids an
-      // empty-flash on the next open while the reconnect is in flight.
-      genRef.current += 1;
-      bindingRef.current?.close();
-      bindingRef.current = null;
-      return;
-    }
+  const closeBinding = () => {
+    binding?.close();
+    binding = null;
+  };
 
-    const gen = ++genRef.current;
-    const loadPairedRemote = loadPairedRemoteDep ?? getPairedRemote;
-    const createBinding = createBindingDep ?? defaultCreateBinding;
-
+  const activate = () => {
+    const myGen = ++gen;
+    closeBinding();
     void (async () => {
       let record: PairedRemoteRecord | null;
       try {
-        record = await loadPairedRemote();
+        record = await opts.loadPairedRemote();
       } catch {
         // IndexedDB unavailable (private mode, SSR) — treat as unpaired.
         record = null;
       }
-      if (gen !== genRef.current) return;
+      if (myGen !== gen) return;
       if (!record) {
         // Unpaired is the common steady state for most users — not a
         // log-worthy branch. The section simply never renders.
-        setSessions([]);
+        opts.onSessions([]);
         return;
       }
 
-      let binding: LocalDaemonBinding;
-      try {
-        binding = createBinding(record, {
-          onOpen: () => {
-            if (gen !== genRef.current) return;
-            void (async () => {
-              try {
-                const res = await binding.request<{ sessions?: unknown }>({
-                  type: 'list_sessions',
-                  timeoutMs: LIST_TIMEOUT_MS,
-                  payload: { limit: LIST_LIMIT, excludeModes: ['headless'] },
-                });
-                if (gen !== genRef.current) return;
-                const rows = parseListSessionsPayload(res?.payload);
-                setSessions(rows);
-                console.log(
-                  JSON.stringify({
-                    level: 'info',
-                    event: 'connected_cli_sessions_listed',
-                    count: rows.length,
-                  }),
-                );
-              } catch (err) {
-                if (gen !== genRef.current) return;
-                setSessions([]);
-                console.log(
-                  JSON.stringify({
-                    level: 'warn',
-                    event: 'connected_cli_sessions_list_failed',
-                    error: err instanceof Error ? err.message : String(err),
-                  }),
-                );
-              }
-            })();
-          },
-          onDead: () => {
-            if (gen !== genRef.current) return;
-            // The daemon went away while the drawer is open: clear the
-            // rows so a stale "Connected" section can't outlive the
-            // connection that justified it.
-            setSessions([]);
+      // `created` is assigned after createBinding returns, but a
+      // binding implementation may fire onOpen SYNCHRONOUSLY during
+      // construction (a test stub; a future pre-opened transport). The
+      // `openedBeforeAssign` latch defers the fetch to just after the
+      // assignment instead of dereferencing an unassigned variable.
+      let created: LocalDaemonBinding | null = null;
+      let openedBeforeAssign = false;
+
+      const fetchSessions = () => {
+        if (myGen !== gen) return;
+        if (!created) {
+          openedBeforeAssign = true;
+          return;
+        }
+        const b = created;
+        void (async () => {
+          try {
+            const res = await b.request<{ sessions?: unknown }>({
+              type: 'list_sessions',
+              timeoutMs: LIST_TIMEOUT_MS,
+              payload: { limit: LIST_LIMIT, excludeModes: ['headless'] },
+            });
+            if (myGen !== gen) return;
+            const rows = parseListSessionsPayload(res?.payload);
+            opts.onSessions(rows);
             console.log(
-              JSON.stringify({ level: 'info', event: 'connected_cli_sessions_disconnected' }),
+              JSON.stringify({
+                level: 'info',
+                event: 'connected_cli_sessions_listed',
+                count: rows.length,
+              }),
             );
-          },
-        });
+          } catch (err) {
+            if (myGen !== gen) return;
+            opts.onSessions([]);
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'connected_cli_sessions_list_failed',
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          }
+        })();
+      };
+
+      const onDead = () => {
+        if (myGen !== gen) return;
+        // The daemon went away while the drawer is open: clear the
+        // rows so a stale "Connected" section can't outlive the
+        // connection that justified it.
+        opts.onSessions([]);
+        console.log(
+          JSON.stringify({ level: 'info', event: 'connected_cli_sessions_disconnected' }),
+        );
+      };
+
+      try {
+        created = opts.createBinding(record, { onOpen: fetchSessions, onDead });
       } catch (err) {
-        if (gen !== genRef.current) return;
-        setSessions([]);
+        if (myGen !== gen) return;
+        opts.onSessions([]);
         console.log(
           JSON.stringify({
             level: 'warn',
@@ -169,18 +191,49 @@ export function useConnectedCliSessions(
         );
         return;
       }
-      if (gen !== genRef.current) {
-        binding.close();
+      if (myGen !== gen) {
+        created.close();
         return;
       }
-      bindingRef.current = binding;
+      binding = created;
+      if (openedBeforeAssign) fetchSessions();
     })();
+  };
 
-    return () => {
-      genRef.current += 1;
-      bindingRef.current?.close();
-      bindingRef.current = null;
-    };
+  const deactivate = () => {
+    gen += 1;
+    closeBinding();
+    // Clear instead of retaining: a retained row would render the green
+    // "Connected" indicator through the next open's reconnect window —
+    // or indefinitely if the daemon is gone — breaking the row's
+    // honest-by-construction contract. The brief empty state on reopen
+    // IS the honest state.
+    opts.onSessions([]);
+  };
+
+  return { activate, deactivate };
+}
+
+export function useConnectedCliSessions(
+  active: boolean,
+  deps: ConnectedCliSessionsDeps = {},
+): UseConnectedCliSessionsResult {
+  const [sessions, setSessions] = useState<DaemonCliSession[]>([]);
+  // Destructured so the effect can depend on the individual functions:
+  // production passes no deps (both stay `undefined`, a stable value),
+  // and tests pass module-stable fakes — either way the effect only
+  // re-runs on `active` flips.
+  const { loadPairedRemote: loadPairedRemoteDep, createBinding: createBindingDep } = deps;
+
+  useEffect(() => {
+    if (!active) return;
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: loadPairedRemoteDep ?? getPairedRemote,
+      createBinding: createBindingDep ?? defaultCreateBinding,
+      onSessions: setSessions,
+    });
+    controller.activate();
+    return () => controller.deactivate();
   }, [active, loadPairedRemoteDep, createBindingDep]);
 
   return { sessions };
