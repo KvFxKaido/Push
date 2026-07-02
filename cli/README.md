@@ -277,6 +277,7 @@ Available tools:
 | `list_dir` | read | List directory contents |
 | `search_files` | read | Ripgrep text search (falls back to grep) |
 | `web_search` | read | Search the public web (backend configurable: `auto`/`tavily`/`ollama`/`duckduckgo`) |
+| `fetch_url` | read | Fetch a public http(s) URL and return readable text (HTML converted to plain text) |
 | `read_symbols` | read | Extract function/class/type declarations from a file |
 | `git_status` | read | Workspace git status (branch, dirty files) |
 | `git_diff` | read | Show git diff (optionally for a specific file, staged) |

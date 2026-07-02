@@ -46,6 +46,7 @@ export type Capability =
   | 'scratchpad' // Read/write the session scratchpad
   | 'todo' // Read/write the model's structured todo list
   | 'web:search' // Search the web for current information
+  | 'web:fetch' // Fetch a specific public URL and read its content
   | 'user:ask' // Ask the user a structured question
   | 'artifacts:write' // Create renderable artifacts (HTML/React/Mermaid/file-tree)
   | 'memory:read'; // Search/recall persisted typed-memory records (verbatim)
@@ -73,6 +74,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
   'scratchpad',
   'todo',
   'web:search',
+  'web:fetch',
   'user:ask',
   'artifacts:write',
   'memory:read',
@@ -209,6 +211,12 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
 
   // Web search
   web_search: ['web:search'],
+
+  // Web fetch (CLI-native, `cli/tools.ts`). Distinct capability from
+  // `web:search` so a deployment can grant search without arbitrary
+  // URL retrieval (or vice versa) — search returns provider-curated
+  // snippets, fetch reads any public page the model names.
+  fetch_url: ['web:fetch'],
 
   // Memory retrieval (read-only). Available to every role: the model can grep
   // persisted records by substring and expand them to verbatim text.
@@ -481,6 +489,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'scratchpad',
     'todo',
     'web:search',
+    'web:fetch',
     'user:ask',
     'artifacts:write',
     'memory:read',
@@ -504,6 +513,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'workflow:read',
     'security:read',
     'web:search',
+    'web:fetch',
     'memory:read',
   ]),
 
@@ -527,6 +537,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'scratchpad',
     'todo',
     'web:search',
+    'web:fetch',
     'user:ask',
     'artifacts:write',
     'memory:read',
@@ -562,6 +573,7 @@ export const ROLE_CAPABILITIES: Readonly<Record<AgentRole, ReadonlySet<Capabilit
     'workflow:read',
     'security:read',
     'web:search',
+    'web:fetch',
     'memory:read',
   ]),
 
@@ -793,6 +805,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   scratchpad: 'use scratchpad',
   todo: 'track its todo list',
   'web:search': 'search the web',
+  'web:fetch': 'fetch web pages',
   'user:ask': 'ask questions',
   'artifacts:write': 'create artifacts',
   'memory:read': 'recall prior memory',

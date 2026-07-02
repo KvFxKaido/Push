@@ -405,6 +405,191 @@ describe('web_search', () => {
   });
 });
 
+// ─── fetch_url ────────────────────────────────────────────────────
+
+describe('fetch_url', () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('fetches an HTML page and returns readable text with title', async () => {
+    const html = [
+      '<html><head><title>Fetch &amp; Read</title><style>body { color: red; }</style></head>',
+      '<body><script>var hidden = "secret-script";</script>',
+      '<h1>Docs Heading</h1>',
+      '<p>First paragraph with <b>bold</b> text.</p>',
+      '<ul><li>alpha item</li><li>beta item</li></ul>',
+      '</body></html>',
+    ].join('\n');
+    globalThis.fetch = async (url) =>
+      new Response(html, {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/docs' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(result.text.includes('Title: Fetch & Read'));
+    assert.ok(result.text.includes('Docs Heading'));
+    assert.ok(result.text.includes('First paragraph with bold text.'));
+    assert.ok(result.text.includes('- alpha item'), 'list items should become bullet lines');
+    assert.ok(!result.text.includes('secret-script'), 'script content must be stripped');
+    assert.ok(!result.text.includes('color: red'), 'style content must be stripped');
+    assert.equal(result.meta.status, 200);
+    assert.equal(result.meta.truncated, false);
+    assert.match(result.meta.content_type, /text\/html/);
+  });
+
+  it('returns non-HTML text bodies (JSON) as-is', async () => {
+    const payload = JSON.stringify({ name: 'push', version: '1.0.0' });
+    globalThis.fetch = async () =>
+      new Response(payload, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/package.json' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(result.text.includes(payload));
+    assert.ok(!result.text.includes('Title:'), 'non-HTML responses have no title line');
+  });
+
+  it('rejects non-http(s) schemes without calling fetch', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('nope', { status: 200 });
+    };
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'file:///etc/passwd' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(fetchCalled, false);
+    assert.equal(result.structuredError.code, 'FETCH_URL_ERROR');
+    assert.equal(result.structuredError.retryable, false);
+    assert.ok(result.text.includes('only http(s) URLs are supported'));
+  });
+
+  it('rejects an unparseable URL without calling fetch', async () => {
+    let fetchCalled = false;
+    globalThis.fetch = async () => {
+      fetchCalled = true;
+      return new Response('nope', { status: 200 });
+    };
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'not a url at all' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(fetchCalled, false);
+    assert.equal(result.structuredError.retryable, false);
+    assert.ok(result.text.includes('not a valid absolute URL'));
+  });
+
+  it('classifies 404 as a non-retryable structured error with status in meta', async () => {
+    globalThis.fetch = async () => new Response('<html>gone</html>', { status: 404 });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/missing' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.code, 'FETCH_URL_ERROR');
+    assert.equal(result.structuredError.retryable, false);
+    assert.equal(result.meta.status, 404);
+    assert.ok(result.text.includes('URL returned 404'));
+  });
+
+  it('classifies 503 as retryable', async () => {
+    globalThis.fetch = async () => new Response('upstream unavailable', { status: 503 });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/flaky' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.retryable, true);
+    assert.equal(result.meta.status, 503);
+  });
+
+  it('refuses binary content types with a non-retryable error', async () => {
+    globalThis.fetch = async () =>
+      new Response('\x89PNG', {
+        status: 200,
+        headers: { 'Content-Type': 'image/png' },
+      });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/logo.png' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError.retryable, false);
+    assert.ok(result.text.includes('unsupported content type'));
+  });
+
+  it('truncates long content at max_chars and flags it in meta', async () => {
+    const body = 'A'.repeat(5_000);
+    globalThis.fetch = async () =>
+      new Response(body, {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/long.txt', max_chars: 1_000 } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.truncated, true);
+    assert.equal(result.meta.chars, 1_000);
+    assert.equal(result.meta.total_chars, 5_000);
+    assert.ok(result.text.includes('[truncated 4000 chars'));
+  });
+
+  it('reports the post-redirect final URL in text and meta', async () => {
+    globalThis.fetch = async () => {
+      const response = new Response('landed here', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+      Object.defineProperty(response, 'url', { value: 'https://example.com/final' });
+      return response;
+    };
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/redirect-me' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(result.meta.final_url, 'https://example.com/final');
+    assert.equal(result.meta.url, 'https://example.com/redirect-me');
+    assert.ok(result.text.includes('URL: https://example.com/final'));
+  });
+
+  it('is classified as read-only', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'fetch_url' }), true);
+  });
+});
+
 // ─── git_commit is NOT read-only ─────────────────────────────────
 
 describe('git_commit classification', () => {
@@ -573,6 +758,10 @@ describe('TOOL_PROTOCOL', () => {
 
   it('includes web_search', () => {
     assert.ok(TOOL_PROTOCOL.includes('web_search'), 'TOOL_PROTOCOL should mention web_search');
+  });
+
+  it('includes fetch_url', () => {
+    assert.ok(TOOL_PROTOCOL.includes('fetch_url'), 'TOOL_PROTOCOL should mention fetch_url');
   });
 
   it('includes exec session tools', () => {

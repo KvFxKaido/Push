@@ -195,6 +195,7 @@ export const VERB_BY_TOOL: Readonly<Record<string, string>> = {
   grep: 'searching',
   grep_file: 'searching',
   web_search: 'searching',
+  fetch_url: 'fetching',
 
   // ── Edit / write ──────────────────────────────────────────────
   write_file: 'writing',

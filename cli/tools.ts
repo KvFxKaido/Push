@@ -123,6 +123,13 @@ const OLLAMA_SEARCH_URL = 'https://ollama.com/api/web_search';
 const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_TAVILY_API_KEY'];
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
+const FETCH_URL_TIMEOUT_MS = 20_000;
+// Refuse bodies the server declares larger than this before reading them.
+// Servers that lie (or stream without content-length) are read in full and
+// capped after decode — acceptable on the sole-user CLI surface, where the
+// model can already `exec curl` its way to the same bytes.
+const MAX_FETCH_URL_CONTENT_LENGTH = 5_000_000;
+const MIN_FETCH_URL_CHARS = 1_000;
 
 // Exported so daemon-side delegation handlers can reuse the same
 // classification when bucketing detected tool calls into read-only
@@ -134,6 +141,7 @@ export const READ_ONLY_TOOLS = new Set([
   'list_dir',
   'search_files',
   'web_search',
+  'fetch_url',
   'read_symbols',
   'read_symbol',
   'git_status',
@@ -892,6 +900,7 @@ Available tools (all read-only — Explorer has no filesystem or exec mutation s
 - git_diff(path?, staged?) — show git diff (optionally for a specific file, optionally staged)
 - lsp_diagnostics(path?) — run type-checker for the workspace; optional path filters results to a specific file. Supported: TypeScript (tsc), Python (pyright/ruff), Rust (cargo check), Go (go vet).
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+- fetch_url(url, max_chars?) — fetch a public http(s) URL and return its readable text (HTML is converted to plain text). Use for docs pages, changelogs, and READMEs — including URLs surfaced by web_search
 - memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
 - memory_expand(ids?, refs?) — recall full verbatim text: ids for memory records (from memory_grep results or [mem_…] tags; surrounding brackets are display-only) and/or refs for verbatim vb_… handles (shown in a reduced tool result's recall marker). At least one is required
 
@@ -925,6 +934,7 @@ Available tools:
 - list_dir(path?) — list files/directories
 - search_files(pattern, path?, max_results?) — text search in workspace
 - web_search(query, max_results?) — search the public web (backend: auto|tavily|ollama|duckduckgo via PUSH_WEB_SEARCH_BACKEND)
+- fetch_url(url, max_chars?) — fetch a public http(s) URL and return its readable text (HTML is converted to plain text). Use for docs pages, changelogs, and READMEs — including URLs surfaced by web_search
 - memory_grep(pattern, kinds?, limit?) — search persisted memory records (prior decisions/findings/verification) by case-insensitive substring; returns matches with their [mem_…] id and a text snippet (use memory_expand for the full record)
 - memory_expand(ids?, refs?) — recall full verbatim text: ids for memory records (from memory_grep results or [mem_…] tags; surrounding brackets are display-only) and/or refs for verbatim vb_… handles (shown in a reduced tool result's recall marker). At least one is required
 - exec(command, timeout_ms?) — run a shell command
@@ -1632,6 +1642,147 @@ async function executeOllamaWebSearch(query, maxResults, apiKey, signal) {
   }
 }
 
+/**
+ * True when a Content-Type header names something we can meaningfully hand
+ * to the model as text. An absent header passes — plenty of raw-file hosts
+ * (gists, plain-text mirrors) omit it, and a garbled decode is self-evident
+ * to the model in a way a refusal is not.
+ */
+function isTextLikeContentType(contentType) {
+  const ct = String(contentType || '')
+    .toLowerCase()
+    .split(';')[0]
+    .trim();
+  if (!ct) return true;
+  if (ct.startsWith('text/')) return true;
+  if (ct.endsWith('+json') || ct.endsWith('+xml')) return true;
+  return new Set([
+    'application/json',
+    'application/xml',
+    'application/javascript',
+    'application/x-javascript',
+    'application/x-ndjson',
+    'application/yaml',
+    'application/x-yaml',
+    'application/toml',
+    'application/x-sh',
+  ]).has(ct);
+}
+
+function extractHtmlTitle(html) {
+  const match = String(html).match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? stripHtml(match[1]) : '';
+}
+
+/**
+ * Convert an HTML page to readable plain text. Unlike `stripHtml` (which
+ * flattens snippets onto one line for search results), this preserves the
+ * block structure — paragraphs, headings, list items — so a fetched docs
+ * page stays scannable for the model.
+ */
+function htmlToReadableText(html) {
+  let text = String(html)
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style|noscript|svg|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  text = text
+    .replace(/<li\b[^>]*>/gi, '\n- ')
+    .replace(
+      /<\/(p|div|section|article|li|tr|h[1-6]|blockquote|pre|table|ul|ol|dd|dt|header|footer|main|nav|figcaption)>/gi,
+      '\n',
+    )
+    .replace(/<(br|hr)\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ');
+  text = decodeHtmlEntities(text);
+  return text
+    .split('\n')
+    .map((line) => line.replace(/[ \t\u00a0]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * GET a public http(s) URL and return `{ finalUrl, status, contentType,
+ * body }`. Throws named errors so the `fetch_url` case can classify
+ * retryability without string-matching messages:
+ *   - `FetchUrlHttpError` (with `.status`) on a non-2xx response
+ *   - `FetchUrlContentTypeError` on a non-text body
+ *   - `FetchUrlTooLargeError` on a declared oversized body
+ * Scheme validation happens in the caller; no private-address blocking is
+ * attempted here — the CLI is a sole-user local surface where `exec curl`
+ * already reaches anything this can (same trust posture as `exec`).
+ */
+async function executeFetchUrl(targetUrl, signal) {
+  if (typeof fetch !== 'function') {
+    throw new Error('fetch is not available in this Node runtime');
+  }
+
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), FETCH_URL_TIMEOUT_MS);
+  const signals = [timeoutController.signal];
+  if (signal) signals.push(signal);
+
+  try {
+    const response = await fetch(targetUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'PushCLI/1.0 (AI Coding Assistant)',
+        Accept:
+          'text/html,application/xhtml+xml,application/json,text/plain,text/*;q=0.9,*/*;q=0.5',
+      },
+      signal: AbortSignal.any(signals),
+    });
+
+    if (!response.ok) {
+      const rawBody = await response.text().catch(() => '');
+      const snippet = stripHtml(rawBody).slice(0, 200);
+      const err = new Error(`URL returned ${response.status}${snippet ? `: ${snippet}` : ''}`);
+      err.name = 'FetchUrlHttpError';
+      err.status = response.status;
+      throw err;
+    }
+
+    const contentType = response.headers.get('content-type') || '';
+    if (!isTextLikeContentType(contentType)) {
+      const err = new Error(
+        `unsupported content type "${contentType.split(';')[0].trim()}" — fetch_url only reads text-like content (HTML, JSON, plain text, XML)`,
+      );
+      err.name = 'FetchUrlContentTypeError';
+      throw err;
+    }
+
+    const declaredLength = Number(response.headers.get('content-length') || '');
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_FETCH_URL_CONTENT_LENGTH) {
+      const err = new Error(
+        `response too large (${declaredLength} bytes declared, limit ${MAX_FETCH_URL_CONTENT_LENGTH})`,
+      );
+      err.name = 'FetchUrlTooLargeError';
+      throw err;
+    }
+
+    const body = await response.text();
+    return {
+      finalUrl: response.url || targetUrl,
+      status: response.status,
+      contentType,
+      body,
+    };
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
+      throw new Error(`Fetch timed out after ${FETCH_URL_TIMEOUT_MS}ms`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/** Transient statuses worth a retry; everything else 4xx is permanent for this URL. */
+function isRetryableHttpStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
 function resolveWebSearchSourceHint(options = {}) {
   const backend = resolveWebSearchBackend(options);
   if (backend === 'tavily') return 'tavily';
@@ -2244,6 +2395,98 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               retryable: !isConfigError,
             },
             meta: { query, max_results: maxResults, source: sourceHint, backend },
+          };
+        }
+      }
+
+      case 'fetch_url': {
+        const rawUrl = asString(call.args.url, 'url').trim();
+        if (!rawUrl) throw new Error('url must be a non-empty string');
+        const maxChars = clamp(
+          asOptionalNumber(call.args.max_chars) ?? MAX_TOOL_OUTPUT_CHARS,
+          MIN_FETCH_URL_CHARS,
+          MAX_TOOL_OUTPUT_CHARS,
+        );
+
+        let parsedUrl;
+        try {
+          parsedUrl = new URL(rawUrl);
+        } catch {
+          return {
+            ok: false,
+            text: `fetch_url failed: "${rawUrl}" is not a valid absolute URL`,
+            structuredError: {
+              code: 'FETCH_URL_ERROR',
+              message: 'invalid absolute URL',
+              retryable: false,
+            },
+            meta: { url: rawUrl },
+          };
+        }
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          return {
+            ok: false,
+            text: `fetch_url failed: only http(s) URLs are supported (got "${parsedUrl.protocol}")`,
+            structuredError: {
+              code: 'FETCH_URL_ERROR',
+              message: `unsupported protocol "${parsedUrl.protocol}"`,
+              retryable: false,
+            },
+            meta: { url: rawUrl },
+          };
+        }
+
+        try {
+          const page = await executeFetchUrl(parsedUrl.toString(), options.signal);
+          const isHtml = /html/i.test(page.contentType);
+          const title = isHtml ? extractHtmlTitle(page.body) : '';
+          let content = isHtml ? htmlToReadableText(page.body) : page.body.trim();
+          const totalChars = content.length;
+          const truncated = totalChars > maxChars;
+          if (truncated) content = content.slice(0, maxChars);
+
+          const headerLines = [`URL: ${page.finalUrl}`];
+          if (title) headerLines.push(`Title: ${title}`);
+          headerLines.push(`Content-Type: ${page.contentType.split(';')[0].trim() || 'unknown'}`);
+          const truncationNote = truncated
+            ? `\n\n[truncated ${totalChars - maxChars} chars — re-call with a larger max_chars (cap ${MAX_TOOL_OUTPUT_CHARS}) or fetch a more specific page]`
+            : '';
+
+          return {
+            ok: true,
+            text: `${headerLines.join('\n')}\n\n${content || '<no readable text content>'}${truncationNote}`,
+            meta: {
+              url: rawUrl,
+              final_url: page.finalUrl,
+              status: page.status,
+              content_type: page.contentType,
+              chars: content.length,
+              total_chars: totalChars,
+              truncated,
+            },
+          };
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') throw err;
+          const message = err instanceof Error ? err.message : String(err);
+          // Classify by failure mode (see PR self-review "HTTP status
+          // classification"): transient statuses + timeouts/network retry;
+          // permanent ones (bad URL class, missing page, non-text body,
+          // oversized body) don't — re-calling the same URL can't help.
+          const status =
+            err instanceof Error && err.name === 'FetchUrlHttpError' ? err.status : undefined;
+          const permanent =
+            (typeof status === 'number' && !isRetryableHttpStatus(status)) ||
+            (err instanceof Error &&
+              (err.name === 'FetchUrlContentTypeError' || err.name === 'FetchUrlTooLargeError'));
+          return {
+            ok: false,
+            text: `fetch_url failed for ${parsedUrl.toString()}: ${message}`,
+            structuredError: {
+              code: 'FETCH_URL_ERROR',
+              message,
+              retryable: !permanent,
+            },
+            meta: { url: rawUrl, ...(typeof status === 'number' ? { status } : {}) },
           };
         }
       }
@@ -3337,7 +3580,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       default:
         return {
           ok: false,
-          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, git_switch_branch, save_memory, lsp_diagnostics${hasEnvGitHubToken() ? `, and GitHub tools (${[...GITHUB_PUBLIC_TOOL_NAMES].join(', ')})` : ''}`,
+          text: `Unknown tool: ${call.tool}. Available: read_file, list_dir, search_files, web_search, fetch_url, exec, exec_start, exec_poll, exec_write, exec_stop, exec_list_sessions, write_file, edit_file, undo_edit, read_symbols, read_symbol, git_status, git_diff, git_commit, git_create_branch, git_switch_branch, save_memory, lsp_diagnostics${hasEnvGitHubToken() ? `, and GitHub tools (${[...GITHUB_PUBLIC_TOOL_NAMES].join(', ')})` : ''}`,
           structuredError: {
             code: 'UNKNOWN_TOOL',
             message: `Unknown tool: ${call.tool}`,
