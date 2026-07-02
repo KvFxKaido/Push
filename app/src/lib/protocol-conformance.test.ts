@@ -38,10 +38,13 @@ import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
  * delivers exactly what `resolvePushCapabilityProfile(provider, model)` promises
  * for that column. The profile is the contract; the serializer is the proof.
  *
- * Status: `toolCalling`, `structuredOutput`, `reasoningBlocks`, and `multimodal`
- * are executably covered. `streamingTools`, `contentBlocks`, and `context` sit
- * on the explicit `PENDING_COLUMNS` backlog (visible `it.todo`s, not counted as
- * covered) until their fill-in lands; tracked on #1169.
+ * Status: `toolCalling`, `structuredOutput`, and `reasoningBlocks` are
+ * executably covered. `streamingTools`, `multimodal`, `contentBlocks`, and
+ * `context` sit on the explicit `PENDING_COLUMNS` backlog (visible `it.todo`s,
+ * not counted as covered) until their fill-in lands; tracked on #1169.
+ * `multimodal` additionally has real (non-gate-registered) delivery + model-
+ * axis coverage in a plain `describe` — see the block above the pending list
+ * for why that doesn't close the column yet.
  */
 
 // --- drift-gate registration -------------------------------------------------
@@ -67,7 +70,12 @@ function conformanceColumn(column: ConformanceColumn, define: () => void): void 
  * "covered" — and filling a column forces moving it out of here into executable
  * coverage (the overlap check fails otherwise). Addresses the #1186 P2.
  */
-const PENDING_COLUMNS = new Set<ConformanceColumn>(['streamingTools', 'contentBlocks', 'context']);
+const PENDING_COLUMNS = new Set<ConformanceColumn>([
+  'streamingTools',
+  'multimodal',
+  'contentBlocks',
+  'context',
+]);
 
 /** Render a pending column's owed assertion as a visible `it.todo`. Does NOT
  *  register executable coverage — the gate accounts for it via PENDING_COLUMNS. */
@@ -252,7 +260,7 @@ conformanceColumn('reasoningBlocks', () => {
   });
 });
 
-// === multimodal ===============================================================
+// === multimodal (delivery + model axis proven; degrade path still pending) ===
 // Native multimodal routes (Anthropic, Gemini) translate an image content part
 // into their provider-native block shape. Support is also a MODEL axis within
 // a provider — `modelSupportsMultimodal` resolves per (provider, model), not
@@ -260,7 +268,16 @@ conformanceColumn('reasoningBlocks', () => {
 // one) — matching the model-axis principle the `structuredOutput` column
 // established. Ported from the existing `toAnthropicMessages`/
 // `toGeminiGenerateContent` multimodal-contentParts suites.
-conformanceColumn('multimodal', () => {
+//
+// This is a plain `describe`, NOT `conformanceColumn` — it does not close the
+// `multimodal` column (still in PENDING_COLUMNS below). Codex review on this
+// PR (#1292) caught that the owed assertion has a second half — "text-only
+// routes degrade clearly" — that isn't actually implemented anywhere:
+// `multimodal` is never consulted as a gate, so a route resolved
+// multimodal:false still gets the image serialized and sent with no clear
+// failure mode. Pinning "no gate exists" (below) documents that gap; it is
+// not the same as proving "degrades clearly", so it doesn't earn the column.
+describe('conformance · multimodal (delivery + model axis; degrade path pending)', () => {
   const PNG = 'data:image/png;base64,iVBORw0KGgo=';
   const withImage = (provider: string, model: string) =>
     req(provider, model, {
@@ -304,12 +321,13 @@ conformanceColumn('multimodal', () => {
     expect(resolvePushCapabilityProfile('openai', 'gpt-3.5-turbo').multimodal).toBe(false);
   });
 
-  it('a route resolved multimodal:false still carries the image through rather than silently dropping it', () => {
-    // `multimodal` isn't consulted as a gate anywhere in the codebase today —
-    // no caller strips images before sending to a non-vision route. Pin the
-    // current best-effort-passthrough behavior so a future gate is a
-    // deliberate addition to this column, not a silent assumption this
-    // harness never checked.
+  it('documents the gap: a route resolved multimodal:false still gets the image passed through, unfiltered', () => {
+    // NOT "degrades clearly" — this is "doesn't degrade at all". The image is
+    // serialized and sent as-is; whether the provider API then rejects it is
+    // outside Push's control. Kept as a plain `describe` (not
+    // `conformanceColumn`) specifically so the drift gate still demands a
+    // real decision — add gating, or explicitly ratify passthrough-by-design
+    // — before `multimodal` can be marked covered.
     const body = toOpenAIChat(withImage('openai', 'gpt-3.5-turbo'));
     expect(body.messages?.[0]?.content).toContainEqual({
       type: 'image_url',
@@ -326,6 +344,10 @@ conformanceColumn('multimodal', () => {
 pendingColumn(
   'streamingTools',
   'native tool-call fragments accumulate incrementally + flush per route that advertises it',
+);
+pendingColumn(
+  'multimodal',
+  'text-only routes (multimodal:false) gate or clearly degrade image content instead of passing it through unfiltered — delivery to multimodal-tier routes and the per-model resolution axis are already proven in the plain `describe` block above, not registered as covered pending this decision',
 );
 pendingColumn(
   'contentBlocks',
