@@ -368,6 +368,8 @@ export type RoundSandboxStatus = {
   branch?: string;
   head?: string;
   changedFiles?: string[];
+  /** Local commits not yet on the upstream tracking ref (`git status -b`'s `[ahead N]`). */
+  ahead?: number;
 };
 
 export interface TurnRunContext {
@@ -447,6 +449,7 @@ export function createTurnRunContext(
           .map(extractChangedPathFromStatusLine)
           .filter((value): value is string => Boolean(value))
           .slice(0, 6),
+        ahead: info?.ahead ?? undefined,
       };
       cacheFetched = true;
     } catch {
