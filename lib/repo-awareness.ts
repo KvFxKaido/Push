@@ -15,6 +15,14 @@ export interface GitInfo {
   ahead: number;
   behind: number;
   detached: boolean;
+  /**
+   * Whether the branch has an upstream tracking ref (`branch...origin/branch`
+   * in the porcelain header). When false, `ahead`/`behind` are 0 by default
+   * but MEANINGLESS — a never-pushed branch has everything "ahead" of origin.
+   * Consumers reporting divergence must branch on this instead of trusting
+   * `ahead: 0`.
+   */
+  hasUpstream: boolean;
 }
 
 /**
@@ -44,6 +52,7 @@ export function parseGitStatus(stdout: string): GitInfo {
     ahead: 0,
     behind: 0,
     detached: false,
+    hasUpstream: false,
   };
 
   if (headerLine.startsWith('## ')) {
@@ -54,6 +63,10 @@ export function parseGitStatus(stdout: string): GitInfo {
     } else {
       const branchMatch = rest.match(/^(.+?)(?:\.\.\.|\s|$)/);
       if (branchMatch) info.branch = branchMatch[1].trim();
+      // `...` separates branch from upstream and cannot appear in a refname
+      // (git rejects `..` in branch names), so its presence is a reliable
+      // upstream signal.
+      info.hasUpstream = rest.includes('...');
     }
 
     const aheadMatch = headerLine.match(/\[ahead\s+(\d+)/);

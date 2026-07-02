@@ -14,6 +14,7 @@ describe('parseGitStatus — header parsing', () => {
   it('parses branch + upstream', () => {
     const info = parseGitStatus('## main...origin/main\n');
     assert.equal(info.branch, 'main');
+    assert.equal(info.hasUpstream, true);
     assert.equal(info.ahead, 0);
     assert.equal(info.behind, 0);
     assert.equal(info.detached, false);
@@ -42,12 +43,16 @@ describe('parseGitStatus — header parsing', () => {
     const info = parseGitStatus('## local-only\n');
     assert.equal(info.branch, 'local-only');
     assert.equal(info.detached, false);
+    // No `...` upstream marker: ahead stays 0 by default but is meaningless —
+    // consumers must key on hasUpstream (issue #1298 item 5 follow-up).
+    assert.equal(info.hasUpstream, false);
   });
 
   it('flags detached HEAD', () => {
     const info = parseGitStatus('## HEAD (no branch)\n');
     assert.equal(info.detached, true);
     assert.equal(info.branch, '(detached)');
+    assert.equal(info.hasUpstream, false);
   });
 
   it('handles initial commit (No commits yet)', () => {

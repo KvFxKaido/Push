@@ -198,6 +198,7 @@ describe('chat-tool-messages', () => {
         head: 'abc1234',
         changedFiles: ['src/a.ts', 'src/b.ts'],
         ahead: 3,
+        hasUpstream: true,
       },
       { includePulse: true, pulseReason: 'mutation' },
     );
@@ -211,7 +212,41 @@ describe('chat-tool-messages', () => {
     expect(metaLine).toContain('"warnings":["Low disk space: 420M"]');
   });
 
-  it('defaults pulse ahead-of-origin to 0 when the round status omits it', () => {
+  it('says noUpstream instead of a fabricated ahead count when the branch has no upstream', () => {
+    mockGetSandboxEnvironment.mockReturnValue({ tools: {}, warnings: [] });
+
+    const metaLine = buildToolResultMetaLine(
+      1,
+      [assistantMessage({ content: 'Inspect repo state' })],
+      'openrouter',
+      'claude-sonnet-4.6:nitro',
+      // A never-pushed branch parses as `ahead: 0` — emitting that would read
+      // as "in sync with origin" when nothing is on origin at all.
+      { dirty: false, files: 0, ahead: 0, hasUpstream: false },
+      { includePulse: true, pulseReason: 'periodic' },
+    );
+
+    expect(metaLine).toContain('"noUpstream":true');
+    expect(metaLine).not.toContain('"ahead"');
+  });
+
+  it('emits ahead 0 for an in-sync branch WITH an upstream', () => {
+    mockGetSandboxEnvironment.mockReturnValue({ tools: {}, warnings: [] });
+
+    const metaLine = buildToolResultMetaLine(
+      1,
+      [assistantMessage({ content: 'Inspect repo state' })],
+      'openrouter',
+      'claude-sonnet-4.6:nitro',
+      { dirty: false, files: 0, ahead: 0, hasUpstream: true },
+      { includePulse: true, pulseReason: 'periodic' },
+    );
+
+    expect(metaLine).toContain('"ahead":0');
+    expect(metaLine).not.toContain('"noUpstream"');
+  });
+
+  it('emits neither ahead nor noUpstream when upstream state is unknown', () => {
     mockGetSandboxEnvironment.mockReturnValue({ tools: {}, warnings: [] });
 
     const metaLine = buildToolResultMetaLine(
@@ -223,7 +258,9 @@ describe('chat-tool-messages', () => {
       { includePulse: true, pulseReason: 'periodic' },
     );
 
-    expect(metaLine).toContain('"ahead":0');
+    expect(metaLine).toContain('[pulse]');
+    expect(metaLine).not.toContain('"ahead"');
+    expect(metaLine).not.toContain('"noUpstream"');
   });
 
   it('builds tool result messages with wrapped content and tool metadata', () => {
