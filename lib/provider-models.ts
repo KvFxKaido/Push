@@ -124,18 +124,14 @@ export const OPENROUTER_MODELS: string[] = [
 
 // OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
 // every model. This set is the single source of truth for "may use
-// /responses", consumed at BOTH layers of the decision:
-//
-//   - Body construction (web `openrouter-stream.ts`, background
-//     `coder-job-stream-adapter.ts`, CLI `provider.ts`): a model in the set
-//     gets a Responses body (`input`); anything else gets a Chat Completions
-//     body (`messages`). This is the layer that actually fixes the routing —
-//     the Worker cannot rescue a Responses body it must send to
-//     /chat/completions.
-//   - Worker routing (`openRouterRequestUsesResponses`): defense-in-depth.
-//     With the clients gating body shape on the same set, body shape and
-//     endpoint always agree; the model check here just refuses to forward a
-//     Responses body to /responses for a model that can't serve it.
+// /responses", consumed at BODY CONSTRUCTION (web `openrouter-stream.ts`,
+// background `coder-job-stream-adapter.ts`, CLI `provider.ts`): a model in
+// the set gets a Responses body (`input`); anything else gets a Chat
+// Completions body (`messages`). Body construction is the only layer that can
+// fix the routing — the Worker routes purely by body shape and deliberately
+// does NOT consult this set (a model gate there can't rescue a Responses
+// body, and it would break the force-responses override used to trial a
+// model before allowlisting; see `openRouterRequestUsesResponses`).
 //
 // Curated against the OpenRouter Responses Beta docs (2026-07 refresh): the
 // OpenAI 5.x family, Anthropic Claude 4.x, and Google Gemini 2.5+ / 3.x. New

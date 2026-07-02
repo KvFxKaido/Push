@@ -28,12 +28,7 @@ import {
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import {
-  ANTHROPIC_MODELS,
-  GOOGLE_MODELS,
-  OPENAI_MODELS,
-  OPENROUTER_RESPONSES_MODELS,
-} from '@push/lib/provider-models';
+import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
   toGeminiGenerateContent,
@@ -726,6 +721,20 @@ const handleOpenRouterChatLegacy = createStreamProxyHandler({
   gateway: { provider: 'openrouter', pathSuffix: '/chat/completions' },
 });
 
+/**
+ * Route by BODY SHAPE alone: a Responses body (`input`) goes to
+ * `/v1/responses`, anything else to the legacy Chat Completions proxy. The
+ * per-model "may this model use /responses?" decision lives where bodies are
+ * BUILT (web `openrouter-stream.ts`, background `coder-job-stream-adapter.ts`,
+ * CLI `provider.ts`), keyed on `OPENROUTER_RESPONSES_MODELS` — so shape and
+ * endpoint always agree here. Do NOT re-add a model allowlist check at this
+ * layer: it can't rescue a Responses body (the chat validator 400s on a
+ * missing `messages`), and it breaks the documented force-responses override
+ * (`VITE_OPENROUTER_TRANSPORT=responses`) used to trial a model before
+ * allowlisting — the deployed web path posts through this Worker (Codex P2 on
+ * #1305). An unsupported model on /responses gets OpenRouter's own error,
+ * which is the accurate one.
+ */
 async function openRouterRequestUsesResponses(request: Request): Promise<boolean> {
   const bodyText = await request
     .clone()
@@ -733,13 +742,11 @@ async function openRouterRequestUsesResponses(request: Request): Promise<boolean
     .catch(() => '');
   try {
     const parsed = JSON.parse(bodyText);
-    const model = typeof parsed.model === 'string' ? parsed.model : '';
     return (
       Boolean(parsed) &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      Object.prototype.hasOwnProperty.call(parsed, 'input') &&
-      OPENROUTER_RESPONSES_MODELS.has(model)
+      Object.prototype.hasOwnProperty.call(parsed, 'input')
     );
   } catch {
     return false;

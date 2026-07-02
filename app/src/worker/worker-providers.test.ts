@@ -206,43 +206,35 @@ describe('handleOpenRouterChat', () => {
     expect(body.input).toBeUndefined();
   });
 
-  it('rejects a Responses body with 400 when the model is not in the Responses allowlist', async () => {
-    // Regression for the OpenRouter `/v1/responses` beta: the client serializes
-    // every OpenRouter request as a Responses body, but the proxy must not
-    // forward to `/v1/responses` for models that don't support it. Without the
-    // allowlist gate, every non-OpenAI 5.x / Claude 4.x / Gemini 2.5+/3.x model
-    // would 4xx on `/v1/responses` and the user would see a useless upstream
-    // error. With the gate, non-allowlisted models fall through to the legacy
-    // chat-completions path, which rejects the Responses-shape body with 400
-    // (the legacy validator requires a `messages` array). The client should
-    // resend a Chat Completions body for these models.
-    const fetchSpy = vi.fn();
-    vi.stubGlobal('fetch', fetchSpy);
-    const response = await handleOpenRouterChat(
+  it('routes a Responses body to /v1/responses even for a model outside the allowlist', async () => {
+    // The Worker routes by BODY SHAPE alone — the per-model "may this model
+    // use /responses?" decision lives at body construction (web/CLI/background
+    // builders, keyed on OPENROUTER_RESPONSES_MODELS). A Responses body for a
+    // non-allowlisted model only reaches here via the deliberate
+    // force-responses override (VITE_OPENROUTER_TRANSPORT=responses, used to
+    // trial a model before allowlisting); re-adding a model gate at this layer
+    // would bounce that body off the chat validator with a misleading 400
+    // instead of the upstream's accurate error (Codex P2 on #1305).
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenRouterChat(
       makeOpenRouterResponsesRequest({ model: 'meta-llama/llama-4-maverick' }),
       makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
     );
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error).toMatch(/non-empty "messages" array/i);
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it('rejects a Responses body with 400 when no model is set', async () => {
-    // No model at all is treated like "not in the allowlist" — conservative
-    // fallback to a known-good endpoint rather than guessing. The legacy
-    // chat-completions validator rejects the request first on the missing
-    // model (the `messages` check only runs once a model is present).
-    const fetchSpy = vi.fn();
-    vi.stubGlobal('fetch', fetchSpy);
-    const response = await handleOpenRouterChat(
-      makeOpenRouterResponsesRequest({ model: undefined }),
-      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
-    );
-    expect(response.status).toBe(400);
-    const body = await response.json();
-    expect(body.error).toMatch(/missing "model"/i);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(captured?.url).toBe('https://openrouter.ai/api/v1/responses');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'meta-llama/llama-4-maverick',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    });
   });
 
   it('attaches OpenRouter-specific HTTP-Referer and X-Title headers', async () => {
