@@ -95,7 +95,7 @@ function makeOpenRouterResponsesRequest(body: Record<string, unknown> = {}): Req
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'test-model',
+      model: 'openai/gpt-5.4',
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
       stream: true,
       store: false,
@@ -180,7 +180,7 @@ describe('handleOpenRouterChat', () => {
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-or');
     expect(JSON.parse(captured?.init.body as string)).toMatchObject({
-      model: 'test-model',
+      model: 'openai/gpt-5.4',
       stream: true,
       store: false,
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
@@ -204,6 +204,45 @@ describe('handleOpenRouterChat', () => {
     const body = JSON.parse(captured?.init.body as string);
     expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(body.input).toBeUndefined();
+  });
+
+  it('rejects a Responses body with 400 when the model is not in the Responses allowlist', async () => {
+    // Regression for the OpenRouter `/v1/responses` beta: the client serializes
+    // every OpenRouter request as a Responses body, but the proxy must not
+    // forward to `/v1/responses` for models that don't support it. Without the
+    // allowlist gate, every non-OpenAI 5.x / Claude 4.x / Gemini 2.5+/3.x model
+    // would 4xx on `/v1/responses` and the user would see a useless upstream
+    // error. With the gate, non-allowlisted models fall through to the legacy
+    // chat-completions path, which rejects the Responses-shape body with 400
+    // (the legacy validator requires a `messages` array). The client should
+    // resend a Chat Completions body for these models.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest({ model: 'meta-llama/llama-4-maverick' }),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/non-empty "messages" array/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects a Responses body with 400 when no model is set', async () => {
+    // No model at all is treated like "not in the allowlist" — conservative
+    // fallback to a known-good endpoint rather than guessing. The legacy
+    // chat-completions validator rejects the request first on the missing
+    // model (the `messages` check only runs once a model is present).
+    const fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    const response = await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest({ model: undefined }),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.json();
+    expect(body.error).toMatch(/missing "model"/i);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('attaches OpenRouter-specific HTTP-Referer and X-Title headers', async () => {

@@ -28,7 +28,12 @@ import {
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
+import {
+  ANTHROPIC_MODELS,
+  GOOGLE_MODELS,
+  OPENAI_MODELS,
+  OPENROUTER_RESPONSES_MODELS,
+} from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
   toGeminiGenerateContent,
@@ -728,11 +733,13 @@ async function openRouterRequestUsesResponses(request: Request): Promise<boolean
     .catch(() => '');
   try {
     const parsed = JSON.parse(bodyText);
+    const model = typeof parsed.model === 'string' ? parsed.model : '';
     return (
       Boolean(parsed) &&
       typeof parsed === 'object' &&
       !Array.isArray(parsed) &&
-      Object.prototype.hasOwnProperty.call(parsed, 'input')
+      Object.prototype.hasOwnProperty.call(parsed, 'input') &&
+      OPENROUTER_RESPONSES_MODELS.has(model)
     );
   } catch {
     return false;

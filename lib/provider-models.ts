@@ -122,6 +122,34 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5-turbo',
 ];
 
+// OpenRouter's `/v1/responses` endpoint is in beta. The Worker only routes to it
+// when the requested model is in this set, even if the client sent a Responses
+// body — that keeps `openRouterRequestUsesResponses` from sniffing the body
+// shape alone and forwarding to an endpoint the model doesn't support. Curated
+// against the OpenRouter Responses Beta docs (2026-07 refresh): the OpenAI 5.x
+// family, Anthropic Claude 4.x, and Google Gemini 2.5+ / 3.x. New entries need
+// manual verification that `/v1/responses` returns 200 for the model — until
+// then it rides the legacy Chat Completions path and is correct by construction.
+export const OPENROUTER_RESPONSES_MODELS = new Set<string>([
+  'openai/gpt-5-mini',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-pro',
+  'anthropic/claude-haiku-4.5:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-sonnet-4.6:nitro',
+  'google/gemini-2.5-flash:nitro',
+  'google/gemini-2.5-pro:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-3.1-flash-lite:nitro',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemini-3.5-flash:nitro',
+]);
+
 export const CLOUDFLARE_MODELS: string[] = [
   CLOUDFLARE_DEFAULT_MODEL,
   '@cf/qwen/qwen2.5-coder-32b-instruct',
