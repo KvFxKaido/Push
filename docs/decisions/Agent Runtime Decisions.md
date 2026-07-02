@@ -677,6 +677,39 @@ have this model-driven spin; the CLI was the worse case. This closes one
 instability axis (the busy-poll storm); the durable-loop-host and sandbox-loss
 axes are separate.
 
+### 17. Vision is a runtime capability; non-vision models get a describing sidecar, not a model swap
+
+Status: **Draft** (spec complete; implementation not started).
+
+When the chat-locked model cannot read images, the runtime routes image
+attachments through a vision-capable model that describes/OCRs them and
+injects the description as labeled text — instead of refusing the send, which
+is today's behavior. Contract points:
+
+- **The chat lock holds.** The fallback is a sidecar preprocessing call (the
+  Auditor/Reviewer pattern: `lib/` kernel + injected PushStream), never a
+  swap of the lead model, and it does not upgrade declared capabilities —
+  `visionInput` stays `unsupported` and the awareness block says plainly that
+  the model is reading a description, not the image.
+- **Resolution is explicit:** user-set sticky selection
+  (`visionFallback.provider` / `visionFallback.modelByProvider`, the
+  `reviewerAdvisory*` shape) → zero-config Workers AI default on web/cloud
+  (the `AI` binding in `wrangler.jsonc` is already provisioned) → degrade to
+  today's honest refusal. No silent auto-scan of other configured providers.
+- **Fail open to the status quo:** a failed describe call injects an honest
+  placeholder and the send proceeds; attachments are never silently dropped.
+  Descriptions are cached per attachment so prior-turn re-injection doesn't
+  re-bill.
+- **Not Modal-shaped.** Inference never runs in the sandbox; this is one more
+  provider call from the Worker. Self-hosted GPU vision is an explicit
+  non-goal.
+- v2 (separate promotion): `describe_image` as a governed, model-callable
+  tool, which is the point where `lib/capabilities.ts` and drift tests get
+  involved. v1 preprocessing does not touch the tool surface.
+
+Source notes:
+[`Vision Fallback for Non-Vision Models`](<../runbooks/Vision Fallback for Non-Vision Models.md>).
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
