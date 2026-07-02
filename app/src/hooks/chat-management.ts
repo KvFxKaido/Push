@@ -193,6 +193,18 @@ export function useChatManagement({
   workspaceModeRef,
   todoRef,
 }: ChatManagementParams) {
+  // Clear the todo list for a fresh-chat mint. `clear()` only schedules the
+  // useTodo state update, but sendMessage can mint a chat and build the next
+  // prompt in the same tick — chat-stream-round reads `todoRef.current.todos`
+  // before any re-render refreshes the mirror — so the ref is also reset
+  // synchronously (same pattern as chat-send-helpers' post-exec ref sync).
+  const clearTodosForFreshChat = useCallback(() => {
+    const handlers = todoRef.current;
+    if (!handlers) return;
+    handlers.clear();
+    todoRef.current = { ...handlers, todos: [] };
+  }, [todoRef]);
+
   const createNewChat = useCallback((): string => {
     const id = createId();
     const bi = branchInfoRef.current;
@@ -211,16 +223,16 @@ export function useChatManagement({
     activeChatIdRef.current = id;
     setActiveChatId(id);
     saveActiveChatId(id);
-    todoRef.current?.clear();
+    clearTodosForFreshChat();
     return id;
   }, [
     activeRepoFullName,
     activeChatIdRef,
     branchInfoRef,
+    clearTodosForFreshChat,
     dirtyConversationIdsRef,
     setActiveChatId,
     setConversations,
-    todoRef,
     workspaceModeRef,
   ]);
 
@@ -300,6 +312,17 @@ export function useChatManagement({
   const deleteChat = useCallback(
     (id: string) => {
       clearQueuedFollowUps(id);
+      // Fresh-chat mint decision, computed outside the setConversations
+      // updater so the updater stays pure (StrictMode double-invokes it).
+      // Mirrors the `remaining` check inside the updater below.
+      const hasRemainingWorkspaceChat = Object.values(conversations).some(
+        (c) =>
+          c.id !== id &&
+          conversationBelongsToWorkspace(c, repoRef.current, workspaceModeRef.current),
+      );
+      if (id === activeChatId && !hasRemainingWorkspaceChat) {
+        clearTodosForFreshChat();
+      }
       setAgentEventsByChat((prev) => {
         if (!prev[id]) return prev;
         const updated = { ...prev };
@@ -336,9 +359,6 @@ export function useChatManagement({
             );
             setActiveChatId(newId);
             saveActiveChatId(newId);
-            // Fresh-chat mint — start the next effort with an empty todo
-            // list (idempotent, safe under StrictMode's double-invoke).
-            todoRef.current?.clear();
           }
         }
 
@@ -351,13 +371,14 @@ export function useChatManagement({
       activeChatId,
       branchInfoRef,
       clearQueuedFollowUps,
+      clearTodosForFreshChat,
+      conversations,
       deletedConversationIdsRef,
       dirtyConversationIdsRef,
       repoRef,
       setActiveChatId,
       setAgentEventsByChat,
       setConversations,
-      todoRef,
       workspaceModeRef,
     ],
   );
@@ -378,7 +399,7 @@ export function useChatManagement({
 
     // deleteAllChats always mints a fresh chat below — reset the todo list
     // with it so the next effort starts clean.
-    todoRef.current?.clear();
+    clearTodosForFreshChat();
 
     setConversations((prev) => {
       const kept: Record<string, Conversation> = {};
@@ -414,12 +435,12 @@ export function useChatManagement({
   }, [
     branchInfoRef,
     clearQueuedFollowUps,
+    clearTodosForFreshChat,
     conversations,
     repoRef,
     setActiveChatId,
     setAgentEventsByChat,
     setConversations,
-    todoRef,
     workspaceModeRef,
   ]);
 
