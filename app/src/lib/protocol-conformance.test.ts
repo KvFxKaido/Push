@@ -38,9 +38,10 @@ import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
  * delivers exactly what `resolvePushCapabilityProfile(provider, model)` promises
  * for that column. The profile is the contract; the serializer is the proof.
  *
- * Status: skeleton + two exemplar columns (`toolCalling`, `structuredOutput`).
- * The remaining columns sit on the explicit `PENDING_COLUMNS` backlog (visible
- * `it.todo`s, not counted as covered) until their fill-in lands; tracked on #1169.
+ * Status: `toolCalling`, `structuredOutput`, `reasoningBlocks`, and `multimodal`
+ * are executably covered. `streamingTools`, `contentBlocks`, and `context` sit
+ * on the explicit `PENDING_COLUMNS` backlog (visible `it.todo`s, not counted as
+ * covered) until their fill-in lands; tracked on #1169.
  */
 
 // --- drift-gate registration -------------------------------------------------
@@ -66,12 +67,7 @@ function conformanceColumn(column: ConformanceColumn, define: () => void): void 
  * "covered" — and filling a column forces moving it out of here into executable
  * coverage (the overlap check fails otherwise). Addresses the #1186 P2.
  */
-const PENDING_COLUMNS = new Set<ConformanceColumn>([
-  'streamingTools',
-  'multimodal',
-  'contentBlocks',
-  'context',
-]);
+const PENDING_COLUMNS = new Set<ConformanceColumn>(['streamingTools', 'contentBlocks', 'context']);
 
 /** Render a pending column's owed assertion as a visible `it.todo`. Does NOT
  *  register executable coverage — the gate accounts for it via PENDING_COLUMNS. */
@@ -256,6 +252,72 @@ conformanceColumn('reasoningBlocks', () => {
   });
 });
 
+// === multimodal ===============================================================
+// Native multimodal routes (Anthropic, Gemini) translate an image content part
+// into their provider-native block shape. Support is also a MODEL axis within
+// a provider — `modelSupportsMultimodal` resolves per (provider, model), not
+// as a blanket per-provider constant (an OpenAI vision model vs. a text-only
+// one) — matching the model-axis principle the `structuredOutput` column
+// established. Ported from the existing `toAnthropicMessages`/
+// `toGeminiGenerateContent` multimodal-contentParts suites.
+conformanceColumn('multimodal', () => {
+  const PNG = 'data:image/png;base64,iVBORw0KGgo=';
+  const withImage = (provider: string, model: string) =>
+    req(provider, model, {
+      messages: [
+        {
+          id: 'a1',
+          role: 'user',
+          content: 'see image',
+          timestamp: 0,
+          contentParts: [
+            { type: 'text', text: 'see image' },
+            { type: 'image_url', image_url: { url: PNG } },
+          ],
+        },
+      ],
+    });
+
+  it('multimodal-tier Anthropic serializes the image as a base64 source block', () => {
+    expect(resolvePushCapabilityProfile('anthropic', 'claude-opus-4-7').multimodal).toBe(true);
+    const body = toAnthropicMessages(withImage('anthropic', 'claude-opus-4-7')) as {
+      messages: Array<{ content?: Array<Record<string, unknown>> }>;
+    };
+    expect(body.messages[0]?.content).toContainEqual({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' },
+    });
+  });
+
+  it('multimodal-tier Gemini serializes the image as inline_data', () => {
+    expect(resolvePushCapabilityProfile('google', 'gemini-3.1-pro-preview').multimodal).toBe(true);
+    const body = toGeminiGenerateContent(withImage('google', 'gemini-3.1-pro-preview')) as {
+      contents: Array<{ parts?: Array<Record<string, unknown>> }>;
+    };
+    expect(body.contents[0]?.parts).toContainEqual({
+      inline_data: { mime_type: 'image/png', data: 'iVBORw0KGgo=' },
+    });
+  });
+
+  it('resolves multimodal per model within one provider, not a blanket true/false', () => {
+    expect(resolvePushCapabilityProfile('openai', 'gpt-4o').multimodal).toBe(true);
+    expect(resolvePushCapabilityProfile('openai', 'gpt-3.5-turbo').multimodal).toBe(false);
+  });
+
+  it('a route resolved multimodal:false still carries the image through rather than silently dropping it', () => {
+    // `multimodal` isn't consulted as a gate anywhere in the codebase today —
+    // no caller strips images before sending to a non-vision route. Pin the
+    // current best-effort-passthrough behavior so a future gate is a
+    // deliberate addition to this column, not a silent assumption this
+    // harness never checked.
+    const body = toOpenAIChat(withImage('openai', 'gpt-3.5-turbo'));
+    expect(body.messages?.[0]?.content).toContainEqual({
+      type: 'image_url',
+      image_url: { url: PNG },
+    });
+  });
+});
+
 // === remaining columns: explicit pending placeholders ========================
 // Visible `it.todo` backlog. These do NOT count as covered — the gate accounts
 // for them via PENDING_COLUMNS, so they can't masquerade as parity assertions.
@@ -264,10 +326,6 @@ conformanceColumn('reasoningBlocks', () => {
 pendingColumn(
   'streamingTools',
   'native tool-call fragments accumulate incrementally + flush per route that advertises it',
-);
-pendingColumn(
-  'multimodal',
-  'image blocks reach multimodal routes (Gemini inline_data / Anthropic image source); text-only routes degrade clearly',
 );
 pendingColumn(
   'contentBlocks',
