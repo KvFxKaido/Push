@@ -26,6 +26,7 @@ import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
 import { createId } from '@/hooks/chat-persistence';
+import { schedulePostPushCIStatus } from '@/hooks/chat-post-push-ci';
 import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import { fileLedger } from '@/lib/file-awareness-ledger';
 import { notifyWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
@@ -584,50 +585,18 @@ export function useChatCardActions({
 
               injectSyntheticMessage(chatId, 'Pushed to the remote.');
 
-              // Auto-fetch CI after 3s delay (same as the commit-kind path).
+              // Auto-fetch CI after a short delay (same as the commit-kind
+              // path). The injected message carries the model-visible check
+              // summary, not just the card — see chat-post-push-ci.ts.
               const repo = repoRef.current;
               if (repo) {
-                setTimeout(async () => {
-                  try {
-                    const ciResult = await executeToolCall(
-                      { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
-                      repo,
-                    );
-                    if (ciResult.card) {
-                      const ciMsg: ChatMessage = {
-                        id: createId(),
-                        role: 'assistant',
-                        content: 'CI status after push:',
-                        timestamp: Date.now(),
-                        status: 'done',
-                        cards: [ciResult.card],
-                      };
-                      setConversations((prev) => {
-                        const conv = prev[chatId];
-                        if (!conv) return prev;
-                        // Stamp from the fresh conversation branch — this fires in a
-                        // setTimeout after push, so the live ref may have moved on.
-                        const branch = resolveMessageWriteBranch(
-                          branchInfoRef.current,
-                          conv.branch,
-                        );
-                        const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
-                        const updated = {
-                          ...prev,
-                          [chatId]: {
-                            ...conv,
-                            messages: [...conv.messages, stamped],
-                            lastMessageAt: Date.now(),
-                          },
-                        };
-                        dirtyConversationIdsRef.current.add(chatId);
-                        return updated;
-                      });
-                    }
-                  } catch {
-                    // CI fetch is best-effort
-                  }
-                }, 3000);
+                schedulePostPushCIStatus({
+                  chatId,
+                  repo,
+                  setConversations,
+                  dirtyConversationIdsRef,
+                  branchInfoRef,
+                });
               }
             } finally {
               updateAgentStatus({ active: false, phase: '' });
@@ -747,47 +716,17 @@ export function useChatCardActions({
 
             injectSyntheticMessage(chatId, `Committed and pushed: "${action.commitMessage}"`);
 
-            // Step 5: Auto-fetch CI after 3s delay
+            // Step 5: Auto-fetch CI after a short delay — shared coordinator,
+            // see chat-post-push-ci.ts.
             const repo = repoRef.current;
             if (repo) {
-              setTimeout(async () => {
-                try {
-                  const ciResult = await executeToolCall(
-                    { tool: 'fetch_checks', args: { repo, ref: 'HEAD' } },
-                    repo,
-                  );
-                  if (ciResult.card) {
-                    const ciMsg: ChatMessage = {
-                      id: createId(),
-                      role: 'assistant',
-                      content: 'CI status after push:',
-                      timestamp: Date.now(),
-                      status: 'done',
-                      cards: [ciResult.card],
-                    };
-                    setConversations((prev) => {
-                      const conv = prev[chatId];
-                      if (!conv) return prev;
-                      // Stamp from the fresh conversation branch — this fires in a
-                      // setTimeout after push, so the live ref may have moved on.
-                      const branch = resolveMessageWriteBranch(branchInfoRef.current, conv.branch);
-                      const stamped = branch !== undefined ? { ...ciMsg, branch } : ciMsg;
-                      const updated = {
-                        ...prev,
-                        [chatId]: {
-                          ...conv,
-                          messages: [...conv.messages, stamped],
-                          lastMessageAt: Date.now(),
-                        },
-                      };
-                      dirtyConversationIdsRef.current.add(chatId);
-                      return updated;
-                    });
-                  }
-                } catch {
-                  // CI fetch is best-effort
-                }
-              }, 3000);
+              schedulePostPushCIStatus({
+                chatId,
+                repo,
+                setConversations,
+                dirtyConversationIdsRef,
+                branchInfoRef,
+              });
             }
           } finally {
             updateAgentStatus({ active: false, phase: '' });

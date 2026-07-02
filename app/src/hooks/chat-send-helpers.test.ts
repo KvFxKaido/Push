@@ -11,6 +11,11 @@ import {
   GITHUB_TOOL_TURN_USED_EVENT,
 } from '@push/lib/prompt-cost-telemetry';
 import type { ToolExecutionResult } from '@/types';
+import { schedulePostPushCIStatus } from './chat-post-push-ci';
+
+vi.mock('./chat-post-push-ci', () => ({
+  schedulePostPushCIStatus: vi.fn(),
+}));
 
 // Pins the Codex P1 contract from PR #603: `plan_tasks` wrapper
 // outcomes carry agent='coder' or 'explorer' but the inner per-task
@@ -205,5 +210,79 @@ describe('applyPostExecutionSideEffects sandbox recovery policy', () => {
       toolSource: 'sandbox',
       reason: 'mutation_may_have_dispatched',
     });
+  });
+});
+
+// Side effect #9 (#1298 item 4): a successful DIRECT sandbox_push schedules
+// the post-push CI status injection — parity with the approval-gated path in
+// chat-card-actions. Failure/blocked results must NOT schedule it.
+describe('applyPostExecutionSideEffects post-push CI parity', () => {
+  const pushCall = {
+    source: 'sandbox',
+    call: { tool: 'sandbox_push', args: {} },
+  } as unknown as AnyToolCall;
+
+  afterEach(() => {
+    vi.mocked(schedulePostPushCIStatus).mockClear();
+  });
+
+  it('schedules the CI follow-up on a successful direct push', async () => {
+    await applyPostExecutionSideEffects(
+      pushCall,
+      { text: '[Tool Result — sandbox_push]\nPushed successfully.' },
+      minimalSideEffectContext(vi.fn()),
+    );
+
+    expect(schedulePostPushCIStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: 'chat-1', repo: 'owner/repo' }),
+    );
+  });
+
+  it('does not schedule on a failed push', async () => {
+    await applyPostExecutionSideEffects(
+      pushCall,
+      { text: '[Tool Result — sandbox_push]\nPush failed: rejected' },
+      minimalSideEffectContext(vi.fn()),
+    );
+
+    expect(schedulePostPushCIStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule on a structured-error push result', async () => {
+    await applyPostExecutionSideEffects(
+      pushCall,
+      {
+        text: '[Tool Error — sandbox_push]\nblocked',
+        structuredError: { type: 'GIT_GUARD_BLOCKED', retryable: false, message: 'blocked' },
+      },
+      minimalSideEffectContext(vi.fn()),
+    );
+
+    expect(schedulePostPushCIStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule when no repo is bound', async () => {
+    const ctx = minimalSideEffectContext(vi.fn());
+    (ctx as unknown as { repoRef: { current: string | null } }).repoRef.current = null;
+    await applyPostExecutionSideEffects(
+      pushCall,
+      { text: '[Tool Result — sandbox_push]\nPushed successfully.' },
+      ctx,
+    );
+
+    expect(schedulePostPushCIStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not schedule for non-push tools', async () => {
+    await applyPostExecutionSideEffects(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_exec', args: { command: 'echo Pushed successfully.' } },
+      } as unknown as AnyToolCall,
+      { text: 'Pushed successfully.' },
+      minimalSideEffectContext(vi.fn()),
+    );
+
+    expect(schedulePostPushCIStatus).not.toHaveBeenCalled();
   });
 });
