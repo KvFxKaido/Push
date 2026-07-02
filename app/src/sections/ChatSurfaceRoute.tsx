@@ -237,7 +237,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
   const settingsData = buildSettingsData(props);
   const reviewModelOptions = buildWorkspaceHubReviewModelOptions(catalog);
   // Paired remote daemon (CLI/TUI) sessions for the drawer's Connected
-  // section — dialed lazily while the drawer is open. See /handoff.
+  // section — dialed lazily while the drawer is open. See /rc.
   const { sessions: connectedCliSessions } = useConnectedCliSessions(isChatsDrawerOpen);
   const drawerProps = buildRepoChatDrawerProps({
     open: isChatsDrawerOpen,

@@ -5041,7 +5041,7 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  // Shared by /remote (setup|pair) and /handoff: mint a phone pairing
+  // Shared by /remote (setup|pair) and /rc: mint a phone pairing
   // bundle targeting the CURRENT TUI session, so pasting it on the phone
   // lands in this exact conversation.
   async function mintPairBundleForActiveSession() {
@@ -5067,7 +5067,7 @@ export async function runTUI(options = {}) {
     );
   }
 
-  // Shared by /remote and /handoff: render a freshly minted pairing
+  // Shared by /remote and /rc: render a freshly minted pairing
   // bundle into the transcript (and adopt any newly minted session
   // attach token).
   function renderPairBundle(payload) {
@@ -5328,7 +5328,7 @@ export async function runTUI(options = {}) {
   }
 
   /**
-   * /handoff — one-shot "continue this session on my phone."
+   * /rc — remote control: one-shot "continue this session on my phone."
    *
    * Claude Code-style ergonomics over the existing relay pieces: instead
    * of the /remote enable → pair → paste dance, a single command drives
@@ -5341,7 +5341,7 @@ export async function runTUI(options = {}) {
    *   - phone already paired          → confirm reachability (the phone's
    *                                     Connected list shows this session)
    *
-   * `/handoff pair` forces a fresh bundle even when a phone is already
+   * `/rc pair` forces a fresh bundle even when a phone is already
    * paired (pairing an additional device re-uses the same path).
    *
    * The "phone already paired" signal is the relay allowlist size (device
@@ -5349,13 +5349,13 @@ export async function runTUI(options = {}) {
    * which only reflects live loopback WS connections and never sees
    * relay-paired phones.
    */
-  async function handleHandoffCommand(arg) {
+  async function handleRemoteControlCommand(arg) {
     const sub = (arg || '').trim().toLowerCase();
     if (sub && sub !== 'pair') {
       addTranscriptEntry(
         tuiState,
         'warning',
-        'Usage: /handoff  (make this session reachable on your phone) | /handoff pair  (mint a bundle for a new phone)',
+        'Usage: /rc  (make this session reachable on your phone) | /rc pair  (mint a bundle for a new phone)',
       );
       scheduler.flush();
       return;
@@ -5371,8 +5371,8 @@ export async function runTUI(options = {}) {
         tuiState,
         'error',
         status.code === 'DAEMON_OFFLINE'
-          ? 'Handoff needs the pushd daemon, and it is not running (autostart may be off). Try /daemon restart, then /handoff again.'
-          : `Handoff failed reading relay status: ${status.error || status.code || 'unknown'}`,
+          ? '/rc needs the pushd daemon, and it is not running (autostart may be off). Try /daemon restart, then /rc again.'
+          : `Remote control failed reading relay status: ${status.error || status.code || 'unknown'}`,
       );
       scheduler.flush();
       return;
@@ -5387,7 +5387,7 @@ export async function runTUI(options = {}) {
         [
           'Remote relay is not configured yet. One-time setup:',
           '  /remote setup <deployment-url> <pushd_relay_...>',
-          'After that, /handoff hands any TUI session to your phone.',
+          'After that, /rc hands any TUI session to your phone.',
         ].join('\n'),
       );
       scheduler.flush();
@@ -5410,7 +5410,7 @@ export async function runTUI(options = {}) {
           addTranscriptEntry(
             tuiState,
             'error',
-            `Handoff could not restart the relay client: ${enable.error || enable.code || 'unknown'}`,
+            `Remote control could not restart the relay client: ${enable.error || enable.code || 'unknown'}`,
           );
           scheduler.flush();
           return;
@@ -5438,8 +5438,8 @@ export async function runTUI(options = {}) {
         tuiState,
         'error',
         response.code === 'NO_DAEMON_SESSION'
-          ? 'Handoff failed: this TUI has no daemon session yet. Enable daemon autostart (/config daemon auto), then retry.'
-          : `Handoff pairing failed: ${response.error || response.code || 'unknown'}`,
+          ? 'Remote control failed: this TUI has no daemon session yet. Enable daemon autostart (/config daemon auto), then retry.'
+          : `Remote control pairing failed: ${response.error || response.code || 'unknown'}`,
       );
       scheduler.flush();
       return;
@@ -5456,7 +5456,7 @@ export async function runTUI(options = {}) {
       addTranscriptEntry(
         tuiState,
         'warning',
-        'A phone is paired, but this TUI is running inline (no daemon session), so the phone cannot see this chat. Enable daemon autostart (/config daemon auto), then /handoff again.',
+        'A phone is paired, but this TUI is running inline (no daemon session), so the phone cannot see this chat. Enable daemon autostart (/config daemon auto), then /rc again.',
       );
       scheduler.flush();
       return;
@@ -5471,7 +5471,7 @@ export async function runTUI(options = {}) {
         `  relay: ${live?.state || 'connected'}`,
         `  paired phones: ${pairedPhones}`,
         '  Open the Chats drawer on the phone — this session is listed under Connected.',
-        '  /handoff pair adds another phone.',
+        '  /rc pair adds another phone.',
       ].join('\n'),
     );
     scheduler.flush();
@@ -5847,8 +5847,8 @@ export async function runTUI(options = {}) {
         await handleRemoteCommand(arg || null);
         return true;
 
-      case 'handoff':
-        await handleHandoffCommand(arg || null);
+      case 'rc':
+        await handleRemoteControlCommand(arg || null);
         return true;
 
       case 'daemon':
@@ -5886,7 +5886,7 @@ export async function runTUI(options = {}) {
             '  /config explain on|off  Toggle pattern explanations',
             '  /config daemon auto|off  Toggle TUI pushd autostart',
             '  /remote status|setup|pair|enable|disable  Manage Remote relay + phone pairing',
-            '  /handoff [pair]      Hand this session to your phone (one-shot; pairs if needed)',
+            '  /rc [pair]           Remote control: hand this session to your phone (one-shot; pairs if needed)',
             '  /daemon status       Show pushd connection, process, and log paths',
             '  /daemon restart      Drain + respawn pushd from current code (auto on stale)',
             '  /theme               Show current theme',

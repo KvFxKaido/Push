@@ -294,7 +294,7 @@ export function DaemonChatBody({
         setHubOpenState(false);
         // Repaint the Connected (CLI/TUI) section on every open so a
         // session started in the terminal after we attached — e.g. a
-        // fresh /handoff — pops up without a reconnect.
+        // fresh /rc — pops up without a reconnect.
         refreshCliSessions();
       }
       setDrawerOpenState(open);

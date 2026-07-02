@@ -1,5 +1,5 @@
 /**
- * Characterization tests for `/handoff` — the one-shot "continue this
+ * Characterization tests for `/rc` (remote control) — the one-shot "continue this
  * session on my phone" command (Claude Code-style ergonomics over the
  * relay pieces shipped in Remote Sessions Phases 1-3).
  *
@@ -11,7 +11,7 @@
  *   - unconfigured relay  → setup guidance, no bundle minted
  *   - no phone paired     → mints a pairing bundle for THIS session
  *   - phone paired        → confirms reachability, does NOT re-mint
- *   - `/handoff pair`     → force-mints even when a phone is paired
+ *   - `/rc pair`          → force-mints even when a phone is paired
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -49,7 +49,7 @@ function transcriptText(h) {
   return (h.tuiState?.transcript ?? []).map((e) => e.text ?? '').join('\n');
 }
 
-async function runHandoff(line, verbResponses, { waitText } = {}) {
+async function runRemoteControl(line, verbResponses, { waitText } = {}) {
   const h = await startHeadlessTui({ verbResponses });
   await h.typeLine(line);
   await h.waitFor(() => (waitText ? transcriptText(h).includes(waitText) : false), {
@@ -58,10 +58,10 @@ async function runHandoff(line, verbResponses, { waitText } = {}) {
   return h;
 }
 
-describe('TUI /handoff (headless characterization)', () => {
+describe('TUI /rc (headless characterization)', () => {
   it('unconfigured relay → one-time setup guidance, no bundle minted', async () => {
-    const h = await runHandoff(
-      '/handoff',
+    const h = await runRemoteControl(
+      '/rc',
       { relay_status: { ok: true, payload: { persisted: null } } },
       { waitText: '/remote setup' },
     );
@@ -82,8 +82,8 @@ describe('TUI /handoff (headless characterization)', () => {
   });
 
   it('relay up, no phone paired → mints a pairing bundle for this session', async () => {
-    const h = await runHandoff(
-      '/handoff',
+    const h = await runRemoteControl(
+      '/rc',
       {
         relay_status: relayStatusResponse({ allowlistSize: 0 }),
         mint_remote_pair_bundle: PAIR_BUNDLE_RESPONSE,
@@ -113,8 +113,8 @@ describe('TUI /handoff (headless characterization)', () => {
   });
 
   it('phone already paired → confirms reachability without re-minting', async () => {
-    const h = await runHandoff(
-      '/handoff',
+    const h = await runRemoteControl(
+      '/rc',
       { relay_status: relayStatusResponse({ allowlistSize: 2 }) },
       { waitText: 'reachable from your phone' },
     );
@@ -132,9 +132,9 @@ describe('TUI /handoff (headless characterization)', () => {
     }
   });
 
-  it('/handoff pair force-mints even with a phone already paired', async () => {
-    const h = await runHandoff(
-      '/handoff pair',
+  it('/rc pair force-mints even with a phone already paired', async () => {
+    const h = await runRemoteControl(
+      '/rc pair',
       {
         relay_status: relayStatusResponse({ allowlistSize: 2 }),
         mint_remote_pair_bundle: PAIR_BUNDLE_RESPONSE,
@@ -149,7 +149,7 @@ describe('TUI /handoff (headless characterization)', () => {
   });
 
   it('unknown subcommand → usage warning, no daemon admin traffic', async () => {
-    const h = await runHandoff('/handoff bogus', {}, { waitText: 'Usage: /handoff' });
+    const h = await runRemoteControl('/rc bogus', {}, { waitText: 'Usage: /rc' });
     try {
       assert.equal(h.requestsOfType('relay_status').length, 0);
       assert.equal(h.requestsOfType('mint_remote_pair_bundle').length, 0);

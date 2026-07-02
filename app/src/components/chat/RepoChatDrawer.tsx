@@ -442,7 +442,7 @@ export function RepoChatDrawer({
               <div className="flex-1 overflow-y-auto p-3">
                 <div className="space-y-2 stagger-in">
                   {/* Connected — live daemon (CLI/TUI) sessions, leading the
-                      drawer so a `/handoff` from the terminal pops up right
+                      drawer so a `/rc` from the terminal pops up right
                       next to the cloud chats (Claude Code-style). Rendered
                       whenever the paired daemon reports sessions; searchable
                       like the chat rows. */}
