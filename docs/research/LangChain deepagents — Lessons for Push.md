@@ -48,12 +48,19 @@ their context-engineering mechanics, which are independently reimplementable.
 
 1. **A model-facing recall path for compacted history.** deepagents' summary
    message embeds `/conversation_history/{thread_id}.md`; the agent can reopen
-   its own evicted past with `read_file`. Push already stores the compacted
-   span losslessly (`visibleToModel: false` + verbatim log) — the storage work
-   is done; what's missing is the *affordance*: a ref in the compaction
-   summary that `memory_expand` (or a sandbox file) can resolve. This turns
-   "lossless for audit" into "lossless for the agent," and it's the cheapest
-   meaningful upgrade on this list because LCM already built the hard half.
+   its own evicted past with `read_file`. Push keeps the compacted span in the
+   durable transcript (`visibleToModel: false`) — lossless for *audit*, but
+   not model-readable: the compaction path never appends the span to the
+   verbatim log (its only appenders today are reduced tool outputs via
+   `lib/verbatim-retain.ts` and oversized memory details in
+   `lib/context-memory.ts`), so there is no `memory_expand` ref to hand the
+   model. The follow-up is to persist the span into a model-readable store at
+   compaction time — appending to the verbatim log and embedding the returned
+   ref in the compaction summary is the natural fit — or to expose an explicit
+   read path over the durable transcript. Still the cheapest meaningful
+   upgrade here, because LCM already built the log, the ref scheme, and the
+   recall tool; only the compaction-time append and the summary affordance
+   are missing.
 
 2. **Retrieval through existing file tools, incrementally.** Their evicted
    tool results are plain files read back with `offset`/`limit` — no bespoke
