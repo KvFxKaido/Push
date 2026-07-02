@@ -48,6 +48,7 @@ function formatGitGuardBlock(
 
   const isLocalMerge = decision.kind === 'block' && decision.reason === 'no-local-merge';
   const isRemoteMutation = decision.kind === 'block' && decision.reason === 'remote-mutation';
+  const isBranchRename = decision.kind === 'block' && decision.reason === 'branch-rename';
 
   let guidance: string;
   if (isBranchCreate) {
@@ -66,6 +67,12 @@ function formatGitGuardBlock(
     // consented form — the session's remote is fixed, so "allowDirectGit" does
     // NOT apply.
     guidance = `Direct "${label}" is blocked. Push pins the session's remote — changing it (e.g. \`git remote set-url\` or \`git config remote.origin.pushurl\`) would redirect an audited push to a different repository while the push-time destination checks still pass. "allowDirectGit" does NOT apply. The remote is fixed for the session; it can't be changed from inside the sandbox.`;
+  } else if (isBranchRename) {
+    // Same state-sync class as branch create/switch, but with no typed tool
+    // to route to — renaming the checked-out branch moves sandbox HEAD's name
+    // out from under Push's tracked branch (active branch, upstream, any open
+    // PR base). No consented form.
+    guidance = `Direct "${label}" is blocked. Renaming a branch would desync Push's tracked branch state from sandbox HEAD. There is no rename tool — use sandbox_create_branch({"name": "<new-name>"}) to create the new name at the current commit, then delete the old branch (\`git branch -d <old-name>\`) once it's no longer needed. "allowDirectGit" does NOT apply.`;
   } else if (decision.kind === 'block') {
     // History rewrites (rebase / cherry-pick): forbidden, no consented form.
     guidance = `Direct "${label}" is blocked. Push doesn't run local history rewrites — commit normally with sandbox_commit and ship via prepare_push (PRs squash-merge, so local history cleanup isn't needed). "allowDirectGit" does NOT apply.`;

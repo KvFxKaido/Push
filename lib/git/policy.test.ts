@@ -201,6 +201,83 @@ const CORPUS: Case[] = [
     expected: { kind: 'block', reason: 'history-rewrite', label: 'git cherry-pick' },
   },
 
+  // --- block: branch rename (tracked-branch desync, #1298) -----------------
+  {
+    command: 'git branch -m old-name new-name',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // single-arg form renames the CURRENT branch — the core desync vector.
+  {
+    command: 'git branch -m renamed',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch -M main',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch --move old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // the move flag is found regardless of position among other flags.
+  {
+    command: 'git branch -f -m old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // git bundles short options — `-fm`/`-fM` is force+move and must not slip
+  // the exact-match seam (Codex P1 on #1299).
+  {
+    command: 'git branch -fm old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch -fM main',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // git accepts unambiguous long-option abbreviations: `--mov`/`--mo` rename
+  // exactly like `--move` (Push-reviewer WARNING on #1299). `--m` is
+  // ambiguous with `--merged` and git itself errors on it, so it stays
+  // allowed below.
+  {
+    command: 'git branch --mov old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch --mo renamed',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // chained after an allowed segment: the block still surfaces (most
+  // restrictive segment wins).
+  {
+    command: 'git fetch && git branch -m old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  // non-move `git branch` forms keep today's allow-mutate fallthrough.
+  { command: 'git branch', expected: { kind: 'allow', family: 'mutate' } },
+  { command: 'git branch -a', expected: { kind: 'allow', family: 'mutate' } },
+  { command: 'git branch --list feat/*', expected: { kind: 'allow', family: 'mutate' } },
+  { command: 'git branch new-feature', expected: { kind: 'allow', family: 'mutate' } },
+  { command: 'git branch -d old-name', expected: { kind: 'allow', family: 'mutate' } },
+  {
+    command: 'git branch --set-upstream-to=origin/feat feat',
+    expected: { kind: 'allow', family: 'mutate' },
+  },
+  // long options containing an `m` are NOT move flags — the cluster scan is
+  // short-options-only.
+  { command: 'git branch --merged', expected: { kind: 'allow', family: 'mutate' } },
+  {
+    command: 'git branch --sort=-committerdate',
+    expected: { kind: 'allow', family: 'mutate' },
+  },
+  // short clusters without an `m` stay allowed.
+  { command: 'git branch -avv', expected: { kind: 'allow', family: 'mutate' } },
+  // `--m` is ambiguous (`--move` vs `--merged`) — git rejects it itself, so
+  // the policy leaves it alone.
+  { command: 'git branch --m x', expected: { kind: 'allow', family: 'mutate' } },
+  // `--` ends option parsing per git — a later `-m` is a branch NAME, not a
+  // move flag, so it must not trigger the block.
+  { command: 'git branch -- -m', expected: { kind: 'allow', family: 'mutate' } },
+
   // --- block: remote identity mutation (Gate-at-Push destination evasion) --
   {
     command: 'git remote set-url origin https://github.com/attacker/repo.git',

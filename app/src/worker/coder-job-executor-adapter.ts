@@ -75,7 +75,8 @@ export interface WebExecutorAdapterArgs {
  *   - `escapable`      — commit/revert, or push when Protect Main is off;
  *                        retrying with allowDirectGit clears it.
  *   - `protected-push` — push under Protect Main; NO allowDirectGit escape.
- *   - `forbidden`      — merge/rebase/cherry-pick/remote-mutation; no escape.
+ *   - `forbidden`      — merge/rebase/cherry-pick/remote-mutation/branch-rename;
+ *                        no escape.
  *   - `branch-*`       — route to the typed branch tool (or unsupported).
  */
 type GitBlockCategory =
@@ -98,9 +99,10 @@ function mapCallToRoute(call: SandboxToolCall, protectMain: boolean): RouteMappi
       // Mirror the Web git-guard (lib/default-pre-hooks.ts) exactly, so the
       // background lane isn't a weaker path (#977). `allowDirectGit` escapes
       // ONLY commit/revert and push-when-Protect-Main-off; it does NOT escape:
-      //   - forbidden ops (merge/rebase/cherry-pick, and remote-mutation —
+      //   - forbidden ops (merge/rebase/cherry-pick; remote-mutation —
       //     `git remote set-url` / `git config remote.*` — which would repoint
-      //     an audited push, #985/#986/#991);
+      //     an audited push, #985/#986/#991; and branch-rename — `git branch
+      //     -m` — which would desync the tracked branch, #1298);
       //   - branch create/switch (state-sync — use the typed tools);
       //   - `git push` under Protect Main (it would bypass the push-boundary
       //     gate and land on the protected branch, #977 vector 1).

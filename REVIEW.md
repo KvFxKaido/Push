@@ -153,6 +153,10 @@ runtime contract, not re-implement it.
 - File restores must use the explicit form: `git checkout -- <path>` or
   two-positional `git checkout HEAD <path>`. Ref expressions (`HEAD~1`, `main^`,
   `branch@{upstream}`) are expected to pass through.
+- `git branch -m` / `-M` / `--move` is **blocked outright** (`branch-rename`,
+  no `allowDirectGit` escape) — renaming the checked-out branch is the same
+  desync class. Other `git branch` forms (list / create / delete / upstream)
+  are expected to pass the policy.
 - Typed branch tools preserve the sandbox; UI-initiated swaps restart it by
   design. Changes that alter `skipBranchTeardownRef` teardown suppression in
   `WorkspaceSessionScreen.tsx` / `useWorkspaceSandboxController.ts` need scrutiny.
