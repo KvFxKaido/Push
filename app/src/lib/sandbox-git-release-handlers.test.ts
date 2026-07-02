@@ -526,7 +526,8 @@ describe('handlePreparePush', () => {
       expect(result.card.data.auditVerdict.verdict).toBe('safe');
       expect(result.card.data.commitMessage).toBe('');
     }
-    expect(result.text).toContain('Ready to push');
+    expect(result.text).toContain('Committed locally');
+    expect(result.text).toContain('awaiting user approval');
     expect(result.text).toContain('SAFE');
   });
 

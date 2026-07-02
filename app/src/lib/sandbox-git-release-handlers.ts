@@ -853,8 +853,9 @@ export async function handlePreparePush(
     },
   };
 
+  const shaNote = auditedHeadSha ? ` at ${auditedHeadSha.slice(0, 12)}` : '';
   return {
-    text: `[Tool Result — prepare_push]\nReady to push (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Auditor verdict: SAFE. Waiting for user approval.`,
+    text: `[Tool Result — prepare_push]\nCommitted locally${shaNote}; push staged, awaiting user approval — not un-landed (${stats.filesChanged} file${stats.filesChanged !== 1 ? 's' : ''}, +${stats.additions} -${stats.deletions}). Auditor verdict: SAFE.`,
     card: { type: 'commit-review', data: reviewData },
   };
 }
