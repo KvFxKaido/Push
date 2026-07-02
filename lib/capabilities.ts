@@ -216,6 +216,15 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   // `web:search` so a deployment can grant search without arbitrary
   // URL retrieval (or vice versa) — search returns provider-curated
   // snippets, fetch reads any public page the model names.
+  //
+  // Deliberately NOT in `lib/tool-registry.ts` yet: web advertising is
+  // source-filtered off the registry, so a bare entry would either be
+  // advertised on web with no executor (source 'web-search') or add a
+  // dead source enum ahead of its executor. The registry entry lands
+  // with the web-surface slice. Role-grant consumers today are the CLI
+  // paths (lead/Explorer/daemon Coder via `executeToolCall`); the web
+  // Coder binding (`lib/coder-agent-bindings.ts`) never sees the tool
+  // because the web surface doesn't advertise or detect it.
   fetch_url: ['web:fetch'],
 
   // Memory retrieval (read-only). Available to every role: the model can grep

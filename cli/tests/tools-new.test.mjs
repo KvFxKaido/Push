@@ -585,8 +585,95 @@ describe('fetch_url', () => {
     assert.ok(result.text.includes('URL: https://example.com/final'));
   });
 
+  it('caps chunked bodies with no content-length instead of buffering them whole', async () => {
+    // Pull-based stream that could yield far more than the 5MB read cap;
+    // the counter proves the reader cancelled at the cap rather than
+    // draining the stream (push-agent NOTE + Codex P2 on #1291).
+    const counter = { bytes: 0 };
+    const chunk = new TextEncoder().encode('A'.repeat(262_144));
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (counter.bytes >= 67_108_864) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(chunk);
+            counter.bytes += chunk.byteLength;
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'text/plain' } },
+      );
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/chunked' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(
+      counter.bytes < 8_000_000,
+      `reader should stop near the 5MB cap, pulled ${counter.bytes} bytes`,
+    );
+    assert.equal(result.meta.truncated, true);
+  });
+
+  it('bounds the error-body read used for the diagnostic snippet', async () => {
+    const counter = { bytes: 0 };
+    const chunk = new TextEncoder().encode('E'.repeat(16_384));
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          pull(controller) {
+            if (counter.bytes >= 10_485_760) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(chunk);
+            counter.bytes += chunk.byteLength;
+          },
+        }),
+        { status: 404 },
+      );
+
+    const result = await executeToolCall(
+      { tool: 'fetch_url', args: { url: 'https://example.com/big-404' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, false);
+    assert.equal(result.meta.status, 404);
+    assert.ok(
+      counter.bytes < 200_000,
+      `error-body reader should stop near the 8KB snippet cap, pulled ${counter.bytes} bytes`,
+    );
+    assert.ok(result.text.includes('URL returned 404'));
+  });
+
+  it('resolves likely alias names (web_fetch) to the fetch_url handler', async () => {
+    globalThis.fetch = async () =>
+      new Response('aliased body', {
+        status: 200,
+        headers: { 'Content-Type': 'text/plain' },
+      });
+
+    const result = await executeToolCall(
+      { tool: 'web_fetch', args: { url: 'https://example.com/alias' } },
+      PUSH_ROOT,
+    );
+
+    assert.equal(result.ok, true);
+    assert.ok(result.text.includes('aliased body'));
+  });
+
   it('is classified as read-only', () => {
     assert.equal(isReadOnlyToolCall({ tool: 'fetch_url' }), true);
+  });
+
+  it('classifies alias names as read-only via canonicalization', () => {
+    assert.equal(isReadOnlyToolCall({ tool: 'web_fetch' }), true);
+    assert.equal(isReadOnlyToolCall({ tool: 'fetch_page' }), true);
   });
 });
 

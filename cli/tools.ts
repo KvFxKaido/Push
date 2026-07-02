@@ -124,10 +124,10 @@ const TAVILY_API_KEY_ENV_VARS = ['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_
 const OLLAMA_API_KEY_ENV_VARS = ['PUSH_OLLAMA_API_KEY', 'OLLAMA_API_KEY', 'VITE_OLLAMA_API_KEY'];
 const WEB_SEARCH_BACKENDS = new Set(['auto', 'tavily', 'ollama', 'duckduckgo']);
 const FETCH_URL_TIMEOUT_MS = 20_000;
-// Refuse bodies the server declares larger than this before reading them.
-// Servers that lie (or stream without content-length) are read in full and
-// capped after decode — acceptable on the sole-user CLI surface, where the
-// model can already `exec curl` its way to the same bytes.
+// Refuse bodies the server declares larger than this before reading them;
+// servers that lie (or stream chunked with no content-length) are cut off
+// at the same cap by the bounded body reader instead of being buffered
+// in full (see `readBodyBounded`).
 const MAX_FETCH_URL_CONTENT_LENGTH = 5_000_000;
 const MIN_FETCH_URL_CHARS = 1_000;
 
@@ -582,6 +582,12 @@ const CLI_TOOL_ALIASES = new Map([
   ['sandbox_switch_branch', 'git_switch_branch'],
   ['create_branch', 'git_create_branch'],
   ['sandbox_create_branch', 'git_create_branch'],
+  // Likely model guesses for the CLI-native fetch_url (fetch_url is not in
+  // the lib registry — CLI alias tolerance lives here, not there).
+  ['fetch', 'fetch_url'],
+  ['web_fetch', 'fetch_url'],
+  ['get_url', 'fetch_url'],
+  ['fetch_page', 'fetch_url'],
 ]);
 
 function canonicalizeCliToolName(name) {
@@ -832,7 +838,10 @@ export function isReadOnlyToolCall(call) {
   // Read-only GitHub tools (public names) parallelize alongside CLI read-only
   // tools. Write GitHub tools fall through as side-effecting.
   if (GITHUB_READ_ONLY_PUBLIC_TOOL_NAMES.has(call.tool)) return true;
-  return READ_ONLY_TOOLS.has(call.tool);
+  // Canonicalize so alias-emitted calls (e.g. `web_fetch` → `fetch_url`)
+  // classify like their canonical tool instead of falling through to the
+  // single-trailing-side-effect lane.
+  return READ_ONLY_TOOLS.has(call.tool) || READ_ONLY_TOOLS.has(canonicalizeCliToolName(call.tool));
 }
 
 /**
@@ -1703,8 +1712,54 @@ function htmlToReadableText(html) {
 }
 
 /**
+ * Read at most ~`maxBytes` from a fetch Response body and decode as UTF-8.
+ * Bounds memory against servers that lie about (or omit) content-length —
+ * `response.text()` would buffer the whole stream first. May overshoot by
+ * up to one chunk; callers slice to their real cap after decode. Returns
+ * `{ text, cut }` where `cut` means the cap stopped the read (the stream
+ * may have held more). Falls back to a sliced `response.text()` when the
+ * body isn't a web stream (some test mocks; undici always provides one).
+ */
+async function readBodyBounded(response, maxBytes) {
+  const body = response.body;
+  if (!body || typeof body.getReader !== 'function') {
+    const text = await response.text();
+    return { text: text.slice(0, maxBytes), cut: text.length > maxBytes };
+  }
+
+  const reader = body.getReader();
+  const chunks = [];
+  let received = 0;
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      received += value.byteLength;
+    }
+  } finally {
+    // Release the connection if we stopped mid-stream; best-effort.
+    await reader.cancel().catch(() => {});
+  }
+
+  const merged = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  // Conservative: a body ending exactly at the cap reads as cut. Callers
+  // only use `cut` to annotate truncation, so the false positive is benign.
+  return { text: new TextDecoder().decode(merged), cut: received >= maxBytes };
+}
+
+// Bound on the error-body read used only to build a short diagnostic
+// snippet — a multi-MB 404 page must not be buffered for 200 chars.
+const MAX_FETCH_URL_ERROR_BODY_BYTES = 8_192;
+
+/**
  * GET a public http(s) URL and return `{ finalUrl, status, contentType,
- * body }`. Throws named errors so the `fetch_url` case can classify
+ * body, bodyCut }`. Throws named errors so the `fetch_url` case can classify
  * retryability without string-matching messages:
  *   - `FetchUrlHttpError` (with `.status`) on a non-2xx response
  *   - `FetchUrlContentTypeError` on a non-text body
@@ -1735,7 +1790,11 @@ async function executeFetchUrl(targetUrl, signal) {
     });
 
     if (!response.ok) {
-      const rawBody = await response.text().catch(() => '');
+      // Bounded read: the body only feeds a 200-char diagnostic snippet, so
+      // a multi-MB error page must not be buffered whole (Codex P2 on #1291).
+      const rawBody = await readBodyBounded(response, MAX_FETCH_URL_ERROR_BODY_BYTES)
+        .then((r) => r.text)
+        .catch(() => '');
       const snippet = stripHtml(rawBody).slice(0, 200);
       const err = new Error(`URL returned ${response.status}${snippet ? `: ${snippet}` : ''}`);
       err.name = 'FetchUrlHttpError';
@@ -1761,12 +1820,18 @@ async function executeFetchUrl(targetUrl, signal) {
       throw err;
     }
 
-    const body = await response.text();
+    // Bounded read regardless of what the header declared — chunked/lying
+    // servers hit the same byte cap instead of being buffered in full.
+    const { text: body, cut: bodyCut } = await readBodyBounded(
+      response,
+      MAX_FETCH_URL_CONTENT_LENGTH,
+    );
     return {
       finalUrl: response.url || targetUrl,
       status: response.status,
       contentType,
       body,
+      bodyCut,
     };
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError' && !signal?.aborted) {
@@ -2399,6 +2464,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         }
       }
 
+      // Likely model guesses fall through to the CLI-native handler — mirrors
+      // the `switch_branch` / `git_switch_branch` pairing. The capability
+      // gate already canonicalized these via CLI_TOOL_ALIASES.
+      case 'fetch':
+      case 'web_fetch':
+      case 'get_url':
+      case 'fetch_page':
       case 'fetch_url': {
         const rawUrl = asString(call.args.url, 'url').trim();
         if (!rawUrl) throw new Error('url must be a non-empty string');
@@ -2442,15 +2514,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           const title = isHtml ? extractHtmlTitle(page.body) : '';
           let content = isHtml ? htmlToReadableText(page.body) : page.body.trim();
           const totalChars = content.length;
-          const truncated = totalChars > maxChars;
-          if (truncated) content = content.slice(0, maxChars);
+          const charsTruncated = totalChars > maxChars;
+          // `bodyCut` alone can also mean dropped content: a byte-capped HTML
+          // page can strip down to fewer than max_chars readable chars.
+          const truncated = charsTruncated || Boolean(page.bodyCut);
+          if (charsTruncated) content = content.slice(0, maxChars);
 
           const headerLines = [`URL: ${page.finalUrl}`];
           if (title) headerLines.push(`Title: ${title}`);
           headerLines.push(`Content-Type: ${page.contentType.split(';')[0].trim() || 'unknown'}`);
-          const truncationNote = truncated
+          const truncationNote = charsTruncated
             ? `\n\n[truncated ${totalChars - maxChars} chars — re-call with a larger max_chars (cap ${MAX_TOOL_OUTPUT_CHARS}) or fetch a more specific page]`
-            : '';
+            : truncated
+              ? `\n\n[page exceeded the ${MAX_FETCH_URL_CONTENT_LENGTH}-byte read cap — content beyond it was dropped]`
+              : '';
 
           return {
             ok: true,
