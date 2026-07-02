@@ -354,19 +354,23 @@ describe('isHighRiskCommand', () => {
   it('requires approval for git operations routed or blocked by the git oracle', () => {
     assert.equal(isHighRiskCommand('git commit -m "test"'), true);
     assert.equal(isHighRiskCommand('git push origin main'), true);
+    assert.equal(isHighRiskCommand('git push origin main >/tmp/out'), true);
     assert.equal(isHighRiskCommand('git checkout main'), true);
     assert.equal(isHighRiskCommand('git switch -c feature/foo'), true);
     assert.equal(isHighRiskCommand('git merge feature/foo'), true);
+    assert.equal(isHighRiskCommand('(git merge feature/foo)'), true);
     assert.equal(
       isHighRiskCommand('git remote set-url origin https://github.com/attacker/repo.git'),
       true,
     );
     assert.equal(isHighRiskCommand("bash -lc 'git status && git push origin main'"), true);
+    assert.equal(isHighRiskCommand("bash -lc 'git commit -m x >/tmp/out'"), true);
   });
 
   it('does not flag quoted git-looking strings as high-risk', () => {
     assert.equal(isHighRiskCommand('echo "git push origin main"'), false);
     assert.equal(isHighRiskCommand('bash -lc \'echo "git push origin main"\''), false);
+    assert.equal(isHighRiskCommand('echo "git push origin main" >/tmp/out'), false);
   });
 });
 
@@ -588,6 +592,21 @@ describe('exec headless hardening', () => {
     try {
       const result = await executeToolCall(
         { tool: 'exec', args: { command: 'git push origin main' } },
+        root,
+        { allowExec: true },
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError.code, 'APPROVAL_REQUIRED');
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
+
+  it('blocks redirected raw git flow commands with allowExec but no approvalFn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'git push origin main >/tmp/out' } },
         root,
         { allowExec: true },
       );

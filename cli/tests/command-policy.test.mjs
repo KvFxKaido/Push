@@ -80,9 +80,27 @@ describe('approval-level command policy', () => {
     assert.equal(commandRequiresApproval("bash -lc 'git status && git push origin main'"), true);
   });
 
+  it('requires approval for git flow commands behind redirects and grouping', () => {
+    assert.equal(commandRequiresApproval('git push origin main >/tmp/out'), true);
+    assert.equal(commandRequiresApproval('git commit -m x 2>&1'), true);
+    assert.equal(commandRequiresApproval('(git merge feature/new)'), true);
+    assert.equal(commandRequiresApproval('true && git push origin main >/tmp/out'), true);
+    assert.equal(
+      commandRequiresApproval('{ git remote set-url origin https://evil.example/r.git; }'),
+      true,
+    );
+    assert.equal(commandRequiresApproval("bash -lc 'git commit -m x >/tmp/out'"), true);
+  });
+
   it('does not scan harmless parsed string arguments as git operations', () => {
     assert.equal(commandRequiresApproval('echo "git push origin main"'), false);
     assert.equal(commandRequiresApproval('bash -lc \'echo "git push origin main"\''), false);
+    assert.equal(commandRequiresApproval('echo "git push origin main" >/tmp/out'), false);
+    assert.equal(commandRequiresApproval('printf "x|git push origin main" >/tmp/out'), false);
+    assert.equal(
+      commandRequiresApproval('bash -lc \'echo "git push origin main" >/tmp/out\''),
+      false,
+    );
   });
 
   it('keeps sanctioned git and non-git commands out of the approval path', () => {
