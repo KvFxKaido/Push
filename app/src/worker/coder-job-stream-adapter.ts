@@ -38,6 +38,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
+import { openRouterModelUsesResponses } from '@push/lib/provider-models';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import type { ChatMessage } from '@/types';
 import { getZenGoTransport } from '../lib/zen-go';
@@ -212,8 +213,15 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // OpenRouter, OpenAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
       // build the typed `input`-item body for any of them; everything else gets
       // the Chat Completions payload below.
+      // OpenRouter is Responses-shaped ONLY for models in the /responses beta
+      // allowlist — the same per-model gate the web client and CLI apply at
+      // body-construction time. One predicate drives both the body shape and
+      // the SSE pump below, so they can't disagree; a non-allowlisted model
+      // gets a chat body, which `handleOpenRouterChat` routes to the legacy
+      // /chat/completions proxy.
       const isResponsesProvider =
-        args.provider === 'openrouter' ||
+        (args.provider === 'openrouter' &&
+          openRouterModelUsesResponses(req.model || args.modelId)) ||
         args.provider === 'openai' ||
         args.provider === 'sakana' ||
         args.provider === 'fireworks';

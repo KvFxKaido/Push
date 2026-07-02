@@ -122,6 +122,51 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5-turbo',
 ];
 
+// OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
+// every model. This set is the single source of truth for "may use
+// /responses", consumed at BODY CONSTRUCTION (web `openrouter-stream.ts`,
+// background `coder-job-stream-adapter.ts`, CLI `provider.ts`): a model in
+// the set gets a Responses body (`input`); anything else gets a Chat
+// Completions body (`messages`). Body construction is the only layer that can
+// fix the routing — the Worker routes purely by body shape and deliberately
+// does NOT consult this set (a model gate there can't rescue a Responses
+// body, and it would break the force-responses override used to trial a
+// model before allowlisting; see `openRouterRequestUsesResponses`).
+//
+// Curated against the OpenRouter Responses Beta docs (2026-07 refresh): the
+// OpenAI 5.x family, Anthropic Claude 4.x, and Google Gemini 2.5+ / 3.x. New
+// entries need manual verification that `/v1/responses` returns 200 for the
+// model — until then it rides the legacy Chat Completions path and is correct
+// by construction. (A per-model capability flag should eventually replace
+// this pinned-ID set — same maintenance concern as the Ollama FC denylist.)
+export const OPENROUTER_RESPONSES_MODELS = new Set<string>([
+  'openai/gpt-5-mini',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-pro',
+  'anthropic/claude-haiku-4.5:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-sonnet-4.6:nitro',
+  'google/gemini-2.5-flash:nitro',
+  'google/gemini-2.5-pro:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-3.1-flash-lite:nitro',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemini-3.5-flash:nitro',
+]);
+
+/** Per-model transport predicate for OpenRouter — see the set's doc above.
+ *  An unknown/missing model resolves to Chat Completions, which every
+ *  OpenRouter model serves; failing toward /responses would 404/400 on
+ *  models outside the beta. */
+export function openRouterModelUsesResponses(model: string | null | undefined): boolean {
+  return Boolean(model && OPENROUTER_RESPONSES_MODELS.has(model.trim()));
+}
+
 export const CLOUDFLARE_MODELS: string[] = [
   CLOUDFLARE_DEFAULT_MODEL,
   '@cf/qwen/qwen2.5-coder-32b-instruct',

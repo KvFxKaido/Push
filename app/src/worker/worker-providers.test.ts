@@ -95,7 +95,7 @@ function makeOpenRouterResponsesRequest(body: Record<string, unknown> = {}): Req
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: 'test-model',
+      model: 'openai/gpt-5.4',
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
       stream: true,
       store: false,
@@ -180,7 +180,7 @@ describe('handleOpenRouterChat', () => {
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-or');
     expect(JSON.parse(captured?.init.body as string)).toMatchObject({
-      model: 'test-model',
+      model: 'openai/gpt-5.4',
       stream: true,
       store: false,
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
@@ -204,6 +204,37 @@ describe('handleOpenRouterChat', () => {
     const body = JSON.parse(captured?.init.body as string);
     expect(body.messages).toEqual([{ role: 'user', content: 'hello' }]);
     expect(body.input).toBeUndefined();
+  });
+
+  it('routes a Responses body to /v1/responses even for a model outside the allowlist', async () => {
+    // The Worker routes by BODY SHAPE alone — the per-model "may this model
+    // use /responses?" decision lives at body construction (web/CLI/background
+    // builders, keyed on OPENROUTER_RESPONSES_MODELS). A Responses body for a
+    // non-allowlisted model only reaches here via the deliberate
+    // force-responses override (VITE_OPENROUTER_TRANSPORT=responses, used to
+    // trial a model before allowlisting); re-adding a model gate at this layer
+    // would bounce that body off the chat validator with a misleading 400
+    // instead of the upstream's accurate error (Codex P2 on #1305).
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenRouterChat(
+      makeOpenRouterResponsesRequest({ model: 'meta-llama/llama-4-maverick' }),
+      makeEnv({ OPENROUTER_API_KEY: 'sk-or' }),
+    );
+    expect(captured?.url).toBe('https://openrouter.ai/api/v1/responses');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'meta-llama/llama-4-maverick',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
+    });
   });
 
   it('attaches OpenRouter-specific HTTP-Referer and X-Title headers', async () => {
