@@ -6,9 +6,12 @@
  *   - Todo is ephemeral model-facing step tracking ("do A, then B, then C").
  *
  * Persistence mirrors the scratchpad (repo-scoped localStorage on the Web
- * shell) so a task list survives a chat restart, but the model is encouraged
- * to treat it as working state for the current effort and clear it when the
- * task ships.
+ * shell) so a task list survives an app reload mid-effort, but it is scoped
+ * to the current effort, not the repo's history: minting a new chat wipes it
+ * (chat-management's createNewChat / fresh-chat mint paths call the clear
+ * handler) so a stale list never leaks into a fresh session's [TODO] block
+ * and reads as false shared history. The model is still encouraged to clear
+ * it explicitly when the task ships.
  *
  * Tools:
  *   - todo_write: replace the entire list (atomic snapshot — matches the

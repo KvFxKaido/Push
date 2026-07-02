@@ -538,6 +538,7 @@ export function useChat(
     abortStream,
     clearQueuedFollowUps,
     workspaceModeRef,
+    todoRef,
   });
 
   // --- Background Coder jobs (PR #3b) ---

@@ -4,8 +4,10 @@
  * Sibling to useScratchpad, but scoped differently: the scratchpad is user-
  * facing narrative memory (notes, decisions, context); the todo list is
  * model-facing step tracking for the current effort. Both persist per-repo
- * so the model has continuity across chat restarts, but the todo list is
- * designed to be cleared when an effort ships.
+ * so state survives an app reload, but the todo list is effort-scoped in
+ * practice: chat-management wipes it whenever a fresh chat is minted (new
+ * chat = new effort), so a previous session's steps never leak into a new
+ * chat's [TODO] prompt block and masquerade as shared history.
  *
  * Storage:
  *   - List: localStorage key `push-todo:<repoFullName>` (JSON array).
