@@ -370,6 +370,9 @@ export type RoundSandboxStatus = {
   changedFiles?: string[];
   /** Local commits not yet on the upstream tracking ref (`git status -b`'s `[ahead N]`). */
   ahead?: number;
+  /** Whether the branch has an upstream at all — `ahead` is meaningless without one
+   *  (a never-pushed branch parses as `ahead: 0` but nothing is on origin). */
+  hasUpstream?: boolean;
 };
 
 export interface TurnRunContext {
@@ -450,6 +453,7 @@ export function createTurnRunContext(
           .filter((value): value is string => Boolean(value))
           .slice(0, 6),
         ahead: info?.ahead ?? undefined,
+        hasUpstream: info?.hasUpstream ?? undefined,
       };
       cacheFetched = true;
     } catch {

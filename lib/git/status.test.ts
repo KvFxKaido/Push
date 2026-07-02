@@ -18,6 +18,7 @@ describe('parseGitStatusInfo', () => {
     expect(info.detached).toBe(false);
     expect(info.ahead).toBe(2);
     expect(info.behind).toBe(1);
+    expect(info.hasUpstream).toBe(true);
     expect(info.statusLine).toBe('main...origin/main [ahead 2, behind 1]');
     expect(info.entries).toHaveLength(5);
     // staged = entries with non-space X (excludes ??): staged.ts, both.ts, added.ts
@@ -34,6 +35,13 @@ describe('parseGitStatusInfo', () => {
     expect(info.entries[0].path).toBe('new.ts');
     expect(info.entries[0].raw).toBe('R  old.ts -> new.ts');
     expect(info.renamed).toEqual(['new.ts']);
+  });
+
+  it('reports hasUpstream=false for a never-pushed branch (ahead 0 is meaningless there)', () => {
+    const info = parseGitStatusInfo('## feat/local-only\n M file.ts');
+    expect(info.branch).toBe('feat/local-only');
+    expect(info.hasUpstream).toBe(false);
+    expect(info.ahead).toBe(0);
   });
 
   it('marks detached HEAD and empty status', () => {

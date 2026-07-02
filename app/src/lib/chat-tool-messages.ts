@@ -17,6 +17,8 @@ export interface ToolResultMetaSnapshot {
   changedFiles?: string[];
   /** Local commits not yet on the upstream tracking ref. */
   ahead?: number;
+  /** Whether the branch has an upstream — `ahead` is only emitted when true. */
+  hasUpstream?: boolean;
 }
 
 export interface BuildToolResultMetaLineOptions {
@@ -146,7 +148,17 @@ export function buildToolResultMetaLine(
       dirty: sandboxStatusCache.dirty,
       files: sandboxStatusCache.files,
       changedFiles: sandboxStatusCache.changedFiles?.slice(0, 6) ?? [],
-      ahead: sandboxStatusCache.ahead ?? 0,
+      // `ahead: 0` on a branch with NO upstream would read as "in sync with
+      // origin" when in fact nothing is on origin — the one case where the
+      // divergence signal matters most (a fresh auto-branch after
+      // sandbox_commit, before its first push). Emit the count only when an
+      // upstream exists; say `noUpstream` explicitly when it doesn't; emit
+      // neither when upstream state is unknown (no fabricated zeros).
+      ...(sandboxStatusCache.hasUpstream === true
+        ? { ahead: sandboxStatusCache.ahead ?? 0 }
+        : sandboxStatusCache.hasUpstream === false
+          ? { noUpstream: true }
+          : {}),
       warnings: sandboxEnv?.warnings?.slice(0, 2) ?? [],
     };
     lines.push(`[pulse] ${JSON.stringify(pulsePayload)}`);
