@@ -201,6 +201,17 @@ function withArticle(noun: string): string {
   return `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
 }
 
+/** Plural noun form for the aggregated summary line. Bare 's'-append mangles
+ *  several LABELS nouns (search → "searchs", push → "pushs", branch →
+ *  "branchs", memory → "memorys"), so cover the two English rules the
+ *  vocabulary actually hits: sibilant endings take "es", consonant+y takes
+ *  "ies". Everything else appends "s". */
+function pluralNoun(noun: string): string {
+  if (/(?:s|sh|ch|x|z)$/i.test(noun)) return `${noun}es`;
+  if (/[^aeiou]y$/i.test(noun)) return `${noun.slice(0, -1)}ies`;
+  return `${noun}s`;
+}
+
 export function buildSummaryLine(items: ToolCallPair[]): string {
   // Single call → prefer the concrete target ("Read config.json", "Ran npm
   // test") over the generic noun ("Read a file") when we captured one. Falls
@@ -223,7 +234,7 @@ export function buildSummaryLine(items: ToolCallPair[]): string {
   const phrases: string[] = [];
   for (const [name, count] of counts) {
     const { noun, verb } = getLabel(name);
-    phrases.push(`${verb} ${count} ${noun}${count > 1 ? 's' : ''}`);
+    phrases.push(`${verb} ${count} ${count > 1 ? pluralNoun(noun) : noun}`);
   }
 
   // Single tool → drop count, e.g. "Ran a command"

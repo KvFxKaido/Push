@@ -233,6 +233,28 @@ describe('withArticle (via buildSummaryLine)', () => {
   });
 });
 
+describe('pluralNoun (via buildSummaryLine)', () => {
+  const batchOf = (toolName: string, n: number): ToolCallPair[] =>
+    Array.from({ length: n }, (_, i) => ({
+      callMsg: toolCallMsg(`c${i}`),
+      resultMsg: toolResultMsg(`r${i}`, toolName),
+    }));
+
+  it('pluralizes sibilant endings with "es" (the "searchs"/"pushs" bug)', () => {
+    expect(buildSummaryLine(batchOf('search', 2))).toBe('Searched 2 searches');
+    expect(buildSummaryLine(batchOf('prepare_push', 2))).toBe('Prepared 2 pushes');
+    expect(buildSummaryLine(batchOf('create_branch', 2))).toBe('Created 2 branches');
+  });
+
+  it('pluralizes consonant+y endings with "ies" (the "memorys" bug)', () => {
+    expect(buildSummaryLine(batchOf('memory_grep', 2))).toBe('Recalled 2 memories');
+  });
+
+  it('keeps the plain "s" append for regular nouns', () => {
+    expect(buildSummaryLine(batchOf('read', 2))).toBe('Read 2 files');
+  });
+});
+
 /* ------------------------------------------------------------------ */
 /*  Pending-action cards (hoisted out of collapsed groups)             */
 /* ------------------------------------------------------------------ */
