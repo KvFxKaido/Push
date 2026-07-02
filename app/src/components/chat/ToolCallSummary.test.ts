@@ -8,6 +8,7 @@ import {
   collectPendingActionCards,
   type ToolCallPair,
 } from './tool-call-utils';
+import { getAllToolSpecs } from '@/lib/tool-registry';
 
 function textMsg(id: string, content: string): ChatMessage {
   return {
@@ -199,6 +200,58 @@ describe('getLabel', () => {
 
   it('falls back to "Used" for unknown tools', () => {
     expect(getLabel('totally_unknown_tool').verb).toBe('Used');
+  });
+
+  it('labels the GitHub catalog (the screenshot regression: "Used a tool" for issues)', () => {
+    expect(getLabel('issues').verb).toBe('Fetched'); // list_issues (public name)
+    expect(getLabel('list_issues').noun).toBe('issue list');
+    expect(getLabel('pr').verb).toBe('Fetched'); // fetch_pr
+    expect(getLabel('commits').verb).toBe('Fetched'); // list_commits
+    expect(getLabel('checks').verb).toBe('Fetched'); // fetch_checks
+    expect(getLabel('workflow_run').verb).toBe('Triggered'); // trigger_workflow
+  });
+
+  // Drift guard: every tool in the shared registry must have a display label.
+  // The default "Used a tool" fallback exists for genuinely unknown names
+  // (malformed calls, future skew), not for shipped tools — a registry
+  // addition without a LABELS entry regresses the collapsed summary to the
+  // generic row this test pins against.
+  it('covers every registered tool — no shipped tool renders "Used a tool"', () => {
+    for (const spec of getAllToolSpecs()) {
+      const label = getLabel(spec.canonicalName);
+      expect(label.verb, `missing LABELS entry for ${spec.canonicalName}`).not.toBe('Used');
+    }
+  });
+});
+
+describe('withArticle (via buildSummaryLine)', () => {
+  it('uses "an" for vowel-initial nouns in the single-call noun form', () => {
+    const items: ToolCallPair[] = [
+      { callMsg: toolCallMsg('1'), resultMsg: toolResultMsg('1', 'issues') },
+    ];
+    expect(buildSummaryLine(items)).toBe('Fetched an issue list');
+  });
+});
+
+describe('pluralNoun (via buildSummaryLine)', () => {
+  const batchOf = (toolName: string, n: number): ToolCallPair[] =>
+    Array.from({ length: n }, (_, i) => ({
+      callMsg: toolCallMsg(`c${i}`),
+      resultMsg: toolResultMsg(`r${i}`, toolName),
+    }));
+
+  it('pluralizes sibilant endings with "es" (the "searchs"/"pushs" bug)', () => {
+    expect(buildSummaryLine(batchOf('search', 2))).toBe('Searched 2 searches');
+    expect(buildSummaryLine(batchOf('prepare_push', 2))).toBe('Prepared 2 pushes');
+    expect(buildSummaryLine(batchOf('create_branch', 2))).toBe('Created 2 branches');
+  });
+
+  it('pluralizes consonant+y endings with "ies" (the "memorys" bug)', () => {
+    expect(buildSummaryLine(batchOf('memory_grep', 2))).toBe('Recalled 2 memories');
+  });
+
+  it('keeps the plain "s" append for regular nouns', () => {
+    expect(buildSummaryLine(batchOf('read', 2))).toBe('Read 2 files');
   });
 });
 
