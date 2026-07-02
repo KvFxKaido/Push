@@ -5,6 +5,7 @@ import {
   handleSearchReplace,
   type EditHandlerContext,
 } from './sandbox-edit-handlers';
+import { calculateLineHash } from './hashline';
 import type { ExecResult, FileReadResult, WriteResult } from './sandbox-client';
 import type { EditGuardVerdict } from './file-awareness-ledger';
 
@@ -166,6 +167,45 @@ describe('handleEditFile', () => {
     expect(ctx.invalidateSymbolLedger).toHaveBeenCalledWith('/workspace/src/app.ts');
     expect(result.text).toContain('[Tool Result — sandbox_edit_file]');
     expect(result.postconditions?.touchedFiles[0]?.mutation).toBe('edit');
+  });
+
+  it('surfaces fresh anchors when the edited write is rejected as stale', async () => {
+    const initial = 'const x = 1;\nconst y = 2;\n';
+    const current = 'const x = 3;\nconst y = 2;\n';
+    const ctx = makeContext({
+      readResults: [
+        {
+          content: initial,
+          version: 'v1',
+          truncated: false,
+        } as FileReadResult,
+        {
+          content: current,
+          version: 'v9',
+          truncated: false,
+        } as FileReadResult,
+      ],
+      writeResult: {
+        ok: false,
+        code: 'STALE_FILE',
+        expected_version: 'v1',
+        current_version: 'v9',
+      },
+    });
+    const ref = `1:${await calculateLineHash('const x = 1;', 7)}`;
+
+    const result = await handleEditFile(ctx, {
+      path: '/workspace/src/app.ts',
+      edits: [{ op: 'replace_line', ref, content: 'const x = 2;' }],
+    });
+
+    expect(result.structuredError?.type).toBe('STALE_FILE');
+    expect(ctx.versionCacheSet).toHaveBeenCalledWith(expect.any(String), 'v9');
+    expect(ctx.markLedgerStale).toHaveBeenCalledWith('/workspace/src/app.ts');
+    expect(result.text).toContain('Fresh hashline anchors');
+    expect(result.text).toMatch(/1:[a-f0-9]{7}/);
+    expect(result.text).toContain('const x = 3;');
+    expect(result.structuredError?.detail).toContain('Fresh hashline anchors');
   });
 });
 

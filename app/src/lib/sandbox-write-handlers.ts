@@ -44,7 +44,9 @@ import {
   buildHashlineRetryHints,
   buildPatchsetFailureDetail,
   buildRangeReplaceHashlineOps,
+  buildStaleFileAnchorHints,
   isUnknownSymbolGuardReason,
+  PATCHSET_DETAIL_MAX_CHARS,
   readFullFileByChunks,
   recordPatchsetStaleConflict,
   runPatchsetDiagnostics,
@@ -67,6 +69,8 @@ type WriteFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_write_file' }>['a
 type ApplyPatchsetArgs = Extract<SandboxToolCall, { tool: 'sandbox_apply_patchset' }>['args'];
 
 type ModifiedBy = MutationProvenance['modifiedBy'];
+
+const STALE_PATCHSET_ANCHOR_BLOCK_LIMIT = 4;
 
 export interface WriteHandlerContext {
   sandboxId: string;
@@ -204,6 +208,96 @@ function buildPatchsetTouchedFiles(
   }
 
   return touchedFiles;
+}
+
+async function buildStaleWriteAnchorLines(
+  ctx: WriteHandlerContext,
+  path: string,
+  proposedContent: string,
+  options: {
+    currentVersion?: string | null;
+    affectedLines?: readonly number[];
+  } = {},
+): Promise<string[]> {
+  try {
+    const latest = (await ctx.readFromSandbox(ctx.sandboxId, path)) as FileReadResult & {
+      error?: string;
+    };
+    if (latest.error) {
+      return [`Fresh anchors unavailable: current-file read failed (${latest.error}).`];
+    }
+    ctx.syncReadSnapshot(ctx.sandboxId, path, latest);
+    return buildStaleFileAnchorHints(latest.content, path, {
+      currentVersion: latest.version ?? options.currentVersion,
+      proposedContent,
+      affectedLines: options.affectedLines,
+      truncated: Boolean(latest.truncated),
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return [`Fresh anchors unavailable: current-file read threw (${msg}).`];
+  }
+}
+
+function formatStaleAnchorBlock(path: string, anchorLines: readonly string[]): string {
+  return [`${path}:`, ...anchorLines.map((line) => `  ${line}`)].join('\n');
+}
+
+interface StalePatchsetAnchorRequest {
+  path: string;
+  proposedContent: string;
+  currentVersion?: string | null;
+  affectedLines?: readonly number[];
+}
+
+function queueStalePatchsetAnchorRequest(
+  requests: StalePatchsetAnchorRequest[],
+  request: StalePatchsetAnchorRequest,
+): boolean {
+  if (requests.length >= STALE_PATCHSET_ANCHOR_BLOCK_LIMIT) return false;
+  requests.push(request);
+  return true;
+}
+
+async function buildStalePatchsetAnchorBlocks(
+  ctx: WriteHandlerContext,
+  requests: readonly StalePatchsetAnchorRequest[],
+  skippedCount: number,
+): Promise<string[]> {
+  const blocks = (
+    await Promise.all(
+      requests.map(async (request) => {
+        const anchorLines = await buildStaleWriteAnchorLines(
+          ctx,
+          request.path,
+          request.proposedContent,
+          {
+            currentVersion: request.currentVersion,
+            affectedLines: request.affectedLines,
+          },
+        );
+        return anchorLines.length > 0 ? formatStaleAnchorBlock(request.path, anchorLines) : null;
+      }),
+    )
+  ).filter((block): block is string => Boolean(block));
+
+  if (skippedCount > 0) {
+    blocks.push(
+      `... ${skippedCount} stale file(s) omitted; re-read failed files for additional anchors.`,
+    );
+  }
+  return blocks;
+}
+
+function buildPatchsetStructuredDetail(
+  writeFailures: readonly string[],
+  staleAnchorBlocks: readonly string[],
+): string {
+  const failureDetail = buildPatchsetFailureDetail([...writeFailures]);
+  if (staleAnchorBlocks.length === 0) return failureDetail;
+  const detail = [failureDetail, 'Fresh anchors for stale files:', ...staleAnchorBlocks].join('\n');
+  if (detail.length <= PATCHSET_DETAIL_MAX_CHARS) return detail;
+  return `${detail.slice(0, PATCHSET_DETAIL_MAX_CHARS)}...`;
 }
 
 // --- Handlers ---
@@ -416,11 +510,14 @@ export async function handleWriteFile(
         });
         const expected = result.expected_version || freshVersion || 'unknown';
         const current = result.current_version || 'missing';
+        const anchorLines = await buildStaleWriteAnchorLines(ctx, args.path, args.content, {
+          currentVersion: result.current_version,
+        });
         const err: StructuredToolError = {
           type: 'STALE_FILE',
           retryable: false,
           message: `Stale write rejected for ${args.path}.`,
-          detail: `expected=${expected} current=${current}`,
+          detail: [`expected=${expected} current=${current}`, ...anchorLines].join('\n'),
         };
         return {
           text: formatStructuredError(
@@ -430,7 +527,8 @@ export async function handleWriteFile(
               `Stale write rejected for ${args.path}.`,
               `Expected version: ${expected}`,
               `Current version: ${current}`,
-              `Re-read the file with sandbox_read_file, apply edits to the latest content, then retry.`,
+              ...anchorLines,
+              `Use the fresh anchors above for a targeted sandbox_edit_file/sandbox_edit_range retry, or re-read the file before retrying sandbox_write_file.`,
             ].join('\n'),
           ),
           structuredError: err,
@@ -919,6 +1017,8 @@ export async function handleApplyPatchset(
     { bytesWritten?: number; versionAfter?: string | null }
   >();
   let staleFailureCount = 0;
+  const staleAnchorRequests: StalePatchsetAnchorRequest[] = [];
+  let skippedStaleAnchorCount = 0;
 
   const editResultsByPath = new Map(editResults.map((r) => [r.path, r]));
 
@@ -1011,6 +1111,16 @@ export async function handleApplyPatchset(
         if (entry.code === 'STALE_FILE') {
           const staleEntry = entry as BatchWriteResultEntry;
           staleFailureCount += 1;
+          if (
+            !queueStalePatchsetAnchorRequest(staleAnchorRequests, {
+              path: staleEntry.path,
+              proposedContent: editInfo?.content ?? '',
+              currentVersion: staleEntry.current_version,
+              affectedLines: editInfo?.resolvedLines,
+            })
+          ) {
+            skippedStaleAnchorCount += 1;
+          }
           writeFailures.push(
             recordPatchsetStaleConflict(
               ctx.sandboxId,
@@ -1057,6 +1167,16 @@ export async function handleApplyPatchset(
         if (!writeResult.ok) {
           if (writeResult.code === 'STALE_FILE') {
             staleFailureCount += 1;
+            if (
+              !queueStalePatchsetAnchorRequest(staleAnchorRequests, {
+                path: r.path,
+                proposedContent: r.content,
+                currentVersion: writeResult.current_version,
+                affectedLines: r.resolvedLines,
+              })
+            ) {
+              skippedStaleAnchorCount += 1;
+            }
             writeFailures.push(
               recordPatchsetStaleConflict(
                 ctx.sandboxId,
@@ -1095,7 +1215,12 @@ export async function handleApplyPatchset(
   }
 
   if (writeFailures.length > 0) {
-    const detail = buildPatchsetFailureDetail(writeFailures);
+    const staleAnchorBlocks = await buildStalePatchsetAnchorBlocks(
+      ctx,
+      staleAnchorRequests,
+      skippedStaleAnchorCount,
+    );
+    const detail = buildPatchsetStructuredDetail(writeFailures, staleAnchorBlocks);
     const err: StructuredToolError =
       staleFailureCount > 0
         ? {
@@ -1119,11 +1244,19 @@ export async function handleApplyPatchset(
     }
     lines.push(`${writeFailures.length} file(s) failed:`);
     lines.push(...writeFailures.map((f) => `  ✗ ${f}`));
+    if (staleAnchorBlocks.length > 0) {
+      lines.push('Fresh anchors for stale files:');
+      lines.push(...staleAnchorBlocks);
+    }
     if (guardWarnings.length > 0) {
       lines.push('Guard warnings:');
       lines.push(...guardWarnings.map((w) => `  ⚠ ${w}`));
     }
-    lines.push('Re-read failed files before retrying to avoid stale or partial-overwrite risk.');
+    lines.push(
+      staleAnchorBlocks.length > 0
+        ? 'Use the fresh anchors above for stale files, or re-read failed files before retrying if you need full context.'
+        : 'Re-read failed files before retrying to avoid stale or partial-overwrite risk.',
+    );
     const partialPostconditions =
       successfulWrites.size > 0
         ? ({
