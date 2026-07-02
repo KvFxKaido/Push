@@ -166,7 +166,10 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'mistralai/mistral-large-2-instruct': M(128000, false, true, true, TEXT, TEXT, false),
   },
   ollama: {
+    // Retiring on Ollama Cloud (2026-07 notice); kept until the id 404s so
+    // free-text picks still resolve declared metadata.
     'gemini-3-flash-preview': M(1048576, true, true, false, TEXT_IMAGE),
+    'minimax-m3': M(512000, true, true, false, TEXT_IMAGE_VIDEO),
   },
   openai: {
     'gpt-5.4': M(1050000, true, true, true, TEXT_IMAGE_PDF),

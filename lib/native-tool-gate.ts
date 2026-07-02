@@ -20,6 +20,20 @@ const OPENAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(OPENAI_MO
 /** Curated Vertex model ids cleared for native function calling. */
 export const VERTEX_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(VERTEX_MODELS);
 
+/**
+ * Ollama-hosted model ids denied native function calling even when capability
+ * metadata reports support. MiniMax M3 on Ollama Cloud's OpenAI-compatible
+ * path stalls (~20s) and returns empty after the first `role: "tool"` result
+ * (ollama/ollama#16389) — fatal to Push's multi-round tool loop, while
+ * text-dispatch works fine. Both the hosted-catalog id and the `:cloud` tag a
+ * local install registers are listed. Remove entries when the upstream fix
+ * lands.
+ */
+export const OLLAMA_NATIVE_TOOL_CALLING_DENYLIST: ReadonlySet<string> = new Set([
+  'minimax-m3',
+  'minimax-m3:cloud',
+]);
+
 /** OpenAI-family model id (curated catalog or `gpt-4*` / `gpt-5*` shape). */
 export function looksLikeOpenAIToolCallingModel(modelId: string): boolean {
   const m = modelId.trim().toLowerCase();

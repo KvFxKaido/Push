@@ -6,6 +6,7 @@ import {
   getModelDisplayLeafName,
   normalizeFireworksModelName,
   normalizeKilocodeModelName,
+  normalizeOllamaModelName,
   PROVIDER_URLS,
   PROVIDERS,
 } from './providers';
@@ -109,6 +110,16 @@ describe('normalizeKilocodeModelName', () => {
       'google/gemini-3-flash-preview',
     );
     expect(normalizeKilocodeModelName('kilo-auto/balanced')).toBe('kilo-auto/balanced');
+  });
+});
+
+describe('normalizeOllamaModelName', () => {
+  it('migrates retired Ollama Cloud ids and passes free-text ids through', () => {
+    expect(normalizeOllamaModelName('gemini-3-flash-preview')).toBe('minimax-m3');
+    expect(normalizeOllamaModelName('')).toBe('minimax-m3');
+    // Free-text ids (local models, account-specific tags) are untouched.
+    expect(normalizeOllamaModelName('minimax-m3:cloud')).toBe('minimax-m3:cloud');
+    expect(normalizeOllamaModelName('qwen3-vl:235b-instruct')).toBe('qwen3-vl:235b-instruct');
   });
 });
 

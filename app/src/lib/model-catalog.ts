@@ -37,6 +37,7 @@ import { anthropicModelSupportsNativeStructuredOutput } from '@push/lib/anthropi
 import {
   looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
+  OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
   VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '@push/lib/native-tool-gate';
 import {
@@ -68,16 +69,20 @@ export const MIN_CONTEXT_TOKENS = 64000;
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
 const NVIDIA_PRIORITY_MODELS: readonly string[] = NVIDIA_MODELS;
+// Refreshed against Ollama Cloud's 2026-07 retirement notice: dropped
+// gemini-3-flash-preview, glm-5, qwen3-coder-next, qwen3-coder:480b,
+// deepseek-v3.2, devstral-2:123b, gemma3:27b in favor of Ollama's
+// recommended replacements. Priority only orders the live `/models`
+// response, so ids not yet on an account simply don't surface.
 const OLLAMA_PRIORITY_MODELS = [
-  'gemini-3-flash-preview',
-  'glm-5',
-  'qwen3-coder-next',
-  'qwen3-coder:480b',
+  'minimax-m3',
+  'glm-5.2',
+  'qwen3.5:397b',
   'kimi-k2.5',
-  'deepseek-v3.2',
-  'devstral-2:123b',
+  'deepseek-v4-flash',
+  'mistral-large-3:675b',
   'qwen3-vl:235b-instruct',
-  'gemma3:27b',
+  'gemma4:31b',
   'nemotron-3-super',
   'minimax-m2.5',
 ] as const;
@@ -711,7 +716,12 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'vertex') return VERTEX_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
-  if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
+  if (provider === 'ollama') {
+    return (
+      !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(modelId) &&
+      getModelCapabilities('ollama', modelId).toolCall
+    );
+  }
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
