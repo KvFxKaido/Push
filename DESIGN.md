@@ -451,7 +451,7 @@ A new top-level surface (full-screen pairing flow, settings sub-page, onboarding
 ### When to reach for which
 
 - **Navigation chrome** (back-button top bars on pairing / settings / sub-page screens): use `<HeaderBar>` + `<PageScaffold>`. Three roles per slot: `back` / `title` / `actions`.
-- **Chat app bar** (`ChatScreen`, `ChatSurfaceScreen`): use the `HEADER_*` classes directly with an inline 3-region grid. Each cell holds interactive content, not a passive title — `HeaderBar` would have to be contorted to fit, so it deliberately doesn't try.
+- **Chat app bar** (`ChatScreen`, `ChatSurfaceScreen`): use the `HEADER_*` classes directly with an inline 3-region grid. Each cell holds interactive content, not a passive title — `HeaderBar` would have to be contorted to fit, so it deliberately doesn't try. The bar is **flat**: no fill, border, shadow, or gradient seam of its own — it sits directly on `bg-push-surface-inset` and blends seamlessly into the content below (the old `from-black` fade strip under the bar was removed as out-of-place depth). Separation comes from spacing and the ambient glow wash, not elevation.
 - **Chrome** (header pills, account buttons, mode chips, page wrappers): use HUB classes + layout primitives. This is the dominant Push aesthetic.
 - **Inside content cards** (chat bubbles, file diffs, code blocks): use token classes directly. The HUB material adds the raised-surface + border treatment that navigation chrome wants; content cards define themselves with `bg-push-grad-card` + a `border-push-edge` and don't need it.
 - **Inside `<Dialog>` / `<Sheet>` forms**: shadcn `Button` and `Input` from `components/ui/` are fine. Dialogs already carry their own overlay + surface; stacking hub material on top reads as heavy.

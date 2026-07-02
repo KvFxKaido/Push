@@ -799,7 +799,6 @@ export function DaemonChatBody({
                 <UnpairIcon className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </div>
-            <div className="pointer-events-none absolute inset-x-0 top-full h-8 bg-gradient-to-b from-black to-transparent" />
           </header>
 
           {status.state !== 'open' && status.state !== 'connecting' ? (
