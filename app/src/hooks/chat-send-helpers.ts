@@ -66,6 +66,7 @@ import { createToolBudgetBlockIntervention } from '@push/lib/tool-ledger';
 import { createId } from '@push/lib/id-utils';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { classifySandboxUnreachableRecovery } from '@/lib/sandbox-recovery-policy';
+import { schedulePostPushCIStatus } from './chat-post-push-ci';
 import type {
   AssistantTurnResult,
   ScratchpadHandlers,
@@ -719,6 +720,29 @@ export async function applyPostExecutionSideEffects(
       result.structuredError.message,
       classifySandboxUnreachableRecovery(call),
     );
+  }
+
+  // 9. Post-push CI status for the DIRECT sandbox_push arm (#1298 item 4).
+  // The approval-gated push path already injects "CI status after push:"
+  // from chat-card-actions; a direct sandbox_push tool call bypasses that
+  // handler, so without this the model gets "Pushed successfully." and no
+  // CI signal. Success detection keys on the handler's single success
+  // sentence — every failure arm returns a structured error or a
+  // "Push failed:" body instead (see handleSandboxPush).
+  if (
+    call.source === 'sandbox' &&
+    call.call.tool === 'sandbox_push' &&
+    !result.structuredError &&
+    result.text.includes('Pushed successfully') &&
+    repoRef.current
+  ) {
+    schedulePostPushCIStatus({
+      chatId,
+      repo: repoRef.current,
+      setConversations,
+      dirtyConversationIdsRef,
+      branchInfoRef,
+    });
   }
 }
 
