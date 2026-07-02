@@ -525,12 +525,18 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
   // cluster letters rather than exact-matching `-m`/`-M`; only `-m`/`-M`
   // carry an `m` among branch's short options, and long options (`--merged`,
   // `--sort=…`) are excluded from the cluster scan so they can't
-  // false-positive. All other `git branch` forms (list / create / delete /
-  // upstream) keep today's allow-mutate fallthrough.
+  // false-positive. Git also accepts unambiguous long-option abbreviations —
+  // `--mo` / `--mov` rename just like `--move` (only `--move` starts with
+  // `--mo` among branch's long options), so the long form matches any prefix
+  // of `--move` that is at least `--mo`. `--m` is ambiguous (`--merged`) and
+  // git itself rejects it, so it stays allowed. All other `git branch` forms
+  // (list / create / delete / upstream) keep today's allow-mutate
+  // fallthrough.
   if (subcommand === 'branch') {
     const flags = takeFlagsBeforeDoubleDash(rest);
     const isMoveFlag = (f: string) =>
-      f === '--move' || (/^-[a-zA-Z]+$/.test(f) && /m/i.test(f.slice(1)));
+      ('--move'.startsWith(f) && f.length >= 4) ||
+      (/^-[a-zA-Z]+$/.test(f) && /m/i.test(f.slice(1)));
     if (flags.some(isMoveFlag)) {
       return { kind: 'block', reason: 'branch-rename', label: 'git branch -m' };
     }

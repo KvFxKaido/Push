@@ -234,6 +234,18 @@ const CORPUS: Case[] = [
     command: 'git branch -fM main',
     expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
   },
+  // git accepts unambiguous long-option abbreviations: `--mov`/`--mo` rename
+  // exactly like `--move` (Push-reviewer WARNING on #1299). `--m` is
+  // ambiguous with `--merged` and git itself errors on it, so it stays
+  // allowed below.
+  {
+    command: 'git branch --mov old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch --mo renamed',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
   // chained after an allowed segment: the block still surfaces (most
   // restrictive segment wins).
   {
@@ -259,6 +271,9 @@ const CORPUS: Case[] = [
   },
   // short clusters without an `m` stay allowed.
   { command: 'git branch -avv', expected: { kind: 'allow', family: 'mutate' } },
+  // `--m` is ambiguous (`--move` vs `--merged`) — git rejects it itself, so
+  // the policy leaves it alone.
+  { command: 'git branch --m x', expected: { kind: 'allow', family: 'mutate' } },
   // `--` ends option parsing per git — a later `-m` is a branch NAME, not a
   // move flag, so it must not trigger the block.
   { command: 'git branch -- -m', expected: { kind: 'allow', family: 'mutate' } },
