@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { retainReducedOutput } from './verbatim-retain';
+import { COMPACTED_SPAN_KIND, retainCompactedSpan, retainReducedOutput } from './verbatim-retain';
 import { createInMemoryVerbatimLog } from './verbatim-log';
 import type { ReducedOutput } from './tool-output-reducers';
 
@@ -73,6 +73,51 @@ describe('retainReducedOutput', () => {
     const res = await retainReducedOutput({
       reduced: reduced(),
       rawText: 'big output',
+      scope: { repoFullName: repo },
+      verbatimLog: brokenLog,
+    });
+    expect(res).toEqual({});
+  });
+});
+
+describe('retainCompactedSpan', () => {
+  it('stores the span byte-exact under the compacted_span kind and returns the ref', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    const spanText = '### ASSISTANT\ndid X\n\n### TOOL_RESULT\n' + 'log line\n'.repeat(400);
+
+    const { ref } = await retainCompactedSpan({
+      spanText,
+      scope: { repoFullName: repo, branch: 'main', chatId: 'c1' },
+      label: 'context compaction (12 messages)',
+      verbatimLog,
+    });
+
+    expect(ref).toBeTruthy();
+    const entry = await verbatimLog.read(ref!);
+    expect(entry?.text).toBe(spanText); // byte-exact
+    expect(entry?.kind).toBe(COMPACTED_SPAN_KIND);
+    expect(entry?.label).toBe('context compaction (12 messages)');
+    expect(entry?.scope).toEqual({ repoFullName: repo, branch: 'main', chatId: 'c1' });
+  });
+
+  it('is a no-op when no scope is available (nothing to scope-guard a recall to)', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    const res = await retainCompactedSpan({
+      spanText: 'a span',
+      scope: { repoFullName: '' },
+      verbatimLog,
+    });
+    expect(res).toEqual({});
+    expect(await verbatimLog.size()).toBe(0);
+  });
+
+  it('degrades to no ref when the log append throws (best-effort)', async () => {
+    const brokenLog = {
+      ...createInMemoryVerbatimLog(),
+      append: () => Promise.reject(new Error('disk full')),
+    };
+    const res = await retainCompactedSpan({
+      spanText: 'a span',
       scope: { repoFullName: repo },
       verbatimLog: brokenLog,
     });

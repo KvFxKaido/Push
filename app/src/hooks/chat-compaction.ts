@@ -37,6 +37,7 @@ import {
   renderSpanForSummary,
   type CompactableMessage,
 } from '@push/lib/llm-compaction';
+import { retainCompactedSpan } from '@push/lib/verbatim-retain';
 import {
   estimateContextTokens,
   estimateMessageTokens,
@@ -129,11 +130,12 @@ export async function maybeCompactBeforeTurn(
   );
 
   const stream = getProviderPushStream(provider) as unknown as PushStream<LlmMessage>;
+  const spanText = renderSpanForSummary(spanMsgs.map(asCompactable));
   const { summary, error } = await summarizeContextViaModel({
     provider,
     model,
     stream,
-    spanText: renderSpanForSummary(spanMsgs.map(asCompactable)),
+    spanText,
     priorHandoff: typeof priorHandoff === 'string' ? priorHandoff : undefined,
   });
 
@@ -148,10 +150,26 @@ export async function maybeCompactBeforeTurn(
   }
   if (ctx.abortRef.current) return apiMessages;
 
+  // Retain the raw span in the verbatim log so the handoff carries a recall
+  // ref — this is what makes compaction lossless for the *model*, not just the
+  // durable transcript (the hidden span is unreachable from the wire context).
+  // Best-effort: a scope-less (scratch/chat-only) session skips retention and
+  // the handoff simply omits the recall line.
+  const memoryScope = ctx.runtimeContext?.memory?.scope;
+  const { ref: recallRef } = await retainCompactedSpan({
+    spanText,
+    scope: {
+      repoFullName: memoryScope?.repoFullName,
+      branch: memoryScope?.branch,
+      chatId: memoryScope?.chatId,
+    },
+    label: `context compaction (${spanMsgs.length} messages)`,
+  });
+
   const beforeTokens = totalTokens;
   // The model-visible result after compaction: everything except the hidden
   // span, plus the handoff. Estimate it for the marker / run event.
-  const handoffContent = buildHandoffBlock(summary);
+  const handoffContent = buildHandoffBlock(summary, recallRef ? { recallRef } : undefined);
   const currentWriteBranch = resolveMessageWriteBranch(
     ctx.branchInfoRef?.current,
     ctx.conversationsRef?.current?.[ctx.chatId]?.branch,
@@ -227,6 +245,7 @@ export async function maybeCompactBeforeTurn(
     afterTokens,
     spanMessages: spanMsgs.length,
     reclaimedTokens: partition.summarizeTokens,
+    recallRef: recallRef ?? null,
   });
 
   return applyCompaction(apiMessages);

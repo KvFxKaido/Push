@@ -37,6 +37,8 @@ import {
   type CompactableMessage,
 } from '../lib/llm-compaction.ts';
 import type { AIProviderType, LlmMessage, PushStream } from '../lib/provider-contract.ts';
+import { retainCompactedSpan } from '../lib/verbatim-retain.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import {
   estimateContextTokens,
   estimateMessageTokens,
@@ -76,6 +78,9 @@ export interface MaybeCompactLeadDeps {
     apiKey: string,
     options: { sessionId?: string },
   ) => PushStream<LlmMessage>;
+  /** Injectable workspace-scope resolver for span retention (tests pass a
+   *  fake). Defaults to `resolveWorkspaceIdentity` over the session cwd. */
+  resolveScope?: (cwd: string) => Promise<{ repoFullName?: string; branch?: string }>;
 }
 
 /**
@@ -131,11 +136,12 @@ export async function maybeCompactLeadHistory(
   const stream = streamFactory(providerConfig, apiKey, {
     sessionId: state.sessionId,
   }) as unknown as PushStream<LlmMessage>;
+  const spanText = renderSpanForSummary(spanMsgs.map(asCompactable));
   const { summary, error } = await summarizeContextViaModel({
     provider: providerConfig.id as AIProviderType,
     model,
     stream,
-    spanText: renderSpanForSummary(spanMsgs.map(asCompactable)),
+    spanText,
     priorHandoff: typeof priorHandoff === 'string' ? priorHandoff : undefined,
   });
 
@@ -149,11 +155,44 @@ export async function maybeCompactLeadHistory(
     return false;
   }
 
+  // Retain the raw span in the verbatim log BEFORE the destructive collapse —
+  // on the CLI the span is *replaced* in `state.messages`, so the log entry is
+  // the only place the original turns survive for the model to recall. Best-
+  // effort: an unidentified workspace (no repoFullName) or a failing resolver
+  // skips retention and the handoff omits the recall line.
+  let recallRef: string | undefined;
+  try {
+    const resolveScope =
+      deps.resolveScope ??
+      (async (cwd: string) => {
+        const identity = await resolveWorkspaceIdentity(cwd);
+        return {
+          repoFullName: identity.repoFullName ?? undefined,
+          branch: identity.branch ?? undefined,
+        };
+      });
+    const scope = await resolveScope(state.cwd);
+    ({ ref: recallRef } = await retainCompactedSpan({
+      spanText,
+      scope,
+      label: `context compaction (${spanMsgs.length} messages)`,
+    }));
+  } catch (err) {
+    // `retainCompactedSpan` never throws; this guards an injected resolver.
+    log('warn', 'cli_compaction_retain_failed', {
+      sessionId: state.sessionId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+
   // Replace the summarized span with the handoff. The CLI has no
   // `visibleToModel` flag, so this is a destructive collapse (matching the
   // existing `compactContext`/`[CONTEXT DIGEST]` model) — the handoff carries
   // the thread forward and the preamble renders it un-clipped.
-  const handoffMessage: Message = { role: 'user', content: buildHandoffBlock(summary) };
+  const handoffMessage: Message = {
+    role: 'user',
+    content: buildHandoffBlock(summary, recallRef ? { recallRef } : undefined),
+  };
   const next = [...messages.slice(0, headLen), handoffMessage, ...messages.slice(lastSpanIdx)];
   state.messages = next;
   const afterTokens = estimateContextTokens(next);
@@ -173,6 +212,7 @@ export async function maybeCompactLeadHistory(
     afterTokens,
     spanMessages: spanMsgs.length,
     reclaimedTokens: partition.summarizeTokens,
+    recallRef: recallRef ?? null,
   });
 
   return true;

@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { maybeCompactLeadHistory } from '../lead-compaction.ts';
 import { isHandoffBlock } from '../../lib/llm-compaction.ts';
+import { createInMemoryVerbatimLog, setDefaultVerbatimLog } from '../../lib/verbatim-log.ts';
 import { estimateContextTokens } from '../context-manager.ts';
 import { createSessionState } from '../session-store.ts';
 
@@ -130,5 +131,53 @@ describe('maybeCompactLeadHistory', () => {
     assert.equal(compacted, false);
     assert.equal(state.messages.length, before.length);
     assert.equal(events.length, 0);
+  });
+
+  it('retains the raw span in the verbatim log and embeds a recall ref in the handoff', async () => {
+    // The CLI collapse is destructive — the span is REPLACED in state.messages —
+    // so the verbatim entry is the only surviving copy of the original turns.
+    const verbatimLog = createInMemoryVerbatimLog();
+    setDefaultVerbatimLog(verbatimLog);
+    try {
+      const state = makeState(bigHistory());
+      const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
+        streamFactory: fakeStreamFactory(summaryEvents),
+        persistEvent: () => {},
+        resolveScope: async () => ({ repoFullName: 'owner/repo', branch: 'main' }),
+      });
+      assert.equal(compacted, true);
+
+      const handoff = state.messages.find((m) => isHandoffBlock(m.content));
+      const refMatch = handoff.content.match(/memory_expand refs=\["(vb_[^"]+)"\]/);
+      assert.ok(refMatch, 'handoff must carry a recall ref');
+      const entry = await verbatimLog.read(refMatch[1]);
+      assert.ok(entry, 'ref must resolve in the verbatim log');
+      assert.equal(entry.kind, 'compacted_span');
+      assert.deepEqual(entry.scope, { repoFullName: 'owner/repo', branch: 'main' });
+      // The retained text is the rendered span — it carries the collapsed turns.
+      assert.match(entry.text, /### ASSISTANT\nstep 0 /);
+    } finally {
+      setDefaultVerbatimLog(null); // reset the lazy process default for other suites
+    }
+  });
+
+  it('omits the recall line (but still compacts) when the workspace has no repo identity', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    setDefaultVerbatimLog(verbatimLog);
+    try {
+      const state = makeState(bigHistory());
+      const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
+        streamFactory: fakeStreamFactory(summaryEvents),
+        persistEvent: () => {},
+        resolveScope: async () => ({}), // unidentified workspace
+      });
+      assert.equal(compacted, true);
+      const handoff = state.messages.find((m) => isHandoffBlock(m.content));
+      assert.ok(handoff);
+      assert.ok(!handoff.content.includes('memory_expand'));
+      assert.equal(await verbatimLog.size(), 0);
+    } finally {
+      setDefaultVerbatimLog(null);
+    }
   });
 });

@@ -231,9 +231,19 @@ export function renderSpanForSummary<M extends CompactableMessage>(messages: M[]
  * working context. `priorHandoff` (the previous compaction's handoff text, if
  * any) is not re-embedded — the summarizer was already instructed to fold its
  * historical thread in — so this only frames the latest summary.
+ *
+ * `recallRef` is the verbatim-log ref of the raw span this summary replaced
+ * (see `retainCompactedSpan` in `verbatim-retain.ts`). When present, the block
+ * carries the concrete `memory_expand` recall line — the affordance that makes
+ * the prefix's "older raw turns remain available" promise actually resolvable
+ * by the model instead of aspirational. Omitted when retention was skipped
+ * (no repo scope) or failed.
  */
-export function buildHandoffBlock(summary: string): string {
-  return `${COMPACTION_HANDOFF_PREFIX}\n\n${summary.trim()}\n\n${COMPACTION_HANDOFF_FOOTER}`;
+export function buildHandoffBlock(summary: string, opts?: { recallRef?: string }): string {
+  const recallLine = opts?.recallRef
+    ? `\n\nThe raw turns behind this summary are retained verbatim — if an exact detail is missing here, recall them with memory_expand refs=["${opts.recallRef}"].`
+    : '';
+  return `${COMPACTION_HANDOFF_PREFIX}\n\n${summary.trim()}${recallLine}\n\n${COMPACTION_HANDOFF_FOOTER}`;
 }
 
 /** Detect a handoff block by its header, so callers can find a prior one in
