@@ -521,11 +521,17 @@ function classifySegment(invocation: ParsedGitInvocation): GitDecision {
   // rename tool — the supported recipe is create-at-same-commit
   // (`sandbox_create_branch`) + optional delete of the old name. Flags after
   // `--` are positionals per git's parser, so they don't trigger the block.
-  // All other `git branch` forms (list / create / delete / upstream) keep
-  // today's allow-mutate fallthrough.
+  // Git bundles short options (`-fm` === `-f -m`), so the move check scans
+  // cluster letters rather than exact-matching `-m`/`-M`; only `-m`/`-M`
+  // carry an `m` among branch's short options, and long options (`--merged`,
+  // `--sort=…`) are excluded from the cluster scan so they can't
+  // false-positive. All other `git branch` forms (list / create / delete /
+  // upstream) keep today's allow-mutate fallthrough.
   if (subcommand === 'branch') {
     const flags = takeFlagsBeforeDoubleDash(rest);
-    if (flags.some((f) => f === '-m' || f === '-M' || f === '--move')) {
+    const isMoveFlag = (f: string) =>
+      f === '--move' || (/^-[a-zA-Z]+$/.test(f) && /m/i.test(f.slice(1)));
+    if (flags.some(isMoveFlag)) {
       return { kind: 'block', reason: 'branch-rename', label: 'git branch -m' };
     }
   }

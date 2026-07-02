@@ -224,6 +224,16 @@ const CORPUS: Case[] = [
     command: 'git branch -f -m old new',
     expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
   },
+  // git bundles short options — `-fm`/`-fM` is force+move and must not slip
+  // the exact-match seam (Codex P1 on #1299).
+  {
+    command: 'git branch -fm old new',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
+  {
+    command: 'git branch -fM main',
+    expected: { kind: 'block', reason: 'branch-rename', label: 'git branch -m' },
+  },
   // chained after an allowed segment: the block still surfaces (most
   // restrictive segment wins).
   {
@@ -240,6 +250,15 @@ const CORPUS: Case[] = [
     command: 'git branch --set-upstream-to=origin/feat feat',
     expected: { kind: 'allow', family: 'mutate' },
   },
+  // long options containing an `m` are NOT move flags — the cluster scan is
+  // short-options-only.
+  { command: 'git branch --merged', expected: { kind: 'allow', family: 'mutate' } },
+  {
+    command: 'git branch --sort=-committerdate',
+    expected: { kind: 'allow', family: 'mutate' },
+  },
+  // short clusters without an `m` stay allowed.
+  { command: 'git branch -avv', expected: { kind: 'allow', family: 'mutate' } },
   // `--` ends option parsing per git — a later `-m` is a branch NAME, not a
   // move flag, so it must not trigger the block.
   { command: 'git branch -- -m', expected: { kind: 'allow', family: 'mutate' } },
