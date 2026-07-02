@@ -163,6 +163,21 @@ export function normalizeKilocodeModelName(model: string): string {
   return trimmed;
 }
 
+// Ollama Cloud retirements: persisted selections of retired ids would 404
+// once Ollama removes them, with no picker path back (the id drops out of the
+// live /models list). Migrate to Ollama's recommended replacements.
+const LEGACY_OLLAMA_MODEL_MIGRATIONS: Record<string, string> = {
+  'gemini-3-flash-preview': 'minimax-m3',
+};
+
+export function normalizeOllamaModelName(model: string): string {
+  const trimmed = model.trim();
+  if (!trimmed) return OLLAMA_DEFAULT_MODEL;
+  // Free-text ids (local models, account-specific tags) pass through — only
+  // known-retired ids are rewritten.
+  return LEGACY_OLLAMA_MODEL_MIGRATIONS[trimmed] ?? trimmed;
+}
+
 export function normalizeFireworksModelName(model: string): string {
   const trimmed = model.trim();
   if (!trimmed) return FIREWORKS_DEFAULT_MODEL;
@@ -339,7 +354,12 @@ function requireModelStorageKey(provider: RealProviderId): string {
   return key;
 }
 
-const ollamaModel = createModelNameStorage(requireModelStorageKey('ollama'), OLLAMA_DEFAULT_MODEL);
+const ollamaModel = createModelNameStorage(
+  requireModelStorageKey('ollama'),
+  OLLAMA_DEFAULT_MODEL,
+  undefined,
+  normalizeOllamaModelName,
+);
 export const getOllamaModelName = ollamaModel.get;
 export const setOllamaModelName = ollamaModel.set;
 

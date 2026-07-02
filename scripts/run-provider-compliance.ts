@@ -56,7 +56,9 @@ const PROVIDER_CONFIGS = {
   },
   ollama: {
     url: 'http://localhost:11434/v1/chat/completions',
-    model: 'minimax-m3',
+    // Local Ollama registers the hosted model under the `:cloud` tag; the bare
+    // `minimax-m3` id only resolves on the hosted ollama.com/v1 endpoint.
+    model: 'minimax-m3:cloud',
     envKey: 'VITE_OLLAMA_API_KEY',
   },
 } as const;

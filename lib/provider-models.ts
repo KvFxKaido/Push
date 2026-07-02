@@ -63,9 +63,11 @@ export const GOOGLE_DEFAULT_MODEL = 'gemini-3.5-flash';
 export const OLLAMA_MODELS: string[] = [
   // Cloud-first curated fallback. Live `/models` fetch and free-text entry
   // cover account-specific availability beyond this baseline. This list also
-  // doubles as the CLI native-FC allowlist (cli/native-tool-gate.ts) —
-  // `gemini-3-flash-preview` is intentionally absent, so a free-text pick of
-  // it rides the text-dispatch path until Ollama retires the id.
+  // feeds the CLI native-FC allowlist (cli/native-tool-gate.ts), minus the
+  // ids in OLLAMA_NATIVE_TOOL_CALLING_DENYLIST (lib/native-tool-gate.ts) —
+  // minimax-m3 stays curated but rides text-dispatch until ollama/ollama#16389
+  // is fixed. `gemini-3-flash-preview` is intentionally absent, so a free-text
+  // pick of it also rides text-dispatch until Ollama retires the id.
   OLLAMA_DEFAULT_MODEL,
 ];
 

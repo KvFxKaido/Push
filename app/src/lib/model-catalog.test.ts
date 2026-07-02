@@ -1336,6 +1336,21 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('zen', undefined)).toBe(false);
   });
 
+  it('denies Ollama native tool calling for denylisted ids on both surfaces', () => {
+    stubWindow();
+    // minimax-m3's declared metadata reports tool support, but the shared
+    // denylist (ollama/ollama#16389 — stalls after the first tool result)
+    // forces text-dispatch on the web gate…
+    expect(providerModelSupportsNativeToolCalling('ollama', 'minimax-m3')).toBe(false);
+    expect(providerModelSupportsNativeToolCalling('ollama', 'minimax-m3:cloud')).toBe(false);
+    // …and keeps it off the CLI curated allowlist built from OLLAMA_MODELS.
+    expect(cliProviderModelSupportsNativeToolCalling('ollama', 'minimax-m3')).toBe(false);
+    // The retired id is also off the CLI allowlist (rides text-dispatch).
+    expect(cliProviderModelSupportsNativeToolCalling('ollama', 'gemini-3-flash-preview')).toBe(
+      false,
+    );
+  });
+
   it('gates Fireworks native tool calling against the curated catalog allowlist', () => {
     stubWindow();
     // Curated FIREWORKS_MODELS ids pass (the default + a couple of families).

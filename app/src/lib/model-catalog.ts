@@ -37,6 +37,7 @@ import { anthropicModelSupportsNativeStructuredOutput } from '@push/lib/anthropi
 import {
   looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
+  OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
   VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '@push/lib/native-tool-gate';
 import {
@@ -715,7 +716,12 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'vertex') return VERTEX_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
-  if (provider === 'ollama') return getModelCapabilities('ollama', modelId).toolCall;
+  if (provider === 'ollama') {
+    return (
+      !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(modelId) &&
+      getModelCapabilities('ollama', modelId).toolCall
+    );
+  }
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);

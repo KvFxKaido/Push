@@ -12,6 +12,7 @@ import {
 import {
   looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
+  OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
   VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '../lib/native-tool-gate.ts';
 
@@ -29,7 +30,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   google: new Set(GOOGLE_MODELS),
   kilocode: new Set(KILOCODE_MODELS),
   nvidia: new Set(NVIDIA_MODELS),
-  ollama: new Set(OLLAMA_MODELS),
+  ollama: new Set(OLLAMA_MODELS.filter((id) => !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(id))),
   openrouter: new Set(OPENROUTER_MODELS),
   sakana: new Set(SAKANA_MODELS),
   zen: new Set(ZEN_MODELS),
