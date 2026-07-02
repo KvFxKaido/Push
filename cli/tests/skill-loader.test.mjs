@@ -268,8 +268,13 @@ describe('interpolateSkill', () => {
     assert.equal(result, 'Do it.');
   });
 
-  it('handles template with no {{args}} placeholder', () => {
+  it('appends args as ARGUMENTS block when template has no placeholder', () => {
     const result = interpolateSkill('Just do the thing.', 'extra args');
+    assert.equal(result, 'Just do the thing.\n\nARGUMENTS: extra args');
+  });
+
+  it('does not append ARGUMENTS block when args are empty', () => {
+    const result = interpolateSkill('Just do the thing.', '');
     assert.equal(result, 'Just do the thing.');
   });
 
@@ -285,32 +290,78 @@ describe('interpolateSkill', () => {
 
   it('does not replace $ARGUMENTS when embedded in a longer word', () => {
     const result = interpolateSkill('Keep $ARGUMENTSX intact.', 'foo');
-    assert.equal(result, 'Keep $ARGUMENTSX intact.');
+    // No token consumed the args, so they arrive via the ARGUMENTS append instead.
+    assert.equal(result, 'Keep $ARGUMENTSX intact.\n\nARGUMENTS: foo');
   });
 
-  it('replaces positional $1/$2 with whitespace-split words', () => {
-    const result = interpolateSkill('Fix issue $1 with priority $2.', '123 high');
-    assert.equal(result, 'Fix issue 123 with priority high.');
+  it('replaces 0-based positionals $0/$1 (Claude Code convention)', () => {
+    const result = interpolateSkill('Fix issue #$0 with priority $1.', '123 high');
+    assert.equal(result, 'Fix issue #123 with priority high.');
+  });
+
+  it('replaces $ARGUMENTS[N] indexed form', () => {
+    const result = interpolateSkill('First: $ARGUMENTS[0], third: $ARGUMENTS[2].', 'a b c');
+    assert.equal(result, 'First: a, third: c.');
   });
 
   it('missing positional arguments become empty', () => {
-    const result = interpolateSkill('First: $1, second: $2.', 'only');
+    const result = interpolateSkill('First: $0, second: $1.', 'only');
     assert.equal(result, 'First: only, second: .');
   });
 
-  it('leaves $10 and beyond untouched', () => {
-    const result = interpolateSkill('Value: $10', 'a b c');
+  it('shell-style quoting groups multi-word indexed arguments', () => {
+    const result = interpolateSkill('$0 then $1', '"hello world" second');
+    assert.equal(result, 'hello world then second');
+  });
+
+  it('$ARGUMENTS always expands to the full string as typed', () => {
+    const result = interpolateSkill('$ARGUMENTS', '"hello world" second');
+    assert.equal(result, '"hello world" second');
+  });
+
+  it('leaves multi-digit $NN untouched (use $ARGUMENTS[N] instead)', () => {
+    const result = interpolateSkill('Value: $10', '');
     assert.equal(result, 'Value: $10');
   });
 
   it('does not re-expand tokens inside the argument string (single pass)', () => {
-    const result = interpolateSkill('Full: {{args}} | first: $1', '$ARGUMENTS {{args}}');
+    const result = interpolateSkill('Full: {{args}} | first: $0', '$ARGUMENTS {{args}}');
     assert.equal(result, 'Full: $ARGUMENTS {{args}} | first: $ARGUMENTS');
   });
 
   it('mixes {{args}}, $ARGUMENTS, and positionals in one template', () => {
-    const result = interpolateSkill('{{args}} / $ARGUMENTS / $2', 'one two');
+    const result = interpolateSkill('{{args}} / $ARGUMENTS / $1', 'one two');
     assert.equal(result, 'one two / one two / two');
+  });
+
+  it('backslash escapes positional tokens — \\$1 stays literal $1', () => {
+    const result = interpolateSkill('Run: echo \\$1 with $0', 'foo');
+    assert.equal(result, 'Run: echo $1 with foo');
+  });
+
+  it('backslash escapes $ARGUMENTS and {{args}}', () => {
+    const result = interpolateSkill('\\$ARGUMENTS and \\{{args}} stay; $ARGUMENTS goes', 'x');
+    assert.equal(result, '$ARGUMENTS and {{args}} stay; x goes');
+  });
+
+  it('escaped tokens survive even with empty args', () => {
+    const result = interpolateSkill('shell example: `echo \\$1 \\$2`', '');
+    assert.equal(result, 'shell example: `echo $1 $2`');
+  });
+
+  it('doubled backslash keeps both backslashes and still expands', () => {
+    const result = interpolateSkill('path \\\\$0 here', 'val');
+    assert.equal(result, 'path \\\\val here');
+  });
+
+  it('backslash before a non-token $ is left unchanged', () => {
+    const result = interpolateSkill('cost \\$x and $z', '');
+    assert.equal(result, 'cost \\$x and $z');
+  });
+
+  it('escaped-only template still gets the ARGUMENTS append (args unconsumed)', () => {
+    const result = interpolateSkill('example: `echo \\$0`', 'real-arg');
+    assert.equal(result, 'example: `echo $0`\n\nARGUMENTS: real-arg');
   });
 });
 

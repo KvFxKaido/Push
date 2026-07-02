@@ -3,8 +3,9 @@
  *
  * A skill is a .md file: filename = skill name, first # heading = description, body = prompt template.
  * At invocation time `{{args}}` and `$ARGUMENTS` are replaced with the full user input, and
- * `$1`–`$9` with individual whitespace-split words of it (missing positions become empty).
- * Substitution is a single pass, so tokens inside the user's own input are never re-expanded.
+ * `$0`–`$9` / `$ARGUMENTS[N]` with individual 0-based arguments (shell-style quoting; missing
+ * positions become empty). `\$…` escapes a token; templates that reference no token get
+ * non-empty input appended as `ARGUMENTS: <value>`. See interpolateSkill for the full contract.
  *
  * Skills may optionally declare YAML frontmatter to constrain visibility:
  *   ---
@@ -612,22 +613,80 @@ export async function getSkillPromptTemplate(skill: Skill): Promise<string> {
 }
 
 /**
- * Substitute argument tokens in a skill template with the given arguments string.
+ * Split a skill argument string into indexed arguments using shell-style quoting:
+ * whitespace separates arguments, but `"…"` / `'…'` group a multi-word value into one.
+ * An unclosed quote is tolerated fail-open (the rest of the string joins the last word).
+ */
+function splitSkillArguments(argString: string): string[] {
+  const words: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let inWord = false;
+  for (const ch of argString) {
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        current += ch;
+      }
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      inWord = true;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      if (inWord || current.length > 0) {
+        words.push(current);
+        current = '';
+        inWord = false;
+      }
+      continue;
+    }
+    current += ch;
+    inWord = true;
+  }
+  if (inWord || current.length > 0) words.push(current);
+  return words;
+}
+
+/**
+ * Substitute argument tokens in a skill template with the given arguments string,
+ * following the Claude Code substitution contract (`.claude/commands` files are loaded
+ * verbatim, so their tokens must behave identically here) plus Push-native `{{args}}`:
  *
- * `{{args}}` (Push-native) and `$ARGUMENTS` (Claude Code convention — `.claude/commands`
- * files are loaded verbatim, so their tokens must work here too) both expand to the full
- * argument string. `$1`–`$9` expand to individual whitespace-split words; positions beyond
- * the supplied words become empty. Everything happens in one pass over the template, so
- * token-shaped text inside the user's own arguments is never re-expanded.
+ *   `{{args}}` / `$ARGUMENTS`  → the full argument string as typed
+ *   `$ARGUMENTS[N]`            → the N-th argument, 0-based, shell-style quoting
+ *   `$N` (`$0`–`$9`)           → shorthand for `$ARGUMENTS[N]`; missing positions → empty
+ *
+ * A single backslash escapes a token — `\$1`, `\$ARGUMENTS`, `\{{args}}` — emitting it
+ * literally minus the backslash, so templates that embed shell/positional syntax as
+ * *content* (e.g. an `echo $1` example) can opt out. A doubled backslash (`\\$1`) keeps
+ * both backslashes and still expands the token. A backslash before any other `$` is left
+ * unchanged. If the template references no argument token at all, non-empty arguments are
+ * appended as `ARGUMENTS: <value>` so typed input is never silently dropped. Everything
+ * happens in one pass over the template, so token-shaped text inside the user's own
+ * arguments is never re-expanded.
  */
 export function interpolateSkill(template: string, args: string): string {
   const argString = args || '';
-  const words = argString.split(/\s+/).filter((w) => w.length > 0);
-  return template
-    .replace(/\{\{args\}\}|\$ARGUMENTS\b|\$([1-9])(?!\d)/g, (_match, digit?: string) =>
-      digit ? (words[Number(digit) - 1] ?? '') : argString,
-    )
-    .trim();
+  const words = splitSkillArguments(argString);
+  let consumedArgs = false;
+  const result = template.replace(
+    /(?<!\\)\\(\{\{args\}\}|\$ARGUMENTS\[\d+\]|\$ARGUMENTS\b|\$\d(?!\d))|\{\{args\}\}|\$ARGUMENTS\[(\d+)\]|\$ARGUMENTS\b|\$(\d)(?!\d)/g,
+    (_match, escaped?: string, bracketIndex?: string, digit?: string) => {
+      if (escaped !== undefined) return escaped;
+      consumedArgs = true;
+      if (bracketIndex !== undefined) return words[Number(bracketIndex)] ?? '';
+      if (digit !== undefined) return words[Number(digit)] ?? '';
+      return argString;
+    },
+  );
+  if (!consumedArgs && argString) {
+    return `${result.trim()}\n\nARGUMENTS: ${argString}`;
+  }
+  return result.trim();
 }
 
 /**
