@@ -1,5 +1,26 @@
 import type { ChatCard, ChatMessage } from '@/types';
-import { Terminal, FileText, Search, Globe, Hammer, Wrench } from 'lucide-react';
+import {
+  Terminal,
+  FileText,
+  Search,
+  Globe,
+  Hammer,
+  Wrench,
+  GitPullRequest,
+  GitCommit,
+  GitBranch,
+  CircleDot,
+  Play,
+  ListChecks,
+  ShieldAlert,
+  MessageCircleQuestion,
+  NotebookPen,
+  ListTodo,
+  Brain,
+  Package,
+  Upload,
+  Download,
+} from 'lucide-react';
 import { resolveToolName } from '@/lib/tool-registry';
 
 /* ------------------------------------------------------------------ */
@@ -99,6 +120,66 @@ const LABELS: Record<string, ToolLabel> = {
   // Delegate
   delegate_coder: { noun: 'task', verb: 'Delegated', icon: Hammer },
   delegate_explorer: { noun: 'task', verb: 'Delegated', icon: Hammer },
+  plan_tasks: { noun: 'task', verb: 'Planned', icon: Hammer },
+  // GitHub — PRs
+  fetch_pr: { noun: 'PR', verb: 'Fetched', icon: GitPullRequest },
+  list_prs: { noun: 'PR list', verb: 'Fetched', icon: GitPullRequest },
+  create_pr: { noun: 'PR', verb: 'Opened', icon: GitPullRequest },
+  merge_pr: { noun: 'PR', verb: 'Merged', icon: GitPullRequest },
+  update_pull_request: { noun: 'PR', verb: 'Updated', icon: GitPullRequest },
+  check_pr_mergeable: { noun: 'PR', verb: 'Checked', icon: GitPullRequest },
+  find_existing_pr: { noun: 'PR', verb: 'Checked', icon: GitPullRequest },
+  // GitHub — issues
+  list_issues: { noun: 'issue list', verb: 'Fetched', icon: CircleDot },
+  get_issue: { noun: 'issue', verb: 'Read', icon: CircleDot },
+  create_issue: { noun: 'issue', verb: 'Opened', icon: CircleDot },
+  update_issue: { noun: 'issue', verb: 'Updated', icon: CircleDot },
+  add_issue_comment: { noun: 'comment', verb: 'Posted', icon: CircleDot },
+  // GitHub — commits / branches
+  list_commits: { noun: 'commit list', verb: 'Fetched', icon: GitCommit },
+  list_commit_files: { noun: 'commit', verb: 'Inspected', icon: GitCommit },
+  list_branches: { noun: 'branch list', verb: 'Fetched', icon: GitBranch },
+  delete_branch: { noun: 'branch', verb: 'Deleted', icon: GitBranch },
+  // GitHub — CI / workflows
+  fetch_checks: { noun: 'CI report', verb: 'Fetched', icon: ListChecks },
+  get_job_logs: { noun: 'CI log', verb: 'Read', icon: ListChecks },
+  trigger_workflow: { noun: 'workflow', verb: 'Triggered', icon: Play },
+  get_workflow_runs: { noun: 'run list', verb: 'Fetched', icon: Play },
+  get_workflow_logs: { noun: 'workflow log', verb: 'Read', icon: Play },
+  rerun_failed_jobs: { noun: 'CI run', verb: 'Reran', icon: Play },
+  cancel_workflow_run: { noun: 'workflow', verb: 'Cancelled', icon: Play },
+  // GitHub — security alerts (three scanners, one display shape)
+  list_code_scanning_alerts: { noun: 'alert list', verb: 'Fetched', icon: ShieldAlert },
+  list_dependabot_alerts: { noun: 'alert list', verb: 'Fetched', icon: ShieldAlert },
+  list_secret_scanning_alerts: { noun: 'alert list', verb: 'Fetched', icon: ShieldAlert },
+  // Sandbox — git / delivery
+  sandbox_show_commit: { noun: 'commit', verb: 'Inspected', icon: GitCommit },
+  sandbox_diff: { noun: 'diff', verb: 'Read', icon: FileText },
+  sandbox_create_branch: { noun: 'branch', verb: 'Created', icon: GitBranch },
+  sandbox_switch_branch: { noun: 'branch', verb: 'Switched', icon: GitBranch },
+  sandbox_commit: { noun: 'change', verb: 'Committed', icon: GitCommit },
+  prepare_push: { noun: 'push', verb: 'Prepared', icon: Upload },
+  sandbox_push: { noun: 'branch', verb: 'Pushed', icon: Upload },
+  promote_to_github: { noun: 'draft', verb: 'Promoted', icon: Upload },
+  // Sandbox — verification / misc
+  sandbox_run_tests: { noun: 'test suite', verb: 'Ran', icon: ListChecks },
+  sandbox_check_types: { noun: 'typecheck', verb: 'Ran', icon: ListChecks },
+  sandbox_verify_workspace: { noun: 'workspace', verb: 'Verified', icon: ListChecks },
+  sandbox_read_symbols: { noun: 'symbol map', verb: 'Read', icon: Search },
+  sandbox_download: { noun: 'file', verb: 'Downloaded', icon: Download },
+  sandbox_save_draft: { noun: 'draft', verb: 'Saved', icon: FileText },
+  // Scratchpad / todo
+  set_scratchpad: { noun: 'scratchpad', verb: 'Updated', icon: NotebookPen },
+  append_scratchpad: { noun: 'scratchpad', verb: 'Updated', icon: NotebookPen },
+  read_scratchpad: { noun: 'scratchpad', verb: 'Read', icon: NotebookPen },
+  todo_write: { noun: 'todo list', verb: 'Updated', icon: ListTodo },
+  todo_read: { noun: 'todo list', verb: 'Read', icon: ListTodo },
+  todo_clear: { noun: 'todo list', verb: 'Cleared', icon: ListTodo },
+  // Interaction / artifacts / memory
+  ask_user: { noun: 'question', verb: 'Asked', icon: MessageCircleQuestion },
+  create_artifact: { noun: 'artifact', verb: 'Created', icon: Package },
+  memory_grep: { noun: 'memory', verb: 'Recalled', icon: Brain },
+  memory_expand: { noun: 'memory', verb: 'Recalled', icon: Brain },
   default: { noun: 'tool', verb: 'Used', icon: Wrench },
 };
 
@@ -113,6 +194,13 @@ export function getLabel(toolName: string): ToolLabel {
 /*  Summary-line builder                                               */
 /* ------------------------------------------------------------------ */
 
+/** Indefinite-article noun form for the summary line — "an issue list",
+ *  "a command". Spelling-based vowel check is enough for the LABELS
+ *  vocabulary (no "hour"/"user" style exceptions in the table). */
+function withArticle(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? 'an' : 'a'} ${noun}`;
+}
+
 export function buildSummaryLine(items: ToolCallPair[]): string {
   // Single call → prefer the concrete target ("Read config.json", "Ran npm
   // test") over the generic noun ("Read a file") when we captured one. Falls
@@ -123,7 +211,7 @@ export function buildSummaryLine(items: ToolCallPair[]): string {
     const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';
     const target = item.callMsg.toolMeta?.target ?? item.resultMsg.toolMeta?.target;
     const { verb, noun } = getLabel(name);
-    return target ? `${verb} ${target}` : `${verb} a ${noun}`;
+    return target ? `${verb} ${target}` : `${verb} ${withArticle(noun)}`;
   }
 
   const counts = new Map<string, number>();
@@ -146,7 +234,7 @@ export function buildSummaryLine(items: ToolCallPair[]): string {
     const [, verb, cntStr, noun] = match;
     const cnt = Number(cntStr);
     if (Number.isNaN(cnt)) return raw;
-    return cnt === 1 ? `${verb} a ${noun}` : phrases[0];
+    return cnt === 1 ? `${verb} ${withArticle(noun)}` : phrases[0];
   }
 
   return phrases.join(', ');
