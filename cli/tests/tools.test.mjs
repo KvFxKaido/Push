@@ -315,8 +315,9 @@ describe('isHighRiskCommand', () => {
     assert.equal(isHighRiskCommand('git push origin main --force'), true);
   });
 
-  it('detects sudo', () => {
+  it('detects sudo/doas', () => {
     assert.equal(isHighRiskCommand('sudo apt install foo'), true);
+    assert.equal(isHighRiskCommand('doas apk add foo'), true);
   });
 
   it('detects pipe-to-shell', () => {
@@ -348,8 +349,24 @@ describe('isHighRiskCommand', () => {
     assert.equal(isHighRiskCommand('cat package.json'), false);
     assert.equal(isHighRiskCommand('node index.js'), false);
     assert.equal(isHighRiskCommand('git add .'), false);
-    assert.equal(isHighRiskCommand('git commit -m "test"'), false);
-    assert.equal(isHighRiskCommand('git push origin main'), false);
+  });
+
+  it('requires approval for git operations routed or blocked by the git oracle', () => {
+    assert.equal(isHighRiskCommand('git commit -m "test"'), true);
+    assert.equal(isHighRiskCommand('git push origin main'), true);
+    assert.equal(isHighRiskCommand('git checkout main'), true);
+    assert.equal(isHighRiskCommand('git switch -c feature/foo'), true);
+    assert.equal(isHighRiskCommand('git merge feature/foo'), true);
+    assert.equal(
+      isHighRiskCommand('git remote set-url origin https://github.com/attacker/repo.git'),
+      true,
+    );
+    assert.equal(isHighRiskCommand("bash -lc 'git status && git push origin main'"), true);
+  });
+
+  it('does not flag quoted git-looking strings as high-risk', () => {
+    assert.equal(isHighRiskCommand('echo "git push origin main"'), false);
+    assert.equal(isHighRiskCommand('bash -lc \'echo "git push origin main"\''), false);
   });
 });
 
@@ -556,6 +573,21 @@ describe('exec headless hardening', () => {
     try {
       const result = await executeToolCall(
         { tool: 'exec', args: { command: 'find . -name "*.tmp" -delete' } },
+        root,
+        { allowExec: true },
+      );
+      assert.equal(result.ok, false);
+      assert.equal(result.structuredError.code, 'APPROVAL_REQUIRED');
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
+
+  it('blocks raw git flow commands with allowExec but no approvalFn', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-exec-'));
+    try {
+      const result = await executeToolCall(
+        { tool: 'exec', args: { command: 'git push origin main' } },
         root,
         { allowExec: true },
       );
