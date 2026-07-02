@@ -72,6 +72,7 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
+import { stripToolCallPayload } from '@/lib/message-content';
 import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
@@ -241,6 +242,20 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
 }
 
 /**
+ * Hand-off slot for a settled round's user-facing narration. The mirror
+ * writes the round's visible prose here when the round's stream completes;
+ * the first `tool.execution_complete` of that round consumes it (splicing
+ * it into the transcript as a settled `tool_prose` message just above the
+ * round's tool disclosure). If a new round starts before any tool completes
+ * — a malformed-call recovery / nudge round — the stale narration is
+ * dropped, matching the old behavior where non-final round text never
+ * survived the placeholder reset.
+ */
+export interface InlineRoundProseSink {
+  pending: string;
+}
+
+/**
  * Build the tee observer that feeds the streaming assistant placeholder.
  * Accumulates per kernel round (a `done` event resets the buffer on the
  * next delta) so the placeholder always shows the round in flight; the
@@ -248,11 +263,17 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
  * state-update JSON is stripped per delta via `splitVisibleContent` so it
  * never reaches the transcript (or the `ACCUMULATED_UPDATED` preview a
  * watching viewer / adopted checkpoint mirrors).
+ *
+ * When a `proseSink` is supplied, each settled round's visible prose is
+ * stashed there (instead of silently dying with the next round's reset) so
+ * the tool-disclosure splicer can keep the model's narration in the
+ * transcript between tool groups.
  */
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
   thinkingVerbs?: string[],
   placeholderId?: string,
+  proseSink?: InlineRoundProseSink,
 ): (event: PushStreamEvent) => void {
   const { chatId } = ctx;
   let accumulated = '';
@@ -263,6 +284,19 @@ export function createInlineTranscriptMirror(
     if (ctx.abortRef.current) return;
     if (event.type === 'done') {
       roundSettled = true;
+      if (proseSink) {
+        // `splitVisibleContent` only cuts at tool-call constructs it can see
+        // per delta (fenced/bare JSON, XML envelopes). A native tool-call
+        // echo — `repo_read", "args": {...}}` content some providers emit
+        // alongside delta.tool_calls — has none of those markers, so it
+        // survives the cut and would persist into a settled tool_prose
+        // message (Codex P2 on this PR; pre-stash it only flashed in the
+        // placeholder and died with the round reset). The full
+        // stripToolCallPayload pass covers echoes + orphaned JSON tails and
+        // is cheap here: once per round on settled content, not per delta.
+        // Its output is already trimmed; the splicer owns the final trim.
+        proseSink.pending = stripToolCallPayload(splitVisibleContent(accumulated).visible);
+      }
       return;
     }
     if (event.type !== 'text_delta' && event.type !== 'reasoning_delta') return;
@@ -270,6 +304,9 @@ export function createInlineTranscriptMirror(
       accumulated = '';
       thinking = '';
       roundSettled = false;
+      // A new round began without any tool consuming the stash — recovery /
+      // nudge rounds produce no disclosure to anchor the narration to.
+      if (proseSink) proseSink.pending = '';
     }
     if (event.type === 'text_delta') {
       accumulated += event.text;
@@ -462,81 +499,99 @@ function completeAssistantMessage(
 type ToolCompleteEvent = Extract<RunEventInput, { type: 'tool.execution_complete' }>;
 
 /**
- * Inserts synthetic isToolCall/isToolResult pairs immediately before the inline
- * placeholder (resolved by id, so a `branch_*` divider appended mid-run doesn't
- * divert the disclosure onto the wrong message), so groupChatMessages renders
- * a collapsible "Used N tools" disclosure above the final answer. These
- * messages are display-only: buildInlineTurnPreamble already filters
- * !isToolCall && !isToolResult from the next turn's model context, and
- * checkpoints capture the kernel transcript (not conv.messages), so these
- * never feed back to the model or corrupt resume state.
+ * Splices one synthetic isToolCall/isToolResult pair — plus the round's
+ * pending narration, when the prose sink holds one — immediately before the
+ * inline placeholder (resolved by id, so a `branch_*` divider appended
+ * mid-run doesn't divert the disclosure onto the wrong message). Called live
+ * from `onRunEvent` as each tool completes, so the transcript interleaves
+ * the way the model actually worked: prose → tool group → prose → tool
+ * group → final answer, instead of one adjacent block that
+ * `groupChatMessages` collapses into a single summary row at completion.
  *
- * When `cards` are supplied they are attached to the last synthetic call
- * message so they render inside the collapsible (matching the old Orchestrator
- * behaviour). ToolCallSummary hoists pending-action cards (ask-user, in-flight
- * commit-review) out of the group regardless, so they stay visible.
+ * These messages are display-only: the prose message carries
+ * `visibleToModel: false` (and `buildInlineTurnPreamble` filters
+ * !isToolCall && !isToolResult from the next turn's model context), and
+ * checkpoints capture the kernel transcript (not conv.messages), so none of
+ * this feeds back to the model or corrupts resume state.
+ *
+ * When narration is consumed, the placeholder's streamed copy of that same
+ * text is cleared in the same state update — the prose "moves" from the
+ * live bubble into a settled message instead of showing twice while the
+ * tool runs.
+ *
+ * Returns the synthetic call message's id (built outside the state updater
+ * so it stays stable under React's double-invoked updater in strict mode —
+ * the workspace-patch capture anchors its card to the last one). If the
+ * splice no-op'd (no assistant target, a rare conv-deleted race), the
+ * downstream findIndex consumers skip silently, so a stale id can't corrupt
+ * state.
  */
-function insertSyntheticToolPairs(
+function spliceInlineToolDisclosure(
   ctx: SendLoopContext,
-  events: ToolCompleteEvent[],
-  cards?: ChatCard[],
+  event: ToolCompleteEvent,
+  proseSink: InlineRoundProseSink,
   placeholderId?: string,
-): string | undefined {
-  if (events.length === 0) return undefined;
+): string {
   const { chatId } = ctx;
   const currentWriteBranch = resolveMessageWriteBranch(
     ctx.branchInfoRef.current,
     ctx.conversationsRef.current[chatId]?.branch,
   );
 
-  // Build the synthetic messages (with their ids) OUTSIDE the state updater so
-  // the returned last-call id matches the committed state even under React's
-  // double-invoked updater in strict mode — the workspace-patch capture below
-  // anchors its card to this id, so it must be stable.
-  const synthetic: ChatMessage[] = [];
-  let lastToolCallId: string | undefined;
-  for (let i = 0; i < events.length; i++) {
-    const event = events[i];
-    const isLast = i === events.length - 1;
-    const meta = buildToolMeta({
-      toolName: event.toolName,
-      target: event.target,
-      source: event.toolSource,
-      durationMs: event.durationMs,
-      isError: event.isError,
-    });
-    const ts = Date.now();
-    const callId = createId();
-    if (isLast) lastToolCallId = callId;
-    // Synthetic assistant message marking the tool call.
-    // visibleToModel: false — display-only; filterModelVisibleMessages
-    // drops these so they never feed back to the model on mode switches
-    // or Orchestrator-path replays (undefined would be treated as visible).
-    // Cards go on the last call message so they render inside the collapsible.
-    const callMessage: ChatMessage = {
-      id: callId,
-      role: 'assistant',
-      content: event.toolName,
+  const meta = buildToolMeta({
+    toolName: event.toolName,
+    target: event.target,
+    source: event.toolSource,
+    durationMs: event.durationMs,
+    isError: event.isError,
+  });
+  const ts = Date.now();
+  const callId = createId();
+  // Synthetic assistant message marking the tool call.
+  // visibleToModel: false — display-only; filterModelVisibleMessages
+  // drops these so they never feed back to the model on mode switches
+  // or Orchestrator-path replays (undefined would be treated as visible).
+  const callMessage: ChatMessage = {
+    id: callId,
+    role: 'assistant',
+    content: event.toolName,
+    timestamp: ts,
+    status: 'done',
+    isToolCall: true,
+    toolMeta: meta,
+    visibleToModel: false,
+  };
+  // Synthetic user message carrying the tool result preview.
+  const resultMessage: ChatMessage = {
+    ...buildToolResultMessage({
+      id: createId(),
       timestamp: ts,
-      status: 'done',
-      isToolCall: true,
+      text: event.preview,
       toolMeta: meta,
-      visibleToModel: false,
-      ...(isLast && cards && cards.length > 0 ? { cards } : {}),
-    };
-    synthetic.push(stampMessageBranch(callMessage, currentWriteBranch));
-    // Synthetic user message carrying the tool result preview.
-    const resultMessage: ChatMessage = {
-      ...buildToolResultMessage({
+    }),
+    visibleToModel: false,
+  };
+
+  const prose = proseSink.pending.trim();
+  proseSink.pending = '';
+  const proseMessage: ChatMessage | null = prose
+    ? {
         id: createId(),
+        role: 'assistant',
+        content: prose,
         timestamp: ts,
-        text: event.preview,
-        toolMeta: meta,
-      }),
-      visibleToModel: false,
-    };
-    synthetic.push(stampMessageBranch(resultMessage, currentWriteBranch));
-  }
+        status: 'done',
+        kind: 'tool_prose',
+        toolProseFor: callId,
+        visibleToModel: false,
+      }
+    : null;
+
+  const synthetic = [
+    ...(proseMessage ? [stampMessageBranch(proseMessage, currentWriteBranch)] : []),
+    stampMessageBranch(callMessage, currentWriteBranch),
+    stampMessageBranch(resultMessage, currentWriteBranch),
+  ];
 
   ctx.setConversations((prev) => {
     const conv = prev[chatId];
@@ -545,14 +600,44 @@ function insertSyntheticToolPairs(
     const targetIdx = resolveAssistantTargetIndex(msgs, placeholderId);
     if (targetIdx === -1) return prev;
     msgs.splice(targetIdx, 0, ...synthetic);
+    if (proseMessage) {
+      // The placeholder still shows the settled round's streamed prose until
+      // the next round's first delta resets it — clear it here so the
+      // narration doesn't render twice while the tool executes. targetIdx
+      // shifted by the splice above.
+      const placeholderIdx = targetIdx + synthetic.length;
+      msgs[placeholderIdx] = { ...msgs[placeholderIdx], content: '' };
+    }
     return { ...prev, [chatId]: { ...conv, messages: msgs } };
   });
 
-  // The last synthetic tool-call message id — the anchor the workspace-patch
-  // capture attaches its card to. If the splice no-op'd (no assistant target,
-  // a rare conv-deleted race), the capture's own findIndex skips silently, so
-  // a stale id can't corrupt state.
-  return lastToolCallId;
+  return callId;
+}
+
+/**
+ * Folds the kernel's result cards into the last synthetic tool-call message
+ * at completion, so they render inside the collapsible disclosure (matching
+ * the old Orchestrator behaviour). ToolCallSummary hoists pending-action
+ * cards (ask-user, in-flight commit-review) out of the group regardless, so
+ * they stay visible. No-ops silently when the anchor message is gone (the
+ * same conv-deleted race the splicer tolerates).
+ */
+function attachCardsToInlineToolCall(
+  ctx: SendLoopContext,
+  messageId: string,
+  cards: ChatCard[],
+): void {
+  if (cards.length === 0) return;
+  const { chatId } = ctx;
+  ctx.setConversations((prev) => {
+    const conv = prev[chatId];
+    if (!conv) return prev;
+    const idx = conv.messages.findIndex((m) => m.id === messageId);
+    if (idx === -1) return prev;
+    const msgs = [...conv.messages];
+    msgs[idx] = { ...msgs[idx], cards: [...(msgs[idx].cards ?? []), ...cards] };
+    return { ...prev, [chatId]: { ...conv, messages: msgs } };
+  });
 }
 
 /**
@@ -696,7 +781,10 @@ export async function startInlineCoderTurn(
   const { preCoderHead, preCoderUntrackedFiles } = await capturePreCoderSnapshot(sandboxId);
 
   // --- Kernel bindings ---
-  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId);
+  // Round-narration hand-off between the stream mirror (producer) and the
+  // tool-disclosure splicer in onRunEvent (consumer) — see InlineRoundProseSink.
+  const roundProse: InlineRoundProseSink = { pending: '' };
+  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId, roundProse);
   const stream = teePushStream(
     getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
     mirror,
@@ -774,9 +862,11 @@ export async function startInlineCoderTurn(
 
   clearLatestCoderState(ctx);
 
-  // Collect tool completion events so we can synthesize the per-turn
-  // collapsible disclosure after the kernel finishes.
+  // Tool completions splice their disclosure into the transcript live (see
+  // spliceInlineToolDisclosure); the array tracks that any ran (cards routing)
+  // and the id anchors completion-time card attach + workspace-patch capture.
   const capturedToolEvents: ToolCompleteEvent[] = [];
+  let lastLiveToolCallId: string | undefined;
   const taskInFlight = classifyTurnIntent(args.trimmedText) === 'task';
 
   const linkedLibraryIds = ctx.conversationsRef.current[chatId]?.linkedLibraryIds ?? [];
@@ -935,8 +1025,15 @@ export async function startInlineCoderTurn(
         },
         onRunEvent: (event) => {
           ctx.appendRunEvent(chatId, event);
-          if (event.type === 'tool.execution_complete') {
-            capturedToolEvents.push(event as ToolCompleteEvent);
+          if (event.type === 'tool.execution_complete' && !ctx.abortRef.current) {
+            const toolEvent = event as ToolCompleteEvent;
+            capturedToolEvents.push(toolEvent);
+            lastLiveToolCallId = spliceInlineToolDisclosure(
+              ctx,
+              toolEvent,
+              roundProse,
+              placeholderId,
+            );
           }
         },
         // Desync detection for the inline lane. The orchestrator dispatch
@@ -1238,17 +1335,16 @@ export async function startInlineCoderTurn(
   }
 
   // --- Complete the transcript: kernel summary replaces the streamed
-  // placeholder. Cards go inside the collapsible disclosure (on the last
-  // synthetic call message) when tool events were captured, so they fold away
-  // like the old Orchestrator path. When no tools ran (pure conversational
-  // turn), cards stay on the final message. ---
+  // placeholder. The tool disclosure was spliced live as each tool completed
+  // (interleaved with the round narration); here we only fold the result
+  // cards into the last synthetic call message so they render inside the
+  // collapsible, like the old Orchestrator path. When no tools ran (pure
+  // conversational turn), cards stay on the final message. ---
   const hasToolDisclosure = capturedToolEvents.length > 0;
-  const lastToolCallId = insertSyntheticToolPairs(
-    ctx,
-    capturedToolEvents,
-    hasToolDisclosure ? result.cards : undefined,
-    placeholderId,
-  );
+  const lastToolCallId = lastLiveToolCallId;
+  if (hasToolDisclosure && lastToolCallId) {
+    attachCardsToInlineToolCall(ctx, lastToolCallId, result.cards);
+  }
   // The completion verdict renders as a structured card, not appended prose —
   // matching the delegated arc, which routes the same verdict through the
   // delegation-result card and strips the `[Evaluation: …]` text from the

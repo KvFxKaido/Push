@@ -350,6 +350,10 @@ export function ChatContainer({
       if (message.role !== 'assistant') continue;
       if (message.status === 'streaming' || message.status === 'error') continue;
       if (message.isToolCall || message.isMalformed) continue;
+      // Display-only messages (tool_prose narration, branch/compaction
+      // dividers) aren't real turns — regenerating one would replay the
+      // wrong anchor.
+      if (message.visibleToModel === false) continue;
       return message.id;
     }
     return null;

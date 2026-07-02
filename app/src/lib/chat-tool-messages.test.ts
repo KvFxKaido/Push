@@ -343,6 +343,73 @@ describe('chat-tool-messages', () => {
     });
   });
 
+  it('splits pre-tool-call narration into a display-only tool_prose message', () => {
+    const messages = markLastAssistantToolCall(
+      [userMessage(), assistantMessage({ id: 'call-1', branch: 'feat/x' })],
+      {
+        content:
+          'Let me check the test config first.\n\n{"tool":"sandbox_read_file","args":{"path":"vitest.config.ts"}}',
+      },
+    );
+
+    expect(messages).toHaveLength(3);
+    // The narration becomes its own settled message before the tool call…
+    expect(messages[1]).toMatchObject({
+      role: 'assistant',
+      content: 'Let me check the test config first.',
+      status: 'done',
+      kind: 'tool_prose',
+      toolProseFor: 'call-1',
+      // …but never re-enters the model transcript: the tool-call message
+      // keeps the full content for the wire, so replaying the prose too
+      // would double-send it (and break role alternation).
+      visibleToModel: false,
+      // Branch provenance follows the round it was narrated in.
+      branch: 'feat/x',
+    });
+    // The tool-call message itself is unchanged — full content, flagged.
+    expect(messages[2]).toMatchObject({ id: 'call-1', isToolCall: true });
+    expect(messages[2].content).toContain('"tool":"sandbox_read_file"');
+  });
+
+  it('does not split when the round carried no narration (pure tool JSON)', () => {
+    const messages = markLastAssistantToolCall(
+      [userMessage(), assistantMessage({ id: 'call-1' })],
+      { content: '{"tool":"sandbox_exec","args":{"command":"npm test"}}' },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages.some((m) => m.kind === 'tool_prose')).toBe(false);
+  });
+
+  it('is idempotent across re-marks of the same round', () => {
+    // The batched execution path re-marks the same placeholder on every
+    // state update (initial mark, then once per result append). The id link
+    // keeps the split from stacking duplicates.
+    const once = markLastAssistantToolCall([userMessage(), assistantMessage({ id: 'call-1' })], {
+      content: 'Checking.\n{"tool":"sandbox_exec","args":{"command":"ls"}}',
+    });
+    const twice = markLastAssistantToolCall(once, {
+      content: 'Checking.\n{"tool":"sandbox_exec","args":{"command":"ls"}}',
+      toolUses: [{ type: 'tool_use', id: 'toolu_1', name: 'sandbox_exec', input: {} }],
+    });
+
+    expect(twice.filter((m) => m.kind === 'tool_prose')).toHaveLength(1);
+    // The re-mark still lands its payload on the tool-call message.
+    expect(twice[twice.length - 1].toolUses).toHaveLength(1);
+  });
+
+  it('does not split malformed rounds — their leftover text is garbage, not narration', () => {
+    const messages = markLastAssistantToolCall(
+      [userMessage(), assistantMessage({ id: 'call-1' })],
+      { content: 'orphaned shell fragment {"tool": "sandbox_e', malformed: true },
+    );
+
+    expect(messages).toHaveLength(2);
+    expect(messages.some((m) => m.kind === 'tool_prose')).toBe(false);
+    expect(messages[1].isMalformed).toBe(true);
+  });
+
   it('attaches non-sandbox-state cards to the latest assistant tool call', () => {
     const cards: ChatCard[] = [
       { type: 'sandbox-state', data: {} as never },
