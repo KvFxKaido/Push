@@ -5,6 +5,7 @@ import {
   decideReconnectProbe,
   isSavedSessionRecoverable,
   loadSandboxSession,
+  markSandboxSessionMutated,
   type ReconnectAttempt,
   saveSandboxSession,
   shouldRetryReconnect,
@@ -151,6 +152,49 @@ describe('sandbox-session', () => {
       vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
 
       expect(touchSandboxSessionActivity('owner/repo', 'main', 'sb-123', 999)).toBe(false);
+    });
+  });
+
+  describe('markSandboxSessionMutated', () => {
+    it('flips hasMutated to true on the matching session', () => {
+      const localStorage = createStorageMock();
+      vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
+
+      saveSandboxSession('owner/repo', 'main', createSession({ hasMutated: false }));
+
+      expect(markSandboxSessionMutated('owner/repo', 'main', 'sb-123')).toBe(true);
+      expect(loadSandboxSession('owner/repo', 'main')).toEqual(createSession({ hasMutated: true }));
+    });
+
+    it('is idempotent once already true', () => {
+      const localStorage = createStorageMock();
+      vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
+
+      saveSandboxSession('owner/repo', 'main', createSession({ hasMutated: true }));
+
+      expect(markSandboxSessionMutated('owner/repo', 'main', 'sb-123')).toBe(true);
+      expect(loadSandboxSession('owner/repo', 'main')).toEqual(createSession({ hasMutated: true }));
+    });
+
+    it('is a no-op when the stored session points at a different sandbox', () => {
+      const localStorage = createStorageMock();
+      vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
+
+      saveSandboxSession(
+        'owner/repo',
+        'main',
+        createSession({ sandboxId: 'sb-newer', hasMutated: false }),
+      );
+
+      expect(markSandboxSessionMutated('owner/repo', 'main', 'sb-older')).toBe(false);
+      expect(loadSandboxSession('owner/repo', 'main')?.hasMutated).toBe(false);
+    });
+
+    it('is a no-op when no session is stored', () => {
+      const localStorage = createStorageMock();
+      vi.stubGlobal('window', { localStorage, sessionStorage: createStorageMock() });
+
+      expect(markSandboxSessionMutated('owner/repo', 'main', 'sb-123')).toBe(false);
     });
   });
 

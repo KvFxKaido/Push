@@ -58,12 +58,14 @@ import {
   decideReconnectProbe,
   isSavedSessionRecoverable,
   loadSandboxSession,
+  markSandboxSessionMutated,
   type ReconnectAttempt,
   saveSandboxSession,
   shouldRetryReconnect,
   touchSandboxSessionActivity,
   type PersistedSandboxSession,
 } from '@/lib/sandbox-session';
+import { onWorkspaceMutation } from '@/lib/sandbox-mutation-signal';
 import { isDefinitivelyGoneError } from '@/lib/sandbox-error-utils';
 import { nativeCheckpointsActive } from '@/lib/checkpoint/checkpoint-store';
 import type { SandboxUnreachableRecoveryPolicy } from '@/lib/sandbox-recovery-policy';
@@ -243,6 +245,23 @@ export function useSandbox(
       }
       if (!saved.snapshotId || !saved.restoreToken) return null;
 
+      // A session that never mutated the workspace has nothing worth fighting
+      // to resurrect — cold-start straight from the default branch instead.
+      // Also sidesteps restoring a false-positive snapshot: auto-back's own
+      // dirty-tree fail-safe can misfire and push a WIP snapshot with nothing
+      // real in it (see the `hasMutated` doc comment in sandbox-session.ts).
+      if (saved.hasMutated === false) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'sandbox_restore_skipped_unmutated',
+            sandboxId: saved.sandboxId,
+            snapshotId: saved.snapshotId,
+          }),
+        );
+        return null;
+      }
+
       console.log(`[useSandbox] Attempting restore from snapshot ${saved.snapshotId}`);
       setStatus('reconnecting');
       try {
@@ -281,6 +300,7 @@ export function useSandbox(
           repoFullName: saved.repoFullName,
           branch: saved.branch,
           createdAt: Date.now(),
+          hasMutated: saved.hasMutated,
         });
         console.log(`[useSandbox] Restored from snapshot → ${session.sandboxId}`);
         return session.sandboxId;
@@ -481,6 +501,18 @@ export function useSandbox(
     restoreSavedSessionSnapshot,
   ]);
 
+  // Persist the first real workspace mutation of the session (see the
+  // `hasMutated` doc comment in sandbox-session.ts) — the durable signal the
+  // definitively-gone recovery path uses to skip fighting to restore a
+  // session that never accumulated anything worth restoring.
+  useEffect(() => {
+    if (activeRepoFullName == null || !activeBranch) return;
+    return onWorkspaceMutation((mutatedSandboxId) => {
+      if (mutatedSandboxId !== sandboxIdRef.current) return;
+      markSandboxSessionMutated(activeRepoFullName, activeBranch, mutatedSandboxId);
+    });
+  }, [activeRepoFullName, activeBranch]);
+
   // Take a keep-warm safety snapshot of the LIVE container (tar /workspace → R2)
   // without terminating it, then persist it as the restore point for a later
   // reclaim. Guarded so we never snapshot a busy container, double-snapshot, or
@@ -573,6 +605,7 @@ export function useSandbox(
               snapshotId: result.snapshotId,
               restoreToken: result.restoreToken,
               snapshotCreatedAt: Date.now(),
+              hasMutated: existing?.hasMutated,
             });
           }
           setSnapshotInfoTick((n) => n + 1);
@@ -848,6 +881,7 @@ export function useSandbox(
             repoFullName: repo,
             branch: normalizedBranch,
             createdAt: Date.now(),
+            hasMutated: false,
           });
           sessionStorageKeyRef.current = buildSandboxSessionStorageKey(repo, normalizedBranch);
 
@@ -913,13 +947,20 @@ export function useSandbox(
     const existing = currentSessionStorageKey ? safeStorageGet(currentSessionStorageKey) : null;
     let createdAt = Date.now();
     let lastActivityAt: number | undefined;
+    let hasMutated: boolean | undefined;
     if (existing) {
       try {
-        const parsed = JSON.parse(existing) as { createdAt?: unknown; lastActivityAt?: unknown };
+        const parsed = JSON.parse(existing) as {
+          createdAt?: unknown;
+          lastActivityAt?: unknown;
+          hasMutated?: unknown;
+        };
         if (typeof parsed.createdAt === 'number') createdAt = parsed.createdAt;
         // Carry recency forward: the container is the same live one, just
         // re-keyed, so the reconnect gate shouldn't fall back to createdAt-age.
         if (typeof parsed.lastActivityAt === 'number') lastActivityAt = parsed.lastActivityAt;
+        // Same container, same mutation history — just re-keyed.
+        if (typeof parsed.hasMutated === 'boolean') hasMutated = parsed.hasMutated;
       } catch {
         // Ignore malformed storage and keep the fresh timestamp.
       }
@@ -932,6 +973,7 @@ export function useSandbox(
       branch,
       createdAt,
       lastActivityAt,
+      hasMutated,
     });
     const nextSessionStorageKey = buildSandboxSessionStorageKey(repoFullName, branch);
     if (currentSessionStorageKey && currentSessionStorageKey !== nextSessionStorageKey) {
@@ -1002,6 +1044,7 @@ export function useSandbox(
         return false;
       }
       const now = Date.now();
+      const existing = loadSandboxSession(activeRepoFullName, activeBranch);
       saveSandboxSession(activeRepoFullName, activeBranch, {
         sandboxId: id,
         ownerToken,
@@ -1011,6 +1054,7 @@ export function useSandbox(
         snapshotId: result.snapshotId,
         restoreToken: result.restoreToken,
         snapshotCreatedAt: now,
+        hasMutated: existing?.hasMutated,
       });
       setSandboxId(null);
       sandboxIdRef.current = null;
@@ -1047,6 +1091,7 @@ export function useSandbox(
         // Keep the recency signal: this drops the snapshot but the container is
         // still live, so a reconnect must not fall back to createdAt-age alone.
         lastActivityAt: saved.lastActivityAt,
+        hasMutated: saved.hasMutated,
       });
     } else {
       const storageKey = buildSandboxSessionStorageKey(activeRepoFullName, activeBranch);

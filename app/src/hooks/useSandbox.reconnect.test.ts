@@ -72,6 +72,7 @@ const sandboxSession = vi.hoisted(() => ({
   loadSandboxSession: vi.fn<() => unknown>(() => null),
   saveSandboxSession: vi.fn(),
   touchSandboxSessionActivity: vi.fn(),
+  markSandboxSessionMutated: vi.fn(),
   isSavedSessionRecoverable: vi.fn<() => boolean>(() => true),
   decideReconnectProbe: vi.fn((args: { savedSandboxId: string; now: number }) => ({
     probe: true,
@@ -217,6 +218,7 @@ vi.mock('@/lib/sandbox-file-version-cache', () => cacheLib);
 vi.mock('@/lib/github-auth', () => ghAuth);
 vi.mock('@/lib/github-repo-coverage', () => repoCoverage);
 vi.mock('@/lib/sandbox-session', () => sandboxSession);
+vi.mock('@/lib/sandbox-mutation-signal', () => ({ onWorkspaceMutation: vi.fn(() => () => {}) }));
 vi.mock('@/lib/checkpoint/checkpoint-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/checkpoint/checkpoint-store')>();
   return { ...actual, nativeCheckpointsActive: checkpointGate.nativeCheckpointsActive };

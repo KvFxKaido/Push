@@ -69,6 +69,7 @@ const sandboxSession = vi.hoisted(() => ({
   loadSandboxSession: vi.fn<() => unknown>(() => null),
   saveSandboxSession: vi.fn(),
   touchSandboxSessionActivity: vi.fn(),
+  markSandboxSessionMutated: vi.fn(),
   isSavedSessionRecoverable: vi.fn<() => boolean>(() => true),
   decideReconnectProbe: vi.fn((args: { savedSandboxId: string; now: number }) => ({
     probe: true,
@@ -93,6 +94,7 @@ vi.mock('@/lib/sandbox-file-version-cache', () => cacheLib);
 vi.mock('@/lib/github-auth', () => ghAuth);
 vi.mock('@/lib/github-repo-coverage', () => repoCoverage);
 vi.mock('@/lib/sandbox-session', () => sandboxSession);
+vi.mock('@/lib/sandbox-mutation-signal', () => ({ onWorkspaceMutation: vi.fn(() => () => {}) }));
 vi.mock('@/lib/checkpoint/checkpoint-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/checkpoint/checkpoint-store')>();
   return { ...actual, nativeCheckpointsActive: checkpointGate.nativeCheckpointsActive };
@@ -440,6 +442,47 @@ describe('useSandbox.start', () => {
     });
     expect(sandboxClient.createSandbox).not.toHaveBeenCalled();
     expect(reactState.cells[0].value).toBe('sb-restored');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
+  it('skips restoring a snapshot and cold-starts when the session never mutated', async () => {
+    sandboxClient.createSandbox
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-1',
+        ownerToken: 'owner-tok',
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-2',
+        ownerToken: 'owner-tok-2',
+      });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
+    // A real snapshot IS on offer — this proves the skip is driven by
+    // hasMutated===false, not by an absent snapshot.
+    sandboxSession.loadSandboxSession.mockReturnValue({
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+      repoFullName: 'owner/repo',
+      branch: 'main',
+      createdAt: 123,
+      snapshotId: 'snap-1',
+      restoreToken: 'restore-tok',
+      hasMutated: false,
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-2');
+    expect(sandboxClient.restoreFromSnapshot).not.toHaveBeenCalled();
+    expect(sandboxClient.createSandbox).toHaveBeenCalledTimes(2);
+    expect(reactState.cells[0].value).toBe('sb-2');
     expect(reactState.cells[1].value).toBe('ready');
   });
 

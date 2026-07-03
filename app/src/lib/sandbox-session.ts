@@ -26,6 +26,21 @@ export interface PersistedSandboxSession {
   restoreToken?: string;
   /** Epoch ms when the snapshot was taken. Used to surface snapshot age on resume. */
   snapshotCreatedAt?: number;
+  /**
+   * Whether a real workspace mutation (write/upload/delete, or a mutating
+   * exec) has happened this session, per `onWorkspaceMutation`. Set to
+   * `false` explicitly at creation and flipped `true` on first mutation —
+   * `false` is a positive claim, not a default, so a pre-existing session
+   * (persisted before this field existed) reads `undefined` and is never
+   * treated as safe to discard. Lets `useSandbox.ts`'s definitively-gone
+   * recovery skip a snapshot restore and cold-start from the default branch
+   * for a session with nothing worth restoring, instead of resurrecting a
+   * snapshot that may itself be a false positive (auto-back's dirty-tree
+   * fail-safe can misfire and push a WIP snapshot with nothing real in it).
+   * `saveSandboxSession` replaces the whole record, so every writer must
+   * carry the existing value forward or a real `true` silently reverts.
+   */
+  hasMutated?: boolean;
 }
 
 function normalizeSandboxSessionBranch(
@@ -141,6 +156,26 @@ export function touchSandboxSessionActivity(
   const existing = parsePersistedSandboxSession(safeStorageGet(storageKey));
   if (!existing || existing.sandboxId !== sandboxId) return false;
   return safeStorageSet(storageKey, JSON.stringify({ ...existing, lastActivityAt: at }));
+}
+
+/**
+ * Flip `hasMutated` to `true` the first time a real workspace mutation is
+ * reported for this session. Idempotent (a no-op write once already `true`)
+ * and, like `touchSandboxSessionActivity`, a no-op when the stored session is
+ * missing or points at a different sandbox — a stale listener from a
+ * swapped-out container must not stamp the new one.
+ */
+export function markSandboxSessionMutated(
+  repoFullName: string | null | undefined,
+  branch: string | null | undefined,
+  sandboxId: string,
+): boolean {
+  const storageKey = buildSandboxSessionStorageKey(repoFullName, branch);
+  if (!storageKey) return false;
+  const existing = parsePersistedSandboxSession(safeStorageGet(storageKey));
+  if (!existing || existing.sandboxId !== sandboxId) return false;
+  if (existing.hasMutated === true) return true;
+  return safeStorageSet(storageKey, JSON.stringify({ ...existing, hasMutated: true }));
 }
 
 /**
