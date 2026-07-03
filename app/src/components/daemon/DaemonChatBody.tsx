@@ -676,17 +676,24 @@ export function DaemonChatBody({
   const showReattachedRun = Boolean(reattachedRun) && !isStreaming;
 
   const daemonControlsDisabledReason =
-    status.state !== 'open'
-      ? `${capitalize(daemonLabel)} is disconnected`
-      : daemonRuntimeUpdating
-        ? 'Updating daemon controls'
-        : daemonRuntimeLoading
-          ? 'Loading daemon controls'
-          : daemonRuntimeError
-            ? daemonRuntimeError
-            : daemonRuntimeSettings
-              ? null
-              : 'Daemon controls unavailable';
+    // set_daemon_runtime_config refuses relay-sourced writes outright (a
+    // remote bearer must not be able to downgrade the daemon's global exec
+    // safety posture) — surface that up front instead of letting the user
+    // tap a live-looking control and land on a guaranteed round-trip error
+    // (Codex P2 on #1318).
+    mode === 'relay'
+      ? 'Not available over Remote — pair Local-PC to change these settings'
+      : status.state !== 'open'
+        ? `${capitalize(daemonLabel)} is disconnected`
+        : daemonRuntimeUpdating
+          ? 'Updating daemon controls'
+          : daemonRuntimeLoading
+            ? 'Loading daemon controls'
+            : daemonRuntimeError
+              ? daemonRuntimeError
+              : daemonRuntimeSettings
+                ? null
+                : 'Daemon controls unavailable';
   const daemonControlsDisabled = daemonControlsDisabledReason !== null;
 
   const handleDaemonWebSearchModeChange = useCallback(
