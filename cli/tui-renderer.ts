@@ -20,6 +20,14 @@ export const ESC = {
   // Mouse tracking + SGR coordinates for wheel scroll in alternate screen.
   mouseOn: '\x1b[?1000h\x1b[?1006h',
   mouseOff: '\x1b[?1006l\x1b[?1000l',
+  // Alternate-scroll mode (xterm DEC 1007) is on by default in many terminals
+  // and, with mouse tracking off, translates wheel movement into Up/Down
+  // arrow-key sequences while the alt screen is active — which would land on
+  // the composer's history recall instead of doing nothing. Disable it
+  // explicitly since we never enable mouse tracking; restore the terminal's
+  // default (on) on exit.
+  altScrollOff: '\x1b[?1007l',
+  altScrollOn: '\x1b[?1007h',
   // Bracketed paste mode
   bracketedPasteOn: '\x1b[?2004h',
   bracketedPasteOff: '\x1b[?2004l',
