@@ -293,7 +293,7 @@ jobs:
       - name: Smoke test — daemon lifecycle
         run: |
           "$BIN" daemon start
-          for i in $(seq 1 15); do
+          for _ in $(seq 1 15); do
             "$BIN" daemon status | grep -q 'responsive' && break
             sleep 1
           done
