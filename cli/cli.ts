@@ -2107,6 +2107,16 @@ async function runDaemonSubcommand(values, positionals) {
   const action = (positionals[1] || 'status').toLowerCase();
   const deep = parseBoolFlag(values?.deep, 'deep');
 
+  // Internal: run pushd in-process. Single-executable builds have no
+  // sibling pushd.<ext> file on disk, so `daemon start` re-execs this
+  // same binary with `daemon __run` (see the start action below).
+  // Deliberately absent from help and the unknown-action list.
+  if (action === '__run') {
+    const { main: pushdMain } = await import('./pushd.js');
+    await pushdMain();
+    return 0;
+  }
+
   if (action === 'status') {
     const pid = await readPidFile();
     const socketPath = getSocketPath();
@@ -2190,15 +2200,24 @@ async function runDaemonSubcommand(values, positionals) {
     // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs).
     // Use fileURLToPath so percent-encoded chars (spaces, etc.) decode correctly
     // and Windows paths don't get a leading slash from URL.pathname.
-    const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
-    const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
-
-    // When the parent is running under tsx (currentExt === 'ts'), the child
-    // also needs the tsx loader — plain `node pushd.ts` dies with
-    // "Unknown file extension .ts" at module-load time. Pass `--import tsx`
-    // so the child registers the same ESM loader the parent is using. This
-    // mirrors `dev:cli` in package.json.
-    const nodeArgs = currentExt === 'ts' ? ['--import', 'tsx', pushdPath] : [pushdPath];
+    const extMatch = import.meta.url.match(/\.(m?[jt]s)$/);
+    let nodeArgs;
+    if (extMatch) {
+      const pushdPath = fileURLToPath(new URL(`./pushd.${extMatch[1]}`, import.meta.url));
+      // When the parent is running under tsx (ext === 'ts'), the child
+      // also needs the tsx loader — plain `node pushd.ts` dies with
+      // "Unknown file extension .ts" at module-load time. Pass `--import tsx`
+      // so the child registers the same ESM loader the parent is using. This
+      // mirrors `dev:cli` in package.json.
+      nodeArgs = extMatch[1] === 'ts' ? ['--import', 'tsx', pushdPath] : [pushdPath];
+    } else {
+      // No extension means a single-executable build (bun build --compile):
+      // import.meta.url points at the embedded bundle, there is no
+      // pushd.<ext> on disk, and process.execPath IS this packaged CLI.
+      // Re-exec ourselves with the internal `daemon __run` action, which
+      // runs pushd's main() in-process.
+      nodeArgs = ['daemon', '__run'];
+    }
 
     // Redirect pushd's stdout/stderr to a log file. Previously stdio was
     // 'ignore', which hid every startup crash — a daemon that dies before
@@ -4127,8 +4146,15 @@ export async function main() {
 // output produced by `npm run build:cli`). Handles both POSIX (`/`)
 // and Windows (`\\`) path separators so a packaged `push` binary on
 // either platform still boots into interactive mode.
+//
+// Single-executable builds (`bun build --compile`) embed the bundle at a
+// virtual path with no extension (`/$bunfs/root/<name>`), so the regex
+// can't see them; `import.meta.main` is the authoritative signal there.
+// Node under tsx leaves `import.meta.main` undefined for imports, so the
+// extra clause never flips the guard on for test imports.
 const isDirectRun =
-  typeof process.argv[1] === 'string' && /[/\\]cli\.(ts|mjs|cjs|js)$/.test(process.argv[1]);
+  import.meta.main === true ||
+  (typeof process.argv[1] === 'string' && /[/\\]cli\.(ts|mjs|cjs|js)$/.test(process.argv[1]));
 
 if (isDirectRun) {
   main()
