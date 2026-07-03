@@ -2201,21 +2201,38 @@ async function runDaemonSubcommand(values, positionals) {
     // Use fileURLToPath so percent-encoded chars (spaces, etc.) decode correctly
     // and Windows paths don't get a leading slash from URL.pathname.
     const extMatch = import.meta.url.match(/\.(m?[jt]s)$/);
+    // A bun single-executable build (bun build --compile) still reports an
+    // import.meta.url ending in .mjs — it's bun's internal embedded-bundle
+    // root (e.g. `B:\~BUN\root\cli.mjs`), not a real file on disk. Matching
+    // on extension alone sent that case down the "resolve a real pushd.mjs"
+    // branch, which spawned the compiled binary with that virtual path as
+    // its first positional arg — the CLI's own parser then rejected it as
+    // an unknown subcommand ("Unknown command: B:\~BUN\root\pushd.mjs"),
+    // so pushd never came up and every run silently fell back to inline
+    // mode. Confirm the resolved path actually exists before trusting it.
+    const pushdPathOnDisk = extMatch
+      ? fileURLToPath(new URL(`./pushd.${extMatch[1]}`, import.meta.url))
+      : null;
+    const pushdExists = pushdPathOnDisk
+      ? await fs.access(pushdPathOnDisk).then(
+          () => true,
+          () => false,
+        )
+      : false;
     let nodeArgs;
-    if (extMatch) {
-      const pushdPath = fileURLToPath(new URL(`./pushd.${extMatch[1]}`, import.meta.url));
+    if (extMatch && pushdExists) {
       // When the parent is running under tsx (ext === 'ts'), the child
       // also needs the tsx loader — plain `node pushd.ts` dies with
       // "Unknown file extension .ts" at module-load time. Pass `--import tsx`
       // so the child registers the same ESM loader the parent is using. This
       // mirrors `dev:cli` in package.json.
-      nodeArgs = extMatch[1] === 'ts' ? ['--import', 'tsx', pushdPath] : [pushdPath];
+      nodeArgs = extMatch[1] === 'ts' ? ['--import', 'tsx', pushdPathOnDisk] : [pushdPathOnDisk];
     } else {
-      // No extension means a single-executable build (bun build --compile):
-      // import.meta.url points at the embedded bundle, there is no
-      // pushd.<ext> on disk, and process.execPath IS this packaged CLI.
-      // Re-exec ourselves with the internal `daemon __run` action, which
-      // runs pushd's main() in-process.
+      // No extension, or the resolved path doesn't exist on disk (bun
+      // single-executable build): import.meta.url points at the embedded
+      // bundle and process.execPath IS this packaged CLI. Re-exec ourselves
+      // with the internal `daemon __run` action, which runs pushd's main()
+      // in-process.
       nodeArgs = ['daemon', '__run'];
     }
 
