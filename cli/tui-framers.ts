@@ -22,6 +22,7 @@ import { highlightCode } from './tui-highlight.js';
 import { renderInline } from './tui-inline.js';
 import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
 import type { UrlCitation } from '../lib/provider-contract.ts';
+import { isEditDiff, type EditDiff, type EditDiffLine } from '../lib/edit-diff.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -445,6 +446,9 @@ export interface TranscriptEntry {
   duration?: number;
   error?: boolean;
   resultPreview?: string;
+  /** Structured edit diff from `tool.execution_complete` (`payload.diff`);
+   *  validated with `isEditDiff` before rendering. */
+  editDiff?: unknown;
   verdict?: 'APPROVED' | 'DENIED' | string;
   kind?: string;
   summary?: string;
@@ -496,6 +500,96 @@ const assistantFramer: EntryFramer = {
   },
 };
 
+// ── Edit-card diff rendering ────────────────────────────────────────
+
+/** Human summary for the edit-card trailer: "Added 3 lines", "Removed 1
+ *  line", or "+3 -1" for mixed changes. */
+export function summarizeEditDiff(diff: EditDiff): string {
+  if (diff.adds > 0 && diff.dels === 0) {
+    return `Added ${diff.adds} line${diff.adds === 1 ? '' : 's'}`;
+  }
+  if (diff.dels > 0 && diff.adds === 0) {
+    return `Removed ${diff.dels} line${diff.dels === 1 ? '' : 's'}`;
+  }
+  return `+${diff.adds} -${diff.dels}`;
+}
+
+/** The line number shown in the gutter: new-file number for adds/context,
+ *  old-file number for deletions (matching git/GitHub reading habits). */
+function editDiffGutterNumber(line: EditDiffLine): number | null {
+  if (line.kind === 'del') return line.oldLine ?? null;
+  return line.newLine ?? line.oldLine ?? null;
+}
+
+/**
+ * Render a structured `EditDiff` as a Claude-Code-style edit card under a
+ * tool-call entry: right-aligned line-number gutter, `+`/`-` markers, and
+ * added/removed lines tinted with the `diff.addBg` / `diff.delBg` tokens
+ * (padded to full width so the change reads as a block). Context lines
+ * stay dim. A jump in gutter numbers between consecutive lines renders a
+ * `⋮` gap row. Long lines truncate (not wrap) to keep the gutter column
+ * flush — the full text lives in the file, not the transcript.
+ *
+ * Degrades cleanly: 16-color terminals have no bg fallback for the diff
+ * tokens, so lines fall back to green/red foreground; tier `none` keeps
+ * the `+`/`-` markers as the only signal.
+ */
+export function renderEditDiffLines(
+  out: string[],
+  diff: EditDiff,
+  width: number,
+  theme: Theme,
+): void {
+  const branch = branchGlyph(theme);
+  const summaryPrefix = `  ${theme.style('fg.dim', branch)}`;
+  out.push(`${summaryPrefix}${theme.style('fg.muted', summarizeEditDiff(diff))}`);
+
+  const numWidth = diff.lines.reduce((w, line) => {
+    const num = editDiffGutterNumber(line);
+    return Math.max(w, num === null ? 0 : String(num).length);
+  }, 1);
+  const indent = '     ';
+  const gapGlyph = theme.unicode ? '⋮' : ':';
+  // indent + number column + space + marker + space
+  const contentWidth = Math.max(4, width - indent.length - numWidth - 3);
+  // Only pad to a solid block when the tier actually renders a bg — at 16
+  // colors / no color the pad would just be trailing whitespace.
+  const hasDiffBg = theme.bg('diff.addBg') !== '' || theme.bg('diff.delBg') !== '';
+
+  let prevGutter: number | null = null;
+  for (const line of diff.lines) {
+    const num = editDiffGutterNumber(line);
+    // Gap row when consecutive hunks skip lines. Deletions repeat the
+    // same new-file position, so only forward jumps > 1 count.
+    if (num !== null && prevGutter !== null && num > prevGutter + 1) {
+      out.push(`${indent}${' '.repeat(numWidth)} ${theme.style('fg.dim', gapGlyph)}`);
+    }
+    if (num !== null) prevGutter = Math.max(prevGutter ?? 0, num);
+
+    const numStr = (num === null ? '' : String(num)).padStart(numWidth);
+    const text = truncate(line.text + (line.textTruncated ? '…' : ''), contentWidth);
+    // Pad by *visible* width (not JS length) so wide glyphs don't break the
+    // solid bg block.
+    const pad = (s: string): string =>
+      hasDiffBg ? s + ' '.repeat(Math.max(0, contentWidth + 1 - visibleWidth(s))) : s;
+    if (line.kind === 'add') {
+      out.push(
+        `${indent}${theme.style('state.success', `${numStr} +`)}${theme.styleFgBg('state.success', 'diff.addBg', pad(` ${text}`))}`,
+      );
+    } else if (line.kind === 'del') {
+      out.push(
+        `${indent}${theme.style('state.error', `${numStr} -`)}${theme.styleFgBg('state.error', 'diff.delBg', pad(` ${text}`))}`,
+      );
+    } else {
+      out.push(`${indent}${theme.style('fg.dim', numStr)}   ${theme.style('fg.secondary', text)}`);
+    }
+  }
+
+  if (diff.truncated) {
+    out.push(`${indent}${theme.style('fg.dim', `${theme.glyphs.ellipsis} diff truncated`)}`);
+  }
+}
+
 const toolCallFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const { glyphs } = theme;
@@ -518,6 +612,12 @@ const toolCallFramer: EntryFramer = {
       nextPrefix,
       styleFn: (s) => s, // segments already pre-styled
     });
+    // A structured edit diff replaces the one-line preview — the card
+    // already says what changed, and better.
+    if (!pending && !entry.error && isEditDiff(entry.editDiff)) {
+      renderEditDiffLines(out, entry.editDiff, width, theme);
+      return;
+    }
     if (entry.resultPreview && !pending) {
       const branch = branchGlyph(theme);
       const trailerPrefix = `  ${theme.style('fg.dim', branch)}`;

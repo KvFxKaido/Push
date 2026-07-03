@@ -32,6 +32,7 @@ import {
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
+import { isEditDiff } from '../lib/edit-diff.ts';
 import { createRuntimeContext } from '../lib/runtime-context.ts';
 import type {
   AIProviderType,
@@ -577,8 +578,13 @@ export async function runLeadKernelTurn(
         getCurrentBranch: () => readCliCurrentBranch(state.cwd),
       });
       const resultText: string = typeof result?.text === 'string' ? result.text : '';
+      // File-mutation results carry a structured diff in meta.editDiff
+      // (cli/tools.ts) — lift it onto the exec result so the kernel can
+      // stamp it on `tool.execution_complete` for transcript rendering.
+      const metaDiff = (result?.meta as Record<string, unknown> | null | undefined)?.editDiff;
+      const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
       if (result && result.ok === true) {
-        return { kind: 'executed', resultText };
+        return { kind: 'executed', resultText, ...(editDiff ? { editDiff } : {}) };
       }
       // Tool ran but reported failure — feed the structured-error code into
       // the kernel's mutation-failure tracker via `errorType`.
@@ -586,6 +592,7 @@ export async function runLeadKernelTurn(
         kind: 'executed',
         resultText,
         errorType: result?.structuredError?.code,
+        ...(editDiff ? { editDiff } : {}),
       };
     } catch (err) {
       // Approval timeout, abort during exec, catastrophic I/O. Surface as

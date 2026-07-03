@@ -56,6 +56,7 @@ import type {
   ToolFunctionSchema,
 } from './provider-contract.js';
 import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
+import type { EditDiff } from './edit-diff.js';
 import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
 import { buildToolResultBlock, buildToolUseBlock, createToolUseBlockId } from './tool-blocks.js';
@@ -863,6 +864,13 @@ export type CoderToolExecResult<TCard> =
        * `SandboxToolExecResult.structuredError.fatal`.
        */
       fatal?: boolean;
+      /**
+       * Structured line diff produced by file-mutation tools (edit_file /
+       * write_file). Forwarded verbatim onto the `tool.execution_complete`
+       * run event as `diff` so transcript surfaces can render the edit;
+       * never enters the model-visible tool result. See lib/edit-diff.ts.
+       */
+      editDiff?: EditDiff;
       policyPost?: { kind: 'inject'; content: string } | { kind: 'halt'; summary: string };
     }
   | { kind: 'denied'; reason: string };
@@ -2081,6 +2089,7 @@ export async function runCoderAgent<TCall, TCard>(
               pToolName,
               (call as unknown as { call: { args?: unknown } }).call.args,
             ),
+            ...(entry.kind === 'executed' && entry.editDiff ? { diff: entry.editDiff } : {}),
           });
           return { call, entry };
         }),
@@ -2160,6 +2169,9 @@ export async function runCoderAgent<TCall, TCard>(
             mqToolName,
             (mutationCall as unknown as { call: { args?: unknown } }).call.args,
           ),
+          ...(mutResult.kind === 'executed' && mutResult.editDiff
+            ? { diff: mutResult.editDiff }
+            : {}),
         });
         if (mutResult.kind === 'denied') {
           const content = `[TOOL_DENIED] ${mutResult.reason} [/TOOL_DENIED]`;
@@ -2601,6 +2613,7 @@ export async function runCoderAgent<TCall, TCard>(
       isError: result.kind === 'executed' ? Boolean(result.errorType) : false,
       preview: result.kind === 'executed' ? summarizeToolResultPreview(result.resultText) : '',
       target: getToolTargetDetail(singleCall.call.tool, singleCall.call.args),
+      ...(result.kind === 'executed' && result.editDiff ? { diff: result.editDiff } : {}),
     });
 
     if (result.kind === 'denied') {

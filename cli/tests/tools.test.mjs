@@ -447,6 +447,47 @@ describe('edit_file hashline flow', () => {
       assert.equal(edit.ok, true);
       const updated = await fs.readFile(abs, 'utf8');
       assert.ok(updated.startsWith('ALPHA\n'));
+
+      // Structured diff for the transcript edit card rides meta.editDiff.
+      assert.ok(edit.meta.editDiff, 'edit_file should attach meta.editDiff');
+      assert.equal(edit.meta.editDiff.path, rel);
+      assert.equal(edit.meta.editDiff.adds, 1);
+      assert.equal(edit.meta.editDiff.dels, 1);
+      const kinds = edit.meta.editDiff.lines.map((l) => l.kind);
+      assert.ok(kinds.includes('add') && kinds.includes('del'), kinds.join(','));
+    } finally {
+      await rmWithRetry(root);
+    }
+  });
+
+  it('write_file attaches meta.editDiff (create = pure additions, update = real diff)', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-tools-'));
+    try {
+      const rel = 'fresh.txt';
+      const created = await executeToolCall(
+        { tool: 'write_file', args: { path: rel, content: 'one\ntwo\n' } },
+        root,
+      );
+      assert.equal(created.ok, true);
+      assert.ok(created.meta.editDiff, 'create should attach meta.editDiff');
+      assert.equal(created.meta.editDiff.adds, 2);
+      assert.equal(created.meta.editDiff.dels, 0);
+
+      const updated = await executeToolCall(
+        { tool: 'write_file', args: { path: rel, content: 'one\nTWO\n' } },
+        root,
+      );
+      assert.equal(updated.ok, true);
+      assert.equal(updated.meta.editDiff.adds, 1);
+      assert.equal(updated.meta.editDiff.dels, 1);
+
+      // Rewriting identical content is a no-op edit — no diff attached.
+      const same = await executeToolCall(
+        { tool: 'write_file', args: { path: rel, content: 'one\nTWO\n' } },
+        root,
+      );
+      assert.equal(same.ok, true);
+      assert.equal(same.meta.editDiff, undefined);
     } finally {
       await rmWithRetry(root);
     }

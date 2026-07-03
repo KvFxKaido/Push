@@ -6,6 +6,7 @@
  * runtime, independent of whether the caller is the web app or the CLI.
  */
 
+import type { EditDiff } from './edit-diff.js';
 import type { ReviewResult } from './provider-contract.js';
 import type { PromptSnapshot } from './system-prompt-builder.js';
 
@@ -394,6 +395,11 @@ export type RunEventInput =
       target?: string;
       /** Workspace git branch stamped after sandbox_exec; omitted when unavailable. */
       branch?: string;
+      /** Structured line diff for file-mutation tools (`edit_file` /
+       *  `write_file`). Bounded by lib/edit-diff.ts caps; rendered by the
+       *  TUI as a line-numbered edit card. Omitted for non-mutation tools,
+       *  no-op edits, and oversized files. */
+      diff?: EditDiff;
     }
   | {
       type: 'branch_desync';

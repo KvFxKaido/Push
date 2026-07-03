@@ -109,6 +109,112 @@ describe('renderEntryLines: tool_call', () => {
   });
 });
 
+describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
+  const editDiff = {
+    path: 'src/foo.ts',
+    adds: 1,
+    dels: 1,
+    lines: [
+      { kind: 'ctx', oldLine: 1, newLine: 1, text: 'alpha' },
+      { kind: 'del', oldLine: 2, text: 'old line' },
+      { kind: 'add', newLine: 2, text: 'new line' },
+      { kind: 'ctx', oldLine: 3, newLine: 3, text: 'omega' },
+    ],
+  };
+
+  it('replaces the preview trailer with a line-numbered diff card', () => {
+    const lines = render({
+      role: 'tool_call',
+      text: 'edit_file',
+      args: { path: 'src/foo.ts' },
+      duration: 12,
+      resultPreview: 'Applied 1 hashline edits to src/foo.ts',
+      editDiff,
+    });
+    assert.deepEqual(lines, [
+      '• ✓ edit_file(src/foo.ts) 12ms',
+      '  └─ +1 -1',
+      '     1   alpha',
+      '     2 - old line',
+      '     2 + new line',
+      '     3   omega',
+    ]);
+  });
+
+  it('summarizes pure additions as "Added N lines" and renders hunk gaps', () => {
+    const lines = render({
+      role: 'tool_call',
+      text: 'edit_file',
+      args: { path: 'a.md' },
+      duration: 3,
+      editDiff: {
+        path: 'a.md',
+        adds: 2,
+        dels: 0,
+        lines: [
+          { kind: 'add', newLine: 2, text: 'first' },
+          { kind: 'ctx', oldLine: 9, newLine: 10, text: 'far away' },
+          { kind: 'add', newLine: 11, text: 'second' },
+        ],
+      },
+    });
+    assert.deepEqual(lines, [
+      '• ✓ edit_file(a.md) 3ms',
+      '  └─ Added 2 lines',
+      '      2 + first',
+      '        ⋮',
+      '     10   far away',
+      '     11 + second',
+    ]);
+  });
+
+  it('marks a payload-truncated diff', () => {
+    const lines = render({
+      role: 'tool_call',
+      text: 'write_file',
+      args: { path: 'big.txt' },
+      duration: 7,
+      editDiff: {
+        path: 'big.txt',
+        adds: 500,
+        dels: 0,
+        lines: [{ kind: 'add', newLine: 1, text: 'head' }],
+        truncated: true,
+      },
+    });
+    assert.deepEqual(lines, [
+      '• ✓ write_file(big.txt) 7ms',
+      '  └─ Added 500 lines',
+      '     1 + head',
+      '     … diff truncated',
+    ]);
+  });
+
+  it('ignores a malformed editDiff and falls back to the preview trailer', () => {
+    const lines = render({
+      role: 'tool_call',
+      text: 'edit_file',
+      args: { path: 'x.ts' },
+      duration: 2,
+      resultPreview: 'Applied 1 hashline edits to x.ts',
+      editDiff: { path: 'x.ts', lines: 'nope' },
+    });
+    assert.deepEqual(lines, ['• ✓ edit_file(x.ts) 2ms', '  └─ Applied 1 hashline edits to x.ts']);
+  });
+
+  it('keeps the plain error rendering when the call failed', () => {
+    const lines = render({
+      role: 'tool_call',
+      text: 'edit_file',
+      args: { path: 'x.ts' },
+      duration: 2,
+      error: true,
+      editDiff,
+    });
+    assert.deepEqual(lines, ['• ✗ edit_file(x.ts) 2ms']);
+  });
+});
+
 describe('renderEntryLines: diff fences', () => {
   it('renders a ```diff fence with a gutter, summary, and stripped markers', () => {
     assert.deepEqual(

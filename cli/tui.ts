@@ -37,6 +37,7 @@ import {
   verbForActivity,
 } from './tui-spinner.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
+import { isEditDiff } from '../lib/edit-diff.ts';
 import {
   formatElapsed,
   formatTokenCount,
@@ -3261,6 +3262,9 @@ export async function runTUI(options = {}) {
             candidate.error = isError;
             candidate.duration = event.payload.durationMs;
             candidate.resultPreview = text.slice(0, 200);
+            // Structured edit diff (edit_file / write_file) — rendered as an
+            // edit card by the tool_call framer instead of the preview line.
+            if (isEditDiff(event.payload.diff)) candidate.editDiff = event.payload.diff;
             // This entry was framed before its result landed; drop its cached
             // frame so the reconciler reframes it (the identity-keyed cache
             // can't observe an in-place edit). This is the one sanctioned

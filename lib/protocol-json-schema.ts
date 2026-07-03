@@ -50,6 +50,7 @@ import {
   TURN_ROUTES,
   TURN_SUPPRESSED_ROUTES,
 } from './protocol-schema.ts';
+import { EDIT_DIFF_LINE_KINDS } from './edit-diff.ts';
 
 /** A JSON Schema node. Loose by design — this is data, not a place to
  *  re-encode the JSON Schema meta-schema in TypeScript. */
@@ -221,7 +222,9 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     args: { type: 'object' },
   }),
 
-  // `tool_result` + `tool.execution_complete`.
+  // `tool_result` + `tool.execution_complete`. `diff` is the optional
+  // structured edit diff for file-mutation tools (shape owned by
+  // lib/edit-diff.ts; strict validation in lib/protocol-schema.ts).
   ToolResult: objectNode(['toolName', 'isError'], {
     toolName: nestr(),
     isError: bool(),
@@ -230,6 +233,22 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     target: str(),
     durationMs: num(),
     branch: str(),
+    diff: objectNode(['path', 'adds', 'dels', 'lines'], {
+      path: nestr(),
+      adds: num(),
+      dels: num(),
+      lines: {
+        type: 'array',
+        items: objectNode(['kind', 'text'], {
+          kind: enumOf(EDIT_DIFF_LINE_KINDS),
+          text: str(),
+          oldLine: num(),
+          newLine: num(),
+          textTruncated: bool(),
+        }),
+      },
+      truncated: bool(),
+    }),
   }),
 
   BranchDesync: objectNode(['expected', 'actual', 'command'], {

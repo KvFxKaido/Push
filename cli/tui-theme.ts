@@ -160,6 +160,12 @@ export const TOKENS = {
   'state.success': identityPalette.state.success,
   'state.warn': identityPalette.state.warning,
   'state.error': identityPalette.state.error,
+  // Edit-card diff backgrounds (tui-framers.ts renderEditDiffLines): dark
+  // tints of state.success / state.error harmonized with bg.base so
+  // added/removed lines read as blocks without swallowing the text. These
+  // stay TUI-local (no web counterpart) like state.warn's exact amber.
+  'diff.addBg': '#0c2918',
+  'diff.delBg': '#321418',
 } as const;
 
 // 16-color ANSI fallback mapping (from Visual Language Spec)
@@ -178,6 +184,9 @@ const ANSI_FALLBACK: Record<TokenName, AnsiFallbackEntry> = {
   'state.success': { fg: '\x1b[32m', bg: null }, // green
   'state.warn': { fg: '\x1b[33m', bg: null }, // yellow
   'state.error': { fg: '\x1b[31m', bg: null }, // red
+  // No 16-color bg fallback — the edit card degrades to fg-colored +/- lines.
+  'diff.addBg': { fg: null, bg: null },
+  'diff.delBg': { fg: null, bg: null },
 };
 
 // ── Theme variants ──────────────────────────────────────────────────
@@ -200,6 +209,8 @@ const NEON_TOKENS: Record<TokenName, string> = {
   'state.success': '#00ff9c',
   'state.warn': '#ffea00',
   'state.error': '#ff3566',
+  'diff.addBg': '#043321',
+  'diff.delBg': '#33101c',
 };
 
 const NEON_ANSI: Record<TokenName, AnsiFallbackEntry> = {
@@ -227,6 +238,8 @@ const METALLIC_TOKENS: Record<TokenName, string> = {
   'state.success': '#4fd1c5',
   'state.warn': '#eab308',
   'state.error': '#f87171',
+  'diff.addBg': '#0f2f2b',
+  'diff.delBg': '#331b1b',
 };
 
 const METALLIC_ANSI: Record<TokenName, AnsiFallbackEntry> = {
@@ -253,6 +266,8 @@ const MONO_TOKENS: Record<TokenName, string> = {
   'state.success': '#d5dccb',
   'state.warn': '#dcd3b3',
   'state.error': '#dcb3b3',
+  'diff.addBg': '#1e241a',
+  'diff.delBg': '#2b1a1a',
 };
 
 const MONO_ANSI: Record<TokenName, AnsiFallbackEntry> = {
@@ -277,6 +292,8 @@ const SOLARIZED_TOKENS: Record<TokenName, string> = {
   'state.success': '#859900',
   'state.warn': '#b58900',
   'state.error': '#dc322f',
+  'diff.addBg': '#1c3300',
+  'diff.delBg': '#3d100e',
 };
 
 const SOLARIZED_ANSI: Record<TokenName, AnsiFallbackEntry> = {
@@ -301,6 +318,8 @@ const FOREST_TOKENS: Record<TokenName, string> = {
   'state.success': '#8bc34a',
   'state.warn': '#e5b53a',
   'state.error': '#d96b4a',
+  'diff.addBg': '#182b10',
+  'diff.delBg': '#33170e',
 };
 
 const FOREST_ANSI: Record<TokenName, AnsiFallbackEntry> = {
@@ -518,6 +537,8 @@ const PREVIEW_ROWS: ReadonlyArray<{ token: TokenName; label: string; kind: 'bg' 
   { token: 'state.success', label: 'state.success', kind: 'fg' },
   { token: 'state.warn', label: 'state.warn', kind: 'fg' },
   { token: 'state.error', label: 'state.error', kind: 'fg' },
+  { token: 'diff.addBg', label: 'diff.addBg', kind: 'bg' },
+  { token: 'diff.delBg', label: 'diff.delBg', kind: 'bg' },
 ];
 
 /**
