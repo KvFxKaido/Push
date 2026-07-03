@@ -119,4 +119,78 @@ describe('TUI user_message broadcast (headless characterization)', () => {
       await h.stop();
     }
   });
+
+  it("does not swallow a phone message that arrives before this TUI's own echo (Codex + push-agent P2 on #1321)", async () => {
+    // The race the un-correlated boolean flag got wrong: this TUI sends,
+    // arming suppression BEFORE the request resolves — a second attached
+    // client's message can land in that same window. An uncorrelated flag
+    // would eat the FIRST user_message it sees, regardless of whose it is:
+    // it would swallow the phone's message here, then wrongly render this
+    // TUI's own echo as if it came from someone else. Correlating by content
+    // (preview/chars) must tell the two apart correctly either way.
+    const h = await startHeadlessTui({
+      verbResponses: {
+        send_user_message: { ok: true, payload: { runId: 'run_own', accepted: true } },
+      },
+    });
+    try {
+      const before = transcriptEntries(h, 'user').length;
+
+      await h.typeLine('hello from me');
+      // Local echo landed synchronously at submit time.
+      assert.equal(transcriptEntries(h, 'user').length, before + 1);
+
+      // A DIFFERENT client's message arrives first, in the window this TUI is
+      // still waiting on its own send_user_message ack.
+      h.emitDaemonEvent({
+        v: 1,
+        kind: 'event',
+        sessionId: 'stub-session',
+        runId: 'run_from_phone',
+        seq: 1,
+        ts: Date.now(),
+        type: 'user_message',
+        payload: { chars: 29, preview: 'what changed recently in push' },
+      });
+      await h.waitFor(() => transcriptEntries(h, 'user').length > before + 1);
+      const afterPhone = transcriptEntries(h, 'user');
+      assert.equal(afterPhone.length, before + 2, 'the phone message must render, not be eaten');
+      assert.equal(afterPhone.at(-1).text, 'what changed recently in push');
+
+      // THEN this TUI's own echo arrives — must still be recognized and
+      // suppressed, not rendered as a third entry.
+      h.emitDaemonEvent({
+        v: 1,
+        kind: 'event',
+        sessionId: 'stub-session',
+        runId: 'run_own',
+        seq: 2,
+        ts: Date.now(),
+        type: 'user_message',
+        payload: { chars: 13, preview: 'hello from me' },
+      });
+      await h.waitFor(() => h.requestsOfType('send_user_message').length > 0);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      h.emitDaemonEvent({
+        v: 1,
+        kind: 'event',
+        sessionId: 'stub-session',
+        runId: 'run_own',
+        seq: 3,
+        ts: Date.now(),
+        type: 'run_complete',
+        payload: { outcome: 'success' },
+      });
+      await h.waitFor(() => h.tuiState?.runState === 'idle');
+
+      assert.equal(
+        transcriptEntries(h, 'user').length,
+        before + 2,
+        "own echo must still be suppressed after a different client's message landed first",
+      );
+    } finally {
+      await h.stop();
+    }
+  });
 });
