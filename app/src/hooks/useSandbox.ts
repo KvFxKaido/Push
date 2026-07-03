@@ -865,6 +865,7 @@ export function useSandbox(
           snapshotRestoredSandboxIdRef.current = null;
           setRestoredFromSnapshotSandboxId(null);
           setSandboxId(session.sandboxId);
+          sandboxIdRef.current = session.sandboxId;
           setStatus('ready');
           setActiveSandboxEnvironment(session.sandboxId);
           setSandboxOwnerToken(session.ownerToken || null);

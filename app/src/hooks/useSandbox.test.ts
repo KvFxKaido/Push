@@ -259,6 +259,25 @@ describe('useSandbox.start', () => {
     expect(sandboxSession.saveSandboxSession).toHaveBeenCalled();
   });
 
+  it('syncs sandboxIdRef synchronously in start(), not only via the later effect', async () => {
+    // Regression (Codex P2 on #1315): a mutating tool call dispatched right
+    // after start() resolves — before React has run the sandboxId->ref sync
+    // effect — must still see the correct id in the ref, or the workspace
+    // mutation listener drops the session's first real mutation and a later
+    // unmutated-session cold-start fast path can discard real work.
+    // Deliberately does NOT call syncRefsFromState() first — that helper is
+    // the manual stand-in for the effect this test is proving isn't required.
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-new',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'feature');
+
+    expect(reactState.refs[0].current).toBe('sb-new');
+  });
+
   it('threads the active default branch into sandbox creation', async () => {
     sandboxClient.createSandbox.mockResolvedValue({
       status: 'ready',
