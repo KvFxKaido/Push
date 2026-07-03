@@ -135,6 +135,17 @@ describe('computeEditDiff: boundary cases', () => {
     const add = diff.lines.find((l) => l.kind === 'add');
     assert.equal(add.text, '  xy');
   });
+
+  it('strips C1 controls and zero-width/bidi marks (terminal spoofing hardening)', () => {
+    // U+009B is a one-byte CSI some terminals honor like ESC[; U+202E
+    // (RLO) visually reorders following text; U+200B is invisible. Same
+    // strip set as the citation sanitizer (cli/citation-format.ts).
+    const hostile = 'safe\u009b31mred\u202eevil\u200bhidden\ufeff';
+    const diff = computeEditDiff('f.txt', 'a\n', `a\n${hostile}\n`);
+    assert.ok(diff);
+    const add = diff.lines.find((l) => l.kind === 'add');
+    assert.equal(add.text, 'safe31mredevilhidden');
+  });
 });
 
 describe('computeEditDiff: hunks, adjacency, caps', () => {

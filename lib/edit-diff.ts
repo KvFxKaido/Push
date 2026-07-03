@@ -12,9 +12,9 @@
  * The output is bounded by design — it rides a run event that fans out
  * over WebSocket to attached clients, so both the line count and the
  * per-line length are capped and the `truncated` flag says so. Line text
- * is display-scrubbed (tabs expanded, C0 controls stripped) because it
- * is written raw into terminal cells; consumers must not treat it as a
- * byte-faithful patch. `git diff` remains the source of truth for
+ * is display-scrubbed (tabs expanded, C0/C1 controls and zero-width/bidi
+ * marks stripped) because it is written raw into terminal cells;
+ * consumers must not treat it as a byte-faithful patch. `git diff` remains the source of truth for
  * applying/reviewing changes.
  */
 
@@ -61,12 +61,23 @@ export const EDIT_DIFF_MAX_FILE_LINES = 40_000;
 /** LCS matrix budget: middles bigger than this fall back to block replace. */
 const LCS_CELL_BUDGET = 4_000_000;
 
-/** Scrub a raw file line for terminal display: expand tabs, drop other
- *  C0 controls (a stray ESC would corrupt every transcript row after it),
- *  and cut at MAX_LINE_CHARS. */
+/** Scrub a raw file line for terminal display: expand tabs, drop
+ *  terminal-unsafe characters, and cut at MAX_LINE_CHARS. The strip set
+ *  mirrors the citation sanitizer's class (cli/citation-format.ts
+ *  CONTROL_CHARS): C0 controls (a stray ESC would corrupt every
+ *  transcript row after it), DEL + C1 controls (U+009B is a one-byte CSI
+ *  some terminals honor like ESC[), soft hyphen, zero-width + bidi marks
+ *  (visual reordering/spoofing of the rendered diff), line/paragraph
+ *  separators, and BOM. Removed rather than space-replaced so zero-width
+ *  characters don't gain visible width. */
 function scrubLine(raw: string): { text: string; textTruncated: boolean } {
   // eslint-disable-next-line no-control-regex
-  const cleaned = raw.replace(/\t/g, '  ').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '');
+  const cleaned = raw
+    .replace(/\t/g, '  ')
+    .replace(
+      /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g,
+      '',
+    );
   if (cleaned.length <= EDIT_DIFF_MAX_LINE_CHARS) {
     return { text: cleaned, textTruncated: false };
   }
