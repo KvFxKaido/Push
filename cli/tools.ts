@@ -4,7 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
-import { computeEditDiff, overEditDiffLineBudget } from '../lib/edit-diff.ts';
+import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
@@ -2953,9 +2953,17 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         });
         const writeRelPath = path.relative(workspaceRoot, filePath) || '.';
         const writeEditDiff = buildEditDiffMeta(writeRelPath, beforeContent, content);
+        // Model-visible orientation: an update to an existing file echoes the
+        // changed regions back (confirmed post-write state, not what the
+        // model *believes* it wrote). Creates skip the echo — the diff would
+        // just replay the content the model authored one message ago.
+        const writeChangeNote =
+          writeEditDiff && beforeContent !== ''
+            ? `\n\nChanges (+${writeEditDiff.adds} -${writeEditDiff.dels}):\n${renderEditDiffText(writeEditDiff, { maxLines: 40 })}`
+            : '';
         return {
           ok: true,
-          text: `Wrote ${content.length} bytes to ${writeRelPath}${writeDiag.note ?? ''}`,
+          text: `Wrote ${content.length} bytes to ${writeRelPath}${writeChangeNote}${writeDiag.note ?? ''}`,
           meta: {
             path: filePath,
             bytes: content.length,

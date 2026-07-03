@@ -296,6 +296,39 @@ export function computeEditDiff(
   };
 }
 
+/**
+ * Plain-text rendering of an EditDiff for the *model-visible* tool result
+ * (the TUI has its own styled renderer in cli/tui-framers.ts). Line shape
+ * mirrors the `N| text` convention edit_file's context preview already
+ * uses, with a +/- marker column for changed lines and `---` rows where
+ * hunks skip lines:
+ *
+ *   1 -| /remote setup <deployment-url>
+ *   1 +| /remote setup [<deployment-url>]
+ *   2  | Enable relay
+ *
+ * Bounded by `maxLines` on top of the diff's own caps so a full-file
+ * rewrite doesn't flood the model's context.
+ */
+export function renderEditDiffText(diff: EditDiff, options: { maxLines?: number } = {}): string {
+  const maxLines = Math.max(1, options.maxLines ?? diff.lines.length);
+  const shown = diff.lines.slice(0, maxLines);
+  const out: string[] = [];
+  let prevGutter: number | null = null;
+  for (const line of shown) {
+    const num = line.kind === 'del' ? line.oldLine : (line.newLine ?? line.oldLine);
+    if (num !== undefined && prevGutter !== null && num > prevGutter + 1) out.push('---');
+    if (num !== undefined) prevGutter = Math.max(prevGutter ?? 0, num);
+    const marker = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+    const suffix = line.textTruncated ? '…' : '';
+    out.push(`${num ?? ''} ${marker}| ${line.text}${suffix}`);
+  }
+  if (diff.truncated || shown.length < diff.lines.length) {
+    out.push(`... (diff truncated; totals: +${diff.adds} -${diff.dels})`);
+  }
+  return out.join('\n');
+}
+
 /** Loose runtime guard for an EditDiff arriving off the wire (run events
  *  cross the daemon WebSocket as JSON). Deep-validates far enough that the
  *  renderer can trust field types without re-checking per line. */

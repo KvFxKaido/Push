@@ -14,6 +14,7 @@ import {
   computeEditDiff,
   isEditDiff,
   overEditDiffLineBudget,
+  renderEditDiffText,
 } from '../../lib/edit-diff.ts';
 
 describe('computeEditDiff: basic shapes', () => {
@@ -185,6 +186,37 @@ describe('computeEditDiff: hunks, adjacency, caps', () => {
     assert.equal(overEditDiffLineBudget(huge, 'a\n'), true);
     assert.equal(overEditDiffLineBudget('a\n', 'b\n'), false);
     assert.equal(computeEditDiff('f.txt', huge, 'a\n'), null);
+  });
+});
+
+describe('renderEditDiffText', () => {
+  it('renders the model-visible text form with markers and hunk separators', () => {
+    const before = Array.from({ length: 20 }, (_, i) => `line${i + 1}`).join('\n');
+    const after = before.replace('line2', 'LINE2').replace('line18', 'LINE18');
+    const diff = computeEditDiff('f.txt', before, after);
+    assert.equal(
+      renderEditDiffText(diff),
+      [
+        '1  | line1',
+        '2 -| line2',
+        '2 +| LINE2',
+        '3  | line3',
+        '4  | line4',
+        '---',
+        '16  | line16',
+        '17  | line17',
+        '18 -| line18',
+        '18 +| LINE18',
+        '19  | line19',
+        '20  | line20',
+      ].join('\n'),
+    );
+  });
+
+  it('caps output at maxLines and appends the totals trailer', () => {
+    const diff = computeEditDiff('f.txt', '', 'a\nb\nc\nd\n');
+    const text = renderEditDiffText(diff, { maxLines: 2 });
+    assert.deepEqual(text.split('\n'), ['1 +| a', '2 +| b', '... (diff truncated; totals: +4 -0)']);
   });
 });
 

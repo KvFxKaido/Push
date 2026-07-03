@@ -473,6 +473,9 @@ describe('edit_file hashline flow', () => {
       assert.equal(created.meta.editDiff.adds, 2);
       assert.equal(created.meta.editDiff.dels, 0);
 
+      // Creating a file does not echo the just-authored content back.
+      assert.ok(!created.text.includes('Changes ('), created.text);
+
       const updated = await executeToolCall(
         { tool: 'write_file', args: { path: rel, content: 'one\nTWO\n' } },
         root,
@@ -480,6 +483,12 @@ describe('edit_file hashline flow', () => {
       assert.equal(updated.ok, true);
       assert.equal(updated.meta.editDiff.adds, 1);
       assert.equal(updated.meta.editDiff.dels, 1);
+
+      // Updating an existing file surfaces the changed regions in the
+      // model-visible result text (confirmed post-write state).
+      assert.ok(updated.text.includes('Changes (+1 -1):'), updated.text);
+      assert.ok(updated.text.includes('2 -| two'), updated.text);
+      assert.ok(updated.text.includes('2 +| TWO'), updated.text);
 
       // Rewriting identical content is a no-op edit — no diff attached.
       const same = await executeToolCall(
