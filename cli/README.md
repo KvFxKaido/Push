@@ -262,6 +262,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_PROVIDER_FAILOVER` | `1`/`true` to opt into round-scoped provider failover. The CLI retries the locked provider first, then may rescue the current round on another configured provider with the same wire shape. Default: off. |
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
+| `PUSH_RELAY_TOKEN` | Fallback `pushd_relay_...` bearer for `push daemon relay enable` / `/remote enable` / `/remote setup` when `--token`/the token arg is omitted |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
 | `PUSH_POST_EDIT_DIAGNOSTICS` | `0`/`false` to disable the post-edit diagnostics loop (default: on). Overrides the `postEditDiagnostics` config setting. |
 | `PUSH_POST_EDIT_DIAGNOSTICS_BUDGET_MS` | Time budget for a post-edit checker run in ms (default: 10000). A run that exceeds it disables the loop for that workspace for the rest of the process. |
@@ -485,15 +486,18 @@ push daemon status|start|stop       Manage pushd daemon
 push daemon pair [--origin <url>]    Mint a Local PC pairing token
 push daemon pair --remote            Mint a Remote pairing bundle via relay
 push daemon relay enable|disable|status
-                                    Manage the outbound Worker relay
+                                    Manage the outbound Worker relay. `enable [--url <url>] [--token <token>]`
+                                    — both are optional after the first machine-wide setup: --url falls back
+                                    to the already-persisted deployment, --token falls back to PUSH_RELAY_TOKEN.
 push attach <session-id>            Attach to daemon-backed session
 push config show                    Show saved config
 push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 
 TUI Remote flow:
-  /remote setup <deployment-url> <pushd_relay_...>
+  /remote setup [<deployment-url>] [<pushd_relay_...>]
                                     Enable relay + mint a phone bundle for this TUI session
+                                    (args optional the same way as `push daemon relay enable`)
   /remote pair                      Mint a fresh phone bundle for this TUI session
   /rc [pair]                        Remote control, one-shot: make this session reachable
                                     on your phone — re-enables the relay from saved config,

@@ -240,7 +240,8 @@ Usage:
                                 Mint a device token bound to an exact origin
   push daemon tokens            List device tokens (no secrets)
   push daemon revoke <tokenId>  Revoke a device token
-  push daemon relay enable      Enable outbound relay dial (requires --url + --token)
+  push daemon relay enable      Enable outbound relay dial (--url/--token optional after first setup;
+                                --url falls back to the persisted deployment, --token to PUSH_RELAY_TOKEN)
   push daemon relay disable     Disable the outbound relay
   push daemon relay status      Show persisted + live relay state
   push daemon pair --remote     Mint a one-shot Remote pairing bundle (phone via relay)
@@ -2839,11 +2840,23 @@ async function runDaemonRelay(
 ): Promise<number> {
   const sub = positionals[2];
   if (sub === 'enable') {
-    const url = typeof values?.url === 'string' ? (values.url as string).trim() : '';
-    const token = typeof values?.token === 'string' ? (values.token as string).trim() : '';
+    const { readRelayConfig } = await import('./pushd-relay-config.js');
+    // Both values are optional on the command line: --url falls back to
+    // whatever deployment is already persisted (the common case is
+    // rotating the token against the same Worker you already dialed),
+    // and --token falls back to PUSH_RELAY_TOKEN so a shell profile can
+    // make `relay enable` a zero-argument command, same as the provider
+    // API key env vars.
+    const explicitUrl = typeof values?.url === 'string' ? (values.url as string).trim() : '';
+    const explicitToken = typeof values?.token === 'string' ? (values.token as string).trim() : '';
+    const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
+    const url = explicitUrl || persisted?.deploymentUrl || '';
+    const token = explicitToken || process.env.PUSH_RELAY_TOKEN?.trim() || '';
     if (!url || !token) {
       process.stderr.write(
-        'Usage: push daemon relay enable --url <deployment-url> --token <pushd_relay_…>\n',
+        'Usage: push daemon relay enable --url <deployment-url> --token <pushd_relay_…>\n' +
+          '  --url may be omitted if a relay was already configured on this machine.\n' +
+          '  --token may be omitted if PUSH_RELAY_TOKEN is set in the environment.\n',
       );
       return 1;
     }
