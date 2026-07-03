@@ -2420,6 +2420,61 @@ describe('multi-client fan-out', () => {
   });
 });
 
+describe('appendSessionEvent seq capture (Codex P2 on #1321)', () => {
+  // handleSendUserMessage broadcasts with the seq captured synchronously
+  // right when appendSessionEvent is called, not after awaiting it —
+  // appendSessionEvent increments state.eventSeq before its own first
+  // await, so a concurrent append for the SAME session (a background
+  // delegation/task-graph run isn't blocked by send_user_message's
+  // activeRunId check) landing during that await window would otherwise
+  // make a post-await read pick up the LATER event's seq. Proven directly
+  // against the real appendSessionEvent, not a reimplementation.
+  it('captures the correct seq even when a concurrent append lands during the await window', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-seq-race-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const sessionId = makeSessionId();
+      const state = createSessionState({
+        sessionId,
+        attachToken: 'pushd_test_seq_race_token',
+        provider: 'ollama',
+        model: 'llama-test',
+        cwd: tmpRoot,
+        mode: 'tui',
+        messages: [{ role: 'system', content: 'system' }],
+      });
+      await saveSessionState(state);
+
+      // Deliberately don't await the first append before starting the
+      // second — this is the race window: both synchronous prefixes run
+      // (both increments happen) before either disk write resolves.
+      const firstAppend = appendSessionEvent(state, 'user_message', { chars: 2, preview: 'hi' });
+      // The correct capture point: synchronous, right after initiating the
+      // call, before this TUI's own code awaits anything.
+      const capturedSeq = state.eventSeq;
+
+      const secondAppend = appendSessionEvent(state, 'status', { detail: 'concurrent' });
+      await Promise.all([firstAppend, secondAppend]);
+
+      assert.equal(capturedSeq, 1, "must capture user_message's own seq, not a later one");
+      // Proves the race scenario genuinely happened: state.eventSeq moved on
+      // to 2 by the time both appends settled — a post-await read here would
+      // have wrongly broadcast seq 2 for the user_message event actually
+      // persisted at seq 1.
+      assert.equal(state.eventSeq, 2, 'sanity: the concurrent append did land during the window');
+
+      const events = await loadSessionEvents(sessionId);
+      const persistedUserMessage = events.find((e) => e.type === 'user_message');
+      assert.equal(persistedUserMessage.seq, capturedSeq);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── Daemon version bump ─────────────────────────────────────────
 
 describe('daemon version', () => {
