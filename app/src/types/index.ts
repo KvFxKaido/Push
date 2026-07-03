@@ -1796,6 +1796,11 @@ export interface WorkspaceScreenNavigationProps {
   /** Phase 2.f Remote (relay) tile. Optional so a build without
    * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
   onStartRelay?: () => void;
+  /** Tap-to-resume: enter (or re-target) the Remote chat surface
+   * attached to a specific daemon session. Callers supply the
+   * per-session bearer they obtained via `grant_session_attach`.
+   * Optional for the same VITE_RELAY_MODE reason as onStartRelay. */
+  onResumeRelaySession?: (targetSessionId: string, targetAttachToken: string) => void;
   onEndWorkspace: () => void;
   /** Opens the pre-flight composer overlay. Callers can pass a seed
    * to prefill the target repo/branch/mode (e.g. "new chat in this repo"). */

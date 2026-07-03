@@ -54,6 +54,16 @@ interface RepoChatDrawerProps {
    */
   cliSessions?: DaemonCliSession[];
   cliSessionsLabel?: 'local-pc' | 'relay';
+  /**
+   * Tap-to-resume for Connected rows. When present, rows render as
+   * buttons and a tap hands the session to this callback (the caller
+   * owns the grant_session_attach round-trip + navigation — see
+   * RelayChatScreen / the workspace routes). The drawer intentionally
+   * does NOT close itself on tap: the caller's navigation unmounts it
+   * on success, and on failure the drawer staying open is the honest
+   * signal that nothing happened. Absent: rows stay read-only.
+   */
+  onResumeCliSession?: (session: DaemonCliSession) => void;
 }
 
 const EMPTY_CHATS: Conversation[] = [];
@@ -96,6 +106,7 @@ export function RepoChatDrawer({
   onRenameChat,
   cliSessions = EMPTY_CLI_SESSIONS,
   cliSessionsLabel,
+  onResumeCliSession,
 }: RepoChatDrawerProps) {
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -453,7 +464,11 @@ export function RepoChatDrawer({
                       </div>
                       <div className="space-y-1 px-0 pb-0">
                         {filteredCliSessions.map((s) => (
-                          <CliSessionRow key={s.sessionId} session={s} />
+                          <CliSessionRow
+                            key={s.sessionId}
+                            session={s}
+                            onResume={onResumeCliSession ? () => onResumeCliSession(s) : undefined}
+                          />
                         ))}
                       </div>
                     </div>

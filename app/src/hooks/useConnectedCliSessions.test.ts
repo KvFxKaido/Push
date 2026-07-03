@@ -216,6 +216,99 @@ describe('createConnectedCliSessionsController', () => {
     expect(onSessions.mock.calls.at(-1)?.[0]).toEqual([]);
   });
 
+  it('grant resolves the bearer over the live connection', async () => {
+    const onSessions = vi.fn();
+    const request = vi.fn((opts: { type: string }) => {
+      if (opts.type === 'grant_session_attach') {
+        return Promise.resolve({
+          ok: true,
+          payload: { sessionId: 'sess_target', attachToken: 'sess-bearer-123' },
+        } as never);
+      }
+      return Promise.resolve(listResponse([]));
+    });
+    const binding = {
+      get status() {
+        return { state: 'open' as const };
+      },
+      request,
+      close: vi.fn(),
+    } as unknown as LocalDaemonBinding;
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    const grant = await controller.grant('sess_target');
+    expect(grant).toEqual({ token: 'sess-bearer-123', stale: false });
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'grant_session_attach',
+        payload: { sessionId: 'sess_target' },
+      }),
+    );
+  });
+
+  it('grant resolves null with no connection and after deactivate', async () => {
+    const onSessions = vi.fn();
+    const fake = makeFakeBinding();
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    // Never activated: a live "no connection" refusal, not staleness.
+    expect(await controller.grant('sess_x')).toEqual({ token: null, stale: false });
+    controller.activate();
+    await flush();
+    controller.deactivate();
+    // Post-deactivate the binding is gone; the generation moved on, so
+    // this reads as a live no-connection refusal too (no request sent).
+    expect((await controller.grant('sess_x')).token).toBeNull();
+    expect(fake.request).not.toHaveBeenCalled();
+  });
+
+  it('grant resolves null when the daemon refuses', async () => {
+    const onSessions = vi.fn();
+    const fake = makeFakeBinding(() => Promise.reject(new Error('SESSION_NOT_FOUND')));
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    expect(await controller.grant('sess_gone')).toEqual({ token: null, stale: false });
+  });
+
+  it('a grant superseded mid-flight resolves stale (no navigation, no error)', async () => {
+    // Deactivate while the grant round-trip is pending: the settle must
+    // come back stale so the caller neither navigates nor toasts —
+    // Codex P2 on #1310 (a slow grant yanking the user into Remote
+    // after they closed the drawer).
+    const onSessions = vi.fn();
+    let rejectGrant: (err: Error) => void = () => {};
+    const fake = makeFakeBinding(
+      () =>
+        new Promise<SessionResponse<unknown>>((_resolve, reject) => {
+          rejectGrant = reject;
+        }),
+    );
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    const pending = controller.grant('sess_slow');
+    controller.deactivate(); // closes the binding → in-flight request rejects
+    rejectGrant(new Error('connection closed before response'));
+    expect(await pending).toEqual({ token: null, stale: true });
+  });
+
   it('a superseded activation cannot emit rows after deactivate', async () => {
     // Deferred pairing load: deactivate() fires while the load is still
     // in flight; when it resolves, the stale generation must not dial

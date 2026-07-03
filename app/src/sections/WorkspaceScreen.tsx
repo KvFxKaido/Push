@@ -43,11 +43,18 @@ export function WorkspaceScreen(props: WorkspaceScreenProps) {
     return (
       <Suspense fallback={workspaceFallback}>
         <RelayChatScreen
+          // Keyed by target so switching the attached session
+          // (tap-to-resume) remounts the chat shell: useChat state,
+          // hydrated history, and run/approval projections all start
+          // clean for the new session instead of the old chat sitting
+          // under the new session's prepended transcript.
+          key={workspaceSession.binding.targetSessionId ?? 'untargeted'}
           binding={workspaceSession.binding}
           onLeave={props.navigation.onEndWorkspace}
           onUnpair={props.navigation.onEndWorkspace}
           auth={props.auth}
           onDisconnect={props.navigation.onDisconnect}
+          onResumeSession={props.navigation.onResumeRelaySession}
         />
       </Suspense>
     );

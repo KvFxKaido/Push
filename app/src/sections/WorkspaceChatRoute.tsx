@@ -23,7 +23,7 @@ import {
   runCommitSwitchDefaultAction,
 } from '@/lib/commit-card-branch-actions';
 import { cleanWorkspacePublishMessage } from '@/lib/workspace-publish';
-import type { CardAction } from '@/types';
+import type { CardAction, DaemonCliSession } from '@/types';
 import { ChatScreen } from './ChatScreen';
 import {
   buildRepoChatDrawerProps,
@@ -127,6 +127,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     handleStartChat,
     handleStartLocalPc,
     handleStartRelay,
+    handleResumeRelaySession,
     handleExitWorkspace,
     handleOpenDraftComposer,
     handleDisconnect,
@@ -627,7 +628,29 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   });
   // Paired remote daemon (CLI/TUI) sessions for the drawer's Connected
   // section — dialed lazily while the drawer is open. See /rc.
-  const { sessions: connectedCliSessions } = useConnectedCliSessions(isChatsDrawerOpen);
+  const { sessions: connectedCliSessions, grantSessionAttach } =
+    useConnectedCliSessions(isChatsDrawerOpen);
+  // Tap-to-resume: grant the session's bearer over the drawer's open
+  // connection, then hand off to App's relay entry. A `stale` grant
+  // means the user moved on mid-round-trip (closed the drawer /
+  // navigated away — the hook's activation was superseded), so a slow
+  // grant can't yank them into Remote after the fact (Codex P2 on
+  // #1310) and doesn't toast either. On a live failure the drawer
+  // stays open (the toast is the only signal; navigating away would
+  // hide it).
+  const handleResumeConnectedCliSession = useCallback(
+    async (session: DaemonCliSession) => {
+      if (!handleResumeRelaySession) return;
+      const grant = await grantSessionAttach(session.sessionId);
+      if (grant.stale) return; // user moved on
+      if (grant.token) {
+        handleResumeRelaySession(session.sessionId, grant.token);
+        return;
+      }
+      toast.error('Could not reach the daemon to resume this session.');
+    },
+    [handleResumeRelaySession, grantSessionAttach],
+  );
   const drawerProps = buildRepoChatDrawerProps({
     open: isChatsDrawerOpen,
     setOpen: setIsChatsDrawerOpen,
@@ -644,6 +667,9 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
     renameChat,
     cliSessions: connectedCliSessions,
     cliSessionsLabel: 'relay',
+    onResumeCliSession: handleResumeRelaySession
+      ? (session) => void handleResumeConnectedCliSession(session)
+      : undefined,
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,

@@ -63,6 +63,12 @@ export interface ChatRouteWorkspaceProps {
   handleStartChat: (() => void) | undefined;
   handleStartLocalPc: (() => void) | undefined;
   handleStartRelay: (() => void) | undefined;
+  /** Tap-to-resume: enter the Remote surface attached to a specific
+   * daemon session (bearer from grant_session_attach). Undefined when
+   * relay mode is disabled — Connected rows stay read-only. */
+  handleResumeRelaySession:
+    | ((targetSessionId: string, targetAttachToken: string) => void)
+    | undefined;
   handleExitWorkspace: () => void;
   handleDisconnect: () => void;
   handleCreateNewChat: () => void;

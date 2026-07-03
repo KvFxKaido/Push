@@ -33,7 +33,7 @@
  * synchronous-open edge, and every failure branch are unit-testable
  * without a DOM renderer; the hook is thin effect glue around it.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LocalDaemonBinding } from '@/lib/local-daemon-binding';
 import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
@@ -47,6 +47,12 @@ const LIST_TIMEOUT_MS = 10_000;
 export interface UseConnectedCliSessionsResult {
   /** Non-empty only while a live daemon connection has reported rows. */
   sessions: DaemonCliSession[];
+  /**
+   * Tap-to-resume grant over the currently-open connection (see
+   * ConnectedCliSessionsController.grant and
+   * GrantSessionAttachResult for the token/stale contract).
+   */
+  grantSessionAttach: (sessionId: string) => Promise<GrantSessionAttachResult>;
 }
 
 export interface ConnectedCliSessionsDeps {
@@ -57,11 +63,32 @@ export interface ConnectedCliSessionsDeps {
   ) => LocalDaemonBinding;
 }
 
+/**
+ * Result of a tap-to-resume grant. `stale: true` means the activation
+ * that issued the request was superseded while it was in flight — the
+ * drawer closed, the route unmounted, or a fresh activation replaced
+ * the connection. Callers must treat stale as "the user moved on":
+ * no navigation AND no error surface (a toast for an intentionally
+ * closed drawer would be noise). `token: null` with `stale: false` is
+ * a live refusal — can't resume right now, worth telling the user.
+ */
+export interface GrantSessionAttachResult {
+  token: string | null;
+  stale: boolean;
+}
+
 export interface ConnectedCliSessionsController {
   /** Dial the stored pairing and emit rows once listed. Supersedes any prior activation. */
   activate(): void;
   /** Close the connection and emit an empty list (Connected rows must not outlive it). */
   deactivate(): void;
+  /**
+   * Tap-to-resume: ask the daemon for `sessionId`'s attach token over
+   * the live connection (`grant_session_attach`). See
+   * GrantSessionAttachResult for the token/stale contract; never
+   * rejects.
+   */
+  grant(sessionId: string): Promise<GrantSessionAttachResult>;
 }
 
 function defaultCreateBinding(
@@ -211,7 +238,47 @@ export function createConnectedCliSessionsController(opts: {
     opts.onSessions([]);
   };
 
-  return { activate, deactivate };
+  const grant = async (sessionId: string): Promise<GrantSessionAttachResult> => {
+    const myGen = gen;
+    const b = binding;
+    if (!b) {
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'connected_cli_sessions_grant_no_binding' }),
+      );
+      return { token: null, stale: false };
+    }
+    try {
+      const res = await b.request<{ attachToken?: unknown }>({
+        type: 'grant_session_attach',
+        timeoutMs: LIST_TIMEOUT_MS,
+        payload: { sessionId },
+      });
+      // Superseded while in flight (drawer closed / reopened): the
+      // user moved on — even a valid token must not navigate now.
+      if (gen !== myGen) return { token: null, stale: true };
+      const token = res?.payload?.attachToken;
+      if (typeof token === 'string' && token) return { token, stale: false };
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'connected_cli_sessions_grant_malformed' }),
+      );
+      return { token: null, stale: false };
+    } catch (err) {
+      // Deactivation closes the binding, which rejects in-flight
+      // requests — that's the stale path (intentional close), not a
+      // daemon refusal, so it must not surface as an error.
+      if (gen !== myGen) return { token: null, stale: true };
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'connected_cli_sessions_grant_failed',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return { token: null, stale: false };
+    }
+  };
+
+  return { activate, deactivate, grant };
 }
 
 export function useConnectedCliSessions(
@@ -219,6 +286,10 @@ export function useConnectedCliSessions(
   deps: ConnectedCliSessionsDeps = {},
 ): UseConnectedCliSessionsResult {
   const [sessions, setSessions] = useState<DaemonCliSession[]>([]);
+  // The live controller, so `grantSessionAttach` reaches the CURRENT
+  // activation's connection (a stale closure would grant over a closed
+  // binding after a drawer close/reopen cycle).
+  const controllerRef = useRef<ConnectedCliSessionsController | null>(null);
   // Destructured so the effect can depend on the individual functions:
   // production passes no deps (both stay `undefined`, a stable value),
   // and tests pass module-stable fakes — either way the effect only
@@ -232,9 +303,21 @@ export function useConnectedCliSessions(
       createBinding: createBindingDep ?? defaultCreateBinding,
       onSessions: setSessions,
     });
+    controllerRef.current = controller;
     controller.activate();
-    return () => controller.deactivate();
+    return () => {
+      controller.deactivate();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
   }, [active, loadPairedRemoteDep, createBindingDep]);
 
-  return { sessions };
+  const grantSessionAttach = useCallback(
+    (sessionId: string): Promise<GrantSessionAttachResult> =>
+      // No live controller = the drawer already closed / never opened —
+      // same "user isn't in the tap context" semantics as stale.
+      controllerRef.current?.grant(sessionId) ?? Promise.resolve({ token: null, stale: true }),
+    [],
+  );
+
+  return { sessions, grantSessionAttach };
 }

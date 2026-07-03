@@ -5502,7 +5502,7 @@ export async function runTUI(options = {}) {
         `Session ${sessionLabel} is reachable from your phone.`,
         `  relay: ${live?.state || 'connected'}`,
         `  paired phones: ${pairedPhones}`,
-        '  Open the Chats drawer on the phone — this session is listed under Connected.',
+        '  Open the Chats drawer on the phone — this session is listed under Connected; tap it to continue there.',
         '  /rc pair adds another phone.',
       ].join('\n'),
     );

@@ -61,6 +61,10 @@ export type AuditEventType =
   // Auth lifecycle
   | 'auth.upgrade'
   | 'auth.mint_attach'
+  // A paired (transport-authenticated) client was handed the attach
+  // token for one daemon session — the tap-to-resume grant. Payload
+  // records `minted` (tripwire) + relaySenderId; never the bearer.
+  | 'auth.grant_session_attach'
   | 'auth.revoke_device'
   | 'auth.revoke_attach'
   // Sandbox tool calls
