@@ -13,7 +13,7 @@
  * was a 95% clone of the local-PC version.
  */
 import { Globe } from 'lucide-react';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { RelayModeChip } from '@/components/RelayModeChip';
 import { DaemonChatBody } from '@/components/daemon/DaemonChatBody';
@@ -133,6 +133,18 @@ export function RelayChatScreen({
     onUnpair();
   };
 
+  // Invalidate an in-flight resume grant once this screen unmounts
+  // (user left Remote, unpaired, or a prior switch already re-keyed
+  // the screen) — a slow grant must not re-target the workspace after
+  // the user moved on (Codex P2 on #1310, in-screen variant).
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   // Tap-to-resume from the drawer's Connected section: ask the daemon
   // for the tapped session's bearer over this screen's own connection,
   // then let App re-target the workspace binding (the screen remounts
@@ -150,6 +162,7 @@ export function RelayChatScreen({
           timeoutMs: 10_000,
           payload: { sessionId: session.sessionId },
         });
+        if (!mountedRef.current) return; // user left Remote mid-grant
         const token = res?.payload?.attachToken;
         if (typeof token === 'string' && token) {
           onResumeSession(session.sessionId, token);

@@ -409,7 +409,19 @@ function App() {
         return;
       }
 
-      void setPairedRemote({ ...record, targetSessionId, targetAttachToken });
+      // Best-effort: a failed write means the sticky-target contract
+      // (next plain Remote entry resumes this session) silently reverts
+      // to the old target — log it so ops can see the branch, but don't
+      // block the resume, which only needs the in-memory binding.
+      setPairedRemote({ ...record, targetSessionId, targetAttachToken }).catch((err: unknown) => {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'relay_resume_sticky_target_persist_failed',
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      });
       setRelayPairingActive(false);
       setWorkspaceSession({
         id: crypto.randomUUID(),

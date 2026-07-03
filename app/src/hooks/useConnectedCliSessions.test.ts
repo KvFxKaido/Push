@@ -241,8 +241,8 @@ describe('createConnectedCliSessionsController', () => {
     });
     controller.activate();
     await flush();
-    const token = await controller.grant('sess_target');
-    expect(token).toBe('sess-bearer-123');
+    const grant = await controller.grant('sess_target');
+    expect(grant).toEqual({ token: 'sess-bearer-123', stale: false });
     expect(request).toHaveBeenCalledWith(
       expect.objectContaining({
         type: 'grant_session_attach',
@@ -259,11 +259,14 @@ describe('createConnectedCliSessionsController', () => {
       createBinding: () => fake.binding,
       onSessions,
     });
-    expect(await controller.grant('sess_x')).toBeNull(); // never activated
+    // Never activated: a live "no connection" refusal, not staleness.
+    expect(await controller.grant('sess_x')).toEqual({ token: null, stale: false });
     controller.activate();
     await flush();
     controller.deactivate();
-    expect(await controller.grant('sess_x')).toBeNull(); // connection closed
+    // Post-deactivate the binding is gone; the generation moved on, so
+    // this reads as a live no-connection refusal too (no request sent).
+    expect((await controller.grant('sess_x')).token).toBeNull();
     expect(fake.request).not.toHaveBeenCalled();
   });
 
@@ -277,7 +280,33 @@ describe('createConnectedCliSessionsController', () => {
     });
     controller.activate();
     await flush();
-    expect(await controller.grant('sess_gone')).toBeNull();
+    expect(await controller.grant('sess_gone')).toEqual({ token: null, stale: false });
+  });
+
+  it('a grant superseded mid-flight resolves stale (no navigation, no error)', async () => {
+    // Deactivate while the grant round-trip is pending: the settle must
+    // come back stale so the caller neither navigates nor toasts —
+    // Codex P2 on #1310 (a slow grant yanking the user into Remote
+    // after they closed the drawer).
+    const onSessions = vi.fn();
+    let rejectGrant: (err: Error) => void = () => {};
+    const fake = makeFakeBinding(
+      () =>
+        new Promise<SessionResponse<unknown>>((_resolve, reject) => {
+          rejectGrant = reject;
+        }),
+    );
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    const pending = controller.grant('sess_slow');
+    controller.deactivate(); // closes the binding → in-flight request rejects
+    rejectGrant(new Error('connection closed before response'));
+    expect(await pending).toEqual({ token: null, stale: true });
   });
 
   it('a superseded activation cannot emit rows after deactivate', async () => {

@@ -631,15 +631,20 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
   const { sessions: connectedCliSessions, grantSessionAttach } =
     useConnectedCliSessions(isChatsDrawerOpen);
   // Tap-to-resume: grant the session's bearer over the drawer's open
-  // connection, then hand off to App's relay entry. The drawer stays
-  // open on failure (the toast is the only signal; navigating away
-  // would hide it).
+  // connection, then hand off to App's relay entry. A `stale` grant
+  // means the user moved on mid-round-trip (closed the drawer /
+  // navigated away — the hook's activation was superseded), so a slow
+  // grant can't yank them into Remote after the fact (Codex P2 on
+  // #1310) and doesn't toast either. On a live failure the drawer
+  // stays open (the toast is the only signal; navigating away would
+  // hide it).
   const handleResumeConnectedCliSession = useCallback(
     async (session: DaemonCliSession) => {
       if (!handleResumeRelaySession) return;
-      const token = await grantSessionAttach(session.sessionId);
-      if (token) {
-        handleResumeRelaySession(session.sessionId, token);
+      const grant = await grantSessionAttach(session.sessionId);
+      if (grant.stale) return; // user moved on
+      if (grant.token) {
+        handleResumeRelaySession(session.sessionId, grant.token);
         return;
       }
       toast.error('Could not reach the daemon to resume this session.');
