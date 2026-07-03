@@ -2227,6 +2227,13 @@ async function runDaemonSubcommand(values, positionals) {
       // so the child registers the same ESM loader the parent is using. This
       // mirrors `dev:cli` in package.json.
       nodeArgs = extMatch[1] === 'ts' ? ['--import', 'tsx', pushdPathOnDisk] : [pushdPathOnDisk];
+      console.error(
+        JSON.stringify({
+          level: 'info',
+          event: 'pushd_spawn_mode_script',
+          entry: pushdPathOnDisk,
+        }),
+      );
     } else {
       // No extension, or the resolved path doesn't exist on disk (bun
       // single-executable build): import.meta.url points at the embedded
@@ -2234,6 +2241,16 @@ async function runDaemonSubcommand(values, positionals) {
       // with the internal `daemon __run` action, which runs pushd's main()
       // in-process.
       nodeArgs = ['daemon', '__run'];
+      // Symmetric with pushd_spawn_mode_script; stderr because CLI stdout
+      // is user output. This branch choice was the silent wrong-turn behind
+      // the Windows daemon-start failure — keep both sides observable.
+      console.error(
+        JSON.stringify({
+          level: 'info',
+          event: 'pushd_spawn_mode_self_exec',
+          pushdPathChecked: pushdPathOnDisk,
+        }),
+      );
     }
 
     // Redirect pushd's stdout/stderr to a log file. Previously stdio was

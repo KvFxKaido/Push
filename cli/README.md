@@ -34,6 +34,21 @@ $env:PUSH_TUI_ENABLED = "0"
 
 `./push config init` walks you through provider, model, API key, and sandbox settings using numbered menus (with free-text fallback). Config is saved to `~/.push/config.json` (mode 0600).
 
+### Single binary
+
+The CLI (daemon included) compiles to a self-contained executable with [Bun](https://bun.sh) — no Node, tsx, or `node_modules` on the target machine:
+
+```bash
+bun build --compile cli/cli.ts --outfile push-bin
+./push-bin                     # same surface: tui, run, daemon, …
+
+# Cross-compile from any host:
+bun build --compile --target=bun-windows-x64 cli/cli.ts --outfile push.exe
+bun build --compile --target=bun-darwin-arm64 cli/cli.ts --outfile push-macos
+```
+
+Caveats: binaries are ~100 MB (embedded Bun runtime), and local embeddings (`@huggingface/transformers`, a native optional dependency) can't be embedded — they resolve from `node_modules` at runtime when present, else the standard optional-dep fallback applies. CI smoke-tests the compiled binary on Linux and Windows (`cli-binary` job). Background and rejected alternative (a Go rewrite): [`docs/decisions/Go Migration Assessment.md`](../docs/decisions/Go%20Migration%20Assessment.md).
+
 ## Modes
 
 ### Interactive REPL (transcript-first CLI)
