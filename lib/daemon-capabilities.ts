@@ -36,6 +36,10 @@ export const DAEMON_CAPABILITIES = [
   'multi_client',
   'crash_recovery',
   'role_routing',
+  // `runtime_config_v1`: paired clients can read and update daemon-owned
+  // runtime preferences (`PUSH_EXEC_MODE` / `PUSH_WEB_SEARCH_BACKEND`) through
+  // explicit RPCs instead of rendering local no-op controls.
+  'runtime_config_v1',
   'delegation_explorer_v1',
   'delegation_reviewer_v1',
   // `delegation_deep_reviewer_v1`: `delegate_deep_reviewer` RPC runs the

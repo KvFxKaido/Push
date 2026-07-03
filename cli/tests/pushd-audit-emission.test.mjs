@@ -209,6 +209,66 @@ describe('auth.{mint_attach,revoke_device,revoke_attach}', () => {
   });
 });
 
+describe('daemon.set_runtime_config', () => {
+  let savedConfigPath;
+
+  beforeEach(() => {
+    savedConfigPath = process.env.PUSH_CONFIG_PATH;
+    process.env.PUSH_CONFIG_PATH = path.join(tmpDir, 'push-config.json');
+  });
+
+  afterEach(() => {
+    if (savedConfigPath === undefined) delete process.env.PUSH_CONFIG_PATH;
+    else process.env.PUSH_CONFIG_PATH = savedConfigPath;
+  });
+
+  it('emits an audit row with provenance + the changed fields on a Unix-socket write', async () => {
+    await handleRequest(
+      makeRequest('set_daemon_runtime_config', { patch: { execMode: 'strict' } }),
+      NOOP_EMIT,
+    );
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'daemon.set_runtime_config' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].surface, 'unix-socket');
+    assert.equal(events[0].payload.execMode, 'strict');
+    assert.equal(events[0].payload.webSearchBackend, undefined);
+  });
+
+  it('emits an audit row with the caller surface + boundOrigin on a loopback-WS write', async () => {
+    const auth = {
+      kind: 'device',
+      tokenId: 'pdt_audit_loopback',
+      parentDeviceTokenId: 'pdt_audit_loopback',
+      boundOrigin: 'loopback',
+      lastUsedAt: null,
+    };
+    await handleRequest(
+      makeRequest('set_daemon_runtime_config', { patch: { webSearchBackend: 'tavily' } }),
+      NOOP_EMIT,
+      { auth },
+    );
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'daemon.set_runtime_config' });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].surface, 'ws');
+    assert.equal(events[0].deviceId, 'pdt_audit_loopback');
+    assert.equal(events[0].payload.boundOrigin, 'loopback');
+    assert.equal(events[0].payload.webSearchBackend, 'tavily');
+  });
+
+  it('does not emit when a relay-sourced write is refused', async () => {
+    await handleRequest(
+      makeRequest('set_daemon_runtime_config', { patch: { execMode: 'yolo' } }),
+      NOOP_EMIT,
+      { auth: { kind: 'attach', tokenId: 'pdat_relay', boundOrigin: 'relay' } },
+    );
+    await flushAuditQueue();
+    const events = await readAuditEvents({ type: 'daemon.set_runtime_config' });
+    assert.equal(events.length, 0);
+  });
+});
+
 describe('session.{start,cancel_run}', () => {
   it('emits session.cancel_run with the runId and ok flag', async () => {
     // No active session → handler returns INVALID_REQUEST (or

@@ -43,4 +43,32 @@ describe('WebSearchMenu', () => {
     const html = renderToStaticMarkup(<WebSearchMenu triggerClassName="trigger" />);
     expect(html).toContain('Web search: Auto');
   });
+
+  it('uses a controlled mode without reading browser storage', () => {
+    storedMode = 'off';
+    const html = renderToStaticMarkup(
+      <WebSearchMenu
+        triggerClassName="trigger"
+        mode="duckduckgo"
+        onModeChange={vi.fn()}
+        availableModes={['auto', 'duckduckgo']}
+        showAutoNativeLabel={false}
+      />,
+    );
+    expect(html).toContain('Web search: DuckDuckGo');
+  });
+
+  it('surfaces disabled runtime state on the trigger', () => {
+    const html = renderToStaticMarkup(
+      <WebSearchMenu
+        triggerClassName="trigger"
+        mode="auto"
+        onModeChange={vi.fn()}
+        disabled
+        disabledReason="Local daemon is disconnected"
+      />,
+    );
+    expect(html).toContain('Web search unavailable: Local daemon is disconnected');
+    expect(html).toContain('disabled=""');
+  });
 });

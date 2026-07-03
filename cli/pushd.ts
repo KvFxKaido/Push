@@ -25,6 +25,8 @@
  *   delegate_deep_reviewer — launch Deep Reviewer sub-agent (real streamFn + read-only tool loop via makeDaemonExplorerToolExec; investigates then reviews)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
+ *   get_daemon_runtime_config — read daemon-owned exec/search settings
+ *   set_daemon_runtime_config — persist daemon-owned exec/search settings
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
@@ -632,7 +634,12 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
 }
 
 import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
-import { loadConfig, reapplyProviderConfigToEnv } from './config-store.js';
+import {
+  getConfigPath,
+  loadConfig,
+  reapplyProviderConfigToEnv,
+  saveConfig,
+} from './config-store.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
 import { executeToolCall, TOOL_PROTOCOL, READ_ONLY_TOOL_PROTOCOL } from './tools.js';
 import {
@@ -681,6 +688,13 @@ import {
   RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
 import { DAEMON_CAPABILITIES, EVENT_V2 } from '../lib/daemon-capabilities.js';
+import {
+  DAEMON_EXEC_MODES,
+  DAEMON_WEB_SEARCH_BACKENDS,
+  daemonExecModeToApprovalMode,
+  normalizeDaemonExecMode,
+  normalizeDaemonWebSearchBackend,
+} from '../lib/daemon-runtime-settings.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import {
   roleCanUseTool,
@@ -7253,6 +7267,153 @@ async function handleListDevices(req, _emitEvent, context) {
   });
 }
 
+function resolveDaemonRuntimeConfigPayload(config) {
+  const execMode =
+    normalizeDaemonExecMode(process.env.PUSH_EXEC_MODE) ||
+    normalizeDaemonExecMode(config.execMode) ||
+    'auto';
+  const webSearchBackend =
+    normalizeDaemonWebSearchBackend(process.env.PUSH_WEB_SEARCH_BACKEND) ||
+    normalizeDaemonWebSearchBackend(config.webSearchBackend) ||
+    'auto';
+  return {
+    execMode,
+    approvalMode: daemonExecModeToApprovalMode(execMode),
+    webSearchBackend,
+    configPath: getConfigPath(),
+  };
+}
+
+/**
+ * Read daemon-owned runtime controls for paired web clients. Unlike repo-mode
+ * controls, these values are resolved from the daemon process itself (env first,
+ * then ~/.push/config.json) because Remote / Local-PC turns execute on this
+ * machine, not in the browser.
+ */
+async function handleGetDaemonRuntimeConfig(req) {
+  let config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
+  }
+  return makeResponse(
+    req.requestId,
+    req.type,
+    null,
+    true,
+    resolveDaemonRuntimeConfigPayload(config),
+  );
+}
+
+/**
+ * Persist daemon runtime controls and update the live process env so the next
+ * turn sees the new setting immediately. Accepts the Unix-socket admin
+ * transport and loopback WS (Local-PC mode) — both are the operator, on this
+ * machine. Refuses true relay callers: unlike a session-scoped verb, this
+ * mutates the daemon's GLOBAL execution safety posture (including `yolo`,
+ * which disables approval prompts) for every future turn on this daemon, not
+ * just the caller's own session — a stolen/leaked Remote-pairing bearer
+ * should not be able to downgrade it from across the internet.
+ */
+async function handleSetDaemonRuntimeConfig(req, _emitEvent, context) {
+  if (context?.auth?.boundOrigin === 'relay') {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'UNSUPPORTED_VIA_TRANSPORT',
+      'set_daemon_runtime_config is not available over the Remote relay — pair Local-PC or use the Unix-socket admin transport.',
+    );
+  }
+
+  const rawPatch =
+    req.payload?.patch && typeof req.payload.patch === 'object' && !Array.isArray(req.payload.patch)
+      ? req.payload.patch
+      : req.payload && typeof req.payload === 'object' && !Array.isArray(req.payload)
+        ? req.payload
+        : null;
+  if (!rawPatch) {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'INVALID_REQUEST',
+      'patch must be a non-null object with optional { execMode, webSearchBackend }',
+    );
+  }
+
+  const hasExecMode = Object.prototype.hasOwnProperty.call(rawPatch, 'execMode');
+  const hasWebSearchBackend = Object.prototype.hasOwnProperty.call(rawPatch, 'webSearchBackend');
+  if (!hasExecMode && !hasWebSearchBackend) {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'INVALID_REQUEST',
+      'patch must include execMode or webSearchBackend',
+    );
+  }
+
+  const execMode = hasExecMode ? normalizeDaemonExecMode(rawPatch.execMode) : null;
+  if (hasExecMode && !execMode) {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'INVALID_REQUEST',
+      `execMode must be one of: ${DAEMON_EXEC_MODES.join(', ')}`,
+    );
+  }
+
+  const webSearchBackend = hasWebSearchBackend
+    ? normalizeDaemonWebSearchBackend(rawPatch.webSearchBackend)
+    : null;
+  if (hasWebSearchBackend && !webSearchBackend) {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'INVALID_REQUEST',
+      `webSearchBackend must be one of: ${DAEMON_WEB_SEARCH_BACKENDS.join(', ')}`,
+    );
+  }
+
+  let config;
+  try {
+    config = await loadConfig();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
+  }
+
+  const next = { ...config };
+  if (execMode) {
+    next.execMode = execMode;
+  }
+  if (webSearchBackend) {
+    next.webSearchBackend = webSearchBackend;
+  }
+
+  try {
+    await saveConfig(next);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return makeErrorResponse(req.requestId, req.type, 'CONFIG_WRITE_FAILED', message);
+  }
+
+  if (execMode) process.env.PUSH_EXEC_MODE = execMode;
+  if (webSearchBackend) process.env.PUSH_WEB_SEARCH_BACKEND = webSearchBackend;
+
+  void appendAuditEvent({
+    type: 'daemon.set_runtime_config',
+    ...auditProvenance(context),
+    payload: {
+      boundOrigin: context?.auth?.boundOrigin,
+      ...(execMode ? { execMode } : {}),
+      ...(webSearchBackend ? { webSearchBackend } : {}),
+    },
+  });
+
+  return makeResponse(req.requestId, req.type, null, true, resolveDaemonRuntimeConfigPayload(next));
+}
+
 /**
  * Re-read `~/.push/config.json` and force its provider keys/urls/models into
  * the daemon's `process.env`, overwriting stale values. The TUI fires this
@@ -7331,6 +7492,8 @@ const HANDLERS = {
   relay_status: handleRelayStatus,
   mint_remote_pair_bundle: handleMintRemotePairBundle,
   grant_session_attach: handleGrantSessionAttach,
+  get_daemon_runtime_config: handleGetDaemonRuntimeConfig,
+  set_daemon_runtime_config: handleSetDaemonRuntimeConfig,
   reload_config: handleReloadConfig,
 };
 

@@ -30,7 +30,7 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { RefreshCw, Square } from 'lucide-react';
+import { RefreshCw, Shield, ShieldOff, Square, Zap } from 'lucide-react';
 import { WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -40,6 +40,7 @@ import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import { ChatContainer } from '@/components/chat/ChatContainer';
 import { ChatInput } from '@/components/chat/ChatInput';
 import { RepoChatDrawer } from '@/components/chat/RepoChatDrawer';
+import { WebSearchMenu } from '@/components/chat/WebSearchMenu';
 import { WorkspaceHubSheet } from '@/components/chat/WorkspaceHubSheet';
 import { HEADER_PILL_BUTTON_CLASS, HEADER_ROUND_BUTTON_CLASS } from '@/components/chat/hub-styles';
 import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
@@ -51,6 +52,7 @@ import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import type { ReattachedRun } from '@/hooks/useDaemonRunState';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
+import { useDaemonRuntimeSettings } from '@/hooks/useDaemonRuntimeSettings';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -64,6 +66,12 @@ import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
+import {
+  DAEMON_APPROVAL_MODES,
+  DAEMON_WEB_SEARCH_BACKENDS,
+  isDaemonWebSearchBackend,
+  type DaemonApprovalMode,
+} from '@push/lib/daemon-runtime-settings';
 import type {
   ChatMessage,
   Conversation,
@@ -195,6 +203,15 @@ const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
   relay: 'Remote',
 };
 
+const DAEMON_APPROVAL_MODE_CONFIG: Record<
+  DaemonApprovalMode,
+  { icon: LucideIcon; label: string; color: string }
+> = {
+  supervised: { icon: Shield, label: 'Supervised', color: 'text-emerald-400' },
+  autonomous: { icon: ShieldOff, label: 'Autonomous', color: 'text-sky-400' },
+  'full-auto': { icon: Zap, label: 'Full Auto', color: 'text-amber-400' },
+};
+
 // Snapshot activity tracking is a cloud-sandbox concern (the snapshot
 // manager debounces autosaves on user activity). Daemon sessions have
 // no cloud sandbox, so the composer's `markSnapshotActivity` callback
@@ -298,6 +315,14 @@ export function DaemonChatBody({
     request,
     status,
   );
+  const {
+    settings: daemonRuntimeSettings,
+    loading: daemonRuntimeLoading,
+    updating: daemonRuntimeUpdating,
+    error: daemonRuntimeError,
+    setApprovalMode: setDaemonApprovalMode,
+    setWebSearchBackend: setDaemonWebSearchBackend,
+  } = useDaemonRuntimeSettings(request, status);
   const handleDrawerOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -650,6 +675,35 @@ export function DaemonChatBody({
   // local user hasn't taken over with their own turn.
   const showReattachedRun = Boolean(reattachedRun) && !isStreaming;
 
+  const daemonControlsDisabledReason =
+    status.state !== 'open'
+      ? `${capitalize(daemonLabel)} is disconnected`
+      : daemonRuntimeUpdating
+        ? 'Updating daemon controls'
+        : daemonRuntimeLoading
+          ? 'Loading daemon controls'
+          : daemonRuntimeError
+            ? daemonRuntimeError
+            : daemonRuntimeSettings
+              ? null
+              : 'Daemon controls unavailable';
+  const daemonControlsDisabled = daemonControlsDisabledReason !== null;
+
+  const handleDaemonWebSearchModeChange = useCallback(
+    (next: string) => {
+      if (daemonControlsDisabled || !isDaemonWebSearchBackend(next)) return;
+      void setDaemonWebSearchBackend(next);
+    },
+    [daemonControlsDisabled, setDaemonWebSearchBackend],
+  );
+
+  const cycleDaemonApprovalMode = useCallback(() => {
+    if (daemonControlsDisabled || !daemonRuntimeSettings) return;
+    const currentIndex = DAEMON_APPROVAL_MODES.indexOf(daemonRuntimeSettings.approvalMode);
+    const next = DAEMON_APPROVAL_MODES[(currentIndex + 1) % DAEMON_APPROVAL_MODES.length];
+    void setDaemonApprovalMode(next);
+  }, [daemonControlsDisabled, daemonRuntimeSettings, setDaemonApprovalMode]);
+
   // Chat-shell navigation, shared with ChatSurfaceScreen / WorkspaceChatRoute
   // via lib/nav-transition. `pager` (default) cross-fades the chat out as a page
   // swap; `push` keeps the legacy parallax. See that module to revert.
@@ -798,6 +852,38 @@ export function DaemonChatBody({
                   <Square className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               )}
+              <WebSearchMenu
+                triggerClassName={`${HEADER_ROUND_BUTTON_CLASS} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-push-fg-secondary`}
+                lockedProvider={lockedProvider}
+                mode={daemonRuntimeSettings?.webSearchBackend ?? 'auto'}
+                onModeChange={handleDaemonWebSearchModeChange}
+                availableModes={DAEMON_WEB_SEARCH_BACKENDS}
+                disabled={daemonControlsDisabled}
+                disabledReason={daemonControlsDisabledReason ?? undefined}
+                getUnavailableReason={() => null}
+                showAutoNativeLabel={false}
+              />
+              {(() => {
+                const approvalMode = daemonRuntimeSettings?.approvalMode;
+                const cfg = approvalMode ? DAEMON_APPROVAL_MODE_CONFIG[approvalMode] : null;
+                const Icon = cfg?.icon ?? Shield;
+                const label = cfg?.label ?? 'Approval mode';
+                const unavailable = daemonControlsDisabledReason
+                  ? `Approval mode unavailable: ${daemonControlsDisabledReason}`
+                  : null;
+                return (
+                  <button
+                    type="button"
+                    onClick={cycleDaemonApprovalMode}
+                    disabled={daemonControlsDisabled}
+                    className={`${HEADER_ROUND_BUTTON_CLASS} ${cfg?.color ?? 'text-push-fg-dim'} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:text-push-fg-secondary`}
+                    aria-label={unavailable ?? `Approval mode: ${label}. Click to cycle.`}
+                    title={unavailable ?? `${label} mode - click to switch`}
+                  >
+                    <Icon className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
+                  </button>
+                );
+              })()}
               <button
                 type="button"
                 onClick={openHub}
