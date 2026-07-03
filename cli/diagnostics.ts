@@ -59,14 +59,32 @@ export interface DiagnosticRunOptions {
 }
 
 /**
- * Classify a killed checker subprocess as a timeout. execFile sets
- * `killed: true` when it terminates the child on timeout expiry; exit-code
- * checks in the runners' catch arms must run after this (a killed child
- * reports `code: null`, but may carry partial stdout that would otherwise
- * be parsed as a truncated — and therefore wrong — diagnostics set).
+ * True when a killed checker subprocess died to the time budget. execFile
+ * also kills the child with `killed: true` on maxBuffer overflow — that is
+ * an output-size failure, not a time one, and must fall through to the
+ * generic failure handling (transient; must not trip the post-edit loop's
+ * adaptive disable). The maxBuffer case is only identifiable by message
+ * ("stdout maxBuffer length exceeded"), so match on that.
+ */
+export function isTimeoutKill(execErr: {
+  killed?: boolean;
+  code?: number | string;
+  message?: string;
+}): boolean {
+  if (!execErr.killed) return false;
+  if (execErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return false;
+  if (/maxBuffer/i.test(execErr.message ?? '')) return false;
+  return true;
+}
+
+/**
+ * Classify a killed checker subprocess as a timeout. Exit-code checks in
+ * the runners' catch arms must run after this (a killed child reports
+ * `code: null`, but may carry partial stdout that would otherwise be
+ * parsed as a truncated — and therefore wrong — diagnostics set).
  */
 function classifyTimeout(execErr: ExecError, checker: string): DiagnosticResult | null {
-  if (!execErr.killed) return null;
+  if (!isTimeoutKill(execErr)) return null;
   return {
     diagnostics: [],
     error: {

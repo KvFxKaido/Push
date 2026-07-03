@@ -11,6 +11,7 @@ import {
   resolvePostEditDiagnosticsEnabled,
   runPostEditDiagnostics,
 } from '../post-edit-diagnostics.ts';
+import { isTimeoutKill } from '../diagnostics.ts';
 
 // Fake runner factory: returns a runner that yields the given results in
 // sequence (last one repeats) and records its calls.
@@ -56,6 +57,34 @@ describe('resolvePostEditDiagnosticsEnabled', () => {
   it('explicit wins over env in both directions', () => {
     assert.equal(resolvePostEditDiagnosticsEnabled({ explicit: false, env: '1' }), false);
     assert.equal(resolvePostEditDiagnosticsEnabled({ explicit: true, env: '0' }), true);
+  });
+});
+
+describe('isTimeoutKill', () => {
+  it('classifies a timeout kill', () => {
+    assert.equal(isTimeoutKill({ killed: true, code: null, message: 'Command failed' }), true);
+  });
+
+  it('does not classify a non-killed failure', () => {
+    assert.equal(isTimeoutKill({ killed: false, code: 1, message: 'type errors' }), false);
+  });
+
+  it('does not classify a maxBuffer overflow kill as a timeout', () => {
+    // execFile also kills the child with killed:true on maxBuffer overflow —
+    // an output-size failure that must not trip the adaptive disable.
+    assert.equal(
+      isTimeoutKill({
+        killed: true,
+        code: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+        message: 'stdout maxBuffer length exceeded',
+      }),
+      false,
+    );
+    // Older/foreign error shapes may carry only the message.
+    assert.equal(
+      isTimeoutKill({ killed: true, message: 'stdout maxBuffer length exceeded' }),
+      false,
+    );
   });
 });
 

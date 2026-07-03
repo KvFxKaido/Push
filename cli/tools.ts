@@ -975,7 +975,7 @@ Rules:
 - Never attempt paths outside workspace.
 - You may emit multiple tool calls in one assistant reply.
 - Per-turn tool budget: read-only calls first (they run in parallel), then any number of file mutations (write_file / edit_file / undo_edit — run sequentially as one batch), then at most one trailing side-effect (exec / git_commit / save_memory). A second side-effect is rejected with MULTI_MUTATION_NOT_ALLOWED.
-- write_file / edit_file results append file-scoped type-checker diagnostics when a project checker is available. Treat reported errors as introduced by your change and fix them before moving on; "Diagnostics: clean" means the checker ran and found nothing for that file.
+- write_file / edit_file results append file-scoped type-checker diagnostics when a project checker is available. Treat reported errors as introduced by your change and fix them before moving on; "Diagnostics: clean" means the checker ran and found nothing for that file. Each check runs immediately after its edit — in a multi-file batch, a finding can be resolved by a later edit in the same reply (e.g. step 1 references a symbol step 2 adds), so before fixing a reported error, check whether a sibling edit already addressed it; when unsure, re-run lsp_diagnostics instead of re-editing.
 - Prefer edit_file over full-file rewrites when possible.
 - If a tool fails, correct the call and retry when appropriate.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.
@@ -2895,6 +2895,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         // Post-edit diagnostics loop (crush pattern): surface breakage the
         // write just introduced in the same tool result. Never fails the
         // already-succeeded write; see cli/post-edit-diagnostics.ts.
+        // `options.postEditDiagnostics` is a per-call override seam (tests,
+        // embedders) — production resolves via PUSH_POST_EDIT_DIAGNOSTICS,
+        // forwarded from config by applyConfigToEnv; no caller threads it.
         const writeDiag = await runPostEditDiagnostics(workspaceRoot, filePath, {
           explicitEnabled:
             typeof options.postEditDiagnostics === 'boolean'
