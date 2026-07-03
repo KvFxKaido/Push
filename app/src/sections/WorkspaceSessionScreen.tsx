@@ -72,6 +72,7 @@ export function WorkspaceSessionScreen({
     onStartChat,
     onStartLocalPc,
     onStartRelay,
+    onResumeRelaySession,
     onEndWorkspace,
     onOpenDraftComposer,
   } = navigation;
@@ -590,6 +591,7 @@ export function WorkspaceSessionScreen({
     handleStartChat: onStartChat,
     handleStartLocalPc: onStartLocalPc,
     handleStartRelay: onStartRelay,
+    handleResumeRelaySession: onResumeRelaySession,
     handleExitWorkspace,
     handleDisconnect: handleDisconnectFromWorkspace,
     handleCreateNewChat,

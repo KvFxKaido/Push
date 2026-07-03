@@ -329,10 +329,12 @@ export function buildRepoChatDrawerProps(args: {
   deleteChat: ChatRouteProps['deleteChat'];
   renameChat: ChatRouteProps['renameChat'];
   /** Live daemon sessions from `useConnectedCliSessions` (paired remote
-   * daemon), rendered read-only in the drawer's Connected section.
-   * Optional — omitted means the section never renders. */
+   * daemon), rendered in the drawer's Connected section. Optional —
+   * omitted means the section never renders. */
   cliSessions?: RepoChatDrawerProps['cliSessions'];
   cliSessionsLabel?: RepoChatDrawerProps['cliSessionsLabel'];
+  /** Tap-to-resume handler for Connected rows; undefined → read-only. */
+  onResumeCliSession?: RepoChatDrawerProps['onResumeCliSession'];
 }): RepoChatDrawerProps {
   // ChatSurfaceRoute and WorkspaceChatRoute route taps through
   // `App.handleResumeChatFromDrawer`, which only handles chat / scratch
@@ -364,6 +366,7 @@ export function buildRepoChatDrawerProps(args: {
     onRenameChat: args.renameChat,
     cliSessions: args.cliSessions,
     cliSessionsLabel: args.cliSessionsLabel,
+    onResumeCliSession: args.onResumeCliSession,
   };
 }
 

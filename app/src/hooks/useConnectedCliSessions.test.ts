@@ -216,6 +216,70 @@ describe('createConnectedCliSessionsController', () => {
     expect(onSessions.mock.calls.at(-1)?.[0]).toEqual([]);
   });
 
+  it('grant resolves the bearer over the live connection', async () => {
+    const onSessions = vi.fn();
+    const request = vi.fn((opts: { type: string }) => {
+      if (opts.type === 'grant_session_attach') {
+        return Promise.resolve({
+          ok: true,
+          payload: { sessionId: 'sess_target', attachToken: 'sess-bearer-123' },
+        } as never);
+      }
+      return Promise.resolve(listResponse([]));
+    });
+    const binding = {
+      get status() {
+        return { state: 'open' as const };
+      },
+      request,
+      close: vi.fn(),
+    } as unknown as LocalDaemonBinding;
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    const token = await controller.grant('sess_target');
+    expect(token).toBe('sess-bearer-123');
+    expect(request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'grant_session_attach',
+        payload: { sessionId: 'sess_target' },
+      }),
+    );
+  });
+
+  it('grant resolves null with no connection and after deactivate', async () => {
+    const onSessions = vi.fn();
+    const fake = makeFakeBinding();
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    expect(await controller.grant('sess_x')).toBeNull(); // never activated
+    controller.activate();
+    await flush();
+    controller.deactivate();
+    expect(await controller.grant('sess_x')).toBeNull(); // connection closed
+    expect(fake.request).not.toHaveBeenCalled();
+  });
+
+  it('grant resolves null when the daemon refuses', async () => {
+    const onSessions = vi.fn();
+    const fake = makeFakeBinding(() => Promise.reject(new Error('SESSION_NOT_FOUND')));
+    const controller = createConnectedCliSessionsController({
+      loadPairedRemote: async () => RECORD,
+      createBinding: () => fake.binding,
+      onSessions,
+    });
+    controller.activate();
+    await flush();
+    expect(await controller.grant('sess_gone')).toBeNull();
+  });
+
   it('a superseded activation cannot emit rows after deactivate', async () => {
     // Deferred pairing load: deactivate() fires while the load is still
     // in flight; when it resolves, the stale generation must not dial

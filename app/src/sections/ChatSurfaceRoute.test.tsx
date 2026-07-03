@@ -241,6 +241,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     handleStartChat: vi.fn(),
     handleStartLocalPc: vi.fn(),
     handleStartRelay: vi.fn(),
+    handleResumeRelaySession: vi.fn(),
     handleExitWorkspace: vi.fn(),
     handleDisconnect: vi.fn(),
     handleCreateNewChat: vi.fn(),

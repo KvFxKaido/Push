@@ -67,6 +67,7 @@ import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appea
 import type {
   ChatMessage,
   Conversation,
+  DaemonCliSession,
   WorkspaceContext,
   WorkspaceMode,
   WorkspaceScreenAuthProps,
@@ -179,6 +180,14 @@ export interface DaemonChatBodyProps {
    * tail so the user watches the remote turn stream. Null when no remote turn.
    */
   remoteTurnMessage?: ChatMessage | null;
+  /**
+   * Tap-to-resume handler for the drawer's Connected (CLI/TUI session)
+   * rows. The screen owns the grant + target-switch choreography (it
+   * holds the daemon connection and the binding); this body only
+   * threads the callback into the drawer. Absent (local-PC mode,
+   * untargeted callers) means the rows render read-only as before.
+   */
+  onResumeCliSession?: (session: DaemonCliSession) => void;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
@@ -222,6 +231,7 @@ export function DaemonChatBody({
   reattachedRun = null,
   onClearReattachedRun,
   remoteTurnMessage = null,
+  onResumeCliSession,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
   // screens. The catalog hook owns reactive `activeBackend` state;
@@ -698,6 +708,7 @@ export function DaemonChatBody({
       },
       cliSessions,
       cliSessionsLabel: mode,
+      onResumeCliSession,
     }),
     [
       drawerOpen,
@@ -713,6 +724,7 @@ export function DaemonChatBody({
       resetDaemonAppearance,
       cliSessions,
       mode,
+      onResumeCliSession,
     ],
   );
 

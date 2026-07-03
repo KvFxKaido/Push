@@ -50,6 +50,19 @@ describe('CliSessionRow', () => {
     expect(html).toContain('· proj ·');
   });
 
+  it('renders the body as a resume button when onResume is provided', () => {
+    const html = renderToStaticMarkup(
+      <CliSessionRow session={makeCliSession()} onResume={() => {}} />,
+    );
+    expect(html).toContain('aria-label="Resume Review auth middleware"');
+    expect(html).toContain('<button');
+  });
+
+  it('stays read-only (no button) without onResume', () => {
+    const html = renderToStaticMarkup(<CliSessionRow session={makeCliSession()} />);
+    expect(html).not.toContain('<button');
+  });
+
   it('falls back to the sessionId as the workspace tag when cwd is empty', () => {
     const html = renderToStaticMarkup(
       <CliSessionRow session={makeCliSession({ sessionId: 'sess_no_cwd', cwd: '' })} />,

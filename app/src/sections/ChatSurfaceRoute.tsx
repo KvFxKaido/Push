@@ -1,4 +1,5 @@
 import { lazy, Suspense, useCallback, useState } from 'react';
+import { toast } from 'sonner';
 import { Toaster } from '@/components/ui/sonner';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
 import { useChatModeAppearance } from '@/hooks/useChatModeAppearance';
@@ -18,6 +19,7 @@ import {
   buildSettingsWorkspace,
   buildWorkspaceHubReviewModelOptions,
 } from './workspace-chat-route-builders';
+import type { DaemonCliSession } from '@/types';
 import type { ChatRouteProps } from './workspace-chat-route-types';
 
 const WorkspaceHubSheet = lazy(() =>
@@ -76,6 +78,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     handleStartWorkspace,
     handleStartLocalPc,
     handleStartRelay,
+    handleResumeRelaySession,
     handleOpenDraftComposer,
     handleDisconnect,
     selectedChatProvider,
@@ -238,7 +241,24 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
   const reviewModelOptions = buildWorkspaceHubReviewModelOptions(catalog);
   // Paired remote daemon (CLI/TUI) sessions for the drawer's Connected
   // section — dialed lazily while the drawer is open. See /rc.
-  const { sessions: connectedCliSessions } = useConnectedCliSessions(isChatsDrawerOpen);
+  const { sessions: connectedCliSessions, grantSessionAttach } =
+    useConnectedCliSessions(isChatsDrawerOpen);
+  // Tap-to-resume: grant the session's bearer over the drawer's open
+  // connection, then hand off to App's relay entry. The drawer stays
+  // open on failure (the toast is the only signal; navigating away
+  // would hide it).
+  const handleResumeConnectedCliSession = useCallback(
+    async (session: DaemonCliSession) => {
+      if (!handleResumeRelaySession) return;
+      const token = await grantSessionAttach(session.sessionId);
+      if (token) {
+        handleResumeRelaySession(session.sessionId, token);
+        return;
+      }
+      toast.error('Could not reach the daemon to resume this session.');
+    },
+    [handleResumeRelaySession, grantSessionAttach],
+  );
   const drawerProps = buildRepoChatDrawerProps({
     open: isChatsDrawerOpen,
     setOpen: setIsChatsDrawerOpen,
@@ -255,6 +275,9 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
     renameChat,
     cliSessions: connectedCliSessions,
     cliSessionsLabel: 'relay',
+    onResumeCliSession: handleResumeRelaySession
+      ? (session) => void handleResumeConnectedCliSession(session)
+      : undefined,
   });
   const repoLauncherProps = buildRepoLauncherSheetProps({
     open: isLauncherOpen,

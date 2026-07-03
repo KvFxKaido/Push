@@ -24,7 +24,7 @@ import { useRelayDaemon } from '@/hooks/useRelayDaemon';
 import type { SessionEvent } from '@/lib/local-daemon-binding';
 import { clearPairedRemote } from '@/lib/relay-storage';
 import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
-import type { RelayBinding, WorkspaceScreenAuthProps } from '@/types';
+import type { DaemonCliSession, RelayBinding, WorkspaceScreenAuthProps } from '@/types';
 
 interface RelayChatScreenProps {
   binding: RelayBinding;
@@ -40,6 +40,12 @@ interface RelayChatScreenProps {
   /** Disconnect handler from the app navigation surface. The hub's
    * Settings → Auth section invokes it. */
   onDisconnect: () => void;
+  /** Tap-to-resume target switch (App's onResumeRelaySession). The
+   * screen does the `grant_session_attach` round-trip itself — it owns
+   * the live daemon connection — then hands the {sessionId, bearer}
+   * pair up so App swaps the workspace binding. Optional: absent means
+   * Connected rows in the drawer stay read-only. */
+  onResumeSession?: (targetSessionId: string, targetAttachToken: string) => void;
 }
 
 export function RelayChatScreen({
@@ -48,6 +54,7 @@ export function RelayChatScreen({
   onUnpair,
   auth,
   onDisconnect,
+  onResumeSession,
 }: RelayChatScreenProps) {
   const approvals = useApprovalQueue();
   const runState = useDaemonRunState();
@@ -126,6 +133,49 @@ export function RelayChatScreen({
     onUnpair();
   };
 
+  // Tap-to-resume from the drawer's Connected section: ask the daemon
+  // for the tapped session's bearer over this screen's own connection,
+  // then let App re-target the workspace binding (the screen remounts
+  // keyed by target). Failures degrade to a structured log + no-op —
+  // the row simply doesn't navigate, matching the "a broken relay must
+  // not make the drawer feel broken" posture.
+  const targetSessionId = binding.targetSessionId ?? null;
+  const handleResumeCliSession = useCallback(
+    async (session: DaemonCliSession) => {
+      if (!onResumeSession) return;
+      if (session.sessionId === targetSessionId) return; // already attached
+      try {
+        const res = await request<{ attachToken?: unknown }>({
+          type: 'grant_session_attach',
+          timeoutMs: 10_000,
+          payload: { sessionId: session.sessionId },
+        });
+        const token = res?.payload?.attachToken;
+        if (typeof token === 'string' && token) {
+          onResumeSession(session.sessionId, token);
+          return;
+        }
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'relay_resume_grant_malformed',
+            sessionId: session.sessionId,
+          }),
+        );
+      } catch (err) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'relay_resume_grant_failed',
+            sessionId: session.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
+    },
+    [onResumeSession, targetSessionId, request],
+  );
+
   return (
     <DaemonChatBody
       mode="relay"
@@ -157,6 +207,7 @@ export function RelayChatScreen({
       reattachedRun={runState.reattachedRun}
       onClearReattachedRun={runState.clear}
       remoteTurnMessage={remoteTurn.remoteMessage}
+      onResumeCliSession={onResumeSession ? handleResumeCliSession : undefined}
     />
   );
 }

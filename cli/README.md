@@ -465,7 +465,8 @@ TUI Remote flow:
   /rc [pair]                        Remote control, one-shot: make this session reachable
                                     on your phone — re-enables the relay from saved config,
                                     mints a pairing bundle if no phone is paired, otherwise
-                                    confirms the session is listed under Connected on the phone
+                                    confirms the session is listed under Connected on the
+                                    phone (tap a Connected row there to resume the session)
 
 Options:
   --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)

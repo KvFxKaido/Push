@@ -7093,6 +7093,99 @@ async function handleMintRemotePairBundle(req, _emitEvent, context) {
   });
 }
 
+/**
+ * `grant_session_attach` — hand an already-authenticated client the
+ * attach token for one daemon session, so a paired phone can resume a
+ * session it discovered via `list_sessions` (tap-to-resume; the
+ * Session Continuity north star: "a session created in the TUI is
+ * listed and resumable from the phone").
+ *
+ * Trust analysis (why this does NOT widen the threat surface):
+ *   - Callers must already hold transport auth: a device/attach-token
+ *     WS connection, the relay path (allowlisted `pushd_da_*` bearers
+ *     only — the DO enforces at upgrade), or the local Unix socket
+ *     (operator; can read session files directly anyway). An
+ *     unauthenticated caller never reaches this handler with a grant.
+ *   - The pair-bundle flow already conveys exactly this class of
+ *     secret (`targetAttachToken`) to a paired phone; this extends
+ *     "one session at pairing time" to "any session while paired,"
+ *     which is the documented product direction.
+ *   - A granted session token is useless without transport access:
+ *     `attach_session` is only reachable over the same authenticated
+ *     transports, so device revocation (allowlist cascade + WS
+ *     disconnect) still cuts off a revoked phone even if it kept
+ *     granted tokens.
+ *   - Unlike `mint_device_attach_token` (device-kind only), this
+ *     mints no new credential — it reveals the session's existing
+ *     bearer, and every grant is audit-logged with provenance.
+ */
+async function handleGrantSessionAttach(req, _emitEvent, context) {
+  const sessionId =
+    typeof req.payload?.sessionId === 'string' && req.payload.sessionId.length > 0
+      ? req.payload.sessionId
+      : null;
+  if (!sessionId) {
+    return makeErrorResponse(
+      req.requestId,
+      'grant_session_attach',
+      'INVALID_REQUEST',
+      'sessionId is required',
+    );
+  }
+
+  let entry = activeSessions.get(sessionId);
+  if (!entry) {
+    // Mirror attach_session's lazy load so a session that survived a
+    // daemon restart (on disk, not yet touched) is still resumable.
+    try {
+      const state = await loadSessionState(sessionId);
+      entry = { state, attachToken: state.attachToken };
+      activeSessions.set(sessionId, entry);
+    } catch {
+      return makeErrorResponse(
+        req.requestId,
+        'grant_session_attach',
+        'SESSION_NOT_FOUND',
+        `Session not found: ${sessionId}`,
+      );
+    }
+  }
+
+  // Universal Session Bearer: resolves to the existing token; the mint
+  // branch is a tripwire for creation paths that bypassed the factory
+  // (see resolveOrMintTargetAttachToken).
+  const resolved = resolveOrMintTargetAttachToken(entry);
+  if (resolved.minted && entry.state && typeof entry.state === 'object') {
+    try {
+      await saveSessionState(entry.state);
+    } catch (err) {
+      // In-memory token still authorizes this run; a restart loses it
+      // and the next grant re-mints. Surface rather than fail.
+      process.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'grant_attach_mint_persist_failed', sessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
+      );
+    }
+  }
+
+  // Audit the grant (tokenId-free — never the bearer) with transport
+  // provenance so `push daemon audit` can answer "which device was
+  // granted access to which session, when."
+  void appendAuditEvent({
+    type: 'auth.grant_session_attach',
+    ...auditProvenance(context),
+    sessionId,
+    payload: {
+      minted: resolved.minted,
+      relaySenderId: typeof context?.relaySenderId === 'string' ? context.relaySenderId : undefined,
+    },
+  });
+
+  return makeResponse(req.requestId, 'grant_session_attach', null, true, {
+    sessionId,
+    attachToken: resolved.token,
+  });
+}
+
 async function handleListAttachTokens(req, _emitEvent, context) {
   if (context?.record || context?.auth) return refuseFromWs(req, 'list_attach_tokens');
   const records = await listDeviceAttachTokens();
@@ -7237,6 +7330,7 @@ const HANDLERS = {
   relay_disable: handleRelayDisable,
   relay_status: handleRelayStatus,
   mint_remote_pair_bundle: handleMintRemotePairBundle,
+  grant_session_attach: handleGrantSessionAttach,
   reload_config: handleReloadConfig,
 };
 

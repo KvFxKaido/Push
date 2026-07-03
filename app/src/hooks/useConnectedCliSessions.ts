@@ -33,7 +33,7 @@
  * synchronous-open edge, and every failure branch are unit-testable
  * without a DOM renderer; the hook is thin effect glue around it.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import type { LocalDaemonBinding } from '@/lib/local-daemon-binding';
 import { createRelayDaemonBinding } from '@/lib/relay-daemon-binding';
@@ -47,6 +47,12 @@ const LIST_TIMEOUT_MS = 10_000;
 export interface UseConnectedCliSessionsResult {
   /** Non-empty only while a live daemon connection has reported rows. */
   sessions: DaemonCliSession[];
+  /**
+   * Tap-to-resume grant over the currently-open connection (see
+   * ConnectedCliSessionsController.grant). Resolves null when the
+   * drawer's connection isn't open or the daemon refuses.
+   */
+  grantSessionAttach: (sessionId: string) => Promise<string | null>;
 }
 
 export interface ConnectedCliSessionsDeps {
@@ -62,6 +68,13 @@ export interface ConnectedCliSessionsController {
   activate(): void;
   /** Close the connection and emit an empty list (Connected rows must not outlive it). */
   deactivate(): void;
+  /**
+   * Tap-to-resume: ask the daemon for `sessionId`'s attach token over
+   * the live connection (`grant_session_attach`). Resolves the bearer,
+   * or null when no connection is open / the daemon refuses — callers
+   * treat null as "can't resume right now," never as a crash.
+   */
+  grant(sessionId: string): Promise<string | null>;
 }
 
 function defaultCreateBinding(
@@ -211,7 +224,39 @@ export function createConnectedCliSessionsController(opts: {
     opts.onSessions([]);
   };
 
-  return { activate, deactivate };
+  const grant = async (sessionId: string): Promise<string | null> => {
+    const b = binding;
+    if (!b) {
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'connected_cli_sessions_grant_no_binding' }),
+      );
+      return null;
+    }
+    try {
+      const res = await b.request<{ attachToken?: unknown }>({
+        type: 'grant_session_attach',
+        timeoutMs: LIST_TIMEOUT_MS,
+        payload: { sessionId },
+      });
+      const token = res?.payload?.attachToken;
+      if (typeof token === 'string' && token) return token;
+      console.log(
+        JSON.stringify({ level: 'warn', event: 'connected_cli_sessions_grant_malformed' }),
+      );
+      return null;
+    } catch (err) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'connected_cli_sessions_grant_failed',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      return null;
+    }
+  };
+
+  return { activate, deactivate, grant };
 }
 
 export function useConnectedCliSessions(
@@ -219,6 +264,10 @@ export function useConnectedCliSessions(
   deps: ConnectedCliSessionsDeps = {},
 ): UseConnectedCliSessionsResult {
   const [sessions, setSessions] = useState<DaemonCliSession[]>([]);
+  // The live controller, so `grantSessionAttach` reaches the CURRENT
+  // activation's connection (a stale closure would grant over a closed
+  // binding after a drawer close/reopen cycle).
+  const controllerRef = useRef<ConnectedCliSessionsController | null>(null);
   // Destructured so the effect can depend on the individual functions:
   // production passes no deps (both stay `undefined`, a stable value),
   // and tests pass module-stable fakes — either way the effect only
@@ -232,9 +281,18 @@ export function useConnectedCliSessions(
       createBinding: createBindingDep ?? defaultCreateBinding,
       onSessions: setSessions,
     });
+    controllerRef.current = controller;
     controller.activate();
-    return () => controller.deactivate();
+    return () => {
+      controller.deactivate();
+      if (controllerRef.current === controller) controllerRef.current = null;
+    };
   }, [active, loadPairedRemoteDep, createBindingDep]);
 
-  return { sessions };
+  const grantSessionAttach = useCallback(
+    (sessionId: string) => controllerRef.current?.grant(sessionId) ?? Promise.resolve(null),
+    [],
+  );
+
+  return { sessions, grantSessionAttach };
 }

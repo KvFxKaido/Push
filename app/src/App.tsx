@@ -12,7 +12,7 @@ import { perfMark, perfMeasure } from '@/lib/perf-marks';
 import { isLocalPcModeEnabled } from '@/lib/local-pc-binding';
 import { getPairedDevice } from '@/lib/local-pc-storage';
 import { isRelayModeEnabled } from '@/lib/relay-binding';
-import { getPairedRemote } from '@/lib/relay-storage';
+import { getPairedRemote, setPairedRemote } from '@/lib/relay-storage';
 import { initAndroidShell } from '@/lib/android/native-shell';
 import { bindAndroidBackHandler } from '@/lib/android/back-handler';
 import type {
@@ -386,6 +386,48 @@ function App() {
       setRelayPairingActive(true);
     }
   }, [clearActiveRepo]);
+
+  // Tap-to-resume: enter the Remote surface attached to a specific
+  // daemon session. Same shape as handleStartRelay, but the target
+  // comes from the tapped Connected row (bearer freshly granted via
+  // `grant_session_attach`) instead of the pair bundle. The stored
+  // record is updated so the next plain "Remote" entry resumes the
+  // same session — "last attached" is the sticky target.
+  const handleResumeRelaySession = useCallback(
+    async (targetSessionId: string, targetAttachToken: string) => {
+      const myGen = ++relayGenRef.current;
+      setPendingResumeChatId(null);
+      clearActiveRepo();
+
+      const record = await getPairedRemote();
+      if (relayGenRef.current !== myGen) return;
+      if (!record) {
+        // Pairing vanished between the grant and the tap landing
+        // (unpair in another tab) — fall back to the pairing screen.
+        setWorkspaceSession(null);
+        setRelayPairingActive(true);
+        return;
+      }
+
+      void setPairedRemote({ ...record, targetSessionId, targetAttachToken });
+      setRelayPairingActive(false);
+      setWorkspaceSession({
+        id: crypto.randomUUID(),
+        kind: 'relay',
+        binding: {
+          deploymentUrl: record.deploymentUrl,
+          sessionId: record.sessionId,
+          token: record.token,
+          attachTokenId: record.attachTokenId,
+          deviceTokenId: record.deviceTokenId,
+          targetSessionId,
+          targetAttachToken,
+        },
+        sandboxId: null,
+      });
+    },
+    [clearActiveRepo],
+  );
 
   const handleRelayPaired = useCallback((binding: RelayBinding) => {
     relayGenRef.current += 1;
@@ -848,6 +890,7 @@ function App() {
           onStartChat: handleStartChatMode,
           onStartLocalPc: isLocalPcModeEnabled() ? handleStartLocalPc : undefined,
           onStartRelay: isRelayModeEnabled() ? handleStartRelay : undefined,
+          onResumeRelaySession: isRelayModeEnabled() ? handleResumeRelaySession : undefined,
           onEndWorkspace: handleEndWorkspace,
           onOpenDraftComposer: handleOpenDraftComposer,
         }}
