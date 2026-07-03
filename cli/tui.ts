@@ -2792,9 +2792,10 @@ export async function runTUI(options = {}) {
 
   // ── Enter alternate screen ───────────────────────────────────────
 
-  io.stdout.write(
-    ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.mouseOn,
-  );
+  // Mouse tracking is intentionally never enabled: its only consumer was
+  // wheel-scroll, which PageUp/PageDown already cover, and enabling it
+  // disables native terminal text selection in every terminal emulator.
+  io.stdout.write(ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn);
 
   if (io.stdin.isTTY) {
     io.stdin.setRawMode(true);
