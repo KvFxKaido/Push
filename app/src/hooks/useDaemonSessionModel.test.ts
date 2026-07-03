@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { __test__ } from './useDaemonSessionModel';
+import { __test__, mergeModelOptions } from './useDaemonSessionModel';
 
 describe('useDaemonSessionModel payload parsers', () => {
   describe('parseProviderList', () => {
@@ -71,5 +71,29 @@ describe('useDaemonSessionModel payload parsers', () => {
       expect(__test__.parseUpdateSessionModel({ roleRouting: {} })).toBeNull();
       expect(__test__.parseUpdateSessionModel(null)).toBeNull();
     });
+  });
+});
+
+describe('mergeModelOptions', () => {
+  it('returns the curated list unchanged when it already contains the value', () => {
+    expect(mergeModelOptions(['minimax-m3', 'qwen3-30b-a3b-fp8'], 'minimax-m3')).toEqual([
+      'minimax-m3',
+      'qwen3-30b-a3b-fp8',
+    ]);
+  });
+
+  it('prepends the active model when it is outside the curated list', () => {
+    // The real failure mode fugu's review caught: a config-set or
+    // provider-live model the static curated list doesn't know about —
+    // it must still show up as a selectable, selected option.
+    expect(mergeModelOptions(['minimax-m3', 'qwen3-30b-a3b-fp8'], 'custom-fine-tune')).toEqual([
+      'custom-fine-tune',
+      'minimax-m3',
+      'qwen3-30b-a3b-fp8',
+    ]);
+  });
+
+  it('handles an empty curated list', () => {
+    expect(mergeModelOptions([], 'only-model')).toEqual(['only-model']);
   });
 });

@@ -53,7 +53,7 @@ import type { ReattachedRun } from '@/hooks/useDaemonRunState';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonRuntimeSettings } from '@/hooks/useDaemonRuntimeSettings';
-import { useDaemonSessionModel } from '@/hooks/useDaemonSessionModel';
+import { mergeModelOptions, useDaemonSessionModel } from '@/hooks/useDaemonSessionModel';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -592,12 +592,16 @@ export function DaemonChatBody({
     const modelControls: ComposerProviderControls['modelControls'] = {};
     for (const p of providers) {
       const providerId = p.id as PreferredProvider;
+      const value =
+        providerId === selectedProvider ? (current.model ?? p.defaultModel) : p.defaultModel;
+      const curated = p.models.length > 0 ? p.models : [p.defaultModel];
+      const options = mergeModelOptions(curated, value);
       modelControls[providerId] = {
         kind: 'picker',
         provider: providerId,
-        value: providerId === selectedProvider ? (current.model ?? p.defaultModel) : p.defaultModel,
+        value,
         isLocked: false,
-        options: p.models.length > 0 ? p.models : [p.defaultModel],
+        options,
         onChange: (model) => void daemonSessionModel.setModel(providerId, model),
         ariaLabel: `${p.id} model`,
         loading: daemonSessionModel.loadingProviders,

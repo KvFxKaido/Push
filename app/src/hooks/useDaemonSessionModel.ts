@@ -41,8 +41,9 @@ export interface UseDaemonSessionModelResult {
   loadingProviders: boolean;
   updating: boolean;
   error: string | null;
-  /** Fetch the daemon's live provider/model for this session. */
-  refreshCurrent: () => Promise<void>;
+  /** Fetch the daemon's live provider/model for this session. Resolves to
+   *  whether it actually landed, so a caller can decide to retry. */
+  refreshCurrent: () => Promise<boolean>;
   /** Fetch the daemon's provider/model catalog. On-demand (picker open), not eager. */
   loadProviders: () => Promise<void>;
   /** Switch this session's provider/model through the daemon's own `update_session` verb. */
@@ -81,6 +82,17 @@ function parseUpdateSessionModel(payload: unknown): DaemonSessionModel | null {
   return { provider, model };
 }
 
+/**
+ * `curated` is a static list (`getCuratedModels`) — the session's actual
+ * active model can be a config-set or provider-live one outside it. The
+ * picker must always let the real active model show as selected, not just
+ * approximate it via the trigger label while the dropdown itself lists
+ * only the curated set (fugu's review on #1319).
+ */
+export function mergeModelOptions(curated: readonly string[], value: string): string[] {
+  return curated.includes(value) ? [...curated] : [value, ...curated];
+}
+
 export function useDaemonSessionModel(
   request: <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>,
   status: ConnectionStatus,
@@ -97,8 +109,10 @@ export function useDaemonSessionModel(
   const providersNonceRef = useRef(0);
   const updateNonceRef = useRef(0);
 
-  const refreshCurrent = useCallback(async () => {
-    if (status.state !== 'open' || !sessionId) return;
+  /** Returns whether the fetch actually landed — the auto-retry effect below
+   *  needs to distinguish success from a stale/superseded nonce no-op. */
+  const refreshCurrent = useCallback(async (): Promise<boolean> => {
+    if (status.state !== 'open' || !sessionId) return false;
     const nonce = ++currentNonceRef.current;
     setLoadingCurrent(true);
     setError(null);
@@ -108,13 +122,15 @@ export function useDaemonSessionModel(
         payload: { sessionId, ...(attachToken ? { attachToken } : {}) },
         timeoutMs: 10_000,
       });
-      if (currentNonceRef.current !== nonce) return;
+      if (currentNonceRef.current !== nonce) return false;
       const snapshot = parseSessionSnapshot(res.payload);
       if (!snapshot) throw new Error('daemon returned malformed session snapshot');
       setCurrent({ provider: snapshot.session.provider, model: snapshot.session.model });
+      return true;
     } catch (err) {
-      if (currentNonceRef.current !== nonce) return;
+      if (currentNonceRef.current !== nonce) return false;
       setError(err instanceof Error ? err.message : 'get_session_snapshot failed');
+      return false;
     } finally {
       if (currentNonceRef.current === nonce) setLoadingCurrent(false);
     }
@@ -178,11 +194,30 @@ export function useDaemonSessionModel(
   // the same open connection to a different sessionId without a status
   // transition, and the previous session's provider/model must not leak
   // into the new one's picker.
+  //
+  // `lastRefreshKeyRef` is marked as soon as the fetch is FIRED (not once
+  // it succeeds) so this effect doesn't refire the same request on every
+  // unrelated re-render. That alone would mean a transient failure (a
+  // timeout, a blip) never retries without a full reconnect — fugu's
+  // review on #1319. One bounded automatic retry after a short delay
+  // covers that without risking an unbounded retry loop; a session/status
+  // change mid-retry cancels the pending timer via the key check.
   const lastRefreshKeyRef = useRef<string | null>(null);
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const key = status.state === 'open' && sessionId ? `${sessionId}` : null;
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
     if (key && key !== lastRefreshKeyRef.current) {
-      void refreshCurrent();
+      lastRefreshKeyRef.current = key;
+      void refreshCurrent().then((ok) => {
+        if (ok || lastRefreshKeyRef.current !== key) return;
+        retryTimerRef.current = setTimeout(() => {
+          if (lastRefreshKeyRef.current === key) void refreshCurrent();
+        }, 2_000);
+      });
     }
     if (!key) {
       // Disconnect/no-session transition — clear synchronously so a
@@ -190,8 +225,11 @@ export function useDaemonSessionModel(
       // session's stale provider/model before its own snapshot lands.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setCurrent(null);
+      lastRefreshKeyRef.current = null;
     }
-    lastRefreshKeyRef.current = key;
+    return () => {
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+    };
   }, [status.state, sessionId, refreshCurrent]);
 
   return {
