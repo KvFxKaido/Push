@@ -53,6 +53,7 @@ import type { ReattachedRun } from '@/hooks/useDaemonRunState';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonRuntimeSettings } from '@/hooks/useDaemonRuntimeSettings';
+import { useDaemonSessionModel } from '@/hooks/useDaemonSessionModel';
 import { useDaemonSettingsBundles } from '@/hooks/useDaemonSettingsBundles';
 import { useModelCatalog } from '@/hooks/useModelCatalog';
 import { usePinnedArtifacts } from '@/hooks/usePinnedArtifacts';
@@ -64,7 +65,15 @@ import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
-import type { LiveDaemonBinding, ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
+import {
+  isLiveDaemonBinding,
+  isRelayBinding,
+  type DaemonBinding,
+  type LiveDaemonBinding,
+  type ToolDispatchBinding,
+} from '@/lib/local-daemon-sandbox-client';
+import type { ComposerProviderControls } from '@/lib/composer-provider-controls';
+import type { PreferredProvider } from '@/lib/providers';
 import { getRepoAppearanceColorHex, type RepoAppearance } from '@/lib/repo-appearance';
 import {
   DAEMON_APPROVAL_MODES,
@@ -323,6 +332,35 @@ export function DaemonChatBody({
     setApprovalMode: setDaemonApprovalMode,
     setWebSearchBackend: setDaemonWebSearchBackend,
   } = useDaemonRuntimeSettings(request, status);
+
+  // The daemon, not this client, owns which provider/model a session is
+  // running (`state.provider`/`state.model`, mutated via `update_session`
+  // — the same verb the TUI's own `/model`/`/provider` commands call). A
+  // session id is required to address either read or write, and only
+  // Remote (relay) bindings carry one today; Local-PC has no
+  // session-attach concept yet (see `sessionAttachToken`'s doc above), so
+  // its picker stays on the local-only `useModelCatalog` value for now.
+  const relaySessionId = useMemo(() => {
+    if (mode !== 'relay') return null;
+    const params: DaemonBinding = isLiveDaemonBinding(paramsBinding)
+      ? paramsBinding.params
+      : paramsBinding;
+    return isRelayBinding(params) ? params.sessionId : null;
+  }, [mode, paramsBinding]);
+  const daemonSessionModel = useDaemonSessionModel(
+    request,
+    status,
+    relaySessionId,
+    sessionAttachToken,
+  );
+  const { loadProviders: loadDaemonProviders } = daemonSessionModel;
+  const loadedProvidersForSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!relaySessionId || status.state !== 'open') return;
+    if (loadedProvidersForSessionRef.current === relaySessionId) return;
+    loadedProvidersForSessionRef.current = relaySessionId;
+    void loadDaemonProviders();
+  }, [relaySessionId, status.state, loadDaemonProviders]);
   const handleDrawerOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
@@ -537,6 +575,48 @@ export function DaemonChatBody({
     isModelLocked,
     markSnapshotActivity: NOOP_MARK_SNAPSHOT_ACTIVITY,
   });
+
+  // Remote mode's model picker is built straight from the daemon's own
+  // catalog/state instead of `composerController.providerControls` (which
+  // is client-local preferences, irrelevant to a daemon-executed turn) —
+  // reuses ChatInput's existing picker UI/interaction unchanged, just
+  // backed by a different data source. `null` while the daemon hasn't
+  // reported a session yet (or has none): ChatInput hides the picker
+  // entirely rather than showing a picker with nothing real to select,
+  // same posture as the composer's other "not ready yet" states.
+  const daemonProviderControls: ComposerProviderControls | null = useMemo(() => {
+    if (mode !== 'relay') return null;
+    const { current, providers } = daemonSessionModel;
+    if (!current?.provider || !providers) return null;
+    const selectedProvider = current.provider as PreferredProvider;
+    const modelControls: ComposerProviderControls['modelControls'] = {};
+    for (const p of providers) {
+      const providerId = p.id as PreferredProvider;
+      modelControls[providerId] = {
+        kind: 'picker',
+        provider: providerId,
+        value: providerId === selectedProvider ? (current.model ?? p.defaultModel) : p.defaultModel,
+        isLocked: false,
+        options: p.models.length > 0 ? p.models : [p.defaultModel],
+        onChange: (model) => void daemonSessionModel.setModel(providerId, model),
+        ariaLabel: `${p.id} model`,
+        loading: daemonSessionModel.loadingProviders,
+      };
+    }
+    return {
+      selectedProvider,
+      availableProviders: providers.map((p) => [p.id as PreferredProvider, p.id, p.hasKey]),
+      isProviderLocked: false,
+      lockedProvider: null,
+      lockedModel: null,
+      onSelectBackend: (provider) => {
+        const target = providers.find((p) => p.id === provider);
+        if (!target) return;
+        void daemonSessionModel.setModel(provider, target.defaultModel);
+      },
+      modelControls,
+    };
+  }, [mode, daemonSessionModel]);
 
   // Wire the binding into the chat's tool-dispatch context. Prefer
   // the hook-owned `liveBinding` (long-lived WS) over the raw
@@ -995,7 +1075,11 @@ export function DaemonChatBody({
             draftKey={activeChatId}
             prefillRequest={composerController.composerPrefillRequest}
             editState={composerController.editState}
-            providerControls={composerController.providerControls}
+            providerControls={
+              mode === 'relay'
+                ? (daemonProviderControls ?? undefined)
+                : composerController.providerControls
+            }
           />
         </div>
       </div>

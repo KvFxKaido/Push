@@ -2421,6 +2421,7 @@ describe('daemon version', () => {
       'update_session',
       'get_daemon_runtime_config',
       'set_daemon_runtime_config',
+      'list_providers',
       'submit_approval',
       'cancel_run',
       'configure_role_routing',
@@ -7267,6 +7268,39 @@ describe('daemon runtime config verbs', () => {
     assert.equal(res.payload.execMode, 'yolo');
     const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
     assert.equal(stored.execMode, 'yolo');
+  });
+});
+
+// ─── list_providers verb ─────────────────────────────────────────
+//
+// Read-only catalog powering Remote/Local-PC's model picker — the web
+// client has no other way to know which providers/models are actually
+// usable on the paired machine. Safe over relay: `hasKey` is boolean only.
+
+describe('list_providers verb', () => {
+  it('returns every configured provider with hasKey and curated models', async () => {
+    const res = await handleRequest(makeRequest('list_providers', {}), () => {});
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.ok(Array.isArray(res.payload.providers));
+    assert.ok(res.payload.providers.length > 0);
+    const ollama = res.payload.providers.find((p) => p.id === 'ollama');
+    assert.ok(ollama, 'expected an ollama entry');
+    assert.equal(typeof ollama.hasKey, 'boolean');
+    assert.equal(typeof ollama.requiresKey, 'boolean');
+    assert.equal(typeof ollama.defaultModel, 'string');
+    assert.ok(Array.isArray(ollama.models));
+    // No secret material — only a boolean flag.
+    assert.ok(!('apiKey' in ollama));
+  });
+
+  it('allows relay-sourced reads (read-only, no secrets)', async () => {
+    const res = await handleRequest(makeRequest('list_providers', {}), () => {}, {
+      auth: { kind: 'attach', tokenId: 'pdat_relay', boundOrigin: 'relay' },
+    });
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.ok(Array.isArray(res.payload.providers));
   });
 });
 
