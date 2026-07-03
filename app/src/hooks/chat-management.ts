@@ -214,6 +214,36 @@ export function resolveDaemonChatAction({
   return { kind: 'create' };
 }
 
+/**
+ * Filters conversations to the ones a daemon screen's drawer can safely
+ * offer. Cross-mode picks (e.g. tapping a Remote transcript inside a Local
+ * PC session) would route the next send through the wrong daemon while
+ * displaying the picked transcript, so the drawer only shows chats this
+ * daemon can faithfully resume.
+ *
+ * Within relay mode there's the same risk one level down: another target
+ * session's chat is still `mode === 'relay'`, so the drawer's resume (a bare
+ * chat switch, no relay retarget) could show session A's transcript while
+ * the live connection stays bound to session B and the next send goes
+ * through B — displayed history and live target silently diverging (Codex
+ * P2 on #1322). Scoped to the attached target when one is known; a legacy
+ * relay chat predating `daemonSessionId` (undefined) is excluded too rather
+ * than ambiguously offered.
+ */
+export function filterDaemonScopedConversations(
+  conversations: Record<string, Conversation>,
+  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>,
+  targetSessionId: string | null,
+): Record<string, Conversation> {
+  const filtered: Record<string, Conversation> = {};
+  for (const [id, conv] of Object.entries(conversations)) {
+    if (conv.mode !== mode) continue;
+    if (mode === 'relay' && targetSessionId && conv.daemonSessionId !== targetSessionId) continue;
+    filtered[id] = conv;
+  }
+  return filtered;
+}
+
 function buildEmptyConversation(
   id: string,
   repoFullName: string | null,

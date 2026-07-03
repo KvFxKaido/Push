@@ -47,7 +47,7 @@ import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
-import { resolveDaemonChatAction } from '@/hooks/chat-management';
+import { filterDaemonScopedConversations, resolveDaemonChatAction } from '@/hooks/chat-management';
 import { useChat } from '@/hooks/useChat';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import type { ReattachedRun } from '@/hooks/useDaemonRunState';
@@ -75,7 +75,6 @@ import {
 } from '@push/lib/daemon-runtime-settings';
 import type {
   ChatMessage,
-  Conversation,
   DaemonCliSession,
   WorkspaceContext,
   WorkspaceMode,
@@ -750,21 +749,13 @@ export function DaemonChatBody({
   const chatShellTransform = chatShellNav.transform;
   const chatShellShadow = chatShellNav.shadowClass;
 
-  // Pre-filter conversations to the active daemon mode before passing
-  // them to the drawer. The daemon screen stays mounted with the same
-  // transport binding regardless of which chat the user taps, so
-  // cross-mode picks (e.g. tapping a Remote transcript inside a Local
-  // PC session) would route the next send through the wrong daemon
-  // while displaying the picked transcript. Filtering at the source
-  // means the drawer only shows chats this daemon can faithfully
-  // resume.
-  const daemonScopedConversations = useMemo(() => {
-    const filtered: Record<string, Conversation> = {};
-    for (const [id, conv] of Object.entries(conversations)) {
-      if (conv.mode === mode) filtered[id] = conv as Conversation;
-    }
-    return filtered;
-  }, [conversations, mode]);
+  // Pre-filter conversations to the ones this daemon screen can faithfully
+  // resume — see filterDaemonScopedConversations for the cross-mode and
+  // cross-session risk this closes (Codex P2 on #1322).
+  const daemonScopedConversations = useMemo(
+    () => filterDaemonScopedConversations(conversations, mode, targetSessionId),
+    [conversations, mode, targetSessionId],
+  );
 
   const drawerProps = useMemo<React.ComponentProps<typeof RepoChatDrawer>>(
     () => ({

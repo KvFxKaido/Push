@@ -3,6 +3,7 @@ import type { Conversation } from '@/types';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import {
   conversationBelongsToWorkspace,
+  filterDaemonScopedConversations,
   resolveDaemonChatAction,
   resolveWorkspaceChatAction,
 } from './chat-management';
@@ -280,5 +281,85 @@ describe('resolveDaemonChatAction', () => {
         conversationsLoaded: false,
       }),
     ).toEqual({ kind: 'noop' });
+  });
+});
+
+describe('filterDaemonScopedConversations', () => {
+  it('excludes chats from the other daemon mode', () => {
+    const relayChat = makeConversation({ id: 'chat-relay', mode: 'relay' });
+    const localPcChat = makeConversation({ id: 'chat-lp', mode: 'local-pc' });
+    const result = filterDaemonScopedConversations(
+      { [relayChat.id]: relayChat, [localPcChat.id]: localPcChat },
+      'relay',
+      null,
+    );
+    expect(Object.keys(result)).toEqual(['chat-relay']);
+  });
+
+  // Regression (Codex P2 on #1322): the drawer's resume is a bare chat
+  // switch, no relay retarget — offering session A's chat while attached to
+  // session B would show A's transcript while the next send still goes
+  // through B's live connection.
+  it("excludes a DIFFERENT session's scoped chat while a target is attached", () => {
+    const chatA = makeConversation({
+      id: 'chat-a',
+      mode: 'relay',
+      daemonSessionId: 'daemon-session-a',
+    });
+    const chatB = makeConversation({
+      id: 'chat-b',
+      mode: 'relay',
+      daemonSessionId: 'daemon-session-b',
+    });
+    const result = filterDaemonScopedConversations(
+      { [chatA.id]: chatA, [chatB.id]: chatB },
+      'relay',
+      'daemon-session-b',
+    );
+    expect(Object.keys(result)).toEqual(['chat-b']);
+  });
+
+  it('excludes a legacy relay chat predating daemonSessionId while a target is attached', () => {
+    const legacy = makeConversation({ id: 'chat-legacy', mode: 'relay' });
+    const scoped = makeConversation({
+      id: 'chat-scoped',
+      mode: 'relay',
+      daemonSessionId: 'daemon-session-a',
+    });
+    const result = filterDaemonScopedConversations(
+      { [legacy.id]: legacy, [scoped.id]: scoped },
+      'relay',
+      'daemon-session-a',
+    );
+    expect(Object.keys(result)).toEqual(['chat-scoped']);
+  });
+
+  it('includes every relay chat when untargeted (no session to disambiguate against)', () => {
+    const chatA = makeConversation({
+      id: 'chat-a',
+      mode: 'relay',
+      daemonSessionId: 'daemon-session-a',
+    });
+    const chatB = makeConversation({
+      id: 'chat-b',
+      mode: 'relay',
+      daemonSessionId: 'daemon-session-b',
+    });
+    const result = filterDaemonScopedConversations(
+      { [chatA.id]: chatA, [chatB.id]: chatB },
+      'relay',
+      null,
+    );
+    expect(Object.keys(result).sort()).toEqual(['chat-a', 'chat-b']);
+  });
+
+  it('local-pc ignores targetSessionId — no picker, always the one session', () => {
+    const chat = makeConversation({ id: 'chat-lp', mode: 'local-pc' });
+    const result = filterDaemonScopedConversations(
+      { [chat.id]: chat },
+      'local-pc',
+      'daemon-session-a',
+    );
+    expect(Object.keys(result)).toEqual(['chat-lp']);
   });
 });
