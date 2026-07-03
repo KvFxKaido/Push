@@ -30,7 +30,7 @@
  * conversation init, workspace context, picker placement, layout)
  * lives here so the screens don't drift.
  */
-import { ArrowLeft, Palette, RefreshCw, Square } from 'lucide-react';
+import { RefreshCw, Square } from 'lucide-react';
 import { WorkspaceDockIcon } from '@/components/icons/push-custom-icons';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -592,9 +592,9 @@ export function DaemonChatBody({
     return () => window.clearInterval(id);
   }, [hasPendingRetry]);
 
-  const handleUnpair = async () => {
+  const handleUnpair = useCallback(async () => {
     await onUnpair();
-  };
+  }, [onUnpair]);
 
   /**
    * Stop button handler. Beyond `abortStream()`, also cancel any
@@ -685,12 +685,10 @@ export function DaemonChatBody({
       activeRepo: null,
       conversations: daemonScopedConversations,
       activeChatId,
-      // The drawer normally keys repo appearance by repoFullName.
-      // Daemon mode has no repo, so any key is irrelevant — both
-      // setters route into the per-mode daemon appearance state so the
-      // drawer's Customize affordance ends up at the same destination
-      // as the header Palette button. Without this, a user customizing
-      // a repo row from inside a daemon session would silently drop.
+      // The drawer normally keys repo appearance by repoFullName. Daemon
+      // mode has no repo, so any key is irrelevant — both setters route
+      // into the per-mode daemon appearance state, same destination as
+      // the drawer's own Customize action below (daemonActions).
       resolveRepoAppearance: () => daemonAppearance,
       setRepoAppearance: (_: string, next: RepoAppearance) => setDaemonAppearance(next),
       clearRepoAppearance: () => resetDaemonAppearance(),
@@ -709,6 +707,13 @@ export function DaemonChatBody({
       cliSessions,
       cliSessionsLabel: mode,
       onResumeCliSession,
+      daemonActions: {
+        daemonLabel,
+        onLeave,
+        onUnpair: handleUnpair,
+        unpairIcon: UnpairIcon,
+        onCustomizeAppearance: () => setAppearanceSheetOpen(true),
+      },
     }),
     [
       drawerOpen,
@@ -725,6 +730,10 @@ export function DaemonChatBody({
       cliSessions,
       mode,
       onResumeCliSession,
+      daemonLabel,
+      onLeave,
+      handleUnpair,
+      UnpairIcon,
     ],
   );
 
@@ -791,39 +800,12 @@ export function DaemonChatBody({
               )}
               <button
                 type="button"
-                onClick={onLeave}
-                aria-label={`Leave ${daemonLabel}`}
-                title={`Leave ${daemonLabel}`}
-                className={HEADER_ROUND_BUTTON_CLASS}
-              >
-                <ArrowLeft className="relative z-10 h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setAppearanceSheetOpen(true)}
-                aria-label={`Customize ${headerLabel} appearance`}
-                title={`Customize ${headerLabel}`}
-                className={HEADER_ROUND_BUTTON_CLASS}
-              >
-                <Palette className="relative z-10 h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
                 onClick={openHub}
                 aria-label="Open hub"
                 title="Notes + pinned artifacts"
                 className={HEADER_ROUND_BUTTON_CLASS}
               >
                 <WorkspaceDockIcon className="relative z-10 h-3.5 w-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={handleUnpair}
-                aria-label="Unpair"
-                title="Unpair this daemon"
-                className={`${HEADER_ROUND_BUTTON_CLASS} hover:text-rose-200`}
-              >
-                <UnpairIcon className="relative z-10 h-3.5 w-3.5" aria-hidden="true" />
               </button>
             </div>
           </header>

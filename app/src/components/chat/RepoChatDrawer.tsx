@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Check, ChevronRight, Menu, Palette, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  Menu,
+  Palette,
+  Pencil,
+  Plus,
+  Search,
+  Trash2,
+  X,
+} from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Sheet,
   SheetContent,
@@ -64,6 +76,21 @@ interface RepoChatDrawerProps {
    * signal that nothing happened. Absent: rows stay read-only.
    */
   onResumeCliSession?: (session: DaemonCliSession) => void;
+  /**
+   * Daemon-mode-only footer actions (Local PC / Remote). Repo mode has no
+   * equivalent — leaving a repo chat happens by picking another item in
+   * this same drawer, so the affordance would be redundant there. Daemon
+   * sessions are singular (one pairing, no repo list to switch between),
+   * so Leave/Unpair/Customize need an explicit home; this keeps them out
+   * of the header row so it can match repo mode's icon set.
+   */
+  daemonActions?: {
+    daemonLabel: string;
+    onLeave: () => void;
+    onUnpair: () => void;
+    unpairIcon: LucideIcon;
+    onCustomizeAppearance: () => void;
+  };
 }
 
 const EMPTY_CHATS: Conversation[] = [];
@@ -107,6 +134,7 @@ export function RepoChatDrawer({
   cliSessions = EMPTY_CLI_SESSIONS,
   cliSessionsLabel,
   onResumeCliSession,
+  daemonActions,
 }: RepoChatDrawerProps) {
   const [expandedRepos, setExpandedRepos] = useState<Record<string, boolean>>({});
   const [searchQuery, setSearchQuery] = useState('');
@@ -616,10 +644,41 @@ export function RepoChatDrawer({
                 className={`flex items-center gap-2 border-t ${HUB_GLASS_HAIRLINE} ${GLASS_FILL_FAINT} px-3 py-3`}
               >
                 <PushMarkIcon className="h-[13px] w-[13px] shrink-0 text-push-accent" />
-                <div className="min-w-0">
+                <div className="min-w-0 flex-1">
                   <p className="text-push-xs font-medium text-push-fg-secondary">Push</p>
                   <p className="truncate text-push-2xs text-push-fg-dim">Your repo, in one chat</p>
                 </div>
+                {daemonActions && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={daemonActions.onCustomizeAppearance}
+                      className={`${GLASS_GHOST_BUTTON_CLASS} h-8 w-8`}
+                      aria-label={`Customize ${daemonActions.daemonLabel} appearance`}
+                      title="Customize appearance"
+                    >
+                      <Palette className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={daemonActions.onLeave}
+                      className={`${GLASS_GHOST_BUTTON_CLASS} h-8 w-8`}
+                      aria-label={`Leave ${daemonActions.daemonLabel}`}
+                      title={`Leave ${daemonActions.daemonLabel}`}
+                    >
+                      <ArrowLeft className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={daemonActions.onUnpair}
+                      className={`${GLASS_GHOST_BUTTON_CLASS} h-8 w-8 hover:text-rose-200`}
+                      aria-label="Unpair"
+                      title={`Unpair this ${daemonActions.daemonLabel}`}
+                    >
+                      <daemonActions.unpairIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
