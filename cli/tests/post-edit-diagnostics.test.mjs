@@ -281,6 +281,28 @@ describe('write_file / edit_file integration', () => {
     }
   });
 
+  it('write_file in a package.json-only workspace emits no false clean note', async () => {
+    // Codex P2 on #1311: detectProjectType returns `node` for a
+    // package.json-only workspace, but there is no tsconfig for tsc to
+    // check — bare `tsc --noEmit` parses to zero diagnostics, which used
+    // to surface as "Diagnostics: clean" for a file nothing checked.
+    const { executeToolCall } = await import('../tools.ts');
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-postedit-node-'));
+    try {
+      await fs.writeFile(path.join(root, 'package.json'), JSON.stringify({ name: 'x' }));
+      const result = await executeToolCall(
+        { tool: 'write_file', args: { path: 'a.ts', content: 'const x = ;\n' } },
+        root,
+        { role: 'coder' },
+      );
+      assert.equal(result.ok, true);
+      assert.ok(!result.text.includes('Diagnostics'), 'no clean note when no checker ran');
+      assert.equal(result.meta.diagnostics, undefined);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('write_file honors the env opt-out', async () => {
     const { executeToolCall } = await import('../tools.ts');
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-postedit-off-'));

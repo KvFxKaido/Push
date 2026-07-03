@@ -75,7 +75,9 @@ const CHECKABLE_EXTENSIONS = new Set([
  */
 const PROJECT_TYPE_EXTENSIONS: Record<string, Set<string>> = {
   typescript: new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']),
-  node: new Set(['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']),
+  // No `node` entry: a package.json-only workspace has no checker to run —
+  // runDiagnostics returns UNSUPPORTED_PROJECT_TYPE for it (Codex P2 on
+  // #1311), which lands in the silent-disable arm below, never here.
   python: new Set(['.py', '.pyi']),
   rust: new Set(['.rs']),
   go: new Set(['.go']),

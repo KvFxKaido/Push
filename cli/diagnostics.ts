@@ -609,9 +609,23 @@ export async function runDiagnostics(
   let result: DiagnosticResult;
   switch (projectType) {
     case 'typescript':
-    case 'node':
       result = await runTypeScriptDiagnostics(workspaceRoot, specificPath, opts);
       break;
+    case 'node':
+      // package.json-only workspace: there is no tsconfig for tsc to check.
+      // Bare `tsc --noEmit` prints help / config errors that parse to zero
+      // diagnostics — which would surface as a false "clean" instead of
+      // "no checker ran" (Codex P2 on #1311). Say so explicitly.
+      return {
+        diagnostics: [],
+        projectType,
+        error: {
+          code: 'UNSUPPORTED_PROJECT_TYPE',
+          message:
+            'Node project without tsconfig.json — no type checker to run (add tsconfig.json to enable tsc diagnostics)',
+          retryable: false,
+        },
+      };
     case 'python':
       result = await runPythonDiagnostics(workspaceRoot, specificPath, opts);
       break;
