@@ -2792,8 +2792,14 @@ export async function runTUI(options = {}) {
 
   // ── Enter alternate screen ───────────────────────────────────────
 
+  // Mouse tracking is intentionally never enabled: its only consumer was
+  // wheel-scroll, which PageUp/PageDown already cover, and enabling it
+  // disables native terminal text selection in every terminal emulator.
+  // Alternate-scroll mode is disabled too — several terminals default it on
+  // and would otherwise translate wheel movement into Up/Down arrow-key
+  // sequences that land on the composer's history recall (see altScrollOff).
   io.stdout.write(
-    ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.mouseOn,
+    ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.altScrollOff,
   );
 
   if (io.stdin.isTTY) {
@@ -7506,7 +7512,12 @@ export async function runTUI(options = {}) {
     }
     try {
       io.stdout.write(
-        ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
+        ESC.mouseOff +
+          ESC.altScrollOn +
+          ESC.bracketedPasteOff +
+          ESC.cursorShow +
+          ESC.altScreenOff +
+          ESC.reset,
       );
       if (io.stdin.isTTY) io.stdin.setRawMode(false);
     } catch {
@@ -7580,7 +7591,12 @@ export async function runTUI(options = {}) {
     }
 
     io.stdout.write(
-      ESC.mouseOff + ESC.bracketedPasteOff + ESC.cursorShow + ESC.altScreenOff + ESC.reset,
+      ESC.mouseOff +
+        ESC.altScrollOn +
+        ESC.bracketedPasteOff +
+        ESC.cursorShow +
+        ESC.altScreenOff +
+        ESC.reset,
     );
     if (io.stdin.isTTY) {
       io.stdin.setRawMode(false);
