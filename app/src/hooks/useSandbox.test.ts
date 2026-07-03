@@ -665,6 +665,54 @@ describe('useSandbox.stop', () => {
   });
 });
 
+describe('useSandbox.rebindSessionRepo', () => {
+  it('carries hasMutated forward onto the new branch key', async () => {
+    // Regression (Codex P2 on #1315): branch-on-first-prompt's fork moves the
+    // live session onto a new branch via this path, not saveSandboxSession.
+    // Without carrying hasMutated forward here, the working branch's first
+    // keep-warm snapshot has no `existing` record to read it from, lands
+    // `undefined`, and the definitively-gone recovery skip never fires for
+    // the unmutated session it exists for.
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+
+    // Simulate the record persisted under the cold-start key — saveSandboxSession
+    // itself is mocked, so it never actually reaches safeStorage in this harness.
+    safeStorage.get.mockImplementation((key: string) =>
+      key === 'sbx:owner/repo:main'
+        ? JSON.stringify({
+            sandboxId: 'sb-1',
+            ownerToken: 'owner-tok',
+            repoFullName: 'owner/repo',
+            branch: 'main',
+            createdAt: 123,
+            hasMutated: false,
+          })
+        : null,
+    );
+    sandboxClient.getSandboxOwnerToken.mockReturnValue('owner-tok');
+
+    hook.rebindSessionRepo('owner/repo', 'feature/new-branch');
+
+    expect(sandboxSession.saveSandboxSession).toHaveBeenLastCalledWith(
+      'owner/repo',
+      'feature/new-branch',
+      expect.objectContaining({ sandboxId: 'sb-1', hasMutated: false }),
+    );
+  });
+
+  it('is a no-op when no sandbox is active', () => {
+    const hook = render();
+    hook.rebindSessionRepo('owner/repo', 'feature/new-branch');
+    expect(sandboxSession.saveSandboxSession).not.toHaveBeenCalled();
+  });
+});
+
 describe('useSandbox.refresh', () => {
   it('returns false when no sandbox is active', async () => {
     const hook = render();
