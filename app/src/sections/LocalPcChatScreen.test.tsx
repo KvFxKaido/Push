@@ -171,7 +171,7 @@ describe('LocalPcChatScreen', () => {
     expect(html).toContain('Local PC');
   });
 
-  it('renders an Unpair button with an accessible label', () => {
+  it('renders the hub button in the header (Leave/Unpair/Customize now live in the drawer)', () => {
     const html = renderToStaticMarkup(
       <LocalPcChatScreen
         binding={binding}
@@ -181,9 +181,13 @@ describe('LocalPcChatScreen', () => {
         onDisconnect={onDisconnect}
       />,
     );
-    expect(html).toContain('aria-label="Leave local daemon"');
-    expect(html).toContain('aria-label="Unpair"');
-    expect(html).toContain('Unpair');
+    // Leave/Unpair/Customize moved into the drawer's daemonActions footer
+    // so the header row matches repo mode's shape (aside from the mode
+    // chip and the absent sandbox chip). Not asserted here: the drawer's
+    // Sheet only renders its Portal content when open, and this suite runs
+    // in the `node` vitest environment (no jsdom), so opening it isn't
+    // exercisable from this test — verified manually in the browser instead.
+    expect(html).toContain('aria-label="Open hub"');
   });
 
   it('renders the compose textarea and send button', () => {

@@ -117,7 +117,13 @@ describe('RelayChatScreen', () => {
 
     expect(html).toContain('Remote');
     expect(html).toContain('push.ishawnd.workers.dev');
-    expect(html).toContain('aria-label="Leave remote daemon"');
+    // Leave/Unpair/Customize moved into the drawer's daemonActions footer
+    // so the header row matches repo mode's shape (aside from the mode
+    // chip and the absent sandbox chip). Not asserted here: the drawer's
+    // Sheet only renders its Portal content when open, and this suite runs
+    // in the `node` vitest environment (no jsdom), so opening it isn't
+    // exercisable from this test — verified manually in the browser instead.
+    expect(html).toContain('aria-label="Open hub"');
     // ChatInput now drives the daemon input — same provider+model
     // affordances as repo/chat mode. The chip surfaces the active
     // provider's model name; the catalog mock pins `cloudflare` +
