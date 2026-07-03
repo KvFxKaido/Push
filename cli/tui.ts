@@ -5108,6 +5108,40 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  // Shared by /remote enable and /remote setup: resolve the deployment
+  // URL + token from positional args, falling back to the persisted
+  // relay config / PUSH_RELAY_TOKEN for whichever is omitted.
+  //
+  // With two args the mapping is unambiguous (url, token), same order
+  // as before this fallback existed. With exactly one arg it's ambiguous
+  // positionally — but the two real values look nothing alike, so shape
+  // disambiguates: a `pushd_relay_...` string can never be a deployment
+  // URL and vice versa. The rotate-token-only case (the actual reason
+  // this fallback exists — keep dialing the same Worker, mint a fresh
+  // bearer) is exactly a lone token argument, so check that first.
+  async function resolveRelayEnableArgs(parts) {
+    const { isValidRelayToken, readRelayConfig } = await import('./pushd-relay-config.js');
+    const first = parts[1];
+    const second = parts[2];
+    let explicitUrl;
+    let explicitToken;
+    if (first && second) {
+      explicitUrl = first;
+      explicitToken = second;
+    } else if (first) {
+      if (isValidRelayToken(first)) {
+        explicitToken = first;
+      } else {
+        explicitUrl = first;
+      }
+    }
+    const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
+    return {
+      deploymentUrl: explicitUrl || persisted?.deploymentUrl,
+      token: explicitToken || process.env.PUSH_RELAY_TOKEN?.trim(),
+    };
+  }
+
   async function handleRemoteCommand(arg) {
     const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
     const sub = (parts[0] || 'status').toLowerCase();
@@ -5143,16 +5177,7 @@ export async function runTUI(options = {}) {
     }
 
     if (sub === 'enable') {
-      const { readRelayConfig } = await import('./pushd-relay-config.js');
-      // Same fallback as `push daemon relay enable`: --url defaults to
-      // whatever's already persisted (rotating a token against the same
-      // Worker), --token defaults to PUSH_RELAY_TOKEN so this can be a
-      // zero-argument command once it's in your shell profile.
-      const explicitUrl = parts[1];
-      const explicitToken = parts[2];
-      const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
-      const deploymentUrl = explicitUrl || persisted?.deploymentUrl;
-      const token = explicitToken || process.env.PUSH_RELAY_TOKEN?.trim();
+      const { deploymentUrl, token } = await resolveRelayEnableArgs(parts);
       if (!deploymentUrl || !token) {
         addTranscriptEntry(
           tuiState,
@@ -5242,14 +5267,7 @@ export async function runTUI(options = {}) {
     }
 
     if (sub === 'setup') {
-      const { readRelayConfig } = await import('./pushd-relay-config.js');
-      // Same fallback as /remote enable: --url defaults to whatever's
-      // already persisted, --token defaults to PUSH_RELAY_TOKEN.
-      const explicitUrl = parts[1];
-      const explicitToken = parts[2];
-      const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
-      const deploymentUrl = explicitUrl || persisted?.deploymentUrl;
-      const token = explicitToken || process.env.PUSH_RELAY_TOKEN?.trim();
+      const { deploymentUrl, token } = await resolveRelayEnableArgs(parts);
       if (!deploymentUrl || !token) {
         addTranscriptEntry(
           tuiState,
