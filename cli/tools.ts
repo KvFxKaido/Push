@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
+import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
@@ -1941,6 +1942,44 @@ export async function backupFile(filePath, workspaceRoot) {
 }
 
 /**
+ * Best-effort structured diff for a file mutation, attached to the tool
+ * result as `meta.editDiff` and rendered by the TUI as an edit card. Never
+ * fails the already-succeeded mutation. Symmetric logs (console.error —
+ * CLI stdout is reserved for user output / --json): `edit_diff_skipped`
+ * when the file is too large to diff within budget, `edit_diff_failed` on
+ * an unexpected computation error; identical content returns null silently
+ * (no-op edits are not a degradation worth a log line).
+ */
+function buildEditDiffMeta(relPath, before, after) {
+  try {
+    const beforeText = String(before ?? '');
+    const afterText = String(after ?? '');
+    const diff = computeEditDiff(relPath, beforeText, afterText);
+    if (!diff && overEditDiffLineBudget(beforeText, afterText)) {
+      console.error(
+        JSON.stringify({
+          level: 'info',
+          event: 'edit_diff_skipped',
+          reason: 'file_too_large',
+          path: relPath,
+        }),
+      );
+    }
+    return diff;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'edit_diff_failed',
+        path: relPath,
+        message: err instanceof Error ? err.message : String(err),
+      }),
+    );
+    return null;
+  }
+}
+
+/**
  * Build a `PreCommitGate` (the `lib/git/push-git.ts` seam) that runs the
  * Auditor SAFE/UNSAFE review over the staged diff before a commit lands.
  *
@@ -2890,6 +2929,14 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         );
         const content = asString(call.args.content, 'content');
         await backupFile(filePath, workspaceRoot);
+        // Prior content feeds the transcript edit card (meta.editDiff); a
+        // missing file is a create — diffed against empty.
+        let beforeContent = '';
+        try {
+          beforeContent = await fs.readFile(filePath, 'utf8');
+        } catch {
+          beforeContent = '';
+        }
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, content, 'utf8');
         // Post-edit diagnostics loop (crush pattern): surface breakage the
@@ -2904,14 +2951,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               ? options.postEditDiagnostics
               : undefined,
         });
+        const writeRelPath = path.relative(workspaceRoot, filePath) || '.';
+        const writeEditDiff = buildEditDiffMeta(writeRelPath, beforeContent, content);
+        // Model-visible orientation: an update to an existing file echoes the
+        // changed regions back (confirmed post-write state, not what the
+        // model *believes* it wrote). Creates skip the echo — the diff would
+        // just replay the content the model authored one message ago.
+        const writeChangeNote =
+          writeEditDiff && beforeContent !== ''
+            ? `\n\nChanges (+${writeEditDiff.adds} -${writeEditDiff.dels}):\n${renderEditDiffText(writeEditDiff, { maxLines: 40 })}`
+            : '';
         return {
           ok: true,
-          text: `Wrote ${content.length} bytes to ${path.relative(workspaceRoot, filePath) || '.'}${writeDiag.note ?? ''}`,
+          text: `Wrote ${content.length} bytes to ${writeRelPath}${writeChangeNote}${writeDiag.note ?? ''}`,
           meta: {
             path: filePath,
             bytes: content.length,
             version: calculateContentVersion(content),
             ...(writeDiag.meta ? { diagnostics: writeDiag.meta } : {}),
+            ...(writeEditDiff ? { editDiff: writeEditDiff } : {}),
           },
         };
       }
@@ -2975,9 +3033,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               : undefined,
         });
 
+        const editRelPath = path.relative(workspaceRoot, filePath) || '.';
+        const editFileDiff = buildEditDiffMeta(editRelPath, before, applied.content);
         return {
           ok: true,
-          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${warningText}${previewText}${editDiag.note ?? ''}`,
+          text: `Applied ${applied.applied.length} hashline edits to ${editRelPath}${warningText}${previewText}${editDiag.note ?? ''}`,
           meta: {
             path: filePath,
             edits: applied.applied.length,
@@ -2985,6 +3045,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             version_after: versionAfter,
             warnings: applied.warnings.length,
             ...(editDiag.meta ? { diagnostics: editDiag.meta } : {}),
+            ...(editFileDiff ? { editDiff: editFileDiff } : {}),
           },
         };
       }

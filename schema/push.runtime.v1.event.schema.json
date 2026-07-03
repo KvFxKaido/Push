@@ -515,6 +515,62 @@
         },
         "branch": {
           "type": "string"
+        },
+        "diff": {
+          "type": "object",
+          "required": [
+            "path",
+            "adds",
+            "dels",
+            "lines"
+          ],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "adds": {
+              "type": "number"
+            },
+            "dels": {
+              "type": "number"
+            },
+            "lines": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "kind",
+                  "text"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "add",
+                      "del",
+                      "ctx"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "oldLine": {
+                    "type": "number"
+                  },
+                  "newLine": {
+                    "type": "number"
+                  },
+                  "textTruncated": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          }
         }
       }
     },

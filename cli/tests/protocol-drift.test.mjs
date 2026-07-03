@@ -474,6 +474,54 @@ describe('protocol drift characterization — tool events', () => {
     );
   });
 
+  it('accepts tool.execution_complete with a structured edit diff', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'edit_file',
+        isError: false,
+        preview: 'Applied 1 hashline edits to src/foo.ts',
+        durationMs: 25,
+        diff: {
+          path: 'src/foo.ts',
+          adds: 1,
+          dels: 1,
+          lines: [
+            { kind: 'ctx', oldLine: 1, newLine: 1, text: 'alpha' },
+            { kind: 'del', oldLine: 2, text: 'old' },
+            { kind: 'add', newLine: 2, text: 'new', textTruncated: true },
+          ],
+          truncated: true,
+        },
+      }),
+    );
+  });
+
+  it('rejects tool.execution_complete with a malformed diff', () => {
+    // Bad line kind
+    assertStrictBroadcastFail(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'edit_file',
+        isError: false,
+        preview: 'x',
+        diff: {
+          path: 'src/foo.ts',
+          adds: 1,
+          dels: 0,
+          lines: [{ kind: 'changed', text: 'x' }],
+        },
+      }),
+    );
+    // Missing counters / non-array lines
+    assertStrictBroadcastFail(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'edit_file',
+        isError: false,
+        preview: 'x',
+        diff: { path: 'src/foo.ts', lines: 'not-an-array' },
+      }),
+    );
+  });
+
   it('rejects tool.execution_complete with a non-string branch stamp', () => {
     assertStrictBroadcastFail(
       makeEnvelope('tool.execution_complete', {

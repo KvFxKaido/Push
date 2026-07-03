@@ -941,6 +941,62 @@ function validateToolResult(payload: unknown, basePath: string): ValidationIssue
   if (d) issues.push(d);
   const b = expectOptionalString(payload, 'branch', basePath);
   if (b) issues.push(b);
+  // `diff` — optional structured edit diff for file-mutation tools
+  // (edit_file / write_file). Shape is owned by lib/edit-diff.ts; here we
+  // pin the envelope-level contract deeply enough that a renderer can
+  // trust field types without re-validating per line.
+  if ('diff' in payload && payload.diff !== undefined) {
+    issues.push(...validateEditDiffField(payload.diff, `${basePath}.diff`));
+  }
+  return issues;
+}
+
+/** Validate the optional `diff` field on tool result payloads. */
+function validateEditDiffField(diff: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(diff)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof diff}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const p = expectNonEmptyString(diff, 'path', basePath);
+  if (p) issues.push(p);
+  for (const counter of ['adds', 'dels'] as const) {
+    if (typeof diff[counter] !== 'number' || !Number.isFinite(diff[counter])) {
+      issues.push({
+        path: `${basePath}.${counter}`,
+        message: `expected finite number, got ${JSON.stringify(diff[counter])}`,
+      });
+    }
+  }
+  if (!Array.isArray(diff.lines)) {
+    issues.push({
+      path: `${basePath}.lines`,
+      message: `expected array, got ${typeof diff.lines}`,
+    });
+    return issues;
+  }
+  diff.lines.forEach((line, index) => {
+    const linePath = `${basePath}.lines[${index}]`;
+    if (!isPlainObject(line)) {
+      issues.push({ path: linePath, message: `expected plain object, got ${typeof line}` });
+      return;
+    }
+    if (line.kind !== 'add' && line.kind !== 'del' && line.kind !== 'ctx') {
+      issues.push({
+        path: `${linePath}.kind`,
+        message: `expected 'add' | 'del' | 'ctx', got ${JSON.stringify(line.kind)}`,
+      });
+    }
+    if (typeof line.text !== 'string') {
+      issues.push({
+        path: `${linePath}.text`,
+        message: `expected string, got ${typeof line.text}`,
+      });
+    }
+    for (const numField of ['oldLine', 'newLine'] as const) {
+      const numIssue = expectOptionalFiniteNumber(line, numField, linePath);
+      if (numIssue) issues.push(numIssue);
+    }
+  });
   return issues;
 }
 
