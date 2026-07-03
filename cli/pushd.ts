@@ -1791,12 +1791,33 @@ async function handleSendUserMessage(req, emitEvent) {
   });
 
   await appendUserMessageWithFileReferences(state, text, state.cwd);
-  await appendSessionEvent(
-    state,
-    'user_message',
-    { chars: text.length, preview: text.slice(0, 280) },
+  const userMessagePayload = { chars: text.length, preview: text.slice(0, 280) };
+  // Capture the seq synchronously, right as the call starts — not after
+  // awaiting it. appendSessionEvent increments state.eventSeq before its
+  // first await, so this read is race-free (nothing else can run between
+  // "call the function" and "read the field" in the same tick); reading
+  // state.eventSeq only after the await could pick up a LATER event's seq if
+  // a background delegation/task-graph run appends to the same session
+  // concurrently (send_user_message only rejects on entry.activeRunId, not
+  // background runs) — the broadcast envelope would then mismatch the
+  // persisted journal entry (Codex P2 on #1321).
+  const appendPromise = appendSessionEvent(state, 'user_message', userMessagePayload, runId);
+  const userMessageSeq = state.eventSeq;
+  await appendPromise;
+  // Broadcast so another client attached to this session (e.g. the TUI that
+  // originated it, watching a phone-driven turn) renders the prompt live —
+  // previously only persisted, never fanned out, so the assistant's reply
+  // would appear on other clients with no visible question above it.
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId: state.sessionId,
     runId,
-  );
+    seq: userMessageSeq,
+    ts: Date.now(),
+    type: 'user_message',
+    payload: userMessagePayload,
+  });
 
   const providerConfig = PROVIDER_CONFIGS[state.provider];
   let apiKey;

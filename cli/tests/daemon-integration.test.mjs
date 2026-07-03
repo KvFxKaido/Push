@@ -2358,6 +2358,121 @@ describe('multi-client fan-out', () => {
     assert.equal(parsed.sessionId, 'sess_multi');
     assert.equal(parsed.payload.text, 'hello');
   });
+
+  it('broadcasts user_message to an already-attached client, not just the sender (TUI-shows-Remote-chat)', async () => {
+    // Regression: user_message was persisted (appendSessionEvent) but never
+    // broadcast, so a second client attached to the same session (e.g. the
+    // TUI that originated it, watching a phone-driven turn over Remote)
+    // never saw the prompt — only the assistant's reply arrived, with no
+    // visible question above it.
+    const mock = await startMockProviderServer({ tokens: ['ack ', 'from mock'] });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      // A second client (the TUI) attaches to the same session as an
+      // observer, distinct from whoever sends the message below.
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const sendResult = await handleRequest(
+        makeRequest(
+          'send_user_message',
+          { sessionId, attachToken, text: 'what changed recently in push' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(sendResult.ok, true);
+
+      const userMessage = await waitForBroadcast(broadcasted, (e) => e.type === 'user_message', {
+        message: 'expected user_message broadcast to the attached observer',
+      });
+      assert.equal(userMessage.payload.preview, 'what changed recently in push');
+      assert.equal(userMessage.payload.chars, 'what changed recently in push'.length);
+      assert.equal(userMessage.runId, sendResult.payload.runId);
+
+      // Let the background turn finish so the mock server isn't torn down
+      // mid-request.
+      await waitForBroadcast(broadcasted, (e) => e.type === 'run_complete', {
+        message: 'expected run_complete',
+      });
+    } finally {
+      restoreConfig();
+      await mock.stop();
+    }
+  });
+});
+
+describe('appendSessionEvent seq capture (Codex P2 on #1321)', () => {
+  // handleSendUserMessage broadcasts with the seq captured synchronously
+  // right when appendSessionEvent is called, not after awaiting it —
+  // appendSessionEvent increments state.eventSeq before its own first
+  // await, so a concurrent append for the SAME session (a background
+  // delegation/task-graph run isn't blocked by send_user_message's
+  // activeRunId check) landing during that await window would otherwise
+  // make a post-await read pick up the LATER event's seq. Proven directly
+  // against the real appendSessionEvent, not a reimplementation.
+  it('captures the correct seq even when a concurrent append lands during the await window', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-seq-race-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const sessionId = makeSessionId();
+      const state = createSessionState({
+        sessionId,
+        attachToken: 'pushd_test_seq_race_token',
+        provider: 'ollama',
+        model: 'llama-test',
+        cwd: tmpRoot,
+        mode: 'tui',
+        messages: [{ role: 'system', content: 'system' }],
+      });
+      await saveSessionState(state);
+
+      // Deliberately don't await the first append before starting the
+      // second — this is the race window: both synchronous prefixes run
+      // (both increments happen) before either disk write resolves.
+      const firstAppend = appendSessionEvent(state, 'user_message', { chars: 2, preview: 'hi' });
+      // The correct capture point: synchronous, right after initiating the
+      // call, before this TUI's own code awaits anything.
+      const capturedSeq = state.eventSeq;
+
+      const secondAppend = appendSessionEvent(state, 'status', { detail: 'concurrent' });
+      await Promise.all([firstAppend, secondAppend]);
+
+      assert.equal(capturedSeq, 1, "must capture user_message's own seq, not a later one");
+      // Proves the race scenario genuinely happened: state.eventSeq moved on
+      // to 2 by the time both appends settled — a post-await read here would
+      // have wrongly broadcast seq 2 for the user_message event actually
+      // persisted at seq 1.
+      assert.equal(state.eventSeq, 2, 'sanity: the concurrent append did land during the window');
+
+      const events = await loadSessionEvents(sessionId);
+      const persistedUserMessage = events.find((e) => e.type === 'user_message');
+      assert.equal(persistedUserMessage.seq, capturedSeq);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── Daemon version bump ─────────────────────────────────────────

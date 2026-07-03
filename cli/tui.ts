@@ -1554,6 +1554,24 @@ export async function runTUI(options = {}) {
   // session isn't running (cleared in `setRunState('idle')`). Audit: Codex #744.
   let daemonActiveRunId = null;
   let daemonAutoStartAttempted = false;
+  // Set right before send_user_message goes out, cleared on the matching
+  // broadcast 'user_message' event: this TUI already rendered its own
+  // submission locally (addTranscriptEntry at send time), so the daemon's
+  // broadcast of that same event — which now fans out to every attached
+  // client, not just the ones that didn't send it — must be recognized and
+  // skipped here or it double-renders. Correlated by content (preview/chars),
+  // not a bare boolean: with two clients attached to the same session, a
+  // phone-originated user_message can land in the window between arming this
+  // and the echo arriving, and an uncorrelated flag would swallow THAT
+  // message instead — the visibility bug this whole change fixes, mirrored
+  // (Codex + push-agent, PR #1321). Content is known synchronously before the
+  // request even goes out, unlike the daemon-assigned runId, which isn't
+  // available until the ack resolves — using it would reopen the same race.
+  // pendingOwnUserMessageNonce guards the timeout safety net (send_user_message
+  // rejected before ever reaching the daemon's broadcast call) from clearing a
+  // NEWER pending send if the user fires another message inside the window.
+  let pendingOwnUserMessage = null;
+  let pendingOwnUserMessageNonce = 0;
   // Code-freshness self-heal state (stale-runtime detection). `daemonBuildStamp`
   // is the connected daemon's startup stamp from the hello handshake; comparing
   // it to this process's own stamp detects a daemon running pre-`git pull` code.
@@ -3424,6 +3442,34 @@ export async function runTUI(options = {}) {
         break;
       }
 
+      case 'user_message': {
+        const { preview = '', chars = preview.length } = event.payload || {};
+        // Every attached client (this TUI, a phone on Remote) gets this
+        // broadcast, including the one that sent it — skip our own echo
+        // (already rendered locally at send time, see runPrompt). Matched by
+        // content, not just "the first one that arrives": with two clients
+        // attached, a phone-originated message can land in the same window,
+        // and an uncorrelated skip would swallow THAT instead of our echo.
+        if (
+          pendingOwnUserMessage &&
+          pendingOwnUserMessage.preview === preview &&
+          pendingOwnUserMessage.chars === chars
+        ) {
+          pendingOwnUserMessage = null;
+          break;
+        }
+        if (tuiState.transcript.length > 0) {
+          pushTranscriptEntry(tuiState, { role: 'divider', timestamp: Date.now() });
+        }
+        // The wire payload is capped at a 280-char preview (see
+        // handleGetSessionMessages's doc comment in pushd.ts) — mark
+        // truncation visually rather than rendering a silent cutoff.
+        addTranscriptEntry(tuiState, 'user', chars > preview.length ? `${preview}…` : preview);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        break;
+      }
+
       default:
         // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
         // routed through a single renderer so the list of handled types lives
@@ -3724,6 +3770,18 @@ export async function runTUI(options = {}) {
             );
           });
 
+          // Content-correlated, not a bare flag — see the declaration comment.
+          // Set synchronously, before the request goes out: the broadcast can
+          // race the ack (both fire from inside the same daemon handler), so
+          // waiting for send_user_message to resolve before arming this would
+          // reopen the exact race it exists to close.
+          const ownMessageNonce = ++pendingOwnUserMessageNonce;
+          pendingOwnUserMessage = { preview: text.slice(0, 280), chars: text.length };
+          setTimeout(() => {
+            // Only clear if still the latest send — an older timeout must not
+            // wipe a newer pending message's correlation state.
+            if (pendingOwnUserMessageNonce === ownMessageNonce) pendingOwnUserMessage = null;
+          }, 5000);
           const res = await daemonClient.request(
             'send_user_message',
             {
@@ -3738,6 +3796,10 @@ export async function runTUI(options = {}) {
             daemonSessionId,
           );
           if (!res.ok) {
+            // Rejected before the daemon ever broadcast user_message — no
+            // echo is coming, so don't wait out the 5s timeout to stop
+            // shadowing another client's messages in the meantime.
+            if (pendingOwnUserMessageNonce === ownMessageNonce) pendingOwnUserMessage = null;
             addTranscriptEntry(tuiState, 'error', res.error?.message || 'Daemon rejected message');
           } else {
             runId = res.payload?.runId;
