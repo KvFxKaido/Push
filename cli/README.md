@@ -149,6 +149,22 @@ PUSH_AUDITOR_GATE=0 ./push run --task "..."   # env overrides the config setting
 
 The toggle resolves identically across CLI, daemon, and the web app (shared resolver in `lib/auditor-policy.ts`): `PUSH_AUDITOR_GATE` wins, then the per-surface setting, then the default (on). The setting is forwarded to the `pushd` daemon as `PUSH_AUDITOR_GATE` so delegated Coder commits gate the same way.
 
+### Post-edit diagnostics
+
+After a successful `write_file` / `edit_file`, the CLI runs the project type-checker (`tsc --noEmit`, pyright/ruff, `cargo check`, or `go vet` — same detection as `lsp_diagnostics`) scoped to the edited file and appends findings to the tool result, so the model sees breakage it just introduced without having to ask. **On by default.** Pattern borrowed from charmbracelet/crush (see `docs/research/charmbracelet crush — Lessons for Push.md`).
+
+Because the checkers are full project compiles rather than an incremental language server, the loop guards its own cost: non-code files skip, unsupported projects and missing checkers disable it silently per workspace, and a run that exceeds the time budget (`PUSH_POST_EDIT_DIAGNOSTICS_BUDGET_MS`, default 10s) disables it for that workspace for the rest of the process with a one-time note to the model. Turn it off per-config or via env:
+
+```json
+{ "postEditDiagnostics": false }
+```
+
+```bash
+PUSH_POST_EDIT_DIAGNOSTICS=0 ./push run --task "..."
+```
+
+Like `auditorGate`, an explicit setting is forwarded to the `pushd` daemon as `PUSH_POST_EDIT_DIAGNOSTICS` so delegated Coder edits behave the same way.
+
 ### Tool allow / deny lists
 
 Two arrays in `~/.push/config.json` shape what tools the agent can run:
@@ -232,6 +248,8 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_TAVILY_API_KEY` | Optional Tavily key for premium web search (`web_search`) |
 | `PUSH_WEB_SEARCH_BACKEND` | Web search backend: `auto` (default), `tavily`, `ollama`, `duckduckgo` |
 | `PUSH_AUDITOR_GATE` | `0`/`false` to disable the Auditor commit gate, `1`/`true` to force it on (default: on). Overrides the `auditorGate` config setting. |
+| `PUSH_POST_EDIT_DIAGNOSTICS` | `0`/`false` to disable the post-edit diagnostics loop (default: on). Overrides the `postEditDiagnostics` config setting. |
+| `PUSH_POST_EDIT_DIAGNOSTICS_BUDGET_MS` | Time budget for a post-edit checker run in ms (default: 10000). A run that exceeds it disables the loop for that workspace for the rest of the process. |
 | `PUSH_DELEGATION_MODE` | `delegated` opts interactive turns (TUI/daemon) back into the planner → task-graph wrapper. Default: `inline` — the single conversational lead runs the turn in-loop with no planner pre-pass (Agent Runtime Decisions §10). Headless `push run` keeps its explicit `--delegate` flag. |
 | `PUSH_GITHUB_TOKEN` | GitHub token enabling the GitHub tools (PRs, checks, repo browse, create/merge PR, workflows). Falls back to `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. |
 | `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |

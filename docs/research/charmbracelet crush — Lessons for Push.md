@@ -70,6 +70,10 @@ mechanisms that are independently reimplementable.
    root-marker match, versioned open files, 30s unavailable-retry,
    agent-callable restart) is the reference design for the real-LSP upgrade
    the original plan doc deferred.
+   *Shipped alongside this doc:* `cli/post-edit-diagnostics.ts` wires the
+   loop into `write_file`/`edit_file` with exactly these guards (extension
+   gate, 10s budget via `PUSH_POST_EDIT_DIAGNOSTICS_BUDGET_MS`, adaptive
+   per-workspace disable, `postEditDiagnostics` config opt-out).
 
 2. **Price the tokens Push already counts.** Push tracks tokens everywhere
    (context budget, stats) but has no dollar field anywhere in the runtime.
