@@ -2358,6 +2358,66 @@ describe('multi-client fan-out', () => {
     assert.equal(parsed.sessionId, 'sess_multi');
     assert.equal(parsed.payload.text, 'hello');
   });
+
+  it('broadcasts user_message to an already-attached client, not just the sender (TUI-shows-Remote-chat)', async () => {
+    // Regression: user_message was persisted (appendSessionEvent) but never
+    // broadcast, so a second client attached to the same session (e.g. the
+    // TUI that originated it, watching a phone-driven turn over Remote)
+    // never saw the prompt — only the assistant's reply arrived, with no
+    // visible question above it.
+    const mock = await startMockProviderServer({ tokens: ['ack ', 'from mock'] });
+    const restoreConfig = patchProviderConfig('ollama', {
+      url: mock.url,
+      apiKey: 'test-mock-key',
+    });
+
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      const { sessionId, attachToken } = start.payload;
+
+      // A second client (the TUI) attaches to the same session as an
+      // observer, distinct from whoever sends the message below.
+      const broadcasted = [];
+      const attached = await handleRequest(
+        makeRequest('attach_session', { sessionId, attachToken }, sessionId),
+        (event) => broadcasted.push(event),
+      );
+      assert.equal(attached.ok, true);
+      broadcasted.length = 0;
+
+      const sendResult = await handleRequest(
+        makeRequest(
+          'send_user_message',
+          { sessionId, attachToken, text: 'what changed recently in push' },
+          sessionId,
+        ),
+        () => {},
+      );
+      assert.equal(sendResult.ok, true);
+
+      const userMessage = await waitForBroadcast(broadcasted, (e) => e.type === 'user_message', {
+        message: 'expected user_message broadcast to the attached observer',
+      });
+      assert.equal(userMessage.payload.preview, 'what changed recently in push');
+      assert.equal(userMessage.payload.chars, 'what changed recently in push'.length);
+      assert.equal(userMessage.runId, sendResult.payload.runId);
+
+      // Let the background turn finish so the mock server isn't torn down
+      // mid-request.
+      await waitForBroadcast(broadcasted, (e) => e.type === 'run_complete', {
+        message: 'expected run_complete',
+      });
+    } finally {
+      restoreConfig();
+      await mock.stop();
+    }
+  });
 });
 
 // ─── Daemon version bump ─────────────────────────────────────────

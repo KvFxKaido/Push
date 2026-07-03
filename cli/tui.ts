@@ -1554,6 +1554,15 @@ export async function runTUI(options = {}) {
   // session isn't running (cleared in `setRunState('idle')`). Audit: Codex #744.
   let daemonActiveRunId = null;
   let daemonAutoStartAttempted = false;
+  // Set right before send_user_message goes out, cleared on the first
+  // matching broadcast 'user_message' event: this TUI already rendered its
+  // own submission locally (addTranscriptEntry at send time), so the daemon's
+  // broadcast of that same event — which now fans out to every attached
+  // client, not just the ones that didn't send it — must be recognized and
+  // skipped here or it double-renders. A short timeout is the safety net for
+  // the case send_user_message is rejected before ever reaching the daemon's
+  // broadcast call (no event ever arrives to clear the flag naturally).
+  let awaitingOwnUserMessageEcho = false;
   // Code-freshness self-heal state (stale-runtime detection). `daemonBuildStamp`
   // is the connected daemon's startup stamp from the hello handshake; comparing
   // it to this process's own stamp detects a daemon running pre-`git pull` code.
@@ -3424,6 +3433,27 @@ export async function runTUI(options = {}) {
         break;
       }
 
+      case 'user_message': {
+        // Every attached client (this TUI, a phone on Remote) gets this
+        // broadcast, including the one that sent it — skip our own echo
+        // (already rendered locally at send time, see runPrompt).
+        if (awaitingOwnUserMessageEcho) {
+          awaitingOwnUserMessageEcho = false;
+          break;
+        }
+        const { preview = '', chars = preview.length } = event.payload || {};
+        if (tuiState.transcript.length > 0) {
+          pushTranscriptEntry(tuiState, { role: 'divider', timestamp: Date.now() });
+        }
+        // The wire payload is capped at a 280-char preview (see
+        // handleGetSessionMessages's doc comment in pushd.ts) — mark
+        // truncation visually rather than rendering a silent cutoff.
+        addTranscriptEntry(tuiState, 'user', chars > preview.length ? `${preview}…` : preview);
+        tuiState.dirty.add('all');
+        scheduler.schedule();
+        break;
+      }
+
       default:
         // Delegation lifecycle events (`subagent.*`, `task_graph.*`) are
         // routed through a single renderer so the list of handled types lives
@@ -3724,6 +3754,10 @@ export async function runTUI(options = {}) {
             );
           });
 
+          awaitingOwnUserMessageEcho = true;
+          setTimeout(() => {
+            awaitingOwnUserMessageEcho = false;
+          }, 5000);
           const res = await daemonClient.request(
             'send_user_message',
             {

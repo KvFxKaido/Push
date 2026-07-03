@@ -1790,12 +1790,22 @@ async function handleSendUserMessage(req, emitEvent) {
   });
 
   await appendUserMessageWithFileReferences(state, text, state.cwd);
-  await appendSessionEvent(
-    state,
-    'user_message',
-    { chars: text.length, preview: text.slice(0, 280) },
+  const userMessagePayload = { chars: text.length, preview: text.slice(0, 280) };
+  await appendSessionEvent(state, 'user_message', userMessagePayload, runId);
+  // Broadcast so another client attached to this session (e.g. the TUI that
+  // originated it, watching a phone-driven turn) renders the prompt live —
+  // previously only persisted, never fanned out, so the assistant's reply
+  // would appear on other clients with no visible question above it.
+  broadcastEvent(sessionId, {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId: state.sessionId,
     runId,
-  );
+    seq: state.eventSeq,
+    ts: Date.now(),
+    type: 'user_message',
+    payload: userMessagePayload,
+  });
 
   const providerConfig = PROVIDER_CONFIGS[state.provider];
   let apiKey;
