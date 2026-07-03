@@ -151,11 +151,105 @@ export function resolveWorkspaceChatAction({
   return { kind: 'create' };
 }
 
+/**
+ * Decides what DaemonChatBody's mount effect should do for a daemon-backed
+ * (local-pc / relay) screen: keep the current chat, switch to an existing
+ * one, or mint a new one. Sibling of `resolveWorkspaceChatAction` for the
+ * daemon screens (which have no repo identity to scope by) — extracted as a
+ * pure function for the same reason: the ordering/scoping logic is
+ * unit-testable without mounting the whole screen.
+ *
+ * Relay sessions are individually addressable — Connected sessions / tap-to-
+ * resume can target N distinct daemon sessions — so `mode` alone can't
+ * find-or-create the right local chat: without `daemonSessionId` scoping,
+ * every tap just re-confirmed whichever relay chat happened to already be
+ * active (`activeChatId` persists across the remount a target switch causes;
+ * 2026-07-03 report). Local-PC has no picker (always the one session), and an
+ * untargeted relay screen (no `targetSessionId` yet) falls back to the same
+ * most-recent-chat-of-this-mode behavior repo mode's fallback path uses.
+ */
+export type DaemonChatAction =
+  | { kind: 'noop' }
+  | { kind: 'switch'; chatId: string }
+  | { kind: 'create'; daemonSessionId?: string };
+
+export interface ResolveDaemonChatActionParams {
+  conversations: Record<string, Conversation>;
+  activeChatId: string;
+  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>;
+  targetSessionId: string | null;
+  conversationsLoaded: boolean;
+}
+
+export function resolveDaemonChatAction({
+  conversations,
+  activeChatId,
+  mode,
+  targetSessionId,
+  conversationsLoaded,
+}: ResolveDaemonChatActionParams): DaemonChatAction {
+  if (!conversationsLoaded) return { kind: 'noop' };
+
+  const activeConversation = conversations[activeChatId];
+
+  if (mode === 'relay' && targetSessionId) {
+    if (
+      activeConversation?.mode === mode &&
+      activeConversation.daemonSessionId === targetSessionId
+    ) {
+      return { kind: 'noop' };
+    }
+    const scoped = Object.values(conversations)
+      .filter((c) => c.mode === mode && c.daemonSessionId === targetSessionId)
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+    if (scoped.length > 0) return { kind: 'switch', chatId: scoped[0].id };
+    return { kind: 'create', daemonSessionId: targetSessionId };
+  }
+
+  if (activeConversation?.mode === mode) return { kind: 'noop' };
+  const modeChats = Object.values(conversations)
+    .filter((c) => c.mode === mode)
+    .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
+  if (modeChats.length > 0) return { kind: 'switch', chatId: modeChats[0].id };
+  return { kind: 'create' };
+}
+
+/**
+ * Filters conversations to the ones a daemon screen's drawer can safely
+ * offer. Cross-mode picks (e.g. tapping a Remote transcript inside a Local
+ * PC session) would route the next send through the wrong daemon while
+ * displaying the picked transcript, so the drawer only shows chats this
+ * daemon can faithfully resume.
+ *
+ * Within relay mode there's the same risk one level down: another target
+ * session's chat is still `mode === 'relay'`, so the drawer's resume (a bare
+ * chat switch, no relay retarget) could show session A's transcript while
+ * the live connection stays bound to session B and the next send goes
+ * through B — displayed history and live target silently diverging (Codex
+ * P2 on #1322). Scoped to the attached target when one is known; a legacy
+ * relay chat predating `daemonSessionId` (undefined) is excluded too rather
+ * than ambiguously offered.
+ */
+export function filterDaemonScopedConversations(
+  conversations: Record<string, Conversation>,
+  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>,
+  targetSessionId: string | null,
+): Record<string, Conversation> {
+  const filtered: Record<string, Conversation> = {};
+  for (const [id, conv] of Object.entries(conversations)) {
+    if (conv.mode !== mode) continue;
+    if (mode === 'relay' && targetSessionId && conv.daemonSessionId !== targetSessionId) continue;
+    filtered[id] = conv;
+  }
+  return filtered;
+}
+
 function buildEmptyConversation(
   id: string,
   repoFullName: string | null,
   branch: string | undefined,
   workspaceMode: WorkspaceMode | null,
+  daemonSessionId?: string,
 ): Conversation {
   const now = Date.now();
   return {
@@ -168,6 +262,7 @@ function buildEmptyConversation(
     branch: repoFullName ? branch : undefined,
     verificationPolicy: getDefaultVerificationPolicy(),
     mode: getWorkspaceScopedMode(repoFullName, workspaceMode),
+    daemonSessionId,
   };
 }
 
@@ -205,36 +300,40 @@ export function useChatManagement({
     todoRef.current = { ...handlers, todos: [] };
   }, [todoRef]);
 
-  const createNewChat = useCallback((): string => {
-    const id = createId();
-    const bi = branchInfoRef.current;
-    const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
-    const newConv = buildEmptyConversation(
-      id,
+  const createNewChat = useCallback(
+    (options?: { daemonSessionId?: string }): string => {
+      const id = createId();
+      const bi = branchInfoRef.current;
+      const branch = bi?.currentBranch || bi?.defaultBranch || 'main';
+      const newConv = buildEmptyConversation(
+        id,
+        activeRepoFullName,
+        branch,
+        workspaceModeRef.current,
+        options?.daemonSessionId,
+      );
+      setConversations((prev) => {
+        const updated = { ...prev, [id]: newConv };
+        dirtyConversationIdsRef.current.add(id);
+        return updated;
+      });
+      activeChatIdRef.current = id;
+      setActiveChatId(id);
+      saveActiveChatId(id);
+      clearTodosForFreshChat();
+      return id;
+    },
+    [
       activeRepoFullName,
-      branch,
-      workspaceModeRef.current,
-    );
-    setConversations((prev) => {
-      const updated = { ...prev, [id]: newConv };
-      dirtyConversationIdsRef.current.add(id);
-      return updated;
-    });
-    activeChatIdRef.current = id;
-    setActiveChatId(id);
-    saveActiveChatId(id);
-    clearTodosForFreshChat();
-    return id;
-  }, [
-    activeRepoFullName,
-    activeChatIdRef,
-    branchInfoRef,
-    clearTodosForFreshChat,
-    dirtyConversationIdsRef,
-    setActiveChatId,
-    setConversations,
-    workspaceModeRef,
-  ]);
+      activeChatIdRef,
+      branchInfoRef,
+      clearTodosForFreshChat,
+      dirtyConversationIdsRef,
+      setActiveChatId,
+      setConversations,
+      workspaceModeRef,
+    ],
+  );
 
   const switchChat = useCallback(
     (id: string) => {

@@ -212,6 +212,7 @@ export function RelayChatScreen({
       approvals={approvals}
       request={request}
       sessionAttachToken={binding.targetAttachToken ?? null}
+      targetSessionId={binding.targetSessionId ?? null}
       auth={auth}
       onDisconnect={onDisconnect}
       attachStatus={attachStatus}
