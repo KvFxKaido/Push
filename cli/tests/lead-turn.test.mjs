@@ -16,7 +16,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { runLeadKernelTurn, buildLeadTurnPreamble } from '../lead-turn.ts';
+import { runLeadKernelTurn, buildLeadTurnPreamble, resolveDefaultExecMode } from '../lead-turn.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
@@ -433,5 +433,36 @@ describe('buildLeadTurnPreamble', () => {
     // The task line precedes the carried reference block.
     assert.ok(preamble.includes('Task: explain @util.ts'));
     assert.ok(preamble.indexOf('Task: explain @util.ts') < preamble.indexOf(bigFileBody));
+  });
+});
+
+describe('resolveDefaultExecMode', () => {
+  let savedExecMode;
+
+  function withSavedExecMode(fn) {
+    savedExecMode = process.env.PUSH_EXEC_MODE;
+    try {
+      return fn();
+    } finally {
+      if (savedExecMode === undefined) delete process.env.PUSH_EXEC_MODE;
+      else process.env.PUSH_EXEC_MODE = savedExecMode;
+    }
+  }
+
+  it('reads the live daemon setting when set (Codex P1 on #1318)', () => {
+    withSavedExecMode(() => {
+      process.env.PUSH_EXEC_MODE = 'yolo';
+      assert.equal(resolveDefaultExecMode(), 'yolo');
+
+      process.env.PUSH_EXEC_MODE = 'strict';
+      assert.equal(resolveDefaultExecMode(), 'strict');
+    });
+  });
+
+  it('falls back to auto when unset', () => {
+    withSavedExecMode(() => {
+      delete process.env.PUSH_EXEC_MODE;
+      assert.equal(resolveDefaultExecMode(), 'auto');
+    });
   });
 });

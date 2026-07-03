@@ -93,7 +93,11 @@ export type AuditEventType =
   // but NEVER the bearer token; the audit log inherits the same
   // posture as the rest of the daemon ("never log the secret").
   | 'relay.connect'
-  | 'relay.disconnect';
+  | 'relay.disconnect'
+  // Daemon-owned runtime controls (exec approval mode / web search backend).
+  // Global, not session-scoped — worth its own audit trail since it changes
+  // execution safety posture for every future turn on this daemon.
+  | 'daemon.set_runtime_config';
 
 /**
  * Single audit record shape. Versioned via `v` so future schema

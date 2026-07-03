@@ -303,6 +303,22 @@ export function buildLeadTurnPreamble(
 // ─── Lead turn runner ────────────────────────────────────────────
 
 /**
+ * Default exec approval mode for a caller that doesn't thread one through
+ * `RunOptions.execMode` — the daemon's `send_user_message`/crash-recovery
+ * paths in `pushd.ts` are the only current callers that omit it. Reads the
+ * live daemon setting (`set_daemon_runtime_config` sets this env var) rather
+ * than hardcoding 'auto', so the setting has an actual effect on daemon
+ * chat turns instead of persisting config + env + an audit row with zero
+ * runtime effect (Codex P1 on #1318). Same idiom cli.ts's own default uses
+ * (`cli.ts:1034`); callers that already thread execMode explicitly (the
+ * direct CLI path, sub-agent delegation) are unaffected since this default
+ * only applies when the key is absent.
+ */
+export function resolveDefaultExecMode(): string {
+  return process.env.PUSH_EXEC_MODE || 'auto';
+}
+
+/**
  * Run one terminal-chat turn as a `leadMode` run of the shared coder kernel.
  *
  * Contract: the caller has already appended the
@@ -324,7 +340,7 @@ export async function runLeadKernelTurn(
     askUserFn,
     allowExec = false,
     safeExecPatterns = [],
-    execMode = 'auto',
+    execMode = resolveDefaultExecMode(),
     disabledTools,
     alwaysAllow,
     auditorGate,

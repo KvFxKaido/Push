@@ -24,20 +24,48 @@ interface WebSearchMenuProps {
    *  NEXT turn actually streams with, which is the lock when present, not the
    *  global default. Falls back to `getActiveProvider()` for a fresh chat. */
   lockedProvider?: string | null;
+  /** Controlled mode for daemon-backed sessions. Omitted keeps repo-mode storage behavior. */
+  mode?: WebSearchMode;
+  /** Controlled setter for daemon-backed sessions. Omitted writes repo-mode storage. */
+  onModeChange?: (mode: WebSearchMode) => void;
+  /** Limit visible rows for surfaces that support only a subset of web search modes. */
+  availableModes?: readonly WebSearchMode[];
+  /** Disable the trigger while the backing runtime is disconnected/stale. */
+  disabled?: boolean;
+  disabledReason?: string;
+  /** Override availability checks when the backing runtime owns keys/config. */
+  getUnavailableReason?: (mode: WebSearchMode) => string | null;
+  /** Repo mode shows provider-native hints on Auto; daemon backend Auto should not. */
+  showAutoNativeLabel?: boolean;
 }
 
-export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMenuProps) {
+export function WebSearchMenu({
+  triggerClassName,
+  lockedProvider,
+  mode: controlledMode,
+  onModeChange,
+  availableModes = WEB_SEARCH_MODES,
+  disabled = false,
+  disabledReason,
+  getUnavailableReason,
+  showAutoNativeLabel = true,
+}: WebSearchMenuProps) {
   // The locked provider wins so the menu describes what the next turn will do;
   // a not-yet-locked chat falls back to the global active provider.
   const activeProvider = lockedProvider ?? getActiveProvider();
-  const [mode, setMode] = useState<WebSearchMode>(() => getWebSearchMode());
+  const [internalMode, setInternalMode] = useState<WebSearchMode>(() => getWebSearchMode());
   const [open, setOpen] = useState(false);
+  const mode = controlledMode ?? internalMode;
 
   // Re-read the pref on open so a setting change made elsewhere (Settings
   // sheet, tab restore) is reflected. Doing it in the onOpenChange handler
   // — not a useEffect — keeps it in the user's interaction tick.
   const handleOpenChange = (next: boolean) => {
-    if (next) setMode(getWebSearchMode());
+    if (disabled) {
+      setOpen(false);
+      return;
+    }
+    if (next && controlledMode === undefined) setInternalMode(getWebSearchMode());
     setOpen(next);
   };
 
@@ -54,7 +82,7 @@ export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMen
   // native web search (OpenRouter / Anthropic / Gemini), or null when the
   // provider has no native tool. Shown on the Auto row so the menu reflects
   // live state instead of hiding which native search is in play.
-  const autoNativeLabel = getAutoNativeSearchLabel(activeProvider);
+  const autoNativeLabel = showAutoNativeLabel ? getAutoNativeSearchLabel(activeProvider) : null;
 
   return (
     <Popover open={open} onOpenChange={handleOpenChange}>
@@ -62,8 +90,17 @@ export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMen
         <button
           type="button"
           className={triggerClassName}
-          aria-label={`Web search: ${WEB_SEARCH_MODE_LABELS[mode]}`}
-          title={`Web search: ${WEB_SEARCH_MODE_LABELS[mode]}`}
+          disabled={disabled}
+          aria-label={
+            disabled && disabledReason
+              ? `Web search unavailable: ${disabledReason}`
+              : `Web search: ${WEB_SEARCH_MODE_LABELS[mode]}`
+          }
+          title={
+            disabled && disabledReason
+              ? `Web search unavailable: ${disabledReason}`
+              : `Web search: ${WEB_SEARCH_MODE_LABELS[mode]}`
+          }
         >
           <Globe
             className={`relative z-10 h-3.5 w-3.5 ${mode === 'off' ? 'text-push-fg-dim' : ''}`}
@@ -87,8 +124,10 @@ export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMen
           Web search
         </div>
         <ul className="space-y-0.5">
-          {WEB_SEARCH_MODES.map((option) => {
-            const reason = getWebSearchModeUnavailableReason(option, ctx);
+          {availableModes.map((option) => {
+            const reason = getUnavailableReason
+              ? getUnavailableReason(option)
+              : getWebSearchModeUnavailableReason(option, ctx);
             const disabled = reason !== null;
             const selected = option === mode;
             return (
@@ -97,8 +136,12 @@ export function WebSearchMenu({ triggerClassName, lockedProvider }: WebSearchMen
                   type="button"
                   disabled={disabled}
                   onClick={() => {
-                    setWebSearchMode(option);
-                    setMode(option);
+                    if (onModeChange) {
+                      onModeChange(option);
+                    } else {
+                      setWebSearchMode(option);
+                      setInternalMode(option);
+                    }
                     setOpen(false);
                   }}
                   className={`flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-push-xs transition-colors ${

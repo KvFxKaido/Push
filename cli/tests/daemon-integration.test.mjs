@@ -2392,6 +2392,7 @@ describe('daemon version', () => {
     assert.ok(response.payload.capabilities.includes('replay_attach'));
     assert.ok(response.payload.capabilities.includes('crash_recovery'));
     assert.ok(response.payload.capabilities.includes('role_routing'));
+    assert.ok(response.payload.capabilities.includes('runtime_config_v1'));
     assert.ok(response.payload.capabilities.includes('delegation_explorer_v1'));
     assert.ok(response.payload.capabilities.includes('delegation_coder_v1'));
     assert.ok(response.payload.capabilities.includes('delegation_reviewer_v1'));
@@ -2418,6 +2419,8 @@ describe('daemon version', () => {
       'attach_session',
       'get_session_snapshot',
       'update_session',
+      'get_daemon_runtime_config',
+      'set_daemon_runtime_config',
       'submit_approval',
       'cancel_run',
       'configure_role_routing',
@@ -7095,6 +7098,7 @@ describe('daemon capability vocabulary drift (#745)', () => {
         'multi_client',
         'crash_recovery',
         'role_routing',
+        'runtime_config_v1',
         'delegation_explorer_v1',
         'delegation_reviewer_v1',
         'delegation_deep_reviewer_v1',
@@ -7139,6 +7143,130 @@ describe('daemon capability vocabulary drift (#745)', () => {
     // consumer side — pinned here against the canonical profile so the two
     // can't drift apart.
     assert.deepEqual([...TUI_DAEMON_CAPABILITIES], ['event_v2', 'session_snapshot_v1']);
+  });
+});
+
+// ─── daemon runtime config verbs ─────────────────────────────────
+
+describe('daemon runtime config verbs', () => {
+  let savedConfigPath;
+  let savedExecMode;
+  let savedWebSearchBackend;
+  let tmpConfigDir;
+
+  before(async () => {
+    savedConfigPath = process.env.PUSH_CONFIG_PATH;
+    savedExecMode = process.env.PUSH_EXEC_MODE;
+    savedWebSearchBackend = process.env.PUSH_WEB_SEARCH_BACKEND;
+    tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-runtime-cfg-'));
+  });
+
+  after(async () => {
+    if (savedConfigPath === undefined) delete process.env.PUSH_CONFIG_PATH;
+    else process.env.PUSH_CONFIG_PATH = savedConfigPath;
+    if (savedExecMode === undefined) delete process.env.PUSH_EXEC_MODE;
+    else process.env.PUSH_EXEC_MODE = savedExecMode;
+    if (savedWebSearchBackend === undefined) delete process.env.PUSH_WEB_SEARCH_BACKEND;
+    else process.env.PUSH_WEB_SEARCH_BACKEND = savedWebSearchBackend;
+    await fs.rm(tmpConfigDir, { recursive: true, force: true });
+  });
+
+  it('reads the daemon process env first and maps exec mode to approval mode', async () => {
+    const configPath = path.join(tmpConfigDir, 'read-config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ execMode: 'strict', webSearchBackend: 'tavily' }),
+      'utf8',
+    );
+    process.env.PUSH_CONFIG_PATH = configPath;
+    process.env.PUSH_EXEC_MODE = 'yolo';
+    process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
+
+    const res = await handleRequest(makeRequest('get_daemon_runtime_config', {}), () => {});
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.execMode, 'yolo');
+    assert.equal(res.payload.approvalMode, 'full-auto');
+    assert.equal(res.payload.webSearchBackend, 'duckduckgo');
+    assert.equal(res.payload.configPath, configPath);
+  });
+
+  it('persists updates and applies them to the running daemon env', async () => {
+    const configPath = path.join(tmpConfigDir, 'write-config.json');
+    await fs.writeFile(configPath, JSON.stringify({ provider: 'zen' }), 'utf8');
+    process.env.PUSH_CONFIG_PATH = configPath;
+    delete process.env.PUSH_EXEC_MODE;
+    delete process.env.PUSH_WEB_SEARCH_BACKEND;
+
+    const res = await handleRequest(
+      makeRequest('set_daemon_runtime_config', {
+        patch: { execMode: 'strict', webSearchBackend: 'ollama' },
+      }),
+      () => {},
+    );
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.execMode, 'strict');
+    assert.equal(res.payload.approvalMode, 'supervised');
+    assert.equal(res.payload.webSearchBackend, 'ollama');
+    assert.equal(process.env.PUSH_EXEC_MODE, 'strict');
+    assert.equal(process.env.PUSH_WEB_SEARCH_BACKEND, 'ollama');
+    const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(stored.provider, 'zen');
+    assert.equal(stored.execMode, 'strict');
+    assert.equal(stored.webSearchBackend, 'ollama');
+  });
+
+  it('rejects unsupported values without mutating config', async () => {
+    const configPath = path.join(tmpConfigDir, 'invalid-config.json');
+    await fs.writeFile(configPath, JSON.stringify({ execMode: 'auto' }), 'utf8');
+    process.env.PUSH_CONFIG_PATH = configPath;
+
+    const res = await handleRequest(
+      makeRequest('set_daemon_runtime_config', {
+        patch: { execMode: 'turbo' },
+      }),
+      () => {},
+    );
+
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'INVALID_REQUEST');
+    const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(stored.execMode, 'auto');
+  });
+
+  it('refuses a relay-sourced write without mutating config (global safety posture, not session-scoped)', async () => {
+    const configPath = path.join(tmpConfigDir, 'relay-refused-config.json');
+    await fs.writeFile(configPath, JSON.stringify({ execMode: 'auto' }), 'utf8');
+    process.env.PUSH_CONFIG_PATH = configPath;
+
+    const res = await handleRequest(
+      makeRequest('set_daemon_runtime_config', { patch: { execMode: 'yolo' } }),
+      () => {},
+      { auth: { kind: 'attach', tokenId: 'pdat_relay', boundOrigin: 'relay' } },
+    );
+
+    assert.equal(res.ok, false);
+    assert.equal(res.error.code, 'UNSUPPORTED_VIA_TRANSPORT');
+    const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(stored.execMode, 'auto');
+  });
+
+  it('allows a loopback-WS write (Local-PC mode is the operator, on this machine)', async () => {
+    const configPath = path.join(tmpConfigDir, 'loopback-allowed-config.json');
+    await fs.writeFile(configPath, JSON.stringify({ execMode: 'auto' }), 'utf8');
+    process.env.PUSH_CONFIG_PATH = configPath;
+
+    const res = await handleRequest(
+      makeRequest('set_daemon_runtime_config', { patch: { execMode: 'yolo' } }),
+      () => {},
+      { auth: { kind: 'device', tokenId: 'pdt_local', boundOrigin: 'loopback' } },
+    );
+
+    assert.equal(res.ok, true, `expected ok, got ${JSON.stringify(res.error)}`);
+    assert.equal(res.payload.execMode, 'yolo');
+    const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
+    assert.equal(stored.execMode, 'yolo');
   });
 });
 
