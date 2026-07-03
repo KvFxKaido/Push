@@ -22,7 +22,12 @@ import { highlightCode } from './tui-highlight.js';
 import { renderInline } from './tui-inline.js';
 import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
 import type { UrlCitation } from '../lib/provider-contract.ts';
-import { isEditDiff, type EditDiff, type EditDiffLine } from '../lib/edit-diff.ts';
+import {
+  createEditDiffGapTracker,
+  isEditDiff,
+  type EditDiff,
+  type EditDiffLine,
+} from '../lib/edit-diff.ts';
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -556,15 +561,14 @@ export function renderEditDiffLines(
   // colors / no color the pad would just be trailing whitespace.
   const hasDiffBg = theme.bg('diff.addBg') !== '' || theme.bg('diff.delBg') !== '';
 
-  let prevGutter: number | null = null;
+  // Gap row when consecutive hunks skip lines — coordinate-aware tracker
+  // shared with renderEditDiffText (lib/edit-diff.ts).
+  const startsNewHunk = createEditDiffGapTracker();
   for (const line of diff.lines) {
     const num = editDiffGutterNumber(line);
-    // Gap row when consecutive hunks skip lines. Deletions repeat the
-    // same new-file position, so only forward jumps > 1 count.
-    if (num !== null && prevGutter !== null && num > prevGutter + 1) {
+    if (startsNewHunk(line)) {
       out.push(`${indent}${' '.repeat(numWidth)} ${theme.style('fg.dim', gapGlyph)}`);
     }
-    if (num !== null) prevGutter = Math.max(prevGutter ?? 0, num);
 
     const numStr = (num === null ? '' : String(num)).padStart(numWidth);
     const text = truncate(line.text + (line.textTruncated ? '…' : ''), contentWidth);

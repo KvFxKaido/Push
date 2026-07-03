@@ -213,6 +213,32 @@ describe('renderEditDiffText', () => {
     );
   });
 
+  it('emits no gap marker inside an unbalanced replace (5 lines → 2)', () => {
+    // Del rows carry old-file numbers (2..6) and the following add rows
+    // restart at new-file 2 — a single-cursor gap heuristic comparing the
+    // two coordinate systems could emit a spurious separator here.
+    const before = 'a\nx1\nx2\nx3\nx4\nx5\nb\n';
+    const after = 'a\ny1\ny2\nb\n';
+    const diff = computeEditDiff('f.txt', before, after);
+    const text = renderEditDiffText(diff);
+    assert.ok(!text.includes('---'), text);
+    assert.ok(!text.includes('truncated'), text);
+  });
+
+  it('emits a gap marker after a deletion-heavy hunk when lines are skipped', () => {
+    // Hunk 1 deletes old 2..7 (new-file cursor stays low); hunk 2 edits
+    // further down. The gap is only visible in old-file coordinates —
+    // this pins that the tracker watches both.
+    const lines = Array.from({ length: 16 }, (_, i) => `line${i + 1}`);
+    const before = `${lines.join('\n')}\n`;
+    const afterLines = ['line1', ...lines.slice(7)]; // drop old 2..7
+    afterLines[afterLines.length - 2] = 'LINE15'; // edit old line 15
+    const after = `${afterLines.join('\n')}\n`;
+    const diff = computeEditDiff('f.txt', before, after);
+    const text = renderEditDiffText(diff);
+    assert.equal(text.split('\n').filter((l) => l === '---').length, 1, text);
+  });
+
   it('caps output at maxLines and appends the totals trailer', () => {
     const diff = computeEditDiff('f.txt', '', 'a\nb\nc\nd\n');
     const text = renderEditDiffText(diff, { maxLines: 2 });

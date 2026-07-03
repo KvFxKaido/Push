@@ -190,15 +190,52 @@ export interface ComputeEditDiffOptions {
   maxLines?: number;
 }
 
+/** Line count matching `splitDiffLines` semantics without allocating the
+ *  array — used by the budget probe so the skip-log path doesn't re-split
+ *  multi-MB content that computeEditDiff already split and rejected. */
+function countDiffLines(content: string): number {
+  const text = String(content);
+  if (text === '') return 0;
+  let count = 1;
+  for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) count++;
+  // Mirror splitDiffLines: a trailing newline does not open a final line.
+  if (count > 1 && text.endsWith('\n')) count--;
+  return count;
+}
+
 /** True when either side exceeds the per-file line budget — the same guard
  *  computeEditDiff applies internally. Exported so callers can tell the
  *  "too large to diff" null apart from the "no changes" null (and log it;
  *  see `edit_diff_skipped` in cli/tools.ts). */
 export function overEditDiffLineBudget(before: string, after: string): boolean {
   return (
-    splitDiffLines(before).length > EDIT_DIFF_MAX_FILE_LINES ||
-    splitDiffLines(after).length > EDIT_DIFF_MAX_FILE_LINES
+    countDiffLines(before) > EDIT_DIFF_MAX_FILE_LINES ||
+    countDiffLines(after) > EDIT_DIFF_MAX_FILE_LINES
   );
+}
+
+/**
+ * Stateful hunk-gap detector shared by the TUI card renderer and the
+ * plain-text renderer. Feeding lines in order returns true when the line
+ * starts a new hunk (skipped context between it and the previous line).
+ *
+ * Tracks the old- and new-file positions independently — comparing a
+ * `del` row's oldLine against a prior `add` row's newLine (the previous
+ * single-cursor heuristic) could miss a real gap after a deletion-heavy
+ * hunk, where the next hunk's new-file numbers sit below the old-file
+ * numbers already seen. A jump in either coordinate is a hunk boundary;
+ * within a hunk each row advances its coordinate(s) by at most one.
+ */
+export function createEditDiffGapTracker(): (line: EditDiffLine) => boolean {
+  let prevOld: number | null = null;
+  let prevNew: number | null = null;
+  return (line: EditDiffLine): boolean => {
+    const oldJump = line.oldLine !== undefined && prevOld !== null && line.oldLine > prevOld + 1;
+    const newJump = line.newLine !== undefined && prevNew !== null && line.newLine > prevNew + 1;
+    if (line.oldLine !== undefined) prevOld = line.oldLine;
+    if (line.newLine !== undefined) prevNew = line.newLine;
+    return oldJump || newJump;
+  };
 }
 
 /**
@@ -314,11 +351,10 @@ export function renderEditDiffText(diff: EditDiff, options: { maxLines?: number 
   const maxLines = Math.max(1, options.maxLines ?? diff.lines.length);
   const shown = diff.lines.slice(0, maxLines);
   const out: string[] = [];
-  let prevGutter: number | null = null;
+  const startsNewHunk = createEditDiffGapTracker();
   for (const line of shown) {
     const num = line.kind === 'del' ? line.oldLine : (line.newLine ?? line.oldLine);
-    if (num !== undefined && prevGutter !== null && num > prevGutter + 1) out.push('---');
-    if (num !== undefined) prevGutter = Math.max(prevGutter ?? 0, num);
+    if (startsNewHunk(line)) out.push('---');
     const marker = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
     const suffix = line.textTruncated ? '…' : '';
     out.push(`${num ?? ''} ${marker}| ${line.text}${suffix}`);
