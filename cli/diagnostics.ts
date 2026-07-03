@@ -40,10 +40,59 @@ interface ExecError extends Error {
   code: number | string;
   stdout: string;
   stderr: string;
+  /** Set by execFile when the child was killed (e.g. timeout expiry). */
+  killed?: boolean;
 }
 
-interface FullDiagnosticResult extends DiagnosticResult {
+export interface FullDiagnosticResult extends DiagnosticResult {
   projectType: string | null;
+}
+
+export interface DiagnosticRunOptions {
+  /**
+   * Kill the checker subprocess after this many ms. Overrides each
+   * runner's built-in default (60s; 120s for cargo). A killed run is
+   * classified as DIAGNOSTIC_TIMEOUT so callers with a time budget
+   * (post-edit diagnostics) can distinguish "too slow" from "broken".
+   */
+  timeoutMs?: number;
+}
+
+/**
+ * True when a killed checker subprocess died to the time budget. execFile
+ * also kills the child with `killed: true` on maxBuffer overflow — that is
+ * an output-size failure, not a time one, and must fall through to the
+ * generic failure handling (transient; must not trip the post-edit loop's
+ * adaptive disable). The maxBuffer case is only identifiable by message
+ * ("stdout maxBuffer length exceeded"), so match on that.
+ */
+export function isTimeoutKill(execErr: {
+  killed?: boolean;
+  code?: number | string;
+  message?: string;
+}): boolean {
+  if (!execErr.killed) return false;
+  if (execErr.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') return false;
+  if (/maxBuffer/i.test(execErr.message ?? '')) return false;
+  return true;
+}
+
+/**
+ * Classify a killed checker subprocess as a timeout. Exit-code checks in
+ * the runners' catch arms must run after this (a killed child reports
+ * `code: null`, but may carry partial stdout that would otherwise be
+ * parsed as a truncated — and therefore wrong — diagnostics set).
+ */
+function classifyTimeout(execErr: ExecError, checker: string): DiagnosticResult | null {
+  if (!isTimeoutKill(execErr)) return null;
+  return {
+    diagnostics: [],
+    error: {
+      code: 'DIAGNOSTIC_TIMEOUT',
+      message: `${checker} was killed after exceeding its time budget`,
+      retryable: false,
+    },
+  };
 }
 
 /**
@@ -77,6 +126,7 @@ export async function detectProjectType(workspaceRoot: string): Promise<ProjectD
 async function runTypeScriptDiagnostics(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult> {
   try {
     // Always run the project-level check so tsconfig.json is honored. Passing a
@@ -89,7 +139,7 @@ async function runTypeScriptDiagnostics(
     const { stdout, stderr } = await execFileAsync('tsc', args, {
       cwd: workspaceRoot,
       maxBuffer: 4_000_000,
-      timeout: 60_000,
+      timeout: opts.timeoutMs ?? 60_000,
     });
 
     // tsc returns 0 on success, 1 on type errors (but we still get output)
@@ -109,6 +159,8 @@ async function runTypeScriptDiagnostics(
     return { diagnostics };
   } catch (err) {
     const execErr = err as ExecError;
+    const timedOut = classifyTimeout(execErr, 'tsc');
+    if (timedOut) return timedOut;
     // tsc exits with code 1 on type errors — this is expected
     if (execErr.code === 1 && (execErr.stdout || execErr.stderr)) {
       const output: string = execErr.stdout || execErr.stderr;
@@ -180,12 +232,17 @@ function parseTscOutput(output: string, workspaceRoot: string): Diagnostic[] {
 async function runPythonDiagnostics(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult> {
   // Try pyright first, then fall back to ruff
-  const pyrightResult: DiagnosticResult | null = await tryPyright(workspaceRoot, specificPath);
+  const pyrightResult: DiagnosticResult | null = await tryPyright(
+    workspaceRoot,
+    specificPath,
+    opts,
+  );
   if (pyrightResult) return pyrightResult;
 
-  const ruffResult: DiagnosticResult | null = await tryRuff(workspaceRoot, specificPath);
+  const ruffResult: DiagnosticResult | null = await tryRuff(workspaceRoot, specificPath, opts);
   if (ruffResult) return ruffResult;
 
   return {
@@ -202,6 +259,7 @@ async function runPythonDiagnostics(
 async function tryPyright(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult | null> {
   try {
     const args: string[] = ['--outputjson'];
@@ -212,12 +270,14 @@ async function tryPyright(
     const { stdout } = await execFileAsync('pyright', args, {
       cwd: workspaceRoot,
       maxBuffer: 4_000_000,
-      timeout: 60_000,
+      timeout: opts.timeoutMs ?? 60_000,
     });
 
     return { diagnostics: parsePyrightOutput(stdout, workspaceRoot) };
   } catch (err) {
     const execErr = err as ExecError;
+    const timedOut = classifyTimeout(execErr, 'pyright');
+    if (timedOut) return timedOut;
     // pyright exits with code 1 on type errors
     if (execErr.code === 1 && execErr.stdout) {
       return { diagnostics: parsePyrightOutput(execErr.stdout, workspaceRoot) };
@@ -281,6 +341,7 @@ interface RuffViolation {
 async function tryRuff(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult | null> {
   try {
     const args: string[] = ['check', '--output-format', 'json'];
@@ -293,12 +354,14 @@ async function tryRuff(
     const { stdout } = await execFileAsync('ruff', args, {
       cwd: workspaceRoot,
       maxBuffer: 4_000_000,
-      timeout: 60_000,
+      timeout: opts.timeoutMs ?? 60_000,
     });
 
     return { diagnostics: parseRuffOutput(stdout, workspaceRoot) };
   } catch (err) {
     const execErr = err as ExecError;
+    const timedOut = classifyTimeout(execErr, 'ruff');
+    if (timedOut) return timedOut;
     // ruff exits with code 1 on violations
     if (execErr.code === 1 && execErr.stdout) {
       return { diagnostics: parseRuffOutput(execErr.stdout, workspaceRoot) };
@@ -344,6 +407,7 @@ function parseRuffOutput(jsonOutput: string, workspaceRoot: string): Diagnostic[
 async function runRustDiagnostics(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult> {
   try {
     // cargo check doesn't support single-file checks well
@@ -353,7 +417,7 @@ async function runRustDiagnostics(
     const { stdout, stderr } = await execFileAsync('cargo', args, {
       cwd: workspaceRoot,
       maxBuffer: 4_000_000,
-      timeout: 120_000,
+      timeout: opts.timeoutMs ?? 120_000,
     });
 
     // Filter to specific path if requested
@@ -366,6 +430,8 @@ async function runRustDiagnostics(
     return { diagnostics };
   } catch (err) {
     const execErr = err as ExecError;
+    const timedOut = classifyTimeout(execErr, 'cargo check');
+    if (timedOut) return timedOut;
     // cargo check exits with code 101 on compile errors
     if (execErr.stdout) {
       let diagnostics: Diagnostic[] = parseCargoOutput(execErr.stdout, workspaceRoot);
@@ -442,6 +508,7 @@ function parseCargoOutput(output: string, workspaceRoot: string): Diagnostic[] {
 async function runGoDiagnostics(
   workspaceRoot: string,
   specificPath: string | null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<DiagnosticResult> {
   try {
     const args: string[] = ['vet'];
@@ -454,13 +521,15 @@ async function runGoDiagnostics(
     const { stdout, stderr } = await execFileAsync('go', args, {
       cwd: workspaceRoot,
       maxBuffer: 4_000_000,
-      timeout: 60_000,
+      timeout: opts.timeoutMs ?? 60_000,
     });
 
     const output: string = stdout || stderr;
     return { diagnostics: parseGoVetOutput(output, workspaceRoot) };
   } catch (err) {
     const execErr = err as ExecError;
+    const timedOut = classifyTimeout(execErr, 'go vet');
+    if (timedOut) return timedOut;
     // go vet exits with code 1 on issues
     if (execErr.code === 1 && (execErr.stdout || execErr.stderr)) {
       const output: string = execErr.stdout || execErr.stderr;
@@ -520,6 +589,7 @@ function parseGoVetOutput(output: string, workspaceRoot: string): Diagnostic[] {
 export async function runDiagnostics(
   workspaceRoot: string,
   specificPath: string | null = null,
+  opts: DiagnosticRunOptions = {},
 ): Promise<FullDiagnosticResult> {
   const { type: projectType } = await detectProjectType(workspaceRoot);
 
@@ -539,17 +609,31 @@ export async function runDiagnostics(
   let result: DiagnosticResult;
   switch (projectType) {
     case 'typescript':
-    case 'node':
-      result = await runTypeScriptDiagnostics(workspaceRoot, specificPath);
+      result = await runTypeScriptDiagnostics(workspaceRoot, specificPath, opts);
       break;
+    case 'node':
+      // package.json-only workspace: there is no tsconfig for tsc to check.
+      // Bare `tsc --noEmit` prints help / config errors that parse to zero
+      // diagnostics — which would surface as a false "clean" instead of
+      // "no checker ran" (Codex P2 on #1311). Say so explicitly.
+      return {
+        diagnostics: [],
+        projectType,
+        error: {
+          code: 'UNSUPPORTED_PROJECT_TYPE',
+          message:
+            'Node project without tsconfig.json — no type checker to run (add tsconfig.json to enable tsc diagnostics)',
+          retryable: false,
+        },
+      };
     case 'python':
-      result = await runPythonDiagnostics(workspaceRoot, specificPath);
+      result = await runPythonDiagnostics(workspaceRoot, specificPath, opts);
       break;
     case 'rust':
-      result = await runRustDiagnostics(workspaceRoot, specificPath);
+      result = await runRustDiagnostics(workspaceRoot, specificPath, opts);
       break;
     case 'go':
-      result = await runGoDiagnostics(workspaceRoot, specificPath);
+      result = await runGoDiagnostics(workspaceRoot, specificPath, opts);
       break;
     default:
       return {

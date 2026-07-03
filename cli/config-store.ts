@@ -5,6 +5,7 @@ import process from 'node:process';
 
 import { AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.js';
 import { RUN_TOKEN_BUDGET_ENV_VAR } from '../lib/run-cost-budget.js';
+import { POST_EDIT_DIAGNOSTICS_ENV_VAR } from './post-edit-diagnostics.ts';
 
 export interface ProviderConfig {
   url?: string;
@@ -55,6 +56,15 @@ export interface PushConfig {
    * pushd daemon) as `PUSH_AUDITOR_GATE` by `applyConfigToEnv`.
    */
   auditorGate?: boolean;
+  /**
+   * Post-edit diagnostics loop. When true (the default), successful
+   * `write_file` / `edit_file` results append file-scoped type-checker
+   * findings (see `cli/post-edit-diagnostics.ts` for the budget and
+   * adaptive-disable guards). Set false to opt out. Forwarded to child
+   * processes (the pushd daemon) as `PUSH_POST_EDIT_DIAGNOSTICS` by
+   * `applyConfigToEnv`.
+   */
+  postEditDiagnostics?: boolean;
   /**
    * Per-run token budget — halts a run once it has consumed this many tokens
    * (a consumption circuit breaker complementing `--max-rounds`). Resolved by
@@ -142,6 +152,11 @@ export function applyConfigToEnv(config: PushConfig): void {
   // unset, the daemon's own resolver applies the default-on.
   if (config.auditorGate !== undefined) {
     setEnvIfMissing(AUDITOR_GATE_ENV_VAR, String(config.auditorGate));
+  }
+  // Forward the post-edit diagnostics toggle the same way — only an explicit
+  // setting is forwarded; when unset, the resolver's default-on applies.
+  if (config.postEditDiagnostics !== undefined) {
+    setEnvIfMissing(POST_EDIT_DIAGNOSTICS_ENV_VAR, String(config.postEditDiagnostics));
   }
   // Forward the per-run token budget so the daemon's kernel resolves the same
   // cap without re-reading config. Unset → the resolver's default-off applies.

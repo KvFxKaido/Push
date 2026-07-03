@@ -30,6 +30,7 @@ import {
   resolveToolName,
 } from '../lib/tool-registry.ts';
 import { evaluatePreHooks } from '../lib/tool-hooks.ts';
+import { runPostEditDiagnostics } from './post-edit-diagnostics.ts';
 import { reduceToolOutput } from '../lib/tool-output-reducers.ts';
 import { retainReducedOutput } from '../lib/verbatim-retain.ts';
 import { runAuditor } from '../lib/auditor-agent.ts';
@@ -974,6 +975,7 @@ Rules:
 - Never attempt paths outside workspace.
 - You may emit multiple tool calls in one assistant reply.
 - Per-turn tool budget: read-only calls first (they run in parallel), then any number of file mutations (write_file / edit_file / undo_edit — run sequentially as one batch), then at most one trailing side-effect (exec / git_commit / save_memory). A second side-effect is rejected with MULTI_MUTATION_NOT_ALLOWED.
+- write_file / edit_file results append file-scoped type-checker diagnostics when a project checker is available. Treat reported errors as introduced by your change and fix them before moving on; "Diagnostics: clean" means the checker ran and found nothing for that file. Each check runs immediately after its edit — in a multi-file batch, a finding can be resolved by a later edit in the same reply (e.g. step 1 references a symbol step 2 adds), so before fixing a reported error, check whether a sibling edit already addressed it; when unsure, re-run lsp_diagnostics instead of re-editing.
 - Prefer edit_file over full-file rewrites when possible.
 - If a tool fails, correct the call and retry when appropriate.
 - Do not describe tool calls in prose. Emit only JSON blocks for tool calls.
@@ -2890,13 +2892,26 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         await backupFile(filePath, workspaceRoot);
         await fs.mkdir(path.dirname(filePath), { recursive: true });
         await fs.writeFile(filePath, content, 'utf8');
+        // Post-edit diagnostics loop (crush pattern): surface breakage the
+        // write just introduced in the same tool result. Never fails the
+        // already-succeeded write; see cli/post-edit-diagnostics.ts.
+        // `options.postEditDiagnostics` is a per-call override seam (tests,
+        // embedders) — production resolves via PUSH_POST_EDIT_DIAGNOSTICS,
+        // forwarded from config by applyConfigToEnv; no caller threads it.
+        const writeDiag = await runPostEditDiagnostics(workspaceRoot, filePath, {
+          explicitEnabled:
+            typeof options.postEditDiagnostics === 'boolean'
+              ? options.postEditDiagnostics
+              : undefined,
+        });
         return {
           ok: true,
-          text: `Wrote ${content.length} bytes to ${path.relative(workspaceRoot, filePath) || '.'}`,
+          text: `Wrote ${content.length} bytes to ${path.relative(workspaceRoot, filePath) || '.'}${writeDiag.note ?? ''}`,
           meta: {
             path: filePath,
             bytes: content.length,
             version: calculateContentVersion(content),
+            ...(writeDiag.meta ? { diagnostics: writeDiag.meta } : {}),
           },
         };
       }
@@ -2951,15 +2966,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             ? `\n\nWarnings:\n${applied.warnings.map((warning) => `- ${warning}`).join('\n')}`
             : '';
 
+        // Post-edit diagnostics loop (crush pattern) — same contract as the
+        // write_file arm above.
+        const editDiag = await runPostEditDiagnostics(workspaceRoot, filePath, {
+          explicitEnabled:
+            typeof options.postEditDiagnostics === 'boolean'
+              ? options.postEditDiagnostics
+              : undefined,
+        });
+
         return {
           ok: true,
-          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${warningText}${previewText}`,
+          text: `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}${warningText}${previewText}${editDiag.note ?? ''}`,
           meta: {
             path: filePath,
             edits: applied.applied.length,
             version_before: versionBefore,
             version_after: versionAfter,
             warnings: applied.warnings.length,
+            ...(editDiag.meta ? { diagnostics: editDiag.meta } : {}),
           },
         };
       }
