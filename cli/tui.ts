@@ -5143,13 +5143,23 @@ export async function runTUI(options = {}) {
     }
 
     if (sub === 'enable') {
-      const deploymentUrl = parts[1];
-      const token = parts[2];
+      const { readRelayConfig } = await import('./pushd-relay-config.js');
+      // Same fallback as `push daemon relay enable`: --url defaults to
+      // whatever's already persisted (rotating a token against the same
+      // Worker), --token defaults to PUSH_RELAY_TOKEN so this can be a
+      // zero-argument command once it's in your shell profile.
+      const explicitUrl = parts[1];
+      const explicitToken = parts[2];
+      const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
+      const deploymentUrl = explicitUrl || persisted?.deploymentUrl;
+      const token = explicitToken || process.env.PUSH_RELAY_TOKEN?.trim();
       if (!deploymentUrl || !token) {
         addTranscriptEntry(
           tuiState,
           'warning',
-          'Usage: /remote enable <deployment-url> <pushd_relay_...>',
+          'Usage: /remote enable <deployment-url> <pushd_relay_...>\n' +
+            '  <deployment-url> may be omitted if a relay was already configured on this machine.\n' +
+            '  <pushd_relay_...> may be omitted if PUSH_RELAY_TOKEN is set in the environment.',
         );
         scheduler.flush();
         return;
@@ -5232,13 +5242,21 @@ export async function runTUI(options = {}) {
     }
 
     if (sub === 'setup') {
-      const deploymentUrl = parts[1];
-      const token = parts[2];
+      const { readRelayConfig } = await import('./pushd-relay-config.js');
+      // Same fallback as /remote enable: --url defaults to whatever's
+      // already persisted, --token defaults to PUSH_RELAY_TOKEN.
+      const explicitUrl = parts[1];
+      const explicitToken = parts[2];
+      const persisted = explicitUrl && explicitToken ? null : await readRelayConfig();
+      const deploymentUrl = explicitUrl || persisted?.deploymentUrl;
+      const token = explicitToken || process.env.PUSH_RELAY_TOKEN?.trim();
       if (!deploymentUrl || !token) {
         addTranscriptEntry(
           tuiState,
           'warning',
-          'Usage: /remote setup <deployment-url> <pushd_relay_...>',
+          'Usage: /remote setup <deployment-url> <pushd_relay_...>\n' +
+            '  <deployment-url> may be omitted if a relay was already configured on this machine.\n' +
+            '  <pushd_relay_...> may be omitted if PUSH_RELAY_TOKEN is set in the environment.',
         );
         scheduler.flush();
         return;
