@@ -15,10 +15,11 @@
  *   - State-only. Submission lives in `request` (passed in) because
  *     it's the daemon hook's fn and the screen knows which hook it
  *     mounted (mirrors the `useApprovalQueue` decoupling).
- *   - Refresh policy: fires once per `connecting → open` transition.
- *     A live `session_started` listener could keep the list warm
- *     mid-session but isn't needed for v1; the manual `refresh()`
- *     callback covers refresh-after-create flows when we add them.
+ *   - Refresh policy: fires once per `connecting → open` transition,
+ *     plus whenever the consumer calls `refresh()` — DaemonChatBody
+ *     wires it to drawer-open so the Connected section repaints each
+ *     time the user looks at it. A live `session_started` listener
+ *     could keep the list warm mid-session but hasn't been needed.
  *   - Filter: drops `mode === 'headless'` rows. Headless runs aren't
  *     resumable as interactive chats; they shouldn't show up next to
  *     Local PC / Remote conversations.
@@ -111,10 +112,11 @@ export function useDaemonCliSessions(
     // tolerate "results match the moment the first fetch started"
     // because each subsequent refresh trigger has its own
     // `connecting → open` transition or explicit call ready to
-    // re-fire once this one settles. A pending-refresh queue would
-    // be the right escalation if `refresh()` becomes a UI affordance;
-    // today it's only exposed for future use and not wired to any
-    // button, so a coalesced fetch is the simpler honest choice.
+    // re-fire once this one settles. `refresh()` is wired to
+    // drawer-open (DaemonChatBody), so a coalesced drop only happens
+    // when a fetch is already in flight — the list the user sees is
+    // then at most milliseconds stale, which a pending-refresh queue
+    // wouldn't meaningfully improve.
     if (inFlightRef.current) return;
     inFlightRef.current = true;
     const nonce = ++fetchNonceRef.current;

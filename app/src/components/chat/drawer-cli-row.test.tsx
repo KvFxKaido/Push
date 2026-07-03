@@ -41,6 +41,22 @@ describe('CliSessionRow', () => {
     expect(html).not.toContain('aria-label="CLI session, running"');
   });
 
+  it('renders the Connected indicator with the workspace tag', () => {
+    // Claude Code-style row: these rows only exist while a live daemon
+    // connection feeds them, so every row carries the green Connected
+    // indicator plus the cwd basename as the workspace tag.
+    const html = renderToStaticMarkup(<CliSessionRow session={makeCliSession()} />);
+    expect(html).toContain('Connected');
+    expect(html).toContain('· proj ·');
+  });
+
+  it('falls back to the sessionId as the workspace tag when cwd is empty', () => {
+    const html = renderToStaticMarkup(
+      <CliSessionRow session={makeCliSession({ sessionId: 'sess_no_cwd', cwd: '' })} />,
+    );
+    expect(html).toContain('· sess_no_cwd ·');
+  });
+
   it('flips the badge to a live indicator when the session is mid-run', () => {
     const html = renderToStaticMarkup(
       <CliSessionRow session={makeCliSession({ state: 'running', activeRunId: 'run_xyz' })} />,

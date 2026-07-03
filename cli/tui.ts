@@ -5041,70 +5041,76 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
+  // Shared by /remote (setup|pair) and /rc: mint a phone pairing
+  // bundle targeting the CURRENT TUI session, so pasting it on the phone
+  // lands in this exact conversation.
+  async function mintPairBundleForActiveSession() {
+    await ensureDaemonConnected({ announce: false });
+    if (!daemonClient?.connected) {
+      return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
+    }
+    await ensureDaemonSession();
+    if (!daemonSessionId) {
+      return {
+        ok: false,
+        code: 'NO_DAEMON_SESSION',
+        error: 'no active daemon session',
+      };
+    }
+    return requestDaemonAdmin(
+      'mint_remote_pair_bundle',
+      {
+        targetSessionId: daemonSessionId,
+        ...(daemonAttachToken ? { targetAttachToken: daemonAttachToken } : {}),
+      },
+      { timeoutMs: 5000 },
+    );
+  }
+
+  // Shared by /remote and /rc: render a freshly minted pairing
+  // bundle into the transcript (and adopt any newly minted session
+  // attach token).
+  function renderPairBundle(payload) {
+    const bundle = String(payload?.bundle || '');
+    const deviceTokenId = String(payload?.deviceTokenId || '');
+    const attachTokenId = String(payload?.attachTokenId || '');
+    const deploymentUrl = String(payload?.deploymentUrl || '');
+    const relaySessionId = String(payload?.sessionId || '');
+    const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
+    // If the daemon minted a fresh attach token for this (previously
+    // tokenless) session, adopt it: update the live token and the in-memory
+    // session state so a reconnect carries the now-required bearer. The
+    // daemon already persisted it to the shared session-store, so no
+    // TUI-side write is needed (and skipping it avoids racing that write).
+    const mintedTargetAttachToken = String(payload?.mintedTargetAttachToken || '');
+    if (mintedTargetAttachToken) {
+      daemonAttachToken = mintedTargetAttachToken;
+      if (state && typeof state === 'object') state.attachToken = mintedTargetAttachToken;
+    }
+    tuiState.lastRemotePairBundle = bundle || null;
+    const lines = [
+      'Remote pairing bundle minted for this TUI session.',
+      `  deployment: ${deploymentUrl || 'unknown'}`,
+      `  relay route: ${relaySessionId || 'unknown'}`,
+      `  target session: ${targetSessionId || 'unknown'}`,
+      `  device id: ${deviceTokenId || 'unknown'}`,
+      `  attach id: ${attachTokenId || 'unknown'}`,
+      '',
+      'Bundle (copy now - this is the only time the bearer is shown):',
+      '',
+      `  ${bundle}`,
+      '',
+      'Copy it with: /copy remote',
+      'Paste this into the phone Remote pairing screen.',
+      deviceTokenId ? `Revoke this phone with: push daemon revoke ${deviceTokenId}` : '',
+    ].filter(Boolean);
+    addTranscriptEntry(tuiState, 'status', lines.join('\n'));
+    scheduler.flush();
+  }
+
   async function handleRemoteCommand(arg) {
     const parts = (arg || '').trim().split(/\s+/).filter(Boolean);
     const sub = (parts[0] || 'status').toLowerCase();
-
-    const mintPairBundleForActiveSession = async () => {
-      await ensureDaemonConnected({ announce: false });
-      if (!daemonClient?.connected) {
-        return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
-      }
-      await ensureDaemonSession();
-      if (!daemonSessionId) {
-        return {
-          ok: false,
-          code: 'NO_DAEMON_SESSION',
-          error: 'no active daemon session',
-        };
-      }
-      return requestDaemonAdmin(
-        'mint_remote_pair_bundle',
-        {
-          targetSessionId: daemonSessionId,
-          ...(daemonAttachToken ? { targetAttachToken: daemonAttachToken } : {}),
-        },
-        { timeoutMs: 5000 },
-      );
-    };
-
-    const renderPairBundle = (payload) => {
-      const bundle = String(payload?.bundle || '');
-      const deviceTokenId = String(payload?.deviceTokenId || '');
-      const attachTokenId = String(payload?.attachTokenId || '');
-      const deploymentUrl = String(payload?.deploymentUrl || '');
-      const relaySessionId = String(payload?.sessionId || '');
-      const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
-      // If the daemon minted a fresh attach token for this (previously
-      // tokenless) session, adopt it: update the live token and the in-memory
-      // session state so a reconnect carries the now-required bearer. The
-      // daemon already persisted it to the shared session-store, so no
-      // TUI-side write is needed (and skipping it avoids racing that write).
-      const mintedTargetAttachToken = String(payload?.mintedTargetAttachToken || '');
-      if (mintedTargetAttachToken) {
-        daemonAttachToken = mintedTargetAttachToken;
-        if (state && typeof state === 'object') state.attachToken = mintedTargetAttachToken;
-      }
-      tuiState.lastRemotePairBundle = bundle || null;
-      const lines = [
-        'Remote pairing bundle minted for this TUI session.',
-        `  deployment: ${deploymentUrl || 'unknown'}`,
-        `  relay route: ${relaySessionId || 'unknown'}`,
-        `  target session: ${targetSessionId || 'unknown'}`,
-        `  device id: ${deviceTokenId || 'unknown'}`,
-        `  attach id: ${attachTokenId || 'unknown'}`,
-        '',
-        'Bundle (copy now - this is the only time the bearer is shown):',
-        '',
-        `  ${bundle}`,
-        '',
-        'Copy it with: /copy remote',
-        'Paste this into the phone Remote pairing screen.',
-        deviceTokenId ? `Revoke this phone with: push daemon revoke ${deviceTokenId}` : '',
-      ].filter(Boolean);
-      addTranscriptEntry(tuiState, 'status', lines.join('\n'));
-      scheduler.flush();
-    };
 
     if (sub === 'status' || sub === 'show') {
       const response = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 1500 });
@@ -5317,6 +5323,188 @@ export async function runTUI(options = {}) {
       tuiState,
       'warning',
       'Usage: /remote status | /remote setup <deployment-url> <pushd_relay_...> | /remote pair | /remote enable <deployment-url> <pushd_relay_...> | /remote disable',
+    );
+    scheduler.flush();
+  }
+
+  /**
+   * /rc — remote control: one-shot "continue this session on my phone."
+   *
+   * Claude Code-style ergonomics over the existing relay pieces: instead
+   * of the /remote enable → pair → paste dance, a single command drives
+   * whatever state the relay is in toward "this session is visible in the
+   * phone's Chats drawer":
+   *
+   *   - relay never configured        → point at the one-time /remote setup
+   *   - relay stopped / disconnected /
+   *     given up (exhausted, fatal)   → re-enable from the saved config;
+   *                                     if still not open/connecting after
+   *                                     the re-dial, report the real state
+   *                                     instead of confirming
+   *   - no phone paired yet           → mint + render a pairing bundle
+   *   - phone already paired          → confirm reachability (the phone's
+   *                                     Connected list shows this session)
+   *
+   * `/rc pair` forces a fresh bundle even when a phone is already
+   * paired (pairing an additional device re-uses the same path).
+   *
+   * The "phone already paired" signal is the relay allowlist size (device
+   * attach tokens registered with the relay client) — NOT `list_devices`,
+   * which only reflects live loopback WS connections and never sees
+   * relay-paired phones.
+   */
+  async function handleRemoteControlCommand(arg) {
+    const sub = (arg || '').trim().toLowerCase();
+    if (sub && sub !== 'pair') {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'Usage: /rc  (make this session reachable on your phone) | /rc pair  (mint a bundle for a new phone)',
+      );
+      scheduler.flush();
+      return;
+    }
+
+    const status = await requestDaemonAdmin(
+      'relay_status',
+      {},
+      { timeoutMs: 2000, startDaemon: true },
+    );
+    if (!status.ok) {
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        status.code === 'DAEMON_OFFLINE'
+          ? '/rc needs the pushd daemon, and it is not running (autostart may be off). Try /daemon restart, then /rc again.'
+          : `Remote control failed reading relay status: ${status.error || status.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    const persisted = status.payload?.persisted || null;
+    let live = status.payload?.live || null;
+    if (!persisted) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        [
+          'Remote relay is not configured yet. One-time setup:',
+          '  /remote setup <deployment-url> <pushd_relay_...>',
+          'After that, /rc hands any TUI session to your phone.',
+        ].join('\n'),
+      );
+      scheduler.flush();
+      return;
+    }
+
+    // "Healthy" = the relay client is connected or actively dialing on
+    // its own. `running` alone is NOT enough: a client whose socket
+    // closed (`state: 'closed' | 'unreachable'`) — or that gave up
+    // (`exhausted` / `fatal`) — still reports `running: true` because
+    // the daemon holds an activeRelayClient. Confirming reachability in
+    // that state would be a lie (Codex P2 on #1309).
+    const relayLiveHealthy = (l) =>
+      Boolean(l?.running) &&
+      !l.exhausted &&
+      !l.fatal &&
+      (l.state === 'open' || l.state === 'connecting');
+
+    // Relay client stopped, disconnected, or given up — re-enable from
+    // the saved config so the phone can reach us again (relay_enable
+    // restarts the client with an immediate dial).
+    if (!relayLiveHealthy(live)) {
+      const { readRelayConfig } = await import('./pushd-relay-config.js');
+      const cfg = await readRelayConfig();
+      if (cfg) {
+        const enable = await requestDaemonAdmin(
+          'relay_enable',
+          { deploymentUrl: cfg.deploymentUrl, token: cfg.token },
+          { timeoutMs: 5000 },
+        );
+        if (!enable.ok) {
+          addTranscriptEntry(
+            tuiState,
+            'error',
+            `Remote control could not restart the relay client: ${enable.error || enable.code || 'unknown'}`,
+          );
+          scheduler.flush();
+          return;
+        }
+        const refreshed = await requestDaemonAdmin('relay_status', {}, { timeoutMs: 2000 });
+        if (refreshed.ok) live = refreshed.payload?.live || live;
+      }
+      // Still not healthy after the re-dial attempt: report the real
+      // state instead of minting a bundle or claiming reachability the
+      // relay can't deliver.
+      if (!relayLiveHealthy(live)) {
+        const closeInfo =
+          live?.closeCode !== null && live?.closeCode !== undefined
+            ? ` (last close: ${live.closeCode}${live.closeReason ? ` ${live.closeReason}` : ''})`
+            : '';
+        addTranscriptEntry(
+          tuiState,
+          'error',
+          `Remote relay is not connected (state: ${live?.state || 'unknown'})${closeInfo}. Check /remote status, then /rc again.`,
+        );
+        scheduler.flush();
+        return;
+      }
+    }
+
+    const pairedPhones = typeof live?.allowlistSize === 'number' ? live.allowlistSize : 0;
+
+    if (sub === 'pair' || pairedPhones === 0) {
+      const response = await mintPairBundleForActiveSession();
+      if (response.ok) {
+        renderPairBundle(response.payload);
+        addTranscriptEntry(
+          tuiState,
+          'status',
+          'Once pasted on the phone, this session appears in the Chats drawer under Connected.',
+        );
+        scheduler.flush();
+        return;
+      }
+      addTranscriptEntry(
+        tuiState,
+        'error',
+        response.code === 'NO_DAEMON_SESSION'
+          ? 'Remote control failed: this TUI has no daemon session yet. Enable daemon autostart (/config daemon auto), then retry.'
+          : `Remote control pairing failed: ${response.error || response.code || 'unknown'}`,
+      );
+      scheduler.flush();
+      return;
+    }
+
+    // A phone is already paired — make sure THIS session lives on the
+    // daemon (an inline TUI session is invisible to the phone), then
+    // confirm. requestDaemonAdmin can succeed over a transient socket
+    // even when the TUI itself runs inline, so re-check the TUI's own
+    // daemon attachment explicitly.
+    await ensureDaemonConnected({ announce: false });
+    if (daemonClient?.connected) await ensureDaemonSession();
+    if (!daemonClient?.connected || !daemonSessionId) {
+      addTranscriptEntry(
+        tuiState,
+        'warning',
+        'A phone is paired, but this TUI is running inline (no daemon session), so the phone cannot see this chat. Enable daemon autostart (/config daemon auto), then /rc again.',
+      );
+      scheduler.flush();
+      return;
+    }
+
+    const sessionLabel = state.sessionName ? `"${state.sessionName}"` : daemonSessionId;
+    addTranscriptEntry(
+      tuiState,
+      'status',
+      [
+        `Session ${sessionLabel} is reachable from your phone.`,
+        `  relay: ${live?.state || 'connected'}`,
+        `  paired phones: ${pairedPhones}`,
+        '  Open the Chats drawer on the phone — this session is listed under Connected.',
+        '  /rc pair adds another phone.',
+      ].join('\n'),
     );
     scheduler.flush();
   }
@@ -5691,6 +5879,10 @@ export async function runTUI(options = {}) {
         await handleRemoteCommand(arg || null);
         return true;
 
+      case 'rc':
+        await handleRemoteControlCommand(arg || null);
+        return true;
+
       case 'daemon':
         await handleDaemonCommand(arg || null);
         return true;
@@ -5726,6 +5918,7 @@ export async function runTUI(options = {}) {
             '  /config explain on|off  Toggle pattern explanations',
             '  /config daemon auto|off  Toggle TUI pushd autostart',
             '  /remote status|setup|pair|enable|disable  Manage Remote relay + phone pairing',
+            '  /rc [pair]           Remote control: hand this session to your phone (one-shot; pairs if needed)',
             '  /daemon status       Show pushd connection, process, and log paths',
             '  /daemon restart      Drain + respawn pushd from current code (auto on stale)',
             '  /theme               Show current theme',

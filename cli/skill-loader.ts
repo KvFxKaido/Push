@@ -62,6 +62,7 @@ export const RESERVED_COMMANDS: Set<string> = new Set([
   'unrevert',
   'children',
   'remote',
+  'rc',
   'daemon',
   'debug',
 ]);
