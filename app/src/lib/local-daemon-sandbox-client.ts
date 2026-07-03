@@ -117,6 +117,22 @@ export function bindingParams(binding: ToolDispatchBinding): DaemonBinding {
 }
 
 /**
+ * Resolve the daemon session a relay binding is attached to
+ * (`targetSessionId`) — not `sessionId`, the relay TRANSPORT's opaque
+ * routing key ("chosen by pushd; shared via the pair bundle"), which is
+ * unrelated to which daemon session the phone is actually talking to.
+ * RPCs that address a specific daemon session (`get_session_snapshot`,
+ * `update_session`) need this one; using `sessionId` there targets the
+ * wrong (or a nonexistent) session. Null for a local-pc binding (no
+ * per-session concept) or an untargeted relay binding (no session
+ * attached yet — e.g. a fresh pair bundle scan before the first resume).
+ */
+export function resolveRelayTargetSessionId(binding: ToolDispatchBinding): string | null {
+  const params = bindingParams(binding);
+  return isRelayBinding(params) ? (params.targetSessionId ?? null) : null;
+}
+
+/**
  * Build a WS adapter for whichever transport the binding describes.
  * Centralises the structural discrimination so `withTransientBinding`
  * stays binding-agnostic. Accepts the same callback set
