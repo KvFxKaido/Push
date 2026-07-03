@@ -67,9 +67,7 @@ import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import type { ApprovalQueueHandle } from '@/hooks/useApprovalQueue';
 import type { ConnectionStatus, RequestOptions, SessionResponse } from '@/lib/local-daemon-binding';
 import {
-  isLiveDaemonBinding,
-  isRelayBinding,
-  type DaemonBinding,
+  resolveRelayTargetSessionId,
   type LiveDaemonBinding,
   type ToolDispatchBinding,
 } from '@/lib/local-daemon-sandbox-client';
@@ -353,10 +351,11 @@ export function DaemonChatBody({
   // its picker stays on the local-only `useModelCatalog` value for now.
   const relaySessionId = useMemo(() => {
     if (mode !== 'relay') return null;
-    const params: DaemonBinding = isLiveDaemonBinding(paramsBinding)
-      ? paramsBinding.params
-      : paramsBinding;
-    return isRelayBinding(params) ? params.sessionId : null;
+    // Was params.sessionId (the relay TRANSPORT's opaque routing key, not a
+    // daemon session id) — get_session_snapshot / update_session need the
+    // daemon session the phone is actually attached to. See
+    // resolveRelayTargetSessionId's doc comment (user report, 2026-07-03).
+    return resolveRelayTargetSessionId(paramsBinding);
   }, [mode, paramsBinding]);
   const daemonSessionModel = useDaemonSessionModel(
     request,

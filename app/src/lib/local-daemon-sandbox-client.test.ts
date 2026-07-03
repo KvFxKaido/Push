@@ -23,6 +23,7 @@ import {
   isRelayBinding,
   listDirLocalDaemon,
   readFileLocalDaemon,
+  resolveRelayTargetSessionId,
   runWithBinding,
   writeFileLocalDaemon,
   type LiveDaemonBinding,
@@ -801,6 +802,60 @@ describe('isRelayBinding', () => {
       boundOrigin: 'http://localhost:5173',
     };
     expect(isRelayBinding(loop)).toBe(false);
+  });
+});
+
+describe('resolveRelayTargetSessionId', () => {
+  // Regression (user report, 2026-07-03): DaemonChatBody's picker read
+  // `sessionId` (the relay TRANSPORT's opaque routing key) instead of
+  // `targetSessionId` (the actual daemon session the phone is attached
+  // to), so get_session_snapshot / update_session addressed the wrong
+  // session — sessionId and targetSessionId are deliberately DIFFERENT
+  // here to prove the function returns the latter, not the former.
+  it("returns targetSessionId, not the transport's routing-key sessionId", () => {
+    const relay: RelayBinding = {
+      deploymentUrl: 'https://relay.example',
+      sessionId: 'relay-routing-key',
+      targetSessionId: 'daemon-session-abc',
+      token: 'pushd_da_xxx',
+    };
+    expect(resolveRelayTargetSessionId(relay)).toBe('daemon-session-abc');
+  });
+
+  it('returns null for an untargeted relay binding (no session attached yet)', () => {
+    const relay: RelayBinding = {
+      deploymentUrl: 'https://relay.example',
+      sessionId: 'relay-routing-key',
+      token: 'pushd_da_xxx',
+    };
+    expect(resolveRelayTargetSessionId(relay)).toBeNull();
+  });
+
+  it('returns null for a local-pc binding (no per-session concept)', () => {
+    const loop: LocalPcBinding = {
+      port: 49152,
+      token: 'pushd_xxx',
+      boundOrigin: 'http://localhost:5173',
+    };
+    expect(resolveRelayTargetSessionId(loop)).toBeNull();
+  });
+
+  it('unwraps a LiveDaemonBinding to its params before resolving', () => {
+    const relay: RelayBinding = {
+      deploymentUrl: 'https://relay.example',
+      sessionId: 'relay-routing-key',
+      targetSessionId: 'daemon-session-abc',
+      token: 'pushd_da_xxx',
+    };
+    // request is never invoked by resolveRelayTargetSessionId — only params
+    // is read — so a throwing stub is enough; no realistic response needed.
+    const live: LiveDaemonBinding = {
+      params: relay,
+      request: async () => {
+        throw new Error('not called');
+      },
+    };
+    expect(resolveRelayTargetSessionId(live)).toBe('daemon-session-abc');
   });
 });
 
