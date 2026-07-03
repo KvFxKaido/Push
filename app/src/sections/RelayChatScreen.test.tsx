@@ -124,11 +124,18 @@ describe('RelayChatScreen', () => {
     // in the `node` vitest environment (no jsdom), so opening it isn't
     // exercisable from this test — verified manually in the browser instead.
     expect(html).toContain('aria-label="Open hub"');
-    // ChatInput now drives the daemon input — same provider+model
-    // affordances as repo/chat mode. The chip surfaces the active
-    // provider's model name; the catalog mock pins `cloudflare` +
-    // `@cf/qwen/qwen3-30b-a3b-fp8`.
-    expect(html).toContain('title="Backend and model"');
-    expect(html).toContain('qwen3-30b-a3b-fp8');
+    // ChatInput's "Backend and model" pill is now built from the daemon's
+    // own reported provider/model (useDaemonSessionModel), not the client
+    // -local useModelCatalog stub — Remote's picker should show what the
+    // paired session is actually running, not a browser preference with no
+    // relation to it. That daemon state is fetched via `useEffect` (a
+    // get_session_snapshot + list_providers round-trip), which never runs
+    // under `renderToStaticMarkup` (SSR has no commit phase), so the pill
+    // is legitimately absent here — this matches real first-paint behavior
+    // before the round-trip resolves. Covered instead by
+    // useDaemonSessionModel.test.ts's payload-parser tests; interactive
+    // coverage needs jsdom, which this suite doesn't have (see the drawer
+    // footer note above).
+    expect(html).not.toContain('title="Backend and model"');
   });
 });

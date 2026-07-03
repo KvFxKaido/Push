@@ -633,7 +633,8 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
   }
 }
 
-import { PROVIDER_CONFIGS, resolveApiKey } from './provider.js';
+import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
+import { getCuratedModels } from './model-catalog.js';
 import {
   getConfigPath,
   loadConfig,
@@ -7415,6 +7416,23 @@ async function handleSetDaemonRuntimeConfig(req, _emitEvent, context) {
 }
 
 /**
+ * Read-only catalog of providers this daemon can route to, with curated
+ * models per provider. Powers Remote/Local-PC's model picker — the web
+ * client has no other way to know what's actually configured on THIS
+ * machine (which providers have a working key, what models to offer)
+ * versus its own browser-local provider config, which is irrelevant to a
+ * daemon-executed turn. Safe over relay: `hasKey` is a boolean, never the
+ * key itself (mirrors `getProviderList`'s own posture).
+ */
+async function handleListProviders(req) {
+  const providers = getProviderList().map((p) => ({
+    ...p,
+    models: getCuratedModels(p.id),
+  }));
+  return makeResponse(req.requestId, req.type, null, true, { providers });
+}
+
+/**
  * Re-read `~/.push/config.json` and force its provider keys/urls/models into
  * the daemon's `process.env`, overwriting stale values. The TUI fires this
  * after a config edit (e.g. rotating a provider API key): the daemon resolves
@@ -7494,6 +7512,7 @@ const HANDLERS = {
   grant_session_attach: handleGrantSessionAttach,
   get_daemon_runtime_config: handleGetDaemonRuntimeConfig,
   set_daemon_runtime_config: handleSetDaemonRuntimeConfig,
+  list_providers: handleListProviders,
   reload_config: handleReloadConfig,
 };
 
