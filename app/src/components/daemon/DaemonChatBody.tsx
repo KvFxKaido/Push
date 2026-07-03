@@ -592,9 +592,9 @@ export function DaemonChatBody({
     return () => window.clearInterval(id);
   }, [hasPendingRetry]);
 
-  const handleUnpair = async () => {
+  const handleUnpair = useCallback(async () => {
     await onUnpair();
-  };
+  }, [onUnpair]);
 
   /**
    * Stop button handler. Beyond `abortStream()`, also cancel any
