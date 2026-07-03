@@ -148,9 +148,20 @@ export function WorkspaceSessionScreen({
   const handleSandboxBranchSwitch = useCallback(
     (branch: string) => {
       skipBranchTeardownRef.current = true;
+      // Re-key the persisted sandbox session (createdAt/lastActivityAt/
+      // hasMutated) onto the new branch — same live container, new git ref.
+      // Without this, branch-on-first-prompt's fork leaves the working
+      // branch's first keep-warm snapshot with no `existing` record to carry
+      // `hasMutated` forward from, so it lands `undefined` instead of the
+      // `false` the cold-start seeded under the old (default-branch) key —
+      // the definitively-gone recovery skip never fires for the session it
+      // exists for (Codex P2 on #1315).
+      if (workspaceRepo) {
+        sandbox.rebindSessionRepo(workspaceRepo.full_name, branch);
+      }
       setCurrentBranch(branch);
     },
-    [setCurrentBranch],
+    [sandbox, setCurrentBranch, workspaceRepo],
   );
 
   const {

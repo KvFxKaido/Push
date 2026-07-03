@@ -69,6 +69,7 @@ const sandboxSession = vi.hoisted(() => ({
   loadSandboxSession: vi.fn<() => unknown>(() => null),
   saveSandboxSession: vi.fn(),
   touchSandboxSessionActivity: vi.fn(),
+  markSandboxSessionMutated: vi.fn(),
   isSavedSessionRecoverable: vi.fn<() => boolean>(() => true),
   decideReconnectProbe: vi.fn((args: { savedSandboxId: string; now: number }) => ({
     probe: true,
@@ -93,6 +94,7 @@ vi.mock('@/lib/sandbox-file-version-cache', () => cacheLib);
 vi.mock('@/lib/github-auth', () => ghAuth);
 vi.mock('@/lib/github-repo-coverage', () => repoCoverage);
 vi.mock('@/lib/sandbox-session', () => sandboxSession);
+vi.mock('@/lib/sandbox-mutation-signal', () => ({ onWorkspaceMutation: vi.fn(() => () => {}) }));
 vi.mock('@/lib/checkpoint/checkpoint-store', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/checkpoint/checkpoint-store')>();
   return { ...actual, nativeCheckpointsActive: checkpointGate.nativeCheckpointsActive };
@@ -255,6 +257,25 @@ describe('useSandbox.start', () => {
     expect(reactState.cells[0].value).toBe('sb-new');
     expect(reactState.cells[1].value).toBe('ready');
     expect(sandboxSession.saveSandboxSession).toHaveBeenCalled();
+  });
+
+  it('syncs sandboxIdRef synchronously in start(), not only via the later effect', async () => {
+    // Regression (Codex P2 on #1315): a mutating tool call dispatched right
+    // after start() resolves — before React has run the sandboxId->ref sync
+    // effect — must still see the correct id in the ref, or the workspace
+    // mutation listener drops the session's first real mutation and a later
+    // unmutated-session cold-start fast path can discard real work.
+    // Deliberately does NOT call syncRefsFromState() first — that helper is
+    // the manual stand-in for the effect this test is proving isn't required.
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-new',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'feature');
+
+    expect(reactState.refs[0].current).toBe('sb-new');
   });
 
   it('threads the active default branch into sandbox creation', async () => {
@@ -443,6 +464,47 @@ describe('useSandbox.start', () => {
     expect(reactState.cells[1].value).toBe('ready');
   });
 
+  it('skips restoring a snapshot and cold-starts when the session never mutated', async () => {
+    sandboxClient.createSandbox
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-1',
+        ownerToken: 'owner-tok',
+      })
+      .mockResolvedValueOnce({
+        status: 'ready',
+        sandboxId: 'sb-2',
+        ownerToken: 'owner-tok-2',
+      });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+
+    hook.markUnreachable('Sandbox not found');
+    syncRefsFromState();
+    sandboxClient.pingSandbox.mockRejectedValue(new Error('Sandbox not found'));
+    // A real snapshot IS on offer — this proves the skip is driven by
+    // hasMutated===false, not by an absent snapshot.
+    sandboxSession.loadSandboxSession.mockReturnValue({
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+      repoFullName: 'owner/repo',
+      branch: 'main',
+      createdAt: 123,
+      snapshotId: 'snap-1',
+      restoreToken: 'restore-tok',
+      hasMutated: false,
+    });
+
+    const id = await hook.start('owner/repo', 'main');
+
+    expect(id).toBe('sb-2');
+    expect(sandboxClient.restoreFromSnapshot).not.toHaveBeenCalled();
+    expect(sandboxClient.createSandbox).toHaveBeenCalledTimes(2);
+    expect(reactState.cells[0].value).toBe('sb-2');
+    expect(reactState.cells[1].value).toBe('ready');
+  });
+
   it('cold-starts after retiring a definitively-gone error sandbox without a snapshot', async () => {
     sandboxClient.createSandbox
       .mockResolvedValueOnce({
@@ -600,6 +662,54 @@ describe('useSandbox.stop', () => {
     await hook.stop();
     expect(reactState.cells[0].value).toBeNull();
     expect(reactState.cells[1].value).toBe('idle');
+  });
+});
+
+describe('useSandbox.rebindSessionRepo', () => {
+  it('carries hasMutated forward onto the new branch key', async () => {
+    // Regression (Codex P2 on #1315): branch-on-first-prompt's fork moves the
+    // live session onto a new branch via this path, not saveSandboxSession.
+    // Without carrying hasMutated forward here, the working branch's first
+    // keep-warm snapshot has no `existing` record to read it from, lands
+    // `undefined`, and the definitively-gone recovery skip never fires for
+    // the unmutated session it exists for.
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'owner-tok',
+    });
+    const hook = render();
+    await hook.start('owner/repo', 'main');
+
+    // Simulate the record persisted under the cold-start key — saveSandboxSession
+    // itself is mocked, so it never actually reaches safeStorage in this harness.
+    safeStorage.get.mockImplementation((key: string) =>
+      key === 'sbx:owner/repo:main'
+        ? JSON.stringify({
+            sandboxId: 'sb-1',
+            ownerToken: 'owner-tok',
+            repoFullName: 'owner/repo',
+            branch: 'main',
+            createdAt: 123,
+            hasMutated: false,
+          })
+        : null,
+    );
+    sandboxClient.getSandboxOwnerToken.mockReturnValue('owner-tok');
+
+    hook.rebindSessionRepo('owner/repo', 'feature/new-branch');
+
+    expect(sandboxSession.saveSandboxSession).toHaveBeenLastCalledWith(
+      'owner/repo',
+      'feature/new-branch',
+      expect.objectContaining({ sandboxId: 'sb-1', hasMutated: false }),
+    );
+  });
+
+  it('is a no-op when no sandbox is active', () => {
+    const hook = render();
+    hook.rebindSessionRepo('owner/repo', 'feature/new-branch');
+    expect(sandboxSession.saveSandboxSession).not.toHaveBeenCalled();
   });
 });
 
