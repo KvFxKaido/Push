@@ -231,9 +231,23 @@ jobs:
         run: npm run test:cli
 
   cli-binary:
-    name: Single-binary compile + smoke (cli)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    name: Single-binary compile + smoke (cli, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the platform this feature exists for — and where the
+        # detection bugs have actually lived (bun's embedded-bundle root is
+        # extensionless on Linux but `B:\~BUN\root\cli.mjs` on Windows, which
+        # sent daemon start down the wrong spawn branch, commit 8fb0ac5).
+        # A Linux-only smoke was green through that bug.
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 15
+    defaults:
+      run:
+        # Git Bash on the Windows runner — keeps the smoke steps (grep,
+        # seq, pipes) identical across the matrix.
+        shell: bash
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -255,33 +269,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Bun appends .exe on Windows regardless of --outfile; resolve the
+      # real name once and export it for the smoke steps.
       - name: Compile single binary
-        run: bun build --compile cli/cli.ts --outfile /tmp/push-bin
+        run: |
+          bun build --compile cli/cli.ts --outfile push-smoke
+          BIN=./push-smoke
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN=./push-smoke.exe; fi
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
 
       # The regression this job exists for: if the isDirectRun guard in
       # cli/cli.ts stops recognizing single-executable builds
       # (import.meta.main), the binary compiles fine and exits 0 having
       # done nothing — green in every other job. Assert real output.
       - name: Smoke test — help boots
-        run: /tmp/push-bin --help | grep -q 'Push CLI'
+        run: '"$BIN" --help | grep -q "Push CLI"'
 
       # `daemon start` from a compiled binary re-execs itself via the
       # internal `daemon __run` action; this catches that path breaking
-      # (e.g. the spawn falling back to a nonexistent pushd.<ext>).
+      # (e.g. the spawn falling back to a nonexistent pushd.<ext>). On
+      # Windows this also exercises the named-pipe transport instead of
+      # the unix socket.
       - name: Smoke test — daemon lifecycle
         run: |
-          /tmp/push-bin daemon start
+          "$BIN" daemon start
           for i in $(seq 1 15); do
-            /tmp/push-bin daemon status | grep -q 'responsive' && break
+            "$BIN" daemon status | grep -q 'responsive' && break
             sleep 1
           done
-          /tmp/push-bin daemon status | grep -q 'responsive'
-          /tmp/push-bin daemon stop
+          "$BIN" daemon status | grep -q 'responsive'
+          "$BIN" daemon stop
 
       # Build-only: proves the bundle stays target-clean (no accidental
-      # host-only native deps). Runtime behavior on Windows/macOS is not
-      # covered here — that needs a real box or a runner matrix later.
+      # host-only native deps). One host is enough for that, so these
+      # stay off the Windows leg.
       - name: Cross-compile (windows-x64, darwin-arm64, linux-arm64)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           bun build --compile --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
           bun build --compile --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
@@ -290,7 +313,7 @@ jobs:
       # Binaries are ~100MB each; only keep them when someone asked for a
       # run by hand (workflow_dispatch), not on every PR.
       - name: Upload binaries (manual runs only)
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
           name: push-binaries
