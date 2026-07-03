@@ -47,6 +47,7 @@ import { ApprovalPrompt } from '@/components/daemon/ApprovalPrompt';
 import { cancelPendingApprovals } from '@/lib/daemon-cancel-pending-approvals';
 import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
+import { resolveDaemonChatAction } from '@/hooks/chat-management';
 import { useChat } from '@/hooks/useChat';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import type { ReattachedRun } from '@/hooks/useDaemonRunState';
@@ -151,6 +152,16 @@ export interface DaemonChatBodyProps {
    * resolves to a benign SESSION_NOT_FOUND, so no token is needed.
    */
   sessionAttachToken?: string | null;
+  /**
+   * The daemon session this screen is targeting, when known (relay's
+   * `binding.targetSessionId` from a pair bundle or tap-to-resume grant).
+   * `null`/undefined in local-PC mode (no picker, always the one session) and
+   * untargeted Remote bundles. Scopes the mount-time conversation lookup so
+   * Connected sessions' tap-to-resume finds-or-creates the LOCAL chat that
+   * mirrors THIS daemon session, instead of reusing whichever relay chat
+   * happened to be active before (every tap collapsing onto one stale chat).
+   */
+  targetSessionId?: string | null;
 
   /** GitHub auth, forwarded into the hub's Settings → Auth section so
    *  the user can manage their token without leaving the daemon. */
@@ -240,6 +251,7 @@ export function DaemonChatBody({
   approvals,
   request,
   sessionAttachToken = null,
+  targetSessionId = null,
   auth,
   onDisconnect,
   attachStatus = 'idle',
@@ -568,22 +580,42 @@ export function DaemonChatBody({
   // Conversation scope: daemon-backed sessions do not have an active repo
   // name. On first mount we either switch to the most recent mode-tagged chat,
   // or create a fresh one. The reentrancy guard keeps the effect idempotent
-  // across re-renders.
+  // across re-renders — a fresh mount (RelayChatScreen keys by
+  // targetSessionId, so tapping a different Connected row remounts this
+  // component) re-arms it. Decision logic lives in the pure, unit-tested
+  // `resolveDaemonChatAction` (see its doc comment for the targetSessionId
+  // scoping rationale).
   const initializedConversationRef = useRef(false);
   useEffect(() => {
+    // Lock before evaluating (not just before acting) — a 'noop' outcome
+    // (already on a matching chat) must also count as "decided" so an
+    // unrelated later re-render can't re-evaluate and switch/create out from
+    // under a chat the user has since navigated to by hand.
     if (!conversationsLoaded || initializedConversationRef.current) return;
     initializedConversationRef.current = true;
-    const activeConv = conversations[activeChatId] as Conversation | undefined;
-    if (activeConv?.mode === mode) return;
-    const modeChats = Object.values(conversations)
-      .filter((c) => c.mode === mode)
-      .sort((a, b) => b.lastMessageAt - a.lastMessageAt);
-    if (modeChats.length > 0) {
-      switchChat(modeChats[0].id);
-    } else {
-      createNewChat();
+    const action = resolveDaemonChatAction({
+      conversations,
+      activeChatId,
+      mode,
+      targetSessionId,
+      conversationsLoaded,
+    });
+    if (action.kind === 'switch') {
+      switchChat(action.chatId);
+    } else if (action.kind === 'create') {
+      createNewChat(
+        action.daemonSessionId ? { daemonSessionId: action.daemonSessionId } : undefined,
+      );
     }
-  }, [conversationsLoaded, conversations, activeChatId, switchChat, createNewChat, mode]);
+  }, [
+    conversationsLoaded,
+    conversations,
+    activeChatId,
+    switchChat,
+    createNewChat,
+    mode,
+    targetSessionId,
+  ]);
 
   // Settings prop bundles for WorkspaceHubSheet's Settings tab. With
   // these wired, the daemon hub's tab filter (see
@@ -757,7 +789,14 @@ export function DaemonChatBody({
         switchChat(id);
       },
       onNewChat: () => {
-        createNewChat();
+        // Stamp the same daemonSessionId when one is targeted: a manually
+        // started "new chat" while viewing a specific Connected session is
+        // still a fresh LOCAL transcript of THAT daemon session, not an
+        // unscoped one the mount effect would immediately have to
+        // disambiguate from on the next remount.
+        createNewChat(
+          mode === 'relay' && targetSessionId ? { daemonSessionId: targetSessionId } : undefined,
+        );
       },
       onDeleteChat: (id: string) => {
         deleteChat(id);
@@ -790,6 +829,7 @@ export function DaemonChatBody({
       resetDaemonAppearance,
       cliSessions,
       mode,
+      targetSessionId,
       onResumeCliSession,
       daemonLabel,
       onLeave,

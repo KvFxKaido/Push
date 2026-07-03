@@ -1153,6 +1153,15 @@ export interface Conversation {
   /** Workspace mode the conversation was created in. Undefined = legacy repo/scratch chat. */
   mode?: WorkspaceMode;
   /**
+   * The daemon-side session this local chat mirrors, for `mode: 'relay'`
+   * conversations. Connected sessions / tap-to-resume can target N distinct
+   * daemon sessions, so `mode` alone can't find-or-create the right local
+   * chat — without this, every tap collapsed onto whichever relay chat
+   * happened to be active before. Undefined for local-pc (single-session, no
+   * picker) and legacy relay chats predating this field.
+   */
+  daemonSessionId?: string;
+  /**
    * Background Coder jobs the chat has kicked off. Keyed by jobId.
    * Non-terminal entries are replayed on foreground via the
    * `visibilitychange` listener in `useBackgroundCoderJob`. Terminal
