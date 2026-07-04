@@ -9,7 +9,7 @@
     "build:mcp:github": "cd mcp/github-server && npm run build",
     "check:design-tokens": "npm --prefix app run check:design-tokens --",
     "dev:cli": "node --import tsx cli/cli.ts",
-    "dev:cli:bun": "bun cli/cli.ts",
+    "dev:cli:bun": "bun --no-env-file cli/cli.ts",
     "dev:mcp:github": "cd mcp/github-server && npm run dev",
     "format": "biome format --write",
     "format:check": "biome format",

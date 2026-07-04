@@ -28,15 +28,26 @@ live, and in what order adoption happens.
 
 ## Phase 0 — compiled-binary hygiene (shipped)
 
-Compiled Bun binaries auto-load `.env` / `.env.local` from cwd into their own
-`process.env` (verified empirically on Bun 1.3.11, the CI-pinned version).
-That injection lands ahead of `applyConfigToEnv()` and the `cli/env-scrub.ts`
-allowlist, so any repo the user cd's into could seed provider keys or
-`PUSH_*` flags into the `push` process. Fixed by
-`--no-compile-autoload-dotenv` on every `bun build --compile` invocation
-(CI + documented commands); verified that real environment variables still
-pass through. If the dev path later runs `bun cli/cli.ts` in untrusted cwds,
-the runtime equivalent is `--no-env-file`.
+Compiled Bun binaries autoload **two** things from cwd, both ahead of
+`applyConfigToEnv()` and the `cli/env-scrub.ts` allowlist, so any repo the
+user cd's into becomes an injection vector (verified empirically on Bun
+1.3.11, the CI-pinned version):
+
+1. **`.env` / `.env.local`** → the binary's own `process.env` (provider keys,
+   `PUSH_*` flags). Closed by `--no-compile-autoload-dotenv`.
+2. **`bunfig.toml`**, whose `preload` runs **arbitrary code before the CLI
+   starts** — remote code execution from a repo-local file, strictly worse
+   than the env case. Closed by `--no-compile-autoload-bunfig`. (Caught in
+   review by the Codex bot; confirmed a repo-local `bunfig.toml` preload
+   executes and that the dotenv flag alone does not stop it.)
+
+Both flags are on every `bun build --compile` invocation (CI + documented
+commands); verified that real environment variables still pass through and
+the preload no longer runs. The dev path (`dev:cli:bun`) carries the runtime
+env equivalent `--no-env-file`; Bun exposes no runtime flag to disable
+`bunfig.toml` autoload, but that path runs in the trusted Push checkout, not
+an arbitrary user repo, so the distributed-binary threat model does not apply
+to it.
 
 ## Phase 1 — dev path on Bun (partial: dev script shipped, tests blocked)
 
@@ -93,7 +104,12 @@ in one PR, under Bun-run tests.
   temp-file + rename (`cli/fs-atomic.ts`); `Bun.write` is not atomic and
   would silently weaken it.
 - **`Bun.hash` for `cli/hashline.ts`** — wyhash-family output would change
-  persisted/compared hash formats; not worth the compat break.
+  persisted/compared hash formats; not worth the compat break. The relevant
+  `createHash('sha256')` line-hashing is in `cli/hashline.ts` (CLI-scoped, so
+  a Bun swap would be *permitted* by ground rule 1 — it's the format-compat
+  break, not the surface rule, that rules it out). Not to be confused with
+  `lib/hashline.ts`, the shared edit-application logic, which contains no
+  crypto.
 - **Bun auto-`.env`** — conflicts with the deliberate config model
   (`~/.push/config.json` + env scrub); disabled at compile (Phase 0).
 - **`Bun.semver` / `Bun.deepEquals` / `Bun.which` / `Bun.peek` /
