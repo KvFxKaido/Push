@@ -69,7 +69,7 @@ describe('MessageBubble', () => {
     expect(html).toContain('hex-thinking');
   });
 
-  it('keeps the thinking block live while streamed answer content is visible', () => {
+  it('keeps the reasoning disclosure live while streamed answer content is visible', () => {
     const message = assistantMessage({
       content: 'answer has started',
       thinking: 'still reasoning through the next step',
@@ -77,10 +77,13 @@ describe('MessageBubble', () => {
     });
 
     const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    // The disclosure coexists with the answer, showing its streaming label.
     expect(html).toContain('Reasoning');
     expect(html).not.toContain('Thought process');
-    expect(html).toContain('still reasoning through the next step');
     expect(html).toContain('answer');
+    // The trace itself sits behind the collapsed disclosure now (no inline
+    // preview) — the avatar's hex-thinking animation is the streaming signal.
+    expect(html).not.toContain('still reasoning through the next step');
   });
 
   it('settles the hexagon avatar to a static stroke once done', () => {
