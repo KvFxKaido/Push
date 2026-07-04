@@ -68,11 +68,9 @@ export function conversationBelongsToWorkspace(
     return !conversation.repoFullName && conversation.mode !== 'chat';
   }
 
-  // Daemon-backed workspaces (local-pc / relay) scope to the matching
-  // mode tag so cross-mode actions (e.g. Settings → "Delete all chats"
-  // from a local-PC session) don't sweep up chats from chat mode,
-  // scratch, or the other daemon mode.
-  if (workspaceMode === 'local-pc' || workspaceMode === 'relay') {
+  // Remote daemon workspaces scope to the matching mode tag so cross-mode
+  // actions don't sweep up chats from chat mode or scratch.
+  if (workspaceMode === 'relay') {
     return !conversation.repoFullName && conversation.mode === workspaceMode;
   }
 
@@ -152,9 +150,9 @@ export function resolveWorkspaceChatAction({
 }
 
 /**
- * Decides what DaemonChatBody's mount effect should do for a daemon-backed
- * (local-pc / relay) screen: keep the current chat, switch to an existing
- * one, or mint a new one. Sibling of `resolveWorkspaceChatAction` for the
+ * Decides what DaemonChatBody's mount effect should do for a Remote daemon
+ * screen: keep the current chat, switch to an existing one, or mint a new
+ * one. Sibling of `resolveWorkspaceChatAction` for the
  * daemon screens (which have no repo identity to scope by) — extracted as a
  * pure function for the same reason: the ordering/scoping logic is
  * unit-testable without mounting the whole screen.
@@ -164,9 +162,9 @@ export function resolveWorkspaceChatAction({
  * find-or-create the right local chat: without `daemonSessionId` scoping,
  * every tap just re-confirmed whichever relay chat happened to already be
  * active (`activeChatId` persists across the remount a target switch causes;
- * 2026-07-03 report). Local-PC has no picker (always the one session), and an
- * untargeted relay screen (no `targetSessionId` yet) falls back to the same
- * most-recent-chat-of-this-mode behavior repo mode's fallback path uses.
+ * 2026-07-03 report). An untargeted relay screen (no `targetSessionId` yet)
+ * falls back to the same most-recent-chat-of-this-mode behavior repo mode's
+ * fallback path uses.
  */
 export type DaemonChatAction =
   | { kind: 'noop' }
@@ -176,7 +174,7 @@ export type DaemonChatAction =
 export interface ResolveDaemonChatActionParams {
   conversations: Record<string, Conversation>;
   activeChatId: string;
-  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>;
+  mode: Extract<WorkspaceMode, 'relay'>;
   targetSessionId: string | null;
   conversationsLoaded: boolean;
 }
@@ -192,7 +190,7 @@ export function resolveDaemonChatAction({
 
   const activeConversation = conversations[activeChatId];
 
-  if (mode === 'relay' && targetSessionId) {
+  if (targetSessionId) {
     if (
       activeConversation?.mode === mode &&
       activeConversation.daemonSessionId === targetSessionId
@@ -215,11 +213,7 @@ export function resolveDaemonChatAction({
 }
 
 /**
- * Filters conversations to the ones a daemon screen's drawer can safely
- * offer. Cross-mode picks (e.g. tapping a Remote transcript inside a Local
- * PC session) would route the next send through the wrong daemon while
- * displaying the picked transcript, so the drawer only shows chats this
- * daemon can faithfully resume.
+ * Filters conversations to the ones a daemon screen's drawer can safely offer.
  *
  * Within relay mode there's the same risk one level down: another target
  * session's chat is still `mode === 'relay'`, so the drawer's resume (a bare
@@ -232,13 +226,13 @@ export function resolveDaemonChatAction({
  */
 export function filterDaemonScopedConversations(
   conversations: Record<string, Conversation>,
-  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>,
+  mode: Extract<WorkspaceMode, 'relay'>,
   targetSessionId: string | null,
 ): Record<string, Conversation> {
   const filtered: Record<string, Conversation> = {};
   for (const [id, conv] of Object.entries(conversations)) {
     if (conv.mode !== mode) continue;
-    if (mode === 'relay' && targetSessionId && conv.daemonSessionId !== targetSessionId) continue;
+    if (targetSessionId && conv.daemonSessionId !== targetSessionId) continue;
     filtered[id] = conv;
   }
   return filtered;

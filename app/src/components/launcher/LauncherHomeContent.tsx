@@ -47,8 +47,6 @@ interface LauncherHomeContentProps {
   }) => Promise<void>;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
-  /** Optional: undefined hides the Local PC tile (feature flag off). */
-  onStartLocalPc?: () => void;
   /** Optional: undefined hides the Remote tile (feature flag off). */
   onStartRelay?: () => void;
   sandboxSession?: LauncherSandboxSession | null;
@@ -72,7 +70,6 @@ export function LauncherHomeContent({
   onPublishToGitHub,
   onStartWorkspace,
   onStartChat,
-  onStartLocalPc,
   onStartRelay,
   sandboxSession,
   onResumeSandbox,
@@ -176,7 +173,6 @@ export function LauncherHomeContent({
           onPublishToGitHub={onPublishToGitHub}
           onStartWorkspace={onStartWorkspace}
           onStartChat={onStartChat}
-          onStartLocalPc={onStartLocalPc}
           onStartRelay={onStartRelay}
           sandboxSession={sandboxSession}
           onResumeSandbox={onResumeSandbox}

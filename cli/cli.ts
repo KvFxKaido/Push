@@ -235,7 +235,7 @@ Usage:
   push daemon start             Start background daemon
   push daemon stop              Stop background daemon
   push daemon status            Check daemon status
-  push daemon pair              Mint a device token (loopback-only)
+  push daemon pair              Mint a loopback device token (low-level/back-compat)
   push daemon pair --origin <url>
                                 Mint a device token bound to an exact origin
   push daemon tokens            List device tokens (no secrets)
@@ -2436,8 +2436,10 @@ async function runDaemonPair(values: Record<string, unknown>): Promise<number> {
   process.stdout.write(`Bearer token (copy now — this is the only time it will be shown):\n`);
   process.stdout.write(`\n  ${token}\n\n`);
   process.stdout.write(
-    `Paste this token in the Push web app's "Pair Local PC" flow. Revoke with:\n`,
+    `Loopback token minted for low-level clients. For the Push web/mobile app, use:\n`,
   );
+  process.stdout.write(`  push daemon pair --remote\n\n`);
+  process.stdout.write(`Revoke this token with:\n`);
   process.stdout.write(`  push daemon revoke ${tokenId}\n`);
   return 0;
 }
@@ -2552,7 +2554,9 @@ async function runDaemonTokens(values: Record<string, unknown>): Promise<number>
     return 0;
   }
   if (records.length === 0) {
-    process.stdout.write('no device tokens (pair with: push daemon pair [--origin <url>])\n');
+    process.stdout.write(
+      'no device tokens (web/mobile pairing: push daemon pair --remote; loopback token: push daemon pair [--origin <url>])\n',
+    );
     return 0;
   }
   for (const r of records) {

@@ -4843,7 +4843,7 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
   });
 });
 
-describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
+describe('executeSandboxToolCall -- daemon dispatch (PR 3c.1)', () => {
   beforeEach(() => {
     vi.mocked(execLocalDaemon).mockReset();
     vi.mocked(sandboxClient.execInSandbox).mockReset();
@@ -4857,7 +4857,7 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
 
   it('routes sandbox_exec through the daemon when localDaemonBinding is provided', async () => {
     vi.mocked(execLocalDaemon).mockResolvedValueOnce({
-      stdout: 'hello from local PC\n',
+      stdout: 'hello from daemon\n',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -4873,7 +4873,7 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
     expect(execLocalDaemon).toHaveBeenCalledOnce();
     expect(execLocalDaemon).toHaveBeenCalledWith(binding, 'echo hello', {});
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
-    expect(result.text).toContain('hello from local PC');
+    expect(result.text).toContain('hello from daemon');
     expect(result.text).toContain('Exit code: 0');
   });
 
@@ -4881,8 +4881,8 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
     // Regression for the Codex P2 finding on PR #511: the bare
     // `!sandboxId` guard at the top of executeSandboxToolCall would
     // return "No active sandbox" before the dispatch fork could run.
-    // WorkspaceSession.local-pc carries sandboxId: null, so this is
-    // the realistic shape — without the fix, this test asserts the
+    // Daemon-bound sessions carry sandboxId: null, so this is the realistic
+    // shape — without the fix, this test asserts the
     // bug; with the fix, the daemon path runs and returns ok.
     vi.mocked(execLocalDaemon).mockResolvedValueOnce({
       stdout: '/home/ishaw/projects/Push\n',
@@ -4923,7 +4923,7 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
     );
 
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
-    expect(result.text).toContain('Local PC daemon is unreachable');
+    expect(result.text).toContain('Daemon is unreachable');
     expect(result.text).toContain('Re-pair to continue');
   });
 
@@ -4947,7 +4947,7 @@ describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.1)', () => {
   });
 });
 
-describe('executeSandboxToolCall -- local-pc dispatch (PR 3c.3 file ops)', () => {
+describe('executeSandboxToolCall -- daemon dispatch (PR 3c.3 file ops)', () => {
   beforeEach(() => {
     vi.mocked(readFileLocalDaemon).mockReset();
     vi.mocked(writeFileLocalDaemon).mockReset();

@@ -321,29 +321,29 @@ describe('IMPLEMENTED_SANDBOX_TOOLS', () => {
   });
 });
 
-describe('LOCAL_PC_TOOL_PROTOCOL', () => {
+describe('LOCAL_DAEMON_TOOL_PROTOCOL', () => {
   it('does not advertise /workspace as a default workdir or repo root', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // The cloud protocol advertises `/workspace` as the default workdir
     // (e.g. "default workdir: /workspace", "cloned to /workspace"). The
-    // local-pc variant must avoid those AFFIRMATIVE uses — negative
+    // daemon-bound variant must avoid those AFFIRMATIVE uses — negative
     // mentions warning the model NOT to invent `/workspace` are fine
     // and intentional. Test the specific cloud-pattern phrasings.
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/default workdir:\s*\/workspace/i);
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/cloned to \/workspace/i);
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/\(default:\s*\/workspace\)/i);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/default workdir:\s*\/workspace/i);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/cloned to \/workspace/i);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/\(default:\s*\/workspace\)/i);
   });
 
   it('explicitly disclaims the /workspace prior', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // Because the model has a strong cloud-sandbox training prior that
     // `/workspace` is the workspace root, an explicit disclaimer is
     // load-bearing — not just an omission.
-    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/no\s+`?\/workspace/i);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).toMatch(/no\s+`?\/workspace/i);
   });
 
   it('does not list cloud-only tools as part of the available tool surface', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // The original leak (PR #527 Copilot low-confidence #3) was
     // interpolating `${SANDBOX_MUTATING_TOOL_NAMES}`, which expands to
     // a comma list including the cloud-only tool public names
@@ -357,7 +357,7 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
     // not legitimate prose references.
     const commaListLeak = (name: string) => new RegExp(`(?:^|[,(])\\s*${name}\\s*(?:[,)]|$)`, 'm');
     for (const name of ['commit', 'push', 'draft', 'promote', 'create_branch', 'switch_branch']) {
-      expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(commaListLeak(name));
+      expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(commaListLeak(name));
     }
     // Affirmative protocol entries: `${PROMOTE_TOOL}(...)` would show up
     // as e.g. "- promote(repo_name, ...) — ..." in the cloud protocol.
@@ -371,50 +371,52 @@ describe('LOCAL_PC_TOOL_PROTOCOL', () => {
       'switch_branch',
       'verify',
     ]) {
-      expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(new RegExp(`^- ${name}\\(`, 'm'));
+      expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(new RegExp(`^- ${name}\\(`, 'm'));
     }
     // Canonical-name leaks (the longer names, less ambiguous in prose).
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_commit/);
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/prepare_push/);
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_save_draft/);
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/promote_to_github/);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/sandbox_commit/);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/prepare_push/);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/sandbox_save_draft/);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(/promote_to_github/);
   });
 
   it('discourages Explorer/Coder delegation explicitly', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // Without this hint the model still reaches for Explorer from
     // training priors even when the tool isn't in its surface. Stated
     // explicitly so we're not relying on absence-of-instruction.
-    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/NO DELEGATION|do not delegate.*Explorer/i);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).toMatch(/NO DELEGATION|do not delegate.*Explorer/i);
   });
 
   it('keeps the JSON fenced-call convention', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // Wire-format compat with the rest of Push: the tool-call parser
     // only looks for ```json ... ``` blocks.
-    expect(LOCAL_PC_TOOL_PROTOCOL).toContain('```json');
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).toContain('```json');
   });
 
   it('states the single-trailing-side-effect cap (MULTI_MUTATION_NOT_ALLOWED)', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // The web dispatch enforces the per-turn budget even when the sandbox is a
     // paired pushd — a second side-effect in one turn returns
     // MULTI_MUTATION_NOT_ALLOWED. The protocol previously only said "place
     // mutations LAST", which doesn't convey the *single* side-effect cap; state
-    // it explicitly so the local-pc model doesn't emit two execs and stall.
-    expect(LOCAL_PC_TOOL_PROTOCOL).toContain('MULTI_MUTATION_NOT_ALLOWED');
-    expect(LOCAL_PC_TOOL_PROTOCOL).toMatch(/at most one|single/i);
-    // The cap must stay local-pc-accurate: no commit/PR/delegation tools in the
+    // it explicitly so the daemon-bound model doesn't emit two execs and stall.
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).toContain('MULTI_MUTATION_NOT_ALLOWED');
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).toMatch(/at most one|single/i);
+    // The cap must stay daemon-accurate: no commit/PR/delegation tools in the
     // side-effect framing (those are forbidden by NO REMOTE / NO DELEGATION).
-    expect(LOCAL_PC_TOOL_PROTOCOL).not.toMatch(/sandbox_commit|prepare_push|create_pr|delegate_/);
+    expect(LOCAL_DAEMON_TOOL_PROTOCOL).not.toMatch(
+      /sandbox_commit|prepare_push|create_pr|delegate_/,
+    );
   });
 
   it('lists the core sandbox_* tool public names that the daemon services', async () => {
-    const { LOCAL_PC_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
+    const { LOCAL_DAEMON_TOOL_PROTOCOL } = await import('./sandbox-tool-detection');
     // Public tool names per the registry: exec / read / write / ls /
     // diff. These are what the model emits in fenced JSON calls.
     for (const tool of ['exec', 'read', 'write', 'ls']) {
-      expect(LOCAL_PC_TOOL_PROTOCOL).toContain(tool);
+      expect(LOCAL_DAEMON_TOOL_PROTOCOL).toContain(tool);
     }
   });
 });

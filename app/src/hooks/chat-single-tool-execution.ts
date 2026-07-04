@@ -181,7 +181,7 @@ export async function executeSingleToolCall(
 
   // Lazy auto-spin: create sandbox on demand for sandbox calls and any
   // delegation that can execute Coder work (direct or via task graph).
-  // Local-PC sessions skip this entirely — their binding is the transport.
+  // Daemon-bound sessions skip this entirely — their binding is the transport.
   if (
     !toolExecResult &&
     (toolCall.source === 'sandbox' || delegateCallNeedsSandbox(toolCall)) &&
@@ -221,7 +221,7 @@ export async function executeSingleToolCall(
   } else {
     // Live tail for the cloud detached-exec path: stream the latest output
     // line into the status bar's `detail` slot (phase + startedAt stay put so
-    // the elapsed timer keeps ticking). Local-pc execs ignore the observer.
+    // the elapsed timer keeps ticking). Daemon execs ignore the observer.
     const execProgressTail =
       toolCall.source === 'sandbox' && EXEC_PROGRESS_TAIL_TOOLS.has(toolCall.call.tool)
         ? createExecProgressTail({

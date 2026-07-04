@@ -218,11 +218,10 @@ async function tryGitHubReadFallback(
 /**
  * Sandbox tools that have a `pushd` daemon implementation today.
  *
- * For a `kind: 'local-pc'` session (binding present, `sandboxId: null`),
- * routing an unsupported tool to the cloud handler would call
- * `execInSandbox('')` against a nonexistent sandbox and surface a
- * confusing error. The runtime layer refuses these calls with a
- * structured `LOCAL_DAEMON_TOOL_UNSUPPORTED` error.
+ * For a daemon-bound session (binding present, `sandboxId: null`), routing an
+ * unsupported tool to the cloud handler would call `execInSandbox('')` against
+ * a nonexistent sandbox and surface a confusing error. The runtime layer
+ * refuses these calls with a structured `LOCAL_DAEMON_TOOL_UNSUPPORTED` error.
  *
  * Shipped daemon paths:
  *   - `sandbox_exec` (PR #511 / 3c.1)
@@ -481,7 +480,7 @@ export class WebToolExecutionRuntime
             };
             break;
           }
-          // Local-PC sessions (binding present, no cloud sandboxId) can
+          // Remote daemon sessions (binding present, no cloud sandboxId) can
           // only route tools that have a daemon implementation. Without
           // this gate, e.g. `sandbox_read_file` would reach the cloud
           // dispatcher with `sandboxId: ''` and fail against a nonexistent
@@ -496,8 +495,8 @@ export class WebToolExecutionRuntime
             const err: StructuredToolError = {
               type: 'LOCAL_DAEMON_TOOL_UNSUPPORTED',
               retryable: false,
-              message: `Tool "${toolCall.call.tool}" is not yet available on Local PC sessions.`,
-              detail: `Only ${Array.from(LOCAL_DAEMON_SUPPORTED_TOOLS).join(', ')} routes through the paired daemon today. Per-tool daemon handlers land in PR 3c.3+.`,
+              message: `Tool "${toolCall.call.tool}" is not yet available on Remote daemon sessions.`,
+              detail: `Only ${Array.from(LOCAL_DAEMON_SUPPORTED_TOOLS).join(', ')} routes through the paired daemon today.`,
             };
             result = {
               text: `[Tool Error — ${toolCall.call.tool}] ${err.message}\n${err.detail}`,
@@ -522,7 +521,7 @@ export class WebToolExecutionRuntime
           });
           // Read-tier fallback (§11): a cloud sandbox that went unreachable
           // mid-session should not fail a read the GitHub tier can serve.
-          // Cloud-only — local-PC daemon reads have their own re-pair path and
+          // Cloud-only — daemon reads have their own re-pair path and
           // GitHub can't see the local working tree.
           if (context.sandboxId && result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
             const fallback = await tryGitHubReadFallback(

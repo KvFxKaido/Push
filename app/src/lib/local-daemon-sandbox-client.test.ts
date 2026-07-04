@@ -29,7 +29,7 @@ import {
   type LiveDaemonBinding,
 } from './local-daemon-sandbox-client';
 import type { RequestOptions, SessionResponse } from './local-daemon-binding';
-import type { LocalPcBinding, RelayBinding } from '@/types';
+import type { LoopbackDaemonBinding, RelayBinding } from '@/types';
 import { canListenOnLoopback } from './test-environment';
 
 if (typeof (globalThis as { WebSocket?: unknown }).WebSocket === 'undefined') {
@@ -155,7 +155,7 @@ async function startStubServer(): Promise<StubServer> {
 }
 
 let server: StubServer;
-let binding: LocalPcBinding;
+let binding: LoopbackDaemonBinding;
 
 beforeEach(async () => {
   if (!loopbackAvailable) return;
@@ -268,7 +268,7 @@ describeWithLoopback('execLocalDaemon', () => {
   });
 
   it('throws LocalDaemonUnreachableError when the daemon rejects the bearer', async () => {
-    const wrongTokenBinding: LocalPcBinding = {
+    const wrongTokenBinding: LoopbackDaemonBinding = {
       port: server.port,
       token: 'pushd_wrong_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       boundOrigin: 'http://localhost:5173',
@@ -491,7 +491,7 @@ describeWithLoopback('identifyLocalDaemon', () => {
   });
 
   it('rejects on auth failure with LocalDaemonUnreachableError', async () => {
-    const wrongBinding: LocalPcBinding = {
+    const wrongBinding: LoopbackDaemonBinding = {
       port: server.port,
       token: 'pushd_wrong_token_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
       boundOrigin: 'http://localhost:5173',
@@ -796,7 +796,7 @@ describe('isRelayBinding', () => {
     expect(isRelayBinding(relay)).toBe(true);
   });
   it('returns false for a loopback binding (has port)', () => {
-    const loop: LocalPcBinding = {
+    const loop: LoopbackDaemonBinding = {
       port: 49152,
       token: 'pushd_xxx',
       boundOrigin: 'http://localhost:5173',
@@ -831,8 +831,8 @@ describe('resolveRelayTargetSessionId', () => {
     expect(resolveRelayTargetSessionId(relay)).toBeNull();
   });
 
-  it('returns null for a local-pc binding (no per-session concept)', () => {
-    const loop: LocalPcBinding = {
+  it('returns null for a loopback binding (no per-session concept)', () => {
+    const loop: LoopbackDaemonBinding = {
       port: 49152,
       token: 'pushd_xxx',
       boundOrigin: 'http://localhost:5173',
@@ -895,7 +895,7 @@ describe('LiveDaemonBinding reuse path', () => {
         port: 1,
         token: 'pushd_unused_in_reuse_path',
         boundOrigin: 'http://localhost:5173',
-      } as LocalPcBinding,
+      } as LoopbackDaemonBinding,
       request: <T = unknown>(opts: RequestOptions): Promise<SessionResponse<T>> => {
         calls.push(opts);
         return handler(opts) as Promise<SessionResponse<T>>;
@@ -912,7 +912,7 @@ describe('LiveDaemonBinding reuse path', () => {
         port: 1,
         token: 'pushd_xxx',
         boundOrigin: 'http://localhost:5173',
-      } as LocalPcBinding),
+      } as LoopbackDaemonBinding),
     ).toBe(false);
   });
 

@@ -12,10 +12,8 @@
  * `visibilitychange` rather than the `@capacitor/app` plugin, matching
  * `useBackgroundCoderJob` / `useChatCheckpoint`).
  *
- * Both `useLocalDaemon` and `useRelayDaemon` share the same reconnect
- * reducer shape, so the decision + the listener wiring live here once
- * (per CLAUDE.md: promote a per-surface helper into a shared module the
- * moment a second surface needs it).
+ * Daemon hooks share the same reconnect reducer shape, so the decision + the
+ * listener wiring live here once.
  */
 import type { ConnectionStatus } from '@/lib/local-daemon-binding';
 

@@ -323,7 +323,7 @@ export function isCapabilityMapped(canonicalName: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Execution mode — cloud sandbox vs paired local daemon
+// Execution mode — cloud sandbox vs paired daemon
 // ---------------------------------------------------------------------------
 
 /**
@@ -335,12 +335,11 @@ export function isCapabilityMapped(canonicalName: string): boolean {
  *                      changes, but delegates anything needing shell/exec
  *                      to the Coder via `delegate_coder` — `sandbox:exec`
  *                      is NOT in its grant.
- *   - `local-daemon` — a paired pushd daemon on the user's machine, reached
- *                      over loopback (`kind: 'local-pc'`) or Worker relay
- *                      (`kind: 'relay'`). There is no second hop, the
- *                      local-pc tool protocol explicitly forbids
- *                      delegation, and the user reviews diffs themselves.
- *                      The orchestrator wields sandbox tools directly here.
+ *   - `local-daemon` — a paired pushd daemon reached through Worker relay.
+ *                      There is no second hop, the daemon tool protocol
+ *                      explicitly forbids delegation, and the user reviews
+ *                      diffs themselves. The orchestrator wields sandbox
+ *                      tools directly here.
  *
  * Passed as the third argument to `roleCanUseTool` / `enforceRoleCapability`.
  * Defaults to `'cloud'` everywhere so existing callers stay correct without
@@ -382,7 +381,7 @@ export interface CapabilityModeOpts {
 
 /**
  * Canonical mapping from a workspace mode (`'repo' | 'scratch' | 'chat'
- * | 'local-pc' | 'relay'`) to the `ExecutionMode` policy input.
+ * | 'relay'`) to the `ExecutionMode` policy input.
  *
  * Kept here, in the capability layer, so the prompt builder and the
  * runtime context cannot drift: both call this and get the same answer
@@ -391,7 +390,7 @@ export interface CapabilityModeOpts {
  * drift-detector test in `capabilities.test.ts` pins the full enum.
  */
 export function workspaceModeToExecutionMode(mode: string | null | undefined): ExecutionMode {
-  return mode === 'local-pc' || mode === 'relay' ? 'local-daemon' : 'cloud';
+  return mode === 'relay' ? 'local-daemon' : 'cloud';
 }
 
 /**
@@ -427,7 +426,7 @@ const LOCAL_DAEMON_ORCHESTRATOR_EXTRA: ReadonlySet<Capability> = new Set<Capabil
 /**
  * Remote-bound git ops the orchestrator carries in `cloud` mode (its
  * direct-edit lane) but must drop in `local-daemon` mode: a paired session
- * cannot push without a remote, so the local-pc tool protocol declares push
+ * cannot push without a remote, so the daemon tool protocol declares push
  * unavailable. Only `git:push` is remote-bound — `git:commit` and `git:branch`
  * operate on the local working tree and are KEPT (commit via the base grant,
  * branch via `LOCAL_DAEMON_ORCHESTRATOR_EXTRA`). Stripped only for the

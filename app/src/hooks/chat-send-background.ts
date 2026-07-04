@@ -50,7 +50,7 @@ import type { UseBackgroundCoderJobResult } from './useBackgroundCoderJob';
  * `useChat.sendMessage`'s turn-dispatch decision, with the per-route
  * eligibility checks the preconditions demand. Both routes hard-require an
  * active repo AND a branch (the sandbox is lazily ensured), so a no-repo
- * workspace (scratch / chat / local-pc) stays on the foreground
+ * workspace (scratch / chat) stays on the foreground
  * Orchestrator loop instead of routing every send into a guaranteed
  * precondition error (Codex P1, PR #887). The provider-capability fold
  * applies to the ENGINE route only: a Settings-key-only provider would

@@ -112,7 +112,7 @@ select:focus-visible {
 .bg-push-grad-page {
   /* Page background gradient owned by <PageScaffold>. Previously hand-rolled */
   /* as `bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)]` */
-  /* in HomeScreen, OnboardingScreen, LocalPcPairing, ComposerDraftScreen.   */
+  /* in HomeScreen, OnboardingScreen, RelayPairing, ComposerDraftScreen.     */
   background: linear-gradient(180deg, #070708 0%, #030304 100%);
 }
 

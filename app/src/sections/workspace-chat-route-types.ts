@@ -61,7 +61,6 @@ export interface ChatRouteWorkspaceProps {
   };
   handleStartWorkspace: (() => void) | undefined;
   handleStartChat: (() => void) | undefined;
-  handleStartLocalPc: (() => void) | undefined;
   handleStartRelay: (() => void) | undefined;
   /** Tap-to-resume: enter the Remote surface attached to a specific
    * daemon session (bearer from grant_session_attach). Undefined when

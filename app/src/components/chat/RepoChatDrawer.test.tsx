@@ -22,7 +22,6 @@ describe('chatDrawerRepoTag — Recents repo tag (replaces the branch stamp)', (
 
   it('tags unscoped chats by workspace mode', () => {
     expect(chatDrawerRepoTag({ mode: 'chat' }, repoNames)).toBe('Chat');
-    expect(chatDrawerRepoTag({ mode: 'local-pc' }, repoNames)).toBe('Local PC');
     expect(chatDrawerRepoTag({ mode: 'relay' }, repoNames)).toBe('Remote');
     expect(chatDrawerRepoTag({}, repoNames)).toBe('Unscoped');
   });

@@ -54,12 +54,11 @@ Without any AI key the app prompts for one on first use.
 Experimental paths are gated by build-time flags. They default OFF so unfinished surfaces don't ship into mainline builds.
 
 ```env
-VITE_LOCAL_PC_MODE=1    # Surfaces the Local PC tile on onboarding, home, and the in-workspace launcher sheet
 VITE_RELAY_MODE=1       # Surfaces the Remote (pushd relay) tile on the same surfaces
 VITE_NATIVE_CHECKPOINTS=1 # APK/native only: use the on-device JGit checkpoint store + history UI
 ```
 
-Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — including unset — hides the tile.
+Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — including unset — hides the gated surface.
 
 **These are inlined by Vite at `vite build` time** (`import.meta.env.VITE_*` becomes a literal string in the bundle). They are **not** runtime vars — setting them in the browser, in `wrangler.jsonc` `vars`, or via `wrangler secret put` has no effect, because the JS the PWA loads was already compiled with whatever value the flag had at build time.
 

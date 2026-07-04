@@ -1,13 +1,9 @@
 /**
  * useRelayDaemon — React hook that owns the lifecycle of one
- * relay-WS adapter. Phase 2.f sibling to `useLocalDaemon`.
+ * relay-WS adapter.
  *
- * Architecture is identical to the loopback hook (status-driven
- * reconnect reducer + timer effect). The shape differences are:
- *
- *   - Transport: `createRelayDaemonBinding` instead of
- *     `createLocalDaemonBinding`; URL + bearer come from a
- *     `RelayBinding` not a `LocalPcBinding`.
+ * Architecture: status-driven reconnect reducer + timer effect. URL + bearer
+ * come from a `RelayBinding`.
  *
  *   - `relay_replay_unavailable`: the chat-screen consumer wants a
  *     transient signal (mode chip amber flash) but no banner. The
@@ -21,10 +17,8 @@
  *     resumes from the right point. The reducer reads it from a
  *     ref so the connection effect doesn't re-fire on every event.
  *
- * The reconnect ladder is intentionally the SAME as `useLocalDaemon`
- * (decided in the 2.f scope chat): [1s, 2s, 4s, 8s, 16s, 30s] cap 6.
- * A future PR may make it relay-specific once real phone testing
- * shows what mobile networks actually need.
+ * The reconnect ladder is [1s, 2s, 4s, 8s, 16s, 30s] with cap 6. A future PR
+ * may make it more mobile-network-specific if real phone testing asks for it.
  */
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
@@ -43,10 +37,7 @@ import { isTranscriptMutationEvent } from '@push/lib/session-transcript-events';
 
 const EVENT_LOG_CAP = 50;
 
-/** Mirror of `useLocalDaemon`'s ladder so a single source of truth
- * lives in `useLocalDaemon.ts` long-term. Today this hook keeps its
- * own copy to avoid coupling the two surfaces; if the two ever
- * actually diverge, the duplication makes that explicit. */
+/** Relay reconnect backoff ladder. */
 export const RELAY_RECONNECT_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
 export const RELAY_RECONNECT_MAX_ATTEMPTS = 6;
 
@@ -436,8 +427,7 @@ export function useRelayDaemon(
           try {
             onEventRef.current?.(event);
           } catch {
-            // see useLocalDaemon for why consumer crashes are
-            // swallowed here.
+            // Consumer callbacks must not crash the relay binding.
           }
         },
         // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -541,11 +531,10 @@ export function useRelayDaemon(
     setLocalReconnectKey((k) => k + 1);
   }, []);
 
-  // Environment "try now" nudge (GOpencode review #3) — same wiring as
-  // `useLocalDaemon`: on network-restore / app-foreground, collapse a
-  // pending backoff wait and reconnect now, but only when parked in a
-  // dropped/exhausted state. Status read from a ref so listeners bind
-  // once per binding rather than per status transition.
+  // Environment "try now" nudge (GOpencode review #3): on network-restore /
+  // app-foreground, collapse a pending backoff wait and reconnect now, but only
+  // when parked in a dropped/exhausted state. Status read from a ref so
+  // listeners bind once per binding rather than per status transition.
   const wsStatusRef = useRef(wsStatus);
   useEffect(() => {
     wsStatusRef.current = wsStatus;

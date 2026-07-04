@@ -63,7 +63,7 @@ Use this operating loop unless the request clearly calls for something else:
  *     git:commit/push) for small, localized changes, but NO sandbox:exec,
  *     so it delegates anything that needs running commands to the Coder.
  *   - local-daemon — orchestrator wields sandbox tools directly, including
- *     exec (no second hop, no delegation per local-pc tool protocol).
+ *     exec (no second hop, no delegation per daemon tool protocol).
  *
  * Set by `app/src/lib/orchestrator.ts` from `workspaceContext.mode`.
  * The CLI surface enters orchestrator-prompt territory rarely today; if
@@ -251,11 +251,10 @@ ${perTurnBudget}`;
  * sections. Shared by `buildOrchestratorBasePrompt()` and `toLLMMessages()`
  * to avoid drift when updating the base prompt wiring.
  *
- * Pass `{ isLocalDaemon: true }` when the active workspace is a paired
- * pushd daemon (`kind: 'local-pc'` or `kind: 'relay'`) so the
- * tool-instructions and delegation sections describe the wider capability
- * grant the orchestrator picks up in that mode. Default `false` matches
- * the cloud-sandbox grant.
+ * Pass `{ isLocalDaemon: true }` when the active workspace is a paired pushd
+ * daemon so the tool-instructions and delegation sections describe the wider
+ * capability grant the orchestrator picks up in that mode. Default `false`
+ * matches the cloud-sandbox grant.
  */
 export function buildOrchestratorBaseBuilder(
   opts: OrchestratorPromptOptions = {},

@@ -48,11 +48,10 @@ import { commandRequiresApproval, isSinglePlainCommand } from '../lib/command-po
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
- * workspace. The current product treats Local PC / Remote sessions as
- * daemon-backed, not cloud sandbox; hardcoding here matches that
- * truth. A future cloud-backed CLI path would lift this to a per-call
- * derivation at the runtime edge (mirroring the web seam in
- * `getExecutionMode`).
+ * workspace. The current product treats daemon-backed sessions as local
+ * execution, not cloud sandbox; hardcoding here matches that truth. A future
+ * cloud-backed CLI path would lift this to a per-call derivation at the
+ * runtime edge (mirroring the web seam in `getExecutionMode`).
  */
 const CLI_EXECUTION_MODE: ExecutionMode = 'local-daemon';
 

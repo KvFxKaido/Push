@@ -38,24 +38,22 @@ export interface SandboxExecutionOptions {
    */
   isMainProtected?: boolean;
   /**
-   * When present, the active workspace is a `kind: 'local-pc'` OR
-   * `kind: 'relay'` session and the dispatcher routes whichever tool
-   * ops the daemon supports through `local-daemon-sandbox-client`
-   * instead of the cloud sandbox. Absent means cloud sandbox (existing
-   * behaviour).
+   * When present, the active workspace is daemon-bound and the dispatcher
+   * routes whichever tool ops the daemon supports through
+   * `local-daemon-sandbox-client` instead of the cloud sandbox. Absent means
+   * cloud sandbox (existing behaviour).
    *
-   * The union widened in Phase 2.f when the relay path joined. The
-   * downstream helpers in `local-daemon-sandbox-client.ts` pick the
-   * adapter constructor by structural narrowing (`'deploymentUrl' in
-   * binding` → relay, else loopback), so neither this type nor the
-   * tool helpers need a tag field.
+   * The downstream helpers in `local-daemon-sandbox-client.ts` pick the
+   * adapter constructor by structural narrowing (`'deploymentUrl' in binding`
+   * → relay, else loopback), so neither this type nor the tool helpers need a
+   * tag field.
    *
    * PR 3c.1 routed only `sandbox_exec` through this seam; subsequent
    * PRs (3c.2+) added read_file, write_file, etc. Tools that don't
-   * yet have a daemon implementation throw a structured "not
-   * implemented for local-pc" error rather than silently falling back
-   * to the cloud — that fallback would talk to a sandbox the user
-   * doesn't have and produce confusing errors.
+   * yet have a daemon implementation throw a structured "not implemented for
+   * daemon-bound sessions" error rather than silently falling back to the
+   * cloud — that fallback would talk to a sandbox the user doesn't have and
+   * produce confusing errors.
    */
   localDaemonBinding?: import('@/lib/local-daemon-sandbox-client').ToolDispatchBinding;
   /**
@@ -70,7 +68,7 @@ export interface SandboxExecutionOptions {
   /**
    * Live-output observer for the cloud `sandbox_exec` detached path: invoked
    * with each drained stdout/stderr chunk so the chat layer can render a live
-   * tail in the agent status bar. Observational only; ignored by the local-pc
+   * tail in the agent status bar. Observational only; ignored by the daemon
    * route and the buffered fallback inside `execLongRunningInSandbox`.
    */
   onExecProgress?: (chunk: { stdout: string; stderr: string }) => void;
@@ -598,7 +596,7 @@ Sandbox rules:
 - Use ${VERIFY_WORKSPACE_TOOL} when the workspace may need "install → typecheck → test" in one step, especially if [SANDBOX_ENVIRONMENT] indicates dependencies are missing.`;
 
 /**
- * Local-PC variant of the sandbox tool protocol. Mirrors the same JSON
+ * Daemon-bound variant of the sandbox tool protocol. Mirrors the same JSON
  * fenced-call convention but with three structural differences:
  *
  *   1. **Path semantics**: no `/workspace` references. The daemon's
@@ -612,11 +610,11 @@ Sandbox rules:
  *      readiness hints, which the local daemon doesn't emit. The
  *      model can still call exec/run_tests/check_types directly.
  *
- * Selected by orchestrator.ts when `workspaceContext.mode === 'local-pc'`
- * (see the mode branch). Smoke-tested 2026-05-13.
+ * Selected by orchestrator.ts when a session is daemon-bound (see the mode
+ * branch). Smoke-tested 2026-05-13.
  */
-export const LOCAL_PC_TOOL_PROTOCOL = `
-LOCAL PC TOOLS — You are connected to a local pushd daemon on the user's machine.
+export const LOCAL_DAEMON_TOOL_PROTOCOL = `
+DAEMON TOOLS — You are connected to a pushd daemon for the active Remote session.
 
 The daemon's current working directory is the workspace root. Relative paths resolve against it; absolute paths are REAL host filesystem paths.
 
@@ -642,17 +640,17 @@ Usage: Output a fenced JSON block:
 {"tool": "${EXEC_TOOL}", "args": {"command": "npm test"}}
 \`\`\`
 
-LOCAL PC RULES (different from cloud sandbox — read carefully):
+DAEMON RULES (different from cloud sandbox — read carefully):
 - CRITICAL: To use a tool, you MUST include the fenced JSON block in your response. The system can ONLY detect and execute tool calls from JSON blocks.
 - PATHS: Relative paths resolve against the daemon's cwd (the workspace root). Absolute paths are REAL host paths — do NOT rewrite \`/tmp/foo\` to \`/workspace/foo\`. There is no \`/workspace\` on this machine.
 - ALLOWLIST: The daemon enforces a repo allowlist. Writes outside the daemon's cwd may be rejected with \`PATH_OUTSIDE_WORKSPACE\`. If that happens, retry with a path inside the workspace root, or surface the constraint to the user — do NOT invent a \`/workspace/\` path to substitute.
 - NO REMOTE: There is no \`git push\` target wired up here. Do not attempt commit/push/PR tools — they are not available.
-- NO DELEGATION: Do not delegate to the Explorer or Coder agent in local-pc mode. Their tooling depends on cloud-side context that doesn't exist here; the delegation will produce a confused "sandbox unavailable" failure. Call the sandbox_* tools above directly.
+- NO DELEGATION: Do not delegate to the Explorer or Coder agent in daemon-bound Remote sessions. Their tooling depends on cloud-side context that doesn't exist here; the delegation will produce a confused "sandbox unavailable" failure. Call the sandbox_* tools above directly.
 - For multi-step tasks (edit + test), use multiple tool calls in sequence.
 - You may emit multiple tool calls in one message, but the per-turn budget is strict: read-only calls (read, list_dir, search, read_symbols, refs, diff) run in parallel, max 6 per turn. Then any number of file mutations (write, edit, edit_range, replace, patch) — they run sequentially as one batch; emit at most one mutation per file path in a turn, combining same-file edits into one edit/patch entry. Then AT MOST ONE trailing side-effecting call (a command-runner like exec, run_tests, or check_types). A second side-effect in the same turn is rejected with MULTI_MUTATION_NOT_ALLOWED — split it into the next turn. Order matters: reads first, then file edits, then the single command last. Cloud-only mutating tools listed in the cloud protocol are NOT available here; the daemon does not service them.
 - Prefer ${READ_TOOL} → write/edit flows for changes. Use expected_version from ${READ_TOOL} to avoid stale overwrites.
 - ${DIFF_TOOL} shows what you've changed — useful for showing the user what was modified, but the daemon won't push commits.
-- IMPORTANT: Direct git commit/push/merge/rebase commands in ${EXEC_TOOL} are blocked at the daemon's git guard. For local-pc work, this is intentional — the user reviews diffs through their own workflow outside Push.
+- IMPORTANT: Direct git commit/push/merge/rebase commands in ${EXEC_TOOL} are blocked at the daemon's git guard. For daemon-bound work, this is intentional — the user reviews diffs through their own workflow outside Push.
 - IMPORTANT: ${READ_TOOL} only works on files. To explore directory structure, use ${LIST_DIR_TOOL} first.
 - For simple one-shot questions ("what's my pwd?", "read package.json"), call ONE tool and answer with the result. Do not over-explore.`;
 

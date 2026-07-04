@@ -134,7 +134,7 @@ export {
   detectSandboxToolCall,
   SANDBOX_TOOL_PROTOCOL,
   getSandboxToolProtocol,
-  LOCAL_PC_TOOL_PROTOCOL,
+  LOCAL_DAEMON_TOOL_PROTOCOL,
 } from './sandbox-tool-detection';
 
 // --- Execution ---
@@ -408,14 +408,14 @@ async function runLocalDaemonTool(
       const err: StructuredToolError = {
         type: 'SANDBOX_UNREACHABLE',
         retryable: false,
-        message: `Local PC daemon is unreachable: ${caught.reason}`,
+        message: `Daemon is unreachable: ${caught.reason}`,
         detail:
           'The daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.',
       };
       return {
         text: formatStructuredError(
           err,
-          `[Tool Error — ${toolName}]\nLocal PC daemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
+          `[Tool Error — ${toolName}]\nDaemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
         ),
         structuredError: err,
       };
@@ -482,11 +482,11 @@ async function executeSandboxToolCallInner(
   sandboxId: string,
   options?: SandboxExecutionOptions,
 ): Promise<ToolExecutionResult> {
-  // local-pc sessions intentionally carry sandboxId: null — the
+  // Daemon-bound sessions intentionally carry sandboxId: null — the
   // dispatch fork below routes via the daemon binding instead. Reject
-  // only when neither a sandbox nor a local binding is available
+  // only when neither a sandbox nor a daemon binding is available
   // (PR #511 review: Codex P2 caught that the bare `!sandboxId` guard
-  // would short-circuit local-pc dispatch as soon as 3c.2 threads the
+  // would short-circuit daemon dispatch as soon as 3c.2 threads the
   // binding through useChat).
   if (!sandboxId && !options?.localDaemonBinding) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
@@ -520,9 +520,9 @@ async function executeSandboxToolCallInner(
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
 
-        // PR 3c.1: when the active session is `kind: 'local-pc'`, route
-        // sandbox_exec through the local daemon's WS instead of the
-        // cloud sandbox endpoint. Same `ExecResult` shape — every
+        // PR 3c.1: when the active session has a daemon binding, route
+        // sandbox_exec through pushd's WS instead of the cloud sandbox
+        // endpoint. Same `ExecResult` shape — every
         // downstream consumer (card, sanitization, ledger stale-mark)
         // is transport-agnostic. Unreachable bindings get their own
         // error path with a "re-pair" recovery hint (the cloud
@@ -535,7 +535,7 @@ async function executeSandboxToolCallInner(
           timedOut?: boolean;
           error?: string;
           branch?: string;
-          /** Detached-path provenance; absent on local-pc and buffered-fallback results. */
+          /** Detached-path provenance; absent on daemon and buffered-fallback results. */
           terminalReason?: import('@push/lib/detached-exec-runner').DetachedTerminalReason;
         };
         if (options?.localDaemonBinding) {
@@ -600,7 +600,7 @@ async function executeSandboxToolCallInner(
               return {
                 text: formatStructuredError(
                   unreachableErr,
-                  `[Tool Error — sandbox_exec]\nLocal PC daemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
+                  `[Tool Error — sandbox_exec]\nDaemon is unreachable: ${caught.reason}\nThe daemon may have stopped or the bearer token may have been revoked. Re-pair to continue.`,
                 ),
                 card: { type: 'sandbox', data: cardData },
                 structuredError: unreachableErr,
@@ -627,7 +627,7 @@ async function executeSandboxToolCallInner(
 
           // User cancel (Stop) — the runner interrupted the detached process
           // and resolved with cancel provenance. Synthesize the same envelope
-          // as the local-pc path: cancel is a user-initiated state, not an
+          // as the daemon path: cancel is a user-initiated state, not an
           // error class. Gate on terminalReason, NOT the live signal — a
           // command that exits 124 on its own while Stop happens to be
           // pressed reports 'completed' and must keep its real result.
@@ -926,7 +926,7 @@ async function executeSandboxToolCallInner(
               call.args.content,
             );
             if (!local.ok || local.error) {
-              const err = classifyError(local.error || 'Local-PC write failed', call.args.path);
+              const err = classifyError(local.error || 'Daemon write failed', call.args.path);
               // Default classification will not pick WRITE_FAILED — set
               // it explicitly when the daemon didn't surface a known
               // error (EACCES, etc.) so the model still sees a write-

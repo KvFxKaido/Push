@@ -566,13 +566,12 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
 
 /**
  * Phase 1.d chat-layer wiring: when the chat round loop carries a
- * `localDaemonBinding` (set on the SendLoopContext from a
- * `kind: 'local-pc'` workspace session), the runtime must forward that
- * binding into `executeSandboxToolCall`'s options bag so the sandbox
- * dispatcher can fork to `execLocalDaemon`. PR #511 added the dispatch
- * seam in `sandbox-tools.ts`; these tests pin the upstream half of the
- * contract — the seam is reachable through the runtime, not just from
- * unit tests that call `executeSandboxToolCall` directly.
+ * `localDaemonBinding`, the runtime must forward that binding into
+ * `executeSandboxToolCall`'s options bag so the sandbox dispatcher can fork to
+ * `execLocalDaemon`. PR #511 added the dispatch seam in `sandbox-tools.ts`;
+ * these tests pin the upstream half of the contract — the seam is reachable
+ * through the runtime, not just from unit tests that call
+ * `executeSandboxToolCall` directly.
  */
 describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
   const runtime = new WebToolExecutionRuntime();
@@ -614,10 +613,9 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
   });
 
   it('does NOT short-circuit on missing sandboxId when a binding is present', async () => {
-    // local-pc WorkspaceSession records carry `sandboxId: null` by
-    // construction — the binding is the transport. This pins the
-    // runtime-layer guard (mirrors the PR #511 fix at the
-    // executeSandboxToolCall layer).
+    // Daemon-bound records carry `sandboxId: null` by construction — the
+    // binding is the transport. This pins the runtime-layer guard (mirrors the
+    // PR #511 fix at the executeSandboxToolCall layer).
     const result = await runtime.execute(
       {
         source: 'sandbox',
@@ -677,7 +675,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
   });
 
   describe('LOCAL_DAEMON_SUPPORTED_TOOLS gate', () => {
-    // PR #514 (Codex P2 / Copilot / Kilo P1): when a local-pc session
+    // PR #514 (Codex P2 / Copilot / Kilo P1): when a daemon-bound session
     // has a binding but no sandboxId, only tools with a daemon
     // implementation may dispatch. Without this gate, a non-daemon tool
     // would reach the cloud dispatcher with `sandboxId: ''` and fail
@@ -712,7 +710,7 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
       expect(result.structuredError?.type).toBe('LOCAL_DAEMON_TOOL_UNSUPPORTED');
       expect(result.structuredError?.retryable).toBe(false);
       expect(result.text).toContain(tool);
-      expect(result.text).toContain('Local PC');
+      expect(result.text).toContain('Remote daemon');
       expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
 
@@ -741,10 +739,10 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
     });
 
     it('does NOT block when sandboxId is present, even with a binding (mixed state)', async () => {
-      // Hypothetical: a cloud sandbox is up AND a local binding is
-      // attached. By construction this shouldn't happen for a `kind:
-      // 'local-pc'` workspace (those carry sandboxId: null), but the
-      // gate must not regress the cloud path when both are set.
+      // Hypothetical: a cloud sandbox is up AND a daemon binding is attached.
+      // By construction this shouldn't happen for a daemon-bound workspace
+      // (those carry sandboxId: null), but the gate must not regress the cloud
+      // path when both are set.
       await runtime.execute(
         {
           source: 'sandbox',
@@ -821,7 +819,7 @@ describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)'
     expect(result.text).toContain('[Read tier]');
   });
 
-  it('does NOT fall back for local-PC reads (cloud-only scope)', async () => {
+  it('does NOT fall back for daemon-bound reads (cloud-only scope)', async () => {
     const binding = { kind: 'params' } as never;
     vi.mocked(sandboxTools.executeSandboxToolCall).mockResolvedValueOnce({
       text: '[daemon] unreachable',
@@ -836,7 +834,8 @@ describe('WebToolExecutionRuntime — read-tier GitHub fallback (decision §11)'
       localDaemonBinding: binding,
     });
 
-    // Local-PC keeps its own re-pair path; GitHub can't see the local working tree.
+    // Daemon-bound sessions keep their own re-pair path; GitHub can't see the
+    // daemon's local working tree.
     expect(vi.mocked(githubTools.executeToolCall)).not.toHaveBeenCalled();
     expect(result.structuredError?.type).toBe('SANDBOX_UNREACHABLE');
   });

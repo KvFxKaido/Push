@@ -131,18 +131,12 @@ export function useWorkspaceSandboxController({
 
   useEffect(() => {
     setSandboxId(sandboxId);
-    // chat / local-pc / relay sessions don't run a cloud sandbox:
-    // chat has no workspace at all, local-pc routes through its WS
-    // adapter via LocalPcChatScreen, relay routes through the Worker
-    // relay via RelayChatScreen. Any of these reaching this controller
-    // is an upstream routing bug; we still need to keep the type
-    // narrow before the spread below — their `sandboxId` is
+    // chat / relay sessions don't run a cloud sandbox: chat has no workspace
+    // at all, and relay routes through the Worker relay via RelayChatScreen.
+    // Either reaching this controller is an upstream routing bug; we still keep
+    // the type narrow before the spread below because their `sandboxId` is
     // `null`-only.
-    if (
-      workspaceSession.kind === 'chat' ||
-      workspaceSession.kind === 'local-pc' ||
-      workspaceSession.kind === 'relay'
-    ) {
+    if (workspaceSession.kind === 'chat' || workspaceSession.kind === 'relay') {
       return;
     }
     if (workspaceSession.sandboxId === sandboxId) return;

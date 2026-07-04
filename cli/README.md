@@ -440,7 +440,7 @@ The `push-sandbox` image must exist locally. File reads/writes still go through 
 
 ## Daemon (experimental)
 
-`pushd` is the daemon runtime for attachable CLI sessions, Local PC sessions, and Remote sessions:
+`pushd` is the daemon runtime for attachable CLI sessions and Remote sessions:
 
 ```bash
 ./push daemon start
@@ -465,7 +465,7 @@ cli/
   file-ledger.ts        # File awareness tracking (per-file read/write status)
   tool-call-metrics.ts  # Malformed tool-call counters
   pushd.ts              # Daemon runtime (Unix socket dispatcher, sessions, role delegation)
-  pushd-ws.ts           # Loopback WebSocket listener for paired Local PC clients
+  pushd-ws.ts           # Loopback WebSocket listener for low-level daemon clients
   pushd-relay-*.ts      # Remote relay config, dialer, pairing bundle, allowlist
   tui.ts                # Experimental full-screen terminal UI
   tests/                # node:test suite
@@ -483,7 +483,7 @@ push resume --no-attach             List resumable sessions without prompting
 push sessions                       List resumable sessions (never prompts; script alias)
 push stats                          Show provider compliance stats
 push daemon status|start|stop       Manage pushd daemon
-push daemon pair [--origin <url>]    Mint a Local PC pairing token
+push daemon pair [--origin <url>]    Mint a loopback device token (low-level/back-compat)
 push daemon pair --remote            Mint a Remote pairing bundle via relay
 push daemon relay enable|disable|status
                                     Manage the outbound Worker relay. `enable [--url <url>] [--token <token>]`

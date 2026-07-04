@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Globe, Key, MessageSquare, Monitor } from 'lucide-react';
+import { Loader2, Globe, Key, MessageSquare } from 'lucide-react';
 import {
   HUB_MATERIAL_BUTTON_CLASS,
   HUB_MATERIAL_INPUT_CLASS,
@@ -24,16 +24,8 @@ interface OnboardingScreenProps {
   onStartWorkspace: () => void;
   onStartChat: () => void;
   /**
-   * Optional Local PC entry. The Local PC mode doesn't require GitHub
-   * auth (pushd is the entire backend), so its tile lives here on the
-   * onboarding screen too — not just on the post-auth hub. Undefined
-   * hides the tile (VITE_LOCAL_PC_MODE off).
-   */
-  onStartLocalPc?: () => void;
-  /**
-   * Optional Remote (relay) entry. Same auth posture as Local PC —
-   * the relay path also bypasses GitHub auth. Undefined hides the
-   * tile (VITE_RELAY_MODE off).
+   * Optional Remote (relay) entry. The relay path bypasses GitHub auth.
+   * Undefined hides the tile (VITE_RELAY_MODE off).
    */
   onStartRelay?: () => void;
   onInstallApp: () => void;
@@ -49,7 +41,6 @@ export function OnboardingScreen({
   onConnectOAuth,
   onStartWorkspace,
   onStartChat,
-  onStartLocalPc,
   onStartRelay,
   onInstallApp,
   onConnectInstallationId,
@@ -289,19 +280,6 @@ export function OnboardingScreen({
                 <span>Workspace</span>
               </button>
             </div>
-            {onStartLocalPc && (
-              <button
-                type="button"
-                onClick={onStartLocalPc}
-                className={`${onboardingButtonClass} mt-2 text-amber-200`}
-              >
-                <Monitor className="h-4 w-4" />
-                <span>Local PC</span>
-                <span className="text-[10px] uppercase tracking-wide text-amber-200/60">
-                  Experimental
-                </span>
-              </button>
-            )}
             {onStartRelay && (
               <button
                 type="button"

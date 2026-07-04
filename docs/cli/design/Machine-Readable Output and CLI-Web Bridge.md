@@ -90,7 +90,7 @@ Pass it to `runAssistantLoop` when `--json` is set in headless mode. The existin
 The shipped bridge did not use HTTP/SSE. It uses:
 
 - `cli/pushd-ws.ts` for loopback-only WebSocket access to the same `handleRequest` dispatcher as the Unix socket.
-- `app/src/lib/local-daemon-binding.ts` for Local PC clients.
+- `app/src/lib/local-daemon-binding.ts` for the low-level loopback WS adapter (back-compat; no dedicated pairing UI).
 - `cli/pushd-relay-client.ts`, `app/src/worker/relay-routes.ts`, and `app/src/worker/relay-do.ts` for the Worker/Durable Object relay path.
 - `app/src/lib/relay-daemon-binding.ts` for Remote clients.
 

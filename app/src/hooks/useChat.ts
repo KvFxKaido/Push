@@ -144,9 +144,8 @@ export function useChat(
   const workspaceSessionIdRef = useRef<string | null>(null);
   const isMainProtectedRef = useRef(false);
   const ensureSandboxRef = useRef<(() => Promise<string | null>) | null>(null);
-  // Local-PC paired daemon binding (Phase 1.d). Null on cloud sessions;
-  // set by the workspace screen when a `kind: 'local-pc'` session is
-  // active so a sandbox tool call this turn routes through `pushd`.
+  // Paired daemon binding. Null on cloud sessions; set by the Remote workspace
+  // screen so a sandbox tool call this turn routes through `pushd`.
   const localDaemonBindingRef = useRef<ToolDispatchBinding | null>(null);
 
   // --- Prop mirror refs (always up-to-date in callbacks) ---

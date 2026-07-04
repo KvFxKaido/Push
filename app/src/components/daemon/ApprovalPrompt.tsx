@@ -10,9 +10,8 @@
  * delegation continues with the user's actual decision instead of
  * the implicit deny-on-timeout.
  *
- * Visual posture mirrors the local-pc reconnect banner: a sticky
- * strip under the header that doesn't take over the viewport but
- * is impossible to miss. Multiple pending approvals queue (FIFO);
+ * Visual posture is a sticky strip under the header that doesn't take over the
+ * viewport but is impossible to miss. Multiple pending approvals queue (FIFO);
  * the strip displays the head of the queue and a counter ("2 more
  * waiting") when there's more.
  */

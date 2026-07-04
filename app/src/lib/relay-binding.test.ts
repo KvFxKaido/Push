@@ -67,14 +67,9 @@ describe('isRelaySession', () => {
   });
   it('rejects other kinds', () => {
     const scratch: WorkspaceSession = { id: 'x', kind: 'scratch', sandboxId: null };
-    const localPc: WorkspaceSession = {
-      id: 'x',
-      kind: 'local-pc',
-      binding: { port: 1, token: 'pushd_xxx', boundOrigin: 'loopback' },
-      sandboxId: null,
-    };
+    const chat: WorkspaceSession = { id: 'x', kind: 'chat', sandboxId: null };
     expect(isRelaySession(scratch)).toBe(false);
-    expect(isRelaySession(localPc)).toBe(false);
+    expect(isRelaySession(chat)).toBe(false);
   });
 });
 

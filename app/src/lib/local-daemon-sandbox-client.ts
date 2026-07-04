@@ -1,16 +1,15 @@
 /**
- * local-daemon-sandbox-client.ts — Non-React wrapper around the
- * loopback WebSocket adapter (`local-daemon-binding`) for callers
- * that can't reach the React hook layer (`useLocalDaemon`).
+ * local-daemon-sandbox-client.ts — Non-React wrapper around pushd
+ * WebSocket adapters for callers that can't reach the React hook layer.
  *
  * Scope (PR 3c.1 → 3c.3):
  *   - `execLocalDaemon`: run a shell command via pushd's `sandbox_exec`
  *     handler and return an `ExecResult`-shaped payload. The dispatch
- *     seam in `sandbox-tools.ts` forks on session binding and calls
- *     this when the active session is `kind: 'local-pc'`.
+ *     seam in `sandbox-tools.ts` forks on daemon binding and calls
+ *     this for daemon-bound sessions.
  *   - `identifyLocalDaemon`: fetch `{ tokenId, boundOrigin, daemonVersion,
  *     protocolVersion }` via the `daemon_identify` handler. Used by
- *     LocalPcChatScreen (or its predecessors) to fill paired-state UI.
+ *     pairing flows that probe a direct loopback daemon.
  *   - `readFileLocalDaemon` / `writeFileLocalDaemon` /
  *     `listDirLocalDaemon` / `getDiffLocalDaemon` (3c.3): per-tool
  *     daemon ops. Each mirrors a `sandbox_*` cloud helper. Result
@@ -21,9 +20,9 @@
  * Transport: two paths.
  *   - `LiveDaemonBinding` (preferred when the hook layer is on-screen):
  *     the per-tool helpers reuse the long-lived WebSocket owned by
- *     `useLocalDaemon` / `useRelayDaemon` via the bundled `request`
- *     fn. No per-call WS handshake; cancel_run routes through the
- *     same connection on AbortSignal.
+ *     the daemon hook via the bundled `request` fn. No per-call WS
+ *     handshake; cancel_run routes through the same connection on
+ *     AbortSignal.
  *   - Plain `DaemonBinding` (params only): each call opens a transient
  *     WebSocket via `withTransientBinding` (the original 2.f shape).
  *     Used by pairing-probe code paths (`identifyLocalDaemon` at
@@ -38,8 +37,8 @@ import {
   createLocalDaemonBinding,
 } from './local-daemon-binding';
 import { createRelayDaemonBinding } from './relay-daemon-binding';
-import { LOCAL_PC_HOST } from './local-pc-binding';
-import type { LocalPcBinding, RelayBinding } from '@/types';
+import { LOOPBACK_DAEMON_HOST } from './loopback-daemon-host';
+import type { LoopbackDaemonBinding, RelayBinding } from '@/types';
 
 /**
  * Discriminated union of every daemon binding shape the chat-layer
@@ -49,12 +48,12 @@ import type { LocalPcBinding, RelayBinding } from '@/types';
  * call sites pick by structural narrowing (`'deploymentUrl' in
  * binding` → relay, else local).
  *
- * Kept as a local alias instead of `LocalPcBinding | RelayBinding`
+ * Kept as a local alias instead of `LoopbackDaemonBinding | RelayBinding`
  * inline so a future third transport (e.g. a desktop wrapper IPC
  * shim from Phase 4) extends one type instead of every callsite's
  * union literal.
  */
-export type DaemonBinding = LocalPcBinding | RelayBinding;
+export type DaemonBinding = LoopbackDaemonBinding | RelayBinding;
 
 /** Shape-discriminator. Used by the per-call adapter factory and
  * by chat-layer code that needs to gate on relay-vs-local without
@@ -65,12 +64,11 @@ export function isRelayBinding(binding: DaemonBinding): binding is RelayBinding 
 
 /**
  * Sandbox-client request signature, narrowed to what the tool
- * helpers need. The hook layer's `useLocalDaemon.request` /
- * `useRelayDaemon.request` already match this shape — they route
- * through the long-lived WS owned by the hook. Decoupling here
- * means a tool helper can be handed either the hook's bound
- * `request` or a transient adapter's `request` without the
- * helpers caring which side opened the connection.
+ * helpers need. The daemon hooks already match this shape — they
+ * route through the long-lived WS owned by the hook. Decoupling here
+ * means a tool helper can be handed either the hook's bound `request`
+ * or a transient adapter's `request` without the helpers caring which
+ * side opened the connection.
  */
 export type DaemonRequest = <T = unknown>(opts: RequestOptions) => Promise<SessionResponse<T>>;
 
@@ -84,12 +82,11 @@ export type DaemonRequest = <T = unknown>(opts: RequestOptions) => Promise<Sessi
  * differentiate relay-vs-local (e.g. session-card formatting) can
  * keep using `isRelayBinding(live.params)` without a separate API.
  *
- * The fn is owned by the React hook layer (`useLocalDaemon` /
- * `useRelayDaemon`). The hook closes the WS on unmount; passing
- * a stale `LiveDaemonBinding` reference after the hook unmounts
- * surfaces as "local daemon not connected" from the bound request
- * fn — which is the same failure shape an in-flight transient
- * adapter would surface mid-call.
+ * The fn is owned by the React hook layer. The hook closes the WS on
+ * unmount; passing a stale `LiveDaemonBinding` reference after the
+ * hook unmounts surfaces as "local daemon not connected" from the
+ * bound request fn — which is the same failure shape an in-flight
+ * transient adapter would surface mid-call.
  */
 export interface LiveDaemonBinding {
   params: DaemonBinding;
@@ -123,7 +120,7 @@ export function bindingParams(binding: ToolDispatchBinding): DaemonBinding {
  * unrelated to which daemon session the phone is actually talking to.
  * RPCs that address a specific daemon session (`get_session_snapshot`,
  * `update_session`) need this one; using `sessionId` there targets the
- * wrong (or a nonexistent) session. Null for a local-pc binding (no
+ * wrong (or a nonexistent) session. Null for a loopback binding (no
  * per-session concept) or an untargeted relay binding (no session
  * attached yet — e.g. a fresh pair bundle scan before the first resume).
  */
@@ -169,7 +166,7 @@ function createTransientAdapter(
   return createLocalDaemonBinding({
     port: binding.port,
     token: binding.token,
-    host: LOCAL_PC_HOST,
+    host: LOOPBACK_DAEMON_HOST,
     ...callbacks,
   });
 }
@@ -543,7 +540,7 @@ export async function getDiffLocalDaemon(
 ): Promise<LocalDaemonDiffResult> {
   // Pass `since_ref` straight through so the local daemon's ranged
   // diff path is exercisable when this binding is the audit transport
-  // (local-PC / relay workspace sessions). The daemon validates the
+  // (relay workspace sessions). The daemon validates the
   // ref shape itself; we don't pre-filter here. Kilo review on PR #604.
   const payload = options?.sinceRef ? { since_ref: options.sinceRef } : {};
   const response = await runWithBinding(binding, (request) =>

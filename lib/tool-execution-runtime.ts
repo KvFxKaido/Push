@@ -160,14 +160,14 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    */
   chatId?: string;
   /**
-   * Opaque local-daemon binding carrier for remote-sessions Phase 1.d.
+   * Opaque local-daemon binding carrier for daemon-bound sessions.
    *
    * When present, sandbox tools should route through the paired `pushd`
    * WebSocket instead of the cloud sandbox provider. Typed as `unknown`
-   * here because the binding shape lives in the Web layer (`LocalPcBinding`
-   * in `app/src/types`); the runtime only forwards it to its sandbox
-   * dispatcher, which narrows. A future lib-side daemon client can
-   * promote this to a typed interface when it needs to read the fields.
+   * here because the binding shape lives in the Web layer; the runtime only
+   * forwards it to its sandbox dispatcher, which narrows. A future lib-side
+   * daemon client can promote this to a typed interface when it needs to read
+   * the fields.
    *
    * `sandboxId: null` is legal when this is set — the dispatcher decides
    * which transport handles the call. NOTE: capability widening no
@@ -182,10 +182,9 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * Threading the resolved mode explicitly (rather than re-deriving
    * from `localDaemonBinding` inside the runtime) keeps the prompt
    * builder and the capability gate reading from the same input —
-   * eliminates the drift class where `workspaceContext.mode` says
-   * `local-pc` but the binding ref hasn't propagated yet, leaving
-   * the prompt advertising direct sandbox tools while the runtime
-   * denies them with ROLE_CAPABILITY_DENIED.
+   * eliminates the drift class where the named workspace mode and binding
+   * propagation disagree, leaving the prompt advertising direct sandbox tools
+   * while the runtime denies them with ROLE_CAPABILITY_DENIED.
    *
    * Optional: callers that haven't been updated fall back to the
    * `localDaemonBinding`-based derivation in `getExecutionMode`.
@@ -206,7 +205,7 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * surface's detached background-exec path invokes it with each drained
    * stdout/stderr chunk so the chat layer can render a live tail in the
    * agent status bar. Purely observational — never alters tool behavior —
-   * and best-effort: executors may ignore it (local-pc, buffered fallback)
+   * and best-effort: executors may ignore it (daemon, buffered fallback)
    * and a throwing observer must not affect the run (the detached runner
    * already guards its onProgress callbacks). CLI callers leave this
    * undefined today; the CLI spinner is the natural second consumer.

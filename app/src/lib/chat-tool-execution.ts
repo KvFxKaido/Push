@@ -76,7 +76,7 @@ export interface ToolExecRunContext {
   chatId: string | null;
   sandboxId: string | null;
   /**
-   * Daemon binding for `kind: 'local-pc'` OR `kind: 'relay'` sessions.
+   * Daemon binding for Remote sessions.
    * When set, sandbox tool calls route through `pushd` over the paired
    * WebSocket (loopback or Worker-relayed) instead of the cloud
    * sandbox provider. `sandboxId` may be `null` when this is set —

@@ -26,8 +26,6 @@ interface HomeScreenProps {
   onDisconnect: () => void;
   onStartWorkspace: () => void;
   onStartChat: () => void;
-  /** Optional: undefined hides the Local PC tile (VITE_LOCAL_PC_MODE off). */
-  onStartLocalPc?: () => void;
   /** Optional: undefined hides the Remote tile (VITE_RELAY_MODE off). */
   onStartRelay?: () => void;
   user: GitHubUser | null;
@@ -47,7 +45,6 @@ export function HomeScreen({
   onDisconnect,
   onStartWorkspace,
   onStartChat,
-  onStartLocalPc,
   onStartRelay,
   user,
 }: HomeScreenProps) {
@@ -72,7 +69,6 @@ export function HomeScreen({
           onDisconnect={onDisconnect}
           onStartWorkspace={onStartWorkspace}
           onStartChat={onStartChat}
-          onStartLocalPc={onStartLocalPc}
           onStartRelay={onStartRelay}
           user={user}
         />

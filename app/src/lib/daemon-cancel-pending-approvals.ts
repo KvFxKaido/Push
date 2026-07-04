@@ -2,7 +2,7 @@
  * daemon-cancel-pending-approvals.ts — Two-sided cleanup for pending
  * daemon approvals when the user aborts the parent round.
  *
- * Why this exists: in a paired-daemon session (local-pc / relay), a
+ * Why this exists: in a paired-daemon session (Remote relay), a
  * delegated Coder agent runs on the daemon side. When it hits a tool
  * needing approval, the daemon emits `approval_required` which
  * `useApprovalQueue` enqueues; the ApprovalPrompt renders in the
@@ -85,10 +85,10 @@ export function cancelPendingApprovals(
     //
     // `attachToken` is required by the daemon's bearer-gated `cancel_run`
     // (Addressable Session Verbs phase 2). The relay binding holds the
-    // session token (`targetAttachToken`) and threads it here; local-PC mode
-    // never attached to a daemon session, so it has no token and its cancel
-    // resolves to a benign SESSION_NOT_FOUND (the gate sits after the
-    // existence check), which the `.catch` already swallows.
+    // session token (`targetAttachToken`) and threads it here; an untargeted
+    // Remote bundle has no token, so its cancel resolves to a benign
+    // SESSION_NOT_FOUND (the gate sits after the existence check), which
+    // the `.catch` already swallows.
     void request({
       type: 'cancel_run',
       sessionId: approval.sessionId,

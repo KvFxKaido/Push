@@ -70,20 +70,12 @@ export type { AuditVerdictCardData } from '@push/lib/auditor-agent';
 import type { UserProfile } from '@push/lib/user-identity';
 export type { UserProfile } from '@push/lib/user-identity';
 
-export type WorkspaceMode = 'repo' | 'scratch' | 'chat' | 'local-pc' | 'relay';
+export type WorkspaceMode = 'repo' | 'scratch' | 'chat' | 'relay';
 
 /**
- * Identity of a paired local pushd daemon, captured at pairing time.
- * The `port` and `token` together open the loopback WebSocket; the
- * `tokenId` and `boundOrigin` are diagnostic surface (shown in the
- * mode chip / paired-state UI), never used to authenticate.
- *
- * Carried inline on a `kind: 'local-pc'` session so the transport
- * boundary is obvious at every read site: anything reading a
- * non-local-pc session has no binding to consider, and `local-pc`
- * sessions can't omit one.
+ * Loopback pushd daemon connection params used by low-level daemon adapters.
  */
-export interface LocalPcBinding {
+export interface LoopbackDaemonBinding {
   port: number;
   token: string;
   /**
@@ -106,15 +98,11 @@ export interface LocalPcBinding {
 
 /**
  * Identity of a paired remote pushd reached through the Worker
- * relay. Phase 2.f sibling to `LocalPcBinding`. Carries the three
- * pieces the relay WS dial needs (deploymentUrl, sessionId, attach
- * token) plus diagnostic surface for the mode chip / paired-state
- * UI.
+ * relay. Carries the three pieces the relay WS dial needs
+ * (deploymentUrl, sessionId, attach token) plus diagnostic surface for the
+ * mode chip / paired-state UI.
  *
- * Discriminated from `LocalPcBinding` by the absence of `port` and
- * the presence of `deploymentUrl`. Both flavors flow through the
- * same chat-layer tool dispatch; the binding shape selects the
- * adapter constructor.
+ * Discriminated by the presence of `deploymentUrl`.
  */
 export interface RelayBinding {
   deploymentUrl: string;
@@ -149,15 +137,13 @@ export interface RelayBinding {
  * `sandboxId` is the runtime container id (null until the container starts).
  *
  * Cloud-sandbox is implicit on scratch/repo/chat — those records keep
- * their existing shape on disk. Only `kind: 'local-pc'` carries a
- * `binding`, and it carries one mandatorily; that keeps the transport
- * boundary impossible to read past by accident.
+ * their existing shape on disk. Remote carries a relay binding because it
+ * attaches to daemon sessions over the Worker relay.
  */
 export type WorkspaceSession =
   | { id: string; kind: 'scratch'; sandboxId: string | null }
   | { id: string; kind: 'repo'; repo: ActiveRepo; sandboxId: string | null }
   | { id: string; kind: 'chat'; sandboxId: null }
-  | { id: string; kind: 'local-pc'; binding: LocalPcBinding; sandboxId: null }
   | { id: string; kind: 'relay'; binding: RelayBinding; sandboxId: null };
 
 /** Structured workspace context passed through the streaming pipeline to toLLMMessages. */
@@ -1157,8 +1143,8 @@ export interface Conversation {
    * conversations. Connected sessions / tap-to-resume can target N distinct
    * daemon sessions, so `mode` alone can't find-or-create the right local
    * chat — without this, every tap collapsed onto whichever relay chat
-   * happened to be active before. Undefined for local-pc (single-session, no
-   * picker) and legacy relay chats predating this field.
+   * happened to be active before. Undefined for legacy relay chats predating
+   * this field.
    */
   daemonSessionId?: string;
   /**
@@ -1208,7 +1194,6 @@ export type AppShellScreen =
   | 'home'
   | 'workspace'
   | 'draft-composer'
-  | 'local-pc-pairing'
   | 'relay-pairing';
 
 /**
@@ -1798,10 +1783,6 @@ export interface WorkspaceScreenNavigationProps {
   onSelectRepo: (repo: RepoWithActivity, branch?: string) => void;
   onStartScratchWorkspace: () => void;
   onStartChat: () => void;
-  /** Optional so a build with `VITE_LOCAL_PC_MODE` disabled can omit
-   * the handler — undefined hides the Local PC tile on every surface
-   * that consumes it (onboarding, home, workspace launcher sheet). */
-  onStartLocalPc?: () => void;
   /** Phase 2.f Remote (relay) tile. Optional so a build without
    * VITE_RELAY_MODE doesn't need to plumb a no-op handler. */
   onStartRelay?: () => void;

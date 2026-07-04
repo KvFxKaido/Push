@@ -86,7 +86,7 @@ export interface PromptTurnRef {
    *  `chatId`; CLI passes the `sessionId`. */
   scopeId: string;
   round: number;
-  /** Workspace mode. Web: `repo` / `chat` / `scratch` / `local-pc` / `relay`.
+  /** Workspace mode. Web: `repo` / `chat` / `scratch` / `relay`.
    *  CLI: the local workspace mode label. Disambiguates which turns carried
    *  the GitHub protocol. */
   mode: string;

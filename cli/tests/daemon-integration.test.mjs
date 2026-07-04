@@ -1,3 +1,11 @@
+// Must be first: several describe blocks below (e.g. `update_session`) call
+// `start_session` in-process with no PUSH_SESSION_DIR scoping of their own,
+// relying entirely on this isolation. Without it, running this file directly
+// (the single-test shortcut in CLAUDE.md skips the --import flag that
+// normally provides it) writes real sessions into ~/.push/sessions — this
+// leaked 127 fixture sessions into the real store before being caught.
+import './setup-test-home-isolation.mjs';
+
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -794,7 +802,7 @@ describe('resolveOrMintTargetAttachToken', () => {
 // session-ful cancel_run path aborted a run from sessionId alone with no
 // validateAttachToken. The gate sits AFTER the existence check so a cancel
 // for a session the daemon doesn't have still returns SESSION_NOT_FOUND (the
-// benign local-PC best-effort path), and BEFORE the run-state check so an
+// benign loopback best-effort path), and BEFORE the run-state check so an
 // unauthenticated caller can't probe run state.
 describe('cancel_run bearer gate', () => {
   const sessionId = 'sess_cancelgate_aabbcc';
@@ -854,7 +862,7 @@ describe('cancel_run bearer gate', () => {
     assert.equal(res.error.code, 'INVALID_TOKEN');
   });
 
-  it('unknown session still returns SESSION_NOT_FOUND (gate after existence; local-PC benign path unchanged)', async () => {
+  it('unknown session still returns SESSION_NOT_FOUND (gate after existence; loopback benign path unchanged)', async () => {
     const res = await handleRequest(
       makeRequest('cancel_run', { sessionId: 'sess_cancelgone_ddeeff', attachToken: 'whatever' }),
       () => {},
@@ -869,7 +877,7 @@ describe('cancel_run bearer gate', () => {
 // Closes the auth gap the cancel_run fix (#723) left open: handleSubmitApproval
 // resolved a paused tool call from sessionId + approvalId alone with no
 // validateAttachToken. Same shape as the cancel_run gate — AFTER the existence
-// check (unknown session → SESSION_NOT_FOUND, the benign local-PC path) and
+// check (unknown session → SESSION_NOT_FOUND, the benign loopback path) and
 // BEFORE the pending-approval lookup (a stolen approvalId can't even probe
 // whether one is outstanding).
 describe('submit_approval bearer gate', () => {
@@ -2012,7 +2020,7 @@ describe('protocol request format', () => {
 
 // ─── list_sessions mode propagation (drift detector) ───────────────
 //
-// The mobile drawer's "Local PC" / "Remote" buckets read `mode` off the
+// The mobile drawer's "Remote" bucket reads `mode` off the
 // `list_sessions` response so they can hide headless runs and tag the
 // origin surface. This test pins the daemon contract: the value passed
 // into `start_session` round-trips through `state.json` and shows up on
@@ -7368,7 +7376,7 @@ describe('daemon runtime config verbs', () => {
     assert.equal(stored.execMode, 'auto');
   });
 
-  it('allows a loopback-WS write (Local-PC mode is the operator, on this machine)', async () => {
+  it('allows a loopback-WS write (a direct loopback connection is the operator, on this machine)', async () => {
     const configPath = path.join(tmpConfigDir, 'loopback-allowed-config.json');
     await fs.writeFile(configPath, JSON.stringify({ execMode: 'auto' }), 'utf8');
     process.env.PUSH_CONFIG_PATH = configPath;
@@ -7388,7 +7396,7 @@ describe('daemon runtime config verbs', () => {
 
 // ─── list_providers verb ─────────────────────────────────────────
 //
-// Read-only catalog powering Remote/Local-PC's model picker — the web
+// Read-only catalog powering Remote's model picker — the web
 // client has no other way to know which providers/models are actually
 // usable on the paired machine. Safe over relay: `hasKey` is boolean only.
 

@@ -1,13 +1,10 @@
 /**
- * useApprovalQueue — FIFO state for the daemon's `approval_required`
- * events. Phase 2.i extraction from the LocalPcChatScreen / RelayChatScreen
- * clones; both screens kept identical copies of this state machinery.
+ * useApprovalQueue — FIFO state for the daemon's `approval_required` events.
  *
  * Shape:
  *   - State-only. Submission is left to the caller because the daemon
- *     `request` fn lives on the screen's own daemon hook
- *     (`useLocalDaemon` / `useRelayDaemon`) — they have different
- *     return shapes, so we can't fold them in here without a generic.
+ *     `request` fn lives on the screen's own daemon hook, so we can't fold it
+ *     in here without a generic.
  *   - `handleDaemonEvent` is the callback the screen wires into the
  *     daemon hook's `onEvent`. It translates `approval_required` →
  *     enqueue and `approval_received` → drop, defending against the

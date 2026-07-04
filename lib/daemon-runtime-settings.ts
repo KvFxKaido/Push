@@ -3,7 +3,7 @@
  *
  * The web UI presents approval modes in user-facing terms, while the CLI daemon
  * executes with `PUSH_EXEC_MODE` terms. Keep that translation explicit so the
- * Remote / Local-PC controls and pushd do not drift.
+ * Remote controls and pushd do not drift.
  */
 
 export type DaemonExecMode = 'strict' | 'auto' | 'yolo';

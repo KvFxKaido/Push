@@ -338,7 +338,7 @@ export function buildRepoChatDrawerProps(args: {
 }): RepoChatDrawerProps {
   // ChatSurfaceRoute and WorkspaceChatRoute route taps through
   // `App.handleResumeChatFromDrawer`, which only handles chat / scratch
-  // / repo conversations. local-pc / relay chats fall through to a
+  // / repo conversations. Relay chats fall through to a
   // no-op there, so surfacing them in these drawers would render dead
   // rows (the tap closes the drawer but the workspace doesn't switch
   // and the chat doesn't resume). Filter them out at the builder so
@@ -346,7 +346,7 @@ export function buildRepoChatDrawerProps(args: {
   // drawer props and isn't affected.
   const conversationsForDrawer: typeof args.conversations = {};
   for (const [id, conv] of Object.entries(args.conversations)) {
-    if (conv.mode === 'local-pc' || conv.mode === 'relay') continue;
+    if (conv.mode === 'relay') continue;
     conversationsForDrawer[id] = conv;
   }
 
@@ -388,7 +388,6 @@ export function buildRepoLauncherSheetProps(args: {
   sandboxCreatedAt: ChatRouteProps['sandbox']['createdAt'];
   handleStartWorkspace?: () => void;
   handleStartChat?: () => void;
-  handleStartLocalPc?: () => void;
   handleStartRelay?: () => void;
   handleDisconnect: () => void;
   validatedUser: ChatRouteProps['validatedUser'];
@@ -412,7 +411,6 @@ export function buildRepoLauncherSheetProps(args: {
       : null,
     onStartWorkspace: args.handleStartWorkspace,
     onStartChat: args.handleStartChat,
-    onStartLocalPc: args.handleStartLocalPc,
     onStartRelay: args.handleStartRelay,
     onDisconnect: args.handleDisconnect,
     user: args.validatedUser,

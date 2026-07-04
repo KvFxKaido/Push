@@ -72,12 +72,9 @@ export interface SendLoopContext {
   sandboxIdRef: MutableRefObject<string | null>;
   ensureSandboxRef: MutableRefObject<(() => Promise<string | null>) | null>;
   /**
-   * Local-daemon binding for `kind: 'local-pc'` OR `kind: 'relay'`
-   * workspace sessions (Phase 1.d / Phase 2.f). When the active
-   * session is one of those kinds, this ref carries the paired
-   * binding (loopback port+token, or relay deploymentUrl+sessionId+
-   * attach token) so sandbox tool calls route through `pushd`
-   * (directly or via the Worker relay) instead of a cloud sandbox.
+   * Local-daemon binding for Remote workspace sessions. When active, this ref
+   * carries the paired relay binding so sandbox tool calls route through
+   * `pushd` via the Worker relay instead of a cloud sandbox.
    * `null` on cloud sessions; the sandbox dispatcher uses absence
    * to fall back to `execInSandbox`. The ref carries either a plain
    * params binding (legacy / pre-open transient path) or a
