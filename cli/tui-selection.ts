@@ -30,6 +30,16 @@ export interface TranscriptSelection {
   focus: TranscriptSelectionPoint;
 }
 
+export function freezeTranscriptMouseSnapshot(
+  snapshot: TranscriptMouseSnapshot | null | undefined,
+): TranscriptMouseSnapshot | null {
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    lines: [...snapshot.lines],
+  };
+}
+
 export function resolveTuiMouseMode(
   value: unknown,
   fallback: TuiMouseMode = 'native',
@@ -111,6 +121,82 @@ function stringIndexAfterVisibleColumn(text: string, col: number): number {
   return text.length;
 }
 
+function ansiSequenceAt(text: string, index: number): string | null {
+  if (text.charCodeAt(index) !== 0x1b) return null;
+  const match = /^\x1b\[[0-9;]*[a-zA-Z]/.exec(text.slice(index));
+  return match?.[0] ?? null;
+}
+
+function rawStringIndexAtVisibleColumn(text: string, col: number): number {
+  if (col <= 0) return 0;
+
+  let visible = 0;
+  for (let i = 0; i < text.length; ) {
+    const ansi = ansiSequenceAt(text, i);
+    if (ansi) {
+      i += ansi.length;
+      continue;
+    }
+
+    const cp = text.codePointAt(i);
+    const ch = String.fromCodePoint(cp ?? 0);
+    const len = ch.length;
+    const w = Math.max(0, visibleWidth(ch));
+    if (visible + w > col) return i;
+    visible += w;
+    i += len;
+  }
+  return text.length;
+}
+
+function rawStringIndexAfterVisibleColumn(text: string, col: number): number {
+  if (col < 0) return 0;
+
+  let visible = 0;
+  for (let i = 0; i < text.length; ) {
+    const ansi = ansiSequenceAt(text, i);
+    if (ansi) {
+      i += ansi.length;
+      continue;
+    }
+
+    const cp = text.codePointAt(i);
+    const ch = String.fromCodePoint(cp ?? 0);
+    const len = ch.length;
+    const w = Math.max(0, visibleWidth(ch));
+    if (visible + w > col) return i + len;
+    visible += w;
+    i += len;
+  }
+  return text.length;
+}
+
+function highlightAnsiVisibleText(text: string, highlight: (text: string) => string): string {
+  let out = '';
+  let visibleRun = '';
+
+  for (let i = 0; i < text.length; ) {
+    const ansi = ansiSequenceAt(text, i);
+    if (ansi) {
+      if (visibleRun) {
+        out += highlight(visibleRun);
+        visibleRun = '';
+      }
+      out += ansi;
+      i += ansi.length;
+      continue;
+    }
+
+    const cp = text.codePointAt(i);
+    const ch = String.fromCodePoint(cp ?? 0);
+    visibleRun += ch;
+    i += ch.length;
+  }
+
+  if (visibleRun) out += highlight(visibleRun);
+  return out;
+}
+
 function lineSegment(text: string, startCol: number, endCol: number): string {
   const start = stringIndexAtVisibleColumn(text, startCol);
   const end = stringIndexAfterVisibleColumn(text, endCol);
@@ -155,9 +241,13 @@ export function highlightSelectedTranscriptLine(
   const plain = stripAnsi(line);
   const startCol = absoluteLine === start.line ? start.col : 0;
   const endCol = absoluteLine === end.line ? end.col : visibleWidth(plain);
-  const startIdx = stringIndexAtVisibleColumn(plain, startCol);
-  const endIdx = stringIndexAfterVisibleColumn(plain, endCol);
+  const startIdx = rawStringIndexAtVisibleColumn(line, startCol);
+  const endIdx = rawStringIndexAfterVisibleColumn(line, endCol);
   if (endIdx <= startIdx) return line;
 
-  return plain.slice(0, startIdx) + highlight(plain.slice(startIdx, endIdx)) + plain.slice(endIdx);
+  return (
+    line.slice(0, startIdx) +
+    highlightAnsiVisibleText(line.slice(startIdx, endIdx), highlight) +
+    line.slice(endIdx)
+  );
 }

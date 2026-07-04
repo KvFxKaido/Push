@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   extractSelectedTranscriptText,
+  freezeTranscriptMouseSnapshot,
   highlightSelectedTranscriptLine,
   pointFromMouse,
   resolveTuiMouseMode,
@@ -35,6 +36,31 @@ describe('pointFromMouse', () => {
   it('rejects points outside the transcript unless clamping is requested', () => {
     assert.equal(pointFromMouse(snapshot, 1, 1), null);
     assert.deepEqual(pointFromMouse(snapshot, 1, 1, { clamp: true }), { line: 10, col: 0 });
+  });
+});
+
+describe('freezeTranscriptMouseSnapshot', () => {
+  it('copies the visible line array so a drag uses the press-time snapshot', () => {
+    const snapshot = {
+      top: 1,
+      left: 1,
+      width: 20,
+      height: 2,
+      startLine: 3,
+      lines: ['first', 'second'],
+    };
+
+    const frozen = freezeTranscriptMouseSnapshot(snapshot);
+    snapshot.lines[0] = 'mutated';
+
+    assert.deepEqual(frozen, {
+      top: 1,
+      left: 1,
+      width: 20,
+      height: 2,
+      startLine: 3,
+      lines: ['first', 'second'],
+    });
   });
 });
 
@@ -102,6 +128,40 @@ describe('highlightSelectedTranscriptLine', () => {
     assert.equal(
       highlightSelectedTranscriptLine('hello world', 5, selection, (text) => `<${text}>`),
       'hello world',
+    );
+  });
+
+  it('preserves ANSI styling around selected text', () => {
+    const selection = {
+      anchor: { line: 4, col: 6 },
+      focus: { line: 4, col: 10 },
+    };
+
+    assert.equal(
+      highlightSelectedTranscriptLine(
+        '\x1b[31mhello world\x1b[0m',
+        4,
+        selection,
+        (text) => `<${text}>`,
+      ),
+      '\x1b[31mhello <world>\x1b[0m',
+    );
+  });
+
+  it('keeps inner ANSI transitions while highlighting selected visible runs', () => {
+    const selection = {
+      anchor: { line: 4, col: 0 },
+      focus: { line: 4, col: 10 },
+    };
+
+    assert.equal(
+      highlightSelectedTranscriptLine(
+        '\x1b[31mhello \x1b[32mworld\x1b[0m!',
+        4,
+        selection,
+        (text) => `<${text}>`,
+      ),
+      '\x1b[31m<hello >\x1b[32m<world>\x1b[0m!',
     );
   });
 });

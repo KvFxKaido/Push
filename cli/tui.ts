@@ -155,6 +155,7 @@ import { reconcileEntryBlocks } from './tui-transcript-cache.js';
 import { reconcileStreamFrame } from './tui-stream-frame.js';
 import {
   extractSelectedTranscriptText,
+  freezeTranscriptMouseSnapshot,
   highlightSelectedTranscriptLine,
   pointFromMouse,
   resolveTuiMouseMode,
@@ -326,6 +327,7 @@ function createTUIState() {
     expandedToolJsonPayloadIds: new Set(),
     payloadBlocks: [],
     transcriptMouseSnapshot: null,
+    mouseSelectionSnapshot: null,
     mouseSelection: null,
     reasoningModalOpen: false,
     reasoningBuf: '',
@@ -2834,6 +2836,7 @@ export async function runTUI(options = {}) {
   function applyTerminalMouseMode(nextMode) {
     mouseMode = nextMode;
     tuiState.mouseSelection = null;
+    tuiState.mouseSelectionSnapshot = null;
     io.stdout.write((mouseMode === 'app' ? ESC.mouseOn : ESC.mouseOff) + ESC.altScrollOff);
     tuiState.dirty.add('transcript');
     scheduler?.schedule();
@@ -7236,13 +7239,16 @@ export async function runTUI(options = {}) {
 
     if (mouse.kind === 'press') {
       if (mouse.button !== 'left') return true;
-      const point = pointFromMouse(snapshot, mouse.x, mouse.y);
+      const selectionSnapshot = freezeTranscriptMouseSnapshot(snapshot);
+      const point = pointFromMouse(selectionSnapshot, mouse.x, mouse.y);
       if (!point) {
         tuiState.mouseSelection = null;
+        tuiState.mouseSelectionSnapshot = null;
         tuiState.dirty.add('transcript');
         scheduler.schedule();
         return true;
       }
+      tuiState.mouseSelectionSnapshot = selectionSnapshot;
       tuiState.mouseSelection = { anchor: point, focus: point };
       tuiState.dirty.add('transcript');
       scheduler.schedule();
@@ -7251,7 +7257,8 @@ export async function runTUI(options = {}) {
 
     if (mouse.kind === 'drag') {
       if (!tuiState.mouseSelection) return true;
-      const point = pointFromMouse(snapshot, mouse.x, mouse.y, { clamp: true });
+      const selectionSnapshot = tuiState.mouseSelectionSnapshot ?? snapshot;
+      const point = pointFromMouse(selectionSnapshot, mouse.x, mouse.y, { clamp: true });
       if (!point) return true;
       tuiState.mouseSelection.focus = point;
       tuiState.dirty.add('transcript');
@@ -7261,11 +7268,18 @@ export async function runTUI(options = {}) {
 
     if (mouse.kind === 'release') {
       const selection = tuiState.mouseSelection;
-      if (!selection) return true;
-      const point = pointFromMouse(snapshot, mouse.x, mouse.y, { clamp: true });
+      const selectionSnapshot = tuiState.mouseSelectionSnapshot ?? snapshot;
+      if (!selection) {
+        tuiState.mouseSelectionSnapshot = null;
+        return true;
+      }
+      const point = pointFromMouse(selectionSnapshot, mouse.x, mouse.y, { clamp: true });
       if (point) selection.focus = point;
-      const text = snapshot ? extractSelectedTranscriptText(snapshot, selection) : '';
+      const text = selectionSnapshot
+        ? extractSelectedTranscriptText(selectionSnapshot, selection)
+        : '';
       tuiState.mouseSelection = null;
+      tuiState.mouseSelectionSnapshot = null;
       tuiState.dirty.add('transcript');
       if (text.length > 0) {
         copyTextToClipboard('selection', text);
