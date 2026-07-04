@@ -6628,14 +6628,17 @@ export async function runTUI(options = {}) {
       toggleAllToolJsonPayloads();
       return;
     }
-    if (key.name === 'pageup') {
+    // Ctrl+B/Ctrl+F alias the same scroll (see tui-input.ts's global
+    // keybinds) — this modal has its own raw handler, so the global keymap
+    // never sees these keys while it's open (Codex P2 on #1326).
+    if (key.name === 'pageup' || (key.ctrl && key.name === 'b')) {
       const { rows } = getTermSize();
       tuiState.scrollOffset += Math.max(1, Math.floor(rows / 3));
       tuiState.dirty.add('transcript');
       scheduler.schedule();
       return;
     }
-    if (key.name === 'pagedown') {
+    if (key.name === 'pagedown' || (key.ctrl && key.name === 'f')) {
       const { rows } = getTermSize();
       tuiState.scrollOffset = Math.max(
         0,
