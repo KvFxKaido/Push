@@ -329,6 +329,90 @@ jobs:
           path: /tmp/push-*
           retention-days: 7
 
+  # Non-blocking instrument, NOT a merge gate. The CLI suite runs on
+  # `node --test` (canonical) because Bun's node:test shim can't run it yet
+  # (oven-sh/bun#5090 — describe()/test() nested inside test() throws during
+  # collection). This job runs the same suite under `bun test` only to make
+  # that blocker OBSERVABLE: the step summary prints the #5090 count, and when
+  # it reaches 0 the shim gap has landed and the canonical runner can flip to
+  # Bun (docs/decisions/Bun Runtime Adoption.md, Phase 1). `continue-on-error`
+  # keeps a red canary from failing CI; the step itself exits non-zero only if
+  # bun produced no summary at all (canary broken, not merely failing tests).
+  cli-bun-canary:
+    name: Bun test canary (cli, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # Keep in lockstep with the cli-binary job's pin.
+          bun-version: '1.3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run CLI suite under Bun and summarize
+        env:
+          TMPDIR: /tmp
+          TEMP: /tmp
+          TMP: /tmp
+        run: |
+          # Failures are expected here; never abort on them. Capture all output.
+          bun test --preload ./cli/tests/setup-test-home-isolation.mjs cli/tests/*.test.mjs > bun-test.log 2>&1 || true
+
+          # Strip ANSI so parsing is stable regardless of bun's color detection.
+          sed -r "s/\x1b\[[0-9;]*[a-zA-Z]//g" bun-test.log > bun-test.clean.log
+
+          summary=$(grep -E "Ran [0-9]+ tests across [0-9]+ files" bun-test.clean.log | tail -1 || true)
+          pass=$(grep -oE "[0-9]+ pass" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+" || true)
+          fail=$(grep -oE "[0-9]+ fail" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+" || true)
+
+          if [ -z "$summary" ] || [ -z "$pass" ]; then
+            echo "::error::bun test produced no summary line — the canary is broken (bun setup or glob), not merely failing tests."
+            tail -n 40 bun-test.clean.log
+            exit 1
+          fi
+          : "${fail:=0}"
+
+          # #5090 is the whole-suite blocker. Each affected file throws exactly
+          # one NotImplementedError during collection, so this count is both the
+          # error total and ~the affected-file count.
+          shim=$(grep -c "issues/5090" bun-test.clean.log || true)
+          : "${shim:=0}"
+          real=$(( fail - shim ))
+          [ "$real" -lt 0 ] && real=0
+
+          {
+            echo "## Bun test canary — \`bun test\` over the CLI suite"
+            echo ""
+            echo "Informational only. Canonical CLI tests run on \`node --test\`."
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | ---: |"
+            echo "| pass | $pass |"
+            echo "| fail | $fail |"
+            echo "| &nbsp;&nbsp;— #5090 shim (describe/test nested in test) | $shim |"
+            echo "| &nbsp;&nbsp;— real Bun failures (fail − shim) | $real |"
+            echo ""
+            echo "\`$summary\`"
+            echo ""
+            echo "**Revisit trigger:** when **#5090 shim = 0**, Bun's \`node:test\` gap has landed — flip the canonical CLI test runner to Bun and unlock Phase 2. Real Bun failures (the \`ws\` gap + spinner rendering today) are tracked separately and do *not* block that flip."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "pass=$pass fail=$fail shim=$shim real=$real"
+
   sandbox:
     name: Validate sandbox
     runs-on: ubuntu-latest
