@@ -302,6 +302,12 @@ describe('createKeybindMap', () => {
     assert.equal(map.lookup(parseKey(Buffer.from('\x1b[<65;12;8M'))), 'scroll_down');
   });
 
+  it('maps Ctrl+B/Ctrl+F to scrollback (keyboards without PageUp/PageDown)', () => {
+    const map = createKeybindMap();
+    assert.equal(map.lookup(parseKey(Buffer.from([0x02]))), 'scroll_up');
+    assert.equal(map.lookup(parseKey(Buffer.from([0x06]))), 'scroll_down');
+  });
+
   it('maps Escape to close_modal', () => {
     const map = createKeybindMap();
     const key = parseKey(Buffer.from([0x1b]));

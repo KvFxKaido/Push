@@ -434,9 +434,15 @@ export function createKeybindMap(): KeybindMap {
   bind('C-left', 'word_left');
   bind('C-right', 'word_right');
 
-  // Scrollback
+  // Scrollback. C-b/C-f (the less/vim/tmux page-back/page-forward
+  // convention) are keyboard-only aliases for keyboards without a
+  // dedicated PageUp/PageDown row (compact/laptop layouts, some mobile
+  // terminal apps) — wheelup/wheeldown never fire since mouse tracking
+  // was dropped (#1324), leaving pageup/pagedown as the only binding.
   bind('pageup', 'scroll_up');
   bind('pagedown', 'scroll_down');
+  bind('C-b', 'scroll_up');
+  bind('C-f', 'scroll_down');
   bind('wheelup', 'scroll_up');
   bind('wheeldown', 'scroll_down');
 

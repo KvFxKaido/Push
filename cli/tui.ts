@@ -6071,7 +6071,7 @@ export async function runTUI(options = {}) {
             '  Ctrl+W        Kill word backward',
             '  Ctrl+D        Delete forward / exit when empty',
             '  Ctrl+Left/Right  Word navigation',
-            '  PageUp/Down   Scroll transcript',
+            '  PageUp/Down   Scroll transcript (Ctrl+B/F also work)',
             '  Ctrl+L        Clear viewport (preserves history)',
             '  Ctrl+T        Toggle tool pane',
             '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
