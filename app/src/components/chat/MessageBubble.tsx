@@ -31,6 +31,7 @@ import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-ico
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
 import { isStreamdownEnabled } from '@/lib/feature-flags';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai/reasoning';
+import { reasoningPaneOpen, reasoningTogglePatch } from './reasoning-view-state';
 import { lazyWithRecovery } from '@/lib/lazy-import';
 import {
   looksLikeToolCall,
@@ -828,12 +829,11 @@ export const MessageBubble = memo(function MessageBubble({
             thinking={message.thinking!}
             isStreaming={isStreaming}
             // Auto-follow streaming (open while thinking, tucked once settled)
-            // until the user toggles it — then `reasoningUserSet` pins their
-            // choice and the auto behavior stops.
-            expanded={viewState.reasoningUserSet ? viewState.reasoningExpanded : isStreaming}
-            onOpenChange={(open) =>
-              setViewState({ reasoningExpanded: open, reasoningUserSet: true })
-            }
+            // until the user toggles it — then the pin (reasoningUserSet) stops
+            // the auto behavior. Policy lives in `reasoning-view-state` so it's
+            // unit-tested without a DOM.
+            expanded={reasoningPaneOpen(viewState, isStreaming)}
+            onOpenChange={(open) => setViewState(reasoningTogglePatch(open))}
           />
         )}
         {hasContent && (
