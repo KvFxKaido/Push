@@ -94,6 +94,7 @@ export const ToolCallSummary = memo(function ToolCallSummary({
               key={i}
               icon={icon as LucideIcon}
               hasConnector={i < items.length - 1}
+              connectorClassName="bg-push-edge"
               // Override the primitive's default `text-sm text-muted-foreground`
               // with Push's mono machinery text; error rows go red so the rail
               // icon (inheriting currentColor) reads as failed at a glance.

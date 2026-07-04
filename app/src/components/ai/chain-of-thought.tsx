@@ -105,11 +105,20 @@ export const ChainOfThought = memo(
 
     const chainOfThoughtContext = useMemo(() => ({ isOpen, setIsOpen }), [isOpen, setIsOpen]);
 
+    // A single Collapsible root wraps both the trigger (Header) and the content
+    // (Content) so Radix wires `aria-controls` ↔ the content id correctly. The
+    // context still shares `isOpen` for presentational bits (the chevron); it is
+    // NOT a second source of open state.
     return (
       <ChainOfThoughtContext.Provider value={chainOfThoughtContext}>
-        <div className={cn('not-prose max-w-prose space-y-4', className)} {...props}>
+        <Collapsible
+          open={isOpen}
+          onOpenChange={setIsOpen}
+          className={cn('not-prose max-w-prose space-y-4', className)}
+          {...props}
+        >
           {children}
-        </div>
+        </Collapsible>
       </ChainOfThoughtContext.Provider>
     );
   },
@@ -123,31 +132,27 @@ export type ChainOfThoughtHeaderProps = ComponentProps<typeof CollapsibleTrigger
 
 export const ChainOfThoughtHeader = memo(
   ({ className, children, icon: Icon = BrainIcon, ...props }: ChainOfThoughtHeaderProps) => {
-    const { isOpen, setIsOpen } = useChainOfThought();
+    // The Collapsible root lives in ChainOfThought; the trigger finds it via
+    // Radix context, so a single root wires trigger ↔ content for a11y. `isOpen`
+    // here is presentational only — it rotates the chevron.
+    const { isOpen } = useChainOfThought();
 
     return (
-      <Collapsible onOpenChange={setIsOpen} open={isOpen}>
-        <CollapsibleTrigger
-          className={cn(
-            'flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground',
-            className,
-          )}
-          {...props}
-        >
-          <Icon className="size-4 shrink-0" />
-          {/* `min-w-0 truncate` lets a long header ellipsize instead of
-              overflowing its row (a lone label short-circuits harmlessly). */}
-          <span className="min-w-0 flex-1 truncate text-left">
-            {children ?? 'Chain of Thought'}
-          </span>
-          <ChevronDownIcon
-            className={cn(
-              'size-4 shrink-0 transition-transform',
-              isOpen ? 'rotate-180' : 'rotate-0',
-            )}
-          />
-        </CollapsibleTrigger>
-      </Collapsible>
+      <CollapsibleTrigger
+        className={cn(
+          'flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground',
+          className,
+        )}
+        {...props}
+      >
+        <Icon className="size-4 shrink-0" />
+        {/* `min-w-0 truncate` lets a long header ellipsize instead of
+            overflowing its row (a lone label short-circuits harmlessly). */}
+        <span className="min-w-0 flex-1 truncate text-left">{children ?? 'Chain of Thought'}</span>
+        <ChevronDownIcon
+          className={cn('size-4 shrink-0 transition-transform', isOpen ? 'rotate-180' : 'rotate-0')}
+        />
+      </CollapsibleTrigger>
     );
   },
 );
@@ -161,6 +166,9 @@ export type ChainOfThoughtStepProps = ComponentProps<'div'> & {
    *  set `false` on the final step so the timeline rail doesn't dangle past
    *  the last node. */
   hasConnector?: boolean;
+  /** Classes for the connector rail. Defaults to the shadcn `bg-border` token;
+   *  override (e.g. `bg-push-edge`) to fit a host design system. */
+  connectorClassName?: string;
 };
 
 export const ChainOfThoughtStep = memo(
@@ -171,6 +179,7 @@ export const ChainOfThoughtStep = memo(
     description,
     status = 'complete',
     hasConnector = true,
+    connectorClassName,
     children,
     ...props
   }: ChainOfThoughtStepProps) => {
@@ -197,7 +206,12 @@ export const ChainOfThoughtStep = memo(
               anchored to the icon, not a fixed row height, so it survives both
               tall steps and dense single-line rows. */}
           {hasConnector && (
-            <div className="absolute top-5 -bottom-3 left-1/2 w-px -translate-x-1/2 bg-border" />
+            <div
+              className={cn(
+                'absolute top-5 -bottom-3 left-1/2 w-px -translate-x-1/2 bg-border',
+                connectorClassName,
+              )}
+            />
           )}
         </div>
         <div className="flex-1 space-y-2 overflow-hidden">
@@ -236,21 +250,19 @@ export type ChainOfThoughtContentProps = ComponentProps<typeof CollapsibleConten
 
 export const ChainOfThoughtContent = memo(
   ({ className, children, ...props }: ChainOfThoughtContentProps) => {
-    const { isOpen } = useChainOfThought();
-
+    // Content for the single Collapsible root in ChainOfThought — Radix links it
+    // to the trigger via context, no second root needed.
     return (
-      <Collapsible open={isOpen}>
-        <CollapsibleContent
-          className={cn(
-            'mt-2 space-y-3',
-            'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
-            className,
-          )}
-          {...props}
-        >
-          {children}
-        </CollapsibleContent>
-      </Collapsible>
+      <CollapsibleContent
+        className={cn(
+          'mt-2 space-y-3',
+          'data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-popover-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in',
+          className,
+        )}
+        {...props}
+      >
+        {children}
+      </CollapsibleContent>
     );
   },
 );
