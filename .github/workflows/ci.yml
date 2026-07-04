@@ -271,9 +271,18 @@ jobs:
 
       # Bun appends .exe on Windows regardless of --outfile; resolve the
       # real name once and export it for the smoke steps.
+      #
+      # Compiled Bun binaries otherwise autoload two things from cwd, ahead
+      # of applyConfigToEnv() and the env-scrub allowlist, so any repo the
+      # user cd's into becomes an injection vector:
+      #   --no-compile-autoload-dotenv  — .env / .env.local into process.env
+      #     (provider keys, PUSH_* flags)
+      #   --no-compile-autoload-bunfig  — bunfig.toml, whose `preload` runs
+      #     ARBITRARY CODE before the CLI starts (RCE, not just env)
+      # Config comes from ~/.push/config.json only.
       - name: Compile single binary
         run: |
-          bun build --compile cli/cli.ts --outfile push-smoke
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig cli/cli.ts --outfile push-smoke
           BIN=./push-smoke
           if [ "$RUNNER_OS" = "Windows" ]; then BIN=./push-smoke.exe; fi
           echo "BIN=$BIN" >> "$GITHUB_ENV"
@@ -306,9 +315,9 @@ jobs:
       - name: Cross-compile (windows-x64, darwin-arm64, linux-arm64)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          bun build --compile --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
-          bun build --compile --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
-          bun build --compile --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
 
       # Binaries are ~100MB each; only keep them when someone asked for a
       # run by hand (workflow_dispatch), not on every PR.

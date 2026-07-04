@@ -39,15 +39,51 @@ $env:PUSH_TUI_ENABLED = "0"
 The CLI (daemon included) compiles to a self-contained executable with [Bun](https://bun.sh) — no Node, tsx, or `node_modules` on the target machine:
 
 ```bash
-bun build --compile cli/cli.ts --outfile push-bin
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig cli/cli.ts --outfile push-bin
 ./push-bin                     # same surface: tui, run, daemon, …
 
 # Cross-compile from any host:
-bun build --compile --target=bun-windows-x64 cli/cli.ts --outfile push.exe
-bun build --compile --target=bun-darwin-arm64 cli/cli.ts --outfile push-macos
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-windows-x64 cli/cli.ts --outfile push.exe
+bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-darwin-arm64 cli/cli.ts --outfile push-macos
 ```
 
+Both flags are load-bearing, not cosmetic. A compiled binary otherwise
+autoloads, from whatever directory it runs in, ahead of `~/.push/config.json`
+hydration and the subprocess env scrub:
+
+- `--no-compile-autoload-dotenv` — `.env` / `.env.local`, injecting
+  repo-controlled values into the CLI's own `process.env` (provider keys,
+  `PUSH_*` flags).
+- `--no-compile-autoload-bunfig` — `bunfig.toml`, whose `preload` runs
+  **arbitrary code before the CLI starts**. This is remote code execution
+  from a repo-local file, not just env injection — the more severe of the
+  two.
+
 Caveats: binaries are ~100 MB (embedded Bun runtime), and local embeddings (`@huggingface/transformers`, a native optional dependency) can't be embedded — they resolve from `node_modules` at runtime when present, else the standard optional-dep fallback applies. CI smoke-tests the compiled binary on Linux and Windows (`cli-binary` job). Background and rejected alternative (a Go rewrite): [`docs/decisions/Go Migration Assessment.md`](../docs/decisions/Go%20Migration%20Assessment.md).
+
+### Running the dev tree under Bun
+
+Bun executes TypeScript natively, so the interpreter path works without the
+tsx loader:
+
+```bash
+npm run dev:cli:bun            # bun --no-env-file cli/cli.ts — same surface as dev:cli
+```
+
+`--no-env-file` keeps this path symmetric with the Node dev script and the
+compiled binary: without it, Bun's interpreter auto-loads `.env` / `.env.local`
+from cwd into `process.env` ahead of `applyConfigToEnv()` and the env scrub.
+(Bun has no runtime flag to disable `bunfig.toml` autoload, but the dev path
+runs in the trusted Push checkout, not an arbitrary user repo — the
+distributed-binary threat model the compile flags address does not apply here.)
+
+Node (`npm run dev:cli`) remains the canonical dev path, and **tests stay on
+`node --test`**: Bun's `node:test` shim can't run this suite yet
+(`describe()` support, [oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090)
+— 137 of 824 tests fail under `bun test` as of Bun 1.3.11). Because tests run
+on Node, code under `cli/` must not call `Bun.*` APIs directly; adoption
+status and sequencing live in
+[`docs/decisions/Bun Runtime Adoption.md`](../docs/decisions/Bun%20Runtime%20Adoption.md).
 
 ## Modes
 
