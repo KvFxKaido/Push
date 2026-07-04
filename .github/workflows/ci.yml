@@ -329,6 +329,107 @@ jobs:
           path: /tmp/push-*
           retention-days: 7
 
+  # Non-blocking instrument, NOT a merge gate. The CLI suite runs on
+  # `node --test` (canonical) because Bun's node:test shim can't run it yet
+  # (oven-sh/bun#5090 — describe()/test() nested inside test() throws during
+  # collection). This job runs the same suite under `bun test` only to make
+  # that blocker OBSERVABLE: the step summary prints the #5090 count, and when
+  # it reaches 0 the shim gap has landed and the canonical runner can flip to
+  # Bun (docs/decisions/Bun Runtime Adoption.md, Phase 1). `continue-on-error`
+  # keeps a red canary from failing CI; the step itself exits non-zero only if
+  # bun produced no summary at all (canary broken, not merely failing tests).
+  cli-bun-canary:
+    name: Bun test canary (cli, non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # DELIBERATELY `latest`, NOT the cli-binary pin. This canary exists to
+          # notice when a *future* Bun release closes the #5090 gap; pinning it
+          # to the known-bad 1.3.11 would report the same numbers forever and
+          # the `errors → 0` trigger would never fire on its own — defeating the
+          # point of making the blocker observable. cli-binary stays pinned (it
+          # ships binaries); this one tracks upstream. (Codex P2 on PR #1341.)
+          bun-version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run CLI suite under Bun and summarize
+        env:
+          TMPDIR: /tmp
+          TEMP: /tmp
+          TMP: /tmp
+        run: |
+          # GitHub runs `run:` under `bash -e`. Failures here are EXPECTED (the
+          # suite is red under Bun) and we handle every non-zero ourselves, so
+          # disable errexit up front — otherwise a benign `[ test ] && x`
+          # short-circuit later aborts the whole step.
+          set +e
+
+          bun test --preload ./cli/tests/setup-test-home-isolation.mjs cli/tests/*.test.mjs > bun-test.log 2>&1
+          bun_exit=$?
+
+          # Strip ANSI so parsing is stable regardless of bun's color detection.
+          sed -r "s/\x1b\[[0-9;]*[a-zA-Z]//g" bun-test.log > bun-test.clean.log
+
+          # Surface bun's own ending in the job log — the canary must show its
+          # work, or a CI-vs-local divergence can't be diagnosed from here.
+          echo "----- bun test exit=$bun_exit; last 30 lines of output: -----"
+          tail -n 30 bun-test.clean.log
+          echo "------------------------------------------------------------"
+
+          # Parse bun's OWN authoritative summary lines. Do NOT grep the #5090
+          # URL: GitHub's ##[error] annotations repeat each error's stack, so a
+          # URL count double-counts in CI (though not locally). bun reports
+          # `fail` (tests that ran and failed) and `errors` (suite-level throws,
+          # ~all #5090 today) as SEPARATE categories — keep them separate.
+          ran=$(grep -oE "Ran [0-9]+ tests across [0-9]+ files" bun-test.clean.log | tail -1)
+          pass=$(grep -oE "^ *[0-9]+ pass *$" bun-test.clean.log | tail -1 | grep -oE "[0-9]+")
+          fail=$(grep -oE "^ *[0-9]+ fail *$" bun-test.clean.log | tail -1 | grep -oE "[0-9]+")
+          errors=$(grep -oE "^ *[0-9]+ errors? *$" bun-test.clean.log | tail -1 | grep -oE "[0-9]+")
+
+          if [ -z "$ran" ] || [ -z "$pass" ]; then
+            echo "::error::bun test produced no summary — canary broken (bun setup or glob), not merely failing tests (exit=$bun_exit)."
+            exit 1
+          fi
+          : "${fail:=0}"
+          : "${errors:=0}"
+
+          {
+            echo "## Bun test canary — \`bun test\` over the CLI suite"
+            echo ""
+            echo "Informational only; canonical CLI tests run on \`node --test\`."
+            echo "Numbers are for *this CI environment* — bun collects a different"
+            echo "test set locally (see \`Ran …\`), so treat absolute counts as"
+            echo "CI-relative, not a fixed baseline."
+            echo ""
+            echo "| metric | value |"
+            echo "| --- | ---: |"
+            echo "| pass | $pass |"
+            echo "| fail (ran, real Bun divergences) | $fail |"
+            echo "| errors (suite-level, ≈ #5090 blocker) | $errors |"
+            echo ""
+            echo "\`$ran\`"
+            echo ""
+            echo "**Revisit trigger:** **errors → 0** means Bun's \`node:test\` shim gap (#5090 — \`describe()\`/\`test()\` nested in \`test()\`) has landed. That is *necessary but not sufficient*: the \`fail\` count (real per-test divergences — the \`ws\` gap, timeouts, spinner rendering) must also come down, and collection must stabilise across environments, before the canonical runner can flip to Bun (Phase 2)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "pass=$pass fail=$fail errors=$errors ($ran)"
+
   sandbox:
     name: Validate sandbox
     runs-on: ubuntu-latest

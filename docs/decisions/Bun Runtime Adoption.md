@@ -81,21 +81,36 @@ ground rule 2 (running *under* Bun ≠ *calling* Bun APIs). Known Bun gap: the
 relay's `ws` `unexpected-response` handler is unimplemented in Bun, so a
 rejected relay dial surfaces differently there.
 
-Tests are the blocker, measured on Bun 1.3.11 against the full suite:
+Tests are the blocker. The `cli-bun-canary` CI job (non-blocking) runs the
+full suite under `bun test` on every run and prints a live breakdown to its
+step summary. bun reports three **separate** categories, and keeping them
+separate is exactly what a first read got wrong (`fail` and `errors` are not
+the same bucket, so you cannot subtract one from the other):
 
-- `bun test --preload ./cli/tests/setup-test-home-isolation.mjs
-  cli/tests/*.test.mjs`: **687 pass, 137 fail, 121 errors** across 824
-  tests / 146 files.
-- The dominant failure is one upstream gap: Bun's `node:test` shim rejects
-  `describe()` nesting patterns this suite uses
-  ([oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090),
-  `ERR_NOT_IMPLEMENTED`).
+- **Local (Bun 1.3.11):** 791 pass / **133 fail** / **100 errors**, Ran 924
+  tests across 147 files.
+- The **100 errors** are one upstream gap — Bun's `node:test` shim can't run
+  `describe()`/`test()` nested inside a `test()`
+  ([oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090)); each
+  affected file throws once during collection, spread across ~100 of the 147
+  files, so de-nesting would be a whole-suite rewrite, not a targeted fix
+  (measured, not assumed — rule 4).
+- The **133 fail are all real per-test divergences** — tests that *ran* and
+  failed under Bun (timeouts, the `ws` API gap, spinner rendering). A much
+  larger real surface than a first pass suggested.
+- **CI collects only 473 of those 924 tests** (140 fail / 139 errors) running
+  the identical command — so bun test is **not yet reproducible across
+  environments**, a second blocker sitting behind #5090.
 
-Decision: **tests stay on `node --test`**; do not port 146 files to
-`bun:test` to route around an upstream gap that is actively tracked.
-Revisit trigger: a Bun release where the command above goes green — then
-flip the canonical test script, make Bun the dev default, and unlock
-Phase 2.
+Decision: **tests stay on `node --test`** — reinforced, not weakened, by the
+measurement: even with #5090 fixed, ~133 real failures and non-reproducible
+collection remain. Do not port the suite to `bun:test` to route around an
+upstream gap that is actively tracked.
+
+Revisit trigger, in order — each made observable by the canary: (1) **errors
+→ 0** (the #5090 shim lands — necessary but not sufficient); (2) the **fail**
+count worked down to ~0; (3) collection stable across local and CI. Only then
+flip the canonical test script, make Bun the dev default, and unlock Phase 2.
 
 ## Phase 2 — utility substitutions (blocked on Phase 1)
 
