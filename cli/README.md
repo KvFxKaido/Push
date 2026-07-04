@@ -54,6 +54,23 @@ injecting repo-controlled values into the CLI's own `process.env` ahead of
 
 Caveats: binaries are ~100 MB (embedded Bun runtime), and local embeddings (`@huggingface/transformers`, a native optional dependency) can't be embedded — they resolve from `node_modules` at runtime when present, else the standard optional-dep fallback applies. CI smoke-tests the compiled binary on Linux and Windows (`cli-binary` job). Background and rejected alternative (a Go rewrite): [`docs/decisions/Go Migration Assessment.md`](../docs/decisions/Go%20Migration%20Assessment.md).
 
+### Running the dev tree under Bun
+
+Bun executes TypeScript natively, so the interpreter path works without the
+tsx loader:
+
+```bash
+npm run dev:cli:bun            # bun cli/cli.ts — same surface as dev:cli
+```
+
+Node (`npm run dev:cli`) remains the canonical dev path, and **tests stay on
+`node --test`**: Bun's `node:test` shim can't run this suite yet
+(`describe()` support, [oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090)
+— 137 of 824 tests fail under `bun test` as of Bun 1.3.11). Because tests run
+on Node, code under `cli/` must not call `Bun.*` APIs directly; adoption
+status and sequencing live in
+[`docs/decisions/Bun Runtime Adoption.md`](../docs/decisions/Bun%20Runtime%20Adoption.md).
+
 ## Modes
 
 ### Interactive REPL (transcript-first CLI)
