@@ -17,9 +17,10 @@ export const ESC = {
   clearLine: '\x1b[2K',
   clearToEnd: '\x1b[0J',
   reset: '\x1b[0m',
-  // Mouse tracking + SGR coordinates for wheel scroll in alternate screen.
-  mouseOn: '\x1b[?1000h\x1b[?1006h',
-  mouseOff: '\x1b[?1006l\x1b[?1000l',
+  // Mouse tracking + SGR coordinates. 1000 reports press/release, 1002 adds
+  // drag events while a button is held, and 1006 keeps coordinates parseable.
+  mouseOn: '\x1b[?1000h\x1b[?1002h\x1b[?1006h',
+  mouseOff: '\x1b[?1006l\x1b[?1002l\x1b[?1000l',
   // Alternate-scroll mode (xterm DEC 1007) is on by default in many terminals
   // and, with mouse tracking off, translates wheel movement into Up/Down
   // arrow-key sequences while the alt screen is active — which would land on

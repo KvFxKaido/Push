@@ -36,6 +36,12 @@ export interface PushConfig {
   theme?: string;
   spinner?: string;
   /**
+   * TUI mouse handling. "native" (default) leaves mouse selection to the
+   * terminal; "app" captures mouse events so Push can wheel-scroll and copy
+   * drag-selected transcript text.
+   */
+  tuiMouseMode?: string;
+  /**
    * TUI daemon integration. Defaults to true: the TUI starts pushd
    * when it is not already reachable, then sends turns through it so
    * sessions can persist in the background.
@@ -166,6 +172,7 @@ export function applyConfigToEnv(config: PushConfig): void {
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
   setEnvIfMissing('PUSH_THEME', config.theme);
   setEnvIfMissing('PUSH_SPINNER', config.spinner);
+  setEnvIfMissing('PUSH_TUI_MOUSE_MODE', config.tuiMouseMode);
 
   // Forward tool allow/deny lists as comma-separated env vars so child
   // processes (notably the pushd daemon's delegated tool executors) see

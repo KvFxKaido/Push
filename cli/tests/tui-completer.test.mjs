@@ -352,7 +352,7 @@ describe('/config completion', () => {
     const r = tc.tab('/config ', false);
     assert.notEqual(r, null);
     assert.equal(r.text, '/config key ');
-    assert.equal(r.total, 4);
+    assert.equal(r.total, 8);
   });
 
   it('narrows subcommands: /config k → /config key ', () => {
@@ -391,6 +391,19 @@ describe('/config completion', () => {
     assert.notEqual(r, null);
     assert.equal(r.text, '/config sandbox off');
     assert.equal(r.total, 1);
+  });
+
+  it('completes daemon and mouse modes', () => {
+    const daemon = tc.tab('/config daemon a', false);
+    assert.notEqual(daemon, null);
+    assert.equal(daemon.text, '/config daemon auto');
+    assert.equal(daemon.total, 1);
+
+    tc.reset();
+    const mouse = tc.tab('/config mouse a', false);
+    assert.notEqual(mouse, null);
+    assert.equal(mouse.text, '/config mouse app');
+    assert.equal(mouse.total, 1);
   });
 
   it('returns null for unknown subcommand args', () => {

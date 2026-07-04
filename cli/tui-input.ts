@@ -90,6 +90,72 @@ export interface ParsedKey {
   meta: boolean;
   sequence: string;
   ch: string;
+  mouse?: ParsedMouseEvent;
+}
+
+export type ParsedMouseButton = 'left' | 'middle' | 'right' | 'none';
+
+export type ParsedMouseEvent =
+  | {
+      kind: 'press' | 'drag' | 'release';
+      button: ParsedMouseButton;
+      x: number;
+      y: number;
+    }
+  | {
+      kind: 'wheel';
+      direction: 'up' | 'down';
+      x: number;
+      y: number;
+    };
+
+function mouseButtonFromCode(button: number): ParsedMouseButton {
+  const low = button & 3;
+  if (low === 0) return 'left';
+  if (low === 1) return 'middle';
+  if (low === 2) return 'right';
+  return 'none';
+}
+
+function applyMouseEvent(
+  key: ParsedKey,
+  button: number,
+  x: number,
+  y: number,
+  action: 'M' | 'm',
+): ParsedKey {
+  if (action === 'M' && (button & 64) === 64) {
+    const direction = button & 3;
+    if (direction === 0 || direction === 1) {
+      key.name = direction === 0 ? 'wheelup' : 'wheeldown';
+      key.mouse = {
+        kind: 'wheel',
+        direction: direction === 0 ? 'up' : 'down',
+        x,
+        y,
+      };
+      return key;
+    }
+  }
+
+  key.name = 'mouse';
+  if (action === 'm') {
+    key.mouse = {
+      kind: 'release',
+      button: mouseButtonFromCode(button),
+      x,
+      y,
+    };
+    return key;
+  }
+
+  key.mouse = {
+    kind: (button & 32) === 32 ? 'drag' : 'press',
+    button: mouseButtonFromCode(button),
+    x,
+    y,
+  };
+  return key;
 }
 
 /**
@@ -178,41 +244,22 @@ export function parseKey(buf: Buffer): ParsedKey {
     const body = seq.slice(2);
 
     // SGR mouse wheel: button bit 64 marks wheel, low bits encode direction.
-    const sgrMouse = body.match(/^<(\d+);\d+;\d+([mM])$/);
+    const sgrMouse = body.match(/^<(\d+);(\d+);(\d+)([mM])$/);
     if (sgrMouse) {
       const button = Number(sgrMouse[1]);
-      const action = sgrMouse[2];
-      if (action === 'M' && (button & 64) === 64) {
-        const direction = button & 3;
-        if (direction === 0) {
-          key.name = 'wheelup';
-          return key;
-        }
-        if (direction === 1) {
-          key.name = 'wheeldown';
-          return key;
-        }
-      }
-      key.name = 'mouse';
-      return key;
+      const x = Number(sgrMouse[2]);
+      const y = Number(sgrMouse[3]);
+      const action = sgrMouse[4] as 'M' | 'm';
+      return applyMouseEvent(key, button, x, y, action);
     }
 
     // Legacy xterm mouse reporting: ESC [ M Cb Cx Cy
     if (seq.startsWith('\x1b[M') && buf.length >= 6) {
       const button = seq.charCodeAt(3) - 32;
-      if ((button & 64) === 64) {
-        const direction = button & 3;
-        if (direction === 0) {
-          key.name = 'wheelup';
-          return key;
-        }
-        if (direction === 1) {
-          key.name = 'wheeldown';
-          return key;
-        }
-      }
-      key.name = 'mouse';
-      return key;
+      const x = seq.charCodeAt(4) - 32;
+      const y = seq.charCodeAt(5) - 32;
+      const action = (button & 3) === 3 ? 'm' : 'M';
+      return applyMouseEvent(key, button, x, y, action);
     }
 
     // Arrow keys

@@ -153,6 +153,12 @@ import {
 import { shouldFullRedraw } from './tui-render-frame.js';
 import { reconcileEntryBlocks } from './tui-transcript-cache.js';
 import { reconcileStreamFrame } from './tui-stream-frame.js';
+import {
+  extractSelectedTranscriptText,
+  highlightSelectedTranscriptLine,
+  pointFromMouse,
+  resolveTuiMouseMode,
+} from './tui-selection.js';
 
 // ── TUI state ───────────────────────────────────────────────────────
 
@@ -207,6 +213,10 @@ function isTuiDaemonAutoStartEnabled(config) {
     process.env.PUSH_TUI_DAEMON_AUTOSTART ?? config.tuiDaemonAutoStart,
     true,
   );
+}
+
+function getTuiMouseMode(config) {
+  return resolveTuiMouseMode(process.env.PUSH_TUI_MOUSE_MODE ?? config.tuiMouseMode);
 }
 
 function isProcessRunning(pid) {
@@ -315,6 +325,8 @@ function createTUIState() {
     payloadCursorId: null,
     expandedToolJsonPayloadIds: new Set(),
     payloadBlocks: [],
+    transcriptMouseSnapshot: null,
+    mouseSelection: null,
     reasoningModalOpen: false,
     reasoningBuf: '',
     lastReasoning: '',
@@ -557,6 +569,15 @@ function renderTranscript(buf, layout, theme, tuiState) {
     }
   }
 
+  tuiState.transcriptMouseSnapshot = {
+    top,
+    left,
+    width,
+    height,
+    startLine: startIdx,
+    lines: slice,
+  };
+
   tuiState.payloadBlocks = payloadBlocks;
   if (tuiState.payloadCursorId && !payloadBlocks.some((b) => b.id === tuiState.payloadCursorId)) {
     tuiState.payloadCursorId = null;
@@ -575,7 +596,13 @@ function renderTranscript(buf, layout, theme, tuiState) {
 
   // Render
   for (let r = 0; r < height; r++) {
-    const line = r < slice.length ? slice[r] : '';
+    const rawLine = r < slice.length ? slice[r] : '';
+    const line = highlightSelectedTranscriptLine(
+      rawLine,
+      startIdx + r,
+      tuiState.mouseSelection,
+      (text) => theme.inverse(text),
+    );
     buf.writeLine(top + r, left, padTo(line, width));
   }
 
@@ -1114,7 +1141,7 @@ function maskInput(str) {
 /**
  * Build the ordered list of config items.
  * Provider rows followed by: tavily, sandbox, execMode, explain,
- * daemon, remote.
+ * daemon, mouse, remote.
  */
 function getConfigItems(providerList, config, modalState = null) {
   const items = [];
@@ -1155,6 +1182,12 @@ function getConfigItems(providerList, config, modalState = null) {
     type: 'daemon',
     id: 'daemon',
     daemonAutoStart: isTuiDaemonAutoStartEnabled(config),
+  });
+  // TUI mouse mode
+  items.push({
+    type: 'mouse',
+    id: 'mouse',
+    mouseMode: getTuiMouseMode(config),
   });
   // Remote relay config is stored separately from ~/.push/config.json;
   // modalState carries a best-effort async snapshot loaded when the
@@ -1226,6 +1259,13 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
           ? theme.style('state.success', 'auto')
           : theme.style('fg.dim', 'manual');
         const name = cursorStyle(theme, isCursor, 'daemon');
+        lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
+      } else if (item.type === 'mouse') {
+        const status =
+          item.mouseMode === 'app'
+            ? theme.style('state.success', 'app')
+            : theme.style('fg.dim', 'native');
+        const name = cursorStyle(theme, isCursor, 'mouse');
         lines.push(`  ${marker} ${num} ${padTo(name, 14)} ${status}`);
       } else if (item.type === 'remote') {
         const name = cursorStyle(theme, isCursor, 'remote');
@@ -1334,6 +1374,7 @@ export async function runTUI(options = {}) {
   // any other theme-relevant env vars) are in place when createTheme() reads them.
   const config = await deps.loadConfig();
   applyConfigToEnv(config);
+  let mouseMode = getTuiMouseMode(config);
 
   // `let` (not `const`) so /theme <name> can hot-swap the theme without
   // restarting the TUI. Renderers receive `theme` as a parameter on every
@@ -2790,16 +2831,46 @@ export async function runTUI(options = {}) {
 
   let runAbort = null;
 
+  function applyTerminalMouseMode(nextMode) {
+    mouseMode = nextMode;
+    tuiState.mouseSelection = null;
+    io.stdout.write((mouseMode === 'app' ? ESC.mouseOn : ESC.mouseOff) + ESC.altScrollOff);
+    tuiState.dirty.add('transcript');
+    scheduler?.schedule();
+  }
+
+  function copyTextToClipboard(label, text) {
+    if (!text) return false;
+    let content = text;
+    let truncated = false;
+    if (content.length > OSC52_MAX_BYTES) {
+      content = content.slice(0, OSC52_MAX_BYTES);
+      truncated = true;
+    }
+    io.stdout.write(osc52Copy(content));
+    const size = formatByteSize(content.length);
+    const suffix = truncated ? ` (truncated to ${size})` : ` (${size})`;
+    addTranscriptEntry(tuiState, 'status', `Copied ${label}${suffix} via OSC 52.`);
+    scheduler?.flush();
+    return true;
+  }
+
   // ── Enter alternate screen ───────────────────────────────────────
 
-  // Mouse tracking is intentionally never enabled: its only consumer was
-  // wheel-scroll, which PageUp/PageDown already cover, and enabling it
-  // disables native terminal text selection in every terminal emulator.
+  // Native mode keeps mouse tracking disabled so ordinary terminal drag
+  // selection works. App mode enables tracking and implements selection/copy
+  // inside Push, which is the only way to support wheel scroll plus
+  // no-modifier drag selection at the same time.
   // Alternate-scroll mode is disabled too — several terminals default it on
   // and would otherwise translate wheel movement into Up/Down arrow-key
   // sequences that land on the composer's history recall (see altScrollOff).
   io.stdout.write(
-    ESC.altScreenOn + ESC.cursorHide + ESC.clearScreen + ESC.bracketedPasteOn + ESC.altScrollOff,
+    ESC.altScreenOn +
+      ESC.cursorHide +
+      ESC.clearScreen +
+      ESC.bracketedPasteOn +
+      ESC.altScrollOff +
+      (mouseMode === 'app' ? ESC.mouseOn : ESC.mouseOff),
   );
 
   if (io.stdin.isTTY) {
@@ -5762,6 +5833,28 @@ export async function runTUI(options = {}) {
       return;
     }
 
+    if (sub === 'mouse') {
+      const value = parts[1]?.toLowerCase();
+      if (value !== 'native' && value !== 'app') {
+        addTranscriptEntry(tuiState, 'warning', 'Usage: /config mouse native|app');
+        scheduler.flush();
+        return;
+      }
+      config.tuiMouseMode = value;
+      process.env.PUSH_TUI_MOUSE_MODE = value;
+      await saveConfig(config);
+      applyTerminalMouseMode(value);
+      addTranscriptEntry(
+        tuiState,
+        'status',
+        value === 'app'
+          ? 'TUI mouse: app (wheel scroll + drag selection copies via OSC 52)'
+          : 'TUI mouse: native (terminal selection; wheel ignored in alternate screen)',
+      );
+      scheduler.flush();
+      return;
+    }
+
     if (sub === 'remote') {
       await handleRemoteCommand(parts.slice(1).join(' '));
       return;
@@ -5770,7 +5863,7 @@ export async function runTUI(options = {}) {
     addTranscriptEntry(
       tuiState,
       'warning',
-      `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain, daemon, remote`,
+      `Unknown config subcommand: ${sub}. Try: key, url, tavily, sandbox, explain, daemon, mouse, remote`,
     );
     scheduler.flush();
   }
@@ -6025,6 +6118,7 @@ export async function runTUI(options = {}) {
             '  /config sandbox on|off  Toggle local Docker sandbox',
             '  /config explain on|off  Toggle pattern explanations',
             '  /config daemon auto|off  Toggle TUI pushd autostart',
+            '  /config mouse native|app  Toggle terminal-native vs app-owned mouse mode',
             '  /remote status|setup|pair|enable|disable  Manage Remote relay + phone pairing',
             '  /rc [pair]           Remote control: hand this session to your phone (one-shot; pairs if needed)',
             '  /daemon status       Show pushd connection, process, and log paths',
@@ -6057,6 +6151,8 @@ export async function runTUI(options = {}) {
             '  /exit                Exit TUI',
             '',
             'Selecting text:',
+            '  /config mouse native  Terminal owns selection; wheel is inert in the TUI',
+            '  /config mouse app     Push owns mouse: wheel scrolls, drag-release copies',
             '  Shift+drag    Native selection (Linux/WSL/Windows Terminal, xterm)',
             '  Option+drag   Native selection (iTerm2, macOS Terminal)',
             '  /copy         Push semantic chunks to clipboard (survives scrollback)',
@@ -6245,16 +6341,7 @@ export async function runTUI(options = {}) {
           scheduler.flush();
           return true;
         }
-        let truncated = false;
-        if (content.length > OSC52_MAX_BYTES) {
-          content = content.slice(0, OSC52_MAX_BYTES);
-          truncated = true;
-        }
-        io.stdout.write(osc52Copy(content));
-        const size = formatByteSize(content.length);
-        const suffix = truncated ? ` (truncated to ${size})` : ` (${size})`;
-        addTranscriptEntry(tuiState, 'status', `Copied ${label}${suffix} via OSC 52.`);
-        scheduler.flush();
+        copyTextToClipboard(label, content);
         return true;
       }
 
@@ -6825,7 +6912,7 @@ export async function runTUI(options = {}) {
   }
 
   function getConfigItemCount() {
-    return getProviderList().length + 6;
+    return getProviderList().length + 7;
   }
 
   async function handleConfigModalInput(key) {
@@ -6971,6 +7058,14 @@ export async function runTUI(options = {}) {
         await ensureDaemonConnected({ announce: true });
       }
     } else if (index === providers.length + 5) {
+      // TUI mouse mode -> toggle directly
+      const current = getTuiMouseMode(config);
+      const next = current === 'app' ? 'native' : 'app';
+      config.tuiMouseMode = next;
+      process.env.PUSH_TUI_MOUSE_MODE = next;
+      await saveConfig(config);
+      applyTerminalMouseMode(next);
+    } else if (index === providers.length + 6) {
       // Remote relay → show status + command hints in the transcript.
       await handleRemoteCommand('status');
       ms.remoteStatusLabel = await getRemoteStatusLabel();
@@ -7114,6 +7209,73 @@ export async function runTUI(options = {}) {
     const str = pendingInput + decoded;
     pendingInput = '';
     processInput(str);
+  }
+
+  function scrollTranscript(direction) {
+    const { rows } = getTermSize();
+    const step = Math.max(1, Math.floor(rows / 3));
+    if (direction === 'up') {
+      tuiState.scrollOffset += step;
+    } else {
+      tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - step);
+    }
+    tuiState.dirty.add('transcript');
+    scheduler.schedule();
+  }
+
+  function handleMouseKey(key) {
+    if (mouseMode !== 'app' || !key.mouse) return false;
+
+    const mouse = key.mouse;
+    const snapshot = tuiState.transcriptMouseSnapshot;
+    if (mouse.kind === 'wheel') {
+      if (!pointFromMouse(snapshot, mouse.x, mouse.y)) return true;
+      scrollTranscript(mouse.direction);
+      return true;
+    }
+
+    if (mouse.kind === 'press') {
+      if (mouse.button !== 'left') return true;
+      const point = pointFromMouse(snapshot, mouse.x, mouse.y);
+      if (!point) {
+        tuiState.mouseSelection = null;
+        tuiState.dirty.add('transcript');
+        scheduler.schedule();
+        return true;
+      }
+      tuiState.mouseSelection = { anchor: point, focus: point };
+      tuiState.dirty.add('transcript');
+      scheduler.schedule();
+      return true;
+    }
+
+    if (mouse.kind === 'drag') {
+      if (!tuiState.mouseSelection) return true;
+      const point = pointFromMouse(snapshot, mouse.x, mouse.y, { clamp: true });
+      if (!point) return true;
+      tuiState.mouseSelection.focus = point;
+      tuiState.dirty.add('transcript');
+      scheduler.schedule();
+      return true;
+    }
+
+    if (mouse.kind === 'release') {
+      const selection = tuiState.mouseSelection;
+      if (!selection) return true;
+      const point = pointFromMouse(snapshot, mouse.x, mouse.y, { clamp: true });
+      if (point) selection.focus = point;
+      const text = snapshot ? extractSelectedTranscriptText(snapshot, selection) : '';
+      tuiState.mouseSelection = null;
+      tuiState.dirty.add('transcript');
+      if (text.length > 0) {
+        copyTextToClipboard('selection', text);
+      } else {
+        scheduler.schedule();
+      }
+      return true;
+    }
+
+    return false;
   }
 
   // Focus stack: ordered key-scope resolution (highest priority first).
@@ -7303,19 +7465,11 @@ export async function runTUI(options = {}) {
             scheduler.schedule();
             return true;
           case 'scroll_up': {
-            const { rows } = getTermSize();
-            const step = Math.max(1, Math.floor(rows / 3));
-            tuiState.scrollOffset += step;
-            tuiState.dirty.add('transcript');
-            scheduler.schedule();
+            scrollTranscript('up');
             return true;
           }
           case 'scroll_down': {
-            const { rows } = getTermSize();
-            const step = Math.max(1, Math.floor(rows / 3));
-            tuiState.scrollOffset = Math.max(0, tuiState.scrollOffset - step);
-            tuiState.dirty.add('transcript');
-            scheduler.schedule();
+            scrollTranscript('down');
             return true;
           }
           default:
@@ -7461,6 +7615,7 @@ export async function runTUI(options = {}) {
 
     const keyBuf = Buffer.from(str);
     const key = parseKey(keyBuf);
+    if (handleMouseKey(key)) return;
 
     // Resolve the key through the focus stack: approval pane → ask-user →
     // overlay modal → tab completion → global keybinds → composer (bottom).

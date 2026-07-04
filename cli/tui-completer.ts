@@ -234,7 +234,7 @@ export function createTabCompleter({
       const parts = arg.split(' ');
       if (parts.length <= 1) {
         // First arg: subcommand
-        const subs = ['key', 'url', 'tavily', 'sandbox'];
+        const subs = ['key', 'url', 'tavily', 'sandbox', 'explain', 'daemon', 'mouse', 'remote'];
         const resolved = subs
           .filter((s: string) => s.startsWith(arg))
           .map((s: string) => prefix + s + ' ');
@@ -257,6 +257,33 @@ export function createTabCompleter({
       }
       if (sub === 'sandbox') {
         const opts = ['on', 'off'];
+        const resolved = opts
+          .filter((o: string) => o.startsWith(rest))
+          .map((o: string) => subPrefix + o);
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
+      }
+      if (sub === 'explain') {
+        const opts = ['on', 'off'];
+        const resolved = opts
+          .filter((o: string) => o.startsWith(rest))
+          .map((o: string) => subPrefix + o);
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
+      }
+      if (sub === 'daemon') {
+        const opts = ['auto', 'off'];
+        const resolved = opts
+          .filter((o: string) => o.startsWith(rest))
+          .map((o: string) => subPrefix + o);
+        lastResolvedText = text;
+        lastResolvedCandidates = resolved;
+        return resolved;
+      }
+      if (sub === 'mouse') {
+        const opts = ['native', 'app'];
         const resolved = opts
           .filter((o: string) => o.startsWith(rest))
           .map((o: string) => subPrefix + o);
