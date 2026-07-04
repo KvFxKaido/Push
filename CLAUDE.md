@@ -53,7 +53,7 @@ Per-surface:
 | `app/` | `npm run lint` (ESLint) | `npm run typecheck` | `npm test` (vitest) / `npm run test:watch` | `npm run build` |
 | `mcp/github-server/` | — | `npm run typecheck` | `npm test` | `npm run build` |
 
-Run a single CLI test with `node --import tsx --test cli/tests/<name>.test.mjs`. Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
+Run a single CLI test with `node --import tsx --import ./cli/tests/setup-test-home-isolation.mjs --test cli/tests/<name>.test.mjs`. The isolation import is not optional: `npm run test:cli` supplies it globally via `--import`, but a standalone invocation without it writes real session/memory state into `~/.push` (some test files, e.g. `daemon-integration.test.mjs`, also self-import it as a backstop — but don't rely on that for files that don't). Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
 
 The TypeScript toolchain is mid-transition to 7.0 and is split by package. **`cli/` and `mcp/github-server` run TS 7.0 RC** (`typescript@rc`) — both typecheck *and* emit (`build:cli`, MCP `build`) go through the native `tsc`. **`app/` stays on TS 7 native-preview typecheck (`tsgo` from `@typescript/native-preview`) + TS 6 for emit/ESLint** because TS 7.0 only ships the `./unstable/*` programmatic API and `typescript-eslint` needs the legacy API that lands in TS 7.1; the app folds onto `typescript@rc` once that's available. App emit is `vite build` (esbuild/rollup); `tsgo`/`tsc` only typecheck. `npm run typecheck:all` runs everything (cli/mcp via `tsc`, app via `tsgo`). If `tsgo: not found` (unsupported platform, `--no-optional` install), fall back to `npx tsc -b` for `app/`.
 

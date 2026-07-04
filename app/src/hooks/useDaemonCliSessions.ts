@@ -5,7 +5,7 @@
  *
  * Mobile shells today don't issue `start_session` at all — every
  * session the daemon knows about is CLI- or TUI-originated. Surfacing
- * those rows in the drawer's Local PC / Remote sections closes the
+ * those rows in the Remote drawer's Connected section closes the
  * "I started a chat in the CLI, why don't I see it on my phone" gap
  * without trying to import the message history into IndexedDB (which
  * would require a separate `attach_session` + event-replay flow this
@@ -22,7 +22,7 @@
  *     could keep the list warm mid-session but hasn't been needed.
  *   - Filter: drops `mode === 'headless'` rows. Headless runs aren't
  *     resumable as interactive chats; they shouldn't show up next to
- *     Local PC / Remote conversations.
+ *     Remote conversations.
  *
  * The classifier (`parseListSessionsPayload`) is exported separately
  * so the field-by-field shape validation has a trivially-testable

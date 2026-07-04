@@ -1,13 +1,9 @@
 /**
  * RelayModeChip — persistent indicator shown whenever the active
  * workspace is bound to a Remote pushd daemon via the Worker relay.
- * Phase 2.f sibling to `LocalPcModeChip`.
  *
- * Differences from the local chip:
- *
- *   - Shows the deployment host (e.g. `relay.example.com`) instead
- *     of a loopback port. The deployment is the only thing the user
- *     can practically use to distinguish Remote sessions.
+ * Shows the deployment host (e.g. `relay.example.com`), which is the
+ * practical identifier for Remote sessions.
  *
  *   - Flashes amber briefly when the relay emits
  *     `relay_replay_unavailable` — the lightweight signal the 2.f

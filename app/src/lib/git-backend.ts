@@ -135,7 +135,7 @@ export function resolveWebSecretScanEnabled(): boolean {
 export function resolveWebAuditAtPushEnabled(): boolean {
   // Read `process.env` first so vitest's `stubEnv` / a Node runtime can drive it,
   // then fall back to `import.meta.env` (Vite inlines `VITE_*` at build time for
-  // production) — the same precedence as `local-pc-binding.ts`.
+  // production) — the same precedence used by other Vite env helpers.
   const raw =
     typeof process !== 'undefined' && process.env?.VITE_PUSH_AUDIT_AT_PUSH !== undefined
       ? process.env.VITE_PUSH_AUDIT_AT_PUSH

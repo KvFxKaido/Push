@@ -5,7 +5,7 @@ const platform = vi.hoisted(() => ({ isNativePlatform: vi.fn(() => false) }));
 vi.mock('../platform', () => platform);
 
 // Exercises the VITE_NATIVE_CHECKPOINTS flag parser via the process.env path
-// (vitest's stubEnv), mirroring local-pc-binding.test.ts. The import.meta.env
+// (vitest's stubEnv), mirroring relay-binding.test.ts. The import.meta.env
 // branch is Vite-inlined at build time and not reachable under the test runtime.
 describe('isNativeCheckpointsEnabled', () => {
   afterEach(() => vi.unstubAllEnvs());

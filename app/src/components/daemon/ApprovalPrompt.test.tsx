@@ -1,9 +1,7 @@
 /**
  * ApprovalPrompt.test.tsx — Phase 3 slice 4 coverage. SSR-style
  * renderToStaticMarkup so we don't pull in a DOM testing library
- * (matches the project's existing component-test style; the
- * onDecide callback is exercised by the LocalPcChatScreen test
- * indirectly through the queue wiring).
+ * (matches the project's existing component-test style).
  */
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';

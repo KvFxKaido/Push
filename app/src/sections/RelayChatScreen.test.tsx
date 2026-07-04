@@ -1,8 +1,6 @@
 /**
  * RelayChatScreen.test.tsx — SSR-style render coverage for the
- * Remote daemon chat shell. Mirrors LocalPcChatScreen coverage but
- * exercises the relay wrapper so Remote does not drift from the
- * shared daemon input controls.
+ * Remote daemon chat shell.
  */
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -52,8 +50,7 @@ vi.mock('@/lib/relay-storage', () => ({
   clearPairedRemote: vi.fn(),
 }));
 
-// Catalog stub shape lives in test-utils so LocalPcChatScreen test
-// can share it; see that module for rationale.
+// Catalog stub shape lives in test-utils; see that module for rationale.
 vi.mock('@/hooks/useModelCatalog', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/hooks/useModelCatalog')>();
   const { makeDaemonModelCatalogStub } = await import('@/test-utils/model-catalog-test-stubs');

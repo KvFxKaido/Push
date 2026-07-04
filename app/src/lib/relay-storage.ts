@@ -1,6 +1,6 @@
 /**
  * relay-storage.ts — Persists paired-remote records for the Remote
- * (relay) workspace mode. Phase 2.f sibling to `local-pc-storage.ts`.
+ * (relay) workspace mode.
  *
  * Backed by IndexedDB (store `paired_remotes`). The attach-token
  * bearer rides in this record because the chat-layer hook needs it

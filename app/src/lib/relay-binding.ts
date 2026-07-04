@@ -1,11 +1,10 @@
 /**
  * relay-binding.ts — Helpers for the Remote (relay) workspace mode.
- * Phase 2.f sibling to `local-pc-binding.ts`.
  *
- * The `RelayBinding` type lives in `@/types` next to `LocalPcBinding`
- * so the workspace-session union shape stays one read away. This
- * module holds the feature flag, the pair-bundle decoder, and the
- * `WorkspaceSession` type guard. Bundles minted from an active TUI
+ * The `RelayBinding` type lives in `@/types` so the workspace-session union
+ * shape stays one read away. This module holds the feature flag, the
+ * pair-bundle decoder, and the `WorkspaceSession` type guard. Bundles minted
+ * from an active TUI
  * session may also carry target daemon session credentials; the
  * decoder preserves them so the phone-side attach flow can consume
  * them instead of silently degrading to a fresh Remote chat.
@@ -20,8 +19,7 @@ const ATTACH_TOKEN_PREFIX = 'pushd_da_';
  * Feature flag for the Remote entry point. Hub tile + route screen
  * gate on this. Defaults OFF so the experimental path doesn't leak
  * into mainline builds. Reads `process.env` first (vitest /
- * `stubEnv`) then `import.meta.env` (Vite inline) — same shape as
- * `isLocalPcModeEnabled`.
+ * `stubEnv`) then `import.meta.env` (Vite inline).
  */
 export function isRelayModeEnabled(): boolean {
   const raw = readFlag();
@@ -40,9 +38,8 @@ function readFlag(): string | boolean | undefined {
 }
 
 /**
- * Type guard for the relay arm of `WorkspaceSession`. Mirrors
- * `isLocalPcSession` so call sites narrowing before reading `.binding`
- * keep the transport boundary obvious.
+ * Type guard for the relay arm of `WorkspaceSession`, so call sites narrow
+ * before reading `.binding`.
  */
 export function isRelaySession(
   session: WorkspaceSession,

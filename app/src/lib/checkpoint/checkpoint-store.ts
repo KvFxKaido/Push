@@ -143,7 +143,7 @@ export interface CheckpointStore {
  * Feature flag for the native (on-device) checkpoint store. Default OFF so the
  * experimental path never ships in mainline builds; only the APK with this flag
  * set uses the JGit store. Mirrors the `VITE_*` build-flag pattern in
- * `local-pc-binding.ts` (process.env first for vitest/Node, then the
+ * `relay-binding.ts` (process.env first for vitest/Node, then the
  * Vite-inlined `import.meta.env`).
  */
 export function isNativeCheckpointsEnabled(): boolean {

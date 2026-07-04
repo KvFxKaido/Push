@@ -218,10 +218,9 @@ interface WorkspaceHubSheetProps {
   protectMainEnabled: boolean;
   showToolActivity: boolean;
   /**
-   * Settings prop bundles. Required for repo / scratch / chat workspaces
-   * that surface the Settings tab. Daemon-backed sessions (local-pc /
-   * relay) don't have these wired today and the Settings tab is dropped
-   * for them — see the `tabs` useMemo below.
+   * Settings prop bundles. Required for repo / scratch / chat workspaces that
+   * surface the Settings tab. Daemon-backed Remote sessions include Settings
+   * only when the screen passes these bundles — see the `tabs` useMemo below.
    */
   settingsAuth?: SettingsAuthProps;
   settingsProfile?: SettingsProfileProps;
@@ -277,10 +276,9 @@ const TABS_WITH_CONSOLE: Array<{
 
 const TABS_WITHOUT_CONSOLE = TABS_WITH_CONSOLE.filter((tab) => tab.key !== 'console');
 const CHAT_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
-// Daemon-backed workspaces (local-pc / relay) get the same trimmed surface
-// as chat mode for now: just Notes. Settings is included only if the daemon
-// screen plumbed the prop bundles (today none of them do — the gate stays
-// the same as the chat-mode check, just keyed off the bundles' presence).
+// Daemon-backed Remote workspaces get the same trimmed surface as chat mode
+// for now: just Notes. Settings is included only if the daemon screen plumbed
+// the prop bundles.
 const DAEMON_MODE_TABS = new Set<HubTab>(['notes', 'settings']);
 
 const PHASE_LABELS: Record<CommitPhase, string> = {
@@ -535,7 +533,7 @@ export function WorkspaceHubSheet({
   }, [onForgetSandboxSnapshot]);
 
   const sandboxReady = sandboxStatus === 'ready' && Boolean(sandboxId);
-  const isDaemonMode = workspaceMode === 'local-pc' || workspaceMode === 'relay';
+  const isDaemonMode = workspaceMode === 'relay';
   // The Settings tab depends on the parent passing the full settings
   // prop bundles. Daemon screens don't plumb these yet, so the tab is
   // omitted there rather than crashing into `HubSettingsTab` with

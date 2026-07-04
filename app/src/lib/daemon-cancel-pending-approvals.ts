@@ -2,7 +2,7 @@
  * daemon-cancel-pending-approvals.ts — Two-sided cleanup for pending
  * daemon approvals when the user aborts the parent round.
  *
- * Why this exists: in a paired-daemon session (local-pc / relay), a
+ * Why this exists: in a paired-daemon session (Remote relay), a
  * delegated Coder agent runs on the daemon side. When it hits a tool
  * needing approval, the daemon emits `approval_required` which
  * `useApprovalQueue` enqueues; the ApprovalPrompt renders in the

@@ -1632,7 +1632,13 @@ async function handleListSessions(req) {
 
 async function handleStartSession(req) {
   const payload = req.payload || {};
-  const provider = payload.provider || 'ollama';
+  // Same fallback chain as cli.ts/tui.ts (explicit → PUSH_PROVIDER →
+  // 'ollama'): a caller that omits `provider` should land on the daemon's
+  // configured default, not a hardcoded one unrelated to the user's setup.
+  const provider =
+    normalizeProviderInput(payload.provider) ||
+    normalizeProviderInput(process.env.PUSH_PROVIDER) ||
+    'ollama';
   const providerConfig = PROVIDER_CONFIGS[provider];
   if (!providerConfig) {
     return makeErrorResponse(
@@ -1650,8 +1656,8 @@ async function handleStartSession(req) {
     : DEFAULT_RESTART_POLICY;
   const now = Date.now();
   // Tag the session with its origin surface so `list_sessions` (and the
-  // mobile drawer that consumes it) can bucket Local PC / Remote / CLI
-  // without re-deriving the mode from local UI state. Mirrors the value
+  // mobile drawer that consumes it) can bucket Remote / CLI without
+  // re-deriving the mode from local UI state. Mirrors the value
   // that gets broadcast in the `session_started` event below; the two
   // must stay in sync so the live event and the persisted state.json
   // agree.
@@ -7309,8 +7315,8 @@ function resolveDaemonRuntimeConfigPayload(config) {
 /**
  * Read daemon-owned runtime controls for paired web clients. Unlike repo-mode
  * controls, these values are resolved from the daemon process itself (env first,
- * then ~/.push/config.json) because Remote / Local-PC turns execute on this
- * machine, not in the browser.
+ * then ~/.push/config.json) because Remote turns execute on this machine, not
+ * in the browser.
  */
 async function handleGetDaemonRuntimeConfig(req) {
   let config;
@@ -7332,8 +7338,8 @@ async function handleGetDaemonRuntimeConfig(req) {
 /**
  * Persist daemon runtime controls and update the live process env so the next
  * turn sees the new setting immediately. Accepts the Unix-socket admin
- * transport and loopback WS (Local-PC mode) — both are the operator, on this
- * machine. Refuses true relay callers: unlike a session-scoped verb, this
+ * transport and a direct loopback WS connection — both are the operator, on
+ * this machine. Refuses true relay callers: unlike a session-scoped verb, this
  * mutates the daemon's GLOBAL execution safety posture (including `yolo`,
  * which disables approval prompts) for every future turn on this daemon, not
  * just the caller's own session — a stolen/leaked Remote-pairing bearer
@@ -7345,7 +7351,7 @@ async function handleSetDaemonRuntimeConfig(req, _emitEvent, context) {
       req.requestId,
       req.type,
       'UNSUPPORTED_VIA_TRANSPORT',
-      'set_daemon_runtime_config is not available over the Remote relay — pair Local-PC or use the Unix-socket admin transport.',
+      'set_daemon_runtime_config is not available over the Remote relay — use a direct loopback connection or the Unix-socket admin transport.',
     );
   }
 
@@ -7438,7 +7444,7 @@ async function handleSetDaemonRuntimeConfig(req, _emitEvent, context) {
 
 /**
  * Read-only catalog of providers this daemon can route to, with curated
- * models per provider. Powers Remote/Local-PC's model picker — the web
+ * models per provider. Powers Remote's model picker — the web
  * client has no other way to know what's actually configured on THIS
  * machine (which providers have a working key, what models to offer)
  * versus its own browser-local provider config, which is irrelevant to a

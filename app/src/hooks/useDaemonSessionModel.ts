@@ -11,9 +11,8 @@
  * browser-local preference that has nothing to do with what the paired
  * session is actually running.
  *
- * Local-PC mode has no session-attach concept yet (see
- * `DaemonChatBody`'s `sessionAttachToken` doc), so this hook is Remote
- * (relay) only for now — a session id is required to call either RPC.
+ * This hook is Remote (relay) only: a daemon session id is required to call
+ * either RPC.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 

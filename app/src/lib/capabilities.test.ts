@@ -351,7 +351,7 @@ describe('ExecutionMode — orchestrator capability widening for local-daemon', 
 
     it('orchestrator gains LOCAL git ops (commit/branch) but not remote-bound ones', () => {
       // local-daemon operates on a real local working tree (CLI, or web
-      // relay/local-pc paired to a real machine), so local git ops are
+      // Remote paired to a real machine), so local git ops are
       // grantable without a remote. Only genuinely remote-bound ops stay
       // stripped. This is what lets a non-delegated CLI orchestrator use the
       // git_commit / git_create_branch / git_switch_branch tools that
@@ -529,7 +529,6 @@ describe('workspaceModeToExecutionMode — canonical WorkspaceMode → Execution
       'repo',
       'scratch',
       'chat',
-      'local-pc',
       'relay',
     ] as const satisfies readonly WorkspaceMode[];
     type _Exhaustive =
@@ -543,7 +542,6 @@ describe('workspaceModeToExecutionMode — canonical WorkspaceMode → Execution
   });
 
   it('maps the daemon-bound modes to local-daemon', () => {
-    expect(workspaceModeToExecutionMode('local-pc')).toBe('local-daemon');
     expect(workspaceModeToExecutionMode('relay')).toBe('local-daemon');
   });
 
@@ -583,13 +581,7 @@ describe('getExecutionMode honors context.executionMode as the single source of 
     // the runtime context. Both reads must agree. Same two-sided
     // compile-time exhaustiveness as the enum-completeness test
     // above — keeps this loop pinned to the full WorkspaceMode union.
-    const modes = [
-      'repo',
-      'scratch',
-      'chat',
-      'local-pc',
-      'relay',
-    ] as const satisfies readonly WorkspaceMode[];
+    const modes = ['repo', 'scratch', 'chat', 'relay'] as const satisfies readonly WorkspaceMode[];
     type _Exhaustive = Exclude<WorkspaceMode, (typeof modes)[number]> extends never ? true : false;
     const _exhaustive: _Exhaustive = true;
     void _exhaustive;

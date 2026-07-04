@@ -63,7 +63,7 @@ describe('sandbox_read_file', () => {
     // Cloud sandboxes are conventionally rooted at /workspace. Models
     // trained on the cloud surface emit paths like /workspace/src/foo.ts.
     // The daemon re-roots these to its own cwd so the model doesn't
-    // have to know whether it's talking to cloud or local-pc.
+    // have to know whether it's talking to cloud or a daemon transport.
     await fs.mkdir(path.join(tmpRoot, 'src'), { recursive: true });
     await fs.writeFile(path.join(tmpRoot, 'src', 'foo.ts'), 'export const x = 1;\n', 'utf8');
     const res = await handleRequest(

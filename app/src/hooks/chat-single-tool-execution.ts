@@ -181,7 +181,7 @@ export async function executeSingleToolCall(
 
   // Lazy auto-spin: create sandbox on demand for sandbox calls and any
   // delegation that can execute Coder work (direct or via task graph).
-  // Local-PC sessions skip this entirely — their binding is the transport.
+  // Daemon-bound sessions skip this entirely — their binding is the transport.
   if (
     !toolExecResult &&
     (toolCall.source === 'sandbox' || delegateCallNeedsSandbox(toolCall)) &&

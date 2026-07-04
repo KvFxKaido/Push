@@ -1,6 +1,6 @@
 /**
  * RelayPairing — single-field pairing panel for the Remote (relay)
- * workspace mode. Phase 2.f sibling to `LocalPcPairing`.
+ * workspace mode.
  *
  * UX: one textarea for the bundle string from `push daemon pair
  * --remote`. The panel decodes the bundle, opens a transient WS to
@@ -8,10 +8,9 @@
  * reachable, and on success persists the binding to IndexedDB and
  * notifies the caller.
  *
- * Token discipline mirrors `LocalPcPairing`: the bundle is held in
- * memory only for the duration of the panel, is type=password
- * via a hidden textarea autocomplete, and is cleared on success /
- * failure / cancel. Never logged, never echoed into error messages.
+ * Token discipline: the bundle is held in memory only for the duration of the
+ * panel, is type=password via a hidden textarea autocomplete, and is cleared on
+ * success / failure / cancel. Never logged, never echoed into error messages.
  *
  * The 2.f scope picked single bundled paste as the main UX (vs
  * three-field manual entry). If users hit edge cases that require
@@ -44,8 +43,8 @@ export function RelayPairing({ onPaired, onCancel }: RelayPairingProps) {
   const [bundleInput, setBundleInput] = useState('');
   const [state, setState] = useState<PairState>({ kind: 'idle' });
 
-  // In-flight probe handle + backstop timer. Mirrors LocalPcPairing's
-  // race-safe pattern: each probe carries its own handle reference;
+  // In-flight probe handle + backstop timer. Each probe carries its own
+  // handle reference;
   // a late callback from a superseded handle closes its own WS and
   // bails so it can't retire the current probe.
   const inFlightRef = useRef<{

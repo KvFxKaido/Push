@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Globe, Lock, MessageSquare, Monitor, Palette, Plus, Search, Loader2 } from 'lucide-react';
+import { Globe, Lock, MessageSquare, Palette, Plus, Search, Loader2 } from 'lucide-react';
 import {
   BranchWaveIcon,
   CommitPulseIcon,
@@ -90,13 +90,6 @@ interface RepoLauncherPanelProps {
   onResumeSandbox?: () => void;
   onStartWorkspace?: () => void;
   onStartChat?: () => void;
-  /**
-   * Local PC entry tile (flag-gated upstream by `isLocalPcModeEnabled`).
-   * Undefined hides the tile entirely — the launcher never decides
-   * the flag here, the App shell does, so a future move of the flag
-   * doesn't require touching this component.
-   */
-  onStartLocalPc?: () => void;
   /** Phase 2.f Remote tile. Undefined hides it (VITE_RELAY_MODE off). */
   onStartRelay?: () => void;
   mode?: 'default' | 'chat';
@@ -118,7 +111,6 @@ export function RepoLauncherPanel({
   onResumeSandbox,
   onStartWorkspace,
   onStartChat,
-  onStartLocalPc,
   onStartRelay,
   mode = 'default',
 }: RepoLauncherPanelProps) {
@@ -634,20 +626,6 @@ export function RepoLauncherPanel({
             <span>{showAllRepos ? 'Hide' : 'Repos'}</span>
           </button>
         </div>
-
-        {onStartLocalPc && (
-          <button
-            type="button"
-            onClick={onStartLocalPc}
-            className={`${HUB_MATERIAL_PILL_BUTTON_CLASS} h-11 w-full justify-center gap-2 px-3 text-sm font-medium text-amber-200`}
-          >
-            <Monitor className="h-4 w-4" />
-            <span>Local PC</span>
-            <span className="text-[10px] uppercase tracking-wide text-amber-200/60">
-              Experimental
-            </span>
-          </button>
-        )}
 
         {onStartRelay && (
           <button

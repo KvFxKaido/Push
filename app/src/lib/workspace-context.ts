@@ -157,40 +157,15 @@ export function buildWorkspaceContext(
 }
 
 /**
- * Workspace description for a `kind: 'local-pc'` session.
+ * Workspace description for a daemon-backed Remote session.
  *
- * Without this block, the orchestrator's environment section is empty
- * for local-pc and the model falls back to cloud-sandbox priors —
- * `/workspace/` paths, GitHub repo exploration, Explorer-delegation
- * reflexes. This block establishes the local-pc facts explicitly.
- *
- * NOTE: this block alone is not sufficient. The orchestrator also
- * needs `LOCAL_PC_TOOL_PROTOCOL` (the local-pc-shaped tool protocol)
- * in place of `SANDBOX_TOOL_PROTOCOL`, otherwise the cloud sandbox
- * protocol — which mentions `/workspace` 9+ times and lists remote-
- * bound tools (promote, push, prepare_commit) — fights this context
- * for the model's attention. See `orchestrator.ts`'s mode branch.
- *
- * Smoke-tested 2026-05-13 after PR 3c.2: without this block the model
- * rewrote `/tmp/foo` → `/workspace/foo` on writes and reflexively
- * delegated Explorer to "trace auth flow in src/auth.ts" (which is
- * literally the canonical example in the explorer tool registry —
- * the model parrots it back when it has no other context).
+ * Without this block, the orchestrator's environment section is empty and the
+ * model falls back to cloud-sandbox priors: `/workspace/` paths, GitHub repo
+ * exploration, and Explorer-delegation reflexes. This block establishes the
+ * daemon facts explicitly.
  */
-/**
- * Phase 2.f: relay sessions get the same workspace-context block as
- * Local PC. The daemon's tool semantics are identical (relay just
- * forwards envelopes); only the transport differs. We use a single
- * builder with an optional transport label so the model can see
- * "Remote (via relay)" vs "Local PC" in the workspace heading.
- */
-export function buildLocalPcWorkspaceContext(
-  opts: { transport?: 'local-pc' | 'relay' } = {},
-): string {
-  const heading =
-    opts.transport === 'relay'
-      ? 'WORKSPACE — Paired Remote Computer (pushd daemon via relay):'
-      : 'WORKSPACE — Paired Local PC (pushd daemon):';
+export function buildDaemonWorkspaceContext(): string {
+  const heading = 'WORKSPACE — Paired Remote Computer (pushd daemon via relay):';
   return [
     heading,
     '',
@@ -216,7 +191,7 @@ export function buildLocalPcWorkspaceContext(
     '• Do NOT call `commit`, `push`, `pr`, `promote_to_github`, or remote-bound',
     '  tools — there is no remote.',
     '',
-    'AVAILABLE TOOLS for filesystem and command work (see the local-pc protocol',
+    'AVAILABLE TOOLS for filesystem and command work (see the daemon protocol',
     'block below for the full signatures):',
     '• `sandbox_exec` — run a shell command on the host (cwd = workspace root)',
     '• `sandbox_read_file` — read a file by absolute or relative path',
@@ -269,17 +244,15 @@ export function buildSessionCapabilityBlock(
     return `[${d.toISOString()}] ${e.message}`;
   });
 
-  // Local-pc sessions have a daemon (so `hasSandbox` is true) but no
-  // cloud sandbox environment — sandboxEnv is null. Without a guard,
-  // the writableRoot fallback emits `/workspace` for local-pc, which
-  // contradicts the local-pc tool protocol's "no /workspace" rule and
-  // can reintroduce the absolute-path-rewrite bug. Emit null instead;
-  // the local-pc protocol tells the model that the daemon's cwd IS the
-  // workspace root. Copilot flagged this as a low-confidence concern
-  // on PR #527; confirmed load-bearing on inspection.
-  const isLocalPc = workspaceContext.mode === 'local-pc';
+  // Remote daemon sessions have a daemon (so `hasSandbox` is true) but no
+  // cloud sandbox environment — sandboxEnv is null. Without a guard, the
+  // writableRoot fallback emits `/workspace`, which contradicts the daemon
+  // protocol's "no /workspace" rule and can reintroduce the
+  // absolute-path-rewrite bug. Emit null instead; the daemon protocol tells
+  // the model that the daemon's cwd IS the workspace root.
+  const isRemoteDaemon = workspaceContext.mode === 'relay';
   const writableRoot =
-    sandboxEnv?.writable_root ?? (hasSandbox && !isLocalPc ? '/workspace' : null);
+    sandboxEnv?.writable_root ?? (hasSandbox && !isRemoteDaemon ? '/workspace' : null);
   const payload = {
     workspaceMode: workspaceContext.mode,
     githubTools: workspaceContext.includeGitHubTools,

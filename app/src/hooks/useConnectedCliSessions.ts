@@ -3,11 +3,10 @@
  * sessions in the MAIN workspace drawer, next to the cloud chats
  * (Claude Code-style "Connected" rows).
  *
- * `useDaemonCliSessions` already closes the "why don't I see my CLI
- * chat" gap *inside* the Local PC / Remote screens, where a daemon
- * binding is mounted anyway. This hook closes it for the surfaces the
- * user actually lives in — the repo/cloud chat drawer — by dialing the
- * stored relay pairing on demand:
+ * `useDaemonCliSessions` already closes the "why don't I see my CLI chat" gap
+ * inside Remote, where a daemon binding is mounted anyway. This hook closes it
+ * for the surfaces the user actually lives in — the repo/cloud chat drawer —
+ * by dialing the stored relay pairing on demand:
  *
  *   - Lazy lifecycle: connects only while `active` (the drawer is
  *     open), closes on deactivate. No standing WS from every chat

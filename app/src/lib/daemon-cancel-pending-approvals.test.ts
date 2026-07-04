@@ -83,11 +83,10 @@ describe('cancelPendingApprovals', () => {
     });
   });
 
-  it('omits attachToken when none is provided (local-PC: cancel is a benign SESSION_NOT_FOUND)', () => {
-    // Local-PC mode never attached to a daemon session, so it has no token;
-    // its cancel resolves to SESSION_NOT_FOUND (the gate sits after the
-    // existence check) and is swallowed. Empty/null must not leak an
-    // `attachToken: undefined` key into the payload.
+  it('omits attachToken when none is provided', () => {
+    // Empty/null must not leak an `attachToken: undefined` key into the
+    // payload. Legacy callers without a session token resolve to
+    // SESSION_NOT_FOUND and are swallowed.
     const request = vi.fn().mockResolvedValue({ ok: true });
     const popMatching = vi.fn();
     const pending = [makeApproval({ approvalId: 'a1', sessionId: 'sess-1', runId: 'run-1' })];

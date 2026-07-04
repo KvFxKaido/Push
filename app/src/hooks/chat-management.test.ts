@@ -246,25 +246,12 @@ describe('resolveDaemonChatAction', () => {
     ).toEqual({ kind: 'switch', chatId: 'chat-new' });
   });
 
-  it('local-pc has no picker — always most-recent-chat-of-this-mode, unaffected by targetSessionId', () => {
-    const chat = makeConversation({ id: 'chat-lp', mode: 'local-pc' });
-    expect(
-      resolveDaemonChatAction({
-        conversations: { [chat.id]: chat },
-        activeChatId: 'missing',
-        mode: 'local-pc',
-        targetSessionId: 'daemon-session-a',
-        conversationsLoaded: true,
-      }),
-    ).toEqual({ kind: 'switch', chatId: 'chat-lp' });
-  });
-
   it('creates an unscoped chat when no mode chats exist and there is no target', () => {
     expect(
       resolveDaemonChatAction({
         conversations: {},
         activeChatId: 'missing',
-        mode: 'local-pc',
+        mode: 'relay',
         targetSessionId: null,
         conversationsLoaded: true,
       }),
@@ -285,11 +272,11 @@ describe('resolveDaemonChatAction', () => {
 });
 
 describe('filterDaemonScopedConversations', () => {
-  it('excludes chats from the other daemon mode', () => {
+  it('excludes non-remote chats', () => {
     const relayChat = makeConversation({ id: 'chat-relay', mode: 'relay' });
-    const localPcChat = makeConversation({ id: 'chat-lp', mode: 'local-pc' });
+    const chatModeChat = makeConversation({ id: 'chat-mode', mode: 'chat' });
     const result = filterDaemonScopedConversations(
-      { [relayChat.id]: relayChat, [localPcChat.id]: localPcChat },
+      { [relayChat.id]: relayChat, [chatModeChat.id]: chatModeChat },
       'relay',
       null,
     );
@@ -351,15 +338,5 @@ describe('filterDaemonScopedConversations', () => {
       null,
     );
     expect(Object.keys(result).sort()).toEqual(['chat-a', 'chat-b']);
-  });
-
-  it('local-pc ignores targetSessionId — no picker, always the one session', () => {
-    const chat = makeConversation({ id: 'chat-lp', mode: 'local-pc' });
-    const result = filterDaemonScopedConversations(
-      { [chat.id]: chat },
-      'local-pc',
-      'daemon-session-a',
-    );
-    expect(Object.keys(result)).toEqual(['chat-lp']);
   });
 });

@@ -138,7 +138,7 @@ export type TurnEngineTrigger = EngineTrigger | null;
  *     foreground run: browser-held Settings keys work directly, so the
  *     provider-capability fold does NOT apply (the gate moved to
  *     background-mode and adoption only). No-repo workspaces (scratch /
- *     chat / local-pc) fall through to the Orchestrator loop that serves
+ *     chat) fall through to the Orchestrator loop that serves
  *     them fine (Codex P1, PR #887).
  */
 export function resolveTurnEngineTrigger(opts: {
@@ -148,8 +148,8 @@ export function resolveTurnEngineTrigger(opts: {
   if (isBackgroundModeEnabled() && opts.engineEligible) return 'background-mode';
   if (isInlineDelegationEnabled() && opts.inlineEligible) return 'inline-delegation';
   // LOAD-BEARING: `null` routes to the foreground Orchestrator role/loop, which
-  // is still the live path for (1) no-repo workspaces (chat / scratch /
-  // local-pc — never inline-eligible) and (2) the explicit `delegated` opt-out.
+  // is still the live path for (1) no-repo workspaces (chat / scratch —
+  // never inline-eligible) and (2) the explicit `delegated` opt-out.
   // The Orchestrator prompt is assembled at runtime via
   // `buildOrchestratorBaseBuilder` in orchestrator.ts. Do NOT prune the
   // Orchestrator role, its prompt builder, or this branch as "legacy" while

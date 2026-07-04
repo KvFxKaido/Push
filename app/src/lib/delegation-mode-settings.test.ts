@@ -104,7 +104,7 @@ describe('delegation-mode-settings', () => {
   });
 
   it('forces the Orchestrator loop (null) when neither route is satisfiable — no-repo workspaces', () => {
-    // Codex P1 (PR #887): with inline as the DEFAULT, a scratch/chat/local-pc
+    // Codex P1 (PR #887): with inline as the DEFAULT, a scratch/chat
     // workspace (no active repo/branch) must stay on the foreground
     // Orchestrator loop — both bypass routes hard-require repo + branch.
     const ineligible = { engineEligible: false, inlineEligible: false };

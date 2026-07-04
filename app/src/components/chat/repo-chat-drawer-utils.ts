@@ -17,7 +17,6 @@ export function chatDrawerRepoTag(
     return chat.repoFullName.split('/').pop() || chat.repoFullName;
   }
   if (chat.mode === 'chat') return 'Chat';
-  if (chat.mode === 'local-pc') return 'Local PC';
   if (chat.mode === 'relay') return 'Remote';
   return 'Unscoped';
 }

@@ -61,11 +61,10 @@ interface RepoChatDrawerProps {
    * with a "Connected" section (Claude Code-style: green indicator,
    * alongside the cloud chats) rendering these rows read-only: no
    * resume-into-mobile flow, no rename/delete affordances. The
-   * `cliSessionsLabel` tags the section header with the transport
-   * provenance — `'local-pc'` or `'relay'` (Remote).
+   * `cliSessionsLabel` tags the section header with the transport provenance.
    */
   cliSessions?: DaemonCliSession[];
-  cliSessionsLabel?: 'local-pc' | 'relay';
+  cliSessionsLabel?: 'relay';
   /**
    * Tap-to-resume for Connected rows. When present, rows render as
    * buttons and a tap hands the session to this callback (the caller
@@ -77,7 +76,7 @@ interface RepoChatDrawerProps {
    */
   onResumeCliSession?: (session: DaemonCliSession) => void;
   /**
-   * Daemon-mode-only footer actions (Local PC / Remote). Repo mode has no
+   * Daemon-mode-only footer actions. Repo mode has no
    * equivalent — leaving a repo chat happens by picking another item in
    * this same drawer, so the affordance would be redundant there. Daemon
    * sessions are singular (one pairing, no repo list to switch between),
@@ -132,7 +131,6 @@ export function RepoChatDrawer({
   onDeleteChat,
   onRenameChat,
   cliSessions = EMPTY_CLI_SESSIONS,
-  cliSessionsLabel,
   onResumeCliSession,
   daemonActions,
 }: RepoChatDrawerProps) {
@@ -200,23 +198,14 @@ export function RepoChatDrawer({
     () => allUnscopedChats.filter((c) => c.mode === 'chat'),
     [allUnscopedChats],
   );
-  // Daemon-backed chats (local-pc / relay) get their own labeled sections.
-  // Before splitting these out, they fell into "Unscoped" beside scratch
-  // chats — confusing when they have a stable provenance (a paired daemon)
-  // and the user is in one of those modes.
-  const localPcChats = useMemo(
-    () => allUnscopedChats.filter((c) => c.mode === 'local-pc'),
-    [allUnscopedChats],
-  );
+  // Remote daemon chats get their own labeled section. Before splitting these
+  // out, they fell into "Unscoped" beside scratch chats.
   const relayChats = useMemo(
     () => allUnscopedChats.filter((c) => c.mode === 'relay'),
     [allUnscopedChats],
   );
   const unscopedChats = useMemo(
-    () =>
-      allUnscopedChats.filter(
-        (c) => c.mode !== 'chat' && c.mode !== 'local-pc' && c.mode !== 'relay',
-      ),
+    () => allUnscopedChats.filter((c) => c.mode !== 'chat' && c.mode !== 'relay'),
     [allUnscopedChats],
   );
   const normalizedQuery = searchQuery.trim().toLowerCase();
@@ -248,11 +237,6 @@ export function RepoChatDrawer({
     return chatModeChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
   }, [isSearching, normalizedQuery, chatModeChats]);
 
-  const filteredLocalPcChats = useMemo(() => {
-    if (!isSearching) return localPcChats;
-    return localPcChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
-  }, [isSearching, normalizedQuery, localPcChats]);
-
   const filteredRelayChats = useMemo(() => {
     if (!isSearching) return relayChats;
     return relayChats.filter((chat) => chat.title.toLowerCase().includes(normalizedQuery));
@@ -265,8 +249,7 @@ export function RepoChatDrawer({
       return haystack.includes(normalizedQuery);
     });
   }, [isSearching, normalizedQuery, cliSessions]);
-  const cliSectionTitle =
-    cliSessionsLabel === 'local-pc' ? 'Connected · Local PC' : 'Connected · Remote';
+  const cliSectionTitle = 'Connected · Remote';
 
   const toggleRepo = (repoFullName: string, fallbackOpen: boolean) => {
     if (isSearching) return;
@@ -597,16 +580,6 @@ export function RepoChatDrawer({
                       </div>
                     </div>
                   )}
-                  {filteredLocalPcChats.length > 0 && (
-                    <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
-                      <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
-                        Local PC
-                      </div>
-                      <div className="space-y-1 px-0 pb-0">
-                        {filteredLocalPcChats.map((chat) => renderChatRow(chat))}
-                      </div>
-                    </div>
-                  )}
                   {filteredRelayChats.length > 0 && (
                     <div className={`${DRAWER_SECTION_SURFACE_CLASS} ${GLASS_SURFACE}`}>
                       <div className="px-1 py-2.5 text-push-xs font-medium uppercase tracking-wide text-push-link">
@@ -630,7 +603,6 @@ export function RepoChatDrawer({
                   {filteredRepoRows.length === 0 &&
                     filteredUnscopedChats.length === 0 &&
                     filteredChatModeChats.length === 0 &&
-                    filteredLocalPcChats.length === 0 &&
                     filteredRelayChats.length === 0 &&
                     filteredCliSessions.length === 0 && (
                       <div className="rounded-xl border border-dashed border-push-edge/70 bg-push-surface/15 px-3 py-4 text-center text-push-sm text-push-fg-muted">

@@ -74,8 +74,8 @@ describe('HeaderBar', () => {
   });
 
   it('renders title and subtitle in the centered slot', () => {
-    const html = renderToStaticMarkup(<HeaderBar title="Pair Local PC" subtitle="experimental" />);
-    expect(html).toContain('Pair Local PC');
+    const html = renderToStaticMarkup(<HeaderBar title="Pair Remote" subtitle="experimental" />);
+    expect(html).toContain('Pair Remote');
     expect(html).toContain('experimental');
     expect(html).toContain('text-push-fg');
   });

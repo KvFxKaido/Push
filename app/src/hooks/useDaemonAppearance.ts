@@ -7,11 +7,8 @@
  * document (a `{ [mode]: RepoAppearance }` map under one canonical key), so the
  * daemon palette follows the signed-in identity across devices.
  *
- * Why keyed by mode: local-pc and relay sessions render the same shell
- * but the user is likely to think of them as different "places" (one
- * runs locally, the other talks to a remote machine). Sharing one
- * appearance would force them to look identical; keying per mode lets
- * the user paint each lane distinctly without bleeding into the other.
+ * Keyed by daemon mode so Remote keeps its own accent separate from repo/chat
+ * surfaces.
  */
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 import { safeStorageGet } from '@/lib/safe-storage';
@@ -23,7 +20,7 @@ import {
 } from '@/lib/repo-appearance';
 import type { WorkspaceMode } from '@/types';
 
-type DaemonAppearanceMode = Extract<WorkspaceMode, 'local-pc' | 'relay'>;
+type DaemonAppearanceMode = Extract<WorkspaceMode, 'relay'>;
 
 type DaemonAppearanceMap = Partial<Record<DaemonAppearanceMode, RepoAppearance>>;
 

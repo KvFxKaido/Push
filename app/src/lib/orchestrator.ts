@@ -1,7 +1,7 @@
 import type { ChatMessage, WorkspaceContext } from '@/types';
 import { formatVerificationPolicyBlock } from './verification-policy';
 import { TOOL_PROTOCOL } from './github-tools';
-import { LOCAL_PC_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
+import { LOCAL_DAEMON_TOOL_PROTOCOL, getSandboxToolProtocol } from './sandbox-tools';
 import { SCRATCHPAD_TOOL_PROTOCOL, buildScratchpadContext } from './scratchpad-tools';
 import { TODO_TOOL_PROTOCOL } from './todo-tools';
 import { WEB_SEARCH_TOOL_PROTOCOL } from './web-search-tools';
@@ -347,8 +347,8 @@ export function toLLMMessages(
     // Start from the shared base and layer in runtime-dependent blocks.
     //
     // LOAD-BEARING (not test-only): this runs on every turn that stays on the
-    // foreground Orchestrator role/loop — no-repo workspaces (chat / scratch /
-    // local-pc), the `delegated` opt-out, and the conversational-inline escape
+    // foreground Orchestrator role/loop — no-repo workspaces (chat / scratch),
+    // the `delegated` opt-out, and the conversational-inline escape
     // hatch while Phase 3 bakes. See the routing in delegation-mode-settings.ts
     // (`resolveTurnEngineTrigger` → `null`). The inline Coder/Explorer lanes
     // pass their own `systemPromptOverride` and skip this path; don't mistake
@@ -373,11 +373,11 @@ export function toLLMMessages(
       builder.set('delegation', null);
     }
 
-    // Local-daemon modes (local-pc + relay) — strip the cloud
+    // Local-daemon modes (Remote relay) — strip the cloud
     // delegation block. The base `delegation` section advertises
     // delegate_coder / delegate_explorer with the literal "Trace the
     // auth flow / src/auth.ts" example that the model was parroting
-    // verbatim in pwd-only conversations. The local-pc tool protocol
+    // verbatim in pwd-only conversations. The daemon tool protocol
     // (injected below) tells the model NOT to delegate, but the
     // contradictory base block reduces the signal — strip it cleanly,
     // the same way chat does. Relay shares the same protocol — the
@@ -488,19 +488,15 @@ export function toLLMMessages(
     } else {
       const baseToolInstructions = builder.get('tool_instructions') ?? '';
       const toolProtocols: string[] = [];
-      // Local-daemon sessions (local-pc + relay) get a tailored tool
-      // protocol: no `/workspace` path prior, no remote-bound tools
-      // (commit/push/promote/draft), no Explorer/Coder delegation. The
-      // cloud SANDBOX_TOOL_PROTOCOL fights the workspace-context block
-      // otherwise — it mentions `/workspace` 9+ times and lists
-      // remote-bound tools that the daemon can't service. Both modes
-      // share the same daemon-backed transport (loopback vs Worker
-      // relay) so the protocol shape is the same. Smoke-tested
-      // 2026-05-13 for local-pc; relay extension addresses the Codex
-      // P2 from PR #554 where relay was falling through to the cloud
-      // protocol after the delegation strip widened.
+      // Daemon-bound sessions get a tailored tool protocol: no `/workspace`
+      // path prior, no remote-bound tools (commit/push/promote/draft), and no
+      // Explorer/Coder delegation. The cloud SANDBOX_TOOL_PROTOCOL fights the
+      // workspace-context block otherwise — it mentions `/workspace` 9+ times
+      // and lists tools the daemon can't service. This addresses the Codex P2
+      // from PR #554 where relay was falling through to the cloud protocol
+      // after the delegation strip widened.
       if (isLocalDaemon) {
-        toolProtocols.push(LOCAL_PC_TOOL_PROTOCOL);
+        toolProtocols.push(LOCAL_DAEMON_TOOL_PROTOCOL);
       } else if (hasSandbox) {
         toolProtocols.push(getSandboxToolProtocol());
       }
@@ -529,7 +525,7 @@ export function toLLMMessages(
 
     // Linked-library content (v2b) — user-managed bundles linked to
     // this chat, pre-rendered by the caller. Applies in every
-    // *non-override* mode (chat, repo, scratch, local-pc); delegated
+    // *non-override* mode (chat, repo, scratch, relay); delegated
     // roles that pass a `systemPromptOverride` (Auditor / Coder)
     // intentionally skip the orchestrator builder entirely, so linked
     // libraries don't reach those backgrounded prompts — they're

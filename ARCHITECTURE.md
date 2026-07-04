@@ -49,7 +49,7 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 
 - **Tool protocol** — multi-tool dispatch and structured error reporting
 - **Sandbox execution** — scratch workspaces and web search tools via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers. The shared `/api/sandbox/*` Worker route can dispatch by `PUSH_SANDBOX_PROVIDER`, while `CloudflareSandboxProvider` deliberately pins direct provider traffic to `/api/sandbox-cf/*`.
-- **Daemon-backed sessions** — experimental Local PC and Remote modes pair the web app to `pushd` over loopback or the Worker relay; chat `sandbox_*` calls route through the hook-owned daemon WebSocket for `sandbox_exec`, file read/write/list, and diff
+- **Daemon-backed sessions** — the experimental Remote mode pairs the web app to `pushd` over the Worker relay; chat `sandbox_*` calls route through the hook-owned daemon WebSocket for `sandbox_exec`, file read/write/list, and diff
 - **Delegation and orchestration** — direct Explorer/Coder runtime delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
 - **Shared runtime contract** — canonical task-graph, memory, delegation-brief, role-context, role-display, and run-event semantics live in root `lib/` and are consumed by both web and CLI
@@ -84,7 +84,7 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 
 - **Repo-backed mode** — repo-locked context, repo-scoped chats, GitHub-backed review/commit/push flows
 - **Scratch workspace mode** — sandbox-only workspace for quick experiments without repo auth
-- **Local PC / Remote modes** — flag-gated daemon-backed chat surfaces (`VITE_LOCAL_PC_MODE`, `VITE_RELAY_MODE`) that drive a paired `pushd`. Their web hub surface is intentionally trimmed compared with cloud repo mode; the local-daemon runtime drops remote write capabilities by default, then restores token-backed GitHub PR/workflow capabilities when a real GitHub remote is available.
+- **Remote mode** — a flag-gated daemon-backed chat surface (`VITE_RELAY_MODE`) that drives a paired `pushd` over the Worker relay. Its web hub surface is intentionally trimmed compared with cloud repo mode; the local-daemon runtime drops remote write capabilities by default, then restores token-backed GitHub PR/workflow capabilities when a real GitHub remote is available.
 - **Workspace publish flow** — scratch work can be promoted into a user-owned GitHub repo from inside the app, with explicit `Private`/`Public` visibility
 
 ## Shared Runtime Shape

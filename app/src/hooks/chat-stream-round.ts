@@ -114,11 +114,11 @@ export async function streamAssistantRound(
   // preserving first-seen order for the "Sources" footer.
   const citationsByUrl = new Map<string, UrlCitation>();
   // Sandbox tools are advertised in the prompt when ANY sandbox-shaped
-  // transport is available: a cloud sandbox id (`sandboxIdRef`) or a
-  // paired local-PC daemon binding (`localDaemonBindingRef`). Without
-  // the binding check, a local-pc session would see only chat tools in
-  // its system prompt and `sandbox_exec` / `sandbox_read_file` etc.
-  // would never be emitted even though the dispatch fork exists.
+  // transport is available: a cloud sandbox id (`sandboxIdRef`) or a paired
+  // daemon binding (`localDaemonBindingRef`). Without the binding check, a
+  // Remote daemon session would see only chat tools in its system prompt and
+  // `sandbox_exec` / `sandbox_read_file` etc. would never be emitted even
+  // though the dispatch fork exists.
   // Codex P2 on PR #516.
   const hasSandboxThisRound = Boolean(sandboxIdRef.current || localDaemonBindingRef.current);
 
