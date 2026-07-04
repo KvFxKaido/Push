@@ -51,7 +51,23 @@ to it.
 
 ## Phase 1 — dev path on Bun (partial: dev script shipped, tests blocked)
 
-`bun cli/cli.ts` boots the full CLI surface today (`dev:cli:bun` script).
+`bun cli/cli.ts` boots the full CLI surface today (`dev:cli:bun` script) —
+**including the pushd daemon**. The daemon spawn paths (self-heal respawn, TUI
+autostart, and `daemon start`) originally keyed loader flags off the entry
+*extension*
+(`.ts` ⟹ `--import tsx`), which is correct under Node but fatal under Bun:
+`bun --import tsx pushd.ts` dies with `Cannot find module './cjs/index.cjs'
+from ''` (tsx is a Node-only loader) before pushd's `main()` runs, so a
+stale-build drain under `dev:cli:bun` could drain the old daemon but never
+respawn — the session silently fell back to inline mode. Fixed by
+`cli/daemon-spawn-args.ts`, which selects loader flags by *runtime*: under Bun,
+native TS with `--no-env-file` (the same cwd-`.env`-autoload guard Phase 0
+applies to the compiled binary) and no tsx; under Node, `--import tsx` for
+`.ts`/`.mts` as before. The daemon runs **no** `Bun.*` APIs, so this respects
+ground rule 2 (running *under* Bun ≠ *calling* Bun APIs). Known Bun gap: the
+relay's `ws` `unexpected-response` handler is unimplemented in Bun, so a
+rejected relay dial surfaces differently there.
+
 Tests are the blocker, measured on Bun 1.3.11 against the full suite:
 
 - `bun test --preload ./cli/tests/setup-test-home-isolation.mjs
