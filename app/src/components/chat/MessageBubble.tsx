@@ -30,6 +30,7 @@ import { CardRenderer } from '@/components/cards/CardRenderer';
 import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-icons';
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
 import { isStreamdownEnabled } from '@/lib/feature-flags';
+import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai/reasoning';
 import { lazyWithRecovery } from '@/lib/lazy-import';
 import {
   looksLikeToolCall,
@@ -336,57 +337,48 @@ function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.Re
   return nodes.map((node) => wrapStreamWordsNode(node, counter));
 }
 
+/**
+ * The reasoning disclosure. Renders the model's `thinking` as a collapsible,
+ * markdown-formatted trace via the `Reasoning` primitive \u2014 no leading brain
+ * icon and no shimmer/auto-open, since the avatar already animates while
+ * streaming. Open state is controlled by the caller (held in `viewState` above
+ * the virtualization boundary), so it survives streaming\u2192settled and scroll
+ * remounts.
+ */
 function ThinkingBlock({
   thinking,
   isStreaming,
   expanded,
-  onToggle,
+  onOpenChange,
 }: {
   thinking: string;
   isStreaming: boolean;
   expanded: boolean;
-  onToggle: () => void;
+  onOpenChange: (open: boolean) => void;
 }) {
-  // Truncate preview to ~80 chars from the end of thinking
-  const preview = thinking.length > 80 ? '\u2026' + thinking.slice(-80).trim() : thinking.trim();
+  // Mirror the main content path: markdown via the lazy renderer when the
+  // streamdown flag is on (plain-text Suspense fallback), else preformatted
+  // text — so reasoning tracks the same rollout as the answer below it.
+  const useStreamdown = isStreamdownEnabled();
 
   return (
-    <div className="mb-2">
-      <button
-        onClick={onToggle}
-        className="flex items-center gap-1 text-push-xs text-push-fg-dim hover:text-push-fg-muted transition-colors duration-150 group"
-      >
-        <ChevronRight
-          className={`h-3 w-3 transition-transform duration-200 ${expanded ? 'rotate-90' : ''}`}
-        />
-        <span className="font-medium">{isStreaming ? 'Reasoning' : 'Thought process'}</span>
-        {isStreaming && (
-          <span className="inline-block w-1 h-1 rounded-full bg-push-fg-dim animate-pulse ml-0.5" />
+    <Reasoning
+      className="mb-2"
+      isStreaming={isStreaming}
+      open={expanded}
+      onOpenChange={onOpenChange}
+    >
+      <ReasoningTrigger />
+      <ReasoningContent>
+        {useStreamdown ? (
+          <Suspense fallback={<span className="whitespace-pre-wrap break-words">{thinking}</span>}>
+            <LazyPushMarkdownRenderer text={thinking} isStreaming={isStreaming} />
+          </Suspense>
+        ) : (
+          <p className="whitespace-pre-wrap break-words leading-relaxed">{thinking}</p>
         )}
-      </button>
-
-      {!expanded && !isStreaming && (
-        <p className="text-push-sm text-push-fg-dimmest leading-relaxed mt-1 ml-4 line-clamp-2 italic">
-          {preview}
-        </p>
-      )}
-
-      {expanded && (
-        <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge max-h-[300px] overflow-y-auto expand-in">
-          <p className="text-push-sm text-push-fg-dim leading-relaxed whitespace-pre-wrap break-words">
-            {thinking}
-          </p>
-        </div>
-      )}
-
-      {isStreaming && !expanded && thinking && (
-        <div className="mt-1.5 ml-4 pl-3 border-l border-push-edge">
-          <p className="text-push-sm text-push-fg-dimmest leading-relaxed whitespace-pre-wrap break-words line-clamp-3">
-            {thinking.slice(-200)}
-          </p>
-        </div>
-      )}
-    </div>
+      </ReasoningContent>
+    </Reasoning>
   );
 }
 
@@ -835,7 +827,7 @@ export const MessageBubble = memo(function MessageBubble({
             thinking={message.thinking!}
             isStreaming={isStreaming}
             expanded={viewState.reasoningExpanded}
-            onToggle={() => setViewState({ reasoningExpanded: !viewState.reasoningExpanded })}
+            onOpenChange={(open) => setViewState({ reasoningExpanded: open })}
           />
         )}
         {hasContent && (

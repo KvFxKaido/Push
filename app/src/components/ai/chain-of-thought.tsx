@@ -2,70 +2,11 @@
 
 import { BrainIcon, ChevronDownIcon, DotIcon, type LucideIcon } from 'lucide-react';
 import type { ComponentProps, ReactNode } from 'react';
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, memo, useContext, useMemo } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
-
-/**
- * Controlled/uncontrolled state helper, folded in rather than pulling
- * `@radix-ui/react-use-controllable-state` (a ~15-line hook) as a dependency.
- * Matches Radix's contract: the setter accepts a value or an updater and only
- * fires `onChange` when the resolved value actually changes.
- */
-function useControllableState<T>({
-  prop,
-  defaultProp,
-  onChange,
-}: {
-  prop?: T;
-  defaultProp: T;
-  onChange?: (value: T) => void;
-}): [T, (next: T | ((prev: T) => T)) => void] {
-  const [uncontrolled, setUncontrolled] = useState<T>(defaultProp);
-  const isControlled = prop !== undefined;
-  const value = isControlled ? (prop as T) : uncontrolled;
-
-  const onChangeRef = useRef(onChange);
-  useEffect(() => {
-    onChangeRef.current = onChange;
-  });
-
-  const setValue = useCallback(
-    (next: T | ((prev: T) => T)) => {
-      const resolve = (prev: T): T =>
-        typeof next === 'function' ? (next as (p: T) => T)(prev) : next;
-
-      if (isControlled) {
-        const nextValue = resolve(prop as T);
-        if (nextValue !== prop) {
-          onChangeRef.current?.(nextValue);
-        }
-        return;
-      }
-
-      setUncontrolled((prev) => {
-        const nextValue = resolve(prev);
-        if (nextValue !== prev) {
-          onChangeRef.current?.(nextValue);
-        }
-        return nextValue;
-      });
-    },
-    [isControlled, prop],
-  );
-
-  return [value, setValue];
-}
+import { useControllableState } from './use-controllable-state';
 
 interface ChainOfThoughtContextValue {
   isOpen: boolean;
