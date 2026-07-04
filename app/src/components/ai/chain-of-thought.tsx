@@ -115,10 +115,14 @@ export const ChainOfThought = memo(
   },
 );
 
-export type ChainOfThoughtHeaderProps = ComponentProps<typeof CollapsibleTrigger>;
+export type ChainOfThoughtHeaderProps = ComponentProps<typeof CollapsibleTrigger> & {
+  /** Leading icon for the trigger. Defaults to a brain; consumers with a more
+   *  fitting glyph (e.g. a tool group's representative icon) can override it. */
+  icon?: LucideIcon;
+};
 
 export const ChainOfThoughtHeader = memo(
-  ({ className, children, ...props }: ChainOfThoughtHeaderProps) => {
+  ({ className, children, icon: Icon = BrainIcon, ...props }: ChainOfThoughtHeaderProps) => {
     const { isOpen, setIsOpen } = useChainOfThought();
 
     return (
@@ -130,10 +134,17 @@ export const ChainOfThoughtHeader = memo(
           )}
           {...props}
         >
-          <BrainIcon className="size-4" />
-          <span className="flex-1 text-left">{children ?? 'Chain of Thought'}</span>
+          <Icon className="size-4 shrink-0" />
+          {/* `min-w-0 truncate` lets a long header ellipsize instead of
+              overflowing its row (a lone label short-circuits harmlessly). */}
+          <span className="min-w-0 flex-1 truncate text-left">
+            {children ?? 'Chain of Thought'}
+          </span>
           <ChevronDownIcon
-            className={cn('size-4 transition-transform', isOpen ? 'rotate-180' : 'rotate-0')}
+            className={cn(
+              'size-4 shrink-0 transition-transform',
+              isOpen ? 'rotate-180' : 'rotate-0',
+            )}
           />
         </CollapsibleTrigger>
       </Collapsible>
@@ -146,6 +157,10 @@ export type ChainOfThoughtStepProps = ComponentProps<'div'> & {
   label: ReactNode;
   description?: ReactNode;
   status?: 'complete' | 'active' | 'pending';
+  /** Draw the vertical connector below the step's icon. Defaults to `true`;
+   *  set `false` on the final step so the timeline rail doesn't dangle past
+   *  the last node. */
+  hasConnector?: boolean;
 };
 
 export const ChainOfThoughtStep = memo(
@@ -155,6 +170,7 @@ export const ChainOfThoughtStep = memo(
     label,
     description,
     status = 'complete',
+    hasConnector = true,
     children,
     ...props
   }: ChainOfThoughtStepProps) => {
@@ -176,7 +192,13 @@ export const ChainOfThoughtStep = memo(
       >
         <div className="relative mt-0.5">
           <Icon className="size-4" />
-          <div className="-mx-px absolute top-7 bottom-0 left-1/2 w-px bg-border" />
+          {/* Rail starts just below the (size-4) icon and overshoots the step's
+              bottom edge so it bridges the inter-step gap to the next node —
+              anchored to the icon, not a fixed row height, so it survives both
+              tall steps and dense single-line rows. */}
+          {hasConnector && (
+            <div className="absolute top-5 -bottom-3 left-1/2 w-px -translate-x-1/2 bg-border" />
+          )}
         </div>
         <div className="flex-1 space-y-2 overflow-hidden">
           <div>{label}</div>
