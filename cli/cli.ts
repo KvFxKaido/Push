@@ -5,7 +5,6 @@ import { createInterface } from 'node:readline/promises';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
 
 import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
 import { isInvalidGitRef, matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
@@ -32,6 +31,7 @@ import {
   type PruneSelectors,
 } from './session-store.js';
 import { runCheckpointCommand } from './checkpoint-command.js';
+import { isBunRuntime, resolvePushdEntryCandidate, pushdSpawnPlan } from './daemon-spawn-args.js';
 import {
   buildSystemPromptBase,
   ensureSystemPromptReady,
@@ -2199,9 +2199,7 @@ async function runDaemonSubcommand(values, positionals) {
     // Launch pushd as a detached child process.
     const { spawn } = await import('node:child_process');
     // Derive pushd entry from the current runtime file extension (.js → .js, .ts → .ts, .mjs → .mjs).
-    // Use fileURLToPath so percent-encoded chars (spaces, etc.) decode correctly
-    // and Windows paths don't get a leading slash from URL.pathname.
-    const extMatch = import.meta.url.match(/\.(m?[jt]s)$/);
+    const pushdCandidate = resolvePushdEntryCandidate(import.meta.url);
     // A bun single-executable build (bun build --compile) still reports an
     // import.meta.url ending in .mjs — it's bun's internal embedded-bundle
     // root (e.g. `B:\~BUN\root\cli.mjs`), not a real file on disk. Matching
@@ -2211,28 +2209,25 @@ async function runDaemonSubcommand(values, positionals) {
     // an unknown subcommand ("Unknown command: B:\~BUN\root\pushd.mjs"),
     // so pushd never came up and every run silently fell back to inline
     // mode. Confirm the resolved path actually exists before trusting it.
-    const pushdPathOnDisk = extMatch
-      ? fileURLToPath(new URL(`./pushd.${extMatch[1]}`, import.meta.url))
-      : null;
-    const pushdExists = pushdPathOnDisk
-      ? await fs.access(pushdPathOnDisk).then(
+    const pushdExists = pushdCandidate.path
+      ? await fs.access(pushdCandidate.path).then(
           () => true,
           () => false,
         )
       : false;
-    let nodeArgs;
-    if (extMatch && pushdExists) {
-      // When the parent is running under tsx (ext === 'ts'), the child
-      // also needs the tsx loader — plain `node pushd.ts` dies with
-      // "Unknown file extension .ts" at module-load time. Pass `--import tsx`
-      // so the child registers the same ESM loader the parent is using. This
-      // mirrors `dev:cli` in package.json.
-      nodeArgs = extMatch[1] === 'ts' ? ['--import', 'tsx', pushdPathOnDisk] : [pushdPathOnDisk];
+    const spawnPlan = pushdSpawnPlan({
+      underBun: isBunRuntime(),
+      ext: pushdCandidate.ext,
+      path: pushdCandidate.path,
+      pathExists: pushdExists,
+    });
+    const nodeArgs = spawnPlan.args;
+    if (spawnPlan.mode === 'script') {
       console.error(
         JSON.stringify({
           level: 'info',
           event: 'pushd_spawn_mode_script',
-          entry: pushdPathOnDisk,
+          entry: spawnPlan.entry,
         }),
       );
     } else {
@@ -2241,7 +2236,6 @@ async function runDaemonSubcommand(values, positionals) {
       // bundle and process.execPath IS this packaged CLI. Re-exec ourselves
       // with the internal `daemon __run` action, which runs pushd's main()
       // in-process.
-      nodeArgs = ['daemon', '__run'];
       // Symmetric with pushd_spawn_mode_script; stderr because CLI stdout
       // is user output. This branch choice was the silent wrong-turn behind
       // the Windows daemon-start failure — keep both sides observable.
@@ -2249,7 +2243,7 @@ async function runDaemonSubcommand(values, positionals) {
         JSON.stringify({
           level: 'info',
           event: 'pushd_spawn_mode_self_exec',
-          pushdPathChecked: pushdPathOnDisk,
+          pushdPathChecked: spawnPlan.pushdPathChecked,
         }),
       );
     }
