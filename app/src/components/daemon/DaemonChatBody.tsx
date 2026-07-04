@@ -43,6 +43,7 @@ import { getChatShellNav, resolveNavMode } from '@/lib/nav-transition';
 import { RepoAppearanceSheet } from '@/components/repo/RepoAppearanceSheet';
 import { filterDaemonScopedConversations, resolveDaemonChatAction } from '@/hooks/chat-management';
 import { useChat } from '@/hooks/useChat';
+import { useCommittedDaemonTurns } from '@/hooks/useCommittedDaemonTurns';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import type { ReattachedRun } from '@/hooks/useDaemonRunState';
 import type { DaemonMessageDispatchHandle } from '@/hooks/useDaemonMessageDispatch';
@@ -509,6 +510,23 @@ export function DaemonChatBody({
   // when the daemon is driving — the TUI, or this client's own dispatched
   // send (see useDaemonMessageDispatch).
   const pendingUserMessage = messageDispatch?.pendingUserMessage ?? null;
+  // A daemon-dispatched turn doesn't append to `messages` (that's the whole
+  // point — it never runs through useChat's local generation), so without
+  // this it would simply vanish once the NEXT send replaces
+  // `pendingUserMessage`/`remoteTurnMessage` with the new turn's pair (Codex
+  // P2 on #1325). See useCommittedDaemonTurns for why this is its own hook.
+  const committedDaemonTurns = useCommittedDaemonTurns();
+  const { commit: commitDaemonTurn, reset: resetCommittedDaemonTurns } = committedDaemonTurns;
+  const remoteTurnStatus = remoteTurnMessage?.status;
+  useEffect(() => {
+    if (remoteTurnStatus !== 'done' && remoteTurnStatus !== 'error') return;
+    if (!pendingUserMessage || !remoteTurnMessage) return;
+    commitDaemonTurn(pendingUserMessage, remoteTurnMessage);
+  }, [remoteTurnStatus, pendingUserMessage, remoteTurnMessage, commitDaemonTurn]);
+  useEffect(() => {
+    resetCommittedDaemonTurns();
+  }, [targetSessionId, resetCommittedDaemonTurns]);
+  const { committedTurns } = committedDaemonTurns;
   const displayMessages = useMemo<ChatMessage[]>(() => {
     const prefix: ChatMessage[] = hydratedMessages?.length
       ? hydratedMessages.map((m, i) => ({
@@ -522,15 +540,28 @@ export function DaemonChatBody({
     // Hide the remote turn the moment the local user starts their own (their
     // turn appends to `messages`, which must order after the remote one). The
     // just-watched turn is in the daemon's history and returns via
-    // `hydratedMessages` on the next attach.
-    const tail: ChatMessage[] = [];
+    // `hydratedMessages` on the next attach. Skip anything already graduated
+    // into `committedTurns` so a just-committed pair isn't rendered twice for
+    // the one render where both are simultaneously true.
+    const tail: ChatMessage[] = [...committedTurns];
     if (!isStreaming) {
-      if (pendingUserMessage) tail.push(pendingUserMessage);
-      if (remoteTurnMessage) tail.push(remoteTurnMessage);
+      if (pendingUserMessage && !committedTurns.some((m) => m.id === pendingUserMessage.id)) {
+        tail.push(pendingUserMessage);
+      }
+      if (remoteTurnMessage && !committedTurns.some((m) => m.id === remoteTurnMessage.id)) {
+        tail.push(remoteTurnMessage);
+      }
     }
     if (prefix.length === 0 && tail.length === 0) return messages;
     return [...prefix, ...messages, ...tail];
-  }, [hydratedMessages, messages, pendingUserMessage, remoteTurnMessage, isStreaming]);
+  }, [
+    hydratedMessages,
+    messages,
+    committedTurns,
+    pendingUserMessage,
+    remoteTurnMessage,
+    isStreaming,
+  ]);
 
   // Composer state — owns the per-chat provider/model drafts that
   // ChatInput's picker reads. `sendMessageWithChatDraft` wraps
@@ -551,21 +582,24 @@ export function DaemonChatBody({
 
   // Route sends through the daemon's own round loop (useDaemonMessageDispatch)
   // instead of generating locally — the whole point of `messageDispatch`
-  // existing. Attachments aren't in `send_user_message`'s payload yet (Stage 1
-  // scope), so they still fall back to local generation; `messageDispatch`
-  // itself no-ops without a bound session, so a missing/disconnected daemon
-  // falls back the same way. `options` (the local chat-draft provider/model)
-  // is intentionally dropped on the daemon path — the session's own
+  // existing. Falls back to local generation when: attachments are present
+  // (Stage 1 scope — `send_user_message`'s payload has no attachment field
+  // yet), or there's no target session to address (an untargeted Remote
+  // pairing bundle from plain `push daemon pair --remote`, before any
+  // tap-to-resume — `messageDispatch.send` itself no-ops on a null session
+  // id, which would otherwise silently drop the draft with no fallback;
+  // Codex P1 on #1325). `options` (the local chat-draft provider/model) is
+  // intentionally dropped on the daemon path — the session's own
   // provider/model is what actually runs the turn, not this client's draft.
   const { sendMessageWithChatDraft } = composerState;
   const handleComposerSend = useCallback(
     (text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
-      if (messageDispatch && !(attachments && attachments.length > 0)) {
+      if (messageDispatch && relaySessionId && !(attachments && attachments.length > 0)) {
         return messageDispatch.send(text);
       }
       return sendMessageWithChatDraft(text, attachments, options);
     },
-    [messageDispatch, sendMessageWithChatDraft],
+    [messageDispatch, relaySessionId, sendMessageWithChatDraft],
   );
 
   // Composer controller — projects composerState + useChat surfaces
