@@ -25,6 +25,19 @@ live, and in what order adoption happens.
    `typeof Bun !== 'undefined'` guards are worse than the hand-rolled code
    they'd replace.
 3. **Consistency beats correctness in the TUI width kernel.** See Phase 2.
+4. **Adjudicate substitutions by differential test, not by reading.** Whether a
+   `Bun.*` API should replace hand-rolled code is decided by running both
+   against an *adversarial* input corpus — never by reading Bun's docs and
+   concluding the hand-roll still looks fine. A read only checks the axes you
+   already thought to hand-roll; it can't surface the cases you never knew to
+   (emoji ZWJ width, a torn non-atomic write, hash-format drift — the three
+   examples the sections below turn on). The Phase 2 width-kernel divergences
+   were found exactly this way: a 16-case corpus through both `visibleWidth`
+   and `Bun.stringWidth`, not by reading `Bun.stringWidth`'s description — the
+   happy path reports "identical, mine's fine" and buries the five cases that
+   break it. The read flatters the hand-roll; the diff adjudicates it. This is
+   also how rule 3's tradeoff was *discovered* — you can't decide correctness
+   vs. consistency on an axis you didn't know diverged.
 
 ## Phase 0 — compiled-binary hygiene (shipped)
 
