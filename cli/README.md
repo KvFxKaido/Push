@@ -39,13 +39,18 @@ $env:PUSH_TUI_ENABLED = "0"
 The CLI (daemon included) compiles to a self-contained executable with [Bun](https://bun.sh) — no Node, tsx, or `node_modules` on the target machine:
 
 ```bash
-bun build --compile cli/cli.ts --outfile push-bin
+bun build --compile --no-compile-autoload-dotenv cli/cli.ts --outfile push-bin
 ./push-bin                     # same surface: tui, run, daemon, …
 
 # Cross-compile from any host:
-bun build --compile --target=bun-windows-x64 cli/cli.ts --outfile push.exe
-bun build --compile --target=bun-darwin-arm64 cli/cli.ts --outfile push-macos
+bun build --compile --no-compile-autoload-dotenv --target=bun-windows-x64 cli/cli.ts --outfile push.exe
+bun build --compile --no-compile-autoload-dotenv --target=bun-darwin-arm64 cli/cli.ts --outfile push-macos
 ```
+
+`--no-compile-autoload-dotenv` is not optional: without it the compiled
+binary auto-loads `.env` / `.env.local` from whatever directory it runs in,
+injecting repo-controlled values into the CLI's own `process.env` ahead of
+`~/.push/config.json` hydration and the subprocess env scrub.
 
 Caveats: binaries are ~100 MB (embedded Bun runtime), and local embeddings (`@huggingface/transformers`, a native optional dependency) can't be embedded — they resolve from `node_modules` at runtime when present, else the standard optional-dep fallback applies. CI smoke-tests the compiled binary on Linux and Windows (`cli-binary` job). Background and rejected alternative (a Go rewrite): [`docs/decisions/Go Migration Assessment.md`](../docs/decisions/Go%20Migration%20Assessment.md).
 

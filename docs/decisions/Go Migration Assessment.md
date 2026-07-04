@@ -40,9 +40,15 @@ separate daemon build.
 
 ## What shipped instead
 
-`bun build --compile cli/cli.ts` now produces a self-contained `push` binary
-(daemon included) and cross-compiles to `bun-windows-x64` / `bun-darwin-arm64`
-/ `bun-linux-arm64` from one host. Two runtime fixes were required, plus CI:
+`bun build --compile --no-compile-autoload-dotenv cli/cli.ts` now produces a
+self-contained `push` binary (daemon included) and cross-compiles to
+`bun-windows-x64` / `bun-darwin-arm64` / `bun-linux-arm64` from one host. The
+dotenv flag is load-bearing: without it the compiled binary auto-loads `.env`
+/ `.env.local` from cwd into its own `process.env` — ahead of
+`applyConfigToEnv()` and the `env-scrub` allowlist — so any repo the user
+cd's into could inject provider keys or `PUSH_*` flags (verified on Bun
+1.3.11). Config comes from `~/.push/config.json` only. Two runtime fixes were
+required, plus CI:
 
 1. **Entry guard** (`cli/cli.ts` `isDirectRun`): single-executable builds embed
    the bundle at a virtual path the `cli.<ext>` regex can't see;
