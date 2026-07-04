@@ -340,10 +340,11 @@ function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.Re
 /**
  * The reasoning disclosure. Renders the model's `thinking` as a collapsible,
  * markdown-formatted trace via the `Reasoning` primitive \u2014 no leading brain
- * icon and no shimmer/auto-open, since the avatar already animates while
- * streaming. Open state is controlled by the caller (held in `viewState` above
- * the virtualization boundary), so it survives streaming\u2192settled and scroll
- * remounts.
+ * icon and no shimmer, since the avatar already animates while streaming. Open
+ * state is controlled by the caller (held in `viewState` above the
+ * virtualization boundary, so it survives streaming\u2192settled and scroll
+ * remounts): the pane auto-opens while streaming and tucks once settled, until
+ * the user toggles it and pins their choice (`reasoningUserSet`).
  */
 function ThinkingBlock({
   thinking,
@@ -826,8 +827,13 @@ export const MessageBubble = memo(function MessageBubble({
           <ThinkingBlock
             thinking={message.thinking!}
             isStreaming={isStreaming}
-            expanded={viewState.reasoningExpanded}
-            onOpenChange={(open) => setViewState({ reasoningExpanded: open })}
+            // Auto-follow streaming (open while thinking, tucked once settled)
+            // until the user toggles it — then `reasoningUserSet` pins their
+            // choice and the auto behavior stops.
+            expanded={viewState.reasoningUserSet ? viewState.reasoningExpanded : isStreaming}
+            onOpenChange={(open) =>
+              setViewState({ reasoningExpanded: open, reasoningUserSet: true })
+            }
           />
         )}
         {hasContent && (

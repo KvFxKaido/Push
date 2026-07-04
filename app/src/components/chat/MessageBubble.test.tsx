@@ -69,7 +69,7 @@ describe('MessageBubble', () => {
     expect(html).toContain('hex-thinking');
   });
 
-  it('keeps the reasoning disclosure live while streamed answer content is visible', () => {
+  it('auto-opens the reasoning trace while streaming', () => {
     const message = assistantMessage({
       content: 'answer has started',
       thinking: 'still reasoning through the next step',
@@ -81,9 +81,41 @@ describe('MessageBubble', () => {
     expect(html).toContain('Reasoning');
     expect(html).not.toContain('Thought process');
     expect(html).toContain('answer');
-    // The trace itself sits behind the collapsed disclosure now (no inline
-    // preview) — the avatar's hex-thinking animation is the streaming signal.
-    expect(html).not.toContain('still reasoning through the next step');
+    // Auto-follows streaming: with no manual toggle the pane is open, so the
+    // trace is visible live (not tucked behind a collapsed disclosure).
+    expect(html).toContain('still reasoning through the next step');
+  });
+
+  it('tucks the reasoning trace once settled (no manual toggle)', () => {
+    const message = assistantMessage({
+      content: 'the answer',
+      thinking: 'private reasoning trace',
+      status: 'done',
+    });
+
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toContain('Thought process');
+    // Settled + untoggled → auto-collapsed, so the trace is unmounted.
+    expect(html).not.toContain('private reasoning trace');
+  });
+
+  it("pins the user's manual collapse against the streaming auto-open", () => {
+    const store = createMessageViewStateStore();
+    // User collapsed it during streaming: pinned closed despite auto-open.
+    store.set('assistant-1', { reasoningExpanded: false, reasoningUserSet: true });
+    const message = assistantMessage({
+      thinking: 'reasoning the user hid',
+      status: 'streaming',
+    });
+
+    const html = renderToStaticMarkup(
+      <MessageViewStateContext.Provider value={store}>
+        <MessageBubble message={message} />
+      </MessageViewStateContext.Provider>,
+    );
+    expect(html).toContain('Reasoning');
+    // Pinned closed wins over the streaming auto-open.
+    expect(html).not.toContain('reasoning the user hid');
   });
 
   it('settles the hexagon avatar to a static stroke once done', () => {
