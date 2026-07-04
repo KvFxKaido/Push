@@ -17,6 +17,7 @@ describe('message view-state store', () => {
     expect(store.getSnapshot('never')).toBe(store.getSnapshot('never'));
     expect(store.getSnapshot('never')).toEqual({
       reasoningExpanded: false,
+      reasoningUserSet: false,
       sourcesExpanded: false,
       actionsRevealed: false,
     });

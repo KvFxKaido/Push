@@ -11,9 +11,11 @@ import { useControllableState } from './use-controllable-state';
  * Collapsible reasoning trace — the layout of the AI-Elements `Reasoning`
  * component, pared to what fits Push: a controlled disclosure (label + chevron)
  * over markdown-rendered thinking. Deliberately no leading brain icon and no
- * shimmer/auto-open/auto-close — the message avatar already animates while
- * streaming (the `hex-thinking` mark), so a second "is thinking" signal here
- * would be redundant.
+ * shimmer — the message avatar already animates while streaming (the
+ * `hex-thinking` mark), so a second "is thinking" signal here would be
+ * redundant. No built-in auto-open/auto-close either: the component is purely
+ * controlled, and the caller decides when it opens (Push auto-follows streaming
+ * via `useMessageViewState`; see MessageBubble).
  *
  * A single Collapsible root wraps the trigger and content so Radix wires
  * `aria-controls` ↔ the content id (see ChainOfThought for the same pattern).

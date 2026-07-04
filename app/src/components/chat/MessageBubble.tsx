@@ -31,6 +31,7 @@ import { BranchWaveIcon, PushMarkIcon } from '@/components/icons/push-custom-ico
 import { useSmoothStreamedText } from '@/hooks/useSmoothStreamedText';
 import { isStreamdownEnabled } from '@/lib/feature-flags';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai/reasoning';
+import { reasoningPaneOpen, reasoningTogglePatch } from './reasoning-view-state';
 import { lazyWithRecovery } from '@/lib/lazy-import';
 import {
   looksLikeToolCall,
@@ -340,10 +341,11 @@ function wrapStreamWords(nodes: React.ReactNode[], textLength: number): React.Re
 /**
  * The reasoning disclosure. Renders the model's `thinking` as a collapsible,
  * markdown-formatted trace via the `Reasoning` primitive \u2014 no leading brain
- * icon and no shimmer/auto-open, since the avatar already animates while
- * streaming. Open state is controlled by the caller (held in `viewState` above
- * the virtualization boundary), so it survives streaming\u2192settled and scroll
- * remounts.
+ * icon and no shimmer, since the avatar already animates while streaming. Open
+ * state is controlled by the caller (held in `viewState` above the
+ * virtualization boundary, so it survives streaming\u2192settled and scroll
+ * remounts): the pane auto-opens while streaming and tucks once settled, until
+ * the user toggles it and pins their choice (`reasoningUserSet`).
  */
 function ThinkingBlock({
   thinking,
@@ -826,8 +828,12 @@ export const MessageBubble = memo(function MessageBubble({
           <ThinkingBlock
             thinking={message.thinking!}
             isStreaming={isStreaming}
-            expanded={viewState.reasoningExpanded}
-            onOpenChange={(open) => setViewState({ reasoningExpanded: open })}
+            // Auto-follow streaming (open while thinking, tucked once settled)
+            // until the user toggles it — then the pin (reasoningUserSet) stops
+            // the auto behavior. Policy lives in `reasoning-view-state` so it's
+            // unit-tested without a DOM.
+            expanded={reasoningPaneOpen(viewState, isStreaming)}
+            onOpenChange={(open) => setViewState(reasoningTogglePatch(open))}
           />
         )}
         {hasContent && (

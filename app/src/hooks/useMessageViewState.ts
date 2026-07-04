@@ -27,6 +27,14 @@ import { createContext, useCallback, useContext, useSyncExternalStore } from 're
  */
 export interface MessageViewState {
   reasoningExpanded: boolean;
+  /**
+   * Whether the user has manually toggled the reasoning pane. Until then the
+   * pane auto-follows streaming (open while thinking, tucked once settled);
+   * once the user opens or closes it themselves this pins to their choice and
+   * the auto behavior stops. Held here (not local state) so it survives the
+   * streaming→settled and scroll remounts like the rest of this slice.
+   */
+  reasoningUserSet: boolean;
   sourcesExpanded: boolean;
   actionsRevealed: boolean;
 }
@@ -36,6 +44,7 @@ export interface MessageViewState {
 // be referentially stable while unchanged).
 const EMPTY: MessageViewState = Object.freeze({
   reasoningExpanded: false,
+  reasoningUserSet: false,
   sourcesExpanded: false,
   actionsRevealed: false,
 });
@@ -72,6 +81,7 @@ export function createMessageViewStateStore(): MessageViewStateStore {
       // No-op identical writes so we never notify (and re-render) for nothing.
       if (
         next.reasoningExpanded === current.reasoningExpanded &&
+        next.reasoningUserSet === current.reasoningUserSet &&
         next.sourcesExpanded === current.sourcesExpanded &&
         next.actionsRevealed === current.actionsRevealed
       ) {
