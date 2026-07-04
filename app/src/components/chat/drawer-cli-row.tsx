@@ -15,8 +15,8 @@
  * Tap-to-resume: when `onResume` is present the row body renders as a
  * button — a tap asks the caller to attach to this session (the caller
  * owns the `grant_session_attach` round-trip; see RelayChatScreen).
- * Absent, the row is a plain read-only div (local-PC mode, callers
- * without a resume path). Still no rename/delete: those verbs belong
+ * Absent, the row is a plain read-only div (callers without a resume
+ * path). Still no rename/delete: those verbs belong
  * to the terminal that owns the session.
  */
 import { timeAgoCompact } from '@/lib/utils';

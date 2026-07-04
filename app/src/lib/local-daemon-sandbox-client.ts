@@ -540,7 +540,7 @@ export async function getDiffLocalDaemon(
 ): Promise<LocalDaemonDiffResult> {
   // Pass `since_ref` straight through so the local daemon's ranged
   // diff path is exercisable when this binding is the audit transport
-  // (local-PC / relay workspace sessions). The daemon validates the
+  // (relay workspace sessions). The daemon validates the
   // ref shape itself; we don't pre-filter here. Kilo review on PR #604.
   const payload = options?.sinceRef ? { since_ref: options.sinceRef } : {};
   const response = await runWithBinding(binding, (request) =>

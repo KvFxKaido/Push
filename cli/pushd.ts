@@ -2488,7 +2488,7 @@ async function handleCancelRun(req, _emitEvent, context) {
   // Without this a relay-authenticated client could abort a run on a session it
   // does not hold the bearer for, just by knowing the sessionId. Placed AFTER
   // the existence check so a cancel for a session the daemon doesn't have still
-  // returns SESSION_NOT_FOUND (the benign local-PC best-effort path), not a
+  // returns SESSION_NOT_FOUND (the benign loopback best-effort path), not a
   // token error. The runId-only path above stays WS-connection-scoped and is
   // intentionally not token-gated.
   const providedToken = req.payload?.attachToken;

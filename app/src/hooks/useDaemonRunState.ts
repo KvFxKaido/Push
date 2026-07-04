@@ -1,6 +1,7 @@
 /**
- * useDaemonRunState — tracks a daemon run this client *reattached to* but did
- * not start, so the relay surface can show a busy indicator + a remote Stop.
+ * useDaemonRunState — tracks the daemon's live foreground run, whether this
+ * client *reattached to* it or *started* it, so the relay surface can show a
+ * busy indicator + a remote Stop.
  *
  * When a phone attaches to a session the TUI is mid-turn on, the web's own
  * `isStreaming` is false (it didn't start the turn), so nothing signals "busy"
@@ -9,6 +10,13 @@
  * `DaemonChatBody` renders as "Running…" + a Stop that fires a session-scoped
  * `cancel_run`. Mirrors the TUI's snapshot path (`hydrateDaemonSnapshot` sets
  * the run state + remembers the run id so Ctrl+C can cancel a reattached run).
+ *
+ * The same field also covers a run *this* client just started by dispatching
+ * `send_user_message` to the daemon instead of generating locally (see
+ * `useDaemonMessageDispatch`): the daemon runs the turn server-side either
+ * way, so watching it is identical regardless of who dispatched it —
+ * `startRun` is the entry point for that case, `hydrateSnapshotRunState` for
+ * the reattach case. `useRemoteTurnProjection` doesn't care which populated it.
  *
  * Scope: the **foreground** run only (`state: running` with an `activeRunId`).
  * A session that's "running" purely from background delegation/task-graph work
@@ -56,6 +64,10 @@ export interface DaemonRunStateHandle {
   handleDaemonEvent: (event: SessionEvent) => void;
   /** Prime the run from a `get_session_snapshot` on attach. */
   hydrateSnapshotRunState: (snapshot: DaemonSessionSnapshot | null) => void;
+  /** Track a run this client just started via `send_user_message` (the
+   *  `runId` from its ack), so it renders the same "Running…" + Stop UI a
+   *  reattached run gets. */
+  startRun: (runId: string, sessionId: string) => void;
   /** Clear it (the local user took over the turn, or hit Stop). Idempotent. */
   clear: () => void;
 }
@@ -76,9 +88,13 @@ export function useDaemonRunState(): DaemonRunStateHandle {
     setReattachedRun((prev) => (sameRun(prev, next) ? prev : next));
   }, []);
 
+  const startRun = useCallback((runId: string, sessionId: string) => {
+    setReattachedRun((prev) => (sameRun(prev, { runId, sessionId }) ? prev : { runId, sessionId }));
+  }, []);
+
   const clear = useCallback(() => {
     setReattachedRun((prev) => (prev ? null : prev));
   }, []);
 
-  return { reattachedRun, handleDaemonEvent, hydrateSnapshotRunState, clear };
+  return { reattachedRun, handleDaemonEvent, hydrateSnapshotRunState, startRun, clear };
 }

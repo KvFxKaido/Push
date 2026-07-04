@@ -521,7 +521,7 @@ export class WebToolExecutionRuntime
           });
           // Read-tier fallback (§11): a cloud sandbox that went unreachable
           // mid-session should not fail a read the GitHub tier can serve.
-          // Cloud-only — local-PC daemon reads have their own re-pair path and
+          // Cloud-only — daemon reads have their own re-pair path and
           // GitHub can't see the local working tree.
           if (context.sandboxId && result.structuredError?.type === 'SANDBOX_UNREACHABLE') {
             const fallback = await tryGitHubReadFallback(

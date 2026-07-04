@@ -7,10 +7,7 @@
  * flashes amber on `replayUnavailableAt`), clears the paired-remote
  * record on unpair. Everything else (chat round loop, compose box,
  * reconnect banner, approval prompt, picker, layout) lives in
- * DaemonChatBody so this screen and `LocalPcChatScreen` can't drift.
- *
- * Phase 2.i factored the shared shell out; before that this screen
- * was a 95% clone of the local-PC version.
+ * DaemonChatBody.
  */
 import { Globe } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -18,12 +15,13 @@ import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { RelayModeChip } from '@/components/RelayModeChip';
 import { DaemonChatBody } from '@/components/daemon/DaemonChatBody';
 import { useApprovalQueue } from '@/hooks/useApprovalQueue';
+import { useDaemonMessageDispatch } from '@/hooks/useDaemonMessageDispatch';
 import { useDaemonRunState } from '@/hooks/useDaemonRunState';
 import { useRemoteTurnProjection } from '@/hooks/useRemoteTurnProjection';
 import { useRelayDaemon } from '@/hooks/useRelayDaemon';
 import type { SessionEvent } from '@/lib/local-daemon-binding';
 import { clearPairedRemote } from '@/lib/relay-storage';
-import { buildLocalPcWorkspaceContext } from '@/lib/workspace-context';
+import { buildDaemonWorkspaceContext } from '@/lib/workspace-context';
 import type { DaemonCliSession, RelayBinding, WorkspaceScreenAuthProps } from '@/types';
 
 interface RelayChatScreenProps {
@@ -91,6 +89,23 @@ export function RelayChatScreen({
     onEvent: handleEvent,
   });
 
+  // The daemon session the phone is actually attached to (not the relay
+  // transport's opaque routing key — see resolveRelayTargetSessionId's doc
+  // comment). Needed both for tap-to-resume below and to address the
+  // messageDispatch send below.
+  const targetSessionId = binding.targetSessionId ?? null;
+
+  // Send this screen's own messages through the daemon's round loop instead
+  // of generating locally, so the response comes from the session's own
+  // provider/model (what the picker shows) and every attached client —
+  // including the TUI — sees it stream live. See useDaemonMessageDispatch.
+  const messageDispatch = useDaemonMessageDispatch(
+    request,
+    targetSessionId,
+    binding.targetAttachToken ?? null,
+    runState.startRun,
+  );
+
   // Hydrate the state the event stream already passed before this client
   // attached: an approval the session is blocked on, and a foreground run it's
   // mid-turn on. The approval enqueue dedupes by id; run-state hydration primes
@@ -101,11 +116,13 @@ export function RelayChatScreen({
   const { hydrateSnapshotApproval, clear: clearApprovals } = approvals;
   const { hydrateSnapshotRunState, clear: clearRunState } = runState;
   const { reset: resetRemoteTurn } = remoteTurn;
+  const { reset: resetMessageDispatch } = messageDispatch;
   useEffect(() => {
     if (!sessionSnapshot) {
       clearApprovals();
       clearRunState();
       resetRemoteTurn();
+      resetMessageDispatch();
       return;
     }
     hydrateSnapshotApproval(sessionSnapshot.pendingApproval, sessionSnapshot.session.sessionId);
@@ -117,11 +134,12 @@ export function RelayChatScreen({
     clearApprovals,
     clearRunState,
     resetRemoteTurn,
+    resetMessageDispatch,
   ]);
 
   const workspaceContext = useMemo(
     () => ({
-      description: buildLocalPcWorkspaceContext({ transport: 'relay' }),
+      description: buildDaemonWorkspaceContext(),
       includeGitHubTools: false,
       mode: 'relay' as const,
     }),
@@ -151,7 +169,6 @@ export function RelayChatScreen({
   // keyed by target). Failures degrade to a structured log + no-op —
   // the row simply doesn't navigate, matching the "a broken relay must
   // not make the drawer feel broken" posture.
-  const targetSessionId = binding.targetSessionId ?? null;
   const handleResumeCliSession = useCallback(
     async (session: DaemonCliSession) => {
       if (!onResumeSession) return;
@@ -212,7 +229,7 @@ export function RelayChatScreen({
       approvals={approvals}
       request={request}
       sessionAttachToken={binding.targetAttachToken ?? null}
-      targetSessionId={binding.targetSessionId ?? null}
+      targetSessionId={targetSessionId}
       auth={auth}
       onDisconnect={onDisconnect}
       attachStatus={attachStatus}
@@ -221,6 +238,7 @@ export function RelayChatScreen({
       reattachedRun={runState.reattachedRun}
       onClearReattachedRun={runState.clear}
       remoteTurnMessage={remoteTurn.remoteMessage}
+      messageDispatch={messageDispatch}
       onResumeCliSession={onResumeSession ? handleResumeCliSession : undefined}
     />
   );

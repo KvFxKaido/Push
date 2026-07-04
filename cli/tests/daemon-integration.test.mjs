@@ -802,7 +802,7 @@ describe('resolveOrMintTargetAttachToken', () => {
 // session-ful cancel_run path aborted a run from sessionId alone with no
 // validateAttachToken. The gate sits AFTER the existence check so a cancel
 // for a session the daemon doesn't have still returns SESSION_NOT_FOUND (the
-// benign local-PC best-effort path), and BEFORE the run-state check so an
+// benign loopback best-effort path), and BEFORE the run-state check so an
 // unauthenticated caller can't probe run state.
 describe('cancel_run bearer gate', () => {
   const sessionId = 'sess_cancelgate_aabbcc';
@@ -862,7 +862,7 @@ describe('cancel_run bearer gate', () => {
     assert.equal(res.error.code, 'INVALID_TOKEN');
   });
 
-  it('unknown session still returns SESSION_NOT_FOUND (gate after existence; local-PC benign path unchanged)', async () => {
+  it('unknown session still returns SESSION_NOT_FOUND (gate after existence; loopback benign path unchanged)', async () => {
     const res = await handleRequest(
       makeRequest('cancel_run', { sessionId: 'sess_cancelgone_ddeeff', attachToken: 'whatever' }),
       () => {},
@@ -877,7 +877,7 @@ describe('cancel_run bearer gate', () => {
 // Closes the auth gap the cancel_run fix (#723) left open: handleSubmitApproval
 // resolved a paused tool call from sessionId + approvalId alone with no
 // validateAttachToken. Same shape as the cancel_run gate — AFTER the existence
-// check (unknown session → SESSION_NOT_FOUND, the benign local-PC path) and
+// check (unknown session → SESSION_NOT_FOUND, the benign loopback path) and
 // BEFORE the pending-approval lookup (a stolen approvalId can't even probe
 // whether one is outstanding).
 describe('submit_approval bearer gate', () => {

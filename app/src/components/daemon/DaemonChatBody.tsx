@@ -1,9 +1,7 @@
 /**
- * DaemonChatBody — shared chat shell for daemon-backed sessions.
+ * DaemonChatBody — chat shell for Remote daemon-backed sessions.
  *
- * Phase 2.i extracted this from `LocalPcChatScreen` / `RelayChatScreen`
- * when they were 95% identical clones. The current pass restructures the
- * shell so daemon sessions look like repo / chat mode: same header
+ * The shell makes daemon sessions look like repo / chat mode: same header
  * layout (drawer left, center pill, hub button right), same background
  * glow capacity, same `RepoChatDrawer` (filtered to daemon-mode chats),
  * same `WorkspaceHubSheet` (trimmed to Notes — see
@@ -12,15 +10,11 @@
  * slot into the matching positions in that shell.
  *
  * What stays in the screen (not here), by design:
- *   - The daemon hook mount — `useLocalDaemon` and `useRelayDaemon`
- *     have divergent return shapes (the relay hook adds
- *     `replayUnavailableAt`), and Rules-of-Hooks means we can't pick
- *     the hook conditionally inside this body.
- *   - The mode chip — rendered with the transport-specific component
- *     (`LocalPcModeChip` vs `RelayModeChip`) and passed in as a
+ *   - The daemon hook mount — `useRelayDaemon` lives in the screen so
+ *     connection lifecycle stays owned by the route.
+ *   - The mode chip — rendered by the screen and passed in as a
  *     ready-to-render `ReactNode`.
- *   - Unpair behavior — `clearPairedDevice` vs `clearPairedRemote`
- *     are storage-side differences the screen owns.
+ *   - Unpair behavior — storage cleanup remains a screen concern.
  *   - The approval queue — owned via the shared `useApprovalQueue`
  *     hook called at the screen so it can wire `handleDaemonEvent`
  *     into the daemon hook's `onEvent` callback.
@@ -51,6 +45,7 @@ import { filterDaemonScopedConversations, resolveDaemonChatAction } from '@/hook
 import { useChat } from '@/hooks/useChat';
 import type { DaemonHydratedMessage } from '@/hooks/useRelayDaemon';
 import type { ReattachedRun } from '@/hooks/useDaemonRunState';
+import type { DaemonMessageDispatchHandle } from '@/hooks/useDaemonMessageDispatch';
 import { useDaemonAppearance } from '@/hooks/useDaemonAppearance';
 import { useDaemonCliSessions } from '@/hooks/useDaemonCliSessions';
 import { useDaemonRuntimeSettings } from '@/hooks/useDaemonRuntimeSettings';
@@ -81,7 +76,9 @@ import {
   type DaemonApprovalMode,
 } from '@push/lib/daemon-runtime-settings';
 import type {
+  AttachmentData,
   ChatMessage,
+  ChatSendOptions,
   DaemonCliSession,
   WorkspaceContext,
   WorkspaceMode,
@@ -89,10 +86,8 @@ import type {
 } from '@/types';
 
 /**
- * The reconnect surface the daemon hooks share. Both
- * `useLocalDaemon.reconnectInfo` and `useRelayDaemon.reconnectInfo`
- * satisfy this — declared structurally so the body doesn't import
- * the hook return types directly (and inherit a hook coupling).
+ * The reconnect surface the daemon hook exposes. Declared structurally so
+ * the body doesn't import the hook return type directly.
  */
 export interface DaemonReconnectInfo {
   attempts: number;
@@ -103,7 +98,7 @@ export interface DaemonReconnectInfo {
 
 export interface DaemonChatBodyProps {
   /** Workspace mode tag used by `useChat`'s conversation scope. */
-  mode: Extract<WorkspaceMode, 'local-pc' | 'relay'>;
+  mode: Extract<WorkspaceMode, 'relay'>;
   /** Human label for placeholder + banner copy. e.g. "local daemon". */
   daemonLabel: string;
   /** Pre-built workspace context the screen wants the orchestrator to read. */
@@ -153,16 +148,16 @@ export interface DaemonChatBodyProps {
   /**
    * Session attach token for the bound daemon session, threaded into the
    * bearer-gated `cancel_run` fired on Stop (Addressable Session Verbs phase 2).
-   * Present in relay mode (the pair-bundle `targetAttachToken`); `null` in
-   * local-PC mode, which never attaches to a daemon session — its cancel
-   * resolves to a benign SESSION_NOT_FOUND, so no token is needed.
+   * Populated in relay mode from the pair-bundle `targetAttachToken`; `null`
+   * for an untargeted Remote bundle, whose cancel resolves to a benign
+   * SESSION_NOT_FOUND, so no token is needed.
    */
   sessionAttachToken?: string | null;
   /**
    * The daemon session this screen is targeting, when known (relay's
    * `binding.targetSessionId` from a pair bundle or tap-to-resume grant).
-   * `null`/undefined in local-PC mode (no picker, always the one session) and
-   * untargeted Remote bundles. Scopes the mount-time conversation lookup so
+   * `null`/undefined for an untargeted Remote bundle. Scopes the mount-time
+   * conversation lookup so
    * Connected sessions' tap-to-resume finds-or-creates the LOCAL chat that
    * mirrors THIS daemon session, instead of reusing whichever relay chat
    * happened to be active before (every tap collapsing onto one stale chat).
@@ -176,47 +171,56 @@ export interface DaemonChatBodyProps {
   onDisconnect: () => void;
 
   /**
-   * Targeted-attach lifecycle from the relay hook (PR #687). `idle`
-   * for local-PC mode and untargeted Remote bundles; relay screens
-   * with `targetSessionId` thread through the actual state. Drives
-   * the attach-failure banner.
+   * Targeted-attach lifecycle from the relay hook (PR #687). `idle` for an
+   * untargeted Remote bundle; relay screens with `targetSessionId` thread
+   * through the actual state. Drives the attach-failure banner.
    */
   attachStatus?: 'idle' | 'attaching' | 'attached' | 'attach_failed';
   attachError?: { code: string; message: string } | null;
   /**
    * Conversation history fetched from the daemon's `state.messages`
-   * after `attach_session` succeeds. Null for local-PC mode and for
-   * Remote bundles without a target. When present, prepended to the
-   * chat transcript so the phone sees the TUI session's history.
+   * after `attach_session` succeeds. Null for Remote bundles without a
+   * target. When present, prepended to the chat transcript so the phone
+   * sees the TUI session's history.
    */
   hydratedMessages?: DaemonHydratedMessage[] | null;
   /**
-   * A foreground run this client reattached to but did not start (from
-   * `get_session_snapshot`, see `useDaemonRunState`). When set and the local
-   * user isn't streaming, the header shows a "Running…" indicator + a Stop that
-   * fires a session-scoped `cancel_run`. Null for local-PC mode / no live run.
+   * A foreground run this client reattached to but did not start, OR one it
+   * just started itself via `messageDispatch` (see `useDaemonRunState`). When
+   * set and the local user isn't streaming, the header shows a "Running…"
+   * indicator + a Stop that fires a session-scoped `cancel_run`. Null when no
+   * live run.
    */
   reattachedRun?: ReattachedRun | null;
   /** Clear the reattached-run indicator (local takeover, Stop, or completion). */
   onClearReattachedRun?: () => void;
   /**
-   * Live assistant message projected from a TUI-driven turn's broadcast tokens
-   * (see useRemoteTurnProjection). Appended to the transcript as a streaming
-   * tail so the user watches the remote turn stream. Null when no remote turn.
+   * Live assistant message projected from a daemon-driven turn's broadcast
+   * tokens (see useRemoteTurnProjection) — whether the TUI is driving it or
+   * this client dispatched it itself via `messageDispatch`. Appended to the
+   * transcript as a streaming tail so the user watches the turn stream. Null
+   * when no turn is in flight.
    */
   remoteTurnMessage?: ChatMessage | null;
+  /**
+   * Send this screen's messages through the daemon's own round loop (see
+   * useDaemonMessageDispatch) instead of generating locally, so the response
+   * comes from the session's own provider/model and every attached client
+   * sees it stream live. Required for Remote — sends fall back to local
+   * generation when absent (should not happen for `mode: 'relay'`).
+   */
+  messageDispatch?: DaemonMessageDispatchHandle;
   /**
    * Tap-to-resume handler for the drawer's Connected (CLI/TUI session)
    * rows. The screen owns the grant + target-switch choreography (it
    * holds the daemon connection and the binding); this body only
-   * threads the callback into the drawer. Absent (local-PC mode,
-   * untargeted callers) means the rows render read-only as before.
+   * threads the callback into the drawer. Absent means the rows render
+   * read-only as before.
    */
   onResumeCliSession?: (session: DaemonCliSession) => void;
 }
 
 const MODE_HEADER_LABEL: Record<DaemonChatBodyProps['mode'], string> = {
-  'local-pc': 'Local PC',
   relay: 'Remote',
 };
 
@@ -237,7 +241,6 @@ const DAEMON_APPROVAL_MODE_CONFIG: Record<
 const NOOP_MARK_SNAPSHOT_ACTIVITY = () => {};
 
 const APPEARANCE_SHEET_DESCRIPTION: Record<DaemonChatBodyProps['mode'], string> = {
-  'local-pc': 'Pick a quiet accent color for local PC sessions on this device.',
   relay: 'Pick a quiet accent color for remote sessions on this device.',
 };
 
@@ -266,6 +269,7 @@ export function DaemonChatBody({
   reattachedRun = null,
   onClearReattachedRun,
   remoteTurnMessage = null,
+  messageDispatch,
   onResumeCliSession,
 }: DaemonChatBodyProps) {
   // Provider/model picker plumbing — identical between the two
@@ -335,9 +339,6 @@ export function DaemonChatBody({
   );
   const {
     settings: daemonRuntimeSettings,
-    loading: daemonRuntimeLoading,
-    updating: daemonRuntimeUpdating,
-    error: daemonRuntimeError,
     setApprovalMode: setDaemonApprovalMode,
     setWebSearchBackend: setDaemonWebSearchBackend,
   } = useDaemonRuntimeSettings(request, status);
@@ -345,18 +346,14 @@ export function DaemonChatBody({
   // The daemon, not this client, owns which provider/model a session is
   // running (`state.provider`/`state.model`, mutated via `update_session`
   // — the same verb the TUI's own `/model`/`/provider` commands call). A
-  // session id is required to address either read or write, and only
-  // Remote (relay) bindings carry one today; Local-PC has no
-  // session-attach concept yet (see `sessionAttachToken`'s doc above), so
-  // its picker stays on the local-only `useModelCatalog` value for now.
+  // session id is required to address either read or write.
   const relaySessionId = useMemo(() => {
-    if (mode !== 'relay') return null;
     // Was params.sessionId (the relay TRANSPORT's opaque routing key, not a
     // daemon session id) — get_session_snapshot / update_session need the
     // daemon session the phone is actually attached to. See
     // resolveRelayTargetSessionId's doc comment (user report, 2026-07-03).
     return resolveRelayTargetSessionId(paramsBinding);
-  }, [mode, paramsBinding]);
+  }, [paramsBinding]);
   const daemonSessionModel = useDaemonSessionModel(
     request,
     status,
@@ -385,9 +382,7 @@ export function DaemonChatBody({
     [refreshCliSessions],
   );
 
-  // Per-mode appearance — local-pc and relay each persist their own
-  // palette so the user can keep the two visually distinct without
-  // them bleeding into each other. Mirrors `useChatModeAppearance`.
+  // Remote appearance persists separately from repo/chat mode appearance.
   const {
     appearance: daemonAppearance,
     setAppearance: setDaemonAppearance,
@@ -415,9 +410,7 @@ export function DaemonChatBody({
           approvalId: head.approvalId,
           decision,
           // Bearer required since submit_approval is now session-gated (matches
-          // cancel_run). Relay mode threads the pair-bundle token; local-PC mode
-          // never attached, so it has no token and the gate's post-existence
-          // placement lets its decision resolve normally on a session it owns.
+          // cancel_run). Remote threads the pair-bundle token.
           ...(typeof sessionAttachToken === 'string' && sessionAttachToken.length > 0
             ? { attachToken: sessionAttachToken }
             : {}),
@@ -512,7 +505,10 @@ export function DaemonChatBody({
   // only), and reasoning blocks are dropped. Both land in a follow-up
   // if the bare transcript proves insufficient.
   // Transcript = hydrated history (prepended) + the web's own messages + a live
-  // remote-turn message (appended as a streaming tail) when the TUI is driving.
+  // turn's user prompt + assistant projection (appended as a streaming tail)
+  // when the daemon is driving — the TUI, or this client's own dispatched
+  // send (see useDaemonMessageDispatch).
+  const pendingUserMessage = messageDispatch?.pendingUserMessage ?? null;
   const displayMessages = useMemo<ChatMessage[]>(() => {
     const prefix: ChatMessage[] = hydratedMessages?.length
       ? hydratedMessages.map((m, i) => ({
@@ -527,10 +523,14 @@ export function DaemonChatBody({
     // turn appends to `messages`, which must order after the remote one). The
     // just-watched turn is in the daemon's history and returns via
     // `hydratedMessages` on the next attach.
-    const tail: ChatMessage[] = remoteTurnMessage && !isStreaming ? [remoteTurnMessage] : [];
+    const tail: ChatMessage[] = [];
+    if (!isStreaming) {
+      if (pendingUserMessage) tail.push(pendingUserMessage);
+      if (remoteTurnMessage) tail.push(remoteTurnMessage);
+    }
     if (prefix.length === 0 && tail.length === 0) return messages;
     return [...prefix, ...messages, ...tail];
-  }, [hydratedMessages, messages, remoteTurnMessage, isStreaming]);
+  }, [hydratedMessages, messages, pendingUserMessage, remoteTurnMessage, isStreaming]);
 
   // Composer state — owns the per-chat provider/model drafts that
   // ChatInput's picker reads. `sendMessageWithChatDraft` wraps
@@ -549,6 +549,25 @@ export function DaemonChatBody({
     sendMessage,
   });
 
+  // Route sends through the daemon's own round loop (useDaemonMessageDispatch)
+  // instead of generating locally — the whole point of `messageDispatch`
+  // existing. Attachments aren't in `send_user_message`'s payload yet (Stage 1
+  // scope), so they still fall back to local generation; `messageDispatch`
+  // itself no-ops without a bound session, so a missing/disconnected daemon
+  // falls back the same way. `options` (the local chat-draft provider/model)
+  // is intentionally dropped on the daemon path — the session's own
+  // provider/model is what actually runs the turn, not this client's draft.
+  const { sendMessageWithChatDraft } = composerState;
+  const handleComposerSend = useCallback(
+    (text: string, attachments?: AttachmentData[], options?: ChatSendOptions) => {
+      if (messageDispatch && !(attachments && attachments.length > 0)) {
+        return messageDispatch.send(text);
+      }
+      return sendMessageWithChatDraft(text, attachments, options);
+    },
+    [messageDispatch, sendMessageWithChatDraft],
+  );
+
   // Composer controller — projects composerState + useChat surfaces
   // into the ~60-field `providerControls` bundle ChatInput needs.
   // Mirrors what WorkspaceChatRoute / ChatSurfaceRoute do; the only
@@ -556,7 +575,7 @@ export function DaemonChatBody({
   // sandbox concern and stays a no-op here.
   const composerController = useWorkspaceChatComposerController({
     messages,
-    sendMessage: composerState.sendMessageWithChatDraft,
+    sendMessage: handleComposerSend,
     editMessageAndResend,
     regenerateLastResponse,
     handleCardAction,
@@ -595,7 +614,6 @@ export function DaemonChatBody({
   // entirely rather than showing a picker with nothing real to select,
   // same posture as the composer's other "not ready yet" states.
   const daemonProviderControls: ComposerProviderControls | null = useMemo(() => {
-    if (mode !== 'relay') return null;
     const { current, providers } = daemonSessionModel;
     if (!current?.provider || !providers) return null;
     const selectedProvider = current.provider as PreferredProvider;
@@ -630,7 +648,7 @@ export function DaemonChatBody({
       },
       modelControls,
     };
-  }, [mode, daemonSessionModel]);
+  }, [daemonSessionModel]);
 
   // Wire the binding into the chat's tool-dispatch context. Prefer
   // the hook-owned `liveBinding` (long-lived WS) over the raw
@@ -789,26 +807,12 @@ export function DaemonChatBody({
   // local user hasn't taken over with their own turn.
   const showReattachedRun = Boolean(reattachedRun) && !isStreaming;
 
-  const daemonControlsDisabledReason =
-    // set_daemon_runtime_config refuses relay-sourced writes outright (a
-    // remote bearer must not be able to downgrade the daemon's global exec
-    // safety posture) — surface that up front instead of letting the user
-    // tap a live-looking control and land on a guaranteed round-trip error
-    // (Codex P2 on #1318).
-    mode === 'relay'
-      ? 'Not available over Remote — pair Local-PC to change these settings'
-      : status.state !== 'open'
-        ? `${capitalize(daemonLabel)} is disconnected`
-        : daemonRuntimeUpdating
-          ? 'Updating daemon controls'
-          : daemonRuntimeLoading
-            ? 'Loading daemon controls'
-            : daemonRuntimeError
-              ? daemonRuntimeError
-              : daemonRuntimeSettings
-                ? null
-                : 'Daemon controls unavailable';
-  const daemonControlsDisabled = daemonControlsDisabledReason !== null;
+  // set_daemon_runtime_config refuses relay-sourced writes outright: a remote
+  // bearer must not be able to downgrade the daemon's global exec safety
+  // posture. Surface that up front instead of letting the user tap a live-
+  // looking control and land on a guaranteed round-trip error.
+  const daemonControlsDisabledReason = 'Not available over Remote';
+  const daemonControlsDisabled = true;
 
   const handleDaemonWebSearchModeChange = useCallback(
     (next: string) => {
@@ -846,8 +850,7 @@ export function DaemonChatBody({
       onOpenChange: handleDrawerOpenChange,
       // Daemon sessions don't enumerate GitHub repos. Passing an empty
       // list collapses the repo accordion section; daemon-mode chats
-      // surface in the "Local PC" / "Remote" sections (see
-      // RepoChatDrawer's filtered* memos).
+      // surface in the "Remote" section.
       repos: [],
       activeRepo: null,
       conversations: daemonScopedConversations,
@@ -868,9 +871,7 @@ export function DaemonChatBody({
         // still a fresh LOCAL transcript of THAT daemon session, not an
         // unscoped one the mount effect would immediately have to
         // disambiguate from on the next remount.
-        createNewChat(
-          mode === 'relay' && targetSessionId ? { daemonSessionId: targetSessionId } : undefined,
-        );
+        createNewChat(targetSessionId ? { daemonSessionId: targetSessionId } : undefined);
       },
       onDeleteChat: (id: string) => {
         deleteChat(id);
@@ -938,7 +939,7 @@ export function DaemonChatBody({
                 <RepoChatDrawer {...drawerProps} />
                 <div className="-ml-2.5 flex min-w-0 items-center self-stretch">
                   {/* Brand label, always visible — matches repo/chat mode's
-                      "Push" / repo name. The mode (Remote / Local PC) and its
+                      "Push" / repo name. The mode (Remote) and its
                       connection status live in the center session pill, so we
                       don't repeat it here. */}
                   <p className="truncate text-sm font-medium leading-tight text-push-fg">Push</p>
@@ -1087,10 +1088,13 @@ export function DaemonChatBody({
             // status was off would silently drop the user's draft on
             // the click. The `disabled` prop blocks `canSend` entirely
             // so the draft survives until the daemon reconnects.
-            // Also disabled while a TUI-driven turn is mid-run: the daemon
-            // rejects a concurrent run with RUN_IN_PROGRESS, so block the send
-            // (the "Running…" header explains why) and keep the draft.
-            disabled={status.state !== 'open' || showReattachedRun}
+            // Also disabled while a daemon-driven turn is mid-run (someone
+            // else's, or this client's own dispatch awaiting its ack): the
+            // daemon rejects a concurrent run with RUN_IN_PROGRESS, so block
+            // the send (the "Running…" header explains why) and keep the draft.
+            disabled={
+              status.state !== 'open' || showReattachedRun || Boolean(messageDispatch?.sending)
+            }
             queuedFollowUpCount={queuedFollowUpCount}
             pendingSteerCount={pendingSteerCount}
             placeholder={composePlaceholder}
@@ -1109,11 +1113,7 @@ export function DaemonChatBody({
             draftKey={activeChatId}
             prefillRequest={composerController.composerPrefillRequest}
             editState={composerController.editState}
-            providerControls={
-              mode === 'relay'
-                ? (daemonProviderControls ?? undefined)
-                : composerController.providerControls
-            }
+            providerControls={daemonProviderControls ?? undefined}
           />
         </div>
       </div>
