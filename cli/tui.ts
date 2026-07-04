@@ -52,6 +52,7 @@ import {
   secondsUntilNextRetry,
 } from './tui-daemon-reconnect.js';
 import { classifyDaemonSpawnError, readPushdLogTail } from './tui-daemon-errors.js';
+import { isBunRuntime, resolvePushdEntryCandidate, pushdSpawnPlan } from './daemon-spawn-args.js';
 import { createDefaultTuiIo } from './tui-io.js';
 import { FocusStack } from './tui-focus.js';
 import {
@@ -1992,12 +1993,38 @@ export async function runTUI(options = {}) {
     }
 
     const { spawn } = await import('node:child_process');
-    const currentExt = import.meta.url.match(/\.(m?[jt]s)$/)?.[1] ?? 'mjs';
-    const pushdPath = fileURLToPath(new URL(`./pushd.${currentExt}`, import.meta.url));
-    // Both .ts and .mts need the tsx loader; Node won't strip TS
-    // syntax on its own. `.js` / `.mjs` are runnable directly.
-    const needsTsxLoader = currentExt === 'ts' || currentExt === 'mts';
-    const nodeArgs = needsTsxLoader ? ['--import', 'tsx', pushdPath] : [pushdPath];
+    const pushdCandidate = resolvePushdEntryCandidate(import.meta.url);
+    // In a Bun single-executable build, import.meta.url can name a virtual
+    // embedded-bundle path. Confirm the sibling exists before spawning it;
+    // otherwise re-exec the packaged CLI via `daemon __run`.
+    const pushdExists = pushdCandidate.path
+      ? await fs.access(pushdCandidate.path).then(
+          () => true,
+          () => false,
+        )
+      : false;
+    const spawnPlan = pushdSpawnPlan({
+      underBun: isBunRuntime(),
+      ext: pushdCandidate.ext,
+      path: pushdCandidate.path,
+      pathExists: pushdExists,
+    });
+    // Which spawn mode the TUI autostart chose is otherwise invisible, and
+    // this path's failure mode is "silently fell back to inline". Symmetric
+    // with cli.ts's daemon-start logging and sharing its event vocabulary;
+    // io.stderr (not console.error) so it never garbles the TUI surface.
+    io.stderr.write(
+      `${JSON.stringify(
+        spawnPlan.mode === 'script'
+          ? { level: 'info', event: 'pushd_spawn_mode_script', entry: spawnPlan.entry }
+          : {
+              level: 'info',
+              event: 'pushd_spawn_mode_self_exec',
+              pushdPathChecked: spawnPlan.pushdPathChecked,
+            },
+      )}\n`,
+    );
+    const nodeArgs = spawnPlan.args;
 
     const logDir = path.dirname(logPath);
     await fs.mkdir(logDir, { recursive: true, mode: 0o700 });
