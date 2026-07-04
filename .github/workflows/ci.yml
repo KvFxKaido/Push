@@ -350,8 +350,13 @@ jobs:
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
         with:
-          # Keep in lockstep with the cli-binary job's pin.
-          bun-version: '1.3.11'
+          # DELIBERATELY `latest`, NOT the cli-binary pin. This canary exists to
+          # notice when a *future* Bun release closes the #5090 gap; pinning it
+          # to the known-bad 1.3.11 would report the same numbers forever and
+          # the `errors → 0` trigger would never fire on its own — defeating the
+          # point of making the blocker observable. cli-binary stays pinned (it
+          # ships binaries); this one tracks upstream. (Codex P2 on PR #1341.)
+          bun-version: latest
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
