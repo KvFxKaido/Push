@@ -1,5 +1,5 @@
 import { clsx, type ClassValue } from 'clsx';
-import { twMerge } from 'tailwind-merge';
+import { extendTailwindMerge } from 'tailwind-merge';
 import { asRecord, streamWithTimeout } from '@push/lib/stream-utils';
 import type { JsonRecord } from '@push/lib/stream-utils';
 
@@ -14,6 +14,41 @@ export {
   detectTruncatedToolCall,
 } from '@push/lib/tool-call-parsing';
 export type { JsonSyntaxDiagnosis } from '@push/lib/tool-call-parsing';
+
+/**
+ * The project's custom font-size scale (`tailwind.config.js` → `theme.fontSize`).
+ * Kept in sync with the config by `cn-tailwind-merge.test.ts` (a drift test
+ * reads the config and asserts set-equality), so a new `push-*` size added
+ * there without registering it here fails CI rather than silently misbehaving.
+ */
+export const PUSH_FONT_SIZE_TOKENS = [
+  'push-2xs',
+  'push-xs',
+  'push-sm',
+  'push-base',
+  'push-lg',
+  'push-xl',
+  'push-2xl',
+  'push-display',
+] as const;
+
+/**
+ * tailwind-merge, taught the custom `text-push-*` font-size scale above.
+ * Without this, vanilla tailwind-merge has no rule for `text-push-xs`/`-2xs`/…
+ * and falls back to treating them as *colors* — so `cn('text-push-2xs',
+ * 'text-push-fg-dim')` would drop the size (two "colors" collapse to the last)
+ * while a baked `text-sm` from a shadcn primitive survived, silently.
+ * Registering the scale in the built-in `font-size` group makes the sizes
+ * dedupe against each other and against standard sizes, and stop colliding with
+ * `text-push-*` colors.
+ */
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      'font-size': [{ text: [...PUSH_FONT_SIZE_TOKENS] }],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

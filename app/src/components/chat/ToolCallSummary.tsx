@@ -56,12 +56,10 @@ export const ToolCallSummary = memo(function ToolCallSummary({
     items[0]?.resultMsg.toolMeta?.toolName ?? items[0]?.callMsg.toolMeta?.toolName ?? 'unknown';
   const HeaderIcon = getLabel(firstName).icon as LucideIcon;
 
-  // Size tokens (`text-push-xs`/`text-push-2xs`) can't ride the primitive's
-  // cn-merged className: this repo's `cn` uses vanilla tailwind-merge, which
-  // misreads the custom `push-*` sizes as colors — so they'd collide with the
-  // `text-push-*` color token and get silently dropped, leaving the baked
-  // `text-sm`. Colors dedupe correctly, so those stay on className; sizes go on
-  // inner elements below, where no baked size competes.
+  // classNames restyle the primitive's default shadcn look into Push's mono
+  // terminal aesthetic. The `text-push-*` size tokens override the primitive's
+  // baked `text-sm` cleanly now that `cn` (lib/utils) registers that scale with
+  // tailwind-merge.
   return (
     <ChainOfThought
       defaultOpen={false}
@@ -69,9 +67,9 @@ export const ToolCallSummary = memo(function ToolCallSummary({
     >
       <ChainOfThoughtHeader
         icon={HeaderIcon}
-        className="font-mono text-push-fg-dim hover:text-push-fg-secondary"
+        className="font-mono font-medium text-push-xs text-push-fg-dim hover:text-push-fg-secondary"
       >
-        <span className="font-medium text-push-xs">{summary}</span>
+        {summary}
       </ChainOfThoughtHeader>
 
       <ChainOfThoughtContent className="mt-1.5 ml-1 space-y-2">
@@ -96,13 +94,14 @@ export const ToolCallSummary = memo(function ToolCallSummary({
               key={i}
               icon={icon as LucideIcon}
               hasConnector={i < items.length - 1}
-              // Color overrides the primitive's default `text-muted-foreground`
-              // (twMerge dedupes colors correctly); error rows go red so the
-              // rail icon (inheriting currentColor) reads as failed at a glance.
-              // Size lives on the label span below, not here — see the note above.
-              className={`gap-1.5 font-mono ${isError ? 'text-red-400' : 'text-push-fg-dim'}`}
+              // Override the primitive's default `text-sm text-muted-foreground`
+              // with Push's mono machinery text; error rows go red so the rail
+              // icon (inheriting currentColor) reads as failed at a glance.
+              className={`gap-1.5 font-mono text-push-2xs ${
+                isError ? 'text-red-400' : 'text-push-fg-dim'
+              }`}
               label={
-                <span className="flex items-center gap-1.5 text-push-2xs">
+                <span className="flex items-center gap-1.5">
                   <span className="font-medium">{toolName}</span>
                   {target && (
                     <span
