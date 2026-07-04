@@ -188,8 +188,12 @@ describe('parseKey', () => {
   });
 
   it('parses SGR mouse wheel up/down', () => {
-    assert.equal(parseKey(Buffer.from('\x1b[<64;12;8M')).name, 'wheelup');
-    assert.equal(parseKey(Buffer.from('\x1b[<65;12;8M')).name, 'wheeldown');
+    const up = parseKey(Buffer.from('\x1b[<64;12;8M'));
+    const down = parseKey(Buffer.from('\x1b[<65;12;8M'));
+    assert.equal(up.name, 'wheelup');
+    assert.deepEqual(up.mouse, { kind: 'wheel', direction: 'up', x: 12, y: 8 });
+    assert.equal(down.name, 'wheeldown');
+    assert.deepEqual(down.mouse, { kind: 'wheel', direction: 'down', x: 12, y: 8 });
   });
 
   it('parses modifier-bearing SGR mouse wheel as scroll direction', () => {
@@ -200,6 +204,20 @@ describe('parseKey', () => {
   it('parses legacy mouse wheel up/down', () => {
     assert.equal(parseKey(Buffer.from('\x1b[M`!!')).name, 'wheelup');
     assert.equal(parseKey(Buffer.from('\x1b[Ma!!')).name, 'wheeldown');
+  });
+
+  it('parses SGR mouse press, drag, and release coordinates', () => {
+    const press = parseKey(Buffer.from('\x1b[<0;12;8M'));
+    assert.equal(press.name, 'mouse');
+    assert.deepEqual(press.mouse, { kind: 'press', button: 'left', x: 12, y: 8 });
+
+    const drag = parseKey(Buffer.from('\x1b[<32;14;9M'));
+    assert.equal(drag.name, 'mouse');
+    assert.deepEqual(drag.mouse, { kind: 'drag', button: 'left', x: 14, y: 9 });
+
+    const release = parseKey(Buffer.from('\x1b[<0;15;9m'));
+    assert.equal(release.name, 'mouse');
+    assert.deepEqual(release.mouse, { kind: 'release', button: 'left', x: 15, y: 9 });
   });
 
   it('parses Shift+Arrow', () => {

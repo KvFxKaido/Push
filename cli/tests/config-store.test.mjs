@@ -10,6 +10,7 @@ const savedEnv = {
   PUSH_WEB_SEARCH_BACKEND: process.env.PUSH_WEB_SEARCH_BACKEND,
   PUSH_THEME: process.env.PUSH_THEME,
   PUSH_SPINNER: process.env.PUSH_SPINNER,
+  PUSH_TUI_MOUSE_MODE: process.env.PUSH_TUI_MOUSE_MODE,
   PUSH_ZEN_URL: process.env.PUSH_ZEN_URL,
   PUSH_ZEN_API_KEY: process.env.PUSH_ZEN_API_KEY,
   PUSH_ZEN_MODEL: process.env.PUSH_ZEN_MODEL,
@@ -131,6 +132,22 @@ describe('applyConfigToEnv', () => {
     applyConfigToEnv({ spinner: 'helix' });
 
     assert.equal(process.env.PUSH_SPINNER, 'orbit');
+  });
+
+  it('applies TUI mouse mode to PUSH_TUI_MOUSE_MODE when missing', () => {
+    delete process.env.PUSH_TUI_MOUSE_MODE;
+
+    applyConfigToEnv({ tuiMouseMode: 'app' });
+
+    assert.equal(process.env.PUSH_TUI_MOUSE_MODE, 'app');
+  });
+
+  it('does not override existing PUSH_TUI_MOUSE_MODE', () => {
+    process.env.PUSH_TUI_MOUSE_MODE = 'native';
+
+    applyConfigToEnv({ tuiMouseMode: 'app' });
+
+    assert.equal(process.env.PUSH_TUI_MOUSE_MODE, 'native');
   });
 
   // Regression guard for the table refactor: provider keys must still DEFER to
