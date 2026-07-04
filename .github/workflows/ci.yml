@@ -369,19 +369,30 @@ jobs:
           TEMP: /tmp
           TMP: /tmp
         run: |
-          # Failures are expected here; never abort on them. Capture all output.
-          bun test --preload ./cli/tests/setup-test-home-isolation.mjs cli/tests/*.test.mjs > bun-test.log 2>&1 || true
+          # GitHub runs `run:` under `bash -e`. Failures here are EXPECTED (the
+          # suite is red under Bun) and we handle every non-zero ourselves, so
+          # disable errexit up front — otherwise a benign `[ test ] && x`
+          # short-circuit later aborts the whole step.
+          set +e
+
+          bun test --preload ./cli/tests/setup-test-home-isolation.mjs cli/tests/*.test.mjs > bun-test.log 2>&1
+          bun_exit=$?
 
           # Strip ANSI so parsing is stable regardless of bun's color detection.
           sed -r "s/\x1b\[[0-9;]*[a-zA-Z]//g" bun-test.log > bun-test.clean.log
 
-          summary=$(grep -E "Ran [0-9]+ tests across [0-9]+ files" bun-test.clean.log | tail -1 || true)
-          pass=$(grep -oE "[0-9]+ pass" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+" || true)
-          fail=$(grep -oE "[0-9]+ fail" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+" || true)
+          # Surface bun's own ending in the job log — the canary must show its
+          # work, or a CI-vs-local divergence can't be diagnosed from here.
+          echo "----- bun test exit=$bun_exit; last 30 lines of output: -----"
+          tail -n 30 bun-test.clean.log
+          echo "------------------------------------------------------------"
+
+          summary=$(grep -E "Ran [0-9]+ tests across [0-9]+ files" bun-test.clean.log | tail -1)
+          pass=$(grep -oE "[0-9]+ pass" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+")
+          fail=$(grep -oE "[0-9]+ fail" bun-test.clean.log | tail -1 | grep -oE "^[0-9]+")
 
           if [ -z "$summary" ] || [ -z "$pass" ]; then
-            echo "::error::bun test produced no summary line — the canary is broken (bun setup or glob), not merely failing tests."
-            tail -n 40 bun-test.clean.log
+            echo "::error::bun test produced no summary line — canary broken (bun setup or glob), not merely failing tests (exit=$bun_exit)."
             exit 1
           fi
           : "${fail:=0}"
@@ -392,7 +403,7 @@ jobs:
           shim=$(grep -c "issues/5090" bun-test.clean.log || true)
           : "${shim:=0}"
           real=$(( fail - shim ))
-          [ "$real" -lt 0 ] && real=0
+          if [ "$real" -lt 0 ]; then real=0; fi
 
           {
             echo "## Bun test canary — \`bun test\` over the CLI suite"
