@@ -743,10 +743,11 @@ export async function runLeadKernelTurn(
         // `--max-rounds 50` is indistinguishable from the default by value.
         // See cli/harness-adaptation.ts.
         // NOTE: emitting a `harness.adaptation` event on cap change (which the
-        // eval/measurement scripts count) is a deferred follow-up — it needs a
-        // canonical payload in lib/runtime-contract.ts + a protocol-schema.ts
-        // validator + a drift test in the same change (AGENTS.md), so it lands
-        // as its own piece rather than an untyped rider here.
+        // eval/measurement scripts count) is a deferred follow-up (#1346) — it
+        // needs a canonical payload in lib/runtime-contract.ts + a
+        // protocol-schema.ts validator + a drift test in the same change
+        // (AGENTS.md), so it lands as its own piece rather than an untyped
+        // rider here.
         adaptMaxRounds: options.explicitMaxRounds
           ? undefined
           : ({ round, currentMaxRounds }) =>
