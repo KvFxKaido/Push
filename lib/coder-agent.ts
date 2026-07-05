@@ -1004,6 +1004,17 @@ export interface CoderAgentOptions<TCall, TCard> {
   acceptanceCriteria?: AcceptanceCriterion[];
   harnessMaxRounds?: number;
   /**
+   * Optional adaptive-harness hook. Called at the top of every round with the
+   * current round index and the cap in force; returns the (possibly adjusted)
+   * cap — grown on healthy progress, shrunk on degraded signals. Absent → the
+   * cap is fixed for the whole run (the web/cloud default today). Kept as an
+   * injected dependency so the CLI can back it with `cli/harness-adaptation.ts`
+   * without `lib/` importing a CLI module (ground rule 1; the
+   * `lib/detached-exec-runner.ts` injection shape). Must be cheap and pure —
+   * it runs every round.
+   */
+  adaptMaxRounds?: (ctx: { round: number; currentMaxRounds: number }) => number;
+  /**
    * Per-run token budget (a circuit breaker on consumption, complementing the
    * round cap). When the run's accumulated token usage reaches this many
    * tokens, the loop halts with `stopReason: 'budget_exceeded'`. Resolved
@@ -1148,6 +1159,7 @@ export async function runCoderAgent<TCall, TCard>(
     evaluateAfterModel,
     acceptanceCriteria,
     harnessMaxRounds,
+    adaptMaxRounds,
     harnessTokenBudget,
     harnessContextResetsEnabled,
     persona,
@@ -1325,7 +1337,7 @@ export async function runCoderAgent<TCall, TCard>(
   // Harness profile — controls scaffolding level. An explicit cap wins; absent
   // one, the lead gets the high invisible backstop and the delegated Coder the
   // 30-round wall.
-  const maxRounds = harnessMaxRounds ?? (leadMode ? LEAD_MAX_ROUNDS : MAX_CODER_ROUNDS);
+  let maxRounds = harnessMaxRounds ?? (leadMode ? LEAD_MAX_ROUNDS : MAX_CODER_ROUNDS);
   const contextResetsEnabled = harnessContextResetsEnabled ?? false;
 
   // Per-run token budget (consumption circuit breaker). The host resolves the
@@ -1472,6 +1484,21 @@ export async function runCoderAgent<TCall, TCard>(
   for (let round = resumeState?.round ?? 0; ; round++) {
     if (callbacks.signal?.aborted) {
       throw new DOMException('Coder cancelled by user.', 'AbortError');
+    }
+
+    // Adaptive harness: re-derive the effective cap each round (grow on healthy
+    // progress, shrink on degraded signals). No-op when the host injects no
+    // hook — the cap stays fixed. Advisory: a garbage return (NaN/≤0) or a
+    // throwing hook must never abort the run, so we keep the last-good cap.
+    if (adaptMaxRounds) {
+      try {
+        const next = adaptMaxRounds({ round, currentMaxRounds: maxRounds });
+        if (Number.isFinite(next) && next > 0) {
+          maxRounds = next;
+        }
+      } catch {
+        /* adaptation is best-effort; fall back to the fixed cap */
+      }
     }
 
     // Circuit breaker: prevent runaway delegation loops
