@@ -128,33 +128,40 @@ function wrapCall(call: CliToolCall): CliKernelCall {
  * Moved here from `cli/pushd.ts` so both the daemon's delegated nodes and the
  * lead-kernel lane share one classifier; pushd re-exports it for its tests.
  */
-export function wrapCliDetectAllToolCalls(
-  text: string,
-  onMalformed?: (report: { reason: string; sample: string; rawToolName?: string }) => void,
-): DetectedToolCalls<CliKernelCall> {
+export function wrapCliDetectAllToolCalls(text: string): DetectedToolCalls<CliKernelCall> {
   const { calls, malformed } = cliDetectAllToolCalls(text) as {
     calls: CliToolCall[];
     malformed?: { reason: string; sample: string; rawToolName?: string }[];
   };
-  // The CLI parser reports json_parse_error / invalid_shape / missing_tool /
-  // validation_failed on its own `malformed` channel. These never reach the
-  // kernel (classifyCliToolCalls returns an empty `droppedCandidates`, so no
-  // `tool.call_malformed` event fires on this surface), so the adaptive
-  // Rule-1 shrink signal is recorded from here — the only place it lands.
-  if (onMalformed && malformed) {
-    for (const report of malformed) onMalformed(report);
-  }
-  return classifyCliToolCalls(calls);
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
 }
 
 export function wrapCliDetectNativeToolCalls(
   nativeCalls: readonly NativeToolCall[],
 ): DetectedToolCalls<CliKernelCall> {
-  const { calls } = cliDetectNativeToolCalls(nativeCalls) as { calls: CliToolCall[] };
-  return classifyCliToolCalls(calls);
+  const { calls, malformed } = cliDetectNativeToolCalls(nativeCalls) as {
+    calls: CliToolCall[];
+    malformed?: { reason: string; sample: string; rawToolName?: string }[];
+  };
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
 }
 
-function classifyCliToolCalls(calls: readonly CliToolCall[]): DetectedToolCalls<CliKernelCall> {
+function malformedReportsToDroppedCandidates(
+  reports: readonly { reason: string; sample: string; rawToolName?: string }[],
+): DetectedToolCalls<CliKernelCall>['droppedCandidates'] {
+  return reports.map((report) => ({
+    // Keep an empty string when the parser could not recover a name; the kernel
+    // omits the detected_tool hint in that case instead of inventing one.
+    rawToolName: report.rawToolName?.trim() || '',
+    resolvedToolName: null,
+    sample: report.sample,
+  }));
+}
+
+function classifyCliToolCalls(
+  calls: readonly CliToolCall[],
+  droppedCandidates: DetectedToolCalls<CliKernelCall>['droppedCandidates'] = [],
+): DetectedToolCalls<CliKernelCall> {
   const readOnly: CliKernelCall[] = [];
   const fileMutations: CliKernelCall[] = [];
   const extraMutations: CliKernelCall[] = [];
@@ -194,14 +201,7 @@ function classifyCliToolCalls(calls: readonly CliToolCall[]): DetectedToolCalls<
     mutating = wrapped;
     phase = 'done';
   }
-  // CLI's `cliDetectAllToolCalls` reports parse/shape failures via the
-  // `malformed` channel on its own `ToolDispatchResult`, separate from
-  // the kernel's `DetectedToolCalls.droppedCandidates` slot the Web-side
-  // detector populates. The CLI surfaces malformed reports through its
-  // own event stream, so the kernel gets an empty array here. The shape
-  // is still required so the kernel's `detected.droppedCandidates.length`
-  // guard doesn't trip on `undefined.length`.
-  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
+  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates };
 }
 
 /**
@@ -367,6 +367,7 @@ export async function runLeadKernelTurn(
     suppressEventPersist = false,
   } = options;
   const runId: string = options.runId || makeRunId();
+  const adaptationMetricsKey = `${state.sessionId}:${runId}`;
   // Coder working memory is NOT seeded onto the CLI runtimeContext: nothing on
   // the CLI reads runtimeContext.workingMemory.coder (the kernel keeps its own
   // loop reference and persists to state.workingMemory). Seeding it here would
@@ -633,7 +634,7 @@ export async function runLeadKernelTurn(
           // expected_version is normal, and counting it toward editErrorRate
           // would wrongly trip the 25% shrink. Track it as stale, not error.
           const stale = code === 'STALE_WRITE';
-          recordWriteFile(state.sessionId, {
+          recordWriteFile(adaptationMetricsKey, {
             error: result?.ok !== true && !stale,
             stale,
           });
@@ -686,20 +687,20 @@ export async function runLeadKernelTurn(
     },
     onRunEvent: (event) => {
       const { type, ...payload } = event as { type: string } & Record<string, unknown>;
+      if (type === 'tool.call_malformed') {
+        recordMalformedToolCall(payload.reason, state.sessionId);
+        recordMalformedToolCall(payload.reason, adaptationMetricsKey);
+      }
       void persistEvent(type, payload);
       dispatchEvent(type, payload);
     },
   };
 
-  // Adaptive harness: each user turn gets a fresh round budget. Reset the
-  // per-session signal counters + one-shot adaptation state so a rough prior
-  // turn doesn't cap this one (they're session-scoped and otherwise accumulate
-  // across turns). Signals re-accrue within this turn; `adaptMaxRounds` reads
-  // them per round.
-  resetToolCallMetrics(state.sessionId);
-  resetWriteFileMetrics(state.sessionId);
-  resetContextMetrics(state.sessionId);
-  resetAdaptationState(state.sessionId);
+  // Adaptive harness: each user turn gets a fresh metric window keyed by runId
+  // (the plain sessionId bucket stays cumulative for the CLI's end-of-session
+  // summary). The runId makes the key unique per turn, so it starts empty — no
+  // reset needed up front; it's cleared in the `finally` below so the metric
+  // maps don't accumulate one entry per turn on a long-running daemon.
 
   try {
     const result = await runCoderAgent<CliKernelCall, unknown>(
@@ -713,10 +714,7 @@ export async function runLeadKernelTurn(
         taskPreamble,
         symbolSummary: null,
         toolExec,
-        detectAllToolCalls: (text) =>
-          wrapCliDetectAllToolCalls(text, (report) =>
-            recordMalformedToolCall(report.reason, state.sessionId),
-          ),
+        detectAllToolCalls: wrapCliDetectAllToolCalls,
         detectNativeToolCalls: wrapCliDetectNativeToolCalls,
         detectAnyToolCall: wrapCliDetectAnyToolCall,
         webSearchToolProtocol: '',
@@ -742,7 +740,7 @@ export async function runLeadKernelTurn(
         adaptMaxRounds: options.explicitMaxRounds
           ? undefined
           : ({ round, currentMaxRounds }) =>
-              computeAdaptation(state.sessionId, currentMaxRounds, {
+              computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
                 currentRound: round,
                 maxAllowedRounds: MAX_ALLOWED_ROUNDS,
               }).adjustedMaxRounds,
@@ -828,5 +826,14 @@ export async function runLeadKernelTurn(
     }
     dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
     return { outcome: 'error', finalAssistantText: message, rounds: 0, runId };
+  } finally {
+    // Drop this turn's per-turn adaptation metric window so the metric maps
+    // don't accumulate one entry per turn for the life of a long-running
+    // daemon. The cumulative sessionId bucket (read by the end-of-session
+    // summary) is intentionally left untouched.
+    resetToolCallMetrics(adaptationMetricsKey);
+    resetWriteFileMetrics(adaptationMetricsKey);
+    resetContextMetrics(adaptationMetricsKey);
+    resetAdaptationState(adaptationMetricsKey);
   }
 }

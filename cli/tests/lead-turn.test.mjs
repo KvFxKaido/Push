@@ -132,24 +132,24 @@ function makeProviderConfig(url) {
 }
 
 describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () => {
-  it('surfaces CLI parser malformations through onMalformed', () => {
-    const reasons = [];
+  it('maps CLI parser malformations into droppedCandidates for kernel recovery', () => {
     const detected = wrapCliDetectAllToolCalls(
       '```json\n{"tool": "read_file", "args": {oops}}\n```',
-      (report) => reasons.push(report.reason),
     );
-    // The parse failure feeds the adaptive shrink signal from here — the
-    // kernel never sees it (droppedCandidates stays empty on this surface).
-    assert.deepEqual(reasons, ['json_parse_error']);
-    assert.equal(detected.droppedCandidates.length, 0);
+
+    assert.equal(detected.droppedCandidates.length, 1);
+    assert.equal(detected.droppedCandidates[0].rawToolName, 'read_file');
+    assert.equal(detected.droppedCandidates[0].resolvedToolName, null);
+    assert.match(detected.droppedCandidates[0].sample, /read_file/);
   });
 
-  it('does not fire onMalformed for a clean tool call', () => {
-    const reasons = [];
-    wrapCliDetectAllToolCalls('```json\n{"tool": "read_file", "args": {"path": "a"}}\n```', (r) =>
-      reasons.push(r.reason),
+  it('leaves droppedCandidates empty for a clean tool call', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      '```json\n{"tool": "read_file", "args": {"path": "a"}}\n```',
     );
-    assert.deepEqual(reasons, []);
+
+    assert.equal(detected.droppedCandidates.length, 0);
+    assert.equal(detected.readOnly.length, 1);
   });
 });
 

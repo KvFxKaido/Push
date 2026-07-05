@@ -1385,7 +1385,7 @@ async function runInteractive(
   }
 
   // End-of-session metrics summary
-  const metrics = getToolCallMetrics();
+  const metrics = getToolCallMetrics(state.sessionId);
   const malformedTotal = Object.values(metrics.malformed).reduce((a, b) => a + b, 0);
   if (malformedTotal > 0) {
     const reasons = Object.entries(metrics.malformed)
