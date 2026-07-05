@@ -138,7 +138,10 @@ describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () =>
     );
 
     assert.equal(detected.droppedCandidates.length, 1);
-    assert.equal(detected.droppedCandidates[0].rawToolName, 'read_file');
+    // Name is intentionally blank: feeding a CLI-local name (e.g. read_file)
+    // into the kernel's shared hint builder resolves to the wrong (GitHub)
+    // tool, so we drop it and let the kernel emit its generic envelope hint.
+    assert.equal(detected.droppedCandidates[0].rawToolName, '');
     assert.equal(detected.droppedCandidates[0].resolvedToolName, null);
     assert.match(detected.droppedCandidates[0].sample, /read_file/);
   });

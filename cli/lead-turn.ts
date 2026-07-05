@@ -150,9 +150,14 @@ function malformedReportsToDroppedCandidates(
   reports: readonly { reason: string; sample: string; rawToolName?: string }[],
 ): DetectedToolCalls<CliKernelCall>['droppedCandidates'] {
   return reports.map((report) => ({
-    // Keep an empty string when the parser could not recover a name; the kernel
-    // omits the detected_tool hint in that case instead of inventing one.
-    rawToolName: report.rawToolName?.trim() || '',
+    // Deliberately drop the parser-recovered name. The kernel's shared
+    // dropped-candidate hint (buildValidationFailedHint → getToolSpec) resolves
+    // names against the SHARED tool registry, where CLI-local names collide
+    // with GitHub tools — e.g. `read_file` resolves to the GitHub
+    // `repo_read(repo, path, ...)`, so a malformed local read would be
+    // "corrected" toward the wrong tool/args. An empty name makes the kernel
+    // emit its generic (always-correct) envelope hint instead.
+    rawToolName: '',
     resolvedToolName: null,
     sample: report.sample,
   }));
