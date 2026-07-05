@@ -4,6 +4,14 @@ import type { SandboxStatus } from '@/hooks/useSandbox';
 import { downloadFromSandbox } from '@/lib/sandbox-client';
 import { getActiveGitBackend } from '@/lib/git-session';
 import type { GitStatusInfo } from '@push/lib/git/status';
+import {
+  createWorkspaceStateProducer,
+  gitStatusInfoToWorkspaceState,
+  reduceWorkspaceStateEvent,
+  type WorkspaceStateEvent,
+  type WorkspaceStateProducer,
+  type WorkspaceStateView,
+} from '@push/lib/workspace-state';
 import type {
   ActiveRepo,
   SandboxStateCardData,
@@ -50,6 +58,15 @@ type SandboxControllerArgs = {
   setSandboxId: (id: string | null) => void;
   setWorkspaceSessionId: (id: string | null) => void;
   skipBranchTeardownRef: MutableRefObject<boolean>;
+  /** Current `Protect Main` setting, stamped into the live workspace state.
+   *  Optional so existing call sites keep compiling; defaults to the
+   *  product's off-by-default state until threaded from settings. */
+  protectMain?: boolean;
+  /** Sink for the workspace-state timeline (`workspace.state_snapshot` /
+   *  `workspace.state_delta`). Optional: the controller is the first
+   *  producer adapter; a consumer that forwards these onto the run-event
+   *  stream is a later increment. */
+  onWorkspaceStateEvent?: (event: WorkspaceStateEvent) => void;
 };
 
 export function useWorkspaceSandboxController({
@@ -68,6 +85,8 @@ export function useWorkspaceSandboxController({
   setSandboxId,
   setWorkspaceSessionId,
   skipBranchTeardownRef,
+  protectMain = false,
+  onWorkspaceStateEvent,
 }: SandboxControllerArgs) {
   // Decompose sandbox into stable individual references to avoid depending
   // on the full object (which is a new identity every render).
@@ -82,6 +101,72 @@ export function useWorkspaceSandboxController({
   const [sandboxDownloading, setSandboxDownloading] = useState(false);
   const sandboxStateFetchedFor = useRef<string | null>(null);
 
+  // Live workspace-state timeline (see lib/workspace-state.ts). The controller
+  // is the first producer adapter: it already owns sandbox lifecycle + the
+  // desync signal, so it drives snapshot/delta emission off the same git-status
+  // reads that feed the status card. `producerRef` is keyed by sandboxId — a
+  // new sandbox (restart, different repo) starts a fresh rev timeline.
+  const [workspaceStateView, setWorkspaceStateView] = useState<WorkspaceStateView | null>(null);
+  const producerRef = useRef<WorkspaceStateProducer | null>(null);
+  const producerWorkspaceIdRef = useRef<string | null>(null);
+  const workspaceViewRef = useRef<WorkspaceStateView | null>(null);
+  // Volatile inputs read by the []-stable driver below; mirrored into refs so
+  // the driver's identity stays stable and doesn't perturb the fetch effect.
+  const sandboxStatusRef = useRef(sandboxStatus);
+  const protectMainRef = useRef(protectMain);
+  const onWorkspaceStateEventRef = useRef(onWorkspaceStateEvent);
+  useEffect(() => {
+    sandboxStatusRef.current = sandboxStatus;
+  }, [sandboxStatus]);
+  useEffect(() => {
+    protectMainRef.current = protectMain;
+  }, [protectMain]);
+  useEffect(() => {
+    onWorkspaceStateEventRef.current = onWorkspaceStateEvent;
+  }, [onWorkspaceStateEvent]);
+
+  // Ref-only teardown of the producer timeline (no setState — callers defer the
+  // `setWorkspaceStateView(null)` to dodge react-hooks/set-state-in-effect, the
+  // same reason the sandbox card nulls through a setTimeout below).
+  const resetWorkspaceStateRefs = useCallback(() => {
+    producerRef.current = null;
+    producerWorkspaceIdRef.current = null;
+    workspaceViewRef.current = null;
+  }, []);
+
+  // Fold a fresh git-status read into the workspace-state timeline: snapshot on
+  // a new sandbox identity, minimal delta otherwise. Reduces the event through
+  // the shared reducer so the exposed view is the delta-reconciled one, and
+  // forwards the event to any sink. HEAD sha isn't in the status payload, so we
+  // fetch it in parallel-friendly form (its own await) and fall back to a
+  // stable non-empty placeholder on an unborn branch / read failure.
+  const driveWorkspaceState = useCallback(async (id: string, info: GitStatusInfo) => {
+    const headSha = await getActiveGitBackend({ sandboxId: id })
+      .headSha({ short: true })
+      .catch(() => null);
+    const nextState = gitStatusInfoToWorkspaceState(info, {
+      headSha: headSha ?? '(unborn)',
+      protectMain: protectMainRef.current,
+      sandboxReady: sandboxStatusRef.current === 'ready',
+    });
+
+    let event: WorkspaceStateEvent;
+    if (!producerRef.current || producerWorkspaceIdRef.current !== id) {
+      producerRef.current = createWorkspaceStateProducer(id, nextState);
+      producerWorkspaceIdRef.current = id;
+      event = producerRef.current.snapshot();
+    } else {
+      const delta = producerRef.current.update(nextState);
+      if (!delta) return; // nothing changed → no event on the wire
+      event = delta;
+    }
+
+    const { view } = reduceWorkspaceStateEvent(workspaceViewRef.current, event);
+    workspaceViewRef.current = view;
+    setWorkspaceStateView(view);
+    onWorkspaceStateEventRef.current?.(event);
+  }, []);
+
   const fetchSandboxState = useCallback(
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
@@ -91,6 +176,19 @@ export function useWorkspaceSandboxController({
 
         const nextState = gitStatusToCard(id, info);
         setSandboxState(nextState);
+        // Fire-and-forget: drives the workspace-state timeline off the same
+        // read. It never rejects (headSha is caught inside), but log any
+        // unexpected throw rather than swallowing it.
+        void driveWorkspaceState(id, info).catch((err) => {
+          console.error(
+            JSON.stringify({
+              level: 'warn',
+              event: 'workspace_state_drive_failed',
+              sandboxId: id,
+              error: err instanceof Error ? err.message : String(err),
+            }),
+          );
+        });
         return nextState;
       } catch {
         return null;
@@ -98,14 +196,18 @@ export function useWorkspaceSandboxController({
         setSandboxStateLoading(false);
       }
     },
-    [],
+    [driveWorkspaceState],
   );
 
   useEffect(() => {
     if (sandboxStatus !== 'ready' || !sandboxId) {
       if (sandboxStatus === 'idle') {
         sandboxStateFetchedFor.current = null;
-        const id = setTimeout(() => setSandboxState(null), 0);
+        resetWorkspaceStateRefs();
+        const id = setTimeout(() => {
+          setSandboxState(null);
+          setWorkspaceStateView(null);
+        }, 0);
         return () => clearTimeout(id);
       }
       return;
@@ -113,7 +215,7 @@ export function useWorkspaceSandboxController({
     if (sandboxStateFetchedFor.current === sandboxId) return;
     sandboxStateFetchedFor.current = sandboxId;
     void fetchSandboxState(sandboxId);
-  }, [sandboxStatus, sandboxId, fetchSandboxState]);
+  }, [sandboxStatus, sandboxId, fetchSandboxState, resetWorkspaceStateRefs]);
 
   const ensureSandbox = useCallback(async (): Promise<string | null> => {
     if (sandboxId && sandboxStatus !== 'error') return sandboxId;
@@ -155,6 +257,8 @@ export function useWorkspaceSandboxController({
 
     setShowFileBrowser(false);
     setSandboxState(null);
+    setWorkspaceStateView(null);
+    resetWorkspaceStateRefs();
     sandboxStateFetchedFor.current = null;
 
     if (isStreaming) {
@@ -167,6 +271,7 @@ export function useWorkspaceSandboxController({
     }
   }, [
     abortStream,
+    resetWorkspaceStateRefs,
     createNewChat,
     isStreaming,
     stopSandbox,
@@ -316,6 +421,7 @@ export function useWorkspaceSandboxController({
     sandboxState,
     sandboxStateLoading,
     sandboxDownloading,
+    workspaceStateView,
     fetchSandboxState,
     ensureSandbox,
     handleSandboxRestart,

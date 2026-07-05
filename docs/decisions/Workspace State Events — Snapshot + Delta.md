@@ -1,7 +1,7 @@
 # Workspace State Events — Snapshot + Delta
 
 Date: 2026-07-05
-Status: **Draft** — shared vocabulary, builders, reducer, strict wire validators, and tests have landed on `claude/copilotkit-research-8bblb4`. Shell wiring (web adapter through `useWorkspaceSandboxController.ts`, CLI daemon emitter) is **not** wired yet — see "Staged wiring" below. Owner: Push web/runtime.
+Status: **Draft** — shared vocabulary, builders, reducer, strict wire validators, the git→state mapper, and the **web producer adapter** (`useWorkspaceSandboxController.ts`) have landed on `claude/copilotkit-research-8bblb4` with unit + hook-level tests. Not yet walked end-to-end in the live app (no consumer renders the view yet), and the CLI daemon emitter is still staged — see "What landed vs. staged wiring". Flip to **Current** once the view is consumed in-app and walked once. Owner: Push web/runtime.
 
 Related: [`Repo-Scoped Chats — Branch as Session State.md`](<Repo-Scoped Chats — Branch as Session State.md>) (the mutable-branch-as-session-state model these events serialize); the branch-desync guard in `app/src/hooks/useWorkspaceSandboxController.ts` (the sandbox-lifecycle signal that drives snapshots).
 
@@ -46,15 +46,16 @@ A dropped delta is never applied onto a mismatched base — that is precisely th
 
 ## What landed vs. staged wiring
 
-**Landed (this change):**
+**Landed:**
 - Types + two `RunEventInput` union members — `lib/runtime-contract.ts`.
-- Builders + reducer (pure, framework-agnostic) — `lib/workspace-state.ts`.
+- Builders + reducer + git→state mapper (pure, framework-agnostic) — `lib/workspace-state.ts`.
 - Strict wire validators + registry — `lib/protocol-schema.ts`.
-- Schema-drift pins — `cli/tests/protocol-drift.test.mjs`.
-- Reducer / gap-behavior tests — `cli/tests/workspace-state.test.mjs`.
+- Parallel published JSON Schema + regenerated artifact — `lib/protocol-json-schema.ts`, `schema/`.
+- Schema-drift pins — `cli/tests/protocol-drift.test.mjs`, `cli/tests/protocol-json-schema.test.mjs`.
+- Reducer / gap-behavior / mapper tests — `cli/tests/workspace-state.test.mjs`.
+- **Web producer adapter** — `useWorkspaceSandboxController.ts`. It holds a `createWorkspaceStateProducer` keyed by `sandboxId` (the workspace identity) and drives it off the same git-status reads that feed the status card: a new sandboxId → snapshot (fresh `createWorkspaceStateProducer`), same id → minimal `update` delta, `idle` / session-change → producer + view reset. HEAD sha (absent from the status payload) is fetched via the git backend, with a stable placeholder on an unborn branch. Each event is reduced through `reduceWorkspaceStateEvent` into an exposed `workspaceStateView` and forwarded to an optional `onWorkspaceStateEvent` sink. Covered by hook-level tests (snapshot-then-delta, reduced-view exposure).
 
-**Staged (next increment):**
-- **Web adapter.** `useWorkspaceSandboxController.ts` holds a `createWorkspaceStateProducer` in a ref (it already owns sandbox lifecycle + the desync signal): `reset` on sandbox (re)start, `update` on dirty-tree / branch / HEAD change, `snapshot` on resume. Consumer folds events via `reduceWorkspaceStateEvent` into the branch/dirty UI. The shell is the adapter; the builders/reducer stay in `lib/`.
-- **CLI daemon emitter.** `cli/pushd.ts` emits the same vocabulary from real filesystem/HEAD signals — no React-shaped assumptions cross over, because none live in `lib/workspace-state.ts`.
-
-Flip this doc to **Current** when at least the web adapter has landed and been walked end-to-end.
+**Staged (next increments):**
+- **Consumer.** Nothing renders `workspaceStateView` or forwards `onWorkspaceStateEvent` onto the run-event stream yet — the adapter produces into a currently-unwired sink. Wiring a branch/dirty UI consumer (and/or the run-event forward) is what earns the **Current** flip.
+- **Real `Protect Main`.** The adapter takes `protectMain` as an optional arg defaulting to the product's off-by-default state; thread the live setting from `WorkspaceSessionScreen` when the consumer lands.
+- **CLI daemon emitter.** `cli/pushd.ts` emits the same vocabulary from real filesystem/HEAD signals, reusing `gitStatusInfoToWorkspaceState` + `createWorkspaceStateProducer` verbatim — no React-shaped assumptions cross over, because none live in `lib/workspace-state.ts`.

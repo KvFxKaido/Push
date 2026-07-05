@@ -23,8 +23,10 @@
  * `..._delta_dropped` (the loud path AND the three silent-drop paths).
  */
 
+import type { GitStatusEntry, GitStatusInfo } from './git/status.js';
 import type {
   WorkspaceDirtyFile,
+  WorkspaceDirtyStatus,
   WorkspaceState,
   WorkspaceStateDeltaOp,
 } from './runtime-contract.js';
@@ -182,6 +184,65 @@ export function applyWorkspaceDelta(
     }
   }
   return next;
+}
+
+// ---------------------------------------------------------------------------
+// Git status → WorkspaceState mapping
+// ---------------------------------------------------------------------------
+//
+// Shared by every producer surface: the web adapter
+// (`useWorkspaceSandboxController`) and, later, the CLI daemon emitter both
+// turn a `GitStatusInfo` read into the same `WorkspaceState`. Keeping the
+// mapping here (not in the React hook) is what lets the CLI reuse it verbatim.
+
+/**
+ * Map one porcelain status entry to a `WorkspaceDirtyStatus`. Reads the two
+ * porcelain columns (`x` = index/staged, `y` = worktree); conflict markers and
+ * untracked take precedence over the ordinary add/delete/rename/modify codes.
+ */
+export function dirtyStatusFromEntry(entry: GitStatusEntry): WorkspaceDirtyStatus {
+  const { x, y } = entry;
+  if (x === '?' || y === '?') return 'untracked';
+  if (x === 'U' || y === 'U' || (x === 'D' && y === 'D') || (x === 'A' && y === 'A')) {
+    return 'conflicted';
+  }
+  if (x === 'R' || y === 'R') return 'renamed';
+  if (x === 'A' || y === 'A') return 'added';
+  if (x === 'D' || y === 'D') return 'deleted';
+  return 'modified';
+}
+
+/**
+ * Build a `WorkspaceState` from a `GitStatusInfo` read plus the ambient bits
+ * the status call doesn't carry (`headSha`, and the `protectMain` /
+ * `sandboxReady` guards the shell owns). One `dirtyFiles` entry per porcelain
+ * entry — no cross-array dedup, because `entries` is already one-per-file.
+ *
+ * `ahead`/`behind` are omitted when there is no upstream: per `GitInfo`'s own
+ * contract they are meaningless without one (a never-pushed branch reports
+ * everything "ahead" of a nonexistent origin), so surfacing them would be a
+ * lie, not a zero.
+ */
+export function gitStatusInfoToWorkspaceState(
+  info: GitStatusInfo,
+  opts: { headSha: string; protectMain: boolean; sandboxReady: boolean },
+): WorkspaceState {
+  const state: WorkspaceState = {
+    // Detached HEAD can report an empty branch label; keep the field non-empty.
+    activeBranch: info.branch || 'HEAD',
+    headSha: opts.headSha,
+    dirtyFiles: info.entries.map((entry) => ({
+      path: entry.path,
+      status: dirtyStatusFromEntry(entry),
+    })),
+    protectMain: opts.protectMain,
+    sandboxReady: opts.sandboxReady,
+  };
+  if (info.hasUpstream) {
+    state.ahead = info.ahead;
+    state.behind = info.behind;
+  }
+  return state;
 }
 
 // ---------------------------------------------------------------------------

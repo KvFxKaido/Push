@@ -5,6 +5,8 @@ import {
   applyWorkspaceDelta,
   createWorkspaceStateProducer,
   diffWorkspaceState,
+  dirtyStatusFromEntry,
+  gitStatusInfoToWorkspaceState,
   reduceWorkspaceStateEvent,
 } from '../../lib/workspace-state.ts';
 
@@ -77,6 +79,105 @@ describe('workspace-state — diff/apply', () => {
     const snapshot = JSON.stringify(a);
     applyWorkspaceDelta(a, [{ op: 'dirty_clear' }]);
     assert.equal(JSON.stringify(a), snapshot);
+  });
+});
+
+describe('workspace-state — git status mapping', () => {
+  const entry = (x, y, path) => ({ x, y, path, raw: `${x}${y} ${path}` });
+
+  it('maps porcelain columns to dirty statuses (untracked/conflict precedence)', () => {
+    assert.equal(dirtyStatusFromEntry(entry('?', '?', 'a')), 'untracked');
+    assert.equal(dirtyStatusFromEntry(entry('U', 'U', 'a')), 'conflicted');
+    assert.equal(dirtyStatusFromEntry(entry('D', 'D', 'a')), 'conflicted');
+    assert.equal(dirtyStatusFromEntry(entry('R', ' ', 'a')), 'renamed');
+    assert.equal(dirtyStatusFromEntry(entry('A', ' ', 'a')), 'added');
+    assert.equal(dirtyStatusFromEntry(entry(' ', 'D', 'a')), 'deleted');
+    assert.equal(dirtyStatusFromEntry(entry(' ', 'M', 'a')), 'modified');
+    assert.equal(dirtyStatusFromEntry(entry('M', ' ', 'a')), 'modified');
+  });
+
+  function gitInfo(overrides = {}) {
+    return {
+      branch: 'main',
+      modified: [],
+      added: [],
+      deleted: [],
+      renamed: [],
+      copied: [],
+      conflicted: [],
+      untracked: [],
+      ahead: 0,
+      behind: 0,
+      detached: false,
+      hasUpstream: true,
+      statusLine: '',
+      staged: 0,
+      unstaged: 0,
+      entries: [],
+      ...overrides,
+    };
+  }
+
+  it('builds a WorkspaceState with one dirtyFile per porcelain entry', () => {
+    const state = gitStatusInfoToWorkspaceState(
+      gitInfo({
+        branch: 'feat/x',
+        ahead: 2,
+        behind: 1,
+        entries: [entry('M', ' ', 'lib/a.ts'), entry('?', '?', 'app/b.ts')],
+      }),
+      { headSha: 'sha1', protectMain: true, sandboxReady: true },
+    );
+    assert.deepEqual(state, {
+      activeBranch: 'feat/x',
+      headSha: 'sha1',
+      ahead: 2,
+      behind: 1,
+      dirtyFiles: [
+        { path: 'lib/a.ts', status: 'modified' },
+        { path: 'app/b.ts', status: 'untracked' },
+      ],
+      protectMain: true,
+      sandboxReady: true,
+    });
+  });
+
+  it('omits ahead/behind when there is no upstream (they are meaningless)', () => {
+    const state = gitStatusInfoToWorkspaceState(
+      gitInfo({ hasUpstream: false, ahead: 5, behind: 0 }),
+      { headSha: 'sha1', protectMain: false, sandboxReady: true },
+    );
+    assert.equal(state.ahead, undefined);
+    assert.equal(state.behind, undefined);
+  });
+
+  it('keeps activeBranch non-empty on a detached HEAD', () => {
+    const state = gitStatusInfoToWorkspaceState(gitInfo({ branch: '', detached: true }), {
+      headSha: 'sha1',
+      protectMain: false,
+      sandboxReady: true,
+    });
+    assert.equal(state.activeBranch, 'HEAD');
+  });
+
+  it('feeds cleanly through a producer → reducer round-trip on real-shaped input', () => {
+    const first = gitStatusInfoToWorkspaceState(gitInfo({ entries: [entry('M', ' ', 'a.ts')] }), {
+      headSha: 'sha1',
+      protectMain: true,
+      sandboxReady: true,
+    });
+    const producer = createWorkspaceStateProducer('sandbox-1', first);
+    let view = reduceWorkspaceStateEvent(null, producer.snapshot()).view;
+    assert.equal(view.rev, 0);
+
+    const second = gitStatusInfoToWorkspaceState(
+      gitInfo({ entries: [entry('M', ' ', 'a.ts'), entry('A', ' ', 'b.ts')] }),
+      { headSha: 'sha2', protectMain: true, sandboxReady: true },
+    );
+    const delta = producer.update(second);
+    view = reduceWorkspaceStateEvent(view, delta).view;
+    assert.equal(view.rev, 1);
+    assert.deepEqual(view.state, second);
   });
 });
 
