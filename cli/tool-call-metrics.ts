@@ -4,7 +4,7 @@
  * Counters are scoped per `sessionId` so that multiple concurrent sessions
  * in the same process (e.g., under `pushd`) do not leak signals into each
  * other. Callers that omit `sessionId` read/write an aggregate view across
- * every tracked session (used by the end-of-run CLI stats summary).
+ * every tracked session.
  */
 
 const malformedBySession = new Map<string, Map<string, number>>();

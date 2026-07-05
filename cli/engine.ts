@@ -51,6 +51,11 @@ export interface RunOptions {
   // `PUSH_AUDITOR_GATE` via the shared `lib/auditor-policy.ts` resolver
   // (default on). `undefined` → resolver falls back to env, then the default.
   auditorGate?: boolean;
+  // True when the user set an explicit `--max-rounds`. The lead turn honors an
+  // explicit cap exactly (no adaptive grow/shrink); absent/false → the default
+  // budget adapts. A boolean, not a value compare — an explicit `--max-rounds
+  // 50` is indistinguishable from the default 50 by value alone.
+  explicitMaxRounds?: boolean;
   // Skip the terminal `run_complete` append + dispatch. Callers that run
   // `runAssistantTurn`/the kernel lane as a sub-step of a larger turn
   // (delegation per-node) set this so the parent scope is the only writer —

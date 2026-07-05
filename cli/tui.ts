@@ -1351,7 +1351,7 @@ function renderConfigModal(buf, theme, rows, cols, modalState, config) {
 
 /**
  * Run the full-screen TUI.
- * @param {{ sessionId?, provider?, model?, cwd?, maxRounds? }} options
+ * @param {{ sessionId?, provider?, model?, cwd?, maxRounds?, explicitMaxRounds? }} options
  */
 export async function runTUI(options = {}) {
   // Process/IO seam (TUI Decomposition Phase 0). Production passes no
@@ -1408,6 +1408,8 @@ export async function runTUI(options = {}) {
   const safeExecPatterns = config.safeExecPatterns;
 
   const maxRounds = options.maxRounds || DEFAULT_MAX_ROUNDS;
+  // Honor an explicit --max-rounds exactly (disables the adaptive harness).
+  const explicitMaxRounds = options.explicitMaxRounds ?? false;
 
   async function createFreshSessionState(providerName, requestedModel, cwd) {
     const providerConfig = PROVIDER_CONFIGS[providerName];
@@ -3955,6 +3957,7 @@ export async function runTUI(options = {}) {
         emit: handleEngineEvent,
         safeExecPatterns,
         execMode: process.env.PUSH_EXEC_MODE || 'auto',
+        explicitMaxRounds,
       });
       await saveSessionState(state);
     } catch (err) {

@@ -112,6 +112,7 @@ function baseCoderOptions(overrides: {
   onSessionDigestEmitted?: CoderAgentOptions<Call, never>['onSessionDigestEmitted'];
   resumeState?: CoderAgentOptions<Call, never>['resumeState'];
   repeatExemptTools?: CoderAgentOptions<Call, never>['repeatExemptTools'];
+  adaptMaxRounds?: CoderAgentOptions<Call, never>['adaptMaxRounds'];
 }): CoderAgentOptions<Call, never> {
   return {
     provider: 'openrouter',
@@ -134,6 +135,7 @@ function baseCoderOptions(overrides: {
     symbolSummary: null,
     resumeState: overrides.resumeState,
     repeatExemptTools: overrides.repeatExemptTools,
+    adaptMaxRounds: overrides.adaptMaxRounds,
     toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
@@ -153,6 +155,67 @@ function baseCoderOptions(overrides: {
       overrides.evaluateAfterModel ?? (async () => ({ action: 'halt', summary: 'done' })),
   };
 }
+
+describe('runCoderAgent — adaptMaxRounds seam', () => {
+  const loopingRounds = (): PushStreamEvent[][] =>
+    Array.from({ length: 10 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+  const repeatedRead = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
+  const detectRepeatedRead = () => ({
+    readOnly: [repeatedRead],
+    mutating: null,
+    fileMutations: [],
+    extraMutations: [],
+    droppedCandidates: [],
+  });
+
+  it('stops at an adapted cap that shrinks below harnessMaxRounds', async () => {
+    const { stream } = makePushStream(loopingRounds());
+    const seen: Array<{ round: number; currentMaxRounds: number }> = [];
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: false,
+        harnessMaxRounds: 50,
+        detectAllToolCalls: detectRepeatedRead,
+        detectAnyToolCall: () => repeatedRead,
+        evaluateAfterModel: async () => null,
+        adaptMaxRounds: (ctx) => {
+          seen.push(ctx);
+          return 3;
+        },
+      }),
+      { onStatus: () => {} },
+    );
+    // The hook's 3 wins over harnessMaxRounds: 50.
+    expect(result.stopReason).toBe('max_rounds');
+    expect(result.rounds).toBe(3);
+    // Called every round; round 0 sees the initial (pre-adaptation) cap.
+    expect(seen[0]).toEqual({ round: 0, currentMaxRounds: 50 });
+    expect(seen.map((s) => s.round)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('runs to an adapted cap that grows above harnessMaxRounds', async () => {
+    const { stream } = makePushStream(loopingRounds());
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        leadMode: false,
+        harnessMaxRounds: 2,
+        detectAllToolCalls: detectRepeatedRead,
+        detectAnyToolCall: () => repeatedRead,
+        evaluateAfterModel: async () => null,
+        adaptMaxRounds: () => 6,
+      }),
+      { onStatus: () => {} },
+    );
+    // Without the hook this stops at 2; grown to 6, it runs to 6.
+    expect(result.stopReason).toBe('max_rounds');
+    expect(result.rounds).toBe(6);
+  });
+});
 
 describe('resolveLeadRoundOptions', () => {
   it('gives a lead turn no explicit cap, with the surface tool scope', () => {

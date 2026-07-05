@@ -81,6 +81,11 @@ import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import type { RunOptions, RunResult } from './engine.js';
 import type { NativeToolCall } from '../lib/provider-contract.js';
+import { MAX_ALLOWED_ROUNDS } from './engine.js';
+import { computeAdaptation, resetAdaptationState } from './harness-adaptation.js';
+import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metrics.js';
+import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
+import { resetContextMetrics } from './context-metrics.js';
 
 // ─── CLI call shapes ─────────────────────────────────────────────
 
@@ -124,18 +129,44 @@ function wrapCall(call: CliToolCall): CliKernelCall {
  * lead-kernel lane share one classifier; pushd re-exports it for its tests.
  */
 export function wrapCliDetectAllToolCalls(text: string): DetectedToolCalls<CliKernelCall> {
-  const { calls } = cliDetectAllToolCalls(text) as { calls: CliToolCall[] };
-  return classifyCliToolCalls(calls);
+  const { calls, malformed } = cliDetectAllToolCalls(text) as {
+    calls: CliToolCall[];
+    malformed?: { reason: string; sample: string; rawToolName?: string }[];
+  };
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
 }
 
 export function wrapCliDetectNativeToolCalls(
   nativeCalls: readonly NativeToolCall[],
 ): DetectedToolCalls<CliKernelCall> {
-  const { calls } = cliDetectNativeToolCalls(nativeCalls) as { calls: CliToolCall[] };
-  return classifyCliToolCalls(calls);
+  const { calls, malformed } = cliDetectNativeToolCalls(nativeCalls) as {
+    calls: CliToolCall[];
+    malformed?: { reason: string; sample: string; rawToolName?: string }[];
+  };
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
 }
 
-function classifyCliToolCalls(calls: readonly CliToolCall[]): DetectedToolCalls<CliKernelCall> {
+function malformedReportsToDroppedCandidates(
+  reports: readonly { reason: string; sample: string; rawToolName?: string }[],
+): DetectedToolCalls<CliKernelCall>['droppedCandidates'] {
+  return reports.map((report) => ({
+    // Deliberately drop the parser-recovered name. The kernel's shared
+    // dropped-candidate hint (buildValidationFailedHint → getToolSpec) resolves
+    // names against the SHARED tool registry, where CLI-local names collide
+    // with GitHub tools — e.g. `read_file` resolves to the GitHub
+    // `repo_read(repo, path, ...)`, so a malformed local read would be
+    // "corrected" toward the wrong tool/args. An empty name makes the kernel
+    // emit its generic (always-correct) envelope hint instead.
+    rawToolName: '',
+    resolvedToolName: null,
+    sample: report.sample,
+  }));
+}
+
+function classifyCliToolCalls(
+  calls: readonly CliToolCall[],
+  droppedCandidates: DetectedToolCalls<CliKernelCall>['droppedCandidates'] = [],
+): DetectedToolCalls<CliKernelCall> {
   const readOnly: CliKernelCall[] = [];
   const fileMutations: CliKernelCall[] = [];
   const extraMutations: CliKernelCall[] = [];
@@ -175,14 +206,7 @@ function classifyCliToolCalls(calls: readonly CliToolCall[]): DetectedToolCalls<
     mutating = wrapped;
     phase = 'done';
   }
-  // CLI's `cliDetectAllToolCalls` reports parse/shape failures via the
-  // `malformed` channel on its own `ToolDispatchResult`, separate from
-  // the kernel's `DetectedToolCalls.droppedCandidates` slot the Web-side
-  // detector populates. The CLI surfaces malformed reports through its
-  // own event stream, so the kernel gets an empty array here. The shape
-  // is still required so the kernel's `detected.droppedCandidates.length`
-  // guard doesn't trip on `undefined.length`.
-  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates: [] };
+  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates };
 }
 
 /**
@@ -348,6 +372,7 @@ export async function runLeadKernelTurn(
     suppressEventPersist = false,
   } = options;
   const runId: string = options.runId || makeRunId();
+  const adaptationMetricsKey = `${state.sessionId}:${runId}`;
   // Coder working memory is NOT seeded onto the CLI runtimeContext: nothing on
   // the CLI reads runtimeContext.workingMemory.coder (the kernel keeps its own
   // loop reference and persists to state.workingMemory). Seeding it here would
@@ -599,6 +624,27 @@ export async function runLeadKernelTurn(
       // stamp it on `tool.execution_complete` for transcript rendering.
       const metaDiff = (result?.meta as Record<string, unknown> | null | undefined)?.editDiff;
       const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
+      // Adaptive-harness signal: file-mutation OUTCOMES feed editErrorRate
+      // (shrink Rule 2). Keyed on FILE_MUTATION_TOOLS (write_file / edit_file /
+      // undo_edit) — the arg-shape oracle `writeTargetOf` misses edit_file's
+      // `{path, edits, expected_version}` form, the main surgical-edit path.
+      // Skip approval/capability DENIALS (`*_DENIED`): a human or policy saying
+      // no is not model edit-flailing and must not inflate the error rate.
+      if (FILE_MUTATION_TOOLS.has(rawCall.tool)) {
+        const code = result?.structuredError?.code;
+        const denied = typeof code === 'string' && code.endsWith('_DENIED');
+        if (!denied) {
+          // A STALE_WRITE is its own (diagnostic-only) category, NOT an edit
+          // error — a model re-reading and retrying with a fresh
+          // expected_version is normal, and counting it toward editErrorRate
+          // would wrongly trip the 25% shrink. Track it as stale, not error.
+          const stale = code === 'STALE_WRITE';
+          recordWriteFile(adaptationMetricsKey, {
+            error: result?.ok !== true && !stale,
+            stale,
+          });
+        }
+      }
       if (result && result.ok === true) {
         return { kind: 'executed', resultText, ...(editDiff ? { editDiff } : {}) };
       }
@@ -646,10 +692,20 @@ export async function runLeadKernelTurn(
     },
     onRunEvent: (event) => {
       const { type, ...payload } = event as { type: string } & Record<string, unknown>;
+      if (type === 'tool.call_malformed') {
+        recordMalformedToolCall(payload.reason, state.sessionId);
+        recordMalformedToolCall(payload.reason, adaptationMetricsKey);
+      }
       void persistEvent(type, payload);
       dispatchEvent(type, payload);
     },
   };
+
+  // Adaptive harness: each user turn gets a fresh metric window keyed by runId
+  // (the plain sessionId bucket stays cumulative for the CLI's end-of-session
+  // summary). The runId makes the key unique per turn, so it starts empty — no
+  // reset needed up front; it's cleared in the `finally` below so the metric
+  // maps don't accumulate one entry per turn on a long-running daemon.
 
   try {
     const result = await runCoderAgent<CliKernelCall, unknown>(
@@ -678,6 +734,26 @@ export async function runLeadKernelTurn(
         approvalModeBlock: null,
         evaluateAfterModel: async () => null,
         harnessMaxRounds: maxRounds,
+        // Adaptive harness: re-derive the effective cap each round from
+        // in-session health signals (malformed calls, edit errors) — grow on
+        // healthy progress toward MAX_ALLOWED_ROUNDS, shrink on flailing.
+        // Disabled when the user set an explicit `--max-rounds`: that's a
+        // deliberate cap, honored exactly (no grow, no shrink). Keyed on the
+        // threaded `explicitMaxRounds` flag, NOT a value compare — an explicit
+        // `--max-rounds 50` is indistinguishable from the default by value.
+        // See cli/harness-adaptation.ts.
+        // NOTE: emitting a `harness.adaptation` event on cap change (which the
+        // eval/measurement scripts count) is a deferred follow-up — it needs a
+        // canonical payload in lib/runtime-contract.ts + a protocol-schema.ts
+        // validator + a drift test in the same change (AGENTS.md), so it lands
+        // as its own piece rather than an untyped rider here.
+        adaptMaxRounds: options.explicitMaxRounds
+          ? undefined
+          : ({ round, currentMaxRounds }) =>
+              computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
+                currentRound: round,
+                maxAllowedRounds: MAX_ALLOWED_ROUNDS,
+              }).adjustedMaxRounds,
         // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
         // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
         // resolving from env here folds in both the operator override and the
@@ -760,5 +836,14 @@ export async function runLeadKernelTurn(
     }
     dispatchEvent('run_complete', { outcome: 'failed', summary: message.slice(0, 500) });
     return { outcome: 'error', finalAssistantText: message, rounds: 0, runId };
+  } finally {
+    // Drop this turn's per-turn adaptation metric window so the metric maps
+    // don't accumulate one entry per turn for the life of a long-running
+    // daemon. The cumulative sessionId bucket (read by the end-of-session
+    // summary) is intentionally left untouched.
+    resetToolCallMetrics(adaptationMetricsKey);
+    resetWriteFileMetrics(adaptationMetricsKey);
+    resetContextMetrics(adaptationMetricsKey);
+    resetAdaptationState(adaptationMetricsKey);
   }
 }

@@ -494,6 +494,8 @@ async function runHeadless(
     // Auditor commit gate (opt-out, default on). `undefined` → the tool layer
     // resolves it against `PUSH_AUDITOR_GATE` then the default.
     auditorGate,
+    // True when the user set an explicit --max-rounds (disables adaptation).
+    explicitMaxRounds = false,
   } = {},
 ) {
   // Headless runs the single conversational lead on the shared coder kernel
@@ -530,6 +532,7 @@ async function runHeadless(
       disabledTools,
       alwaysAllow,
       auditorGate,
+      explicitMaxRounds,
     });
     await saveSessionState(state);
 
@@ -886,7 +889,7 @@ async function runInteractive(
   providerConfig,
   apiKey,
   maxRounds,
-  { alreadyPersisted = false } = {},
+  { alreadyPersisted = false, explicitMaxRounds = false } = {},
 ) {
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
@@ -1287,6 +1290,7 @@ async function runInteractive(
                 disabledTools,
                 alwaysAllow,
                 auditorGate,
+                explicitMaxRounds,
               },
             );
             await saveSessionState(state);
@@ -1348,6 +1352,7 @@ async function runInteractive(
             disabledTools,
             alwaysAllow,
             auditorGate,
+            explicitMaxRounds,
           },
         );
         await saveSessionState(state);
@@ -1380,7 +1385,7 @@ async function runInteractive(
   }
 
   // End-of-session metrics summary
-  const metrics = getToolCallMetrics();
+  const metrics = getToolCallMetrics(state.sessionId);
   const malformedTotal = Object.values(metrics.malformed).reduce((a, b) => a + b, 0);
   if (malformedTotal > 0) {
     const reasons = Object.entries(metrics.malformed)
@@ -3858,6 +3863,7 @@ export async function main() {
         values['max-rounds'] || values.maxRounds
           ? clamp(Number(values['max-rounds'] || values.maxRounds), 1, MAX_ALLOWED_ROUNDS)
           : undefined,
+      explicitMaxRounds: (values['max-rounds'] || values.maxRounds) !== undefined,
     });
   }
 
@@ -3890,6 +3896,10 @@ export async function main() {
     }
   }
   const maxRounds = clamp(Number(maxRoundsRaw || DEFAULT_MAX_ROUNDS), 1, MAX_ALLOWED_ROUNDS);
+  // An explicit --max-rounds disables the adaptive harness (the cap is honored
+  // exactly); omitting it lets the default budget adapt. Threaded via
+  // RunOptions so the lead turn never has to guess default-50 vs explicit-50.
+  const explicitMaxRounds = maxRoundsRaw !== undefined;
   const acceptanceChecks = Array.isArray(values.accept) ? values.accept : [];
 
   const positionalTask = subcommand === 'run' ? positionals.slice(1).join(' ').trim() : '';
@@ -4114,6 +4124,7 @@ export async function main() {
         disabledTools: headlessDisabledTools,
         alwaysAllow: headlessAlwaysAllow,
         auditorGate: headlessAuditorGate,
+        explicitMaxRounds,
       };
       return await runHeadless(
         state,
@@ -4139,6 +4150,7 @@ export async function main() {
       return await runTUI({
         sessionId: state.sessionId,
         maxRounds,
+        explicitMaxRounds,
       });
     }
 
@@ -4153,6 +4165,7 @@ export async function main() {
       // this runInteractive would lazily re-emit session_started on the
       // first user message.
       alreadyPersisted: !!resumedSessionId,
+      explicitMaxRounds,
     });
   } finally {
     // Clean-if-clean teardown: remove the worktree only when it has no

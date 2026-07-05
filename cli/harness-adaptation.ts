@@ -1,5 +1,10 @@
 /**
- * harness-adaptation.ts — adaptive round-budget tuning for the CLI engine.
+ * harness-adaptation.ts — adaptive round-budget tuning for the CLI lead turn.
+ *
+ * Wired into the shared kernel via the `adaptMaxRounds` hook on
+ * `runCoderAgent` (see `cli/lead-turn.ts`): the kernel calls it at the top of
+ * every round, and this module returns the (possibly adjusted) cap. The
+ * kernel stays portable — it never imports this CLI module.
  *
  * Mirrors the adaptation slice of `app/src/lib/harness-profiles.ts`. Reads
  * session metrics (malformed calls, context pressure, edit error/stale
@@ -10,7 +15,7 @@
  * when the agent is working close to the current ceiling with healthy
  * signals (no malformed-call or edit-error degradation), Rule 3 grants more
  * rounds up to an absolute ceiling. Growth is opt-in — it only fires when the
- * caller passes `currentRound` + `maxAllowedRounds` (the engine loop does),
+ * caller passes `currentRound` + `maxAllowedRounds` (the lead turn does),
  * so two-arg callers keep the shrink-only contract. A session that has ever
  * tripped a reduction rule never grows again.
  *

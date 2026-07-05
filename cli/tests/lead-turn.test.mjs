@@ -16,7 +16,12 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { runLeadKernelTurn, buildLeadTurnPreamble, resolveDefaultExecMode } from '../lead-turn.ts';
+import {
+  runLeadKernelTurn,
+  buildLeadTurnPreamble,
+  resolveDefaultExecMode,
+  wrapCliDetectAllToolCalls,
+} from '../lead-turn.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
@@ -126,6 +131,31 @@ function makeProviderConfig(url) {
   };
 }
 
+describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () => {
+  it('maps CLI parser malformations into droppedCandidates for kernel recovery', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      '```json\n{"tool": "read_file", "args": {oops}}\n```',
+    );
+
+    assert.equal(detected.droppedCandidates.length, 1);
+    // Name is intentionally blank: feeding a CLI-local name (e.g. read_file)
+    // into the kernel's shared hint builder resolves to the wrong (GitHub)
+    // tool, so we drop it and let the kernel emit its generic envelope hint.
+    assert.equal(detected.droppedCandidates[0].rawToolName, '');
+    assert.equal(detected.droppedCandidates[0].resolvedToolName, null);
+    assert.match(detected.droppedCandidates[0].sample, /read_file/);
+  });
+
+  it('leaves droppedCandidates empty for a clean tool call', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      '```json\n{"tool": "read_file", "args": {"path": "a"}}\n```',
+    );
+
+    assert.equal(detected.droppedCandidates.length, 0);
+    assert.equal(detected.readOnly.length, 1);
+  });
+});
+
 describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopback, () => {
   it('sends the lead identity and commits the kernel summary as the assistant turn', async () => {
     await withTempWorkspace(async (cwd) => {
@@ -212,7 +242,9 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
           'mock-key',
           'Do the thing',
           1,
-          { emit: (event) => emitted.push(event) },
+          // Explicit cap → the adaptive harness is off, so round 1
+          // deterministically hits the cap instead of growing past it.
+          { emit: (event) => emitted.push(event), explicitMaxRounds: true },
         );
 
         assert.equal(result.outcome, 'max_rounds');
