@@ -23,10 +23,10 @@
     "typecheck:all": "npx tsc --noEmit -p cli/tsconfig.json && npm --prefix mcp/github-server run typecheck && npm --prefix app run typecheck"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.0",
-    "@types/node": "^26.0.0",
+    "@biomejs/biome": "2.5.2",
+    "@types/node": "^26.1.0",
     "@types/ws": "^8.18.1",
-    "tsx": "^4.22.4",
+    "tsx": "^4.23.0",
     "typescript": "rc"
   },
   "dependencies": {

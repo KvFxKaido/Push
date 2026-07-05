@@ -106,7 +106,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 | `app/android/` | Capacitor Android project; committed source with native customization. Build outputs and regenerated web assets are ignored. |
 | `cli/` | Local terminal agent, sessions, daemon, and terminal interface |
 | `sandbox/` | Modal sandbox backend (Python + FastAPI endpoints) |
-| `Dockerfile.sandbox` | Cloudflare Sandbox container image (extends `cloudflare/sandbox:0.12.1-python`) |
+| `Dockerfile.sandbox` | Cloudflare Sandbox container image (extends `cloudflare/sandbox:0.12.3-python`) |
 | `lib/` | Shared logic used across app and CLI |
 | `docs/` | Architecture, decisions, runbooks, and archived references |
 | `scripts/` | Build and utility scripts |

@@ -25,6 +25,19 @@ live, and in what order adoption happens.
    `typeof Bun !== 'undefined'` guards are worse than the hand-rolled code
    they'd replace.
 3. **Consistency beats correctness in the TUI width kernel.** See Phase 2.
+4. **Adjudicate substitutions by differential test, not by reading.** Whether a
+   `Bun.*` API should replace hand-rolled code is decided by running both
+   against an *adversarial* input corpus — never by reading Bun's docs and
+   concluding the hand-roll still looks fine. A read only checks the axes you
+   already thought to hand-roll; it can't surface the cases you never knew to
+   (emoji ZWJ width, a torn non-atomic write, hash-format drift — the three
+   examples the sections below turn on). The Phase 2 width-kernel divergences
+   were found exactly this way: a 16-case corpus through both `visibleWidth`
+   and `Bun.stringWidth`, not by reading `Bun.stringWidth`'s description — the
+   happy path reports "identical, mine's fine" and buries the five cases that
+   break it. The read flatters the hand-roll; the diff adjudicates it. This is
+   also how rule 3's tradeoff was *discovered* — you can't decide correctness
+   vs. consistency on an axis you didn't know diverged.
 
 ## Phase 0 — compiled-binary hygiene (shipped)
 
@@ -51,22 +64,53 @@ to it.
 
 ## Phase 1 — dev path on Bun (partial: dev script shipped, tests blocked)
 
-`bun cli/cli.ts` boots the full CLI surface today (`dev:cli:bun` script).
-Tests are the blocker, measured on Bun 1.3.11 against the full suite:
+`bun cli/cli.ts` boots the full CLI surface today (`dev:cli:bun` script) —
+**including the pushd daemon**. The daemon spawn paths (self-heal respawn, TUI
+autostart, and `daemon start`) originally keyed loader flags off the entry
+*extension*
+(`.ts` ⟹ `--import tsx`), which is correct under Node but fatal under Bun:
+`bun --import tsx pushd.ts` dies with `Cannot find module './cjs/index.cjs'
+from ''` (tsx is a Node-only loader) before pushd's `main()` runs, so a
+stale-build drain under `dev:cli:bun` could drain the old daemon but never
+respawn — the session silently fell back to inline mode. Fixed by
+`cli/daemon-spawn-args.ts`, which selects loader flags by *runtime*: under Bun,
+native TS with `--no-env-file` (the same cwd-`.env`-autoload guard Phase 0
+applies to the compiled binary) and no tsx; under Node, `--import tsx` for
+`.ts`/`.mts` as before. The daemon runs **no** `Bun.*` APIs, so this respects
+ground rule 2 (running *under* Bun ≠ *calling* Bun APIs). Known Bun gap: the
+relay's `ws` `unexpected-response` handler is unimplemented in Bun, so a
+rejected relay dial surfaces differently there.
 
-- `bun test --preload ./cli/tests/setup-test-home-isolation.mjs
-  cli/tests/*.test.mjs`: **687 pass, 137 fail, 121 errors** across 824
-  tests / 146 files.
-- The dominant failure is one upstream gap: Bun's `node:test` shim rejects
-  `describe()` nesting patterns this suite uses
-  ([oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090),
-  `ERR_NOT_IMPLEMENTED`).
+Tests are the blocker. The `cli-bun-canary` CI job (non-blocking) runs the
+full suite under `bun test` on every run and prints a live breakdown to its
+step summary. bun reports three **separate** categories, and keeping them
+separate is exactly what a first read got wrong (`fail` and `errors` are not
+the same bucket, so you cannot subtract one from the other):
 
-Decision: **tests stay on `node --test`**; do not port 146 files to
-`bun:test` to route around an upstream gap that is actively tracked.
-Revisit trigger: a Bun release where the command above goes green — then
-flip the canonical test script, make Bun the dev default, and unlock
-Phase 2.
+- **Local (Bun 1.3.11):** 791 pass / **133 fail** / **100 errors**, Ran 924
+  tests across 147 files.
+- The **100 errors** are one upstream gap — Bun's `node:test` shim can't run
+  `describe()`/`test()` nested inside a `test()`
+  ([oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090)); each
+  affected file throws once during collection, spread across ~100 of the 147
+  files, so de-nesting would be a whole-suite rewrite, not a targeted fix
+  (measured, not assumed — rule 4).
+- The **133 fail are all real per-test divergences** — tests that *ran* and
+  failed under Bun (timeouts, the `ws` API gap, spinner rendering). A much
+  larger real surface than a first pass suggested.
+- **CI collects only 473 of those 924 tests** (140 fail / 139 errors) running
+  the identical command — so bun test is **not yet reproducible across
+  environments**, a second blocker sitting behind #5090.
+
+Decision: **tests stay on `node --test`** — reinforced, not weakened, by the
+measurement: even with #5090 fixed, ~133 real failures and non-reproducible
+collection remain. Do not port the suite to `bun:test` to route around an
+upstream gap that is actively tracked.
+
+Revisit trigger, in order — each made observable by the canary: (1) **errors
+→ 0** (the #5090 shim lands — necessary but not sufficient); (2) the **fail**
+count worked down to ~0; (3) collection stable across local and CI. Only then
+flip the canonical test script, make Bun the dev default, and unlock Phase 2.
 
 ## Phase 2 — utility substitutions (blocked on Phase 1)
 
