@@ -104,7 +104,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.0",
-    "@cloudflare/workers-types": "^4.20260620.1",
+    "@cloudflare/workers-types": "^5.20260704.1",
     "@commitlint/cli": "^20.4.1",
     "@commitlint/config-conventional": "^21.0.2",
     "@eslint/js": "^10.0.1",
