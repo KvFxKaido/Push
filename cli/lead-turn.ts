@@ -128,8 +128,22 @@ function wrapCall(call: CliToolCall): CliKernelCall {
  * Moved here from `cli/pushd.ts` so both the daemon's delegated nodes and the
  * lead-kernel lane share one classifier; pushd re-exports it for its tests.
  */
-export function wrapCliDetectAllToolCalls(text: string): DetectedToolCalls<CliKernelCall> {
-  const { calls } = cliDetectAllToolCalls(text) as { calls: CliToolCall[] };
+export function wrapCliDetectAllToolCalls(
+  text: string,
+  onMalformed?: (report: { reason: string; sample: string; rawToolName?: string }) => void,
+): DetectedToolCalls<CliKernelCall> {
+  const { calls, malformed } = cliDetectAllToolCalls(text) as {
+    calls: CliToolCall[];
+    malformed?: { reason: string; sample: string; rawToolName?: string }[];
+  };
+  // The CLI parser reports json_parse_error / invalid_shape / missing_tool /
+  // validation_failed on its own `malformed` channel. These never reach the
+  // kernel (classifyCliToolCalls returns an empty `droppedCandidates`, so no
+  // `tool.call_malformed` event fires on this surface), so the adaptive
+  // Rule-1 shrink signal is recorded from here — the only place it lands.
+  if (onMalformed && malformed) {
+    for (const report of malformed) onMalformed(report);
+  }
   return classifyCliToolCalls(calls);
 }
 
@@ -614,9 +628,14 @@ export async function runLeadKernelTurn(
         const code = result?.structuredError?.code;
         const denied = typeof code === 'string' && code.endsWith('_DENIED');
         if (!denied) {
+          // A STALE_WRITE is its own (diagnostic-only) category, NOT an edit
+          // error — a model re-reading and retrying with a fresh
+          // expected_version is normal, and counting it toward editErrorRate
+          // would wrongly trip the 25% shrink. Track it as stale, not error.
+          const stale = code === 'STALE_WRITE';
           recordWriteFile(state.sessionId, {
-            error: result?.ok !== true,
-            stale: code === 'STALE_WRITE',
+            error: result?.ok !== true && !stale,
+            stale,
           });
         }
       }
@@ -667,12 +686,6 @@ export async function runLeadKernelTurn(
     },
     onRunEvent: (event) => {
       const { type, ...payload } = event as { type: string } & Record<string, unknown>;
-      // Adaptive-harness signal: malformed tool calls feed the shrink rule
-      // (Rule 1). Recorded here off the existing event stream so no extra
-      // kernel callback is needed.
-      if (type === 'tool.call_malformed') {
-        recordMalformedToolCall(payload.reason, state.sessionId);
-      }
       void persistEvent(type, payload);
       dispatchEvent(type, payload);
     },
@@ -700,7 +713,10 @@ export async function runLeadKernelTurn(
         taskPreamble,
         symbolSummary: null,
         toolExec,
-        detectAllToolCalls: wrapCliDetectAllToolCalls,
+        detectAllToolCalls: (text) =>
+          wrapCliDetectAllToolCalls(text, (report) =>
+            recordMalformedToolCall(report.reason, state.sessionId),
+          ),
         detectNativeToolCalls: wrapCliDetectNativeToolCalls,
         detectAnyToolCall: wrapCliDetectAnyToolCall,
         webSearchToolProtocol: '',

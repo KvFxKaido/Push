@@ -16,7 +16,12 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { runLeadKernelTurn, buildLeadTurnPreamble, resolveDefaultExecMode } from '../lead-turn.ts';
+import {
+  runLeadKernelTurn,
+  buildLeadTurnPreamble,
+  resolveDefaultExecMode,
+  wrapCliDetectAllToolCalls,
+} from '../lead-turn.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
@@ -125,6 +130,28 @@ function makeProviderConfig(url) {
     url,
   };
 }
+
+describe('wrapCliDetectAllToolCalls — malformed signal (Rule 1 source)', () => {
+  it('surfaces CLI parser malformations through onMalformed', () => {
+    const reasons = [];
+    const detected = wrapCliDetectAllToolCalls(
+      '```json\n{"tool": "read_file", "args": {oops}}\n```',
+      (report) => reasons.push(report.reason),
+    );
+    // The parse failure feeds the adaptive shrink signal from here — the
+    // kernel never sees it (droppedCandidates stays empty on this surface).
+    assert.deepEqual(reasons, ['json_parse_error']);
+    assert.equal(detected.droppedCandidates.length, 0);
+  });
+
+  it('does not fire onMalformed for a clean tool call', () => {
+    const reasons = [];
+    wrapCliDetectAllToolCalls('```json\n{"tool": "read_file", "args": {"path": "a"}}\n```', (r) =>
+      reasons.push(r.reason),
+    );
+    assert.deepEqual(reasons, []);
+  });
+});
 
 describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopback, () => {
   it('sends the lead identity and commits the kernel summary as the assistant turn', async () => {
