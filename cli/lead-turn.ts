@@ -81,12 +81,11 @@ import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import type { RunOptions, RunResult } from './engine.js';
 import type { NativeToolCall } from '../lib/provider-contract.js';
-import { DEFAULT_MAX_ROUNDS, MAX_ALLOWED_ROUNDS } from './engine.js';
+import { MAX_ALLOWED_ROUNDS } from './engine.js';
 import { computeAdaptation, resetAdaptationState } from './harness-adaptation.js';
 import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metrics.js';
 import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
 import { resetContextMetrics } from './context-metrics.js';
-import { writeTargetOf } from '../lib/loop-detection.ts';
 
 // ─── CLI call shapes ─────────────────────────────────────────────
 
@@ -605,12 +604,21 @@ export async function runLeadKernelTurn(
       // stamp it on `tool.execution_complete` for transcript rendering.
       const metaDiff = (result?.meta as Record<string, unknown> | null | undefined)?.editDiff;
       const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
-      // Adaptive-harness signal: a file-mutation call feeds editErrorRate
-      // (shrink Rule 2). Classified via the shared `writeTargetOf` oracle so it
-      // matches the kernel's own file-mutation detection. `stale` is
-      // diagnostic-only on the CLI (no rule reads it), so we track error.
-      if (writeTargetOf(rawCall.args)) {
-        recordWriteFile(state.sessionId, { error: result?.ok !== true, stale: false });
+      // Adaptive-harness signal: file-mutation OUTCOMES feed editErrorRate
+      // (shrink Rule 2). Keyed on FILE_MUTATION_TOOLS (write_file / edit_file /
+      // undo_edit) — the arg-shape oracle `writeTargetOf` misses edit_file's
+      // `{path, edits, expected_version}` form, the main surgical-edit path.
+      // Skip approval/capability DENIALS (`*_DENIED`): a human or policy saying
+      // no is not model edit-flailing and must not inflate the error rate.
+      if (FILE_MUTATION_TOOLS.has(rawCall.tool)) {
+        const code = result?.structuredError?.code;
+        const denied = typeof code === 'string' && code.endsWith('_DENIED');
+        if (!denied) {
+          recordWriteFile(state.sessionId, {
+            error: result?.ok !== true,
+            stale: code === 'STALE_WRITE',
+          });
+        }
       }
       if (result && result.ok === true) {
         return { kind: 'executed', resultText, ...(editDiff ? { editDiff } : {}) };
@@ -710,18 +718,18 @@ export async function runLeadKernelTurn(
         // Adaptive harness: re-derive the effective cap each round from
         // in-session health signals (malformed calls, edit errors) — grow on
         // healthy progress toward MAX_ALLOWED_ROUNDS, shrink on flailing.
-        // Gated to the DEFAULT budget: an explicit `--max-rounds` is a
-        // deliberate cap and is honored exactly (no grow, no shrink) — without
-        // this, `--max-rounds 1` would balloon to 16 the moment round 0 lands
-        // within the growth trigger margin. See cli/harness-adaptation.ts.
-        adaptMaxRounds:
-          maxRounds === DEFAULT_MAX_ROUNDS
-            ? ({ round, currentMaxRounds }) =>
-                computeAdaptation(state.sessionId, currentMaxRounds, {
-                  currentRound: round,
-                  maxAllowedRounds: MAX_ALLOWED_ROUNDS,
-                }).adjustedMaxRounds
-            : undefined,
+        // Disabled when the user set an explicit `--max-rounds`: that's a
+        // deliberate cap, honored exactly (no grow, no shrink). Keyed on the
+        // threaded `explicitMaxRounds` flag, NOT a value compare — an explicit
+        // `--max-rounds 50` is indistinguishable from the default by value.
+        // See cli/harness-adaptation.ts.
+        adaptMaxRounds: options.explicitMaxRounds
+          ? undefined
+          : ({ round, currentMaxRounds }) =>
+              computeAdaptation(state.sessionId, currentMaxRounds, {
+                currentRound: round,
+                maxAllowedRounds: MAX_ALLOWED_ROUNDS,
+              }).adjustedMaxRounds,
         // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
         // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
         // resolving from env here folds in both the operator override and the

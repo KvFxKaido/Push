@@ -212,7 +212,9 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
           'mock-key',
           'Do the thing',
           1,
-          { emit: (event) => emitted.push(event) },
+          // Explicit cap → the adaptive harness is off, so round 1
+          // deterministically hits the cap instead of growing past it.
+          { emit: (event) => emitted.push(event), explicitMaxRounds: true },
         );
 
         assert.equal(result.outcome, 'max_rounds');
