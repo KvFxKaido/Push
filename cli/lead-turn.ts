@@ -744,11 +744,27 @@ export async function runLeadKernelTurn(
         // See cli/harness-adaptation.ts.
         adaptMaxRounds: options.explicitMaxRounds
           ? undefined
-          : ({ round, currentMaxRounds }) =>
-              computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
+          : ({ round, currentMaxRounds }) => {
+              const adaptation = computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
                 currentRound: round,
                 maxAllowedRounds: MAX_ALLOWED_ROUNDS,
-              }).adjustedMaxRounds,
+              });
+              if (adaptation.wasAdapted) {
+                // Surface the cap change as a `harness.adaptation` event: the
+                // eval/measurement harness counts these (scripts/eval/eval-lib.ts,
+                // scripts/measure-delegation.ts), so without it a run whose cap
+                // grew or shrank reports 0 adaptations.
+                const payload = {
+                  round,
+                  fromMaxRounds: currentMaxRounds,
+                  toMaxRounds: adaptation.adjustedMaxRounds,
+                  reasons: adaptation.reasons,
+                };
+                void persistEvent('harness.adaptation', payload);
+                dispatchEvent('harness.adaptation', payload);
+              }
+              return adaptation.adjustedMaxRounds;
+            },
         // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
         // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
         // resolving from env here folds in both the operator override and the
