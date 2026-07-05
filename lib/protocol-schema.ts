@@ -778,6 +778,186 @@ function validateContextCompaction(payload: unknown, basePath: string): Validati
   return issues;
 }
 
+// ---------------------------------------------------------------------------
+// Live workspace-state events (workspace.state_snapshot / .state_delta)
+// ---------------------------------------------------------------------------
+//
+// Distinct vocabulary from `session_state_changed` below: that carries
+// settings/session config (provider, model, role routing); these carry live
+// sandbox-derived state (branch, HEAD, dirty tree, guards). The closed op-set
+// is what keeps the delta strictly validatable — see
+// `docs/decisions/Workspace State Events — Snapshot + Delta.md`.
+
+export const WORKSPACE_DIRTY_STATUSES = [
+  'modified',
+  'added',
+  'deleted',
+  'renamed',
+  'untracked',
+  'conflicted',
+] as const;
+
+function validateWorkspaceDirtyFile(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push({ path, message: `expected plain object, got ${typeof value}` });
+    return;
+  }
+  const p = expectNonEmptyString(value, 'path', path);
+  if (p) issues.push(p);
+  const s = expectAgentValue(value, 'status', path, WORKSPACE_DIRTY_STATUSES);
+  if (s) issues.push(s);
+}
+
+function validateWorkspaceState(value: unknown, path: string, issues: ValidationIssue[]): void {
+  if (!isPlainObject(value)) {
+    issues.push({ path, message: `expected plain object, got ${typeof value}` });
+    return;
+  }
+  const b = expectNonEmptyString(value, 'activeBranch', path);
+  if (b) issues.push(b);
+  const h = expectNonEmptyString(value, 'headSha', path);
+  if (h) issues.push(h);
+  const a = expectOptionalNonNegativeInteger(value, 'ahead', path);
+  if (a) issues.push(a);
+  const be = expectOptionalNonNegativeInteger(value, 'behind', path);
+  if (be) issues.push(be);
+  if (!Array.isArray(value.dirtyFiles)) {
+    issues.push({
+      path: `${path}.dirtyFiles`,
+      message: `expected array, got ${JSON.stringify(value.dirtyFiles)}`,
+    });
+  } else {
+    value.dirtyFiles.forEach((f, i) =>
+      validateWorkspaceDirtyFile(f, `${path}.dirtyFiles[${i}]`, issues),
+    );
+  }
+  if (typeof value.protectMain !== 'boolean') {
+    issues.push({
+      path: `${path}.protectMain`,
+      message: `expected boolean, got ${JSON.stringify(value.protectMain)}`,
+    });
+  }
+  if (typeof value.sandboxReady !== 'boolean') {
+    issues.push({
+      path: `${path}.sandboxReady`,
+      message: `expected boolean, got ${JSON.stringify(value.sandboxReady)}`,
+    });
+  }
+}
+
+function validateWorkspaceStateSnapshot(payload: unknown, basePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const w = expectNonEmptyString(payload, 'workspaceId', basePath);
+  if (w) issues.push(w);
+  const rev = expectNonNegativeInteger(payload, 'rev', basePath);
+  if (rev) issues.push(rev);
+  validateWorkspaceState(payload.state, `${basePath}.state`, issues);
+  return issues;
+}
+
+export const WORKSPACE_DELTA_OPS = [
+  'set_branch',
+  'set_head',
+  'set_tracking',
+  'dirty_add',
+  'dirty_remove',
+  'dirty_clear',
+  'set_protect_main',
+  'set_sandbox_ready',
+] as const;
+
+function validateWorkspaceStateDeltaOp(
+  value: unknown,
+  path: string,
+  issues: ValidationIssue[],
+): void {
+  if (!isPlainObject(value)) {
+    issues.push({ path, message: `expected plain object, got ${typeof value}` });
+    return;
+  }
+  const opIssue = expectAgentValue(value, 'op', path, WORKSPACE_DELTA_OPS);
+  if (opIssue) {
+    // Unknown/absent op — can't check the op-specific fields, so stop here.
+    issues.push(opIssue);
+    return;
+  }
+  switch (value.op) {
+    case 'set_branch': {
+      const b = expectNonEmptyString(value, 'activeBranch', path);
+      if (b) issues.push(b);
+      const h = expectNonEmptyString(value, 'headSha', path);
+      if (h) issues.push(h);
+      break;
+    }
+    case 'set_head': {
+      const h = expectNonEmptyString(value, 'headSha', path);
+      if (h) issues.push(h);
+      break;
+    }
+    case 'set_tracking': {
+      const a = expectOptionalNonNegativeInteger(value, 'ahead', path);
+      if (a) issues.push(a);
+      const be = expectOptionalNonNegativeInteger(value, 'behind', path);
+      if (be) issues.push(be);
+      break;
+    }
+    case 'dirty_add':
+      validateWorkspaceDirtyFile(value.file, `${path}.file`, issues);
+      break;
+    case 'dirty_remove': {
+      const p = expectNonEmptyString(value, 'path', path);
+      if (p) issues.push(p);
+      break;
+    }
+    case 'set_protect_main':
+      if (typeof value.protectMain !== 'boolean') {
+        issues.push({
+          path: `${path}.protectMain`,
+          message: `expected boolean, got ${JSON.stringify(value.protectMain)}`,
+        });
+      }
+      break;
+    case 'set_sandbox_ready':
+      if (typeof value.sandboxReady !== 'boolean') {
+        issues.push({
+          path: `${path}.sandboxReady`,
+          message: `expected boolean, got ${JSON.stringify(value.sandboxReady)}`,
+        });
+      }
+      break;
+    // 'dirty_clear' carries no op-specific fields.
+    default:
+      break;
+  }
+}
+
+function validateWorkspaceStateDelta(payload: unknown, basePath: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const w = expectNonEmptyString(payload, 'workspaceId', basePath);
+  if (w) issues.push(w);
+  const rev = expectNonNegativeInteger(payload, 'rev', basePath);
+  if (rev) issues.push(rev);
+  const base = expectNonNegativeInteger(payload, 'baseRev', basePath);
+  if (base) issues.push(base);
+  if (!Array.isArray(payload.ops)) {
+    issues.push({
+      path: `${basePath}.ops`,
+      message: `expected array, got ${JSON.stringify(payload.ops)}`,
+    });
+  } else {
+    payload.ops.forEach((o, i) =>
+      validateWorkspaceStateDeltaOp(o, `${basePath}.ops[${i}]`, issues),
+    );
+  }
+  return issues;
+}
+
 /**
  * `session_state_changed` carries the daemon's current session-scoped state
  * after `update_session` or `configure_role_routing` mutates it. Clients
@@ -1546,6 +1726,11 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'job.failed': validateJobFailed,
   'user.follow_up_queued': validateUserFollowUpQueued,
   'user.follow_up_steered': validateUserFollowUpSteered,
+
+  // Live workspace-state timeline. Snapshot is ground truth; delta is a
+  // disposable patch that a consumer applies only when its base is provable.
+  'workspace.state_snapshot': validateWorkspaceStateSnapshot,
+  'workspace.state_delta': validateWorkspaceStateDelta,
 };
 
 /** The set of event types that have a per-payload schema in this module. */

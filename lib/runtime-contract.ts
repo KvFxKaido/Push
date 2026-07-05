@@ -315,6 +315,63 @@ export type RunEventSubagent =
   | 'auditor'
   | 'task_graph';
 
+// ---------------------------------------------------------------------------
+// Live workspace / sandbox state (snapshot + delta)
+// ---------------------------------------------------------------------------
+//
+// The authoritative view of *mutable session state that follows sandbox HEAD*
+// — active branch, HEAD, dirty working tree, tracking position, and the
+// guards (Protect Main, sandbox readiness) that gate delivery. Both surfaces
+// reconstruct this today from `BranchSwitchPayload` moments plus ad hoc HEAD
+// polling; these events make it a single diffable timeline instead.
+//
+// This is deliberately NOT the same vocabulary as `session_state_changed`,
+// which carries *settings / session config* (provider, model, role routing).
+// The split is load-bearing: config state and live workspace state change on
+// different clocks and have different consumers. Keep them separate — see
+// `docs/decisions/Workspace State Events — Snapshot + Delta.md`.
+
+export type WorkspaceDirtyStatus =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'untracked'
+  | 'conflicted';
+
+export interface WorkspaceDirtyFile {
+  path: string;
+  status: WorkspaceDirtyStatus;
+}
+
+export interface WorkspaceState {
+  activeBranch: string;
+  headSha: string;
+  /** Tracking position vs upstream; omitted when there is no upstream. */
+  ahead?: number;
+  behind?: number;
+  /** Uncommitted working-tree entries. */
+  dirtyFiles: WorkspaceDirtyFile[];
+  protectMain: boolean;
+  sandboxReady: boolean;
+}
+
+/**
+ * Closed op-set for `workspace.state_delta`. No JSON Pointer — every op names
+ * a known field of `WorkspaceState`, so the wire is fully strict-validatable
+ * (unlike raw RFC-6902). Ops apply in array order. `dirty_add` upserts by
+ * `path`; `dirty_clear` empties the list (e.g. after a commit).
+ */
+export type WorkspaceStateDeltaOp =
+  | { op: 'set_branch'; activeBranch: string; headSha: string }
+  | { op: 'set_head'; headSha: string }
+  | { op: 'set_tracking'; ahead?: number; behind?: number }
+  | { op: 'dirty_add'; file: WorkspaceDirtyFile }
+  | { op: 'dirty_remove'; path: string }
+  | { op: 'dirty_clear' }
+  | { op: 'set_protect_main'; protectMain: boolean }
+  | { op: 'set_sandbox_ready'; sandboxReady: boolean };
+
 export type RunEventInput =
   | {
       // Pre-loop routing decision emitted for route decisions we need to bake
@@ -543,6 +600,31 @@ export type RunEventInput =
       round: number;
       preview: string;
       replacedPending: boolean;
+    }
+  | {
+      // Full authoritative snapshot of live workspace state. Emitted on
+      // sandbox (re)start, on chat resume/reconnect, and as the resync anchor
+      // after a delta gap. `rev` is monotonic *within a `workspaceId`* — a new
+      // `workspaceId` (sandbox restart, different repo) starts a fresh timeline
+      // at rev 0. Snapshots are always ground truth: a consumer adopts them
+      // unconditionally.
+      type: 'workspace.state_snapshot';
+      workspaceId: string;
+      rev: number;
+      state: WorkspaceState;
+    }
+  | {
+      // Patch against the snapshot at (`workspaceId`, `baseRev`). `rev` =
+      // `baseRev + 1`. A delta applies ONLY when both the consumer's current
+      // `workspaceId` matches AND its last-applied rev === `baseRev`; on any
+      // mismatch the consumer drops the delta and waits for the next snapshot.
+      // Deltas are a disposable bandwidth optimization for the hot path
+      // (dirty-file churn during editing), never the source of truth.
+      type: 'workspace.state_delta';
+      workspaceId: string;
+      rev: number;
+      baseRev: number;
+      ops: WorkspaceStateDeltaOp[];
     };
 
 export type RunEvent = RunEventInput & {

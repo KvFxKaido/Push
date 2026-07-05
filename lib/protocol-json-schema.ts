@@ -49,6 +49,8 @@ import {
   TURN_ROUTE_REASONS,
   TURN_ROUTES,
   TURN_SUPPRESSED_ROUTES,
+  WORKSPACE_DELTA_OPS,
+  WORKSPACE_DIRTY_STATUSES,
 } from './protocol-schema.ts';
 import { EDIT_DIFF_LINE_KINDS } from './edit-diff.ts';
 
@@ -440,6 +442,57 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     preview: str(),
     replacedPending: bool(),
   }),
+
+  // Live workspace state. `state` mirrors `WorkspaceState` (validateWorkspaceState);
+  // `ahead`/`behind` are optional tracking counts.
+  WorkspaceStateSnapshot: objectNode(['workspaceId', 'rev', 'state'], {
+    workspaceId: nestr(),
+    rev: uint(),
+    state: objectNode(['activeBranch', 'headSha', 'dirtyFiles', 'protectMain', 'sandboxReady'], {
+      activeBranch: nestr(),
+      headSha: nestr(),
+      ahead: uint(),
+      behind: uint(),
+      dirtyFiles: {
+        type: 'array',
+        items: objectNode(['path', 'status'], {
+          path: nestr(),
+          status: enumOf(WORKSPACE_DIRTY_STATUSES),
+        }),
+      },
+      protectMain: bool(),
+      sandboxReady: bool(),
+    }),
+  }),
+
+  // The delta's `ops` is a closed op-set. This is a coarse description — each op
+  // carries `op` plus op-specific fields validated at runtime by
+  // validateWorkspaceStateDeltaOp. The `op` enum leads with the field-free
+  // `dirty_clear` so the required-field agreement test's minimal sample
+  // (`{ op: <first> }`) is a valid op without op-specific fields; membership,
+  // not order, is the contract (the runtime constant stays in logical order).
+  WorkspaceStateDelta: objectNode(['workspaceId', 'rev', 'baseRev', 'ops'], {
+    workspaceId: nestr(),
+    rev: uint(),
+    baseRev: uint(),
+    ops: {
+      type: 'array',
+      items: objectNode(['op'], {
+        op: enumOf(['dirty_clear', ...WORKSPACE_DELTA_OPS.filter((o) => o !== 'dirty_clear')]),
+        activeBranch: nestr(),
+        headSha: nestr(),
+        ahead: uint(),
+        behind: uint(),
+        file: objectNode(['path', 'status'], {
+          path: nestr(),
+          status: enumOf(WORKSPACE_DIRTY_STATUSES),
+        }),
+        path: nestr(),
+        protectMain: bool(),
+        sandboxReady: bool(),
+      }),
+    },
+  }),
 };
 
 /**
@@ -493,6 +546,8 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'job.failed': 'JobFailed',
   'user.follow_up_queued': 'UserFollowUpQueued',
   'user.follow_up_steered': 'UserFollowUpSteered',
+  'workspace.state_snapshot': 'WorkspaceStateSnapshot',
+  'workspace.state_delta': 'WorkspaceStateDelta',
 };
 
 // ---------------------------------------------------------------------------
