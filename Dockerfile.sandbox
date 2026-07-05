@@ -9,7 +9,7 @@
 # Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip, procps,
 # ca-certificates, matplotlib, numpy, pandas, ipython.
 
-FROM docker.io/cloudflare/sandbox:0.12.1-python
+FROM docker.io/cloudflare/sandbox:0.12.3-python
 ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
 ARG PUSH_SANDBOX_PNPM_VERSION=11.9.0
 ARG PUSH_SANDBOX_YARN_VERSION=4.17.0
