@@ -81,6 +81,12 @@ import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import type { RunOptions, RunResult } from './engine.js';
 import type { NativeToolCall } from '../lib/provider-contract.js';
+import { DEFAULT_MAX_ROUNDS, MAX_ALLOWED_ROUNDS } from './engine.js';
+import { computeAdaptation, resetAdaptationState } from './harness-adaptation.js';
+import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metrics.js';
+import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
+import { resetContextMetrics } from './context-metrics.js';
+import { writeTargetOf } from '../lib/loop-detection.ts';
 
 // ─── CLI call shapes ─────────────────────────────────────────────
 
@@ -599,6 +605,13 @@ export async function runLeadKernelTurn(
       // stamp it on `tool.execution_complete` for transcript rendering.
       const metaDiff = (result?.meta as Record<string, unknown> | null | undefined)?.editDiff;
       const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
+      // Adaptive-harness signal: a file-mutation call feeds editErrorRate
+      // (shrink Rule 2). Classified via the shared `writeTargetOf` oracle so it
+      // matches the kernel's own file-mutation detection. `stale` is
+      // diagnostic-only on the CLI (no rule reads it), so we track error.
+      if (writeTargetOf(rawCall.args)) {
+        recordWriteFile(state.sessionId, { error: result?.ok !== true, stale: false });
+      }
       if (result && result.ok === true) {
         return { kind: 'executed', resultText, ...(editDiff ? { editDiff } : {}) };
       }
@@ -646,10 +659,26 @@ export async function runLeadKernelTurn(
     },
     onRunEvent: (event) => {
       const { type, ...payload } = event as { type: string } & Record<string, unknown>;
+      // Adaptive-harness signal: malformed tool calls feed the shrink rule
+      // (Rule 1). Recorded here off the existing event stream so no extra
+      // kernel callback is needed.
+      if (type === 'tool.call_malformed') {
+        recordMalformedToolCall(payload.reason, state.sessionId);
+      }
       void persistEvent(type, payload);
       dispatchEvent(type, payload);
     },
   };
+
+  // Adaptive harness: each user turn gets a fresh round budget. Reset the
+  // per-session signal counters + one-shot adaptation state so a rough prior
+  // turn doesn't cap this one (they're session-scoped and otherwise accumulate
+  // across turns). Signals re-accrue within this turn; `adaptMaxRounds` reads
+  // them per round.
+  resetToolCallMetrics(state.sessionId);
+  resetWriteFileMetrics(state.sessionId);
+  resetContextMetrics(state.sessionId);
+  resetAdaptationState(state.sessionId);
 
   try {
     const result = await runCoderAgent<CliKernelCall, unknown>(
@@ -678,6 +707,21 @@ export async function runLeadKernelTurn(
         approvalModeBlock: null,
         evaluateAfterModel: async () => null,
         harnessMaxRounds: maxRounds,
+        // Adaptive harness: re-derive the effective cap each round from
+        // in-session health signals (malformed calls, edit errors) — grow on
+        // healthy progress toward MAX_ALLOWED_ROUNDS, shrink on flailing.
+        // Gated to the DEFAULT budget: an explicit `--max-rounds` is a
+        // deliberate cap and is honored exactly (no grow, no shrink) — without
+        // this, `--max-rounds 1` would balloon to 16 the moment round 0 lands
+        // within the growth trigger margin. See cli/harness-adaptation.ts.
+        adaptMaxRounds:
+          maxRounds === DEFAULT_MAX_ROUNDS
+            ? ({ round, currentMaxRounds }) =>
+                computeAdaptation(state.sessionId, currentMaxRounds, {
+                  currentRound: round,
+                  maxAllowedRounds: MAX_ALLOWED_ROUNDS,
+                }).adjustedMaxRounds
+            : undefined,
         // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
         // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
         // resolving from env here folds in both the operator override and the
