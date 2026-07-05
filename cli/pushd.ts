@@ -1863,6 +1863,12 @@ async function handleSendUserMessage(req, emitEvent) {
     try {
       await runAssistantTurn(state, providerConfig, apiKey, text, DEFAULT_MAX_ROUNDS, {
         runId,
+        // Daemon turns run at a fixed DEFAULT_MAX_ROUNDS: the client's
+        // `--max-rounds` isn't carried through `send_user_message`, so disable
+        // the adaptive harness here rather than silently grow a cap the user
+        // can't control. Threading the real cap (+ adaptation) through the
+        // daemon protocol is a follow-up.
+        explicitMaxRounds: true,
         signal: abortController.signal,
         approvalFn,
         emit: (event) => {
@@ -7948,6 +7954,9 @@ async function recoverInterruptedRuns() {
           DEFAULT_MAX_ROUNDS,
           {
             runId: recoveryRunId,
+            // Fixed cap on daemon turns — see handleSendUserMessage; adaptation
+            // stays off until the client cap is threaded through the daemon.
+            explicitMaxRounds: true,
             approvalFn,
             signal: abortController.signal,
             emit: (event) => {
