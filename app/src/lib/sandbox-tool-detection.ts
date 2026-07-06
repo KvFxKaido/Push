@@ -57,6 +57,16 @@ export interface SandboxExecutionOptions {
    */
   localDaemonBinding?: import('@/lib/local-daemon-sandbox-client').ToolDispatchBinding;
   /**
+   * Durable scope (`repoFullName` + `branch`) of the active session, used on the
+   * native (APK) shell to resolve the on-device working copy. When it resolves to
+   * a ready clone (native platform + working-copy flag on), the dispatcher routes
+   * file ops (`sandbox_read_file` / `_write_file` / `_list_dir`) through the local
+   * clone instead of the cloud sandbox, and refuses non-git `sandbox_exec` (no
+   * shell on device). Absent / unresolved ⇒ cloud sandbox (existing behaviour).
+   * See `native-fs.ts#resolveNativeFs`.
+   */
+  nativeFsScope?: { repoFullName: string; branch: string };
+  /**
    * AbortSignal observed by daemon-routed tools that support mid-run
    * cancellation (today: `sandbox_exec`). When the signal fires while
    * the daemon child is running, the client sends a `cancel_run` over

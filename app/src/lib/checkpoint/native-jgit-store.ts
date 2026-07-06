@@ -27,6 +27,7 @@ import { invalidateWorkspaceSnapshots } from '../sandbox-edit-ops';
 import { isInvalidGitRef } from '../git-ref-validation';
 import { NativeGit } from '../native-git/plugin';
 import type { NativeGitPlugin } from '../native-git/definitions';
+import { laneSegment } from '../native-git/lane-key';
 import type {
   CheckpointCaptureInput,
   CheckpointCaptureResult,
@@ -218,31 +219,6 @@ function parseDeltaCapture(
     if (/^[0-9a-f]{40}$/.test(sha) && path) manifest[path] = sha;
   }
   return { bytes: Number(ok[1]), deleted, manifest };
-}
-
-/** Cosmetic, path-safe prefix for the on-device dir (NOT the uniqueness key). */
-function sanitizeSegment(value: string): string {
-  return value.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_') || '_';
-}
-
-/**
- * FNV-1a 32-bit hex of the EXACT value — the collision-free part of the lane key.
- * Sanitizing alone is lossy (`feat/x`, `feat:x`, `feat_x` all sanitize to
- * `feat_x`), which would point distinct branches at the same on-device repo and
- * restore the wrong work (Codex P1). The hash disambiguates; the sanitized prefix
- * is just for human-readable dirs.
- */
-function laneHash(value: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < value.length; i++) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, '0');
-}
-
-function laneSegment(value: string): string {
-  return `${sanitizeSegment(value)}-${laneHash(value)}`;
 }
 
 /** App-private on-device checkpoint repo dir for a lane (relative; resolved under filesDir). */

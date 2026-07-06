@@ -5,8 +5,20 @@ import type { WorkspaceStateEvent } from '@push/lib/workspace-state';
 const gitSession = vi.hoisted(() => ({
   getActiveGitBackend: vi.fn(),
 }));
+const nativeWorkingCopy = vi.hoisted(() => ({
+  ensureWorkingCopy: vi.fn<
+    (scope: unknown, opts: unknown) => Promise<{ status: string; dir: string }>
+  >(async () => ({ status: 'ready', dir: '/clone' })),
+  forgetWorkingCopy: vi.fn<(scope: unknown) => boolean>(() => true),
+}));
+const platform = vi.hoisted(() => ({ isNativePlatform: vi.fn(() => false) }));
+const featureFlags = vi.hoisted(() => ({ isNativeWorkingCopyEnabled: vi.fn(() => false) }));
 
 vi.mock('@/lib/git-session', () => gitSession);
+vi.mock('@/lib/native-working-copy', () => nativeWorkingCopy);
+vi.mock('@/lib/platform', () => platform);
+vi.mock('@/lib/feature-flags', () => featureFlags);
+vi.mock('@/lib/github-auth', () => ({ getActiveGitHubToken: vi.fn(() => 'tok') }));
 vi.mock('@/lib/sandbox-client', () => ({
   downloadFromSandbox: vi.fn(),
 }));
@@ -137,6 +149,10 @@ beforeEach(() => {
   reactState.stateIndex = 0;
   reactState.effects = [];
   gitSession.getActiveGitBackend.mockReset();
+  nativeWorkingCopy.ensureWorkingCopy.mockClear();
+  nativeWorkingCopy.forgetWorkingCopy.mockClear();
+  platform.isNativePlatform.mockReturnValue(false);
+  featureFlags.isNativeWorkingCopyEnabled.mockReturnValue(false);
 });
 
 describe('useWorkspaceSandboxController branch teardown guard', () => {
@@ -209,6 +225,45 @@ describe('useWorkspaceSandboxController branch teardown guard', () => {
 
     expect(stopSandbox).not.toHaveBeenCalled();
     expect(skipRef.current).toBe(false);
+  });
+});
+
+describe('useWorkspaceSandboxController native working-copy trigger', () => {
+  const noop = vi.fn(async () => {});
+  const skip = () => ({ current: false });
+
+  it('does not clone on web (non-native)', () => {
+    platform.isNativePlatform.mockReturnValue(false);
+    featureFlags.isNativeWorkingCopyEnabled.mockReturnValue(true);
+    renderController('main', noop, skip());
+    expect(nativeWorkingCopy.ensureWorkingCopy).not.toHaveBeenCalled();
+  });
+
+  it('does not clone on native when the flag is off', () => {
+    platform.isNativePlatform.mockReturnValue(true);
+    featureFlags.isNativeWorkingCopyEnabled.mockReturnValue(false);
+    renderController('main', noop, skip());
+    expect(nativeWorkingCopy.ensureWorkingCopy).not.toHaveBeenCalled();
+  });
+
+  it('clones the durable scope on native with the flag on', () => {
+    platform.isNativePlatform.mockReturnValue(true);
+    featureFlags.isNativeWorkingCopyEnabled.mockReturnValue(true);
+    renderController('feature/x', noop, skip());
+    expect(nativeWorkingCopy.ensureWorkingCopy).toHaveBeenCalledWith(
+      { repoFullName: 'owner/Push', branch: 'feature/x' },
+      expect.objectContaining({ getToken: expect.any(Function) }),
+    );
+  });
+
+  it('injects the active GitHub token into the clone', () => {
+    platform.isNativePlatform.mockReturnValue(true);
+    featureFlags.isNativeWorkingCopyEnabled.mockReturnValue(true);
+    renderController('main', noop, skip());
+    const opts = nativeWorkingCopy.ensureWorkingCopy.mock.calls[0][1] as unknown as {
+      getToken: () => string | undefined;
+    };
+    expect(opts.getToken()).toBe('tok');
   });
 });
 

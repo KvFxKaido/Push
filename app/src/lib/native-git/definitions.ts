@@ -89,6 +89,45 @@ export interface NativeGitPlugin {
     token?: string;
   }): Promise<NativeGitWriteResult>;
 
+  // -- Working-copy filesystem ops -------------------------------------------
+  // Read/write/list files inside a session working copy (the on-device clone).
+  // Plain file I/O (java.io.File), NOT git — the session's non-git tools
+  // (`sandbox_read_file` / `_write_file` / `_list_dir`) route here on native
+  // instead of the cloud sandbox HTTP API. Every op is scoped to `dir` (the
+  // clone root); `path` is relative to it. Result shapes mirror the local-daemon
+  // FS helpers so the dispatcher formats native and daemon results identically.
+
+  /**
+   * Read `path` (relative to `dir`), optionally a 1-based inclusive line window.
+   * `content` is '' on error; `code` carries the errno-style reason (`ENOENT`,
+   * `EACCES`) so the caller can classify (e.g. → `FILE_NOT_FOUND`).
+   */
+  readFile(options: { dir: string; path: string; startLine?: number; endLine?: number }): Promise<{
+    content: string;
+    truncated: boolean;
+    totalLines?: number;
+    error?: string;
+    code?: string;
+  }>;
+
+  /** Write `content` to `path` (relative to `dir`), creating parent dirs. */
+  writeFile(options: {
+    dir: string;
+    path: string;
+    content: string;
+  }): Promise<{ ok: boolean; bytesWritten?: number; error?: string }>;
+
+  /** List a directory (relative to `dir`; omit `path` for the clone root). */
+  listDir(options: { dir: string; path?: string }): Promise<{
+    entries: Array<{
+      name: string;
+      type: 'file' | 'directory' | 'symlink' | 'other';
+      size?: number;
+    }>;
+    truncated: boolean;
+    error?: string;
+  }>;
+
   // -- Checkpoint operations (CheckpointStore native backend) ----------------
   // These operate on an app-private backup repo (auto-`git init`-ed on first
   // use), separate from any session working copy. See

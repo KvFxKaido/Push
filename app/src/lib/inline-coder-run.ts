@@ -94,6 +94,7 @@ import {
   getSandboxToolProtocol,
   type SandboxToolCall,
 } from './sandbox-tools';
+import { nativeFsScopeFrom } from './native-fs';
 import {
   detectWebSearchToolCall,
   executeWebSearch,
@@ -924,6 +925,12 @@ export async function runInPageCoderKernel(
         // `git push` via sandbox_exec+allowDirectGit is a separate path gated by
         // the git-guard, not this boundary gate.
         isMainProtected: spec.branchContext?.protectMain ?? false,
+        // Native (APK) file-op routing: on-device clone scope. Resolves to the
+        // local working copy on native (flag on); no-op / cloud everywhere else.
+        nativeFsScope: nativeFsScopeFrom(
+          spec.memoryScope?.repoFullName,
+          spec.branchContext?.activeBranch || spec.branchContext?.defaultBranch,
+        ),
       });
       if (call.tool === 'sandbox_exec' && result.branch) {
         callbacks.onSandboxExecBranch?.({ command: call.args.command, branch: result.branch });

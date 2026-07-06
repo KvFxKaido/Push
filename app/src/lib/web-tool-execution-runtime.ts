@@ -30,6 +30,7 @@ import type { ApprovalGateRegistry } from './approval-gates';
 import { executeToolCall } from './github-tools';
 import { mapSandboxReadToGitHubCall } from './sandbox-read-github-fallback';
 import { executeSandboxToolCall } from './sandbox-tools';
+import { nativeFsScopeFrom } from './native-fs';
 import { executeWebSearch } from './web-search-tools';
 import { executeArtifactToolCall } from './artifact-tools';
 import { runMemoryGrep, runMemoryExpand } from '@push/lib/memory-tool-exec';
@@ -511,6 +512,12 @@ export class WebToolExecutionRuntime
             defaultBranch: context.defaultBranch,
             isMainProtected: context.isMainProtected,
             localDaemonBinding,
+            // Native (APK) file-op routing: on-device clone scope (cloud/no-op
+            // off native or flag-off). `allowedRepo` is the session repo.
+            nativeFsScope: nativeFsScopeFrom(
+              context.allowedRepo,
+              context.currentBranch || context.defaultBranch,
+            ),
             abortSignal: context.abortSignal,
             onExecProgress: context.onExecProgress,
             memoryScope: {

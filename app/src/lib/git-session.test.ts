@@ -64,7 +64,7 @@ describe('resolveActiveGitBinding platform selection', () => {
 
   it('returns a sandbox binding on native when no working copy is registered (dormant arm)', () => {
     const binding = resolveActiveGitBinding(
-      { sandboxId: 'sb_9' },
+      { sandboxId: 'sb_9', repoFullName: 'owner/repo', branch: 'main' },
       { isNative: () => true, nativeWorkingCopyDir: () => undefined },
     );
     expect(binding).toEqual({ kind: 'sandbox', sandboxId: 'sb_9' });
@@ -72,10 +72,38 @@ describe('resolveActiveGitBinding platform selection', () => {
 
   it('returns a native binding on native once a working copy is registered', () => {
     const binding = resolveActiveGitBinding(
-      { sandboxId: 'sb_9' },
+      { sandboxId: 'sb_9', repoFullName: 'owner/repo', branch: 'main' },
       { isNative: () => true, nativeWorkingCopyDir: () => '/data/owner-repo' },
     );
     expect(binding).toEqual({ kind: 'native', dir: '/data/owner-repo' });
+  });
+
+  it('keys the working-copy lookup on the durable scope (repoFullName + branch)', () => {
+    const lookup = vi.fn((s: { repoFullName?: string; branch?: string }) =>
+      `/data/${s.repoFullName}@${s.branch}`.replace(/\//g, '-'),
+    );
+    const binding = resolveActiveGitBinding(
+      { sandboxId: 'sb_9', repoFullName: 'owner/repo', branch: 'feat/x' },
+      { isNative: () => true, nativeWorkingCopyDir: lookup },
+    );
+    expect(lookup).toHaveBeenCalledWith(
+      expect.objectContaining({ repoFullName: 'owner/repo', branch: 'feat/x' }),
+    );
+    expect(binding).toEqual({ kind: 'native', dir: '-data-owner-repo@feat-x' });
+  });
+
+  it('falls through to sandbox (never calls the lookup) when a native ref omits the scope', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lookup = vi.fn(() => '/should-not-be-used');
+    const binding = resolveActiveGitBinding(
+      { sandboxId: 'sb_9' },
+      { isNative: () => true, nativeWorkingCopyDir: lookup },
+    );
+    expect(binding).toEqual({ kind: 'sandbox', sandboxId: 'sb_9' });
+    expect(lookup).not.toHaveBeenCalled();
+    // The unscoped-native fall-through is a defect, not a transient — it logs.
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('native_git_binding_unscoped'));
+    warn.mockRestore();
   });
 
   it('defaults to the real platform probe (sandbox under the test/jsdom runtime)', () => {
@@ -87,7 +115,7 @@ describe('resolveActiveGitBinding platform selection', () => {
 describe('getActiveGitBackend end-to-end', () => {
   it('resolves binding then dispatches in one call', () => {
     getActiveGitBackend(
-      { sandboxId: 'sb_e2e' },
+      { sandboxId: 'sb_e2e', repoFullName: 'owner/repo', branch: 'main' },
       { isNative: () => true, nativeWorkingCopyDir: () => '/clone' },
     );
     const opts = (createNativeGitBackend as ReturnType<typeof vi.fn>).mock.calls[0][0];

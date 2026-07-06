@@ -612,6 +612,45 @@ describe('WebToolExecutionRuntime — local-daemon binding propagation', () => {
     expect(sandboxIdArg).toBe('');
   });
 
+  it('forwards nativeFsScope (repo + branch) into executeSandboxToolCall options', async () => {
+    await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_read_file', args: { path: '/workspace/a.ts' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb_1',
+        role: 'coder',
+        isMainProtected: false,
+        currentBranch: 'feature/x',
+        defaultBranch: 'main',
+      },
+    );
+
+    expect(vi.mocked(sandboxTools.executeSandboxToolCall)).toHaveBeenCalledTimes(1);
+    const [, , options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
+    expect(options?.nativeFsScope).toEqual({ repoFullName: 'owner/repo', branch: 'feature/x' });
+  });
+
+  it('omits nativeFsScope when the branch is unknown (cannot key the registry)', async () => {
+    await runtime.execute(
+      {
+        source: 'sandbox',
+        call: { tool: 'sandbox_read_file', args: { path: '/workspace/a.ts' } },
+      },
+      {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb_1',
+        role: 'coder',
+        isMainProtected: false,
+      },
+    );
+
+    const [, , options] = vi.mocked(sandboxTools.executeSandboxToolCall).mock.calls[0];
+    expect(options?.nativeFsScope).toBeUndefined();
+  });
+
   it('does NOT short-circuit on missing sandboxId when a binding is present', async () => {
     // Daemon-bound records carry `sandboxId: null` by construction — the
     // binding is the transport. This pins the runtime-layer guard (mirrors the
