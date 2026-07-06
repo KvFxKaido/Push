@@ -49,15 +49,29 @@ export interface NativeFsListResult {
 
 /**
  * Map a tool path onto a path relative to the clone root. Strips the cloud
- * `/workspace` root convention and any leading slash, so both `/workspace/src/a`
- * and `src/a` resolve under the clone — and an absolute-looking path can't escape
- * it. The clone root itself (`/workspace` or `''`) maps to `''`.
+ * `/workspace` root convention and any leading slash, then resolves `.`/`..`
+ * segments **clamped at the root** so an absolute-looking or traversing path can
+ * never escape the working copy (`/workspace/../etc/passwd` → `etc/passwd`, not
+ * `../etc/passwd`). The clone root itself (`/workspace` or `''`) maps to `''`.
+ *
+ * This is the TS-layer half of the boundary; the native `resolveWorktreeFile`
+ * still canonical-path-checks against the clone dir as defense in depth.
  */
 export function toWorktreeRelative(path: string | undefined): string {
   if (!path) return '';
   const trimmed = path.trim();
   if (trimmed === '/workspace' || trimmed === '/workspace/') return '';
-  return trimmed.replace(/^\/workspace\//, '').replace(/^\/+/, '');
+  const stripped = trimmed.replace(/^\/workspace\//, '').replace(/^\/+/, '');
+  const out: string[] = [];
+  for (const seg of stripped.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg === '..') {
+      out.pop(); // clamp: `..` above the root is a no-op, never escapes
+      continue;
+    }
+    out.push(seg);
+  }
+  return out.join('/');
 }
 
 /** File I/O over one on-device clone at `dir`. Constructed by {@link resolveNativeFs}. */

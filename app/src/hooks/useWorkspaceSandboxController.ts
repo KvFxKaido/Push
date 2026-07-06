@@ -5,7 +5,7 @@ import { downloadFromSandbox } from '@/lib/sandbox-client';
 import { getActiveGitBackend } from '@/lib/git-session';
 import { isNativePlatform } from '@/lib/platform';
 import { isNativeWorkingCopyEnabled } from '@/lib/feature-flags';
-import { ensureWorkingCopy, forgetWorkingCopy } from '@/lib/native-working-copy';
+import { ensureWorkingCopy } from '@/lib/native-working-copy';
 import { getActiveGitHubToken } from '@/lib/github-auth';
 import type { GitStatusInfo } from '@push/lib/git/status';
 import {
@@ -451,15 +451,14 @@ export function useWorkspaceSandboxController({
     // re-attach. So tear the container down here rather than waiting on the
     // sleepAfter reclaim (Codex P2 on #1001).
     void stopSandbox();
-    // Symmetric native teardown: drop the working-copy registry entry so the
-    // seam falls back to sandbox on re-attach. Bytes stay on disk (warm
-    // re-attach), matching the container's persist posture above. No flag guard
-    // — `forgetWorkingCopy` is a no-op when nothing was registered.
-    if (isNativePlatform() && !isScratch && repoFullName && repoBranch) {
-      forgetWorkingCopy({ repoFullName, branch: repoBranch });
-    }
+    // NOTE: the native working copy is deliberately NOT forgotten here. The
+    // registry is process-lifetime and the clone bytes stay on disk, so keeping
+    // the `ready` entry is what makes a re-attach warm — `ensureWorkingCopy`
+    // returns the reused clone instead of re-cloning into a non-empty dir (JGit
+    // would fail that and fall through to sandbox). Purging the on-disk clone
+    // needs a native delete + a disk-discovery/open path; tracked in #1352.
     onDisconnect();
-  }, [abortStream, isStreaming, onDisconnect, stopSandbox, isScratch, repoFullName, repoBranch]);
+  }, [abortStream, isStreaming, onDisconnect, stopSandbox]);
 
   // Deliberately NO destroy on unmount. Leaving the workspace view (Home,
   // Settings, another chat, PWA backgrounding) used to destroy the container,

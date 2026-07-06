@@ -26,6 +26,17 @@ describe('toWorktreeRelative', () => {
     expect(toWorktreeRelative('/etc/passwd')).toBe('etc/passwd');
     expect(toWorktreeRelative('///a')).toBe('a');
   });
+  it('neutralizes `..` traversal, clamped at the clone root', () => {
+    expect(toWorktreeRelative('/workspace/../etc/passwd')).toBe('etc/passwd');
+    expect(toWorktreeRelative('../../secret')).toBe('secret');
+    expect(toWorktreeRelative('src/../../../etc/passwd')).toBe('etc/passwd');
+    expect(toWorktreeRelative('a/b/../c')).toBe('a/c');
+    expect(toWorktreeRelative('/workspace/..')).toBe('');
+  });
+  it('drops redundant `.` and empty segments', () => {
+    expect(toWorktreeRelative('./src/./a.ts')).toBe('src/a.ts');
+    expect(toWorktreeRelative('src//a.ts')).toBe('src/a.ts');
+  });
 });
 
 function fakePlugin(): NativeGitPlugin {
