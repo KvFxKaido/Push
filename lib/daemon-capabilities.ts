@@ -117,17 +117,23 @@ export function isDaemonCapability(value: unknown): value is DaemonCapability {
 
 /**
  * Capabilities the full-screen TUI client advertises back to the daemon. It
- * consumes raw v2 events (`event_v2`) and the reconnect status packet
- * (`session_snapshot_v1`). Typed against {@link DaemonCapability} so an entry
+ * consumes raw v2 events (`event_v2`), the reconnect status packet
+ * (`session_snapshot_v1`), and the live workspace-state timeline
+ * (`workspace_state_v1`). Typed against {@link DaemonCapability} so an entry
  * the daemon doesn't advertise fails typecheck.
  */
 export const TUI_DAEMON_CAPABILITIES = Object.freeze([
   'event_v2',
   'session_snapshot_v1',
+  'workspace_state_v1',
 ] satisfies DaemonCapability[]);
 
 /**
  * Capabilities the headless attach client (`push attach` / CLI engine path)
- * advertises. It opts into raw v2 events only.
+ * advertises. It opts into raw v2 events plus the live workspace-state
+ * timeline so attached clients can render ambient workspace changes.
  */
-export const ATTACH_CLIENT_CAPABILITIES = Object.freeze(['event_v2'] satisfies DaemonCapability[]);
+export const ATTACH_CLIENT_CAPABILITIES = Object.freeze([
+  'event_v2',
+  'workspace_state_v1',
+] satisfies DaemonCapability[]);

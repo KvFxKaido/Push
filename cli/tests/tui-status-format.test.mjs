@@ -9,7 +9,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { formatElapsed, formatTokenCount } from '../tui-status.ts';
+import {
+  formatElapsed,
+  formatTokenCount,
+  formatWorkspaceStateView,
+  renderStatusBar,
+} from '../tui-status.ts';
+import { createTheme } from '../tui-theme.ts';
 
 describe('formatElapsed', () => {
   it('renders sub-second as 0s', () => {
@@ -58,5 +64,99 @@ describe('formatTokenCount', () => {
     assert.equal(formatTokenCount(10_000), '10k');
     assert.equal(formatTokenCount(17_900), '18k');
     assert.equal(formatTokenCount(100_000), '100k');
+  });
+});
+
+describe('formatWorkspaceStateView', () => {
+  it('renders branch, dirty count, tracking, and runtime guards', () => {
+    assert.equal(
+      formatWorkspaceStateView(
+        {
+          workspaceId: 'sess_ws',
+          rev: 3,
+          state: {
+            activeBranch: 'feature/workspace',
+            headSha: 'abc1234',
+            ahead: 2,
+            behind: 1,
+            dirtyFiles: [
+              { path: 'a.ts', status: 'modified' },
+              { path: 'b.ts', status: 'untracked' },
+            ],
+            protectMain: true,
+            sandboxReady: true,
+          },
+        },
+        80,
+      ),
+      'feature/workspace +2 ↑2 ↓1 protect-main sandbox-ready',
+    );
+  });
+
+  it('renders clean state and disabled guards explicitly', () => {
+    assert.equal(
+      formatWorkspaceStateView(
+        {
+          workspaceId: 'sess_ws',
+          rev: 0,
+          state: {
+            activeBranch: 'main',
+            headSha: 'abc1234',
+            dirtyFiles: [],
+            protectMain: false,
+            sandboxReady: false,
+          },
+        },
+        80,
+      ),
+      'main clean no-protect-main sandbox-wait',
+    );
+  });
+});
+
+describe('renderStatusBar', () => {
+  it('prefers fresh git status fields while appending daemon-only guards', () => {
+    const writes = [];
+    const buf = {
+      writeLine(_row, _col, text) {
+        writes.push(text);
+      },
+    };
+
+    renderStatusBar(
+      buf,
+      { footer: { top: 0, left: 0, width: 140 } },
+      createTheme({ tier: 'none', unicode: false }),
+      {
+        gitStatus: {
+          branch: 'fresh',
+          dirty: 3,
+          ahead: 0,
+          behind: 0,
+        },
+        workspaceStateView: {
+          workspaceId: 'sess_ws',
+          rev: 3,
+          state: {
+            activeBranch: 'stale',
+            headSha: 'abc1234',
+            ahead: 7,
+            behind: 2,
+            dirtyFiles: [],
+            protectMain: false,
+            sandboxReady: true,
+          },
+        },
+        cwd: '/tmp/project',
+        tokens: 0,
+        messageCount: 0,
+      },
+    );
+
+    const line = writes[0];
+    assert.match(line, /git: fresh \+3 no-protect-main sandbox-ready/);
+    assert.doesNotMatch(line, /stale/);
+    assert.doesNotMatch(line, /clean/);
+    assert.doesNotMatch(line, /↑7|↓2/);
   });
 });

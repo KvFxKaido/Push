@@ -65,6 +65,7 @@ import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
+import { formatWorkspaceStateView } from './tui-status.js';
 import { appendUserMessageWithFileReferences } from './file-references.js';
 import { compactContext } from './context-manager.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
@@ -74,6 +75,7 @@ import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { getDefaultMemoryStore, setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.js';
 import { getDefaultEmbeddingProvider } from '../lib/embedding-provider.js';
+import { reduceWorkspaceStateEvent } from '../lib/workspace-state.js';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.js';
 import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-file-store.js';
 import { createFileVerbatimLog, getVerbatimLogBaseDir } from './verbatim-log-file-store.js';
@@ -334,6 +336,7 @@ async function runAcceptanceChecks(cwd, checks) {
 export function makeCLIEventHandler() {
   let isAssistantStreaming = false;
   let isReasoningStreaming = false;
+  let workspaceStateView = null;
   const spinner = new Spinner();
   const renderDelegationEvent = createDelegationTranscriptRenderer();
 
@@ -373,6 +376,25 @@ export function makeCLIEventHandler() {
     }
 
     switch (event.type) {
+      case 'workspace.state_snapshot':
+      case 'workspace.state_delta': {
+        const result = reduceWorkspaceStateEvent(workspaceStateView, {
+          type: event.type,
+          ...(event.payload || {}),
+        });
+        workspaceStateView = result.view;
+        if (
+          workspaceStateView &&
+          (result.outcome === 'snapshot_adopted' || result.outcome === 'delta_applied')
+        ) {
+          flushInlineStreams();
+          spinner.stop();
+          process.stderr.write(
+            `${fmt.dim('[workspace]')} ${formatWorkspaceStateView(workspaceStateView, 80)}\n`,
+          );
+        }
+        break;
+      }
       case 'tool_call':
       case 'tool.execution_start':
         flushInlineStreams();
@@ -3182,9 +3204,13 @@ async function runAttach(sessionId, options = {}) {
   // delegating to the renderer. A render-time exception is swallowed by
   // daemon-client's try/catch around listeners, but we still want the
   // resume point to advance so a later reconnect doesn't replay the
-  // event that tripped the renderer.
+  // event that tripped the renderer. Workspace-state events are live-only
+  // and reuse the durable stream's current seq, so they must not move this
+  // cursor.
   const observingHandler = (event) => {
-    if (typeof event.seq === 'number' && event.seq > lastSeenSeq) {
+    const isWorkspaceStateEvent =
+      event.type === 'workspace.state_snapshot' || event.type === 'workspace.state_delta';
+    if (!isWorkspaceStateEvent && typeof event.seq === 'number' && event.seq > lastSeenSeq) {
       lastSeenSeq = event.seq;
       seqWriter.schedule(lastSeenSeq);
     }

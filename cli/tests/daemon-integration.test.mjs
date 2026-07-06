@@ -9,6 +9,8 @@ import './setup-test-home-isolation.mjs';
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -38,6 +40,9 @@ import {
   __setDelegateExplorerHooksForTesting,
   handleGetSessionMessages,
   resolveOrMintTargetAttachToken,
+  __emitWorkspaceStateForTesting,
+  __handleConnectionForTesting,
+  __setLifecycleExitForTesting,
 } from '../pushd.ts';
 import {
   PROTOCOL_VERSION,
@@ -59,6 +64,7 @@ import {
   TUI_DAEMON_CAPABILITIES,
   ATTACH_CLIENT_CAPABILITIES,
   EVENT_V2,
+  WORKSPACE_STATE_V1,
   isDaemonCapability,
 } from '../../lib/daemon-capabilities.ts';
 import { getToolSpec } from '../../lib/tool-registry.ts';
@@ -70,6 +76,7 @@ const loopbackAvailable = await canListenOnLoopback();
 const needsLoopback = {
   skip: !loopbackAvailable && 'loopback HTTP listeners are unavailable in this sandbox',
 };
+const execFileAsync = promisify(execFile);
 
 // Enable protocol strict mode for every test in this file via
 // `before`/`after` hooks rather than a raw module-scope assignment.
@@ -252,6 +259,29 @@ function connectClient(socketPath) {
     });
     socket.on('error', reject);
   });
+}
+
+async function receiveMatching(client, predicate, { timeoutMs = 3000, message = 'message' } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    const msg = await client.receive(Math.min(remaining, 250)).catch(() => null);
+    if (!msg) continue;
+    if (predicate(msg)) return msg;
+  }
+  throw new Error(`timeout waiting for ${message}`);
+}
+
+async function createWorkspaceStateGitRepo(prefix = 'push-ws-repo-') {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  try {
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+  } catch {
+    await execFileAsync('git', ['init'], { cwd: root });
+    await execFileAsync('git', ['checkout', '-b', 'main'], { cwd: root });
+  }
+  await fs.writeFile(path.join(root, 'README.md'), 'hello\n');
+  return root;
 }
 
 // ─── Path helpers (existing tests preserved) ──────────────────────
@@ -6406,6 +6436,124 @@ describe('attach_session resume from lastSeenSeq', () => {
     }
   });
 
+  it('sends the opening workspace snapshot to a capable socket start_session client', async (t) => {
+    const sockPath = makeTestSocketPath('push-ws-autoattach');
+    const availability = await canListenOnUnixSocket(sockPath);
+    if (!availability.ok) return t.skip(availability.reason);
+
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-autoattach-state-'));
+    const repoRoot = await createWorkspaceStateGitRepo('push-ws-autoattach-repo-');
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    __setLifecycleExitForTesting(() => {}, { graceMs: 60_000 });
+    const server = net.createServer(__handleConnectionForTesting);
+    let client = null;
+    try {
+      await new Promise((resolve) => server.listen(sockPath, resolve));
+      client = await connectClient(sockPath);
+      client.send(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: repoRoot },
+          capabilities: [WORKSPACE_STATE_V1],
+        }),
+      );
+
+      const response = await receiveMatching(
+        client,
+        (msg) => msg.kind === 'response' && msg.type === 'start_session',
+        { message: 'start_session response' },
+      );
+      assert.equal(response.ok, true);
+
+      const snapshot = await receiveMatching(
+        client,
+        (msg) => msg.kind === 'event' && msg.type === 'workspace.state_snapshot',
+        { message: 'opening workspace.state_snapshot' },
+      );
+      assert.equal(snapshot.sessionId, response.payload.sessionId);
+      assert.equal(snapshot.payload.workspaceId, response.payload.sessionId);
+      assert.equal(snapshot.payload.rev, 0);
+      assert.equal(typeof snapshot.payload.state.activeBranch, 'string');
+      assert.ok(snapshot.payload.state.activeBranch.length > 0);
+      assert.equal(snapshot.payload.state.dirtyFiles.length, 1);
+      assert.equal(snapshot.payload.state.sandboxReady, true);
+    } finally {
+      if (client) {
+        const socketClosed = new Promise((resolve) => client.socket.once('close', resolve));
+        client.close();
+        client.socket.destroy();
+        await socketClosed;
+      }
+      await new Promise((resolve) => server.close(resolve));
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      __setLifecycleExitForTesting(undefined, { graceMs: 8000 });
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+      await fs.rm(repoRoot, { recursive: true, force: true });
+      try {
+        if (!isNamedPipePath(sockPath)) await fs.unlink(sockPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+
+  it('keeps the producer fresh across zero-subscriber run-end deltas', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-nosub-state-'));
+    const repoRoot = await createWorkspaceStateGitRepo('push-ws-nosub-repo-');
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          repo: { rootPath: repoRoot },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+      await waitUntil(() =>
+        Boolean(__getActiveSessionForTesting(sessionId)?.workspaceStateProducer),
+      );
+      const entry = __getActiveSessionForTesting(sessionId);
+      assert.ok(entry?.workspaceStateProducer);
+
+      await fs.writeFile(path.join(repoRoot, 'second.txt'), 'new dirty file\n');
+      await __emitWorkspaceStateForTesting(sessionId, entry, 'delta');
+
+      const events = [];
+      const attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, lastSeenSeq: 0, capabilities: [WORKSPACE_STATE_V1] },
+          sessionId,
+        ),
+        (event) => events.push(event),
+      );
+      assert.equal(attach.ok, true);
+
+      const snapshot = await waitForBroadcast(
+        events,
+        (event) => event.type === 'workspace.state_snapshot',
+        { message: 'workspace-state resync snapshot' },
+      );
+      assert.equal(snapshot.payload.workspaceId, sessionId);
+      assert.equal(snapshot.payload.state.dirtyFiles.length, 2);
+      assert.deepEqual(snapshot.payload.state.dirtyFiles.map((file) => file.path).sort(), [
+        'README.md',
+        'second.txt',
+      ]);
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+      await fs.rm(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('returns an empty replay when lastSeenSeq is already at the tip', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-caught-up-'));
@@ -7308,11 +7456,23 @@ describe('daemon capability vocabulary drift (#745)', () => {
     assert.ok(isDaemonCapability(EVENT_V2));
   });
 
-  it('the TUI profile opts into the reconnect snapshot + raw v2 events', () => {
+  it('keeps the named WORKSPACE_STATE_V1 constant in sync with the vocabulary', () => {
+    assert.equal(WORKSPACE_STATE_V1, 'workspace_state_v1');
+    assert.ok(isDaemonCapability(WORKSPACE_STATE_V1));
+  });
+
+  it('the TUI profile opts into reconnect snapshots, raw v2 events, and workspace state', () => {
     // Guards the specific contract the TUI source-guard test asserts on the
     // consumer side — pinned here against the canonical profile so the two
     // can't drift apart.
-    assert.deepEqual([...TUI_DAEMON_CAPABILITIES], ['event_v2', 'session_snapshot_v1']);
+    assert.deepEqual(
+      [...TUI_DAEMON_CAPABILITIES],
+      ['event_v2', 'session_snapshot_v1', 'workspace_state_v1'],
+    );
+  });
+
+  it('the attach profile opts into raw v2 events and workspace state', () => {
+    assert.deepEqual([...ATTACH_CLIENT_CAPABILITIES], ['event_v2', 'workspace_state_v1']);
   });
 });
 

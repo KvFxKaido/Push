@@ -41,6 +41,68 @@ describe('TUI session snapshot source guards', () => {
     );
   });
 
+  it('consumes workspace-state events ambiently instead of as transcript entries', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /import \{ reduceWorkspaceStateEvent \} from '\.\.\/lib\/workspace-state\.js'/,
+      'the TUI should reuse the shared workspace-state reducer',
+    );
+    assert.match(
+      src,
+      /case 'workspace\.state_snapshot':\s*case 'workspace\.state_delta':/,
+      'the TUI should handle both workspace-state event types',
+    );
+    assert.match(
+      src,
+      /workspaceStateView: tuiState\.workspaceStateView/,
+      'the reduced workspace view should render through the status bar',
+    );
+    assert.doesNotMatch(
+      src,
+      /addTranscriptEntry\(tuiState,\s*['"](?:status|warning|assistant)['"],\s*[^)]*workspace\.state_/,
+      'workspace-state updates should not be appended to the transcript',
+    );
+  });
+
+  it('clears daemon workspace state on disconnect and leaves header branch to the git poll', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /client\._socket\.on\('close', \(\) => \{[\s\S]*tuiState\.workspaceStateView = null;[\s\S]*tuiState\.dirty\.add\('footer'\);/,
+      'the daemon close path should clear stale workspace-state guards from the footer',
+    );
+    assert.match(
+      src,
+      /const nextBranch = status\.branch \|\| '';[\s\S]*if \(nextBranch !== branch\) \{[\s\S]*branch = nextBranch;[\s\S]*tuiState\.dirty\.add\('header'\);/,
+      'the local git poll should be the source of truth for the header branch',
+    );
+    assert.match(
+      src,
+      /const status = await getCompactGitStatus\(state\.cwd\);[\s\S]*if \(!status\) return;/,
+      'a transient null git poll must not blank the header branch (keep last-known)',
+    );
+    assert.doesNotMatch(
+      src,
+      /branch = result\.view\.state\.activeBranch/,
+      'workspace-state adoption must not overwrite the header branch',
+    );
+  });
+
+  it('does not let live-only workspace-state events advance the replay cursor', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /const isWorkspaceStateEvent =\s*event\.type === 'workspace\.state_snapshot' \|\| event\.type === 'workspace\.state_delta'/,
+      'workspace-state event detection should be explicit at the replay cursor boundary',
+    );
+    assert.match(
+      src,
+      /if \(!isWorkspaceStateEvent && typeof event\.seq === 'number' && event\.seq > lastSeenDaemonSeq\)/,
+      'live-only workspace-state seqs must not become durable replay checkpoints',
+    );
+  });
+
   it('reattaches from persisted session identity after socket reconnect', async () => {
     const src = await readTuiSource();
     assert.match(
