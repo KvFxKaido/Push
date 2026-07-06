@@ -83,6 +83,13 @@ export const DAEMON_CAPABILITIES = [
   // (direct delegation RPCs + dependency-ordered task graphs).
   // Reviewer stays single-turn JSON-only by design.
   'multi_agent',
+  // `workspace_state_v1`: the daemon emits the live workspace-state timeline
+  // (`workspace.state_snapshot` / `workspace.state_delta`) to clients that
+  // advertise this cap. Gated because the events are live-only (non-persistent,
+  // reusing the current seq) and must not perturb the seq-based replay contract
+  // for clients that don't consume them — see `docs/decisions/Workspace State
+  // Events — Snapshot + Delta.md`.
+  'workspace_state_v1',
 ] as const;
 
 /** A capability the daemon advertises. */
@@ -95,6 +102,13 @@ export type DaemonCapability = (typeof DAEMON_CAPABILITIES)[number];
  * the advertised vocabulary.
  */
 export const EVENT_V2: DaemonCapability = 'event_v2';
+
+/**
+ * `workspace_state_v1` as a named constant for the capability-gated emission of
+ * the live workspace-state timeline in `cli/pushd.ts`. Same rationale as
+ * {@link EVENT_V2}: reference the const so the gate renames in lockstep.
+ */
+export const WORKSPACE_STATE_V1: DaemonCapability = 'workspace_state_v1';
 
 /** True if `value` is a capability the daemon advertises. */
 export function isDaemonCapability(value: unknown): value is DaemonCapability {

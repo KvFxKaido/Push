@@ -12,6 +12,7 @@ import { useProjectInstructions } from '@/hooks/useProjectInstructions';
 import { useWorkspaceComposerState } from '@/hooks/useWorkspaceComposerState';
 import { useWorkspacePreferences } from '@/hooks/useWorkspacePreferences';
 import { useWorkspaceSandboxController } from '@/hooks/useWorkspaceSandboxController';
+import type { WorkspaceStateEvent } from '@push/lib/workspace-state';
 import { useWorkspaceSandboxAutoBack } from '@/hooks/useWorkspaceSandboxAutoBack';
 import { useWorkspaceSandboxRestore } from '@/hooks/useWorkspaceSandboxRestore';
 import { perfMark } from '@/lib/perf-marks';
@@ -179,6 +180,7 @@ export function WorkspaceSessionScreen({
     conversations,
     conversationsLoaded,
     activeChatId,
+    appendRunEvent,
     switchChat,
     renameChat,
     setChatLinkedLibraries,
@@ -455,12 +457,22 @@ export function WorkspaceSessionScreen({
 
   const snapshots = useSnapshotManager(workspaceSession, sandbox, workspaceRepo, isStreaming);
   const branches = useBranchManager(workspaceRepo, workspaceSession);
+  // Forward the live workspace-state timeline onto the active chat's run-event
+  // stream. shouldPersistRunEvent marks these live-only, so they render but
+  // don't bloat persisted history (see lib/run-events.ts).
+  const forwardWorkspaceStateEvent = useCallback(
+    (event: WorkspaceStateEvent) => {
+      if (activeChatId) appendRunEvent(activeChatId, event);
+    },
+    [activeChatId, appendRunEvent],
+  );
   const {
     showFileBrowser,
     setShowFileBrowser,
     sandboxState,
     sandboxStateLoading,
     sandboxDownloading,
+    resyncWorkspaceState,
     fetchSandboxState,
     ensureSandbox,
     handleSandboxRestart,
@@ -485,7 +497,16 @@ export function WorkspaceSessionScreen({
     setSandboxId,
     setWorkspaceSessionId,
     skipBranchTeardownRef,
+    protectMain: protectMain.isProtected,
+    onWorkspaceStateEvent: forwardWorkspaceStateEvent,
   });
+
+  // Re-anchor the incoming chat's run-event stream on chat switch: the producer
+  // is workspace-scoped but the stream is per-chat, so a chat that never saw the
+  // opening snapshot would drop deltas. No-op until a sandbox exists.
+  useEffect(() => {
+    resyncWorkspaceState();
+  }, [activeChatId, resyncWorkspaceState]);
 
   const instructions = useProjectInstructions(
     workspaceRepo,

@@ -67,6 +67,25 @@ describe('chat-run-events', () => {
         agent: 'coder',
         detail: 'Fix auth flow',
       },
+      {
+        type: 'workspace.state_snapshot',
+        workspaceId: 'sb-1',
+        rev: 0,
+        state: {
+          activeBranch: 'main',
+          headSha: 'sha1',
+          dirtyFiles: [],
+          protectMain: true,
+          sandboxReady: true,
+        },
+      },
+      {
+        type: 'workspace.state_delta',
+        workspaceId: 'sb-1',
+        rev: 1,
+        baseRev: 0,
+        ops: [{ op: 'dirty_add', file: { path: 'a.ts', status: 'modified' } }],
+      },
     ];
 
     liveOnlyEvents.forEach((event) => {

@@ -1229,6 +1229,182 @@
           "type": "boolean"
         }
       }
+    },
+    "WorkspaceStateSnapshot": {
+      "type": "object",
+      "required": [
+        "workspaceId",
+        "rev",
+        "state"
+      ],
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "object",
+          "required": [
+            "activeBranch",
+            "headSha",
+            "dirtyFiles",
+            "protectMain",
+            "sandboxReady"
+          ],
+          "properties": {
+            "activeBranch": {
+              "type": "string",
+              "minLength": 1
+            },
+            "headSha": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ahead": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "behind": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "dirtyFiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "status"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "modified",
+                      "added",
+                      "deleted",
+                      "renamed",
+                      "untracked",
+                      "conflicted"
+                    ]
+                  }
+                }
+              }
+            },
+            "protectMain": {
+              "type": "boolean"
+            },
+            "sandboxReady": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+    "WorkspaceStateDelta": {
+      "type": "object",
+      "required": [
+        "workspaceId",
+        "rev",
+        "baseRev",
+        "ops"
+      ],
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "baseRev": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ops": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "op"
+            ],
+            "properties": {
+              "op": {
+                "type": "string",
+                "enum": [
+                  "dirty_clear",
+                  "set_branch",
+                  "set_head",
+                  "set_tracking",
+                  "dirty_add",
+                  "dirty_remove",
+                  "set_protect_main",
+                  "set_sandbox_ready"
+                ]
+              },
+              "activeBranch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "headSha": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ahead": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "behind": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "file": {
+                "type": "object",
+                "required": [
+                  "path",
+                  "status"
+                ],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "modified",
+                      "added",
+                      "deleted",
+                      "renamed",
+                      "untracked",
+                      "conflicted"
+                    ]
+                  }
+                }
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "protectMain": {
+                "type": "boolean"
+              },
+              "sandboxReady": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
     }
   },
   "allOf": [
@@ -2064,6 +2240,44 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/UserFollowUpSteered"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "workspace.state_snapshot"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/WorkspaceStateSnapshot"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "workspace.state_delta"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/WorkspaceStateDelta"
           }
         }
       }

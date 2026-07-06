@@ -121,6 +121,8 @@ describe('protocol drift characterization — schema surface', () => {
       'user.follow_up_steered',
       'user_message',
       'warning',
+      'workspace.state_delta',
+      'workspace.state_snapshot',
     ]);
   });
 
@@ -791,6 +793,91 @@ describe('protocol drift characterization — task_graph family', () => {
         executionId: 'graph_1',
         agent: 'explorer',
         detail: 'ready',
+      }),
+    );
+  });
+
+  it('accepts a well-formed workspace.state_snapshot', () => {
+    assert.deepEqual(
+      validateRunEventPayload('workspace.state_snapshot', {
+        workspaceId: 'kvfxkaido/push',
+        rev: 0,
+        state: {
+          activeBranch: 'main',
+          headSha: 'abc123',
+          ahead: 0,
+          behind: 0,
+          dirtyFiles: [{ path: 'lib/foo.ts', status: 'modified' }],
+          protectMain: true,
+          sandboxReady: true,
+        },
+      }),
+      [],
+    );
+  });
+
+  it('accepts a well-formed workspace.state_delta over the closed op-set', () => {
+    assert.deepEqual(
+      validateRunEventPayload('workspace.state_delta', {
+        workspaceId: 'kvfxkaido/push',
+        rev: 3,
+        baseRev: 2,
+        ops: [
+          { op: 'set_branch', activeBranch: 'feat/x', headSha: 'def456' },
+          { op: 'dirty_add', file: { path: 'app/bar.ts', status: 'added' } },
+          { op: 'dirty_remove', path: 'lib/foo.ts' },
+          { op: 'dirty_clear' },
+          { op: 'set_protect_main', protectMain: false },
+        ],
+      }),
+      [],
+    );
+  });
+
+  it('rejects a workspace.state_delta op outside the closed set', () => {
+    const issues = validateRunEventPayload('workspace.state_delta', {
+      workspaceId: 'kvfxkaido/push',
+      rev: 1,
+      baseRev: 0,
+      ops: [{ op: 'set_remote', url: 'https://evil.example/x.git' }],
+    });
+    assert.ok(issues.length >= 1);
+    assert.ok(issues.some((i) => i.path === 'payload.ops[0].op'));
+  });
+
+  it('rejects a dirty_add whose file is missing a valid status in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('workspace.state_delta', {
+        workspaceId: 'kvfxkaido/push',
+        rev: 1,
+        baseRev: 0,
+        ops: [{ op: 'dirty_add', file: { path: 'app/bar.ts' } }],
+      }),
+    );
+  });
+
+  it('rejects a workspace.state_delta missing baseRev in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('workspace.state_delta', {
+        workspaceId: 'kvfxkaido/push',
+        rev: 1,
+        ops: [{ op: 'dirty_clear' }],
+      }),
+    );
+  });
+
+  it('rejects a workspace.state_snapshot with a non-boolean guard in strict mode', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('workspace.state_snapshot', {
+        workspaceId: 'kvfxkaido/push',
+        rev: 0,
+        state: {
+          activeBranch: 'main',
+          headSha: 'abc123',
+          dirtyFiles: [],
+          protectMain: 'yes',
+          sandboxReady: true,
+        },
       }),
     );
   });
