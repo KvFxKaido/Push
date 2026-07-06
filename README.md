@@ -121,7 +121,7 @@ npm install
 
 ## Current direction
 
-Push is actively improving CLI ergonomics, daemon-backed Remote sessions, and the experimental Android app path. See [ROADMAP.md](ROADMAP.md) for what's next.
+Push's active direction is collapsing its internal multi-agent scaffolding onto a **single conversational lead** that behaves the same on every surface (web, terminal, daemon) and differs only in reach; making the **pushed branch the durable source of truth** so nothing lands on `main` unaudited and the sandbox stays disposable compute; and hardening **session continuity** between the terminal and the phone. See [ROADMAP.md](ROADMAP.md) for near-term priorities and [`docs/decisions/`](docs/decisions/) for the live decision surface.
 
 ## Contributors
 

@@ -1,11 +1,18 @@
-# Push Roadmap (Canonical)
+# Push Roadmap
 
-Last updated: 2026-06-15
+Last curated: 2026-07-05
 
-This is the single source of truth for active product and engineering direction.
+This is the high-level priority list, **not** the live decision surface. The
+canonical, continuously-updated record of runtime and platform decisions lives
+in the decision docs — `docs/decisions/Agent Runtime Decisions.md` and
+`docs/decisions/Platform, Sessions, and Sandbox Decisions.md` — each carrying
+its own `Status:` / `Reviewed:` date. The priority rows below can lag those
+docs and the merged work; when they conflict, the decision docs and the code
+win.
 
-`docs/` is a draft lab for spikes, explorations, and non-final plans.
-Only decisions promoted into this file should be treated as implementation commitments.
+`docs/` is the working decision surface. Promote an item into this file only to
+flag it as a committed near-term priority; treat the decision docs as canonical
+for what has actually shipped.
 
 Current cycle emphasis: **Single-agent loop + branch-at-commit persistence is the first priority** (promoted 2026-06-03; resumed 2026-06-11 after Durable Runs — promoted over it 2026-06-10 — shipped end-to-end #870–#884, landing step (1)'s inline flag and its A/B measurement along the way) — with a frontier model leading, the scaffolding built for weak models and for git-only durability is overhead. Collapse the Coder-delegation wrapper so the lead drives the durable job engine directly, and make the branch automatic at the first commit ("talk on `main`" → `auto-branch-on-commit` + auto-push behind a deterministic secret scan → best-effort snapshot for uncommitted scratch only). Keep the engines (durable job DO, snapshot, git), cut the wrappers (Planner/brief, branch-first ceremony, the model-Auditor). **Session continuity & stability remains the active north-star beneath it** — the north star is "start a session in the TUI and continue it on the phone (and vice versa)" with no manual state surgery. Everything that makes a session a durable, portable, authenticated thing serves this: the relay, the Universal Session Bearer (auth by construction), legible failure surfaces, and deterministic resume. Secondary, ongoing emphasis: transcript-first CLI ergonomics, selective CLI adoption of the shared runtime foundation, and chat/workspace product follow-through. **Push CLI Muscle-Memory UX is also load-bearing for the Architecture Remediation Plan's evaluation gate** — extraction validation depends on real-use observations, which require the CLI to be daily-driver ready (see `docs/archive/decisions/Architecture Remediation Plan — Defusing the Big Four.md §CLI Runtime Parity` for the source framing). Treat CLI usability as equivalent-priority to extraction, not adjacent. Live decision summaries now live in `docs/decisions/Agent Runtime Decisions.md` and `docs/decisions/Platform, Sessions, and Sandbox Decisions.md`.
 
