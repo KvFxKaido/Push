@@ -1583,7 +1583,12 @@ export async function runTUI(options = {}) {
 
   async function refreshGitStatus() {
     const status = await getCompactGitStatus(state.cwd);
-    const nextBranch = status?.branch || '';
+    // A transient git failure (index lock during a concurrent commit/branch op,
+    // or a poll error) returns null. Treat it as "no new info" and keep the
+    // last-known branch/status rather than blanking the header — the next poll
+    // re-populates. On a stable session cwd, null never means "left the repo".
+    if (!status) return;
+    const nextBranch = status.branch || '';
     let changed = false;
     if (JSON.stringify(status) !== JSON.stringify(tuiState.gitStatus)) {
       tuiState.gitStatus = status;

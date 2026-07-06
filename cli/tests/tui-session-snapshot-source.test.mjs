@@ -74,8 +74,13 @@ describe('TUI session snapshot source guards', () => {
     );
     assert.match(
       src,
-      /const nextBranch = status\?\.branch \|\| '';[\s\S]*if \(nextBranch !== branch\) \{[\s\S]*branch = nextBranch;[\s\S]*tuiState\.dirty\.add\('header'\);/,
+      /const nextBranch = status\.branch \|\| '';[\s\S]*if \(nextBranch !== branch\) \{[\s\S]*branch = nextBranch;[\s\S]*tuiState\.dirty\.add\('header'\);/,
       'the local git poll should be the source of truth for the header branch',
+    );
+    assert.match(
+      src,
+      /const status = await getCompactGitStatus\(state\.cwd\);[\s\S]*if \(!status\) return;/,
+      'a transient null git poll must not blank the header branch (keep last-known)',
     );
     assert.doesNotMatch(
       src,
