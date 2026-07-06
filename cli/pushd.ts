@@ -2254,18 +2254,6 @@ function broadcastWorkspaceStateEvent(sessionId, entry, event) {
   }
 }
 
-// True when at least one attached client advertised `workspace_state_v1`, i.e.
-// someone will actually consume the timeline. Used to short-circuit emission
-// before spawning git subprocesses whose result would reach zero subscribers.
-function hasWorkspaceStateSubscriber(sessionId) {
-  const clients = sessionClients.get(sessionId);
-  if (!clients) return false;
-  for (const [, meta] of clients) {
-    if (meta.capabilities.has(WORKSPACE_STATE_V1)) return true;
-  }
-  return false;
-}
-
 /**
  * Drive the per-session workspace-state timeline and broadcast the resulting
  * event, serialized per session. The producer lives on the session entry, keyed
@@ -2282,11 +2270,19 @@ function hasWorkspaceStateSubscriber(sessionId) {
  * `entry.workspaceStateProducer` — so without ordering, a slow start-session
  * read could land after a post-run delta, broadcast stale state, and reset the
  * baseline. `entry.workspaceStateEmitChain` serializes all emits per session in
- * call order, closing that race. Emission also short-circuits when no client
- * consumes the timeline, so idle sessions never spawn git subprocesses.
+ * call order, closing that race.
+ *
+ * Emission is unconditional — no subscriber-gated skip. Always reading keeps the
+ * producer current, so a resync after a subscriber gap re-anchors on fresh state
+ * and the start-session opener still lands (the git read defers its broadcast
+ * past the socket's auto-attach registration, which runs after `handleRequest`
+ * returns). `broadcastWorkspaceStateEvent` already gates delivery per client on
+ * `workspace_state_v1`, so nothing reaches a non-consumer. A skip that
+ * short-circuited before the read lived here briefly but dropped the opener and
+ * staled the reconnect anchor; reintroduce it only subscriber-aware, and only
+ * once a daemon consumer exists to test it (#1349).
  */
 function emitWorkspaceState(sessionId, entry, mode) {
-  if (!hasWorkspaceStateSubscriber(sessionId)) return Promise.resolve();
   const prior = entry.workspaceStateEmitChain ?? Promise.resolve();
   // runWorkspaceStateEmit never rejects (it catches + logs), so the chain can't
   // wedge on a failed emit.
