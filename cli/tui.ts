@@ -31,7 +31,6 @@ import {
   detectSpinnerName,
   isReducedMotion,
   isSpinnerName,
-  liveFrame,
   moodVerb,
   setMotionEnabled,
   SPINNER_NAMES,
@@ -632,7 +631,7 @@ function renderTranscript(buf, layout, theme, tuiState) {
   }
 }
 
-function renderToolPane(buf, layout, theme, tuiState, tick = 0) {
+function renderToolPane(buf, layout, theme, tuiState) {
   if (!layout.toolPane) return;
   const { top, left, width, height } = layout.toolPane;
   const { glyphs } = theme;
@@ -643,25 +642,13 @@ function renderToolPane(buf, layout, theme, tuiState, tick = 0) {
   buf.writeLine(top, left, padTo(title, width));
 
   // Tool feed entries (bottom-aligned)
-  // If the most recent entry is still a 'call' (no result yet) and we are
-  // running, give it a small cycling prefix for live motion.
   const lines = [];
-  const hasActiveToolCall =
-    tuiState.runState === 'running' &&
-    tuiState.toolFeed.length > 0 &&
-    tuiState.toolFeed[tuiState.toolFeed.length - 1]?.type === 'call';
-
-  for (let i = 0; i < tuiState.toolFeed.length; i++) {
-    const entry = tuiState.toolFeed[i];
-    const isLastCall = hasActiveToolCall && i === tuiState.toolFeed.length - 1;
-
+  for (const entry of tuiState.toolFeed) {
     if (entry.type === 'call') {
       const argsPreview = summarizeToolArgs(entry.args, Math.max(8, width - entry.name.length - 8));
-      const prefix = isLastCall
-        ? theme.style('accent.secondary', liveFrame(tick) + ' ')
-        : theme.style('accent.secondary', (glyphs.arrow || glyphs.prompt) + ' ');
       lines.push(
-        prefix +
+        theme.style('accent.secondary', glyphs.arrow || glyphs.prompt) +
+          ' ' +
           theme.style('fg.primary', entry.name) +
           (argsPreview ? ' ' + theme.style('fg.dim', argsPreview) : ''),
       );
@@ -3115,7 +3102,7 @@ export async function runTUI(options = {}) {
 
       renderHeaderRegion();
       renderTranscript(screenBuf, layout, theme, tuiState);
-      renderToolPane(screenBuf, layout, theme, tuiState, frameTick);
+      renderToolPane(screenBuf, layout, theme, tuiState);
       renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
       renderFooterRegion();
     } else {
@@ -3127,7 +3114,7 @@ export async function runTUI(options = {}) {
         renderTranscript(screenBuf, layout, theme, tuiState);
       }
       if (tuiState.dirty.has('tools')) {
-        renderToolPane(screenBuf, layout, theme, tuiState, frameTick);
+        renderToolPane(screenBuf, layout, theme, tuiState);
       }
       if (tuiState.dirty.has('composer')) {
         renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
