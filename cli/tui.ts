@@ -27,10 +27,12 @@ import {
 const TICK_MODULUS = 60 * 60 * 60;
 
 import {
+  animatedEllipsis,
   detectSpinnerName,
   isReducedMotion,
   isSpinnerName,
   moodVerb,
+  setMotionEnabled,
   SPINNER_NAMES,
   SPINNERS,
   spinnerFrame,
@@ -412,26 +414,35 @@ function renderHeader(
   const { glyphs } = theme;
   const { top, left, width } = layout.header;
 
+  const tick = spinner?.tick ?? 0;
+
   // Status dot. While running, prefer a Braille spinner frame if one is
   // active and the terminal can render Unicode; otherwise fall back to the
   // static glyph set's statusDot.
   const runningGlyph =
     theme.unicode && spinner?.name && spinner.name !== 'off'
-      ? (spinnerFrame(spinner.name, spinner.tick ?? 0) ?? glyphs.statusDot)
+      ? (spinnerFrame(spinner.name, tick) ?? glyphs.statusDot)
       : glyphs.statusDot;
+
+  // Status dot: warn while running (the glyph itself spins via the active
+  // spinner), error when awaiting approval, success otherwise. No color pulse —
+  // the dot's colour is semantic state, not decoration.
   const stateDot =
     runState === 'running'
       ? theme.style('state.warn', runningGlyph)
       : runState === 'awaiting_approval'
         ? theme.style('state.error', glyphs.statusDot)
         : theme.style('state.success', glyphs.statusDot);
+
   // Verb sits next to the spinner glyph while running (thinking,
   // replying, or a tool verb). Falls through to runState otherwise so
   // 'idle' / 'awaiting_approval' still read clearly. When there's no
   // activity-specific verb yet, swap the mechanical 'running' for a
   // deterministic mood verb (roosting / brewing / …) seeded by
   // sessionId — softer than a status code, stable per session.
-  const verb = runState === 'running' ? (verbForActivity(activity) ?? moodVerb(session)) : runState;
+  const baseVerb =
+    runState === 'running' ? (verbForActivity(activity) ?? moodVerb(session)) : runState;
+  const verb = runState === 'running' ? `${baseVerb}${animatedEllipsis(tick, 5)}` : baseVerb;
 
   const sep = theme.style('fg.dim', '·');
   const stateLabel = theme.style('fg.dim', verb);
@@ -679,7 +690,7 @@ function renderToolPane(buf, layout, theme, tuiState) {
  * Called every frame tick (10 FPS) while running, so elapsed time
  * updates roughly once per second of wall clock.
  */
-function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId) {
+function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId, tick = 0) {
   const top = layout.composer.top - 1;
   if (top < 1) return; // tiny terminal — gap row collapsed
 
@@ -691,13 +702,15 @@ function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId
     return;
   }
 
-  const verb = verbForActivity(tuiState.activity) ?? moodVerb(sessionId);
+  const baseVerb = verbForActivity(tuiState.activity) ?? moodVerb(sessionId);
+  const dots = animatedEllipsis(tick, 4);
+  const verb = `${baseVerb}${dots}`;
   const elapsed = formatElapsed(Date.now() - tuiState.turnStartedAt);
   const tokenStr = typeof tokens === 'number' ? formatTokenCount(tokens) : null;
 
   const sep = theme.style('fg.dim', '·');
   const marker = theme.style('fg.dim', theme.glyphs.hexagon);
-  const verbStyled = theme.style('fg.muted', `${verb}…`);
+  const verbStyled = theme.style('fg.muted', verb);
   const metaInner = tokenStr ? `${elapsed} ${sep} ${tokenStr} tokens` : elapsed;
   const meta = theme.style('fg.dim', `(${metaInner})`);
   const row = `${marker} ${verbStyled} ${meta}`;
@@ -2735,7 +2748,11 @@ export async function runTUI(options = {}) {
   const FRAME_TICK_MS = Math.round(1000 / FRAME_FPS);
   const reducedMotion = isReducedMotion();
   let frameTick = 0;
-  const spinner = { name: reducedMotion ? 'off' : (detectSpinnerName() ?? 'off') };
+  const spinner = {
+    name: reducedMotion
+      ? 'off'
+      : (detectSpinnerName() ?? (isSpinnerName(config.spinner) ? config.spinner : 'off')),
+  };
   let frameInterval = null;
   // Is there any on-screen consumer that cares about the next tick? Keeps
   // us from invalidating the screen 10×/s when the user has pinned a
@@ -2811,6 +2828,7 @@ export async function runTUI(options = {}) {
     frameInterval = null;
   };
   const refreshTicker = () => {
+    setMotionEnabled(spinner.name !== 'off');
     if (anyConsumerEligible()) startFrameTicker();
     else stopFrameTicker();
   };
@@ -3062,10 +3080,19 @@ export async function runTUI(options = {}) {
         contextBudget: budget,
         fileAwareness: tuiState.fileAwareness,
         daemonStatus,
+        tick: frameTick,
       });
       tuiState.session = state.sessionId;
       renderKeybindHints(screenBuf, layout, theme, tuiState);
-      renderActivityIndicator(screenBuf, layout, theme, tuiState, tokens, state.sessionId);
+      renderActivityIndicator(
+        screenBuf,
+        layout,
+        theme,
+        tuiState,
+        tokens,
+        state.sessionId,
+        frameTick,
+      );
     };
 
     if (mustFullRedraw) {

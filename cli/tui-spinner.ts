@@ -326,3 +326,45 @@ export function moodVerb(seed: string | null | undefined): string {
   }
   return MOOD_VERBS[h % MOOD_VERBS.length];
 }
+
+// ── Motion helpers ────────────────────────────────────────────────
+//
+// One switch governs all TUI micro-motion: it is on iff a spinner is
+// active (`spinner.name !== 'off'`), which already folds in the
+// reduced-motion env guard and the user's spinner preference. The TUI
+// syncs it via `setMotionEnabled` whenever the spinner changes, so motion
+// never runs behind a user's back — spinner off → everything static.
+// `isReducedMotion()` stays as a hard backstop for direct callers/tests.
+let motionEnabled = false;
+
+/** Sync motion to the resolved spinner state. Called by the TUI. */
+export function setMotionEnabled(on: boolean): void {
+  motionEnabled = on;
+}
+
+/** True when TUI micro-motion should animate. */
+export function isMotionOn(): boolean {
+  return motionEnabled && !isReducedMotion();
+}
+
+/**
+ * Fixed-width (3-column) animated ellipsis driven by tick, so text that
+ * follows never reflows as the dots cycle. Motion off → static '…'.
+ * `speed` = ticks per dot step (higher is slower).
+ */
+export function animatedEllipsis(tick: number, speed = 4): string {
+  if (!isMotionOn()) return '…';
+  const n = Math.floor((tick / Math.max(1, speed)) % 4);
+  return ['   ', '.  ', '.. ', '...'][n];
+}
+
+/**
+ * Small cycling glyph for a "LIVE" badge or an in-flight tool row —
+ * motion that carries meaning (this thing is still active), not
+ * decoration. Motion off → static '●'.
+ */
+export function liveFrame(tick: number): string {
+  if (!isMotionOn()) return '●';
+  const frames = ['●', '◉', '○', '◌'];
+  return frames[((tick % frames.length) + frames.length) % frames.length];
+}
