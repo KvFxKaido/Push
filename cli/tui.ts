@@ -38,6 +38,7 @@ import {
 } from './tui-spinner.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { isEditDiff } from '../lib/edit-diff.ts';
+import { reduceWorkspaceStateEvent } from '../lib/workspace-state.js';
 import {
   formatElapsed,
   formatTokenCount,
@@ -348,6 +349,9 @@ function createTUIState() {
     dirty: new Set(['all']),
     // Git status for status bar
     gitStatus: null, // { branch, dirty, ahead, behind }
+    // Reduced live workspace-state timeline from pushd, preferred over polling
+    // when present because it carries runtime guards as well as git status.
+    workspaceStateView: null,
     // File awareness ledger (accumulated from engine tool_result events)
     fileAwareness: null, // { total, files: [{ path, status, reads, writes }] }
     // Most recent full tool result text — used by /copy tool. The per-entry
@@ -3032,6 +3036,7 @@ export async function runTUI(options = {}) {
 
       renderStatusBar(screenBuf, layout, theme, {
         gitStatus: tuiState.gitStatus,
+        workspaceStateView: tuiState.workspaceStateView,
         cwd: state.cwd,
         tokens,
         isStreaming,
@@ -3265,18 +3270,40 @@ export async function runTUI(options = {}) {
   }
 
   function handleEngineEvent(event) {
+    const isWorkspaceStateEvent =
+      event.type === 'workspace.state_snapshot' || event.type === 'workspace.state_delta';
     // Track the highest daemon-emitted seq we've seen so the next
     // attach (after a disconnect / reconnect) asks for events strictly
     // after this point. Inline events have no `seq` field; daemon
-    // events always do. See `lastSeenDaemonSeq` declaration above for
-    // why this isn't `state.eventSeq`.
-    if (typeof event.seq === 'number' && event.seq > lastSeenDaemonSeq) {
+    // events always do. Workspace-state events are live-only and reuse the
+    // current durable seq, so they must not advance the replay cursor.
+    // See `lastSeenDaemonSeq` declaration above for why this isn't
+    // `state.eventSeq`.
+    if (!isWorkspaceStateEvent && typeof event.seq === 'number' && event.seq > lastSeenDaemonSeq) {
       lastSeenDaemonSeq = event.seq;
     }
     const transcriptLenBefore = tuiState.transcript.length;
     const streamBufBefore = tuiState.streamBuf;
     const reasoningBufBefore = tuiState.reasoningBuf;
     switch (event.type) {
+      case 'workspace.state_snapshot':
+      case 'workspace.state_delta': {
+        const result = reduceWorkspaceStateEvent(tuiState.workspaceStateView, {
+          type: event.type,
+          ...(event.payload || {}),
+        });
+        tuiState.workspaceStateView = result.view;
+        if (result.outcome === 'snapshot_adopted' || result.outcome === 'delta_applied') {
+          if (result.view?.state?.activeBranch) {
+            branch = result.view.state.activeBranch;
+          }
+          tuiState.dirty.add('header');
+          tuiState.dirty.add('footer');
+          scheduler.schedule();
+        }
+        break;
+      }
+
       case 'assistant_thinking_token':
         if (!tuiState.reasoningStreaming) {
           thinkingPhaseStart = tuiState.reasoningBuf.length; // mark start of this chunk

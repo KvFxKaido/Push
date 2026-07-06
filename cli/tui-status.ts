@@ -7,6 +7,7 @@ import { visibleWidth, truncate, padTo } from './tui-renderer.js';
 import { getGitInfo } from './workspace-context.js';
 import { moodVerb } from './tui-spinner.js';
 import type { Theme, TokenName } from './tui-theme.js';
+import type { WorkspaceStateView } from '../lib/workspace-state.js';
 
 // ── Token estimation ────────────────────────────────────────────────
 
@@ -114,6 +115,32 @@ export function formatGitStatus(status: CompactGitStatus | null, maxWidth: numbe
 
   const result = parts.join(' ');
   return truncate(result, maxWidth);
+}
+
+/**
+ * Format the reduced workspace-state timeline for compact ambient display.
+ * This mirrors `formatGitStatus` but includes the runtime guards that are not
+ * part of ordinary git status: Protect Main and sandbox readiness.
+ */
+export function formatWorkspaceStateView(
+  view: WorkspaceStateView | null,
+  maxWidth: number = 40,
+): string {
+  if (!view) return '—';
+
+  const { state } = view;
+  const parts: string[] = [state.activeBranch || 'HEAD'];
+  parts.push(state.dirtyFiles.length > 0 ? `+${state.dirtyFiles.length}` : 'clean');
+  if (typeof state.ahead === 'number' && state.ahead > 0) {
+    parts.push(`↑${state.ahead}`);
+  }
+  if (typeof state.behind === 'number' && state.behind > 0) {
+    parts.push(`↓${state.behind}`);
+  }
+  parts.push(state.protectMain ? 'protect-main' : 'no-protect-main');
+  parts.push(state.sandboxReady ? 'sandbox-ready' : 'sandbox-wait');
+
+  return truncate(parts.join(' '), maxWidth);
 }
 
 // ── Path formatting ─────────────────────────────────────────────────
@@ -225,6 +252,7 @@ export interface DaemonStatusIndicator {
 
 interface StatusBarOptions {
   gitStatus?: CompactGitStatus | null;
+  workspaceStateView?: WorkspaceStateView | null;
   cwd?: string;
   tokens?: number;
   isStreaming?: boolean;
@@ -244,6 +272,7 @@ export function renderStatusBar(
   theme: Theme,
   {
     gitStatus = null,
+    workspaceStateView = null,
     cwd = '',
     tokens = 0,
     isStreaming = false,
@@ -259,8 +288,23 @@ export function renderStatusBar(
   // Build status components
   const parts: StatusBarPart[] = [];
 
-  // Git section
-  if (gitStatus) {
+  // Workspace / Git section
+  if (workspaceStateView) {
+    const workspaceStr = formatWorkspaceStateView(workspaceStateView, 38);
+    const workspaceState = workspaceStateView.state;
+    const workspaceColor: TokenName =
+      workspaceState.dirtyFiles.length > 0 ||
+      !workspaceState.protectMain ||
+      !workspaceState.sandboxReady
+        ? 'state.warn'
+        : 'accent.link';
+    parts.push({
+      icon: glyphs.branch || '',
+      text: workspaceStr,
+      color: workspaceColor,
+      width: visibleWidth(workspaceStr),
+    });
+  } else if (gitStatus) {
     const gitStr = formatGitStatus(gitStatus, 25);
     const branchColor: TokenName = gitStatus.dirty > 0 ? 'state.warn' : 'accent.link';
     parts.push({
