@@ -7,6 +7,7 @@ import {
   executeToolCall as _rawExecuteToolCall,
   READ_ONLY_TOOLS,
   REPEAT_EXEMPT_TOOLS,
+  waitForSessionExit,
 } from '../tools.ts';
 
 // Match the exec-session harness convention (default role 'coder' so the
@@ -130,5 +131,48 @@ describe('exec_wait: blocking wait collapses the exec_poll storm', () => {
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+// Regression for the reviewer finding (push-agent WARNING + Codex P2): the
+// slice loop called waitForSessionExit once per slice, and the old helper left
+// its timed-out waiter in session.exitWaiters — so a long/oft-resumed wait
+// leaked hundreds/thousands of dead closures. These pin the self-cleaning +
+// abort-aware behavior directly, using a fake session (EXEC_SESSIONS is private).
+describe('waitForSessionExit: self-cleaning + abort-aware', () => {
+  it('removes its waiter on the timeout path — no accumulation across slices', async () => {
+    const fake = { running: true, exitWaiters: [] };
+    for (let i = 0; i < 5; i++) {
+      await waitForSessionExit(fake, 10);
+      assert.equal(fake.exitWaiters.length, 0, `no stale waiter after slice ${i + 1}`);
+    }
+  });
+
+  it('resolves promptly on abort and cleans up its waiter', async () => {
+    const fake = { running: true, exitWaiters: [] };
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 20);
+    const t0 = Date.now();
+    await waitForSessionExit(fake, 5_000, controller.signal);
+    assert.ok(Date.now() - t0 < 1_000, 'abort resolves promptly, not at the 5s timeout');
+    assert.equal(fake.exitWaiters.length, 0, 'waiter removed on abort');
+  });
+
+  it('resolves when the session exits and leaves no waiter behind', async () => {
+    const fake = { running: true, exitWaiters: [] };
+    const pending = waitForSessionExit(fake, 5_000);
+    assert.equal(fake.exitWaiters.length, 1, 'waiter registered while blocking');
+    // simulate notifySessionExit: splice all, invoke each
+    for (const w of fake.exitWaiters.splice(0)) w();
+    await pending;
+    assert.equal(fake.exitWaiters.length, 0, 'no waiter left after exit');
+  });
+
+  it('returns immediately for an already-aborted signal (registers no waiter)', async () => {
+    const fake = { running: true, exitWaiters: [] };
+    const controller = new AbortController();
+    controller.abort();
+    await waitForSessionExit(fake, 5_000, controller.signal);
+    assert.equal(fake.exitWaiters.length, 0, 'no waiter registered for a pre-aborted signal');
   });
 });

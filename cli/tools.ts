@@ -492,14 +492,34 @@ function collectSessionOutput(session, fromSeq, maxChars) {
   };
 }
 
-function waitForSessionExit(session, timeoutMs = 2_500) {
+// Resolve when the session exits, after `timeoutMs`, or when `signal` aborts —
+// whichever comes first — and always remove this waiter from
+// `session.exitWaiters` on the way out. Self-cleaning is load-bearing for
+// `exec_wait`, which calls this once per slice while blocking: without removing
+// the timed-out waiter, a long wait would pile up `waitMs / slice` dead closures
+// per call (and more across resumes) that only flush when the process finally
+// exits. Passing `signal` lets a blocking wait abort instantly instead of at the
+// next slice boundary. Exported for unit tests.
+export function waitForSessionExit(session, timeoutMs = 2_500, signal) {
   if (!session || !session.running) return Promise.resolve();
+  if (signal?.aborted) return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    session.exitWaiters.push(() => {
+    let settled = false;
+    let timer;
+    const waiter = () => settle();
+    const onAbort = () => settle();
+    function settle() {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
+      const idx = session.exitWaiters.indexOf(waiter);
+      if (idx !== -1) session.exitWaiters.splice(idx, 1);
+      signal?.removeEventListener('abort', onAbort);
       resolve();
-    });
+    }
+    timer = setTimeout(settle, timeoutMs);
+    session.exitWaiters.push(waiter);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -2860,9 +2880,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         // loop off the model: one `exec_wait` replaces the many `exec_poll`
         // round-trips the model would otherwise spend spinning on a quiet
         // long-running command. `waitForSessionExit` resolves immediately on
-        // exit (event-driven, not a busy-wait); the slice only bounds how
-        // quickly we notice an interactive trap or an abort. Aborting stops
-        // *waiting* — it never kills the command (that is exec_stop's job).
+        // exit or abort (event-driven, not a busy-wait) and removes its own
+        // waiter on every path; the slice only bounds how quickly we notice an
+        // interactive trap. Aborting stops *waiting* — it never kills the
+        // command (that is exec_stop's job).
         const deadline = Date.now() + waitMs;
         while (
           session.running &&
@@ -2872,7 +2893,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         ) {
           const slice = Math.min(EXEC_WAIT_SLICE_MS, deadline - Date.now());
           if (slice <= 0) break;
-          await waitForSessionExit(session, slice);
+          await waitForSessionExit(session, slice, options.signal);
         }
 
         const collected = collectSessionOutput(session, fromSeq, maxChars);
