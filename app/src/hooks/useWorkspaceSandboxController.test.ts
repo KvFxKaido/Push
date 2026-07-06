@@ -342,6 +342,27 @@ describe('useWorkspaceSandboxController workspace-state adapter', () => {
     expect(delta.rev).toBe(1);
     expect(delta.ops).toEqual([{ op: 'dirty_add', file: { path: 'b.ts', status: 'added' } }]);
   });
+
+  it('resyncWorkspaceState re-forwards the current snapshot without advancing rev', async () => {
+    const events: WorkspaceStateEvent[] = [];
+    const result = renderAdapter({
+      sandboxId: 'sb-1',
+      entries: [entry('M', ' ', 'a.ts')],
+      headSha: 'sha1',
+      onWorkspaceStateEvent: (e) => events.push(e),
+    });
+    await flush();
+    expect(events).toHaveLength(1); // opening snapshot
+
+    // Simulates a chat switch: the same producer re-emits its current state so a
+    // fresh (per-chat) sink can anchor. Rev must not advance.
+    result.resyncWorkspaceState();
+    expect(events).toHaveLength(2);
+    const resync = events[1];
+    if (resync.type !== 'workspace.state_snapshot') throw new Error('expected a snapshot');
+    expect(resync.rev).toBe(0);
+    expect(resync.state.dirtyFiles).toEqual([{ path: 'a.ts', status: 'modified' }]);
+  });
 });
 
 describe('useWorkspaceSandboxController ensureSandbox', () => {

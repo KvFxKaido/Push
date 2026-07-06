@@ -19,6 +19,14 @@ export function shouldPersistRunEvent(event: RunEventInput): boolean {
     case 'task_graph.task_started':
     case 'user.follow_up_queued':
     case 'user.follow_up_steered':
+    // Ambient live workspace state, not turn history. The current state is
+    // always re-emitted as a fresh snapshot on sandbox (re)start / resume, so
+    // persisting the snapshot+delta churn would both bloat the conversation
+    // run-state and duplicate that resync mechanism. Live-only: it merges into
+    // `runEvents` for rendering, then evaporates on reload until the next
+    // snapshot re-anchors the timeline.
+    case 'workspace.state_snapshot':
+    case 'workspace.state_delta':
       return false;
     // `assistant.prompt_snapshot` persists. Hashes + sizes only (no
     // section content), one event per turn — small enough to keep on

@@ -167,6 +167,16 @@ export function useWorkspaceSandboxController({
     onWorkspaceStateEventRef.current?.(event);
   }, []);
 
+  // Re-forward the current snapshot without advancing the timeline. Callers use
+  // this to re-anchor a *new* sink that never saw the earlier events — e.g. a
+  // chat switch, where the run-event stream is per-chat but the producer is
+  // workspace-scoped, so the incoming chat would otherwise drop deltas for lack
+  // of a base. No setState: the controller's own view is already current.
+  const resyncWorkspaceState = useCallback(() => {
+    if (!producerRef.current) return;
+    onWorkspaceStateEventRef.current?.(producerRef.current.snapshot());
+  }, []);
+
   const fetchSandboxState = useCallback(
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
@@ -422,6 +432,7 @@ export function useWorkspaceSandboxController({
     sandboxStateLoading,
     sandboxDownloading,
     workspaceStateView,
+    resyncWorkspaceState,
     fetchSandboxState,
     ensureSandbox,
     handleSandboxRestart,

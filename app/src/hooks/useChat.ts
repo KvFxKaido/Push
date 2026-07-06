@@ -878,6 +878,9 @@ export function useChat(
     setEnsureSandbox,
     setLocalDaemonBinding,
     setIsMainProtected,
+    // Ambient event sink: lets the sandbox controller forward the live
+    // workspace-state timeline onto the active chat's run-event stream.
+    appendRunEvent,
 
     // AGENTS.md
     setAgentsMd,
