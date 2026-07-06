@@ -376,6 +376,16 @@ export type RunEventInput =
       cause?: 'tool_output' | 'long_message' | 'mixed';
     }
   | {
+      // CLI eval-harness round-budget adaptation. Emitted only when the
+      // effective max-round cap changes, so measurement scripts can count real
+      // shrink/growth decisions instead of inferring them from final outcomes.
+      type: 'harness.adaptation';
+      round: number;
+      fromMaxRounds: number;
+      toMaxRounds: number;
+      reasons: string[];
+    }
+  | {
       type: 'tool.execution_start';
       round: number;
       executionId: string;

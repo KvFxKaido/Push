@@ -90,6 +90,7 @@ describe('protocol drift characterization — schema surface', () => {
       'context_compacted',
       'delegation_interrupted',
       'error',
+      'harness.adaptation',
       'job.completed',
       'job.failed',
       'job.started',
@@ -265,6 +266,43 @@ describe('protocol drift characterization — context.compaction', () => {
         beforeTokens: -1,
         afterTokens: 50,
         messagesDropped: 0,
+      }),
+    );
+  });
+});
+
+describe('protocol drift characterization — harness.adaptation', () => {
+  installStrictModeHooks();
+
+  it('accepts a well-formed harness.adaptation envelope in strict mode', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('harness.adaptation', {
+        round: 3,
+        fromMaxRounds: 30,
+        toMaxRounds: 20,
+        reasons: ['Reduce max rounds to 20: 3 malformed tool calls'],
+      }),
+    );
+  });
+
+  it('rejects harness.adaptation with empty reasons', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('harness.adaptation', {
+        round: 3,
+        fromMaxRounds: 30,
+        toMaxRounds: 20,
+        reasons: [],
+      }),
+    );
+  });
+
+  it('rejects harness.adaptation with a non-integer cap', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('harness.adaptation', {
+        round: 3,
+        fromMaxRounds: 30,
+        toMaxRounds: 20.5,
+        reasons: ['bad cap'],
       }),
     );
   });
