@@ -288,3 +288,95 @@ describe('moodVerb', () => {
     }
   });
 });
+
+// ─── Motion helpers (motion switch, animatedEllipsis, liveFrame) ─────
+
+import { afterEach } from 'node:test';
+import { animatedEllipsis, isMotionOn, liveFrame, setMotionEnabled } from '../tui-spinner.ts';
+
+// Motion is a module-level switch the TUI syncs to the spinner state.
+// Reset after every test so state never leaks across tests.
+afterEach(() => setMotionEnabled(false));
+
+describe('motion switch (setMotionEnabled / isMotionOn)', () => {
+  it('is off by default and follows setMotionEnabled', () => {
+    setMotionEnabled(false);
+    assert.equal(isMotionOn(), false);
+    setMotionEnabled(true);
+    assert.equal(isMotionOn(), true);
+  });
+
+  it('reduced-motion env forces motion off even when enabled', () => {
+    setMotionEnabled(true);
+    withEnv({ PUSH_REDUCED_MOTION: '1' }, () => {
+      assert.equal(isMotionOn(), false);
+    });
+  });
+});
+
+describe('animatedEllipsis', () => {
+  it('returns static … when motion is off', () => {
+    setMotionEnabled(false);
+    assert.equal(animatedEllipsis(0), '…');
+    assert.equal(animatedEllipsis(100), '…');
+  });
+
+  it('returns static … under reduced motion even when enabled', () => {
+    setMotionEnabled(true);
+    withEnv({ PUSH_REDUCED_MOTION: '1' }, () => {
+      assert.equal(animatedEllipsis(0), '…');
+      assert.equal(animatedEllipsis(100), '…');
+    });
+  });
+
+  it('cycles fixed-width dot phases at default speed', () => {
+    setMotionEnabled(true);
+    // speed=4 → phase changes every 4 ticks; every frame is 3 columns wide.
+    assert.equal(animatedEllipsis(0), '   ');
+    assert.equal(animatedEllipsis(3), '   ');
+    assert.equal(animatedEllipsis(4), '.  ');
+    assert.equal(animatedEllipsis(7), '.  ');
+    assert.equal(animatedEllipsis(8), '.. ');
+    assert.equal(animatedEllipsis(12), '...');
+    assert.equal(animatedEllipsis(15), '...');
+    assert.equal(animatedEllipsis(16), '   '); // wraps
+  });
+
+  it('every phase is exactly 3 columns wide (no reflow)', () => {
+    setMotionEnabled(true);
+    for (let t = 0; t < 32; t++) {
+      assert.equal(animatedEllipsis(t).length, 3, `tick ${t} width`);
+    }
+  });
+
+  it('respects custom speed', () => {
+    setMotionEnabled(true);
+    assert.equal(animatedEllipsis(0, 2), '   ');
+    assert.equal(animatedEllipsis(1, 2), '   ');
+    assert.equal(animatedEllipsis(2, 2), '.  ');
+    assert.equal(animatedEllipsis(4, 2), '.. ');
+  });
+});
+
+describe('liveFrame', () => {
+  it('returns static ● when motion is off', () => {
+    setMotionEnabled(false);
+    assert.equal(liveFrame(0), '●');
+    assert.equal(liveFrame(42), '●');
+  });
+
+  it('returns static ● under reduced motion even when enabled', () => {
+    setMotionEnabled(true);
+    withEnv({ PUSH_REDUCED_MOTION: '1' }, () => {
+      assert.equal(liveFrame(0), '●');
+      assert.equal(liveFrame(42), '●');
+    });
+  });
+
+  it('cycles a small set of glyphs when motion is on', () => {
+    setMotionEnabled(true);
+    const frames = new Set();
+    for (let t = 0; t < 20; t++) frames.add(liveFrame(t));
+    assert.ok(frames.size >= 2);
+  });
+});

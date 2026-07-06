@@ -5,7 +5,7 @@
 
 import { visibleWidth, truncate, padTo } from './tui-renderer.js';
 import { getGitInfo } from './workspace-context.js';
-import { moodVerb } from './tui-spinner.js';
+import { liveFrame, moodVerb } from './tui-spinner.js';
 import type { Theme, TokenName } from './tui-theme.js';
 import type { WorkspaceStateView } from '../lib/workspace-state.js';
 
@@ -270,6 +270,8 @@ interface StatusBarOptions {
   contextBudget?: ContextBudget | null;
   fileAwareness?: FileAwareness | null;
   daemonStatus?: DaemonStatusIndicator | null;
+  /** Frame tick for subtle LIVE / meter motion. */
+  tick?: number;
 }
 
 /**
@@ -290,6 +292,7 @@ export function renderStatusBar(
     contextBudget = null,
     fileAwareness = null,
     daemonStatus = null,
+    tick = 0,
   }: StatusBarOptions,
 ): void {
   const { top, left, width } = layout.footer;
@@ -422,10 +425,11 @@ export function renderStatusBar(
     });
   }
 
-  // Live indicator (only when streaming)
+  // Live indicator (only when streaming) — cycling glyph signals "still live".
   let liveIndicator = '';
   if (isStreaming) {
-    liveIndicator = theme.style('state.warn', ' ● LIVE ');
+    const glyph = liveFrame(tick);
+    liveIndicator = theme.style('state.warn', ` ${glyph} LIVE `);
   }
 
   // Build the line
