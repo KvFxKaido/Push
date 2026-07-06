@@ -2254,10 +2254,22 @@ function broadcastWorkspaceStateEvent(sessionId, entry, event) {
   }
 }
 
+// True when at least one attached client advertised `workspace_state_v1`, i.e.
+// someone will actually consume the timeline. Used to short-circuit emission
+// before spawning git subprocesses whose result would reach zero subscribers.
+function hasWorkspaceStateSubscriber(sessionId) {
+  const clients = sessionClients.get(sessionId);
+  if (!clients) return false;
+  for (const [, meta] of clients) {
+    if (meta.capabilities.has(WORKSPACE_STATE_V1)) return true;
+  }
+  return false;
+}
+
 /**
  * Drive the per-session workspace-state timeline and broadcast the resulting
- * event. The producer lives on the session entry, keyed by sessionId (the
- * workspace identity). Modes:
+ * event, serialized per session. The producer lives on the session entry, keyed
+ * by sessionId (the workspace identity). Modes:
  *   - `snapshot`: read the tree, start a fresh producer, emit the opener
  *     (session start).
  *   - `delta`: read the tree, emit the minimal delta since last state — or
@@ -2265,10 +2277,27 @@ function broadcastWorkspaceStateEvent(sessionId, entry, event) {
  *   - `resync`: re-forward the current snapshot without re-reading or
  *     advancing, so a newly attached client anchors (reconnect). Falls back to
  *     a read+snapshot when no producer exists yet.
- * Symmetric structured logs (to console.error — CLI stdout is reserved) on the
- * skip and failure branches so a silent no-emit is visible to operators.
+ *
+ * Callers fire-and-forget, and each mode awaits a git read before assigning
+ * `entry.workspaceStateProducer` — so without ordering, a slow start-session
+ * read could land after a post-run delta, broadcast stale state, and reset the
+ * baseline. `entry.workspaceStateEmitChain` serializes all emits per session in
+ * call order, closing that race. Emission also short-circuits when no client
+ * consumes the timeline, so idle sessions never spawn git subprocesses.
  */
-async function emitWorkspaceState(sessionId, entry, mode) {
+function emitWorkspaceState(sessionId, entry, mode) {
+  if (!hasWorkspaceStateSubscriber(sessionId)) return Promise.resolve();
+  const prior = entry.workspaceStateEmitChain ?? Promise.resolve();
+  // runWorkspaceStateEmit never rejects (it catches + logs), so the chain can't
+  // wedge on a failed emit.
+  const next = prior.then(() => runWorkspaceStateEmit(sessionId, entry, mode));
+  entry.workspaceStateEmitChain = next;
+  return next;
+}
+
+// Symmetric structured logs (to console.error — CLI stdout is reserved) on the
+// skip and failure branches so a silent no-emit is visible to operators.
+async function runWorkspaceStateEmit(sessionId, entry, mode) {
   try {
     if (mode === 'resync' && entry.workspaceStateProducer) {
       broadcastWorkspaceStateEvent(sessionId, entry, entry.workspaceStateProducer.snapshot());

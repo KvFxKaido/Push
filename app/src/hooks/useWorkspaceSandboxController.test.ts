@@ -243,6 +243,7 @@ describe('useWorkspaceSandboxController workspace-state adapter', () => {
     entries: ReturnType<typeof entry>[];
     headSha: string;
     onWorkspaceStateEvent: (event: WorkspaceStateEvent) => void;
+    protectMain?: boolean;
   }) {
     reactState.refIndex = 0;
     reactState.stateIndex = 0;
@@ -278,7 +279,7 @@ describe('useWorkspaceSandboxController workspace-state adapter', () => {
       setSandboxId: vi.fn(),
       setWorkspaceSessionId: vi.fn(),
       skipBranchTeardownRef: { current: false },
-      protectMain: true,
+      protectMain: args.protectMain ?? true,
       onWorkspaceStateEvent: args.onWorkspaceStateEvent,
     });
     for (const effect of reactState.effects) effect();
@@ -362,6 +363,39 @@ describe('useWorkspaceSandboxController workspace-state adapter', () => {
     if (resync.type !== 'workspace.state_snapshot') throw new Error('expected a snapshot');
     expect(resync.rev).toBe(0);
     expect(resync.state.dirtyFiles).toEqual([{ path: 'a.ts', status: 'modified' }]);
+  });
+
+  it('emits a set_protect_main delta when Protect Main toggles mid-sandbox', async () => {
+    const events: WorkspaceStateEvent[] = [];
+    const push = (e: WorkspaceStateEvent) => events.push(e);
+
+    renderAdapter({
+      sandboxId: 'sb-1',
+      entries: [],
+      headSha: 'sha1',
+      protectMain: false,
+      onWorkspaceStateEvent: push,
+    });
+    await flush();
+    const opener = events[0];
+    if (opener.type !== 'workspace.state_snapshot') throw new Error('expected a snapshot');
+    expect(opener.state.protectMain).toBe(false);
+
+    // Same sandbox, no git churn — just flip the guard. The ready effect won't
+    // re-fetch (fetched once per id), so only the protectMain effect can emit.
+    renderAdapter({
+      sandboxId: 'sb-1',
+      entries: [],
+      headSha: 'sha1',
+      protectMain: true,
+      onWorkspaceStateEvent: push,
+    });
+
+    const delta = events.find((e) => e.type === 'workspace.state_delta');
+    if (!delta || delta.type !== 'workspace.state_delta') throw new Error('expected a delta');
+    expect(delta.baseRev).toBe(0);
+    expect(delta.rev).toBe(1);
+    expect(delta.ops).toEqual([{ op: 'set_protect_main', protectMain: true }]);
   });
 });
 

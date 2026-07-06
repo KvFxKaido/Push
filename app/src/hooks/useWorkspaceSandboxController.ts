@@ -177,6 +177,28 @@ export function useWorkspaceSandboxController({
     onWorkspaceStateEventRef.current?.(producerRef.current.snapshot());
   }, []);
 
+  // Emit a guard-only delta when Protect Main toggles while the sandbox is
+  // already ready. The ready effect fetches once per sandbox id, so without
+  // this a mid-session toggle would only update `protectMainRef` and consumers
+  // would keep showing the stale delivery guard until a manual refresh. Async
+  // (matching `driveWorkspaceState`) so the internal setState isn't a
+  // synchronous set-state-in-effect. No git read — we patch the one field on
+  // the current reduced state and let the producer diff it.
+  const emitProtectMainDelta = useCallback(async (nextProtectMain: boolean) => {
+    const producer = producerRef.current;
+    const view = workspaceViewRef.current;
+    if (!producer || !view || view.state.protectMain === nextProtectMain) return;
+    const event = producer.update({ ...view.state, protectMain: nextProtectMain });
+    if (!event) return;
+    const { view: nextView } = reduceWorkspaceStateEvent(view, event);
+    workspaceViewRef.current = nextView;
+    setWorkspaceStateView(nextView);
+    onWorkspaceStateEventRef.current?.(event);
+  }, []);
+  useEffect(() => {
+    void emitProtectMainDelta(protectMain);
+  }, [protectMain, emitProtectMainDelta]);
+
   const fetchSandboxState = useCallback(
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
