@@ -389,7 +389,7 @@ export function makeCLIEventHandler() {
         ) {
           flushInlineStreams();
           spinner.stop();
-          process.stdout.write(
+          process.stderr.write(
             `${fmt.dim('[workspace]')} ${formatWorkspaceStateView(workspaceStateView, 80)}\n`,
           );
         }

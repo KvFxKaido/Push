@@ -209,7 +209,7 @@ describe('makeCLIEventHandler delegation rendering', () => {
 
   it('renders workspace-state snapshots and deltas as compact ambient lines', () => {
     const handler = makeCLIEventHandler();
-    const { stdout } = capture(() => {
+    const { stdout, stderr } = capture(() => {
       handler({
         type: 'workspace.state_snapshot',
         payload: {
@@ -241,7 +241,8 @@ describe('makeCLIEventHandler delegation rendering', () => {
       });
     });
 
-    const clean = stripAnsi(stdout);
+    assert.equal(stdout, '');
+    const clean = stripAnsi(stderr);
     assert.match(clean, /\[workspace\] feature\/workspace \+1 ↑1 ↓2 protect-main sandbox-ready/);
     assert.match(
       clean,

@@ -1583,9 +1583,19 @@ export async function runTUI(options = {}) {
 
   async function refreshGitStatus() {
     const status = await getCompactGitStatus(state.cwd);
+    const nextBranch = status?.branch || '';
+    let changed = false;
     if (JSON.stringify(status) !== JSON.stringify(tuiState.gitStatus)) {
       tuiState.gitStatus = status;
       tuiState.dirty.add('footer');
+      changed = true;
+    }
+    if (nextBranch !== branch) {
+      branch = nextBranch;
+      tuiState.dirty.add('header');
+      changed = true;
+    }
+    if (changed) {
       scheduler?.schedule();
     }
   }
@@ -2187,6 +2197,9 @@ export async function runTUI(options = {}) {
           // on PR #664).
           daemonSessionId = null;
           daemonAttachToken = null;
+          tuiState.workspaceStateView = null;
+          tuiState.dirty.add('footer');
+          scheduler?.schedule();
           // A drain-driven refresh exits the daemon on purpose. Respawn a
           // fresh one from current code instead of the plain reconnect loop
           // (which would only re-dial the now-dead socket and never spawn).
@@ -3294,10 +3307,6 @@ export async function runTUI(options = {}) {
         });
         tuiState.workspaceStateView = result.view;
         if (result.outcome === 'snapshot_adopted' || result.outcome === 'delta_applied') {
-          if (result.view?.state?.activeBranch) {
-            branch = result.view.state.activeBranch;
-          }
-          tuiState.dirty.add('header');
           tuiState.dirty.add('footer');
           scheduler.schedule();
         }

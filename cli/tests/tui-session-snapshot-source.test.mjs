@@ -65,6 +65,25 @@ describe('TUI session snapshot source guards', () => {
     );
   });
 
+  it('clears daemon workspace state on disconnect and leaves header branch to the git poll', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /client\._socket\.on\('close', \(\) => \{[\s\S]*tuiState\.workspaceStateView = null;[\s\S]*tuiState\.dirty\.add\('footer'\);/,
+      'the daemon close path should clear stale workspace-state guards from the footer',
+    );
+    assert.match(
+      src,
+      /const nextBranch = status\?\.branch \|\| '';[\s\S]*if \(nextBranch !== branch\) \{[\s\S]*branch = nextBranch;[\s\S]*tuiState\.dirty\.add\('header'\);/,
+      'the local git poll should be the source of truth for the header branch',
+    );
+    assert.doesNotMatch(
+      src,
+      /branch = result\.view\.state\.activeBranch/,
+      'workspace-state adoption must not overwrite the header branch',
+    );
+  });
+
   it('does not let live-only workspace-state events advance the replay cursor', async () => {
     const src = await readTuiSource();
     assert.match(

@@ -143,6 +143,16 @@ export function formatWorkspaceStateView(
   return truncate(parts.join(' '), maxWidth);
 }
 
+function formatWorkspaceStateGuardSuffix(view: WorkspaceStateView | null): string {
+  if (!view) return '';
+
+  const { state } = view;
+  return [
+    state.protectMain ? 'protect-main' : 'no-protect-main',
+    state.sandboxReady ? 'sandbox-ready' : 'sandbox-wait',
+  ].join(' ');
+}
+
 // ── Path formatting ─────────────────────────────────────────────────
 
 /**
@@ -289,7 +299,23 @@ export function renderStatusBar(
   const parts: StatusBarPart[] = [];
 
   // Workspace / Git section
-  if (workspaceStateView) {
+  if (gitStatus) {
+    const gitStr = formatGitStatus(gitStatus, workspaceStateView ? 38 : 25);
+    const guardSuffix = formatWorkspaceStateGuardSuffix(workspaceStateView);
+    const workspaceStr = truncate([gitStr, guardSuffix].filter(Boolean).join(' '), 38);
+    const workspaceColor: TokenName =
+      gitStatus.dirty > 0 ||
+      (workspaceStateView &&
+        (!workspaceStateView.state.protectMain || !workspaceStateView.state.sandboxReady))
+        ? 'state.warn'
+        : 'accent.link';
+    parts.push({
+      icon: glyphs.branch || '',
+      text: workspaceStr,
+      color: workspaceColor,
+      width: visibleWidth(workspaceStr),
+    });
+  } else if (workspaceStateView) {
     const workspaceStr = formatWorkspaceStateView(workspaceStateView, 38);
     const workspaceState = workspaceStateView.state;
     const workspaceColor: TokenName =
@@ -303,15 +329,6 @@ export function renderStatusBar(
       text: workspaceStr,
       color: workspaceColor,
       width: visibleWidth(workspaceStr),
-    });
-  } else if (gitStatus) {
-    const gitStr = formatGitStatus(gitStatus, 25);
-    const branchColor: TokenName = gitStatus.dirty > 0 ? 'state.warn' : 'accent.link';
-    parts.push({
-      icon: glyphs.branch || '',
-      text: gitStr,
-      color: branchColor,
-      width: visibleWidth(gitStr) + (gitStatus.dirty > 0 ? 2 : 0),
     });
   }
 
