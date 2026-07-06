@@ -629,6 +629,54 @@ Source notes:
 [`strands-agents/harness-sdk`](https://github.com/strands-agents/harness-sdk),
 [`Strands steering`](https://strandsagents.com/docs/user-guide/concepts/plugins/steering/).
 
+### 16. Long-running commands block server-side; the model never polls in a loop
+
+Status: **Current** (shipped 2026-07-05, CLI — `feat(tools): exec_wait`).
+
+The CLI session-exec family (`exec_start` → `exec_poll` → `exec_stop`,
+`cli/tools.ts`) lets a long command run detached, but `exec_poll` is a
+*snapshot* read — it returns whatever output exists right now and returns
+immediately. There was no blocking wait, so to wait out a long command the model
+had to **busy-poll**: one full model round-trip per poll. Measured on the lead
+loop, a single 200-second command took **169 rounds** (~169 provider calls to
+babysit one command). The runtime had *accommodated* the spin rather than
+removing it — `exec_poll` sits in `REPEAT_EXEMPT_TOOLS` (so the exact-repeat loop
+breaker won't abort it) and the adaptive round budget (`adaptMaxRounds`) expands
+to absorb the extra rounds. Two mechanisms kept the spin alive; none eliminated
+it.
+
+Why it is load-bearing for stability: N poll rounds is N independent chances for
+a provider stall, a 429, or a network blip, any one of which kills the turn. On a
+stall-prone default (Gemini) that fragility is the dominant "long tasks are
+unstable" failure mode on the CLI. It also partly explains why the autonomous
+reviewer is the most stable loop in the system — it is read-only and **never
+enters this spin**: a durable no-client loop that also never runs long commands
+dodges several instability axes at once.
+
+The decision: a long command is waited on with a **blocking** tool, not a
+model-driven poll loop. `exec_wait(session_id, timeout_ms?, from_seq?,
+max_chars?)` blocks server-side until the process exits, needs input, the wait
+budget elapses, or the run is aborted, then returns new output + final status. It
+is event-driven (reuses `waitForSessionExit`, resolves the instant the process
+exits — not a Node-side busy-wait), abortable via `options.signal` so Stop
+interrupts the wait without killing the command (that stays `exec_stop`'s job),
+and reports a `waited` state (`exited` | `needs_input` | `running` | `aborted`)
+where `running` tells the model it may wait again. The poll loop moves off the
+model and into one tool call.
+
+Evidence: the identical 200s probe dropped from **169 → 4 rounds**. The model
+adopted `exec_wait` from the tool-doc hint with **no runtime steer** — the tool
+plus its result semantics are the code-level fix; the doc line is advertisement,
+and the measurement said advertisement sufficed. A steer (after K repeat polls on
+a live session, nudge toward `exec_wait`) is the fallback if adoption proves
+provider-dependent, per §15's steer vocabulary — not added preemptively.
+
+Scope: **CLI session-exec only.** The cloud `sandbox_exec` path already polls
+server-side in its detached runner (background-exec, PR #863), so it does not
+have this model-driven spin; the CLI was the worse case. This closes one
+instability axis (the busy-poll storm); the durable-loop-host and sandbox-loss
+axes are separate.
+
 ## Active Runtime Work
 
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
@@ -643,6 +691,7 @@ Source notes:
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
 11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web + CLI)** — toggle removed, `lib/llm-compaction.ts` engine, `app/src/hooks/chat-compaction.ts` (web) + `cli/lead-compaction.ts` (CLI lead) coordinators wired pre-turn, three web visibility surfaces + the CLI `context_compacted` event. Remaining: graduate the run-event `phase` vocabulary if ops need to distinguish heuristic- from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema), and a Worker-side background-coder integration if those long jobs need it.
 12. Unify runtime intervention machinery (§15 / #1260): add the shared steer/block contract and execution tool ledger in `lib/`, then route existing recovery, budget, loop, and Auditor gate decisions through that contract without changing agent capability.
+13. Long-command blocking wait (§16): **shipped 2026-07-05** (`exec_wait`, CLI) — the 200s probe collapsed 169 → 4 rounds, model adopted it from the tool-doc hint (no steer). Follow-ups only if warranted: a repeat-poll → `exec_wait` steer if adoption proves provider-dependent, and a cloud parity check (the detached runner already polls server-side, so likely a no-op).
 
 ## Archived Context Worth Knowing
 
