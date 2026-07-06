@@ -76,6 +76,14 @@ const DEFAULT_EXEC_SESSION_TIMEOUT_MS = 600_000;
 const MAX_EXEC_SESSION_TIMEOUT_MS = 1_800_000;
 const DEFAULT_EXEC_POLL_MAX_CHARS = 8_000;
 const MAX_EXEC_POLL_MAX_CHARS = 64_000;
+// `exec_wait` blocks server-side until a session exits (or needs input / the
+// wait budget elapses), moving the poll loop off the model — one tool call
+// instead of one model round-trip per poll. Returns early the instant the
+// command exits. The slice bounds abort/interactive-trap detection latency
+// while blocking; the wait itself is abortable via `options.signal` (Stop).
+const DEFAULT_EXEC_WAIT_MS = 120_000;
+const MAX_EXEC_WAIT_MS = 600_000;
+const EXEC_WAIT_SLICE_MS = 400;
 const INTERACTIVE_TRAP_THRESHOLD_MS = 2_000;
 
 // Interactive prompt heuristics. Each regex is tested against `text.trim()`
@@ -149,6 +157,7 @@ export const READ_ONLY_TOOLS = new Set([
   'git_diff',
   'lsp_diagnostics',
   'exec_poll',
+  'exec_wait',
   'exec_list_sessions',
   'memory_grep',
   'memory_expand',
@@ -176,7 +185,11 @@ export const FILE_MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edi
 // call is the same `{session_id, from_seq}` — repeating it is waiting, not a
 // loop. Without the exemption a slow command that doesn't emit output every
 // round would trip the breaker on its 4th poll and abort the lead turn.
-export const REPEAT_EXEMPT_TOOLS = new Set(['exec_poll']);
+// `exec_wait` is exempt for the same reason: a command outliving one wait
+// budget is resumed by re-calling with identical args — still waiting, not a
+// loop. (In practice exec_wait collapses the poll storm to a handful of calls,
+// but the exemption keeps a legitimately long wait from tripping the breaker.)
+export const REPEAT_EXEMPT_TOOLS = new Set(['exec_poll', 'exec_wait']);
 
 export function isFileMutationToolCall(call) {
   return Boolean(call && FILE_MUTATION_TOOLS.has(call.tool));
@@ -951,6 +964,7 @@ Available tools:
 - exec(command, timeout_ms?) — run a shell command
 - exec_start(command, timeout_ms?, tty?) — start a long-running command session
 - exec_poll(session_id, from_seq?, max_chars?) — read incremental output from a running command session
+- exec_wait(session_id, timeout_ms?, from_seq?, max_chars?) — block until the command exits, needs input, or timeout_ms elapses, then return new output and final status; prefer this over repeated exec_poll for long commands
 - exec_write(session_id, input, append_newline?) — send stdin to a running command session
 - exec_stop(session_id, signal?) — stop a running command session and release it
 - exec_list_sessions() — list active/finished command sessions
@@ -2798,6 +2812,99 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             session_id: session.id,
             running: session.running,
             interactive_trap: session.interactiveTrap,
+            status,
+            exit_code: session.exitCode,
+            signal: session.exitSignal,
+            timed_out: session.timedOut,
+            from_seq: fromSeq,
+            next_seq: latestSeq,
+            first_available_seq: session.firstAvailableSeq,
+            returned_chunks: collected.returnedChunks,
+            history_truncated: historyTruncated,
+            output_truncated: collected.truncated,
+            tty_mode: session.ttyMode,
+          },
+        };
+      }
+
+      case 'exec_wait': {
+        const sessionId = asString(call.args.session_id, 'session_id');
+        const session = EXEC_SESSIONS.get(sessionId);
+        if (!session) {
+          return {
+            ok: false,
+            text: `No exec session found: ${sessionId}`,
+            structuredError: {
+              code: 'NOT_FOUND',
+              message: `Unknown exec session: ${sessionId}`,
+              retryable: false,
+            },
+          };
+        }
+
+        const fromSeqRaw = asOptionalNumber(call.args.from_seq) ?? 0;
+        const fromSeq = Number.isFinite(fromSeqRaw) ? Math.max(0, Math.floor(fromSeqRaw)) : 0;
+        const maxChars = clamp(
+          asOptionalNumber(call.args.max_chars) ?? DEFAULT_EXEC_POLL_MAX_CHARS,
+          256,
+          MAX_EXEC_POLL_MAX_CHARS,
+        );
+        const waitMs = clamp(
+          asOptionalNumber(call.args.timeout_ms) ?? DEFAULT_EXEC_WAIT_MS,
+          1_000,
+          MAX_EXEC_WAIT_MS,
+        );
+
+        // Block until the process exits, an interactive prompt is detected, the
+        // wait budget elapses, or the run is aborted (Stop). This moves the poll
+        // loop off the model: one `exec_wait` replaces the many `exec_poll`
+        // round-trips the model would otherwise spend spinning on a quiet
+        // long-running command. `waitForSessionExit` resolves immediately on
+        // exit (event-driven, not a busy-wait); the slice only bounds how
+        // quickly we notice an interactive trap or an abort. Aborting stops
+        // *waiting* — it never kills the command (that is exec_stop's job).
+        const deadline = Date.now() + waitMs;
+        while (
+          session.running &&
+          !session.interactiveTrap &&
+          !options.signal?.aborted &&
+          Date.now() < deadline
+        ) {
+          const slice = Math.min(EXEC_WAIT_SLICE_MS, deadline - Date.now());
+          if (slice <= 0) break;
+          await waitForSessionExit(session, slice);
+        }
+
+        const collected = collectSessionOutput(session, fromSeq, maxChars);
+        const latestSeq = session.nextSeq;
+        const historyTruncated = fromSeq < session.firstAvailableSeq - 1;
+        const status = formatSessionStatus(session);
+        const waited = !session.running
+          ? 'exited'
+          : session.interactiveTrap
+            ? 'needs_input'
+            : options.signal?.aborted
+              ? 'aborted'
+              : 'running';
+
+        let finalOutput = collected.text || '<no new output>';
+        if (session.interactiveTrap) {
+          finalOutput +=
+            '\n\n[push] [INTERACTIVE_PROMPT_DETECTED] The process appears to be waiting for input. Use exec_write to respond or exec_stop to kill it.';
+        } else if (waited === 'running') {
+          finalOutput += `\n\n[push] still running after ${waitMs}ms — call exec_wait again to keep waiting, or exec_stop to kill it.`;
+        }
+
+        return {
+          ok: true,
+          text: truncateText(
+            `session_id: ${session.id}\nstatus: ${status}\nwaited: ${waited}\nfrom_seq: ${fromSeq}\nnext_seq: ${latestSeq}\n\noutput:\n${finalOutput}`,
+          ),
+          meta: {
+            session_id: session.id,
+            running: session.running,
+            interactive_trap: session.interactiveTrap,
+            waited,
             status,
             exit_code: session.exitCode,
             signal: session.exitSignal,

@@ -276,14 +276,15 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   undo_edit: ['repo:write'],
   exec: ['sandbox:exec'],
   exec_start: ['sandbox:exec'],
-  // exec_poll / exec_list_sessions are read-verbs over exec-family objects.
-  // Assigned `sandbox:exec` (not `repo:read`) because Explorer can never
-  // poll a session it could not have started — `exec_start` requires
-  // `sandbox:exec` and `makeDaemonExplorerToolExec` passes `allowExec:
+  // exec_poll / exec_wait / exec_list_sessions are read-verbs over exec-family
+  // objects. Assigned `sandbox:exec` (not `repo:read`) because Explorer can
+  // never poll or wait on a session it could not have started — `exec_start`
+  // requires `sandbox:exec` and `makeDaemonExplorerToolExec` passes `allowExec:
   // false` as a second line of defense. Coherent with the family;
-  // functionally removes Explorer access to these two tools (intentional
+  // functionally removes Explorer access to these tools (intentional
   // behavior change — see PR description for rationale).
   exec_poll: ['sandbox:exec'],
+  exec_wait: ['sandbox:exec'],
   exec_write: ['sandbox:exec'],
   exec_stop: ['sandbox:exec'],
   exec_list_sessions: ['sandbox:exec'],

@@ -211,6 +211,7 @@ export const VERB_BY_TOOL: Readonly<Record<string, string>> = {
   exec: 'running',
   exec_start: 'running',
   exec_poll: 'running',
+  exec_wait: 'running',
   exec_write: 'running',
   exec_stop: 'running',
   exec_list_sessions: 'running',
