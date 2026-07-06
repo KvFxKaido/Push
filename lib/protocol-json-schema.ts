@@ -407,6 +407,17 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     outcome: enumOf(TURN_END_OUTCOMES),
   }),
 
+  HarnessAdaptation: objectNode(['round', 'fromMaxRounds', 'toMaxRounds', 'reasons'], {
+    round: uint(),
+    fromMaxRounds: uint(),
+    toMaxRounds: uint(),
+    reasons: {
+      type: 'array',
+      minItems: 1,
+      items: nestr(),
+    },
+  }),
+
   JobStarted: objectNode(['executionId', 'role'], {
     executionId: nestr(),
     role: enumOf(PROMPT_SNAPSHOT_ROLES),
@@ -488,6 +499,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'turn.route': 'TurnRoute',
   'assistant.turn_start': 'AssistantTurnStart',
   'assistant.turn_end': 'AssistantTurnEnd',
+  'harness.adaptation': 'HarnessAdaptation',
   'job.started': 'JobStarted',
   'job.completed': 'JobCompleted',
   'job.failed': 'JobFailed',

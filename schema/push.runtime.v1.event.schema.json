@@ -1076,6 +1076,37 @@
         }
       }
     },
+    "HarnessAdaptation": {
+      "type": "object",
+      "required": [
+        "round",
+        "fromMaxRounds",
+        "toMaxRounds",
+        "reasons"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fromMaxRounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "toMaxRounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "JobStarted": {
       "type": "object",
       "required": [
@@ -1919,6 +1950,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/AssistantTurnEnd"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "harness.adaptation"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/HarnessAdaptation"
           }
         }
       }

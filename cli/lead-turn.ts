@@ -742,19 +742,25 @@ export async function runLeadKernelTurn(
         // threaded `explicitMaxRounds` flag, NOT a value compare — an explicit
         // `--max-rounds 50` is indistinguishable from the default by value.
         // See cli/harness-adaptation.ts.
-        // NOTE: emitting a `harness.adaptation` event on cap change (which the
-        // eval/measurement scripts count) is a deferred follow-up (#1346) — it
-        // needs a canonical payload in lib/runtime-contract.ts + a
-        // protocol-schema.ts validator + a drift test in the same change
-        // (AGENTS.md), so it lands as its own piece rather than an untyped
-        // rider here.
         adaptMaxRounds: options.explicitMaxRounds
           ? undefined
-          : ({ round, currentMaxRounds }) =>
-              computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
+          : ({ round, currentMaxRounds }) => {
+              const adaptation = computeAdaptation(adaptationMetricsKey, currentMaxRounds, {
                 currentRound: round,
                 maxAllowedRounds: MAX_ALLOWED_ROUNDS,
-              }).adjustedMaxRounds,
+              });
+              if (adaptation.wasAdapted) {
+                const payload = {
+                  round,
+                  fromMaxRounds: currentMaxRounds,
+                  toMaxRounds: adaptation.adjustedMaxRounds,
+                  reasons: adaptation.reasons,
+                };
+                void persistEvent('harness.adaptation', payload);
+                dispatchEvent('harness.adaptation', payload);
+              }
+              return adaptation.adjustedMaxRounds;
+            },
         // Per-run token budget. Config (`config.runTokenBudget`) is forwarded
         // to `PUSH_RUN_TOKEN_BUDGET` by `applyConfigToEnv` at startup, so
         // resolving from env here folds in both the operator override and the

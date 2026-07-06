@@ -25,7 +25,7 @@ import {
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
-import { makeSessionId } from '../session-store.ts';
+import { loadSessionEvents, makeSessionId } from '../session-store.ts';
 import { canListenOnLoopback } from './test-environment.mjs';
 
 const loopbackAvailable = await canListenOnLoopback();
@@ -67,6 +67,16 @@ async function withTempWorkspace(run) {
     else process.env.PUSH_MEMORY_DIR = prevMemory;
     await fs.rm(tmpDir, { recursive: true, force: true });
   }
+}
+
+async function loadSessionEventsEventually(sessionId, predicate) {
+  let events = [];
+  for (let i = 0; i < 20; i++) {
+    events = await loadSessionEvents(sessionId);
+    if (predicate(events)) return events;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  return events;
 }
 
 // Sequenced mock of the OpenAI-compatible streaming provider — one scripted
@@ -250,6 +260,54 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         assert.equal(result.outcome, 'max_rounds');
         const runComplete = emitted.find((e) => e.type === 'run_complete');
         assert.equal(runComplete.payload.outcome, 'max_rounds');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('emits and persists harness.adaptation when adaptive max rounds changes', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const malformedCall = '```json\n{"tool": "read_file", "args": {oops}}\n```';
+      const server = await startSequencedProviderServer([
+        { tokens: [malformedCall] },
+        { tokens: [malformedCall] },
+        { tokens: [malformedCall] },
+        { tokens: ['Recovered after adaptation.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Read notes.txt',
+          30,
+          { emit: (event) => emitted.push(event) },
+        );
+
+        assert.equal(result.outcome, 'success');
+        assert.equal(server.requests.length, 4, 'expected three recovery rounds plus final answer');
+
+        const emittedAdaptations = emitted.filter((e) => e.type === 'harness.adaptation');
+        assert.equal(emittedAdaptations.length, 1);
+        assert.deepEqual(emittedAdaptations[0].payload, {
+          round: 3,
+          fromMaxRounds: 30,
+          toMaxRounds: 20,
+          reasons: ['Reduce max rounds to 20: 3 malformed tool calls'],
+        });
+
+        const events = await loadSessionEventsEventually(state.sessionId, (loaded) =>
+          loaded.some((event) => event.type === 'harness.adaptation'),
+        );
+        const persistedAdaptations = events.filter((event) => event.type === 'harness.adaptation');
+        assert.equal(persistedAdaptations.length, 1);
+        assert.deepEqual(persistedAdaptations[0].payload, emittedAdaptations[0].payload);
       } finally {
         await server.stop();
       }

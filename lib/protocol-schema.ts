@@ -348,6 +348,32 @@ function expectNonNegativeInteger(
   return null;
 }
 
+function expectNonEmptyStringArray(
+  obj: Record<string, unknown>,
+  field: string,
+  basePath: string,
+): ValidationIssue[] {
+  const value = obj[field];
+  if (!Array.isArray(value) || value.length === 0) {
+    return [
+      {
+        path: `${basePath}.${field}`,
+        message: `expected non-empty string array, got ${JSON.stringify(value)}`,
+      },
+    ];
+  }
+  const issues: ValidationIssue[] = [];
+  value.forEach((element, index) => {
+    if (!isNonEmptyString(element)) {
+      issues.push({
+        path: `${basePath}.${field}[${index}]`,
+        message: `expected non-empty string, got ${JSON.stringify(element)}`,
+      });
+    }
+  });
+  return issues;
+}
+
 // Required finite number, but NOT constrained to non-negative — duration-style
 // fields (e.g. `markerAge = Date.now() - startedAt`) can legitimately go
 // negative under clock skew, and rejecting that would be a false-positive in
@@ -1407,6 +1433,19 @@ function validateAssistantTurnEnd(payload: unknown, basePath: string): Validatio
   return issues;
 }
 
+function validateHarnessAdaptation(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  for (const field of ['round', 'fromMaxRounds', 'toMaxRounds']) {
+    const issue = expectNonNegativeInteger(payload, field, basePath);
+    if (issue) issues.push(issue);
+  }
+  issues.push(...expectNonEmptyStringArray(payload, 'reasons', basePath));
+  return issues;
+}
+
 function validateJobStarted(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
@@ -1541,6 +1580,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'turn.route': validateTurnRoute,
   'assistant.turn_start': validateAssistantTurnStart,
   'assistant.turn_end': validateAssistantTurnEnd,
+  'harness.adaptation': validateHarnessAdaptation,
   'job.started': validateJobStarted,
   'job.completed': validateJobCompleted,
   'job.failed': validateJobFailed,
