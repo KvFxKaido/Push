@@ -78,6 +78,7 @@ import { createSandboxPushGit } from './git-backend';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
+import { resolveNativeFs } from './native-fs';
 
 import {
   setPrefetchedEditFile,
@@ -425,6 +426,34 @@ async function runLocalDaemonTool(
 }
 
 /**
+ * Run a native (on-device) file-op and map a plugin rejection to a structured
+ * tool error. The `NativeGit` plugin rejects when a call reaches it off the
+ * native shell (the web stub) or when JGit/File I/O throws; either surfaces as a
+ * `SANDBOX_UNREACHABLE` so the model gets a typed failure rather than an
+ * unhandled throw. Mirrors {@link runLocalDaemonTool} for the native FS path.
+ */
+async function runNativeFsTool(
+  toolName: string,
+  fn: () => Promise<ToolExecutionResult>,
+): Promise<ToolExecutionResult> {
+  try {
+    return await fn();
+  } catch (caught) {
+    const reason = caught instanceof Error ? caught.message : String(caught);
+    const err: StructuredToolError = {
+      type: 'SANDBOX_UNREACHABLE',
+      retryable: false,
+      message: `On-device working copy unavailable: ${reason}`,
+      detail: 'The native git engine did not respond. The working copy may not be ready.',
+    };
+    return {
+      text: formatStructuredError(err, `[Tool Error — ${toolName}]\n${reason}`),
+      structuredError: err,
+    };
+  }
+}
+
+/**
  * Defense-in-depth git-guard for `sandbox_exec`. Runs the same lib hook
  * factory the runtime registers so the rule has a single source of
  * truth, but evaluates it inline so the web Coder bypass path (which
@@ -488,7 +517,13 @@ async function executeSandboxToolCallInner(
   // (PR #511 review: Codex P2 caught that the bare `!sandboxId` guard
   // would short-circuit daemon dispatch as soon as 3c.2 threads the
   // binding through useChat).
-  if (!sandboxId && !options?.localDaemonBinding) {
+  // Native (APK) file-op routing: when the session has a ready on-device clone,
+  // file ops run against it instead of the cloud sandbox. `null` off native /
+  // flag-off / no-ready-clone, so every other surface is unchanged. Resolved
+  // once and shared across the file-op cases below.
+  const nativeFs = resolveNativeFs(options?.nativeFsScope);
+
+  if (!sandboxId && !options?.localDaemonBinding && !nativeFs) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
     return {
       text: formatStructuredError(err, '[Tool Error] No active sandbox — start one first.'),
@@ -515,6 +550,28 @@ async function executeSandboxToolCallInner(
         );
         if (gitGuardDeny) {
           return gitGuardDeny;
+        }
+        // Hard boundary: the native (APK) shell has no POSIX shell / coreutils,
+        // so arbitrary `sandbox_exec` can't run on-device. Git work goes through
+        // the typed branch/commit tools (not shell), so a session on the local
+        // clone refuses exec with a typed, non-retryable error rather than
+        // pretending success or falling through to a sandbox it doesn't have.
+        if (nativeFs) {
+          const err: StructuredToolError = {
+            type: 'NATIVE_TOOL_UNSUPPORTED',
+            retryable: false,
+            message: 'sandbox_exec is unavailable on the on-device working copy',
+            detail:
+              'The native shell has no command runtime. Use the typed file and git tools ' +
+              '(read/write/list, create_branch, commit) instead of shell commands.',
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_exec]\nsandbox_exec is not supported on the on-device working copy — there is no shell on the native shell. Use the typed file/git tools instead.`,
+            ),
+            structuredError: err,
+          };
         }
         const start = Date.now();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
@@ -799,6 +856,40 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_read_file': {
+        if (nativeFs) {
+          // Sensitive-path refusal BEFORE the read, matching the cloud/daemon
+          // paths (keeps the model's context clean of blocked round-trips).
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runNativeFsTool('sandbox_read_file', async () => {
+            const local = await nativeFs.readFile(call.args.path, {
+              startLine: call.args.start_line,
+              endLine: call.args.end_line,
+            });
+            if (local.error) {
+              const err = classifyError(local.error, call.args.path);
+              if (local.code === 'ENOENT') err.type = 'FILE_NOT_FOUND';
+              err.detail = `Path: ${call.args.path}`;
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_read_file]\n${local.error}`,
+                ),
+                structuredError: err,
+              };
+            }
+            // Same untrusted-content defenses as the cloud/daemon read paths.
+            const redaction = redactSensitiveText(local.content);
+            const sanitized = sanitizeUntrustedSource(redaction.text);
+            const header = `[Tool Result — sandbox_read_file]\nPath: ${call.args.path}${
+              local.totalLines !== undefined ? ` (${local.totalLines} lines)` : ''
+            }${local.truncated ? ' [truncated]' : ''}${
+              redaction.redacted ? ' [secrets redacted]' : ''
+            }`;
+            return { text: `${header}\n\n${sanitized}` };
+          });
+        }
         if (options?.localDaemonBinding) {
           // Match cloud `handleReadFile` semantics: refuse sensitive paths
           // BEFORE they reach the daemon. The daemon also rejects these
@@ -854,6 +945,43 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_list_dir': {
+        if (nativeFs) {
+          const dirPath = call.args.path ?? '(cwd)';
+          if (call.args.path && isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runNativeFsTool('sandbox_list_dir', async () => {
+            const local = await nativeFs.listDir(call.args.path);
+            if (local.error) {
+              const err = classifyError(local.error, dirPath);
+              err.detail = `Path: ${dirPath}`;
+              return {
+                text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${local.error}`),
+                structuredError: err,
+              };
+            }
+            const filtered = filterSensitiveDirectoryEntries(call.args.path ?? '', local.entries);
+            const rows = filtered.entries
+              .map((e) =>
+                e.type === 'directory'
+                  ? `${e.name}/`
+                  : e.size !== undefined
+                    ? `${e.name}\t${e.size}`
+                    : e.name,
+              )
+              .join('\n');
+            const hiddenNote =
+              filtered.hiddenCount > 0
+                ? ` (${filtered.hiddenCount} sensitive entr${
+                    filtered.hiddenCount === 1 ? 'y' : 'ies'
+                  } hidden)`
+                : '';
+            const header = `[Tool Result — sandbox_list_dir]\nPath: ${dirPath}${
+              local.truncated ? ` [truncated to ${local.entries.length}]` : ''
+            }${hiddenNote}`;
+            return { text: `${header}\n\n${rows}` };
+          });
+        }
         if (options?.localDaemonBinding) {
           const dirPath = call.args.path ?? '(cwd)';
           // Match cloud `handleListDir` semantics for the directory itself
@@ -911,6 +1039,33 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_write_file': {
+        if (nativeFs) {
+          // Same sensitive-path guard as the cloud/daemon write paths.
+          if (isSensitivePath(call.args.path)) {
+            return { text: formatSensitivePathToolError(call.args.path) };
+          }
+          return runNativeFsTool('sandbox_write_file', async () => {
+            const local = await nativeFs.writeFile(call.args.path, call.args.content);
+            if (!local.ok || local.error) {
+              const err = classifyError(local.error || 'Native write failed', call.args.path);
+              if (err.type === 'UNKNOWN') err.type = 'WRITE_FAILED';
+              err.detail = `Path: ${call.args.path}`;
+              return {
+                text: formatStructuredError(
+                  err,
+                  `[Tool Error — sandbox_write_file]\n${err.message}`,
+                ),
+                structuredError: err,
+              };
+            }
+            return {
+              text:
+                `[Tool Result — sandbox_write_file]\n` +
+                `Path: ${call.args.path}\n` +
+                `Bytes written: ${local.bytesWritten ?? 'n/a'}`,
+            };
+          });
+        }
         if (options?.localDaemonBinding) {
           // The cloud `handleWriteFile` has its own guards (file ledger,
           // version cache, etc.); on the daemon side we have none of those

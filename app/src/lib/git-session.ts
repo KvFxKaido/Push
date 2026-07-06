@@ -33,15 +33,32 @@ import { createNativeGitBackend } from './native-git';
 import type { GitHubTokenProvider } from './native-git-backend';
 import { getActiveGitHubToken } from './github-auth';
 import { isNativePlatform } from './platform';
+import { workingCopyDir } from './native-working-copy';
 
 /** Tagged identity of the active session's git working copy. */
 export type GitSessionBinding =
   | { kind: 'sandbox'; sandboxId: string }
   | { kind: 'native'; dir: string };
 
-/** The minimal session shape the binding is resolved from. */
+/**
+ * The session shape a binding is resolved from.
+ *
+ * `sandboxId` is the cloud-sandbox identity (and the cloud HTTP resource id used
+ * across `sandbox-client.ts`); it is meaningless on native, where there is no
+ * container. The on-device working copy is instead keyed by its **durable
+ * scope** (`repoFullName` + `branch`) — the same CLI-first key scheme the native
+ * checkpoint store already uses — so the clone survives a controller remount and
+ * can be found again by scope rather than by an ephemeral id. Both are optional
+ * so existing web call sites keep compiling; a native ref that omits the scope
+ * cannot resolve a clone and deliberately falls through to sandbox (logged, so
+ * a call site that forgot to thread the scope is not silent).
+ */
 export interface GitSessionRef {
   sandboxId: string;
+  /** Repo `owner/name`; the first half of the native working-copy registry key. */
+  repoFullName?: string;
+  /** Active branch; the second half of the native working-copy registry key. */
+  branch?: string;
 }
 
 /**
@@ -88,18 +105,25 @@ export interface ResolveBindingDeps {
 }
 
 /**
- * The session's on-device clone, or `undefined` when none is registered.
- * Placeholder until the clone lifecycle increment supplies a real registry;
- * isolated here so that increment is a one-function change.
+ * The session's on-device clone dir, or `undefined` when none is registered
+ * (yet, still cloning, or the clone failed — the registry returns a dir only for
+ * a `ready` clone). Reads the process-lifetime working-copy registry; the caller
+ * ({@link resolveActiveGitBinding}) has already confirmed the scope is present.
  */
-function resolveNativeWorkingCopyDir(): string | undefined {
-  return undefined;
+function resolveNativeWorkingCopyDir(session: GitSessionRef): string | undefined {
+  if (!session.repoFullName || !session.branch) return undefined;
+  return workingCopyDir({ repoFullName: session.repoFullName, branch: session.branch });
 }
 
 /**
  * Pick the git binding for the running platform. Native shell with a registered
  * working copy → `native`; otherwise (plain web, or native before its clone
  * exists) → `sandbox`.
+ *
+ * A native ref with no durable scope (`repoFullName`/`branch`) can't key the
+ * working-copy registry, so it falls through to sandbox — but that's the "a call
+ * site forgot to thread the scope" defect, not a normal transient, so it's
+ * logged distinctly from the expected clone-not-ready-yet fall-through.
  */
 export function resolveActiveGitBinding(
   session: GitSessionRef,
@@ -107,10 +131,23 @@ export function resolveActiveGitBinding(
 ): GitSessionBinding {
   const isNative = deps.isNative ?? isNativePlatform;
   if (isNative()) {
-    const lookup = deps.nativeWorkingCopyDir ?? resolveNativeWorkingCopyDir;
-    const dir = lookup(session);
-    if (dir) return { kind: 'native', dir };
-    // Native shell but no local working copy yet — fall through to sandbox.
+    if (!session.repoFullName || !session.branch) {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'native_git_binding_unscoped',
+          sandboxId: session.sandboxId,
+          hasRepo: Boolean(session.repoFullName),
+          hasBranch: Boolean(session.branch),
+        }),
+      );
+    } else {
+      const lookup = deps.nativeWorkingCopyDir ?? resolveNativeWorkingCopyDir;
+      const dir = lookup(session);
+      if (dir) return { kind: 'native', dir };
+      // Native shell, scope present, but no local clone yet — expected transient
+      // while the clone-on-session lifecycle runs; falls through to sandbox.
+    }
   }
   return { kind: 'sandbox', sandboxId: session.sandboxId };
 }

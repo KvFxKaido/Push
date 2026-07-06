@@ -408,6 +408,8 @@ export function createTurnRunContext(
   const {
     chatId,
     sandboxIdRef,
+    repoRef,
+    branchInfoRef,
     checkpointRefs,
     setConversations,
     dirtyConversationIdsRef,
@@ -434,7 +436,13 @@ export function createTurnRunContext(
       // Run in parallel so the round-status fetch stays one round-trip of
       // wall-clock latency (it's cached per round and only invalidated when a
       // tool mutates the workspace, so the extra requests are infrequent).
-      const backend = getActiveGitBackend({ sandboxId: sandboxIdRef.current });
+      const backend = getActiveGitBackend({
+        sandboxId: sandboxIdRef.current,
+        // Durable native scope (native only): resolves the on-device clone on
+        // the phone, ignored on web where the sandboxId keys a cloud container.
+        repoFullName: repoRef.current ?? undefined,
+        branch: branchInfoRef.current?.currentBranch || branchInfoRef.current?.defaultBranch,
+      });
       const [branch, head, info] = await Promise.all([
         backend.currentBranch(),
         backend.headSha({ short: true }),

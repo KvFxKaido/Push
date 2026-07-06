@@ -37,3 +37,24 @@ export function isStreamdownEnabled(): boolean {
   if (override !== undefined) return override;
   return readBuildFlag(import.meta.env.VITE_USE_STREAMDOWN as string | undefined);
 }
+
+/**
+ * Clone repo sessions to an on-device working copy on the native (Android)
+ * shell, so git ops resolve the local clone instead of the cloud sandbox.
+ *
+ * - Build flag: `VITE_NATIVE_WORKING_COPY=1`
+ * - Runtime override: `localStorage['push:native-working-copy'] = '1' | '0'`
+ *
+ * Off by default and gated behind {@link isNativePlatform} at the call site.
+ * DELIBERATELY dormant: the clone makes git *reads* resolve locally, but the
+ * non-git tools (exec, file read/write) still route to the cloud sandbox by
+ * `sandboxId` — until that HTTP surface is native-routed, a flag-on session is a
+ * knowingly-incomplete hybrid for on-device validation of the clone path, not a
+ * shippable workspace. See the on-device working-copy registry
+ * (`native-working-copy.ts`) and git-session's native binding.
+ */
+export function isNativeWorkingCopyEnabled(): boolean {
+  const override = readLocalOverride('push:native-working-copy');
+  if (override !== undefined) return override;
+  return readBuildFlag(import.meta.env.VITE_NATIVE_WORKING_COPY as string | undefined);
+}

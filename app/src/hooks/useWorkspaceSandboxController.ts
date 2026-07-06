@@ -3,6 +3,10 @@ import { buildWorkspaceScratchActions, type SnapshotManager } from '@/hooks/useS
 import type { SandboxStatus } from '@/hooks/useSandbox';
 import { downloadFromSandbox } from '@/lib/sandbox-client';
 import { getActiveGitBackend } from '@/lib/git-session';
+import { isNativePlatform } from '@/lib/platform';
+import { isNativeWorkingCopyEnabled } from '@/lib/feature-flags';
+import { ensureWorkingCopy, forgetWorkingCopy } from '@/lib/native-working-copy';
+import { getActiveGitHubToken } from '@/lib/github-auth';
 import type { GitStatusInfo } from '@push/lib/git/status';
 import {
   createWorkspaceStateProducer,
@@ -134,38 +138,53 @@ export function useWorkspaceSandboxController({
     workspaceViewRef.current = null;
   }, []);
 
+  // Durable native scope for the working-copy registry (native only; undefined
+  // for scratch, which never clones). Passed alongside `sandboxId` so the git
+  // seam resolves the on-device clone on native and the cloud sandbox on web.
+  const nativeScope = useCallback(
+    (id: string) => ({
+      sandboxId: id,
+      repoFullName: workspaceRepo?.full_name,
+      branch: workspaceRepo?.current_branch || workspaceRepo?.default_branch,
+    }),
+    [workspaceRepo],
+  );
+
   // Fold a fresh git-status read into the workspace-state timeline: snapshot on
   // a new sandbox identity, minimal delta otherwise. Reduces the event through
   // the shared reducer so the exposed view is the delta-reconciled one, and
   // forwards the event to any sink. HEAD sha isn't in the status payload, so we
   // fetch it in parallel-friendly form (its own await) and fall back to a
   // stable non-empty placeholder on an unborn branch / read failure.
-  const driveWorkspaceState = useCallback(async (id: string, info: GitStatusInfo) => {
-    const headSha = await getActiveGitBackend({ sandboxId: id })
-      .headSha({ short: true })
-      .catch(() => null);
-    const nextState = gitStatusInfoToWorkspaceState(info, {
-      headSha: headSha ?? '(unborn)',
-      protectMain: protectMainRef.current,
-      sandboxReady: sandboxStatusRef.current === 'ready',
-    });
+  const driveWorkspaceState = useCallback(
+    async (id: string, info: GitStatusInfo) => {
+      const headSha = await getActiveGitBackend(nativeScope(id))
+        .headSha({ short: true })
+        .catch(() => null);
+      const nextState = gitStatusInfoToWorkspaceState(info, {
+        headSha: headSha ?? '(unborn)',
+        protectMain: protectMainRef.current,
+        sandboxReady: sandboxStatusRef.current === 'ready',
+      });
 
-    let event: WorkspaceStateEvent;
-    if (!producerRef.current || producerWorkspaceIdRef.current !== id) {
-      producerRef.current = createWorkspaceStateProducer(id, nextState);
-      producerWorkspaceIdRef.current = id;
-      event = producerRef.current.snapshot();
-    } else {
-      const delta = producerRef.current.update(nextState);
-      if (!delta) return; // nothing changed → no event on the wire
-      event = delta;
-    }
+      let event: WorkspaceStateEvent;
+      if (!producerRef.current || producerWorkspaceIdRef.current !== id) {
+        producerRef.current = createWorkspaceStateProducer(id, nextState);
+        producerWorkspaceIdRef.current = id;
+        event = producerRef.current.snapshot();
+      } else {
+        const delta = producerRef.current.update(nextState);
+        if (!delta) return; // nothing changed → no event on the wire
+        event = delta;
+      }
 
-    const { view } = reduceWorkspaceStateEvent(workspaceViewRef.current, event);
-    workspaceViewRef.current = view;
-    setWorkspaceStateView(view);
-    onWorkspaceStateEventRef.current?.(event);
-  }, []);
+      const { view } = reduceWorkspaceStateEvent(workspaceViewRef.current, event);
+      workspaceViewRef.current = view;
+      setWorkspaceStateView(view);
+      onWorkspaceStateEventRef.current?.(event);
+    },
+    [nativeScope],
+  );
 
   // Re-forward the current snapshot without advancing the timeline. Callers use
   // this to re-anchor a *new* sink that never saw the earlier events — e.g. a
@@ -203,7 +222,7 @@ export function useWorkspaceSandboxController({
     async (id: string): Promise<SandboxStateCardData | null> => {
       setSandboxStateLoading(true);
       try {
-        const info = await getActiveGitBackend({ sandboxId: id }).status();
+        const info = await getActiveGitBackend(nativeScope(id)).status();
         if (!info) return null;
 
         const nextState = gitStatusToCard(id, info);
@@ -228,7 +247,7 @@ export function useWorkspaceSandboxController({
         setSandboxStateLoading(false);
       }
     },
-    [driveWorkspaceState],
+    [driveWorkspaceState, nativeScope],
   );
 
   useEffect(() => {
@@ -341,6 +360,26 @@ export function useWorkspaceSandboxController({
     }
   }, [isScratch, sandboxStatus, sandboxId, sandboxStart]);
 
+  // On-device working-copy trigger (native/APK only, flag-gated). Clones the
+  // repo session to a local working copy so git ops resolve the on-device clone
+  // via git-session's native binding. Dormant on web and until the flag is on.
+  // Runs alongside — NOT in place of — the cloud sandbox: the non-git tools
+  // still route by `sandboxId`, so this is the git-read half of the native
+  // workspace until the HTTP surface is native-routed (see the flag doc). The
+  // clone is registry-deduped, so re-runs on re-render collapse to a reused hit.
+  // Depends on the durable scope primitives (not the `workspaceRepo` identity)
+  // so it fires once per (repo, branch), not on every render.
+  const repoFullName = workspaceRepo?.full_name;
+  const repoBranch = workspaceRepo?.current_branch || workspaceRepo?.default_branch;
+  useEffect(() => {
+    if (!isNativePlatform() || !isNativeWorkingCopyEnabled()) return;
+    if (isScratch || !repoFullName || !repoBranch) return;
+    void ensureWorkingCopy(
+      { repoFullName, branch: repoBranch },
+      { getToken: () => getActiveGitHubToken() || undefined },
+    );
+  }, [isScratch, repoFullName, repoBranch]);
+
   const handleSandboxDownload = useCallback(async () => {
     if (!sandboxId || sandboxDownloading) return;
     setSandboxDownloading(true);
@@ -412,8 +451,15 @@ export function useWorkspaceSandboxController({
     // re-attach. So tear the container down here rather than waiting on the
     // sleepAfter reclaim (Codex P2 on #1001).
     void stopSandbox();
+    // Symmetric native teardown: drop the working-copy registry entry so the
+    // seam falls back to sandbox on re-attach. Bytes stay on disk (warm
+    // re-attach), matching the container's persist posture above. No flag guard
+    // — `forgetWorkingCopy` is a no-op when nothing was registered.
+    if (isNativePlatform() && !isScratch && repoFullName && repoBranch) {
+      forgetWorkingCopy({ repoFullName, branch: repoBranch });
+    }
     onDisconnect();
-  }, [abortStream, isStreaming, onDisconnect, stopSandbox]);
+  }, [abortStream, isStreaming, onDisconnect, stopSandbox, isScratch, repoFullName, repoBranch]);
 
   // Deliberately NO destroy on unmount. Leaving the workspace view (Home,
   // Settings, another chat, PWA backgrounding) used to destroy the container,
