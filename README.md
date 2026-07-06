@@ -3,7 +3,7 @@
 [![Deploy Modal](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/deploy-modal.yml)
 [![CI](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml/badge.svg)](https://github.com/KvFxKaido/Push/actions/workflows/ci.yml)
 
-Run your repo from a chat. Push collapses the mobile dev stack — GitHub, terminal, CI, code, and AI — into one conversation, not a dozen apps and browser tabs.
+**Push is one agent attached to your repo.** Talk to it from your phone or your terminal — same conversation, same branch. The pushed branch is the source of truth; the sandbox, the tab, and the daemon are all disposable views of it.
 
 Self-hosted, provider-flexible, and built to stay tied to real code — not someone else's managed AI cloud.
 
