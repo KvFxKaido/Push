@@ -10,6 +10,7 @@ import {
   appendSessionEvent,
   loadSessionEvents,
 } from '../session-store.ts';
+import { stripAnsi } from '../tui-renderer.ts';
 
 // ─── loadSessionEvents ──────────────────────────────────────────
 
@@ -122,7 +123,7 @@ describe('aggregateStats', () => {
 describe('formatStats', () => {
   it('formats empty stats', () => {
     const text = formatStats({ providers: {}, totals: { sessions: 0 } });
-    assert.ok(text.includes('No sessions found'));
+    assert.ok(stripAnsi(text).includes('No sessions found'));
   });
 
   it('formats populated stats', () => {
@@ -143,9 +144,10 @@ describe('formatStats', () => {
       },
       totals: { sessions: 2, runs: 3, rounds: 9, toolCalls: 15, toolErrors: 1, malformedCalls: 2 },
     });
-    assert.ok(text.includes('ollama/test'));
-    assert.ok(text.includes('Avg rounds/run: 3.0'));
-    assert.ok(text.includes('Malformed: 2'));
-    assert.ok(text.includes('json_parse_error:2'));
+    const plain = stripAnsi(text);
+    assert.ok(plain.includes('ollama/test'));
+    assert.ok(plain.includes('Avg rounds/run: 3.0'));
+    assert.ok(plain.includes('Malformed: 2'));
+    assert.ok(plain.includes('json_parse_error:2'));
   });
 });

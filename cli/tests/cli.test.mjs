@@ -279,8 +279,8 @@ describe('unknown flag warning', needsChildStdout, () => {
   it('warns on unknown flag but does not block --help', async () => {
     const { code, stdout, stderr } = await runCli(['--banana', '--help']);
     assert.equal(code, 0);
-    assert.ok(stderr.includes('Warning: unknown flag --banana'));
-    assert.ok(stdout.includes('Usage:'));
+    assert.ok(stripAnsi(stderr).includes('Warning: unknown flag --banana'));
+    assert.ok(stripAnsi(stdout).includes('Usage:'));
   });
 });
 
