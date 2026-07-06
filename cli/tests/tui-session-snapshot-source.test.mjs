@@ -41,6 +41,44 @@ describe('TUI session snapshot source guards', () => {
     );
   });
 
+  it('consumes workspace-state events ambiently instead of as transcript entries', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /import \{ reduceWorkspaceStateEvent \} from '\.\.\/lib\/workspace-state\.js'/,
+      'the TUI should reuse the shared workspace-state reducer',
+    );
+    assert.match(
+      src,
+      /case 'workspace\.state_snapshot':\s*case 'workspace\.state_delta':/,
+      'the TUI should handle both workspace-state event types',
+    );
+    assert.match(
+      src,
+      /workspaceStateView: tuiState\.workspaceStateView/,
+      'the reduced workspace view should render through the status bar',
+    );
+    assert.doesNotMatch(
+      src,
+      /addTranscriptEntry\(tuiState,\s*['"](?:status|warning|assistant)['"],\s*[^)]*workspace\.state_/,
+      'workspace-state updates should not be appended to the transcript',
+    );
+  });
+
+  it('does not let live-only workspace-state events advance the replay cursor', async () => {
+    const src = await readTuiSource();
+    assert.match(
+      src,
+      /const isWorkspaceStateEvent =\s*event\.type === 'workspace\.state_snapshot' \|\| event\.type === 'workspace\.state_delta'/,
+      'workspace-state event detection should be explicit at the replay cursor boundary',
+    );
+    assert.match(
+      src,
+      /if \(!isWorkspaceStateEvent && typeof event\.seq === 'number' && event\.seq > lastSeenDaemonSeq\)/,
+      'live-only workspace-state seqs must not become durable replay checkpoints',
+    );
+  });
+
   it('reattaches from persisted session identity after socket reconnect', async () => {
     const src = await readTuiSource();
     assert.match(

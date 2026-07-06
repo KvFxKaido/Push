@@ -2291,6 +2291,10 @@ function emitWorkspaceState(sessionId, entry, mode) {
   return next;
 }
 
+export function __emitWorkspaceStateForTesting(sessionId, entry, mode) {
+  return emitWorkspaceState(sessionId, entry, mode);
+}
+
 // Symmetric structured logs (to console.error — CLI stdout is reserved) on the
 // skip and failure branches so a silent no-emit is visible to operators.
 async function runWorkspaceStateEmit(sessionId, entry, mode) {
@@ -8331,6 +8335,10 @@ export async function main() {
     process.stderr.write(`Server error: ${err.message}\n`);
     process.exit(1);
   });
+}
+
+export function __handleConnectionForTesting(socket) {
+  return handleConnection(socket);
 }
 
 // Only run main() when executed directly (not when imported).

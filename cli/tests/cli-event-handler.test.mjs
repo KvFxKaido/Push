@@ -206,11 +206,71 @@ describe('makeCLIEventHandler delegation rendering', () => {
     });
     assert.equal(stdout, '');
   });
+
+  it('renders workspace-state snapshots and deltas as compact ambient lines', () => {
+    const handler = makeCLIEventHandler();
+    const { stdout } = capture(() => {
+      handler({
+        type: 'workspace.state_snapshot',
+        payload: {
+          workspaceId: 'sess_ws',
+          rev: 0,
+          state: {
+            activeBranch: 'feature/workspace',
+            headSha: 'abc1234',
+            ahead: 1,
+            behind: 2,
+            dirtyFiles: [{ path: 'a.ts', status: 'modified' }],
+            protectMain: true,
+            sandboxReady: true,
+          },
+        },
+      });
+      handler({
+        type: 'workspace.state_delta',
+        payload: {
+          workspaceId: 'sess_ws',
+          baseRev: 0,
+          rev: 1,
+          ops: [
+            { op: 'dirty_clear' },
+            { op: 'set_protect_main', protectMain: false },
+            { op: 'set_sandbox_ready', sandboxReady: false },
+          ],
+        },
+      });
+    });
+
+    const clean = stripAnsi(stdout);
+    assert.match(clean, /\[workspace\] feature\/workspace \+1 ↑1 ↓2 protect-main sandbox-ready/);
+    assert.match(
+      clean,
+      /\[workspace\] feature\/workspace clean ↑1 ↓2 no-protect-main sandbox-wait/,
+    );
+  });
+
+  it('keeps dropped workspace-state deltas silent until a snapshot arrives', () => {
+    const handler = makeCLIEventHandler();
+    const { stdout, stderr } = capture(() => {
+      handler({
+        type: 'workspace.state_delta',
+        payload: {
+          workspaceId: 'sess_ws',
+          baseRev: 2,
+          rev: 3,
+          ops: [{ op: 'dirty_clear' }],
+        },
+      });
+    });
+
+    assert.equal(stdout, '');
+    assert.match(stderr, /workspace_state_delta_dropped/);
+  });
 });
 
 describe('buildAttachSessionPayload', () => {
-  it('opts attach clients into raw v2 delegation events', () => {
-    assert.deepEqual(ATTACH_CLIENT_CAPABILITIES, ['event_v2']);
+  it('opts attach clients into raw v2 delegation events and workspace state', () => {
+    assert.deepEqual(ATTACH_CLIENT_CAPABILITIES, ['event_v2', 'workspace_state_v1']);
     assert.deepEqual(
       buildAttachSessionPayload({
         sessionId: 'sess_alpha1_abcdef',
@@ -219,7 +279,7 @@ describe('buildAttachSessionPayload', () => {
       {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 12,
-        capabilities: ['event_v2'],
+        capabilities: ['event_v2', 'workspace_state_v1'],
       },
     );
   });
@@ -235,7 +295,7 @@ describe('buildAttachSessionPayload', () => {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 0,
         attachToken: 'att_secret',
-        capabilities: ['event_v2'],
+        capabilities: ['event_v2', 'workspace_state_v1'],
       },
     );
   });
@@ -272,7 +332,7 @@ describe('buildAttachSessionPayload', () => {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 4,
         attachToken: 'att_local_secret',
-        capabilities: ['event_v2'],
+        capabilities: ['event_v2', 'workspace_state_v1'],
       });
     } finally {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
