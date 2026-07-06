@@ -6361,6 +6361,51 @@ describe('attach_session resume from lastSeenSeq', () => {
     }
   });
 
+  it('emits a workspace snapshot to a client that advertises workspace_state_v1', async () => {
+    const originalSessionDir = process.env.PUSH_SESSION_DIR;
+    const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-state-'));
+    process.env.PUSH_SESSION_DIR = tmpRoot;
+    try {
+      const start = await handleRequest(
+        makeRequest('start_session', {
+          provider: 'ollama',
+          // The Push repo is a real git repo, so the emitter reads live state.
+          repo: { rootPath: process.cwd() },
+        }),
+        () => {},
+      );
+      assert.equal(start.ok, true);
+      const { sessionId, attachToken } = start.payload;
+
+      const events = [];
+      const attach = await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId, attachToken, lastSeenSeq: 0, capabilities: ['workspace_state_v1'] },
+          sessionId,
+        ),
+        (event) => events.push(event),
+      );
+      assert.equal(attach.ok, true);
+      // The resync emit may read git asynchronously; let it settle.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+
+      const snapshots = events.filter((e) => e.type === 'workspace.state_snapshot');
+      assert.ok(snapshots.length >= 1, 'expected at least one workspace.state_snapshot');
+      const snap = snapshots[snapshots.length - 1];
+      assert.equal(typeof snap.payload.workspaceId, 'string');
+      assert.ok(snap.payload.rev >= 0);
+      assert.equal(typeof snap.payload.state.activeBranch, 'string');
+      assert.equal(snap.payload.state.sandboxReady, true);
+      // A client that never advertised the cap gets none of these — proven by
+      // the sibling replay-exactness tests, which assert the raw missed set.
+    } finally {
+      if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
+      else process.env.PUSH_SESSION_DIR = originalSessionDir;
+      await fs.rm(tmpRoot, { recursive: true, force: true });
+    }
+  });
+
   it('returns an empty replay when lastSeenSeq is already at the tip', async () => {
     const originalSessionDir = process.env.PUSH_SESSION_DIR;
     const tmpRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'push-attach-caught-up-'));
@@ -7230,6 +7275,7 @@ describe('daemon capability vocabulary drift (#745)', () => {
         'task_graph_v1',
         'event_v2',
         'multi_agent',
+        'workspace_state_v1',
       ],
     );
   });

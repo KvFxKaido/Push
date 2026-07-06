@@ -688,7 +688,7 @@ import {
   validateEvent,
   RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
-import { DAEMON_CAPABILITIES, EVENT_V2 } from '../lib/daemon-capabilities.js';
+import { DAEMON_CAPABILITIES, EVENT_V2, WORKSPACE_STATE_V1 } from '../lib/daemon-capabilities.js';
 import {
   DAEMON_EXEC_MODES,
   DAEMON_WEB_SEARCH_BACKENDS,
@@ -697,6 +697,7 @@ import {
   normalizeDaemonWebSearchBackend,
 } from '../lib/daemon-runtime-settings.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
+import { nextWorkspaceStateEvent, readWorkspaceStateFromGit } from './workspace-state-emitter.js';
 import {
   roleCanUseTool,
   getToolCapabilities,
@@ -1693,7 +1694,11 @@ async function handleStartSession(req) {
   });
   await saveSessionState(state);
 
-  activeSessions.set(sessionId, { state, attachToken });
+  const sessionEntry = { state, attachToken };
+  activeSessions.set(sessionId, sessionEntry);
+  // Anchor the workspace-state timeline for this session (fire-and-forget: the
+  // opener shouldn't block the start response on a git read).
+  void emitWorkspaceState(sessionId, sessionEntry, 'snapshot');
 
   return makeResponse(req.requestId, 'start_session', sessionId, true, {
     sessionId,
@@ -1945,6 +1950,9 @@ async function handleSendUserMessage(req, emitEvent) {
       }
       // Clear run marker — this run is no longer active
       clearRunMarker(sessionId).catch(() => {});
+      // The turn may have edited files / committed / switched branch — emit the
+      // resulting workspace delta (fire-and-forget; no event when unchanged).
+      void emitWorkspaceState(sessionId, entry, 'delta');
       // If a drain is pending, this run settling may be the transition to
       // idle that lets the daemon self-exit for a runtime refresh.
       noteRunSettled();
@@ -2070,6 +2078,11 @@ async function handleAttachSession(req, emitEvent) {
     // best-effort replay
   }
 
+  // Re-anchor the workspace-state timeline for the (re)attached client: these
+  // events are live-only, so a reconnecting client has none until a fresh
+  // snapshot arrives. Fire-and-forget after replay.
+  void emitWorkspaceState(sessionId, entry, 'resync');
+
   return makeResponse(req.requestId, 'attach_session', sessionId, true, {
     sessionId,
     state: entry.activeRunId ? 'running' : 'idle',
@@ -2190,6 +2203,114 @@ async function readGitBranch(cwd) {
     return branch ? branch : null;
   } catch {
     return null;
+  }
+}
+
+// `GitExec` adapter over the daemon's execFileAsync. Resolves null on any git
+// failure (not a repo, git missing) so the emitter treats it as "no state".
+async function gitExecForWorkspaceState(args, cwd) {
+  try {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd,
+      timeout: 5_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { stdout };
+  } catch {
+    return null;
+  }
+}
+
+// Emit a workspace-state event live-only, gated on the `workspace_state_v1`
+// capability. These are non-persistent (see `shouldPersistRunEvent`): they ride
+// the current `eventSeq` like streaming tokens and are never appended to the
+// session journal, so they must NOT reach clients that reconcile the seq-based
+// replay stream without consuming them — hence per-client capability gating
+// rather than a blanket `broadcastEvent`. `runId` is omitted — the timeline is
+// ambient, not turn-scoped.
+function broadcastWorkspaceStateEvent(sessionId, entry, event) {
+  const { type, ...payload } = event;
+  const envelope = {
+    v: PROTOCOL_VERSION,
+    kind: 'event',
+    sessionId,
+    seq: entry.state?.eventSeq ?? 0,
+    ts: Date.now(),
+    type,
+    payload,
+  };
+  // Fail-fast strict validation even with zero capable clients, mirroring
+  // `broadcastEvent`'s top-of-function `checkOutboundEvent`.
+  checkOutboundEvent(envelope);
+  const clients = sessionClients.get(sessionId);
+  if (!clients) return;
+  for (const [emitFn, meta] of clients) {
+    if (!meta.capabilities.has(WORKSPACE_STATE_V1)) continue;
+    try {
+      emitFn(envelope);
+    } catch {
+      /* client may have disconnected */
+    }
+  }
+}
+
+/**
+ * Drive the per-session workspace-state timeline and broadcast the resulting
+ * event. The producer lives on the session entry, keyed by sessionId (the
+ * workspace identity). Modes:
+ *   - `snapshot`: read the tree, start a fresh producer, emit the opener
+ *     (session start).
+ *   - `delta`: read the tree, emit the minimal delta since last state — or
+ *     nothing when unchanged (run end).
+ *   - `resync`: re-forward the current snapshot without re-reading or
+ *     advancing, so a newly attached client anchors (reconnect). Falls back to
+ *     a read+snapshot when no producer exists yet.
+ * Symmetric structured logs (to console.error — CLI stdout is reserved) on the
+ * skip and failure branches so a silent no-emit is visible to operators.
+ */
+async function emitWorkspaceState(sessionId, entry, mode) {
+  try {
+    if (mode === 'resync' && entry.workspaceStateProducer) {
+      broadcastWorkspaceStateEvent(sessionId, entry, entry.workspaceStateProducer.snapshot());
+      return;
+    }
+    const cwd = entry.state?.cwd || process.cwd();
+    const nextState = await readWorkspaceStateFromGit(
+      cwd,
+      // Protect Main is a per-commit/push gate on the CLI, not ambient session
+      // state; default off (parity with the web adapter's optional arg).
+      { protectMain: false },
+      gitExecForWorkspaceState,
+    );
+    if (!nextState) {
+      console.error(
+        JSON.stringify({
+          level: 'info',
+          event: 'workspace_state_emit_skipped',
+          sessionId,
+          reason: 'no_git_status',
+        }),
+      );
+      return;
+    }
+    const { producer, event } = nextWorkspaceStateEvent(
+      entry.workspaceStateProducer ?? null,
+      sessionId,
+      nextState,
+      mode === 'delta' ? 'delta' : 'snapshot',
+    );
+    entry.workspaceStateProducer = producer;
+    if (!event) return; // delta found nothing changed
+    broadcastWorkspaceStateEvent(sessionId, entry, event);
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'workspace_state_emit_failed',
+        sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
   }
 }
 
