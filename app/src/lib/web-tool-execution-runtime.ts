@@ -337,11 +337,10 @@ export class WebToolExecutionRuntime
           };
           // Pair the start event with a matching complete event so any
           // attached observer sees the block as a terminal tool lifecycle
-          // rather than an in-flight tool stuck forever. The other
-          // pre-execution denial paths in this function (pre-hook,
-          // approval gate, Protect Main) omit the complete emit today —
-          // that is a pre-existing inconsistency, out of scope here;
-          // the new code path at least gets it right.
+          // rather than an in-flight tool stuck forever. The sibling
+          // pre-execution denial paths (pre-hook and the approval-gate
+          // branches) emit the same terminal complete — every early-return
+          // denial in this function pairs its start.
           context.emit?.toolExecutionComplete({
             toolName,
             durationMs: Date.now() - startTime,
@@ -380,6 +379,15 @@ export class WebToolExecutionRuntime
             retryable: false,
             message: reason,
           };
+          // Pair the unconditional toolExecutionStart with a terminal complete
+          // so observers don't see this tool stuck in-flight forever — same
+          // reasoning as the capability-gate denial above. Previously omitted
+          // here (the known "pre-existing inconsistency" that block noted).
+          context.emit?.toolExecutionComplete({
+            toolName,
+            durationMs: Date.now() - startTime,
+            error: { type: err.type, message: err.message, retryable: err.retryable },
+          });
           return {
             text: `[Tool Blocked] ${reason}`,
             structuredError: err,
@@ -402,6 +410,11 @@ export class WebToolExecutionRuntime
               message: gateResult.reason,
               detail: gateResult.recoveryPath,
             };
+            context.emit?.toolExecutionComplete({
+              toolName,
+              durationMs: Date.now() - startTime,
+              error: { type: err.type, message: err.message, retryable: err.retryable },
+            });
             return {
               text: `[Tool Blocked — ${toolName}] ${gateResult.reason}\n\nRecovery: ${gateResult.recoveryPath}`,
               structuredError: err,
@@ -417,20 +430,35 @@ export class WebToolExecutionRuntime
                 args: toolArgs,
               });
               if (!approved) {
+                context.emit?.toolExecutionComplete({
+                  toolName,
+                  durationMs: Date.now() - startTime,
+                  error: {
+                    type: 'APPROVAL_GATE_BLOCKED',
+                    message: 'User denied approval.',
+                    retryable: true,
+                  },
+                });
                 return {
                   text: `[Approval Denied — ${toolName}] User denied approval.\n\nReason: ${gateResult.reason}`,
                 };
               }
               // Approved — fall through to normal tool execution.
             } else {
+              const err: StructuredToolError = {
+                type: 'APPROVAL_GATE_BLOCKED',
+                retryable: true,
+                message: gateResult.reason,
+                detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
+              };
+              context.emit?.toolExecutionComplete({
+                toolName,
+                durationMs: Date.now() - startTime,
+                error: { type: err.type, message: err.message, retryable: err.retryable },
+              });
               return {
                 text: `[Approval Required — ${toolName}] This action requires explicit user approval.\n\nReason: ${gateResult.reason}\n\nUse ask_user to request permission before proceeding. Explain what you want to do and why.\n\nRecovery: ${gateResult.recoveryPath}`,
-                structuredError: {
-                  type: 'APPROVAL_GATE_BLOCKED',
-                  retryable: true,
-                  message: gateResult.reason,
-                  detail: `Use ask_user to get approval. ${gateResult.recoveryPath}`,
-                },
+                structuredError: err,
               };
             }
           }

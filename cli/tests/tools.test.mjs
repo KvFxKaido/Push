@@ -1107,3 +1107,57 @@ describe('lsp_diagnostics tool', () => {
     }
   });
 });
+
+describe('pre-hook denial observability', () => {
+  it('emits a pre_hook_denied structured log on stderr when a pre-hook denies', async () => {
+    // A pre-hook (e.g. Protect Main) that denies must leave an ops-greppable
+    // trail, matching the capability-denial (`role_capability_denied`) and
+    // auditor-gate events — not just return the block to the model.
+    const hooks = {
+      pre: [
+        {
+          matcher: /list_dir/,
+          hook: () => ({
+            decision: 'deny',
+            reason: 'blocked by test hook',
+            errorType: 'PROTECT_MAIN',
+          }),
+        },
+      ],
+      post: [],
+    };
+
+    const errCalls = [];
+    const originalError = console.error;
+    console.error = (...args) => {
+      errCalls.push(args);
+    };
+    let result;
+    try {
+      result = await _rawExecuteToolCall({ tool: 'list_dir', args: { path: '.' } }, process.cwd(), {
+        role: 'coder',
+        hooks,
+      });
+    } finally {
+      console.error = originalError;
+    }
+
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError?.code, 'PROTECT_MAIN');
+
+    const log = errCalls
+      .map(([m]) => {
+        try {
+          return JSON.parse(m);
+        } catch {
+          return null;
+        }
+      })
+      .find((p) => p && p.event === 'pre_hook_denied');
+    assert.ok(log, 'expected a pre_hook_denied structured log on stderr');
+    assert.equal(log.type, 'PROTECT_MAIN');
+    assert.equal(log.role, 'coder');
+    assert.equal(log.tool, 'list_dir');
+    assert.equal(log.reason, 'blocked by test hook');
+  });
+});
