@@ -1352,6 +1352,40 @@ export async function runCoderAgent<TCall, TCard>(
       ? Math.floor(harnessTokenBudget)
       : null;
   const tokenLedger = createRunTokenLedger();
+  // Run-cost receipt: emit the ledger's final tally on EVERY run termination,
+  // not only on the budget cap-hit (`coder_budget_exceeded`). With the budget
+  // off — the default — the ledger was otherwise write-only, so a run's spend
+  // was never observable. This is an after-the-fact ops receipt (structured
+  // log, no UI, nothing to watch): grep `coder_run_cost` to answer "what did
+  // this run spend, and was it capped." Idempotent — the first terminal exit
+  // wins and the guard blocks any double-emit. `console.log` matches the sibling
+  // run-loop telemetry in this kernel (`coder_budget_exceeded`,
+  // `coder_tool_choice_forced`), which is the generalization this receipt
+  // subsumes; the daemon treats kernel stdout as its structured channel.
+  let runCostReceiptEmitted = false;
+  const emitRunCostReceipt = (stopReason: string, finalRound: number): void => {
+    if (runCostReceiptEmitted) return;
+    runCostReceiptEmitted = true;
+    const snap = tokenLedger.snapshot();
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_run_cost',
+        stopReason,
+        round: finalRound,
+        leadMode,
+        model: coderModelId ?? '',
+        // The active cap (null when uncapped) — pairs the spend with the ceiling
+        // it ran under so a receipt is self-describing without a separate join.
+        limitTokens: tokenBudget,
+        usedTokens: snap.usedTokens,
+        // reported vs estimated splits the trustworthy total from the
+        // fail-closed fallback rounds (adapters that never report usage).
+        reportedRounds: snap.reportedRounds,
+        estimatedRounds: snap.estimatedRounds,
+      }),
+    );
+  };
   // Warn fires once on the crossing into `warn`, not every round past it.
   let tokenBudgetWarned = false;
   // Fail-closed estimate for the rare adapter that never reports usage. Input
@@ -1504,6 +1538,9 @@ export async function runCoderAgent<TCall, TCard>(
     // Circuit breaker: prevent runaway delegation loops
     if (round >= maxRounds) {
       callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`);
+      // Top-of-loop guard: returns before `finishRound` is defined this
+      // iteration, so emit the run-cost receipt explicitly here.
+      emitRunCostReceipt('max_rounds', round);
       // Append a compact summary of what changed (for the reader / next turn).
       const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
       // The lead is user-facing: close gracefully in its own voice, with no
@@ -1551,6 +1588,11 @@ export async function runCoderAgent<TCall, TCard>(
           'Coder stopped',
           `Hit ${tokenBudget.toLocaleString()}-token budget (used ~${verdict.usedTokens.toLocaleString()})`,
         );
+        // Also emit the unified run-cost receipt (this guard returns before
+        // `finishRound` is defined). The `coder_budget_exceeded` line above
+        // stays as the cap-hit-specific signal; `coder_run_cost` is the
+        // always-on receipt every terminal path shares.
+        emitRunCostReceipt('budget_exceeded', round);
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
         const leadClose =
           "I've used up the token budget for this task, so I'm stopping here rather than spending further.";
@@ -1590,6 +1632,16 @@ export async function runCoderAgent<TCall, TCard>(
       if (roundEnded) return;
       roundEnded = true;
       callbacks.onRunEvent?.({ type: 'assistant.turn_end', round, outcome });
+      // `completed` / `error` / `aborted` are the run-terminal outcomes (each
+      // is immediately followed by a return or throw); `continued` / `steered`
+      // keep the loop going. Emit the run-cost receipt on the terminal ones so
+      // every normal completion, drift halt, loop halt, stream error, and
+      // cancellation leaves a `coder_run_cost` line. The two top-of-loop guards
+      // (`max_rounds`, `budget_exceeded`) return before this helper is defined,
+      // so they emit the receipt explicitly.
+      if (outcome === 'completed' || outcome === 'error' || outcome === 'aborted') {
+        emitRunCostReceipt(outcome, round);
+      }
     };
 
     callbacks.onRunEvent?.({ type: 'assistant.turn_start', round });

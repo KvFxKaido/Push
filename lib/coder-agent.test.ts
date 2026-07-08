@@ -1647,3 +1647,89 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(result.rounds).toBe(2);
   });
 });
+
+describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
+  // Capture into a local array — `mockRestore()` clears `spy.mock.calls`, so
+  // reading it after restore would see nothing.
+  const parseReceipts = (lines: string[]) =>
+    lines
+      .map((arg) => {
+        try {
+          return JSON.parse(arg);
+        } catch {
+          return null;
+        }
+      })
+      .filter((p) => p && p.event === 'coder_run_cost');
+
+  it('emits a run-cost receipt on normal completion (policy halt)', async () => {
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const logged: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((arg) => {
+      if (typeof arg === 'string') logged.push(arg);
+    });
+    try {
+      await runCoderAgent(baseCoderOptions({ stream }), { onStatus: () => {} });
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    const receipts = parseReceipts(logged);
+    expect(receipts).toHaveLength(1);
+    const receipt = receipts[0];
+    expect(receipt.stopReason).toBe('completed');
+    expect(receipt.model).toBe('coder-model');
+    expect(receipt.leadMode).toBe(false);
+    // No budget passed → uncapped.
+    expect(receipt.limitTokens).toBeNull();
+    expect(typeof receipt.usedTokens).toBe('number');
+    expect(typeof receipt.reportedRounds).toBe('number');
+    expect(typeof receipt.estimatedRounds).toBe('number');
+  });
+
+  it('emits exactly one receipt with stopReason max_rounds when the round cap is hit', async () => {
+    const rounds = Array.from({ length: 6 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    const repeatedRead = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
+    const logged: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((arg) => {
+      if (typeof arg === 'string') logged.push(arg);
+    });
+    let result;
+    try {
+      result = await runCoderAgent(
+        baseCoderOptions({
+          stream,
+          harnessMaxRounds: 2,
+          detectAllToolCalls: () => ({
+            readOnly: [repeatedRead],
+            mutating: null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          }),
+          detectAnyToolCall: () => repeatedRead,
+          evaluateAfterModel: async () => null,
+        }),
+        { onStatus: () => {} },
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(result.stopReason).toBe('max_rounds');
+    // The top-of-loop guard emits directly and finishRound never fires a second
+    // receipt — the idempotency guard must hold at exactly one.
+    const receipts = parseReceipts(logged);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].stopReason).toBe('max_rounds');
+  });
+});
