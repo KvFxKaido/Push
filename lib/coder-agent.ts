@@ -1352,6 +1352,40 @@ export async function runCoderAgent<TCall, TCard>(
       ? Math.floor(harnessTokenBudget)
       : null;
   const tokenLedger = createRunTokenLedger();
+  // Run-cost receipt: emit the ledger's final tally on EVERY run termination,
+  // not only on the budget cap-hit (`coder_budget_exceeded`). With the budget
+  // off — the default — the ledger was otherwise write-only, so a run's spend
+  // was never observable. This is an after-the-fact ops receipt (structured
+  // log, no UI, nothing to watch): grep `coder_run_cost` to answer "what did
+  // this run spend, and was it capped." Idempotent — the first terminal exit
+  // wins and the guard blocks any double-emit. `console.log` matches the sibling
+  // run-loop telemetry in this kernel (`coder_budget_exceeded`,
+  // `coder_tool_choice_forced`), which is the generalization this receipt
+  // subsumes; the daemon treats kernel stdout as its structured channel.
+  let runCostReceiptEmitted = false;
+  const emitRunCostReceipt = (stopReason: string, finalRound: number): void => {
+    if (runCostReceiptEmitted) return;
+    runCostReceiptEmitted = true;
+    const snap = tokenLedger.snapshot();
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_run_cost',
+        stopReason,
+        round: finalRound,
+        leadMode,
+        model: coderModelId ?? '',
+        // The active cap (null when uncapped) — pairs the spend with the ceiling
+        // it ran under so a receipt is self-describing without a separate join.
+        limitTokens: tokenBudget,
+        usedTokens: snap.usedTokens,
+        // reported vs estimated splits the trustworthy total from the
+        // fail-closed fallback rounds (adapters that never report usage).
+        reportedRounds: snap.reportedRounds,
+        estimatedRounds: snap.estimatedRounds,
+      }),
+    );
+  };
   // Warn fires once on the crossing into `warn`, not every round past it.
   let tokenBudgetWarned = false;
   // Fail-closed estimate for the rare adapter that never reports usage. Input
@@ -1503,6 +1537,10 @@ export async function runCoderAgent<TCall, TCard>(
 
     // Circuit breaker: prevent runaway delegation loops
     if (round >= maxRounds) {
+      // Emit the receipt before the host `onStatus` callback (a throwing
+      // callback must not swallow it) and before `finishRound` is even defined
+      // this iteration — this top-of-loop guard returns directly.
+      emitRunCostReceipt('max_rounds', round);
       callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`);
       // Append a compact summary of what changed (for the reader / next turn).
       const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
@@ -1547,6 +1585,13 @@ export async function runCoderAgent<TCall, TCard>(
             model: coderModelId ?? '',
           }),
         );
+        // Emit the unified run-cost receipt before the host `onStatus` /
+        // `fetchSandboxStateSummary` callbacks (a throwing callback must not
+        // swallow it) and before `finishRound` is defined this iteration — this
+        // guard returns directly. The `coder_budget_exceeded` line above stays
+        // as the cap-hit-specific signal; `coder_run_cost` is the always-on
+        // receipt every terminal path shares.
+        emitRunCostReceipt('budget_exceeded', round);
         callbacks.onStatus(
           'Coder stopped',
           `Hit ${tokenBudget.toLocaleString()}-token budget (used ~${verdict.usedTokens.toLocaleString()})`,
@@ -1589,6 +1634,20 @@ export async function runCoderAgent<TCall, TCard>(
     const finishRound = (outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered') => {
       if (roundEnded) return;
       roundEnded = true;
+      // Emit the run-cost receipt BEFORE the host `onRunEvent` callback below: a
+      // throwing host callback must not swallow the receipt (the "every terminal
+      // path leaves a receipt" guarantee has to survive a misbehaving host).
+      // `completed` / `error` / `aborted` are the run-terminal outcomes (each is
+      // immediately followed by a return or throw); `continued` / `steered` keep
+      // the loop going. This backstops the normal-completion and stream
+      // error/abort exits (where `finishRound` is the first thing called). The
+      // paths that run a host callback *before* `finishRound` — the two
+      // top-of-loop guards and the loop/drift halts — emit the receipt
+      // explicitly with a precise reason (idempotent, so this call no-ops), so a
+      // loop halt doesn't read here as a generic `completed`.
+      if (outcome === 'completed' || outcome === 'error' || outcome === 'aborted') {
+        emitRunCostReceipt(outcome, round);
+      }
       callbacks.onRunEvent?.({ type: 'assistant.turn_end', round, outcome });
     };
 
@@ -1676,18 +1735,21 @@ export async function runCoderAgent<TCall, TCard>(
       throw streamError;
     }
 
-    // Account this round against the run token budget. Prefer the provider's
-    // reported usage; estimate from the transcript only when usage is absent
-    // (avoids the per-round estimate cost on the common reported-usage path).
-    if (tokenBudget !== null) {
-      const reportedTotal =
-        (roundUsage?.totalTokens ?? 0) +
-        (roundUsage?.inputTokens ?? 0) +
-        (roundUsage?.outputTokens ?? 0);
-      const estimatedTokens =
-        reportedTotal > 0 ? 0 : estimateRoundTokens(messages, rawModelText, reasoningText);
-      tokenLedger.record({ usage: roundUsage, estimatedTokens });
-    }
+    // Account this round's usage UNCONDITIONALLY. The ledger feeds two
+    // consumers now: the per-run budget circuit-breaker (only when a budget is
+    // set) AND the always-on `coder_run_cost` receipt (every run). Gating the
+    // record on `tokenBudget !== null` — as it used to — left the receipt
+    // reporting `usedTokens: 0` in exactly the uncapped default case it exists
+    // to expose (Codex P2 on this PR). Prefer the provider's reported usage;
+    // estimate from the transcript only when usage is absent, so the common
+    // reported-usage path still pays no estimate cost regardless of budget.
+    const reportedTotal =
+      (roundUsage?.totalTokens ?? 0) +
+      (roundUsage?.inputTokens ?? 0) +
+      (roundUsage?.outputTokens ?? 0);
+    const estimatedTokens =
+      reportedTotal > 0 ? 0 : estimateRoundTokens(messages, rawModelText, reasoningText);
+    tokenLedger.record({ usage: roundUsage, estimatedTokens });
 
     // --- Answer stranded in the reasoning channel ---
     // Distinct from the buried *tool-call* recovery below (which re-prompts a
@@ -1842,6 +1904,11 @@ export async function runCoderAgent<TCall, TCard>(
     const policyResult = await evaluateAfterModel(accumulated, round);
     if (policyResult) {
       if (policyResult.action === 'halt') {
+        // Explicit early receipt: an after-model policy halt is a defensive stop,
+        // not a clean natural completion, and it runs host callbacks before
+        // `finishRound`. Emit first (idempotent) so the reason is labeled
+        // `policy_halt` and a throwing callback can't swallow the receipt.
+        emitRunCostReceipt('policy_halt', round);
         callbacks.onStatus('Coder stopped', 'Cognitive drift — halted');
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
         finishRound('completed');
@@ -2011,6 +2078,11 @@ export async function runCoderAgent<TCall, TCard>(
       }
 
       if (loopVerdict.action === 'abort') {
+        // Explicit early receipt: a loop halt is a defensive circuit-breaker
+        // (returns `stopReason: 'loop'`), not a clean completion, and it runs
+        // host callbacks before `finishRound`. Emit first (idempotent) so the
+        // reason is labeled `loop` and a throwing callback can't swallow it.
+        emitRunCostReceipt('loop', round);
         callbacks.onStatus('Coder stopped', 'Repeated tool-call loop — halted');
         const loopText = `Detected repeated tool call loop (${loopCalls
           .map((c) => c.tool)
