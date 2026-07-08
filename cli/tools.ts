@@ -634,6 +634,21 @@ function canonicalizeCliToolName(name) {
   return CLI_TOOL_ALIASES.get(trimmed) ?? trimmed;
 }
 
+/**
+ * True when `disabledTools` policy (explicit list, falling back to
+ * `PUSH_DISABLED_TOOLS`) blocks the named tool. `executeToolCall` enforces
+ * this at dispatch; exported for callers that route a tool AROUND the
+ * dispatcher and must keep honoring the same policy — the lead lane's
+ * `delegate_explorer` interception (`cli/lead-turn.ts`) checks it to decide
+ * whether to advertise/execute the fan-out arc or fall through to the
+ * dispatcher's canonical TOOL_DISABLED denial (Codex P2 on #1370).
+ */
+export function isCliToolDisabled(toolName, disabledTools) {
+  return resolveToolPolicyList(disabledTools, 'PUSH_DISABLED_TOOLS').has(
+    canonicalizeCliToolName(toolName),
+  );
+}
+
 // Resolve a comma-separated env var into a Set of canonicalized tool names,
 // with an optional explicit list winning over the env. `undefined` array
 // means "fall back to env"; an empty array means "no entries" and

@@ -37,7 +37,6 @@ Notable traits:
 Primary entry points and helpers:
 
 - `cli.ts` — `push run` command handling
-- `task-brief.ts` — shared delegation brief formatting for headless tasks
 - `tools.ts` — execution policy and mode-specific tool restrictions
 
 ### Full-screen TUI
@@ -61,6 +60,8 @@ The CLI keeps several terminal-specific layers local even as more shared semanti
 
 - `cli.ts` — top-level command parsing and mode dispatch
 - `engine.ts` — assistant turn loop, streaming, approval hooks, and execution flow
+- `lead-turn.ts` — the lead-kernel lane: every interactive turn as a `leadMode` run of the shared coder kernel
+- `lead-explorer.ts` — the lead's Explorer fan-out (read-only investigation delegation) and the shared read-only tool executor the daemon's delegated runs wrap
 - `tools.ts` — tool routing, guardrails, structured results, and policy differences by mode
 - `provider.ts` — provider integration and streaming normalization
 - `protocol-schema.ts` — event, payload, and protocol shape used by the CLI runtime

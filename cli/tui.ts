@@ -4012,12 +4012,10 @@ export async function runTUI(options = {}) {
     runAbort = new AbortController();
 
     try {
-      // runAssistantTurn runs the single conversational lead in-loop by
-      // default (Agent Runtime Decisions §10) — no planner pre-pass. With
-      // PUSH_DELEGATION_MODE=delegated it plans first: null/1-feature plans
-      // fall back to the single-agent loop on the already-appended user
-      // message; 2+-feature plans execute as a task graph and emit canonical
-      // subagent.*/task_graph.* events handled by handleEngineEvent.
+      // runAssistantTurn runs the single conversational lead on the shared
+      // coder kernel (Agent Runtime Decisions §10) — no Planner pre-pass, no
+      // subagent ceremony. The PUSH_DELEGATION_MODE=delegated plan-first arc
+      // was retired with the engine round loop; the routing is unconditional.
       await runAssistantTurn(state, ctx.providerConfig, ctx.apiKey, text, maxRounds, {
         approvalFn: makeApprovalFn(),
         askUserFn: makeAskUserFn(),

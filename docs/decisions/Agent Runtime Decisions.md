@@ -194,9 +194,12 @@ Current state / gap: the web `inline` lane is the collapsed lead today
 On the CLI, the first convergence step landed 2026-06-12: interactive turns
 (TUI + daemon `send_user_message`) default to the single lead in-loop —
 `runAssistantTurn` no longer runs the Planner pre-pass or the subagent
-ceremony unless `delegationMode: 'delegated'` / `PUSH_DELEGATION_MODE=delegated`
-opts back in (the interactive analog of headless `--delegate`, sharing the
-web preference's opt-in rule via `lib/delegation-mode.ts`). The second step
+ceremony. (At the time a `delegationMode: 'delegated'` /
+`PUSH_DELEGATION_MODE=delegated` opt-in kept the wrapper reachable, the
+interactive analog of headless `--delegate`; it has since been retired along
+with the engine loop — the CLI no longer reads either knob, and
+`lib/delegation-mode.ts` is consumed by the web preference only. The dead
+headless brief shim `cli/task-brief.ts` was deleted 2026-07-08.) The second step
 landed the same day as an opt-in lane: `cli/lead-turn.ts` runs the terminal
 turn as a `leadMode: true` run of the **shared** coder kernel — same kernel +
 lead framing as the inline lane, assembled with the CLI's local reach
@@ -228,10 +231,27 @@ offload read-only investigation when a question spans many files, and fan out
 up to two Explorers concurrently in one turn. This rides an opt-in
 parallel-delegation bucket in the shared grouper
 (`lib/tool-call-grouping.ts:maxParallelDelegations`, default-disabled so the
-Orchestrator and CLI surfaces are unchanged) which the Coder kernel executes
-in its read-phase `Promise.all`. `delegate:explorer` is part of the
-lead-capable `coder` grant; the empty `extraToolSources` on a delegated
+Orchestrator and the delegated sub-agent nodes are unchanged) which the Coder
+kernel executes in its read-phase `Promise.all`. `delegate:explorer` is part
+of the lead-capable `coder` grant; the empty `extraToolSources` on a delegated
 sub-Coder keeps the same call refused at the source gate.
+
+The **CLI lead carries the same arc** (2026-07-08): `cli/lead-explorer.ts`
+runs a `delegate_explorer` call on the shared Explorer kernel
+(`lib/explorer-agent.ts`) against the real filesystem — the read-only tool
+executor is the same capability-gated implementation the daemon's delegated
+Explorer/Deep Reviewer runs use (`makeCliReadOnlyToolExec`, which
+`makeDaemonExplorerToolExec` now wraps) — and the lead lane
+(`cli/lead-turn.ts`) opts into the same fan-out cap (2) through the shared
+grouper, advertises the arc via `LEAD_EXPLORER_DELEGATION_PROTOCOL` (the
+native function schema parses from the same block, so prompt and schema can't
+drift), and reports lifecycle through the existing `subagent.*` events the
+TUI/REPL delegation renderers already handle. Provider/model inherit the
+lead's lock, with the session's `roleRouting.explorer` override honored
+(same precedence as the daemon's `delegate_explorer` RPC). An Explorer cannot
+fan out further Explorers: sub-runs get the default (bucket-disabled)
+detectors and the `explorer` grant refuses `delegate:explorer` at the
+capability gate.
 
 **Conversational-lead convergence (routing fork removed by default).**
 Repo-backed *conversational* turns now route to the inline lead by default
@@ -712,7 +732,7 @@ Source notes:
 
 ## Active Runtime Work
 
-1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
+1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite. Partial: the CLI's headless brief shim (`cli/task-brief.ts`, dead since the engine-loop retirement — test-only callers) was deleted 2026-07-08; the shared `lib/delegation-brief.ts` stays (live in the web's delegated Coder/Explorer arcs) until the web-side deletion lands.
 2. Ship auto-branch-on-commit as the universal commit-flow for scratchpad work.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
@@ -720,7 +740,7 @@ Source notes:
 6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution + reducer raw-retention/recall via `memory_expand` `refs`). Only the Worker durable backend remains, tracked in **#1063** (blocked on a Worker-side typed-memory store). See the LCM doc's Phase 3.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
-9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal.
+9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal. Step 5 landed 2026-07-08: Explorer fan-out parity — the CLI lead wires the same Explorer-only delegation arc as the web inline lane (`cli/lead-explorer.ts`, cap 2, shared-grouper bucket, `subagent.*` lifecycle events); see the §10 arc paragraph.
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).
 11. Context-window compaction (§14): **always-on + visible + LLM-summarized shipped 2026-06-21 (web + CLI)** — toggle removed, `lib/llm-compaction.ts` engine, `app/src/hooks/chat-compaction.ts` (web) + `cli/lead-compaction.ts` (CLI lead) coordinators wired pre-turn, three web visibility surfaces + the CLI `context_compacted` event. Remaining: graduate the run-event `phase` vocabulary if ops need to distinguish heuristic- from LLM-summarization (today both report `phase: 'summarization'` to avoid churning the drift-pinned `context.compaction` schema), and a Worker-side background-coder integration if those long jobs need it.
 12. Unify runtime intervention machinery (§15 / #1260): add the shared steer/block contract and execution tool ledger in `lib/`, then route existing recovery, budget, loop, and Auditor gate decisions through that contract without changing agent capability.

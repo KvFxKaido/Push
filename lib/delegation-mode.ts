@@ -7,14 +7,16 @@
  * Orchestrator handoff. `delegated` opts back into the historical org-chart
  * wrapper. Inline has been the web default since 2026-06-11 (the step-1
  * delegation-collapse A/B measured twice with quality tied and the wrapper
- * costing ~78% wall-clock); the CLI terminal chat adopted the same default
- * as the first §10 convergence step.
+ * costing ~78% wall-clock).
  *
- * Surfaces differ only in where the raw preference comes from — web reads
- * localStorage (`app/src/lib/delegation-mode-settings.ts`), the CLI reads
- * `RunOptions.delegationMode` falling back to the `PUSH_DELEGATION_MODE`
- * env var — but both resolve through `resolveDelegationMode` so the opt-in
- * rule cannot drift between them.
+ * Consumers today: **web only**, via localStorage
+ * (`app/src/lib/delegation-mode-settings.ts`). The CLI adopted the inline
+ * default as the first §10 convergence step and later retired its
+ * `delegated` opt-in entirely (`RunOptions.delegationMode` /
+ * `PUSH_DELEGATION_MODE` are no longer read) — every CLI turn is the lead,
+ * unconditionally. This stays in `lib/` as the shared vocabulary in case a
+ * surface grows a preference again; the web resolves through
+ * `resolveDelegationMode` so the opt-in rule has one home.
  */
 
 export type DelegationMode = 'delegated' | 'inline';

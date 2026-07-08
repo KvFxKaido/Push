@@ -50,9 +50,10 @@ export interface GroupingPredicates<T> {
    * concurrently rather than occupy the single trailing side-effect slot.
    * Only consulted when `caps.maxParallelDelegations` is a positive number;
    * absent/disabled → such calls fall through to the `mutating` slot exactly
-   * as before. The Inline Foreground Lane opts in (cap 2) so the single lead
-   * can spawn a couple of Explorers in one turn; the Orchestrator and CLI
-   * leave it disabled.
+   * as before. The lead surfaces opt in (cap 2) so the single lead can spawn
+   * a couple of Explorers in one turn — the web's Inline Foreground Lane and
+   * the CLI lead lane (`cli/lead-turn.ts`); the Orchestrator and the
+   * delegated Coder/Explorer nodes leave it disabled.
    */
   readonly isParallelDelegation?: (call: T) => boolean;
 }
@@ -78,8 +79,9 @@ export interface GroupingCaps {
    * re-issues the tail next turn). `null`/`undefined`/absent disables the
    * parallel-delegation bucket entirely: delegations fall through to the
    * single trailing `mutating` slot exactly as before. This is the default
-   * for the Orchestrator and CLI surfaces; the Inline Foreground Lane sets
-   * it to 2. Requires `predicates.isParallelDelegation` to take effect.
+   * for the Orchestrator and the delegated sub-agent nodes; the lead
+   * surfaces (web Inline Foreground Lane, CLI lead lane) set it to 2.
+   * Requires `predicates.isParallelDelegation` to take effect.
    */
   readonly maxParallelDelegations?: number | null;
 }
