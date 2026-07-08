@@ -12,7 +12,7 @@ Push is built around execution-first reliability. We favor explicit state and hu
 
 ## Tech Stack
 
-- React 19 + Vite 8 (Rolldown). TypeScript is mid-transition to 7.0: `cli/` and `mcp/github-server` run TS 7.0 RC (typecheck **and** emit via the native `tsc`); the `app/` stays on TS 7 native-preview typecheck (`tsgo`) + TS 6 for emit/ESLint until typescript-eslint supports the TS 7 programmatic API (lands in 7.1)
+- React 19 + Vite 8 (Rolldown). TypeScript is on 7.0 GA, still split by package: `cli/` and `mcp/github-server` run TS 7.0 GA `typescript@~7.0.2` (typecheck **and** emit via the native `tsc`); the `app/` stays on TS 7 native-preview typecheck (`tsgo`) + TS 6 for ESLint until typescript-eslint drops its `<6.1.0` `typescript` peer cap (needs the new API expected in 7.1)
 - Tailwind CSS 4 + shadcn/ui (Radix primitives)
 - GitHub REST API for repo operations
 - Multi-backend AI with built-ins plus opt-in private connectors

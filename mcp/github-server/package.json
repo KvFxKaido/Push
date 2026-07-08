@@ -21,6 +21,6 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "tsx": "^4.23.0",
-    "typescript": "rc"
+    "typescript": "~7.0.2"
   }
 }
