@@ -258,6 +258,18 @@ object JGitEngine {
     return out.toString()
   }
 
+  /**
+   * Read cap, mirroring the Modal sandbox read path (`sandbox/app.py`,
+   * `max_read_chars = 200_000`): any single read returns at most this many
+   * characters, truncated at a line boundary when possible. Without it an
+   * unbounded read of a large lockfile/bundle would stream the whole file
+   * through the Capacitor bridge into model context. Capped reads report
+   * `truncated = true` with `totalLines` still counting the FULL file, so the
+   * TS chunked-expansion path can page the remainder via startLine/endLine
+   * range reads (ranges past the cap boundary are served normally).
+   */
+  internal const val READ_MAX_CHARS = 200_000
+
   fun readFile(dir: String, path: String, startLine: Int?, endLine: Int?): FileReadResult {
     val root = File(dir)
     val file = safeChild(root, path)
@@ -265,19 +277,73 @@ object JGitEngine {
     if (!file.exists()) return FileReadResult("", false, null, "No such file: $path", "ENOENT")
     if (!file.isFile) return FileReadResult("", false, null, "Not a file: $path", "EISDIR")
 
+    // Line model matches the previous split('\n') semantics exactly: segments
+    // are separated by '\n' (CR stays inside a segment, so CRLF content round-
+    // trips), the segment after the final '\n' counts even when empty, and
+    // selected segments are re-joined with '\n' — the identity for a full read.
     return try {
-      val text = file.readText(Charsets.UTF_8)
-      val lines = if (text.isEmpty()) emptyList() else text.split('\n')
-      val totalLines = lines.size
-      if (startLine == null && endLine == null) {
-        FileReadResult(text, false, totalLines)
-      } else {
-        val start = (startLine ?: 1).coerceAtLeast(1)
-        val end = (endLine ?: totalLines).coerceAtLeast(start)
-        val selected =
-          if (start > totalLines) emptyList() else lines.subList(start - 1, end.coerceAtMost(totalLines))
-        FileReadResult(selected.joinToString("\n"), false, totalLines)
+      val hasRange = startLine != null || endLine != null
+      val selStart = if (hasRange) (startLine ?: 1).coerceAtLeast(1) else 1
+      val selEnd = if (hasRange) endLine?.coerceAtLeast(selStart) else null // null = to EOF
+
+      val out = StringBuilder()
+      var truncated = false
+      var selectedCount = 0
+      var totalLines = 0
+      var sawAnyChar = false
+
+      // Streaming read: the file never fully materializes. `line` buffers only
+      // the currently-selected segment and is itself capped at READ_MAX_CHARS,
+      // so peak memory is O(cap) even for a single 100MB line. The UTF-8
+      // decoder replaces malformed bytes, so binary files degrade to mojibake
+      // rather than throwing.
+      file.bufferedReader(Charsets.UTF_8).use { reader ->
+        val line = StringBuilder()
+        var lineOverflowed = false
+        var lineNo = 1
+        var done = false // content collection finished; keep counting lines
+
+        fun endSegment() {
+          val selected = lineNo >= selStart && (selEnd == null || lineNo <= selEnd)
+          if (selected && !done) {
+            val sepLen = if (selectedCount > 0) 1 else 0
+            if (!lineOverflowed && out.length + sepLen + line.length <= READ_MAX_CHARS) {
+              if (sepLen == 1) out.append('\n')
+              out.append(line)
+              selectedCount++
+            } else if (selectedCount == 0) {
+              // First selected segment alone exceeds the cap: hard cut
+              // (the buffer already holds exactly the first cap chars).
+              out.append(line)
+              selectedCount++
+              truncated = true
+              done = true
+            } else {
+              truncated = true
+              done = true
+            }
+          }
+          line.setLength(0)
+          lineOverflowed = false
+          lineNo++
+        }
+
+        while (true) {
+          val c = reader.read()
+          if (c == -1) break
+          sawAnyChar = true
+          if (c == '\n'.code) {
+            endSegment()
+          } else if (!done && lineNo >= selStart && (selEnd == null || lineNo <= selEnd)) {
+            if (line.length < READ_MAX_CHARS) line.append(c.toChar()) else lineOverflowed = true
+          }
+        }
+        endSegment() // final segment after the last '\n' (possibly empty)
+        totalLines = lineNo - 1
       }
+
+      if (!sawAnyChar) return FileReadResult("", false, 0)
+      FileReadResult(out.toString(), truncated, totalLines)
     } catch (e: Exception) {
       FileReadResult("", false, null, e.message ?: "read failed", "EIO")
     }

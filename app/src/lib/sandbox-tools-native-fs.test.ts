@@ -254,6 +254,50 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('sandbox_search');
   });
 
+  it('reports a truncated native directory listing instead of presenting it as complete', async () => {
+    fakeBackend.listDir.mockResolvedValueOnce({
+      entries: [{ name: 'a.ts', type: 'file' as const, size: 3 }],
+      truncated: true,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_list_dir', args: { path: '/workspace' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(result.text).toContain('[truncated]');
+  });
+
+  it('filters sensitive paths out of git_status on the empty-diff branch', async () => {
+    fakeBackend.diff.mockResolvedValueOnce({
+      diff: '',
+      truncated: false,
+      git_status: '## main\n M a.ts\n?? .env',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_diff', args: {} }, '', {
+      nativeFsScope: scope,
+    });
+    expect(result.text).toContain('M a.ts');
+    expect(result.text).not.toContain('.env');
+  });
+
+  it('refuses verification tools on-device with a typed error instead of a phantom sandbox call', async () => {
+    for (const tool of [
+      'sandbox_run_tests',
+      'sandbox_check_types',
+      'sandbox_verify_workspace',
+      'sandbox_show_commit',
+      'sandbox_download',
+    ] as const) {
+      const result = await executeSandboxToolCall(
+        { tool, args: {} } as Parameters<typeof executeSandboxToolCall>[0],
+        '',
+        { nativeFsScope: scope },
+      );
+      expect(result.structuredError?.type, tool).toBe('NATIVE_TOOL_UNSUPPORTED');
+      expect(result.structuredError?.retryable, tool).toBe(false);
+    }
+  });
+
   it('refuses sensitive-path writes on the cloud path too (guard lives in the handler)', async () => {
     nativeFs.resolveNativeFs.mockReturnValue(null);
     const result = await executeSandboxToolCall(

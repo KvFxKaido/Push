@@ -31,7 +31,6 @@ import type {
   BatchWriteEntry,
   BatchWriteResult,
   ExecResult,
-  FileEntry,
   FileReadResult,
   WriteResult,
 } from './sandbox-client';
@@ -299,18 +298,23 @@ function nativeBatchWrite(nativeFs: NativeFsBackend): WriteHandlerContext['batch
 
 function nativeListDirectory(
   nativeFs: NativeFsBackend,
-): ReadOnlyInspectionHandlerContext['listDirectory'] {
-  return async (_sandboxId, path = '/workspace'): Promise<FileEntry[]> => {
+): NonNullable<ReadOnlyInspectionHandlerContext['listDirectoryDetailed']> {
+  return async (_sandboxId, path = '/workspace') => {
     const result = await nativeFs.listDir(path);
     if (result.error) throw new Error(result.error);
-    return result.entries
-      .filter((entry) => entry.type === 'file' || entry.type === 'directory')
-      .map((entry) => ({
-        name: entry.name,
-        path: nativePathForEntry(path, entry.name),
-        type: entry.type === 'directory' ? 'directory' : 'file',
-        size: entry.size ?? 0,
-      }));
+    return {
+      entries: result.entries
+        .filter((entry) => entry.type === 'file' || entry.type === 'directory')
+        .map((entry) => ({
+          name: entry.name,
+          path: nativePathForEntry(path, entry.name),
+          type: entry.type === 'directory' ? ('directory' as const) : ('file' as const),
+          size: entry.size ?? 0,
+        })),
+      // JGit caps listings at 500 entries; surface that instead of letting a
+      // capped listing read as complete.
+      truncated: result.truncated,
+    };
   };
 }
 
@@ -362,7 +366,26 @@ function nativeFileDiffHunks(
  * value-redact the rest.
  */
 function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
-  if (!result.diff) return result;
+  // Porcelain status names files too (`?? .env`) — filter it with the same
+  // rule as the diff body so a consumer that prints git_status (the diff
+  // handler's empty-diff branch does, and the commit handler's status lines
+  // would) can't leak what the diff hides. Filtered even when the diff body
+  // is empty — that IS the branch that prints status.
+  const gitStatus = result.git_status
+    ?.split('\n')
+    .filter((line) => {
+      if (!line || line.startsWith('##')) return true;
+      // XY <path> (renames: `XY old -> new`) — drop the line if any named
+      // path is sensitive.
+      const paths = line.slice(3).split(' -> ');
+      return !paths.some((p) => p.trim() && isSensitivePath(p.trim()));
+    })
+    .join('\n');
+  const withStatus = (value: NativeFsDiffResult): NativeFsDiffResult => ({
+    ...value,
+    ...(result.git_status !== undefined ? { git_status: gitStatus } : {}),
+  });
+  if (!result.diff) return withStatus(result);
   let hidden = 0;
   const kept = result.diff.split(/^(?=diff --git )/m).filter((block) => {
     const header = /^diff --git a\/(\S+) /.exec(block);
@@ -378,7 +401,29 @@ function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
     ...(redaction.redacted ? ['[secret-like values redacted]'] : []),
   ];
   const diff = [redaction.text.trimEnd(), ...notes].filter(Boolean).join('\n');
-  return { ...result, diff };
+  return withStatus({ ...result, diff });
+}
+
+/**
+ * Typed refusal for tools with no on-device implementation. A native session
+ * must fail fast here: falling through would attempt cloud-sandbox calls with
+ * an empty sandbox id (Codex P2 on #1356) — or, when a stale sandbox exists,
+ * run against a workspace the on-device edits never touched.
+ */
+function nativeUnsupportedToolResult(tool: string, detail: string): ToolExecutionResult {
+  const err: StructuredToolError = {
+    type: 'NATIVE_TOOL_UNSUPPORTED',
+    retryable: false,
+    message: `${tool} is unavailable on the on-device working copy`,
+    detail,
+  };
+  return {
+    text: formatStructuredError(
+      err,
+      `[Tool Error — ${tool}]\n${tool} is not supported on the on-device working copy. ${detail}`,
+    ),
+    structuredError: err,
+  };
 }
 
 function unsupportedNativeExec(): EditHandlerContext['execInSandbox'] {
@@ -407,7 +452,8 @@ function buildReadOnlyInspectionContext(
     sandboxId,
     readFromSandbox: nativeFs ? nativeReadFile(nativeFs) : readFromSandbox,
     execInSandbox,
-    listDirectory: nativeFs ? nativeListDirectory(nativeFs) : listDirectory,
+    listDirectory,
+    listDirectoryDetailed: nativeFs ? nativeListDirectory(nativeFs) : undefined,
     readSymbolsFromSandbox,
     findReferencesInSandbox,
     readSymbolsNative: nativeFs ? nativeReadSymbols(nativeFs) : undefined,
@@ -1248,6 +1294,12 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_show_commit': {
+        if (nativeFs) {
+          return nativeUnsupportedToolResult(
+            'sandbox_show_commit',
+            'Commit inspection is not routed on-device yet. Use sandbox_diff for working-copy changes.',
+          );
+        }
         return handleShowCommit(buildGitReleaseContext(sandboxId), call.args);
       }
 
@@ -1447,19 +1499,46 @@ async function executeSandboxToolCallInner(
         );
       }
 
+      // Verification tools need a shell; a native session must refuse rather
+      // than fall through to a cloud sandbox call (empty id, or a stale clone
+      // the on-device edits never touched). Push the branch and let CI verify.
       case 'sandbox_run_tests': {
+        if (nativeFs) {
+          return nativeUnsupportedToolResult(
+            'sandbox_run_tests',
+            'There is no shell on the on-device working copy. Commit and push, then verify with CI.',
+          );
+        }
         return handleRunTests(buildVerificationContext(sandboxId, options), call.args);
       }
 
       case 'sandbox_check_types': {
+        if (nativeFs) {
+          return nativeUnsupportedToolResult(
+            'sandbox_check_types',
+            'There is no shell on the on-device working copy. Commit and push, then verify with CI.',
+          );
+        }
         return handleCheckTypes(buildVerificationContext(sandboxId, options));
       }
 
       case 'sandbox_verify_workspace': {
+        if (nativeFs) {
+          return nativeUnsupportedToolResult(
+            'sandbox_verify_workspace',
+            'There is no shell on the on-device working copy. Commit and push, then verify with CI.',
+          );
+        }
         return handleVerifyWorkspace(buildVerificationContext(sandboxId, options));
       }
 
       case 'sandbox_download': {
+        if (nativeFs) {
+          return nativeUnsupportedToolResult(
+            'sandbox_download',
+            'Workspace archives come from the cloud sandbox API, which a native session does not have.',
+          );
+        }
         const archivePath = normalizeSandboxPath(call.args.path || '/workspace');
         const result = await downloadFromSandbox(sandboxId, archivePath);
 
@@ -1502,21 +1581,11 @@ async function executeSandboxToolCallInner(
         // native implementation, so refuse with the same typed error as
         // `sandbox_exec` instead of dead-ending on an unreachable sandbox.
         if (nativeFs) {
-          const err: StructuredToolError = {
-            type: 'NATIVE_TOOL_UNSUPPORTED',
-            retryable: false,
-            message: 'sandbox_find_references is unavailable on the on-device working copy',
-            detail:
-              'Reference lookup needs the sandbox analyzer runtime, which the native shell ' +
+          return nativeUnsupportedToolResult(
+            'sandbox_find_references',
+            'Reference lookup needs the sandbox analyzer runtime, which the native shell ' +
               'does not have. Use sandbox_search to find usages instead.',
-          };
-          return {
-            text: formatStructuredError(
-              err,
-              `[Tool Error — sandbox_find_references]\nReference lookup is not supported on the on-device working copy. Use sandbox_search to find usages instead.`,
-            ),
-            structuredError: err,
-          };
+          );
         }
         return handleFindReferences(buildReadOnlyInspectionContext(sandboxId), call.args);
       }

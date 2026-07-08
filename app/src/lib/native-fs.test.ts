@@ -152,6 +152,60 @@ describe('NativeFsBackend', () => {
 
     expect(result.lines).toEqual(['/workspace/src/a.ts:1:call fn( now']);
   });
+
+  it('surfaces an error when the search path is neither a readable dir nor file', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'No such directory: nope',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: '',
+      truncated: false,
+      error: 'No such file: nope',
+      code: 'ENOENT',
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'nope');
+
+    // A bad path must NOT read as a clean "No matches" — the rg transport
+    // errors on nonexistent paths and native should too.
+    expect(result.lines).toEqual([]);
+    expect(result.error).toContain('not a readable directory or file');
+  });
+
+  it("skips node_modules and top-level .gitignore'd dirs during the walk", async () => {
+    const plugin = fakePlugin();
+    const listings: Record<string, { name: string; type: 'file' | 'directory' }[]> = {
+      '': [
+        { name: 'node_modules', type: 'directory' },
+        { name: 'dist', type: 'directory' },
+        { name: 'src', type: 'directory' },
+        { name: '.gitignore', type: 'file' },
+      ],
+      src: [{ name: 'a.ts', type: 'file' }],
+    };
+    vi.mocked(plugin.listDir).mockImplementation(async ({ path }: { path?: string }) => {
+      const entries = listings[path ?? ''];
+      if (!entries) return { entries: [], truncated: false, error: `unexpected listDir: ${path}` };
+      return { entries, truncated: false };
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '.gitignore') return { content: 'dist/\n# comment\n', truncated: false };
+      if (path === 'src/a.ts') return { content: 'needle here', truncated: false };
+      return { content: '', truncated: false, error: `unexpected read: ${path}` };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle');
+
+    expect(result.error).toBeUndefined();
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:needle here']);
+    // Neither ignored dir was ever listed — no bridge I/O into them.
+    const listedPaths = vi.mocked(plugin.listDir).mock.calls.map(([arg]) => arg.path);
+    expect(listedPaths).not.toContain('node_modules');
+    expect(listedPaths).not.toContain('dist');
+  });
 });
 
 describe('resolveNativeFs', () => {

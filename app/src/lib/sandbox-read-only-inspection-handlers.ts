@@ -81,6 +81,12 @@ export interface ReadOnlyInspectionHandlerContext {
     options?: { markWorkspaceMutated?: boolean },
   ) => Promise<ExecResult>;
   listDirectory: (sandboxId: string, path?: string) => Promise<FileEntry[]>;
+  // Preferred by handleListDir when present: transports that cap listings
+  // (native: 500 entries) report the cap so the result can say [truncated].
+  listDirectoryDetailed?: (
+    sandboxId: string,
+    path?: string,
+  ) => Promise<{ entries: FileEntry[]; truncated: boolean }>;
   readSymbolsFromSandbox: (sandboxId: string, path: string) => Promise<SandboxReadSymbolsResult>;
   findReferencesInSandbox: (
     sandboxId: string,
@@ -465,8 +471,17 @@ export async function handleListDir(
   }
 
   let entries: FileEntry[];
+  // Transports that cap listings (native caps at 500 entries) report it via
+  // the detailed variant so the model isn't told a capped listing is complete.
+  let listTruncated = false;
   try {
-    entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+    if (ctx.listDirectoryDetailed) {
+      const detailed = await ctx.listDirectoryDetailed(ctx.sandboxId, dirPath);
+      entries = detailed.entries;
+      listTruncated = detailed.truncated;
+    } else {
+      entries = await ctx.listDirectory(ctx.sandboxId, dirPath);
+    }
   } catch (error) {
     // A missing path (or one that isn't a directory) is a recoverable tool
     // result — the model lists the parent or picks another path — NOT a
@@ -497,7 +512,7 @@ export async function handleListDir(
   const lines: string[] = [
     `[Tool Result — sandbox_list_dir]`,
     `Directory: ${dirPath}`,
-    `${dirs.length} directories, ${files.length} files\n`,
+    `${dirs.length} directories, ${files.length} files${listTruncated ? ' [truncated]' : ''}\n`,
     filtered.hiddenCount > 0
       ? `(${filtered.hiddenCount} sensitive entr${filtered.hiddenCount === 1 ? 'y' : 'ies'} hidden)\n`
       : '',

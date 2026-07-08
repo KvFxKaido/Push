@@ -102,6 +102,95 @@ class JGitEngineCheckpointTest {
     assertFalse("native side rejects traversal that escapes the clone", escaped.ok)
   }
 
+  /**
+   * A file guaranteed to exceed READ_MAX_CHARS: `lineCount` lines of exactly
+   * 49 chars + '\n'. Written straight to disk (no git checkout involved), so
+   * host autocrlf can't smudge the content.
+   */
+  private fun writeBigFile(dir: String, lineCount: Int): List<String> {
+    val lines = (1..lineCount).map { "line-%05d-".format(it) + "x".repeat(38) }
+    File(dir, "big.txt").writeText(lines.joinToString("\n"))
+    return lines
+  }
+
+  @Test
+  fun unboundedReadOfLargeFileIsCappedAtLineBoundaryWithFullLineCount() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    val lineCount = 5000 // 5000 * 50 chars = 250k > READ_MAX_CHARS (200k)
+    val lines = writeBigFile(dir, lineCount)
+
+    val read = JGitEngine.readFile(dir, "big.txt", null, null)
+    assertNull(read.error)
+    assertTrue("capped read reports truncation", read.truncated)
+    assertEquals("totalLines counts the FULL file, not the capped slice", lineCount, read.totalLines)
+    assertTrue("content respects the cap", read.content.length <= JGitEngine.READ_MAX_CHARS)
+
+    // Truncation lands on a line boundary: the content is exactly the longest
+    // whole-line prefix that fits under the cap.
+    val expected = StringBuilder()
+    for (line in lines) {
+      val sep = if (expected.isEmpty()) 0 else 1
+      if (expected.length + sep + line.length > JGitEngine.READ_MAX_CHARS) break
+      if (sep == 1) expected.append('\n')
+      expected.append(line)
+    }
+    assertEquals(expected.toString(), read.content)
+  }
+
+  @Test
+  fun rangeReadBeyondTheCapBoundaryStillServesTheRequestedLines() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    val lines = writeBigFile(dir, 5000)
+
+    // Lines near EOF — far past where the unbounded read gets capped.
+    val read = JGitEngine.readFile(dir, "big.txt", 4990, 4995)
+    assertNull(read.error)
+    assertFalse("an in-cap range is not truncated", read.truncated)
+    assertEquals(5000, read.totalLines)
+    assertEquals(lines.subList(4989, 4995).joinToString("\n"), read.content)
+  }
+
+  @Test
+  fun singleRangeExceedingTheCapIsItselfCapped() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    writeBigFile(dir, 5000)
+
+    val read = JGitEngine.readFile(dir, "big.txt", 1, 5000)
+    assertNull(read.error)
+    assertTrue("a range wider than the cap truncates", read.truncated)
+    assertEquals(5000, read.totalLines)
+    assertTrue(read.content.length <= JGitEngine.READ_MAX_CHARS)
+  }
+
+  @Test
+  fun singleOversizedLineIsHardCutWithoutMaterializing() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    File(dir, "one-line.txt").writeText("y".repeat(JGitEngine.READ_MAX_CHARS + 50_000))
+
+    val read = JGitEngine.readFile(dir, "one-line.txt", null, null)
+    assertNull(read.error)
+    assertTrue(read.truncated)
+    assertEquals(1, read.totalLines)
+    assertEquals(JGitEngine.READ_MAX_CHARS, read.content.length)
+  }
+
+  @Test
+  fun smallFileReadIsUnchangedByTheCap() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    JGitEngine.writeFile(dir, "small.txt", "one\ntwo\nthree")
+
+    val read = JGitEngine.readFile(dir, "small.txt", null, null)
+    assertNull(read.error)
+    assertFalse(read.truncated)
+    assertEquals("one\ntwo\nthree", read.content)
+    assertEquals(3, read.totalLines)
+  }
+
   @Test
   fun workspaceDiffIncludesTrackedAndUntrackedChanges() {
     val dir = tempDir()

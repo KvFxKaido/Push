@@ -61,6 +61,51 @@ export interface NativeFsDiffResult {
 const NATIVE_SEARCH_MAX_RESULTS = 120;
 
 /**
+ * Dirs skipped by name at any depth, independent of .gitignore. Deliberately
+ * tiny — only universally-generated trees; everything else defers to the
+ * repo's own .gitignore so real source dirs can't be silently excluded.
+ */
+const NATIVE_SEARCH_SKIP_DIRS = new Set(['.git', 'node_modules']);
+
+function escapeRegExpLiteral(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Minimal top-level .gitignore matcher so the native search walk stays
+ * consistent with the rg/grep transports (which honor ignore rules) and
+ * doesn't pump generated trees through the Capacitor bridge file-by-file.
+ * Supported subset: comments/blank lines, trailing-slash dir patterns, `*`
+ * within a segment, and root-anchored patterns containing `/`. Negations
+ * (`!`) and `**` are ignored — unsupported patterns simply don't exclude,
+ * which errs toward searching too much rather than silently missing matches.
+ */
+export function buildGitignoreMatcher(content: string): (relPath: string) => boolean {
+  const nameGlobs: RegExp[] = [];
+  const rootedGlobs: RegExp[] = [];
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+    const pattern = line.replace(/\/+$/, '');
+    if (!pattern || pattern.includes('**')) continue;
+    const anchored = pattern.includes('/');
+    const cleaned = pattern.replace(/^\//, '');
+    const source = `^${cleaned.split('*').map(escapeRegExpLiteral).join('[^/]*')}$`;
+    try {
+      (anchored ? rootedGlobs : nameGlobs).push(new RegExp(source));
+    } catch {
+      // Unparseable pattern → doesn't exclude.
+    }
+  }
+  return (relPath) => {
+    const name = relPath.split('/').pop() ?? relPath;
+    return (
+      nameGlobs.some((glob) => glob.test(name)) || rootedGlobs.some((glob) => glob.test(relPath))
+    );
+  };
+}
+
+/**
  * Map a tool path onto a path relative to the clone root. Strips the cloud
  * `/workspace` root convention and any leading slash, then resolves `.`/`..`
  * segments **clamped at the root** so an absolute-looking or traversing path can
@@ -139,9 +184,12 @@ export class NativeFsBackend {
       matchesLine = (line) => line.includes(query);
     }
 
-    const searchFile = async (rel: string): Promise<void> => {
+    // Returns the read error (if any) so the root-path case can surface it;
+    // per-file errors during a directory walk are skipped like rg skips
+    // unreadable files.
+    const searchFile = async (rel: string): Promise<string | null> => {
       const read = await this.readFile(rel);
-      if (read.error) return;
+      if (read.error) return read.error;
       const fileLines = read.content.split('\n');
       const displayPath = `/workspace/${rel}`;
       for (let i = 0; i < fileLines.length; i += 1) {
@@ -149,31 +197,29 @@ export class NativeFsBackend {
         lines.push(`${displayPath}:${i + 1}:${fileLines[i]}`);
         if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
           truncated = true;
-          return;
+          break;
         }
       }
+      return null;
     };
 
-    const walk = async (rel: string): Promise<void> => {
-      if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
-        truncated = true;
-        return;
-      }
-      const listing = await this.listDir(rel);
-      if (listing.error) {
-        await searchFile(rel);
-        return;
-      }
+    // Honor the repo's top-level .gitignore so the walk matches the rg/grep
+    // transports and skips generated trees instead of pumping them through
+    // the bridge file-by-file. Best-effort: no .gitignore → nothing ignored.
+    let isIgnored: (relPath: string) => boolean = () => false;
 
-      for (const entry of listing.entries) {
+    const walkEntries = async (rel: string, entries: NativeFsDirEntry[]): Promise<void> => {
+      for (const entry of entries) {
         if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
           truncated = true;
           return;
         }
-        if (entry.name === '.git') continue;
+        if (NATIVE_SEARCH_SKIP_DIRS.has(entry.name)) continue;
         const child = rel ? `${rel}/${entry.name}` : entry.name;
+        if (isIgnored(child)) continue;
         if (entry.type === 'directory') {
-          await walk(child);
+          const listing = await this.listDir(child);
+          if (!listing.error) await walkEntries(child, listing.entries);
           continue;
         }
         if (entry.type !== 'file') continue;
@@ -183,7 +229,24 @@ export class NativeFsBackend {
     };
 
     try {
-      await walk(root);
+      const rootListing = await this.listDir(root);
+      if (rootListing.error) {
+        // Not-a-directory fallback: search the path as a single file. If that
+        // ALSO fails, the path is bad — surface an error instead of a silent
+        // "No matches" (the rg transport errors on nonexistent paths too).
+        const readError = await searchFile(root);
+        if (readError) {
+          return {
+            lines: [],
+            truncated: false,
+            error: `Search path is not a readable directory or file: ${readError}`,
+          };
+        }
+        return { lines, truncated };
+      }
+      const ignoreRead = await this.readFile('.gitignore');
+      if (!ignoreRead.error) isIgnored = buildGitignoreMatcher(ignoreRead.content);
+      await walkEntries(root, rootListing.entries);
       return { lines, truncated };
     } catch (err) {
       return {
