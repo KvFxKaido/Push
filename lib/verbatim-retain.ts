@@ -56,7 +56,9 @@ export interface RetainCompactedSpanInput {
    *  detail the summary could have dropped. */
   spanText: string;
   /** Session scope, same contract as `RetainReducedOutputInput.scope`:
-   *  retention is skipped when `repoFullName` is empty/absent. */
+   *  retention is skipped when `repoFullName` is empty/absent. `branch` is
+   *  accepted (callers pass their whole runtime scope) but deliberately not
+   *  persisted — see the `log.append` scope in `retainCompactedSpan`. */
   scope: { repoFullName?: string; branch?: string; chatId?: string };
   /** Human label for `ls`/debug, e.g. `context compaction (12 messages)`. */
   label?: string;
@@ -86,14 +88,22 @@ export async function retainCompactedSpan(
     });
     return {};
   }
-  if (!input.spanText) return {};
+  if (!input.spanText) {
+    logRetain('debug', 'compaction_span_retain_skipped_empty', {});
+    return {};
+  }
 
   const log = input.verbatimLog ?? getDefaultVerbatimLog();
   try {
     const entry = await log.append({
+      // Compacted spans are chat-durable, not branch-moment artifacts: the chat
+      // (and the handoff carrying this recall ref) is repo-scoped and survives
+      // switch_branch/create_branch, so branch-stamping the entry would make the
+      // ref unresolvable after a switch — `verbatimScopeMatches` rejects a query
+      // whose branch differs from the entry's. Scope to repo (+chat), never
+      // branch, so the handoff's recall promise still holds across switches.
       scope: {
         repoFullName: input.scope.repoFullName,
-        ...(input.scope.branch ? { branch: input.scope.branch } : {}),
         ...(input.scope.chatId ? { chatId: input.scope.chatId } : {}),
       },
       text: input.spanText,

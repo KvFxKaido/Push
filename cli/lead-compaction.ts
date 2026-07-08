@@ -158,8 +158,10 @@ export async function maybeCompactLeadHistory(
   // Retain the raw span in the verbatim log BEFORE the destructive collapse —
   // on the CLI the span is *replaced* in `state.messages`, so the log entry is
   // the only place the original turns survive for the model to recall. Best-
-  // effort: an unidentified workspace (no repoFullName) or a failing resolver
-  // skips retention and the handoff omits the recall line.
+  // effort: a failing resolver skips retention and the handoff omits the recall
+  // line. (A gitless workspace does NOT skip — `resolveWorkspaceIdentity` falls
+  // back to `repoFullName: 'unknown'`, so retention still happens, scoped to
+  // that pseudo-repo.)
   let recallRef: string | undefined;
   try {
     const resolveScope =

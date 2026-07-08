@@ -153,7 +153,9 @@ describe('maybeCompactLeadHistory', () => {
       const entry = await verbatimLog.read(refMatch[1]);
       assert.ok(entry, 'ref must resolve in the verbatim log');
       assert.equal(entry.kind, 'compacted_span');
-      assert.deepEqual(entry.scope, { repoFullName: 'owner/repo', branch: 'main' });
+      // branch is deliberately dropped: the span is chat-durable and the recall
+      // ref must still resolve after a CLI branch switch, so it scopes to repo only.
+      assert.deepEqual(entry.scope, { repoFullName: 'owner/repo' });
       // The retained text is the rendered span — it carries the collapsed turns.
       assert.match(entry.text, /### ASSISTANT\nstep 0 /);
     } finally {
@@ -161,7 +163,11 @@ describe('maybeCompactLeadHistory', () => {
     }
   });
 
-  it('omits the recall line (but still compacts) when the workspace has no repo identity', async () => {
+  it('omits the recall line (but still compacts) when the resolver yields no repo scope', async () => {
+    // NOTE: this is the injected-resolver case. In production `resolveWorkspaceIdentity`
+    // falls back to `repoFullName: 'unknown'` for a gitless dir, so a real CLI workspace
+    // never yields an empty scope — retention there happens under 'unknown'. This asserts
+    // the skip path itself (also reached when the resolver throws), not a production state.
     const verbatimLog = createInMemoryVerbatimLog();
     setDefaultVerbatimLog(verbatimLog);
     try {
@@ -169,7 +175,7 @@ describe('maybeCompactLeadHistory', () => {
       const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
         streamFactory: fakeStreamFactory(summaryEvents),
         persistEvent: () => {},
-        resolveScope: async () => ({}), // unidentified workspace
+        resolveScope: async () => ({}), // injected no-scope resolver (see NOTE)
       });
       assert.equal(compacted, true);
       const handoff = state.messages.find((m) => isHandoffBlock(m.content));

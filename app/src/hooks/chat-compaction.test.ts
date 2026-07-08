@@ -287,12 +287,15 @@ describe('maybeCompactBeforeTurn', () => {
       expect(refMatch).toBeTruthy();
       // The retained entry is the exact rendered span the summarizer received
       // (its user message wraps it in a "span to compact" preamble), scope-
-      // guarded to the session and tagged with the compaction provenance kind.
+      // guarded to the repo+chat and tagged with the compaction provenance kind.
+      // branch is deliberately omitted so the recall ref survives a branch
+      // switch (the chat carries across branches; a branch-stamped entry would
+      // stop resolving after switch_branch).
       const entry = await verbatimLog.read(refMatch![1]);
       expect(entry?.text).toMatch(/^### ASSISTANT\n/);
       expect(lastSpanText).toContain(entry?.text);
       expect(entry?.kind).toBe('compacted_span');
-      expect(entry?.scope).toEqual({ repoFullName: 'owner/repo', branch: 'main', chatId: 'c1' });
+      expect(entry?.scope).toEqual({ repoFullName: 'owner/repo', chatId: 'c1' });
     } finally {
       setDefaultVerbatimLog(null); // reset the lazy process default for other suites
     }

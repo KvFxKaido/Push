@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { COMPACTED_SPAN_KIND, retainCompactedSpan, retainReducedOutput } from './verbatim-retain';
-import { createInMemoryVerbatimLog } from './verbatim-log';
+import { createInMemoryVerbatimLog, verbatimScopeMatches } from './verbatim-log';
 import type { ReducedOutput } from './tool-output-reducers';
 
 const repo = 'owner/repo';
@@ -97,7 +97,28 @@ describe('retainCompactedSpan', () => {
     expect(entry?.text).toBe(spanText); // byte-exact
     expect(entry?.kind).toBe(COMPACTED_SPAN_KIND);
     expect(entry?.label).toBe('context compaction (12 messages)');
-    expect(entry?.scope).toEqual({ repoFullName: repo, branch: 'main', chatId: 'c1' });
+    // branch is deliberately dropped (see below) — chat-durable, not branch-scoped.
+    expect(entry?.scope).toEqual({ repoFullName: repo, chatId: 'c1' });
+  });
+
+  it('scopes to repo+chat, never branch, so the recall ref survives a branch switch', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    const { ref } = await retainCompactedSpan({
+      spanText: 'original turns',
+      // Caller passes its whole runtime scope, branch included...
+      scope: { repoFullName: repo, branch: 'main', chatId: 'c1' },
+      verbatimLog,
+    });
+
+    const entry = await verbatimLog.read(ref!);
+    // ...but the entry omits branch, so a `memory_expand` issued after a
+    // switch_branch (current scope names a *different* branch) still resolves.
+    // With branch stamped, `verbatimScopeMatches` would reject and the handoff's
+    // recall promise would point at nothing again — the exact bug this guards.
+    expect(entry?.scope).toEqual({ repoFullName: repo, chatId: 'c1' });
+    expect(
+      verbatimScopeMatches({ repoFullName: repo, branch: 'feature-x', chatId: 'c1' }, entry!.scope),
+    ).toBe(true);
   });
 
   it('is a no-op when no scope is available (nothing to scope-guard a recall to)', async () => {
