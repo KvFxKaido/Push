@@ -59,9 +59,26 @@ class NativeGitPlugin : Plugin() {
    * contract); a relative path resolves against the app's private `filesDir`, so
    * a JS caller can pass a plain name (e.g. "smoke-clone") without knowing
    * Android's absolute storage path. Additive — absolute callers are unaffected.
+   *
+   * Defense in depth: JS callers derive a relative `dir` from `laneSegment`,
+   * which replaces every `/` with `_` and strips leading dots, so a `..` path
+   * component can't reach here — but this is the one path-resolution seam that
+   * didn't enforce the sandbox boundary itself (unlike `safeChild` /
+   * `extractDeltaOnto`). Canonical-check a relative dir against `filesDir` so a
+   * future caller or a `laneSegment` regression can't silently escape the app
+   * sandbox. Absolute dirs remain the caller's explicit responsibility.
    */
-  private fun resolveDir(dir: String): String =
-    if (File(dir).isAbsolute) dir else File(getContext().filesDir, dir).absolutePath
+  private fun resolveDir(dir: String): String {
+    if (File(dir).isAbsolute) return dir
+    val filesDir = getContext().filesDir
+    val resolved = File(filesDir, dir)
+    val base = filesDir.canonicalPath
+    val cp = resolved.canonicalPath
+    if (cp != base && !cp.startsWith(base + File.separator)) {
+      throw IllegalArgumentException("relative dir escapes the app sandbox: $dir")
+    }
+    return resolved.absolutePath
+  }
 
   private fun PluginCall.requireDir(): String =
     getString("dir")?.let { resolveDir(it) } ?: throw IllegalArgumentException("missing 'dir'")
