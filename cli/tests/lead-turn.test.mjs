@@ -610,6 +610,86 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
     });
   });
 
+  it('honors disabledTools: no advertise, no spawn, canonical TOOL_DISABLED denial (Codex P2 #1370)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
+        { tokens: ['Understood, answering directly.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(state, providerConfig, 'mock-key', 'Go', 5, {
+          emit: (event) => emitted.push(event),
+          disabledTools: ['delegate_explorer'],
+        });
+
+        assert.equal(result.outcome, 'success');
+        // Advertising stays aligned with executor support: the disabled arc
+        // is not in the prompt.
+        assert.ok(
+          !JSON.stringify(server.requests[0]).includes('[DELEGATE_EXPLORER]'),
+          'disabled Explorer arc still advertised in the lead prompt',
+        );
+        // No Explorer provider request — the call fell through to
+        // executeToolCall's dispatch gate.
+        assert.equal(server.requests.length, 2);
+        assert.ok(
+          JSON.stringify(server.requests[1]).includes('disabled by user config'),
+          'TOOL_DISABLED denial not fed back to the lead',
+        );
+        assert.ok(!emitted.some((e) => e.type.startsWith('subagent.')));
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('keeps the never-throw contract when the event sink throws on subagent events', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
+        { tokens: ['Findings: alpha beta'] },
+        { tokens: ['All done.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+
+        // A client emit callback that throws on the delegation lifecycle
+        // events — previously the unguarded subagent.started emit rejected
+        // the kernel's fan-out batch before the runner's try (fugu review on
+        // #1370); now lifecycle emission is best-effort.
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Investigate the flow',
+          5,
+          {
+            emit: (event) => {
+              if (event.type.startsWith('subagent.')) {
+                throw new Error('sink exploded');
+              }
+            },
+          },
+        );
+
+        assert.equal(result.outcome, 'success');
+        assert.ok(result.finalAssistantText.includes('All done.'));
+        // The Explorer still ran and its report still reached the lead.
+        assert.equal(server.requests.length, 3);
+        assert.ok(JSON.stringify(server.requests[2]).includes('Findings: alpha beta'));
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('rejects a task-less delegation with a tool error and no Explorer spawn', async () => {
     await withTempWorkspace(async (cwd) => {
       const server = await startSequencedProviderServer([

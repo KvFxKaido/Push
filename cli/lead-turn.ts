@@ -59,6 +59,7 @@ import {
   detectToolCall as cliDetectToolCall,
   executeToolCall,
   getGitHubToolProtocolAsync,
+  isCliToolDisabled,
   FILE_MUTATION_TOOLS,
   READ_ONLY_TOOLS,
   REPEAT_EXEMPT_TOOLS,
@@ -456,6 +457,13 @@ export async function runLeadKernelTurn(
     memory,
   );
   const leadModelId = state.model || providerConfig.defaultModel;
+  // Explorer fan-out honors the disabledTools policy end-to-end (Codex P2 on
+  // #1370): when `delegate_explorer` is disabled, the arc is neither
+  // advertised (protocol block, native schema, detector bucket) nor
+  // special-cased in the executor — a stray call falls through to
+  // `executeToolCall`, whose dispatch gate returns the canonical
+  // TOOL_DISABLED denial.
+  const explorerFanOutEnabled = !isCliToolDisabled('delegate_explorer', disabledTools);
   const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(
     providerConfig.id,
     leadModelId,
@@ -466,7 +474,7 @@ export async function runLeadKernelTurn(
         // protocol block advertised below, so prompt text and native schema
         // can't drift. The daemon's delegated nodes don't thread this — a
         // delegated sub-Coder neither advertises nor executes delegation.
-        extraProtocolBlocks: [LEAD_EXPLORER_DELEGATION_PROTOCOL],
+        extraProtocolBlocks: explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : [],
       })
     : undefined;
 
@@ -618,8 +626,10 @@ export async function runLeadKernelTurn(
     // synthesis: the delegation renders through its own `subagent.*`
     // lifecycle events (same as the daemon's delegated runs), not as a
     // sandbox-tool transcript row. Never throws — a failed Explorer must not
-    // take down the siblings sharing the kernel's parallel batch.
-    if (rawCall.tool === 'delegate_explorer') {
+    // take down the siblings sharing the kernel's parallel batch. When the
+    // fan-out is disabled by policy, fall through so `executeToolCall`'s
+    // dispatch gate returns its canonical TOOL_DISABLED denial.
+    if (rawCall.tool === 'delegate_explorer' && explorerFanOutEnabled) {
       const { resultText } = await runLeadExplorerDelegation(rawCall.args ?? {}, {
         cwd: state.cwd,
         sessionId: state.sessionId,
@@ -786,14 +796,15 @@ export async function runLeadKernelTurn(
         // fan out up to LEAD_MAX_PARALLEL_EXPLORERS Explorers in one turn
         // (they ride the kernel's read-phase Promise.all). The daemon's
         // delegated nodes keep the default (no bucket — a delegation call
-        // falls through to the trailing slot).
+        // falls through to the trailing slot), as does a lead whose fan-out
+        // is disabled by policy.
         detectAllToolCalls: (text: string) =>
           wrapCliDetectAllToolCalls(text, {
-            maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS,
+            maxParallelDelegations: explorerFanOutEnabled ? LEAD_MAX_PARALLEL_EXPLORERS : null,
           }),
         detectNativeToolCalls: (calls: readonly NativeToolCall[]) =>
           wrapCliDetectNativeToolCalls(calls, {
-            maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS,
+            maxParallelDelegations: explorerFanOutEnabled ? LEAD_MAX_PARALLEL_EXPLORERS : null,
           }),
         detectAnyToolCall: wrapCliDetectAnyToolCall,
         webSearchToolProtocol: '',
@@ -801,11 +812,12 @@ export async function runLeadKernelTurn(
         // as the daemon's delegated Coder nodes.
         sandboxToolProtocol: TOOL_PROTOCOL,
         // Lead-only extras: GitHub (when a token resolves) plus the Explorer
-        // fan-out arc — advertised only because the matching executor paths
-        // are wired above (toolExec's delegate_explorer route).
+        // fan-out arc — advertised only when the matching executor paths are
+        // wired above (toolExec's delegate_explorer route) and not disabled
+        // by policy, so advertising stays aligned with executor support.
         extraToolProtocols: [
           ...(githubProtocol ? [githubProtocol] : []),
-          LEAD_EXPLORER_DELEGATION_PROTOCOL,
+          ...(explorerFanOutEnabled ? [LEAD_EXPLORER_DELEGATION_PROTOCOL] : []),
         ],
         nativeToolSchemas,
         projectInstructions: instructions?.content || undefined,

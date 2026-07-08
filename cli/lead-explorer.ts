@@ -291,6 +291,34 @@ export async function runLeadExplorerDelegation<TCall>(
   const executionId = `sub_explorer_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
   const startMs = Date.now();
 
+  // Best-effort lifecycle emission: the caller's sink dispatches to
+  // client-supplied emit callbacks synchronously, so a throwing sink here
+  // would break this function's never-throw contract — the started emit runs
+  // before the try, and a throw from the failed emit inside the catch would
+  // re-propagate — rejecting the kernel's whole fan-out Promise.all batch.
+  // A dropped event is logged (stderr — CLI stdout is reserved) instead of
+  // vanishing; the delegation itself proceeds.
+  const emitLifecycle = (type: string, payload: Record<string, unknown>): void => {
+    try {
+      ctx.emitEvent(type, payload);
+    } catch (err) {
+      try {
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'lead_explorer_event_emit_failed',
+            type,
+            executionId,
+            sessionId: ctx.sessionId,
+            message: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      } catch {
+        // JSON.stringify cycle guard — never let logging break the contract.
+      }
+    }
+  };
+
   // Provider/model resolution with role-routing precedence, mirroring the
   // daemon's `handleDelegateExplorer`: an `explorer` role route overrides the
   // lead's locked provider; otherwise the delegation inherits the lock
@@ -332,7 +360,7 @@ export async function runLeadExplorerDelegation<TCall>(
   const stream: PushStream<LlmMessage> = (req) =>
     normalizeReasoning(providerStream({ ...req, provider: providerId as AIProviderType }));
 
-  ctx.emitEvent('subagent.started', {
+  emitLifecycle('subagent.started', {
     executionId,
     subagentId: executionId,
     agent: 'explorer',
@@ -395,7 +423,7 @@ export async function runLeadExplorerDelegation<TCall>(
       : result.rounds > 0 && summary
         ? 'complete'
         : 'inconclusive';
-    ctx.emitEvent('subagent.completed', {
+    emitLifecycle('subagent.completed', {
       executionId,
       subagentId: executionId,
       agent: 'explorer',
@@ -417,7 +445,7 @@ export async function runLeadExplorerDelegation<TCall>(
     const isAbort =
       (err instanceof Error && err.name === 'AbortError') || (ctx.signal?.aborted ?? false);
     const message = err instanceof Error ? err.message : String(err);
-    ctx.emitEvent('subagent.failed', {
+    emitLifecycle('subagent.failed', {
       executionId,
       subagentId: executionId,
       agent: 'explorer',
