@@ -41,6 +41,9 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
   logPatch(): Promise<never> {
     return this.notAvailable();
   }
+  lsRemoteHead(): Promise<never> {
+    return this.notAvailable();
+  }
   createBranch(): Promise<never> {
     return this.notAvailable();
   }

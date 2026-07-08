@@ -103,6 +103,7 @@ object JGitEngine {
     val gitStatus: String,
     val error: String? = null,
   )
+  data class RemoteHeadResult(val ok: Boolean, val sha: String?)
 
   // -- Lifecycle --------------------------------------------------------------
 
@@ -462,6 +463,27 @@ object JGitEngine {
       walk.next()?.name
     }
   }
+
+  fun lsRemoteHead(dir: String, remote: String, branch: String, token: String?): RemoteHeadResult =
+    withRepo(dir) { git ->
+      try {
+        val config = git.repository.config
+        val remoteUrl = config.getString("remote", remote, "url")
+          ?: return@withRepo RemoteHeadResult(false, null)
+        val refs = Git.lsRemoteRepository()
+          .setRemote(remoteUrl)
+          .setHeads(true)
+          .apply { credentials(token)?.let { setCredentialsProvider(it) } }
+          .call()
+        val sha = refs.firstOrNull { it.name == "refs/heads/$branch" }?.objectId?.name
+        RemoteHeadResult(true, sha)
+      } catch (t: Throwable) {
+        println(
+          """{"level":"error","event":"native_push_plan_remote_read_failed","remote":${jsonString(remote)},"branch":${jsonString(branch)},"error":${jsonString(t.message ?: "ls-remote failed")}}""",
+        )
+        RemoteHeadResult(false, null)
+      }
+    }
 
   private fun writeUtf8(out: ByteArrayOutputStream, text: String) {
     out.write(text.toByteArray(Charsets.UTF_8))

@@ -86,7 +86,12 @@ import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { retainReducedOutput } from '@push/lib/verbatim-retain';
 import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { createSandboxPushGit } from './git-backend';
-import { computeNativePushedDiff, createNativePushGit } from './native-git';
+import {
+  computeNativePushedDiff,
+  computeNativePushPlan,
+  createNativePushGit,
+  nativeBranchExists,
+} from './native-git';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -259,6 +264,7 @@ function buildGitReleaseContext(
     currentBranch: branchInfo?.currentBranch,
     defaultBranch: branchInfo?.defaultBranch,
     isMainProtected: branchInfo?.isMainProtected,
+    gitSurface: nativeFs ? 'native' : 'sandbox',
     execInSandbox,
     getSandboxDiff: nativeFs
       ? async () => sanitizeNativeDiff(await nativeFs.diff())
@@ -279,16 +285,30 @@ function buildGitReleaseContext(
               ...opts,
               defaultBranch: branchInfo?.defaultBranch,
             }),
-          computePushPlan: null,
-          runPreCommitHook: async () => ({
-            stdout: '',
-            stderr: '',
-            exitCode: 0,
-            truncated: false,
-          }),
+          computePushPlan: (opts?: { ref?: string; remote?: string }) =>
+            computeNativePushPlan(nativeFs.dir, {
+              ...opts,
+              getToken: () => getActiveGitHubToken() || undefined,
+            }),
+          runPreCommitHook: async () => {
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'native_pre_commit_hook_skipped',
+                sandboxId,
+                reason: 'no-shell',
+              }),
+            );
+            return {
+              stdout: '',
+              stderr: '',
+              exitCode: 0,
+              truncated: false,
+            };
+          },
           collectUntrackedDiff: async () => '',
           onBranchChanged: (branch: string) => rekeyNativeWorkingCopyScope(nativeFsScope, branch),
-          branchExists: async () => false,
+          branchExists: (branch: string) => nativeBranchExists(nativeFs.dir, branch),
           forkCommitTargetBranch: async (branch: string) => {
             const result = await createToolPushGit(sandboxId, nativeFs).createBranch(branch);
             if (result.ok) rekeyNativeWorkingCopyScope(nativeFsScope, branch);

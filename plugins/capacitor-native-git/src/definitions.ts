@@ -39,6 +39,12 @@ export interface NativeGitPlugin {
   revParse(options: { dir: string; ref: string }): Promise<{ sha: string | null }>;
   mergeBase(options: { dir: string; a: string; b: string }): Promise<{ sha: string | null }>;
   logPatch(options: { dir: string; range: string }): Promise<{ patch: string | null }>;
+  lsRemoteHead(options: {
+    dir: string;
+    remote?: string;
+    branch: string;
+    token?: string;
+  }): Promise<{ ok: boolean; sha: string | null }>;
   createBranch(options: {
     dir: string;
     name: string;

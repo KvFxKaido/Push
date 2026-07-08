@@ -7,6 +7,12 @@ resolution run over `PushedDiffSource`, the native plugin exposes `revParse` /
 `mergeBase` / `logPatch`, and native `PushGit` composes the same Protect Main,
 secret-scan, and Auditor gates as sandbox. Device validation of JGit `logPatch`
 output is still required before treating native push as fully proven live.
+Slice 3 also routes native `prepare_push` through a native push-plan source:
+`lsRemoteHead` reads the live remote tip, review cards pin the audited git
+surface, and native auto-branch collision checks read local and fetched refs.
+Native pre-commit hooks are currently a logged no-op
+(`native_pre_commit_hook_skipped`) because the Android bridge has no shell hook
+runner.
 Owner: Push mobile/git.
 
 ## Context
@@ -138,12 +144,24 @@ device-validated** before native gating is relied on.
 
 Likely lands as 2–3 PRs (2a alone; 2b+2c together, or each separately).
 
-## Out of scope
+## Native push-plan increment
 
-`computePushPlan` (`lib/git/push-plan.ts`) — the ref-only push plan with
-force-with-lease via `ls-remote` — is the web `prepare_push` tool's divergence /
-lease protection, separate from the gate stack. Mobile push-divergence handling is
-a later push-tool increment, not part of gate unification.
+`computePushPlan` (`lib/git/push-plan.ts`) - the ref-only push plan with
+force-with-lease via `ls-remote` - now shares the same typed-source pattern as
+`computePushedDiff`. The web/CLI adapter still wraps argv git, while native uses
+`lsRemoteHead` for the live remote tip and the existing `revParse` / `mergeBase`
+primitives for classification.
+
+This keeps the fail-closed lease behavior on native `prepare_push`: if the remote
+read fails, the plan is `unknown` with no established lease; if divergence is
+proven, the push is blocked before the Auditor card is created.
+
+## Still out of scope
+
+The native `CommitPushSheet` patch-apply flow still needs its own native
+implementation before it can safely commit an edited patch against the on-device
+tree. Huge first-push histories can still make `logPatch` expensive; a byte cap
+with an explicit truncation/fail-closed signal is a separate interface change.
 
 ## Status flip plan
 

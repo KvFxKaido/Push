@@ -69,6 +69,13 @@ export interface NativeGitPlugin {
   mergeBase(options: { dir: string; a: string; b: string }): Promise<{ sha: string | null }>;
   /** Per-commit patch series for a rev/range, uncapped; null when unreadable. */
   logPatch(options: { dir: string; range: string }): Promise<{ patch: string | null }>;
+  /** Live remote branch tip; ok=false means the remote read failed. */
+  lsRemoteHead(options: {
+    dir: string;
+    remote?: string;
+    branch: string;
+    token?: string;
+  }): Promise<{ ok: boolean; sha: string | null }>;
 
   // -- Sanctioned writes -----------------------------------------------------
   /** Create and switch to `name`, optionally from a ref. */

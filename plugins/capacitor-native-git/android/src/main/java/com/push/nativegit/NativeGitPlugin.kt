@@ -135,6 +135,20 @@ class NativeGitPlugin : Plugin() {
   }
 
   @PluginMethod
+  fun lsRemoteHead(call: PluginCall) = resolveAsync(call) {
+    val branch = call.getString("branch") ?: return@resolveAsync JSObject()
+      .put("ok", false)
+      .put("sha", JSONObject.NULL)
+    val result = JGitEngine.lsRemoteHead(
+      call.requireDir(),
+      call.getString("remote") ?: "origin",
+      branch,
+      call.getString("token"),
+    )
+    JSObject().put("ok", result.ok).put("sha", result.sha ?: JSONObject.NULL)
+  }
+
+  @PluginMethod
   fun readFile(call: PluginCall) = resolveAsync(call) {
     val path = call.getString("path") ?: return@resolveAsync JSObject()
       .put("content", "")

@@ -30,7 +30,8 @@
  */
 
 import type { GitExec } from './backend.js';
-import { resolvePushDestination } from './push-destination.js';
+import { resolvePushDestinationFromSource } from './push-destination.js';
+import { pushedDiffSourceFromGitExec, type PushedDiffSource } from './pushed-diff-source.js';
 
 /**
  * Git's all-zero object id — the conventional "this ref does not exist" sentinel
@@ -89,6 +90,26 @@ export interface PushPlan {
   requiresForce: boolean;
 }
 
+export interface RemoteHeadRead {
+  /** False means the remote could not be read; true with sha null means absent branch. */
+  ok: boolean;
+  sha: string | null;
+}
+
+export interface RevListCounts {
+  behind: number;
+  ahead: number;
+}
+
+export interface PushPlanSource extends PushedDiffSource {
+  /** Live remote branch tip, not the local remote-tracking mirror. */
+  lsRemoteHead(remote: string, branch: string): Promise<RemoteHeadRead>;
+  /** True when `ancestor` is reachable from `descendant`; null when unreadable. */
+  isAncestor?(ancestor: string, descendant: string): Promise<boolean | null>;
+  /** Best-effort ahead/behind counts for `<left>...<right>`. */
+  revListLeftRightCount?(range: string): Promise<RevListCounts | null>;
+}
+
 type LogLevel = 'info' | 'warn' | 'error';
 type LogFn = (level: LogLevel, event: string, ctx: Record<string, unknown>) => void;
 
@@ -103,6 +124,30 @@ async function read(exec: GitExec, args: string[]): Promise<string | null> {
   return res.stdout.trim() || null;
 }
 
+export function pushPlanSourceFromGitExec(exec: GitExec): PushPlanSource {
+  return {
+    ...pushedDiffSourceFromGitExec(exec),
+    async lsRemoteHead(remote, branch) {
+      const res = await exec(['ls-remote', remote, `refs/heads/${branch}`]);
+      if (res.exitCode !== 0) return { ok: false, sha: null };
+      const firstLine = res.stdout.trim().split('\n')[0]?.trim() ?? '';
+      return { ok: true, sha: firstLine ? firstLine.split(/\s+/)[0] || null : null };
+    },
+    async isAncestor(ancestor, descendant) {
+      const res = await exec(['merge-base', '--is-ancestor', ancestor, descendant]);
+      if (res.exitCode === 0) return true;
+      if (res.exitCode === 1) return false;
+      return null;
+    },
+    async revListLeftRightCount(range) {
+      const counts = await read(exec, ['rev-list', '--left-right', '--count', range]);
+      if (!counts) return null;
+      const [behind, ahead] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10));
+      return Number.isFinite(behind) && Number.isFinite(ahead) ? { behind, ahead } : null;
+    },
+  };
+}
+
 /**
  * Compute the push plan for `ref` (default HEAD) against `remote` (default
  * origin). Pure preview — see the file header for the lease/classification split.
@@ -114,15 +159,20 @@ export async function computePushPlan(
   exec: GitExec,
   opts?: { ref?: string; remote?: string; log?: LogFn },
 ): Promise<PushPlan> {
+  return computePushPlanFromSource(pushPlanSourceFromGitExec(exec), opts);
+}
+
+export async function computePushPlanFromSource(
+  source: PushPlanSource,
+  opts?: { ref?: string; remote?: string; log?: LogFn },
+): Promise<PushPlan> {
   const log = opts?.log ?? defaultLog;
   const remote = opts?.remote ?? 'origin';
   const ref = opts?.ref?.trim() || 'HEAD';
 
-  const target = await resolvePushDestination(exec, { ref });
+  const target = await resolvePushDestinationFromSource(source, { ref });
   const branch = target.branch;
-  const localSha = target.sourceRef
-    ? await read(exec, ['rev-parse', '--verify', '--quiet', target.sourceRef])
-    : null;
+  const localSha = target.sourceRef ? await source.verifyRef(target.sourceRef) : null;
 
   // Live remote tip via ls-remote (NOT the local origin/<branch> mirror). Exit 0
   // with empty output means the branch truly doesn't exist on origin (a create);
@@ -131,12 +181,9 @@ export async function computePushPlan(
   let remoteSha: string | null = null;
   let remoteReadOk = false;
   if (branch) {
-    const res = await exec(['ls-remote', remote, `refs/heads/${branch}`]);
-    if (res.exitCode === 0) {
-      remoteReadOk = true;
-      const firstLine = res.stdout.trim().split('\n')[0]?.trim() ?? '';
-      remoteSha = firstLine ? firstLine.split(/\s+/)[0] || null : null;
-    }
+    const remoteHead = await source.lsRemoteHead(remote, branch);
+    remoteReadOk = remoteHead.ok;
+    remoteSha = remoteHead.sha;
   }
 
   let kind: RefMoveKind;
@@ -161,12 +208,12 @@ export async function computePushPlan(
     // other exit = origin's object isn't present locally (stale mirror) so we
     // can't classify — stay `unknown` rather than misreport a force.
     const anc = target.sourceRef
-      ? await exec(['merge-base', '--is-ancestor', remoteSha, target.sourceRef])
-      : { stdout: '', stderr: '', exitCode: 128 };
-    if (anc.exitCode === 0) {
+      ? await resolveAncestry(source, remoteSha, target.sourceRef)
+      : null;
+    if (anc === true) {
       kind = 'fast-forward';
       reason = `fast-forward over ${remote}/${branch}`;
-    } else if (anc.exitCode === 1) {
+    } else if (anc === false) {
       kind = 'force';
       requiresForce = true;
       reason = `local "${branch}" has diverged from ${remote}/${branch} (would require a force-push)`;
@@ -179,19 +226,17 @@ export async function computePushPlan(
   // Best-effort ahead/behind; only meaningful when both tips are local objects.
   let ahead: number | null = null;
   let behind: number | null = null;
-  if (target.sourceRef && localSha && remoteSha && remoteSha !== localSha) {
-    const counts = await read(exec, [
-      'rev-list',
-      '--left-right',
-      '--count',
-      `${remoteSha}...${target.sourceRef}`,
-    ]);
+  if (
+    source.revListLeftRightCount &&
+    target.sourceRef &&
+    localSha &&
+    remoteSha &&
+    remoteSha !== localSha
+  ) {
+    const counts = await source.revListLeftRightCount(`${remoteSha}...${target.sourceRef}`);
     if (counts) {
-      const [b, a] = counts.split(/\s+/).map((n) => Number.parseInt(n, 10));
-      if (Number.isFinite(b) && Number.isFinite(a)) {
-        behind = b;
-        ahead = a;
-      }
+      behind = counts.behind;
+      ahead = counts.ahead;
     }
   }
 
@@ -213,4 +258,17 @@ export async function computePushPlan(
   });
 
   return plan;
+}
+
+async function resolveAncestry(
+  source: PushPlanSource,
+  ancestor: string,
+  descendant: string,
+): Promise<boolean | null> {
+  if (source.isAncestor) return source.isAncestor(ancestor, descendant);
+  const resolvedAncestor = await source.verifyRef(ancestor);
+  if (!resolvedAncestor) return null;
+  const base = await source.mergeBase(ancestor, descendant);
+  if (!base) return false;
+  return base === resolvedAncestor || base === ancestor;
 }

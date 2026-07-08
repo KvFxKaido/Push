@@ -16,6 +16,7 @@ function fakePlugin(overrides: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
     revParse: vi.fn(async () => ({ sha: 'abc1234' })),
     mergeBase: vi.fn(async () => ({ sha: 'base1234' })),
     logPatch: vi.fn(async () => ({ patch: '' })),
+    lsRemoteHead: vi.fn(async () => ({ ok: true, sha: 'remotesha' })),
     createBranch: vi.fn(async () => ({ ok: true })),
     switchBranch: vi.fn(async () => ({ ok: true })),
     commit: vi.fn(async () => ({ ok: true })),

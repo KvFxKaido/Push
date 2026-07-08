@@ -178,6 +178,8 @@ export interface GitReleaseHandlerContext {
   clearPrefetchedEditFileCache: GitReleaseClearPrefetchedEditFileCache;
   /** PushGit factory for the active git surface. Defaults to sandbox PushGit. */
   createPushGit?: (opts?: SandboxPushGitOptions) => PushGit;
+  /** Active git surface for staleness pins carried on push-review cards. */
+  gitSurface?: 'sandbox' | 'native';
   /** Pushed-diff reader for the active git surface. Defaults to sandbox git. */
   computePushedDiff?: (opts?: PushedDiffReadOptions) => Promise<string | null>;
   /**
@@ -895,6 +897,7 @@ export async function handlePreparePush(
     commitMessage: '',
     status: 'pending',
     ...(auditedHeadSha ? { auditedHeadSha } : {}),
+    ...(ctx.gitSurface ? { auditedGitSurface: ctx.gitSurface } : {}),
     ...(auditedBranch ? { auditedBranch } : {}),
     ...(auditedUpstream ? { auditedUpstream } : {}),
     ...(auditedRemoteUrl ? { auditedRemoteUrl } : {}),
@@ -903,9 +906,7 @@ export async function handlePreparePush(
     ...(plan?.leaseEstablished && plan.leasedRemoteSha
       ? { auditedRemoteTipSha: plan.leasedRemoteSha }
       : {}),
-    // Display-only plan summary (force is already ruled out above). Native
-    // slice 3 deliberately has no push-plan port yet, so native review cards
-    // omit this advisory summary and the lease pin.
+    // Display-only plan summary (force is already ruled out above).
     ...(plan
       ? {
           pushPlan: {

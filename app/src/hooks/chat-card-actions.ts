@@ -22,7 +22,12 @@ import type {
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { computeSandboxPushPlan } from '@/lib/git-backend';
-import { getActivePushGit, resolveActiveGitBinding } from '@/lib/git-session';
+import {
+  defaultNativeTokenProvider,
+  getActivePushGit,
+  resolveActiveGitBinding,
+} from '@/lib/git-session';
+import { computeNativePushPlan } from '@/lib/native-git';
 import { nativeFsScopeFrom } from '@/lib/native-fs';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
@@ -242,6 +247,8 @@ export function useChatCardActions({
         const binding = resolveActiveGitBinding(activeGitSession(sandboxId));
         return binding.kind === 'native' || Boolean(binding.sandboxId);
       };
+      const activeGitBinding = (sandboxId: string) =>
+        resolveActiveGitBinding(activeGitSession(sandboxId));
       const markCommitReviewError = (messageId: string, cardIndex: number, error: string) => {
         updateCardInMessage(chatId, messageId, cardIndex, (card) => {
           if (card.type !== 'commit-review') return card;
@@ -428,9 +435,26 @@ export function useChatCardActions({
               const approveSourceData =
                 approveSourceCard?.type === 'commit-review' ? approveSourceCard.data : undefined;
               const auditedHeadSha = approveSourceData?.auditedHeadSha;
+              const auditedGitSurface = approveSourceData?.auditedGitSurface;
               const auditedBranch = approveSourceData?.auditedBranch;
               const auditedUpstream = approveSourceData?.auditedUpstream ?? null;
               const auditedRemoteUrl = approveSourceData?.auditedRemoteUrl;
+              const binding = activeGitBinding(sandboxId);
+              if (auditedGitSurface && binding.kind !== auditedGitSurface) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error:
+                        'Git surface changed since this review; refresh to re-audit before pushing.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
               const pushGit = getActivePushGit(activeGitSession(sandboxId));
               const [liveHeadSha, liveBranch, liveUpstream, liveRemoteUrl] = await Promise.all([
                 pushGit.headSha(),
@@ -507,9 +531,15 @@ export function useChatCardActions({
               // to refuse. (git-sync's --force-with-lease, applied at our gate.)
               const auditedRemoteTipSha = approveSourceData?.auditedRemoteTipSha;
               if (auditedRemoteTipSha) {
-                const livePlan = await computeSandboxPushPlan(sandboxId, undefined, {
-                  ref: liveBranch,
-                });
+                const livePlan =
+                  binding.kind === 'native'
+                    ? await computeNativePushPlan(binding.dir, {
+                        ref: liveBranch || undefined,
+                        getToken: defaultNativeTokenProvider,
+                      })
+                    : await computeSandboxPushPlan(binding.sandboxId, undefined, {
+                        ref: liveBranch || undefined,
+                      });
                 if (!livePlan.leaseEstablished) {
                   updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                     if (card.type !== 'commit-review') return card;

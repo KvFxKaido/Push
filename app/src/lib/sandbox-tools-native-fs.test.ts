@@ -30,6 +30,7 @@ const fakeNativeGit = vi.hoisted(() => ({
   revParse: vi.fn(),
   mergeBase: vi.fn(),
   logPatch: vi.fn(),
+  lsRemoteHead: vi.fn(),
   createBranch: vi.fn(),
   switchBranch: vi.fn(),
   commit: vi.fn(),
@@ -62,7 +63,15 @@ vi.mock('./ensure-commit-target-branch', async (importOriginal) => ({
   createModelCommitBranchNameProposer: vi.fn(() => async () => 'feature/native-auto'),
 }));
 
+vi.mock('./auditor-agent', () => ({
+  runAuditor: vi.fn(async () => ({
+    verdict: 'safe',
+    card: { verdict: 'safe', summary: 'No issues.', risks: [], filesReviewed: 1 },
+  })),
+}));
+
 import { executeSandboxToolCall } from './sandbox-tools';
+import { nativeBranchExists } from './native-git';
 
 const scope = { repoFullName: 'owner/repo', branch: 'main' };
 
@@ -105,6 +114,7 @@ beforeEach(() => {
             : null,
   }));
   fakeNativeGit.mergeBase.mockReset().mockResolvedValue({ sha: 'mergebase123' });
+  fakeNativeGit.lsRemoteHead.mockReset().mockResolvedValue({ ok: true, sha: 'remotesha' });
   fakeNativeGit.logPatch
     .mockReset()
     .mockResolvedValue({ patch: 'diff --git a/a.ts b/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+safe\n' });
@@ -234,11 +244,19 @@ describe('sandbox-tools native FS routing', () => {
   });
 
   it('routes sandbox_commit to native PushGit without requiring a shell hook', async () => {
-    const result = await executeSandboxToolCall(
-      { tool: 'sandbox_commit', args: { message: 'Native commit' } },
-      '',
-      { nativeFsScope: scope, currentBranch: 'feature/native', defaultBranch: 'main' },
-    );
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let result!: Awaited<ReturnType<typeof executeSandboxToolCall>>;
+    try {
+      result = await executeSandboxToolCall(
+        { tool: 'sandbox_commit', args: { message: 'Native commit' } },
+        '',
+        { nativeFsScope: scope, currentBranch: 'feature/native', defaultBranch: 'main' },
+      );
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('native_pre_commit_hook_skipped');
+    } finally {
+      logSpy.mockRestore();
+    }
     expect(fakeNativeGit.commit).toHaveBeenCalledWith({
       dir: '/data/clone',
       message: 'Native commit',
@@ -246,6 +264,69 @@ describe('sandbox-tools native FS routing', () => {
     });
     expect(result.text).toContain('[Tool Result — sandbox_commit]');
     expect(result.text).toContain('Committed: "Native commit"');
+  });
+
+  it('pins a native push plan lease on prepare_push', async () => {
+    fakeNativeGit.revParse.mockImplementation(async ({ ref }: { ref: string }) => ({
+      sha:
+        ref === 'refs/remotes/origin/feature/native'
+          ? 'base123'
+          : ref === 'feature/native' || ref === 'HEAD'
+            ? 'abc123'
+            : ref === 'remotesha'
+              ? 'remotesha'
+              : null,
+    }));
+    fakeNativeGit.mergeBase.mockResolvedValueOnce({ sha: 'remotesha' });
+    const result = await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, '', {
+      nativeFsScope: scope,
+      currentBranch: 'feature/native',
+      defaultBranch: 'main',
+    });
+    expect(fakeNativeGit.lsRemoteHead).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      remote: 'origin',
+      branch: 'feature/native',
+      token: undefined,
+    });
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.auditedRemoteTipSha).toBe('remotesha');
+      expect(result.card.data.auditedGitSurface).toBe('native');
+      expect(result.card.data.pushPlan?.kind).toBe('fast-forward');
+    }
+  });
+
+  it('uses fetched local and remote refs for native auto-branch collision checks', async () => {
+    fakeNativeGit.revParse.mockImplementation(async ({ ref }: { ref: string }) => ({
+      sha:
+        ref === 'refs/remotes/origin/feature/native-auto'
+          ? 'remote-collision'
+          : ref === 'HEAD'
+            ? 'abc123'
+            : null,
+    }));
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'feat: native auto' } },
+      '',
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
+    );
+    expect(fakeNativeGit.createBranch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'feature/native-auto' }),
+    );
+    expect(result.branchSwitch?.name).not.toBe('feature/native-auto');
+  });
+
+  it('treats native branch-exists probe failures as occupied', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      fakeNativeGit.revParse.mockRejectedValue(new Error('bridge down'));
+      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(true);
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('native_branch_exists_failed');
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 
   it('rekeys the on-device working-copy registry when native commit auto-forks', async () => {

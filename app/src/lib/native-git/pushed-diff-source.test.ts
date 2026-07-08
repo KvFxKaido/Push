@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { computePushedDiffFromSource } from '@push/lib/git/pushed-diff';
+import { computePushPlanFromSource } from '@push/lib/git/push-plan';
 import type { NativeGitPlugin } from './definitions';
-import { pushedDiffSourceFromNativePlugin } from './pushed-diff-source';
+import {
+  pushedDiffSourceFromNativePlugin,
+  pushPlanSourceFromNativePlugin,
+} from './pushed-diff-source';
 
 function fakePlugin(overrides: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
   return {
@@ -11,6 +15,7 @@ function fakePlugin(overrides: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
     })),
     mergeBase: vi.fn(async () => ({ sha: 'merge123' })),
     logPatch: vi.fn(async () => ({ patch: 'PATCHES' })),
+    lsRemoteHead: vi.fn(async () => ({ ok: true, sha: 'remotesha' })),
     ...overrides,
   } as unknown as NativeGitPlugin;
 }
@@ -90,6 +95,56 @@ describe('pushedDiffSourceFromNativePlugin', () => {
     const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
     expect(logged).toContain('native_pushed_diff_read_failed');
     expect(logged).toContain('logPatch');
+    errSpy.mockRestore();
+  });
+
+  it('feeds computePushPlanFromSource with a live native remote-head read', async () => {
+    const plugin = fakePlugin({
+      revParse: vi.fn(async ({ ref }: { ref: string }) => ({
+        sha:
+          ref === 'feature/native' || ref === 'HEAD'
+            ? 'localsha'
+            : ref === 'remotesha'
+              ? 'remotesha'
+              : null,
+      })),
+      mergeBase: vi.fn(async () => ({ sha: 'remotesha' })),
+    });
+
+    const plan = await computePushPlanFromSource(
+      pushPlanSourceFromNativePlugin(plugin, '/data/clone', () => 'tok_123'),
+      { log: () => {} },
+    );
+
+    expect(plan.move.kind).toBe('fast-forward');
+    expect(plan.leasedRemoteSha).toBe('remotesha');
+    expect(plugin.lsRemoteHead).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      remote: 'origin',
+      branch: 'feature/native',
+      token: 'tok_123',
+    });
+  });
+
+  it('keeps the native push-plan lease unestablished when the remote read throws', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const plugin = fakePlugin({
+      lsRemoteHead: vi.fn(async () => {
+        throw new Error('network down');
+      }),
+    });
+
+    const plan = await computePushPlanFromSource(
+      pushPlanSourceFromNativePlugin(plugin, '/data/clone'),
+      { log: () => {} },
+    );
+
+    expect(plan.move.kind).toBe('unknown');
+    expect(plan.leaseEstablished).toBe(false);
+    expect(plan.leasedRemoteSha).toBeNull();
+    const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(logged).toContain('native_pushed_diff_read_failed');
+    expect(logged).toContain('lsRemoteHead');
     errSpy.mockRestore();
   });
 });
