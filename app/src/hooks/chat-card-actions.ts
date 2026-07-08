@@ -243,12 +243,14 @@ export function useChatCardActions({
         repoFullName: repoRef.current ?? undefined,
         branch: activeBranch(),
       });
-      const hasActiveGitSurface = (sandboxId: string) => {
+      const activeGitBinding = (
+        sandboxId: string,
+      ): ReturnType<typeof resolveActiveGitBinding> | null => {
         const binding = resolveActiveGitBinding(activeGitSession(sandboxId));
-        return binding.kind === 'native' || Boolean(binding.sandboxId);
+        if (binding.kind === 'sandbox' && !binding.sandboxId) return null;
+        return binding;
       };
-      const activeGitBinding = (sandboxId: string) =>
-        resolveActiveGitBinding(activeGitSession(sandboxId));
+      const hasActiveGitSurface = (sandboxId: string) => Boolean(activeGitBinding(sandboxId));
       const markCommitReviewError = (messageId: string, cardIndex: number, error: string) => {
         updateCardInMessage(chatId, messageId, cardIndex, (card) => {
           if (card.type !== 'commit-review') return card;
@@ -440,6 +442,20 @@ export function useChatCardActions({
               const auditedUpstream = approveSourceData?.auditedUpstream ?? null;
               const auditedRemoteUrl = approveSourceData?.auditedRemoteUrl;
               const binding = activeGitBinding(sandboxId);
+              if (!binding) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error: 'Sandbox expired. Start a new sandbox.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
               if (auditedGitSurface && binding.kind !== auditedGitSurface) {
                 updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                   if (card.type !== 'commit-review') return card;
