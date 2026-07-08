@@ -29,6 +29,12 @@ const hookState = vi.hoisted(() => ({
   },
 }));
 
+const gitSessionState = vi.hoisted(() => ({
+  binding: { kind: 'sandbox', sandboxId: 'sbx-1' } as
+    | { kind: 'sandbox'; sandboxId: string }
+    | { kind: 'native'; dir: string },
+}));
+
 vi.mock('@/hooks/useFileBrowser', () => ({
   useFileBrowser: (): UseFileBrowserResult => ({
     ...hookState.current,
@@ -54,7 +60,7 @@ vi.mock('@/components/filebrowser/FileActionsSheet', () => ({
 }));
 
 vi.mock('@/components/filebrowser/CommitPushSheet', () => ({
-  CommitPushSheet: () => null,
+  CommitPushSheet: () => <div data-testid="commit-push-sheet" />,
 }));
 
 vi.mock('@/components/filebrowser/UploadButton', () => ({
@@ -71,6 +77,10 @@ vi.mock('@/components/filebrowser/FileEditor', () => ({
   ),
 }));
 
+vi.mock('@/lib/git-session', () => ({
+  resolveActiveGitBinding: vi.fn(() => gitSessionState.binding),
+}));
+
 const { FileBrowser } = await import('./FileBrowser');
 
 beforeEach(() => {
@@ -82,6 +92,7 @@ beforeEach(() => {
     operations: [],
     breadcrumbs: [{ label: 'workspace', path: '/workspace' }],
   };
+  gitSessionState.binding = { kind: 'sandbox', sandboxId: 'sbx-1' };
 });
 
 function file(overrides: Partial<FileEntry> = {}): FileEntry {
@@ -111,6 +122,25 @@ describe('FileBrowser', () => {
     expect(html).toContain('Empty directory');
     // Commit & push FAB is present when the workspace supports it.
     expect(html).toContain('Commit and push changes');
+    expect(html).toContain('commit-push-sheet');
+  });
+
+  it('does not mount the sandbox-only commit sheet for native git workspaces', () => {
+    gitSessionState.binding = { kind: 'native', dir: '/data/clone' };
+
+    const html = renderToStaticMarkup(
+      <FileBrowser
+        sandboxId="sbx-1"
+        workspaceLabel="my-repo"
+        capabilities={{ canCommitAndPush: true }}
+        repoFullName="owner/repo"
+        currentBranch="feature/native"
+        onBack={vi.fn()}
+      />,
+    );
+
+    expect(html).toContain('Native file-browser commit is not available yet');
+    expect(html).not.toContain('commit-push-sheet');
   });
 
   it('renders the error state with a retry button', () => {

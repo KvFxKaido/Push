@@ -6,7 +6,7 @@
  * All operations go through the workspace runtime — no LLM involvement.
  */
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Folder,
   File,
@@ -33,6 +33,7 @@ import { CommitPulseIcon } from '@/components/icons/push-custom-icons';
 import { getFileEditability } from '@/lib/file-utils';
 import { writeToSandbox } from '@/lib/sandbox-client';
 import { fileLedger } from '@/lib/file-awareness-ledger';
+import { resolveActiveGitBinding } from '@/lib/git-session';
 import type {
   AIProviderType,
   BranchSwitchPayload,
@@ -110,6 +111,17 @@ export function FileBrowser({
   const [commitSheetOpen, setCommitSheetOpen] = useState(false);
   const [editingFile, setEditingFile] = useState<FileEntry | null>(null);
   const canCommitAndPush = capabilities.canCommitAndPush;
+  const activeGitBinding = useMemo(
+    () =>
+      resolveActiveGitBinding({
+        sandboxId,
+        repoFullName: repoFullName ?? undefined,
+        branch: currentBranch,
+      }),
+    [sandboxId, repoFullName, currentBranch],
+  );
+  const nativeCommitPushUnavailable = canCommitAndPush && activeGitBinding.kind === 'native';
+  const commitPushSheetAvailable = canCommitAndPush && !nativeCommitPushUnavailable;
   const showScratchActions = !canCommitAndPush && Boolean(scratchActions);
 
   // Load root directory on mount
@@ -359,11 +371,25 @@ export function FileBrowser({
       {/* Repo-backed workspaces show commit/push; scratch workspaces show save/restore/download. */}
       {canCommitAndPush && (
         <button
-          onClick={() => setCommitSheetOpen(true)}
+          onClick={() => {
+            if (nativeCommitPushUnavailable) {
+              toast.error('Commit & Push from Files is not available for native workspaces yet.');
+              return;
+            }
+            setCommitSheetOpen(true);
+          }}
           disabled={status === 'loading'}
           className="fixed bottom-6 right-[4.75rem] z-30 flex h-12 w-12 items-center justify-center rounded-full bg-push-status-success text-white shadow-lg shadow-push-status-success/25 transition-all duration-200 hover:brightness-110 active:scale-95 disabled:opacity-40 disabled:pointer-events-none"
-          title="Commit & push"
-          aria-label="Commit and push changes"
+          title={
+            nativeCommitPushUnavailable
+              ? 'Native file-browser commit is not available yet'
+              : 'Commit & push'
+          }
+          aria-label={
+            nativeCommitPushUnavailable
+              ? 'Native file-browser commit is not available yet'
+              : 'Commit and push changes'
+          }
         >
           <CommitPulseIcon className="h-5 w-5" />
         </button>
@@ -439,7 +465,7 @@ export function FileBrowser({
       />
 
       {/* Commit & push is only available when the workspace has Git remote capabilities. */}
-      {canCommitAndPush && (
+      {commitPushSheetAvailable && (
         <CommitPushSheet
           sandboxId={sandboxId}
           open={commitSheetOpen}

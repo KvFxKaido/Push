@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { GitExec, GitExecResult } from './backend.ts';
-import { computePushPlan, ZERO_OID } from './push-plan.ts';
+import {
+  computePushPlan,
+  computePushPlanFromSource,
+  type PushPlanSource,
+  ZERO_OID,
+} from './push-plan.ts';
 
 const okRes = (stdout: string): GitExecResult => ({ stdout, stderr: '', exitCode: 0 });
 const exitRes = (exitCode: number): GitExecResult => ({ stdout: '', stderr: '', exitCode });
@@ -125,6 +130,49 @@ describe('computePushPlan', () => {
     expect(plan.requiresForce).toBe(false);
     // Lease is still established (we read the live tip) even though we can't
     // classify ancestry locally.
+    expect(plan.leaseEstablished).toBe(true);
+    expect(plan.leasedRemoteSha).toBe('remotesha');
+  });
+});
+
+// Sources without a native `--is-ancestor` (JGit) fall back to comparing the
+// merge-base. That fallback must not report a proven force from an ambiguous
+// null merge-base (unrelated histories vs. a transient bridge/JGit read error).
+describe('computePushPlanFromSource — ancestry fallback (no isAncestor)', () => {
+  function nativeLikeSource(overrides: Partial<PushPlanSource>): PushPlanSource {
+    return {
+      currentBranch: async () => 'feature-x',
+      verifyRef: async (ref) => (ref === 'HEAD' ? 'localsha' : ref),
+      mergeBase: async () => null,
+      logPatch: async () => '',
+      lsRemoteHead: async () => ({ ok: true, sha: 'remotesha' }),
+      // no isAncestor / revListLeftRightCount — the native shape
+      ...overrides,
+    };
+  }
+
+  it('fast-forwards when the merge-base equals the remote tip', async () => {
+    const source = nativeLikeSource({
+      verifyRef: async (ref) => (ref === 'HEAD' ? 'localsha' : 'remotesha'),
+      mergeBase: async () => 'remotesha', // remote tip is the base → ancestor
+    });
+    const plan = await computePushPlanFromSource(source, { log: silent });
+    expect(plan.move.kind).toBe('fast-forward');
+    expect(plan.requiresForce).toBe(false);
+  });
+
+  it('stays unknown (NOT force) when the merge-base read returns null', async () => {
+    // Native `mergeBase` maps a thrown bridge/JGit error to null, and this
+    // branch is only reached with the remote tip present locally, so an
+    // ambiguous null must not be reported as a proven divergence.
+    const source = nativeLikeSource({
+      verifyRef: async (ref) => (ref === 'HEAD' ? 'localsha' : 'remotesha'),
+      mergeBase: async () => null,
+    });
+    const plan = await computePushPlanFromSource(source, { log: silent });
+    expect(plan.move.kind).toBe('unknown');
+    expect(plan.requiresForce).toBe(false);
+    // The live tip was still read, so the lease is pinnable.
     expect(plan.leaseEstablished).toBe(true);
     expect(plan.leasedRemoteSha).toBe('remotesha');
   });

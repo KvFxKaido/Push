@@ -4,6 +4,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 // (or null) so the dispatcher's `if (nativeFs)` forks are exercised without a
 // real device/plugin. Everything else in sandbox-tools loads for real.
 const fakeBackend = vi.hoisted(() => ({
+  dir: '/data/clone',
   readFile: vi.fn(async () => ({ content: 'file body', truncated: false, totalLines: 1 })),
   writeFile: vi.fn(async () => ({ ok: true, bytesWritten: 9 })),
   listDir: vi.fn(async () => ({
@@ -20,8 +21,27 @@ const fakeBackend = vi.hoisted(() => ({
     git_status: ' M a.ts',
   })),
 }));
+const fakeNativeGit = vi.hoisted(() => ({
+  currentBranch: vi.fn(),
+  upstreamRef: vi.fn(),
+  remoteUrl: vi.fn(),
+  headSha: vi.fn(),
+  status: vi.fn(),
+  revParse: vi.fn(),
+  mergeBase: vi.fn(),
+  logPatch: vi.fn(),
+  lsRemoteHead: vi.fn(),
+  createBranch: vi.fn(),
+  switchBranch: vi.fn(),
+  commit: vi.fn(),
+  push: vi.fn(),
+  fetch: vi.fn(),
+}));
 const nativeFs = vi.hoisted(() => ({
   resolveNativeFs: vi.fn((): typeof fakeBackend | null => fakeBackend),
+}));
+const nativeWorkingCopy = vi.hoisted(() => ({
+  rekeyWorkingCopyScope: vi.fn(() => true),
 }));
 
 vi.mock('./native-fs', async (importOriginal) => ({
@@ -29,7 +49,29 @@ vi.mock('./native-fs', async (importOriginal) => ({
   resolveNativeFs: nativeFs.resolveNativeFs,
 }));
 
+vi.mock('./native-git/plugin', () => ({
+  NativeGit: fakeNativeGit,
+}));
+
+vi.mock('./native-working-copy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./native-working-copy')>()),
+  rekeyWorkingCopyScope: nativeWorkingCopy.rekeyWorkingCopyScope,
+}));
+
+vi.mock('./ensure-commit-target-branch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ensure-commit-target-branch')>()),
+  createModelCommitBranchNameProposer: vi.fn(() => async () => 'feature/native-auto'),
+}));
+
+vi.mock('./auditor-agent', () => ({
+  runAuditor: vi.fn(async () => ({
+    verdict: 'safe',
+    card: { verdict: 'safe', summary: 'No issues.', risks: [], filesReviewed: 1 },
+  })),
+}));
+
 import { executeSandboxToolCall } from './sandbox-tools';
+import { nativeBranchExists } from './native-git';
 
 const scope = { repoFullName: 'owner/repo', branch: 'main' };
 
@@ -49,6 +91,38 @@ beforeEach(() => {
   fakeBackend.search.mockClear();
   fakeBackend.diff.mockClear();
   nativeFs.resolveNativeFs.mockReturnValue(fakeBackend);
+  nativeWorkingCopy.rekeyWorkingCopyScope.mockReset().mockReturnValue(true);
+
+  fakeNativeGit.currentBranch.mockReset().mockResolvedValue({ branch: 'feature/native' });
+  fakeNativeGit.upstreamRef.mockReset().mockResolvedValue({ ref: 'origin/feature/native' });
+  fakeNativeGit.remoteUrl
+    .mockReset()
+    .mockResolvedValue({ url: 'https://github.com/owner/repo.git' });
+  fakeNativeGit.headSha.mockReset().mockResolvedValue({ sha: 'abc123' });
+  fakeNativeGit.status.mockReset().mockResolvedValue({ porcelain: '## feature/native\n' });
+  // Base resolution asks for the FULLY-QUALIFIED remote-tracking ref
+  // (refs/remotes/origin/...), never the bare `origin/...` shorthand — a local
+  // decoy branch must not be able to shadow it.
+  fakeNativeGit.revParse.mockReset().mockImplementation(async ({ ref }: { ref: string }) => ({
+    sha:
+      ref === 'refs/remotes/origin/feature/native'
+        ? 'base123'
+        : ref === 'refs/remotes/origin/HEAD'
+          ? 'originhead123'
+          : ref === 'feature/native' || ref === 'HEAD'
+            ? 'abc123'
+            : null,
+  }));
+  fakeNativeGit.mergeBase.mockReset().mockResolvedValue({ sha: 'mergebase123' });
+  fakeNativeGit.lsRemoteHead.mockReset().mockResolvedValue({ ok: true, sha: 'remotesha' });
+  fakeNativeGit.logPatch
+    .mockReset()
+    .mockResolvedValue({ patch: 'diff --git a/a.ts b/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+safe\n' });
+  fakeNativeGit.createBranch.mockReset().mockResolvedValue({ ok: true });
+  fakeNativeGit.switchBranch.mockReset().mockResolvedValue({ ok: true });
+  fakeNativeGit.commit.mockReset().mockResolvedValue({ ok: true });
+  fakeNativeGit.push.mockReset().mockResolvedValue({ ok: true });
+  fakeNativeGit.fetch.mockReset().mockResolvedValue({ ok: true });
 });
 
 describe('sandbox-tools native FS routing', () => {
@@ -132,6 +206,188 @@ describe('sandbox-tools native FS routing', () => {
     expect(fakeBackend.diff).toHaveBeenCalled();
     expect(result.text).toContain('[Tool Result — sandbox_diff]');
     expect(result.text).toContain('diff --git');
+  });
+
+  it('routes sandbox_create_branch to the on-device git clone', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'feature/native-2' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      name: 'feature/native-2',
+      from: undefined,
+    });
+    expect(result.branchSwitch?.name).toBe('feature/native-2');
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-2',
+    });
+  });
+
+  it('rekeys the on-device working-copy registry after native branch switches', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'feature/native-3' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(fakeNativeGit.switchBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      branch: 'feature/native-3',
+    });
+    expect(result.branchSwitch?.name).toBe('feature/native-3');
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-3',
+    });
+  });
+
+  it('routes sandbox_commit to native PushGit without requiring a shell hook', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    let result!: Awaited<ReturnType<typeof executeSandboxToolCall>>;
+    try {
+      result = await executeSandboxToolCall(
+        { tool: 'sandbox_commit', args: { message: 'Native commit' } },
+        '',
+        { nativeFsScope: scope, currentBranch: 'feature/native', defaultBranch: 'main' },
+      );
+      const logged = logSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('native_pre_commit_hook_skipped');
+    } finally {
+      logSpy.mockRestore();
+    }
+    expect(fakeNativeGit.commit).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      message: 'Native commit',
+      addAll: true,
+    });
+    expect(result.text).toContain('[Tool Result — sandbox_commit]');
+    expect(result.text).toContain('Committed: "Native commit"');
+  });
+
+  it('pins a native push plan lease on prepare_push', async () => {
+    fakeNativeGit.revParse.mockImplementation(async ({ ref }: { ref: string }) => ({
+      sha:
+        ref === 'refs/remotes/origin/feature/native'
+          ? 'base123'
+          : ref === 'feature/native' || ref === 'HEAD'
+            ? 'abc123'
+            : ref === 'remotesha'
+              ? 'remotesha'
+              : null,
+    }));
+    fakeNativeGit.mergeBase.mockResolvedValueOnce({ sha: 'remotesha' });
+    const result = await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, '', {
+      nativeFsScope: scope,
+      currentBranch: 'feature/native',
+      defaultBranch: 'main',
+    });
+    expect(fakeNativeGit.lsRemoteHead).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      remote: 'origin',
+      branch: 'feature/native',
+      token: undefined,
+    });
+    expect(result.card?.type).toBe('commit-review');
+    if (result.card?.type === 'commit-review') {
+      expect(result.card.data.auditedRemoteTipSha).toBe('remotesha');
+      expect(result.card.data.auditedGitSurface).toBe('native');
+      expect(result.card.data.pushPlan?.kind).toBe('fast-forward');
+    }
+  });
+
+  it('uses fetched local and remote refs for native auto-branch collision checks', async () => {
+    fakeNativeGit.revParse.mockImplementation(async ({ ref }: { ref: string }) => ({
+      sha:
+        ref === 'refs/remotes/origin/feature/native-auto'
+          ? 'remote-collision'
+          : ref === 'HEAD'
+            ? 'abc123'
+            : null,
+    }));
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'feat: native auto' } },
+      '',
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
+    );
+    expect(fakeNativeGit.createBranch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'feature/native-auto' }),
+    );
+    expect(result.branchSwitch?.name).not.toBe('feature/native-auto');
+  });
+
+  it('treats native branch-exists probe failures as occupied', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      fakeNativeGit.revParse.mockRejectedValue(new Error('bridge down'));
+      await expect(nativeBranchExists('/data/clone', 'feature/probe')).resolves.toBe(true);
+      const logged = errSpy.mock.calls.map((c) => String(c[0])).join('\n');
+      expect(logged).toContain('native_branch_exists_failed');
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('rekeys the on-device working-copy registry when native commit auto-forks', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'feat: native auto' } },
+      '',
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
+    );
+    expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      name: 'feature/native-auto',
+      from: undefined,
+    });
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-auto',
+    });
+    expect(result.branchSwitch?.name).toBe('feature/native-auto');
+    expect(result.text).toContain('Forked off the default branch first');
+  });
+
+  it('rekeys the on-device working-copy registry when native save-draft creates a branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_save_draft', args: { branch_name: 'draft/native-save', message: 'WIP' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      name: 'draft/native-save',
+      from: undefined,
+    });
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'draft/native-save',
+    });
+    expect(result.branchSwitch?.name).toBe('draft/native-save');
+    expect(result.text).toContain('Draft saved to branch: draft/native-save');
+  });
+
+  it('blocks native sandbox_push on secrets found in the pushed patch series', async () => {
+    fakeNativeGit.logPatch.mockResolvedValueOnce({
+      patch:
+        'commit abc123\n' +
+        'diff --git a/keys.txt b/keys.txt\n' +
+        '+++ b/keys.txt\n' +
+        '@@ -0,0 +1 @@\n' +
+        '+OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz1234567890\n',
+    });
+    const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, '', {
+      nativeFsScope: scope,
+      defaultBranch: 'main',
+      currentBranch: 'feature/native',
+    });
+    expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
+    expect(fakeNativeGit.logPatch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      range: 'refs/remotes/origin/feature/native..HEAD',
+    });
+    expect(fakeNativeGit.push).not.toHaveBeenCalled();
+    expect(fakeBackend.diff).not.toHaveBeenCalled();
   });
 
   it('routes sandbox_read_symbols through native file reads', async () => {

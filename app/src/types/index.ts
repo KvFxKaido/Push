@@ -919,6 +919,12 @@ export interface CommitReviewCardData {
    */
   auditedHeadSha?: string;
   /**
+   * For a `kind: 'push'` card: the git surface used for the audit. Approval
+   * refuses if the active surface flips before push (for example native clone
+   * becomes unavailable and the call would otherwise fall back to sandbox).
+   */
+  auditedGitSurface?: 'sandbox' | 'native';
+  /**
    * For a `kind: 'push'` card: the sandbox branch and upstream destination in
    * effect when the Auditor verdict was computed. Approval re-reads both and
    * refuses stale cards if the destination changed while HEAD stayed the same.

@@ -63,6 +63,19 @@ export interface NativeGitPlugin {
     git_status?: string;
     error?: string;
   }>;
+  /** Verify/resolve a ref (branch, remote ref, sha, HEAD), or null when absent. */
+  revParse(options: { dir: string; ref: string }): Promise<{ sha: string | null }>;
+  /** Merge-base of two refs, or null when not computable. */
+  mergeBase(options: { dir: string; a: string; b: string }): Promise<{ sha: string | null }>;
+  /** Per-commit patch series for a rev/range, uncapped; null when unreadable. */
+  logPatch(options: { dir: string; range: string }): Promise<{ patch: string | null }>;
+  /** Live remote branch tip; ok=false means the remote read failed. */
+  lsRemoteHead(options: {
+    dir: string;
+    remote?: string;
+    branch: string;
+    token?: string;
+  }): Promise<{ ok: boolean; sha: string | null }>;
 
   // -- Sanctioned writes -----------------------------------------------------
   /** Create and switch to `name`, optionally from a ref. */

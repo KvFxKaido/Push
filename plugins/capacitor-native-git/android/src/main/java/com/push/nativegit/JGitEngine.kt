@@ -24,11 +24,15 @@ import org.eclipse.jgit.lib.ObjectId
 import org.eclipse.jgit.lib.PersonIdent
 import org.eclipse.jgit.lib.Ref
 import org.eclipse.jgit.lib.Repository
+import org.eclipse.jgit.revwalk.RevCommit
 import org.eclipse.jgit.revwalk.RevWalk
+import org.eclipse.jgit.revwalk.filter.RevFilter
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
+import org.eclipse.jgit.treewalk.AbstractTreeIterator
 import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.EmptyTreeIterator
 import org.eclipse.jgit.treewalk.FileTreeIterator
 import org.eclipse.jgit.treewalk.TreeWalk
 
@@ -55,6 +59,28 @@ object JGitEngine {
   private fun <T> withRepo(dir: String, block: (Git) -> T): T =
     Git.open(File(dir)).use(block)
 
+  private fun tryResolve(repo: Repository, ref: String): ObjectId? =
+    try {
+      repo.resolve(ref)
+    } catch (_: Exception) {
+      null
+    }
+
+  private fun resolveObject(repo: Repository, ref: String): ObjectId? {
+    val trimmed = ref.trim()
+    if (trimmed.isEmpty()) return null
+    val candidates = mutableListOf(trimmed)
+    if (!trimmed.startsWith("refs/")) {
+      candidates.add("refs/heads/$trimmed")
+      candidates.add("refs/remotes/$trimmed")
+    }
+    for (candidate in candidates.distinct()) {
+      tryResolve(repo, "$candidate^{commit}")?.let { return it }
+      tryResolve(repo, candidate)?.let { return it }
+    }
+    return null
+  }
+
   private const val DIFF_MAX_BYTES = 30 * 1024
 
   data class FileReadResult(
@@ -77,6 +103,7 @@ object JGitEngine {
     val gitStatus: String,
     val error: String? = null,
   )
+  data class RemoteHeadResult(val ok: Boolean, val sha: String?)
 
   // -- Lifecycle --------------------------------------------------------------
 
@@ -418,6 +445,124 @@ object JGitEngine {
       DiffResult(diff, truncated, formatPorcelain(git, git.status().call()))
     } catch (e: Exception) {
       DiffResult("", false, "", e.message ?: "diff failed")
+    }
+  }
+
+  fun revParse(dir: String, ref: String): String? = withRepo(dir) { git ->
+    resolveObject(git.repository, ref)?.name
+  }
+
+  fun mergeBase(dir: String, a: String, b: String): String? = withRepo(dir) { git ->
+    val repo = git.repository
+    val aId = resolveObject(repo, a) ?: return@withRepo null
+    val bId = resolveObject(repo, b) ?: return@withRepo null
+    RevWalk(repo).use { walk ->
+      walk.setRevFilter(RevFilter.MERGE_BASE)
+      walk.markStart(walk.parseCommit(aId))
+      walk.markStart(walk.parseCommit(bId))
+      walk.next()?.name
+    }
+  }
+
+  fun lsRemoteHead(dir: String, remote: String, branch: String, token: String?): RemoteHeadResult =
+    withRepo(dir) { git ->
+      try {
+        val config = git.repository.config
+        val remoteUrl = config.getString("remote", remote, "url")
+          ?: return@withRepo RemoteHeadResult(false, null)
+        val refs = Git.lsRemoteRepository()
+          .setRemote(remoteUrl)
+          .setHeads(true)
+          .apply { credentials(token)?.let { setCredentialsProvider(it) } }
+          .call()
+        val sha = refs.firstOrNull { it.name == "refs/heads/$branch" }?.objectId?.name
+        RemoteHeadResult(true, sha)
+      } catch (t: Throwable) {
+        println(
+          """{"level":"error","event":"native_push_plan_remote_read_failed","remote":${jsonString(remote)},"branch":${jsonString(branch)},"error":${jsonString(t.message ?: "ls-remote failed")}}""",
+        )
+        RemoteHeadResult(false, null)
+      }
+    }
+
+  private fun writeUtf8(out: ByteArrayOutputStream, text: String) {
+    out.write(text.toByteArray(Charsets.UTF_8))
+  }
+
+  private fun formatCommitPatch(
+    repo: Repository,
+    formatter: DiffFormatter,
+    commit: RevCommit,
+    parent: RevCommit?,
+  ) {
+    repo.newObjectReader().use { reader ->
+      val oldTree: AbstractTreeIterator =
+        if (parent == null) {
+          EmptyTreeIterator()
+        } else {
+          CanonicalTreeParser().apply { reset(reader, parent.tree.id) }
+        }
+      val newTree = CanonicalTreeParser().apply { reset(reader, commit.tree.id) }
+      for (entry in formatter.scan(oldTree, newTree)) {
+        formatter.format(entry)
+      }
+    }
+  }
+
+  fun logPatch(dir: String, range: String): String? = withRepo(dir) { git ->
+    try {
+      val trimmed = range.trim()
+      if (trimmed.isEmpty()) return@withRepo ""
+      val rangeParts = trimmed.split("..", limit = 2)
+      val baseRef = if (rangeParts.size == 2) rangeParts[0].takeIf { it.isNotEmpty() } else null
+      val targetRef = if (rangeParts.size == 2) rangeParts[1] else trimmed
+      if (targetRef.isEmpty()) return@withRepo null
+
+      val repo = git.repository
+      val targetId = resolveObject(repo, targetRef) ?: return@withRepo null
+      val baseId = baseRef?.let { resolveObject(repo, it) }
+      if (baseRef != null && baseId == null) return@withRepo null
+
+      val commits = mutableListOf<RevCommit>()
+      RevWalk(repo).use { walk ->
+        walk.markStart(walk.parseCommit(targetId))
+        if (baseId != null) walk.markUninteresting(walk.parseCommit(baseId))
+        while (true) {
+          val next = walk.next() ?: break
+          commits.add(next)
+        }
+      }
+
+      val out = ByteArrayOutputStream()
+      DiffFormatter(out).use { formatter ->
+        formatter.setRepository(repo)
+        formatter.setDiffComparator(RawTextComparator.DEFAULT)
+        formatter.isDetectRenames = true
+        RevWalk(repo).use { walk ->
+          for (commit in commits) {
+            val parsed = walk.parseCommit(commit.id)
+            val parent =
+              if (parsed.parentCount > 0) walk.parseCommit(parsed.getParent(0).id) else null
+            writeUtf8(out, "commit ${parsed.name}\n")
+            val author = parsed.authorIdent
+            if (author != null) writeUtf8(out, "Author: ${author.name} <${author.emailAddress}>\n")
+            writeUtf8(out, "\n    ${parsed.shortMessage}\n\n")
+            formatCommitPatch(repo, formatter, parsed, parent)
+          }
+        }
+      }
+      String(out.toByteArray(), Charsets.UTF_8)
+    } catch (t: Throwable) {
+      // Catch Throwable, not Exception: a whole-history range on a large repo
+      // buffers the entire patch series in memory, so OutOfMemoryError (an
+      // Error, not Exception) is a real failure mode here. Degrade to null so
+      // the bridge reports a read failure the gate can handle, rather than
+      // letting an uncaught Error crash the app mid-push. Logged so a swallowed
+      // failure is distinguishable from an empty diff.
+      println(
+        """{"level":"error","event":"native_git_log_patch_failed","error":${jsonString(t.message ?: t.javaClass.simpleName)}}""",
+      )
+      null
     }
   }
 

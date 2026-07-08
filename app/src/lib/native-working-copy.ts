@@ -90,6 +90,34 @@ export function workingCopyDir(scope: WorkingCopyScope): string | undefined {
   return entry?.status === 'ready' ? entry.dir : undefined;
 }
 
+/**
+ * Re-key a ready working-copy registry entry after the clone itself switches
+ * branches. The physical dir is preserved: typed native branch ops move HEAD in
+ * one on-device clone, then the durable `{repoFullName, branch}` lookup needs to
+ * follow that same clone under the new branch key.
+ */
+export function rekeyWorkingCopyScope(
+  fromScope: WorkingCopyScope,
+  toScope: WorkingCopyScope,
+  deps: { log?: LogFn } = {},
+): boolean {
+  const fromKey = workingCopyPath(fromScope);
+  const toKey = workingCopyPath(toScope);
+  const entry = registry.get(fromKey);
+  if (!entry || entry.status !== 'ready') return false;
+  if (fromKey !== toKey) {
+    registry.delete(fromKey);
+    registry.set(toKey, entry);
+  }
+  (deps.log ?? defaultLog)('info', 'native_working_copy_rekeyed', {
+    repo: fromScope.repoFullName,
+    fromBranch: fromScope.branch,
+    toBranch: toScope.branch,
+    dir: entry.dir,
+  });
+  return true;
+}
+
 /** Injected clone + config for {@link ensureWorkingCopy}. */
 export interface EnsureWorkingCopyDeps {
   /** JGit clone (defaults to the `NativeGit` plugin). */

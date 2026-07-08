@@ -71,6 +71,7 @@ import { parseDiffStats } from './diff-utils';
 import {
   createModelCommitBranchNameProposer,
   ensureCommitTargetBranch,
+  type CommitTargetForkFn,
 } from './ensure-commit-target-branch';
 import {
   computeSandboxPushedDiff,
@@ -79,6 +80,8 @@ import {
   resolveWebAuditAtPushEnabled,
 } from './git-backend';
 import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
+import type { PushGit } from '@push/lib/git/push-git';
+import type { PushPlan } from '@push/lib/git/push-plan';
 import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
@@ -129,6 +132,10 @@ export type GitReleaseClearFileVersionCache = (sandboxId: string) => void;
 /** Signature of the prefetched-edit-file-cache clearer used by `sandbox_save_draft`. */
 export type GitReleaseClearPrefetchedEditFileCache = (sandboxId: string) => void;
 
+type SandboxPushGitOptions = NonNullable<Parameters<typeof createSandboxPushGit>[1]>;
+type PushedDiffReadOptions = { ref?: string; remote?: string };
+type PushPlanReadOptions = { ref?: string; remote?: string };
+
 /**
  * The ambient context passed to every git/release handler.
  *
@@ -169,6 +176,28 @@ export interface GitReleaseHandlerContext {
   clearFileVersionCache: GitReleaseClearFileVersionCache;
   /** Clear the prefetched-edit-file cache after a workspace mutation (`sandbox_save_draft`). */
   clearPrefetchedEditFileCache: GitReleaseClearPrefetchedEditFileCache;
+  /** PushGit factory for the active git surface. Defaults to sandbox PushGit. */
+  createPushGit?: (opts?: SandboxPushGitOptions) => PushGit;
+  /** Active git surface for staleness pins carried on push-review cards. */
+  gitSurface?: 'sandbox' | 'native';
+  /** Pushed-diff reader for the active git surface. Defaults to sandbox git. */
+  computePushedDiff?: (opts?: PushedDiffReadOptions) => Promise<string | null>;
+  /**
+   * Ref-only push-plan reader. `null` means this surface cannot establish a
+   * force-with-lease plan yet (native slice 3); approval relies on pinned
+   * branch/head/remote plus git's own non-fast-forward rejection.
+   */
+  computePushPlan?: ((opts?: PushPlanReadOptions) => Promise<PushPlan>) | null;
+  /** Pre-commit hook runner. Native has no shell and supplies a no-op. */
+  runPreCommitHook?: () => Promise<ExecResult>;
+  /** Optional untracked-diff synthesizer. Native working-tree diff already includes untracked files. */
+  collectUntrackedDiff?: () => Promise<string>;
+  /** Optional branch collision check for auto-branch-on-commit. */
+  branchExists?: (branch: string) => Promise<boolean>;
+  /** Optional fork implementation for auto-branch-on-commit. */
+  forkCommitTargetBranch?: CommitTargetForkFn;
+  /** Optional notification after a handler-created branch switch succeeds. */
+  onBranchChanged?: (branch: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,6 +416,44 @@ async function collectUntrackedDiff(ctx: GitReleaseHandlerContext): Promise<stri
   return res.stdout ?? '';
 }
 
+function createReleasePushGit(
+  ctx: GitReleaseHandlerContext,
+  opts?: SandboxPushGitOptions,
+): PushGit {
+  if (ctx.createPushGit) return ctx.createPushGit(opts);
+  return createSandboxPushGit(ctx.sandboxId, {
+    ...opts,
+    execFn: opts?.execFn ?? ctx.execInSandbox,
+  });
+}
+
+function computeReleasePushedDiff(
+  ctx: GitReleaseHandlerContext,
+  opts?: PushedDiffReadOptions,
+): Promise<string | null> {
+  if (ctx.computePushedDiff) return ctx.computePushedDiff(opts);
+  return computeSandboxPushedDiff(ctx.sandboxId, ctx.execInSandbox, opts);
+}
+
+async function computeReleasePushPlan(
+  ctx: GitReleaseHandlerContext,
+  opts?: PushPlanReadOptions,
+): Promise<PushPlan | null> {
+  if (ctx.computePushPlan === null) return null;
+  if (ctx.computePushPlan) return ctx.computePushPlan(opts);
+  return computeSandboxPushPlan(ctx.sandboxId, ctx.execInSandbox, opts);
+}
+
+function runReleasePreCommitHook(ctx: GitReleaseHandlerContext): Promise<ExecResult> {
+  if (ctx.runPreCommitHook) return ctx.runPreCommitHook();
+  return ctx.execInSandbox(
+    ctx.sandboxId,
+    'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
+    '/workspace',
+    { markWorkspaceMutated: true },
+  );
+}
+
 /**
  * `sandbox_commit` (Gate-at-Push Move A) — make a SILENT local commit.
  *
@@ -394,8 +461,8 @@ async function collectUntrackedDiff(ctx: GitReleaseHandlerContext): Promise<stri
  * SAFE/UNSAFE gate has moved to the push step (`prepare_push`). This runs the
  * repo's pre-commit hook (so formatters/codegen still fire), auto-forks off the
  * default branch first (a commit must never land on main), then commits via the
- * backend (`createSandboxPushGit(...).commit()` — NOT a raw `git commit`, which
- * stays blocked in `sandbox_exec`).
+ * active git facade (`PushGit.commit()` — NOT a raw `git commit`, which stays
+ * blocked in `sandbox_exec`).
  */
 export async function handleSandboxCommit(
   ctx: GitReleaseHandlerContext,
@@ -445,12 +512,7 @@ export async function handleSandboxCommit(
   }
 
   // Step 2: Run pre-commit hook before committing so hooks still fire.
-  const hookResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    'if [ -x .git/hooks/pre-commit ]; then .git/hooks/pre-commit 2>&1 || exit $?; fi',
-    '/workspace',
-    { markWorkspaceMutated: true },
-  );
+  const hookResult = await runReleasePreCommitHook(ctx);
   const hookOutput = [hookResult.stdout, hookResult.stderr]
     .filter((part): part is string => typeof part === 'string' && part.length > 0)
     .join('\n')
@@ -523,7 +585,9 @@ export async function handleSandboxCommit(
   // `ls-files --others` no longer lists them.
   let effectiveDiff = postHookDiffResult.diff;
   if (statusHasUntracked(postHookDiffResult.git_status)) {
-    const untrackedDiff = await collectUntrackedDiff(ctx);
+    const untrackedDiff = ctx.collectUntrackedDiff
+      ? await ctx.collectUntrackedDiff()
+      : await collectUntrackedDiff(ctx);
     if (untrackedDiff) {
       effectiveDiff = effectiveDiff ? `${effectiveDiff}\n${untrackedDiff}` : untrackedDiff;
       console.log(
@@ -548,6 +612,8 @@ export async function handleSandboxCommit(
       providerOverride: overrides?.providerOverride,
       modelOverride: overrides?.modelOverride,
     }),
+    fork: ctx.forkCommitTargetBranch,
+    branchExists: ctx.branchExists,
   });
 
   // Protect Main (fail-closed): the auto-branch above normally forks off the
@@ -557,9 +623,7 @@ export async function handleSandboxCommit(
   // `sandbox_commit` (it runs before the in-handler fork), so this is the
   // authoritative guard — it mirrors the retired prepare-commit approval check.
   if (!branchTarget.switched && ctx.isMainProtected) {
-    const liveBranch = await createSandboxPushGit(ctx.sandboxId, {
-      execFn: ctx.execInSandbox,
-    }).currentBranch();
+    const liveBranch = await createReleasePushGit(ctx).currentBranch();
     const protectedBranches = new Set(['main', 'master']);
     if (ctx.defaultBranch) protectedBranches.add(ctx.defaultBranch);
     // Fail closed: an unreadable HEAD under Protect Main is treated as on-main —
@@ -591,9 +655,7 @@ export async function handleSandboxCommit(
 
   // Step 4: Commit locally via the backend (no gate — silent commit). The
   // backend stages (`add -A`) then commits and shell-escapes the message.
-  const commitResult = await createSandboxPushGit(ctx.sandboxId, {
-    execFn: ctx.execInSandbox,
-  }).commit({ message: args.message });
+  const commitResult = await createReleasePushGit(ctx).commit({ message: args.message });
 
   if (!commitResult.ok) {
     notifyWorkspaceMutation(ctx.sandboxId);
@@ -635,7 +697,7 @@ export async function handleSandboxCommit(
  * return the review card.
  *
  * This is the delivery gate: it computes everything the next push would upload
- * (`computeSandboxPushedDiff`), runs the Auditor over it, and on SAFE returns a
+ * (via the active pushed-diff source), runs the Auditor over it, and on SAFE returns a
  * `commit-review` card with `kind: 'push'` for approval. On UNSAFE it returns an
  * `audit-verdict` card and blocks. The actual push happens on approval, which
  * re-runs only the cheap deterministic gates (Protect Main + secret scan) and
@@ -656,9 +718,7 @@ export async function handlePreparePush(
   // refresh rather than shipping a newer diff under this verdict. The realistic
   // staleness vector — committing more in a later turn, then approving this
   // stale card — is caught the same way.
-  const pushGit = createSandboxPushGit(ctx.sandboxId, {
-    execFn: ctx.execInSandbox,
-  });
+  const pushGit = createReleasePushGit(ctx);
   const [auditedHeadSha, auditedBranch, auditedUpstream, auditedRemoteUrl] = await Promise.all([
     pushGit.headSha(),
     pushGit.currentBranch(),
@@ -674,7 +734,7 @@ export async function handlePreparePush(
   const auditedPushRefOpts = auditedPushRef ? { ref: auditedPushRef } : undefined;
   let diff: string | null;
   try {
-    diff = await computeSandboxPushedDiff(ctx.sandboxId, ctx.execInSandbox, auditedPushRefOpts);
+    diff = await computeReleasePushedDiff(ctx, auditedPushRefOpts);
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     const pushDiffErr = classifyError(reason, 'prepare_push');
@@ -693,7 +753,7 @@ export async function handlePreparePush(
   }
 
   if (diff === null) {
-    // `computeSandboxPushedDiff` returns null on a diff-read FAILURE (no
+    // The pushed-diff reader returns null on a diff-read FAILURE (no
     // resolvable commits / invalid ref / unreachable sandbox), NOT on an empty
     // diff — and the GitExec adapter resolves errors instead of throwing, so the
     // catch above usually won't fire. Surface it as infra trouble, never as
@@ -703,7 +763,7 @@ export async function handlePreparePush(
         level: 'error',
         event: 'prepare_push_diff_failed',
         sandboxId: ctx.sandboxId,
-        error: 'computeSandboxPushedDiff returned null',
+        error: 'computeReleasePushedDiff returned null',
       }),
     );
     const pushDiffErr = classifyError('could not read the diff to push', 'prepare_push');
@@ -738,8 +798,8 @@ export async function handlePreparePush(
   // review and push (the audited diff was computed against the old base). The
   // read is side-effect-free; an unreadable origin yields `leaseEstablished:
   // false` and we simply don't pin (git's own rejection remains the backstop).
-  const plan = await computeSandboxPushPlan(ctx.sandboxId, ctx.execInSandbox, auditedPushRefOpts);
-  if (plan.requiresForce) {
+  const plan = await computeReleasePushPlan(ctx, auditedPushRefOpts);
+  if (plan?.requiresForce) {
     console.log(
       JSON.stringify({
         level: 'warn',
@@ -837,20 +897,25 @@ export async function handlePreparePush(
     commitMessage: '',
     status: 'pending',
     ...(auditedHeadSha ? { auditedHeadSha } : {}),
+    ...(ctx.gitSurface ? { auditedGitSurface: ctx.gitSurface } : {}),
     ...(auditedBranch ? { auditedBranch } : {}),
     ...(auditedUpstream ? { auditedUpstream } : {}),
     ...(auditedRemoteUrl ? { auditedRemoteUrl } : {}),
     // Force-with-lease pin: only set when origin was actually read, so a
     // network blip can't manufacture a spurious mismatch at approval.
-    ...(plan.leaseEstablished && plan.leasedRemoteSha
+    ...(plan?.leaseEstablished && plan.leasedRemoteSha
       ? { auditedRemoteTipSha: plan.leasedRemoteSha }
       : {}),
     // Display-only plan summary (force is already ruled out above).
-    pushPlan: {
-      kind: plan.move.kind as PushPlanSummary['kind'],
-      ahead: plan.move.ahead,
-      behind: plan.move.behind,
-    },
+    ...(plan
+      ? {
+          pushPlan: {
+            kind: plan.move.kind as PushPlanSummary['kind'],
+            ahead: plan.move.ahead,
+            behind: plan.move.behind,
+          },
+        }
+      : {}),
   };
 
   const shaNote = auditedHeadSha ? ` at ${auditedHeadSha.slice(0, 12)}` : '';
@@ -903,8 +968,7 @@ export async function handleSandboxPush(
   ctx: GitReleaseHandlerContext,
   overrides?: PrepareCommitAuditorOverrides,
 ): Promise<ToolExecutionResult> {
-  const pushResult = await createSandboxPushGit(ctx.sandboxId, {
-    execFn: ctx.execInSandbox,
+  const pushResult = await createReleasePushGit(ctx, {
     secretScan: true,
     protectMain: ctx.isMainProtected,
     defaultBranch: ctx.defaultBranch,
@@ -1109,8 +1173,7 @@ export async function handleSaveDraft(
   // `secretScan` matters most here: save_draft is the one release path that
   // skips the Auditor, so the deterministic pre-push scan is the only gate
   // standing between a draft credential and origin.
-  const pushGit = createSandboxPushGit(ctx.sandboxId, {
-    execFn: ctx.execInSandbox,
+  const pushGit = createReleasePushGit(ctx, {
     secretScan: true,
   });
   const currentBranch = (await pushGit.currentBranch()) ?? '';
@@ -1145,6 +1208,7 @@ export async function handleSaveDraft(
         text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
       };
     }
+    ctx.onBranchChanged?.(draftBranchName);
   }
 
   const activeDraftBranch = needsNewBranch ? draftBranchName : currentBranch;

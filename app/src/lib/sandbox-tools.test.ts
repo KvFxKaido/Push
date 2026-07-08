@@ -4486,6 +4486,18 @@ describe('executeSandboxToolCall -- sandbox_create_branch', () => {
     expect(calls[0][3]?.markWorkspaceMutated).toBe(true);
   });
 
+  it('refuses to create a local branch that shadows the remote-tracking namespace', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_create_branch', args: { name: 'origin/feature-x' } },
+      'sb-1',
+    );
+
+    expect(result.structuredError?.type).toBe('INVALID_ARG');
+    expect(result.text).toContain('shadow');
+    // Never reached the sandbox — refused before any git command ran.
+    expect(vi.mocked(sandboxClient.execInSandbox)).not.toHaveBeenCalled();
+  });
+
   it('uses atomic git checkout -b <name> <from> when from is provided', async () => {
     vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
       stdout: '',

@@ -21,7 +21,14 @@ import type {
   SandboxStateCardData,
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
-import { computeSandboxPushPlan, createSandboxPushGit } from '@/lib/git-backend';
+import { computeSandboxPushPlan } from '@/lib/git-backend';
+import {
+  defaultNativeTokenProvider,
+  getActivePushGit,
+  resolveActiveGitBinding,
+} from '@/lib/git-session';
+import { computeNativePushPlan } from '@/lib/native-git';
+import { nativeFsScopeFrom } from '@/lib/native-fs';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
@@ -228,21 +235,46 @@ export function useChatCardActions({
         return lines.slice(1).join('\n').trim() || lines[0];
       };
 
+      const activeBranch = () =>
+        branchInfoRef.current?.currentBranch ?? branchInfoRef.current?.defaultBranch;
+      const activeNativeScope = () => nativeFsScopeFrom(repoRef.current, activeBranch());
+      const activeGitSession = (sandboxId: string) => ({
+        sandboxId,
+        repoFullName: repoRef.current ?? undefined,
+        branch: activeBranch(),
+      });
+      const activeGitBinding = (
+        sandboxId: string,
+      ): ReturnType<typeof resolveActiveGitBinding> | null => {
+        const binding = resolveActiveGitBinding(activeGitSession(sandboxId));
+        if (binding.kind === 'sandbox' && !binding.sandboxId) return null;
+        return binding;
+      };
+      const hasActiveGitSurface = (sandboxId: string) => Boolean(activeGitBinding(sandboxId));
+      const markCommitReviewError = (messageId: string, cardIndex: number, error: string) => {
+        updateCardInMessage(chatId, messageId, cardIndex, (card) => {
+          if (card.type !== 'commit-review') return card;
+          return {
+            ...card,
+            data: {
+              ...card.data,
+              status: 'error',
+              error,
+            } as CommitReviewCardData,
+          };
+        });
+      };
+
       switch (action.type) {
         case 'commit-refresh': {
-          const sandboxId = sandboxIdRef.current;
-          if (!sandboxId) {
-            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
-              if (card.type !== 'commit-review') return card;
-              return {
-                ...card,
-                data: {
-                  ...card.data,
-                  status: 'error',
-                  error: 'Sandbox expired. Start a new sandbox.',
-                } as CommitReviewCardData,
-              };
-            });
+          const sandboxId = sandboxIdRef.current ?? '';
+          const nativeFsScope = activeNativeScope();
+          if (!hasActiveGitSurface(sandboxId)) {
+            markCommitReviewError(
+              action.messageId,
+              action.cardIndex,
+              'Sandbox expired. Start a new sandbox.',
+            );
             return;
           }
 
@@ -279,6 +311,7 @@ export function useChatCardActions({
                     ? (lockedProvider as ActiveProvider)
                     : undefined,
                 auditorModelOverride: lockedModel ?? null,
+                ...(nativeFsScope ? { nativeFsScope } : {}),
               },
             );
 
@@ -314,19 +347,13 @@ export function useChatCardActions({
         }
 
         case 'commit-approve': {
-          const sandboxId = sandboxIdRef.current;
-          if (!sandboxId) {
-            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
-              if (card.type !== 'commit-review') return card;
-              return {
-                ...card,
-                data: {
-                  ...card.data,
-                  status: 'error',
-                  error: 'Sandbox expired. Start a new sandbox.',
-                } as CommitReviewCardData,
-              };
-            });
+          const sandboxId = sandboxIdRef.current ?? '';
+          if (!hasActiveGitSurface(sandboxId)) {
+            markCommitReviewError(
+              action.messageId,
+              action.cardIndex,
+              'Sandbox expired. Start a new sandbox.',
+            );
             return;
           }
 
@@ -344,7 +371,9 @@ export function useChatCardActions({
           // the push boundary gate is the authoritative backstop for push-kind).
           if (isMainProtectedRef.current) {
             try {
-              const currentBranch = await createSandboxPushGit(sandboxId).currentBranch();
+              const currentBranch = await getActivePushGit(
+                activeGitSession(sandboxId),
+              ).currentBranch();
               const mainBranches = new Set(['main', 'master']);
               const defBranch = branchInfoRef.current?.defaultBranch;
               if (defBranch) mainBranches.add(defBranch);
@@ -408,10 +437,41 @@ export function useChatCardActions({
               const approveSourceData =
                 approveSourceCard?.type === 'commit-review' ? approveSourceCard.data : undefined;
               const auditedHeadSha = approveSourceData?.auditedHeadSha;
+              const auditedGitSurface = approveSourceData?.auditedGitSurface;
               const auditedBranch = approveSourceData?.auditedBranch;
               const auditedUpstream = approveSourceData?.auditedUpstream ?? null;
               const auditedRemoteUrl = approveSourceData?.auditedRemoteUrl;
-              const pushGit = createSandboxPushGit(sandboxId);
+              const binding = activeGitBinding(sandboxId);
+              if (!binding) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error: 'Sandbox expired. Start a new sandbox.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+              if (auditedGitSurface && binding.kind !== auditedGitSurface) {
+                updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
+                  if (card.type !== 'commit-review') return card;
+                  return {
+                    ...card,
+                    data: {
+                      ...card.data,
+                      status: 'error',
+                      error:
+                        'Git surface changed since this review; refresh to re-audit before pushing.',
+                    } as CommitReviewCardData,
+                  };
+                });
+                return;
+              }
+              const pushGit = getActivePushGit(activeGitSession(sandboxId));
               const [liveHeadSha, liveBranch, liveUpstream, liveRemoteUrl] = await Promise.all([
                 pushGit.headSha(),
                 pushGit.currentBranch(),
@@ -487,9 +547,15 @@ export function useChatCardActions({
               // to refuse. (git-sync's --force-with-lease, applied at our gate.)
               const auditedRemoteTipSha = approveSourceData?.auditedRemoteTipSha;
               if (auditedRemoteTipSha) {
-                const livePlan = await computeSandboxPushPlan(sandboxId, undefined, {
-                  ref: liveBranch,
-                });
+                const livePlan =
+                  binding.kind === 'native'
+                    ? await computeNativePushPlan(binding.dir, {
+                        ref: liveBranch || undefined,
+                        getToken: defaultNativeTokenProvider,
+                      })
+                    : await computeSandboxPushPlan(binding.sandboxId, undefined, {
+                        ref: liveBranch || undefined,
+                      });
                 if (!livePlan.leaseEstablished) {
                   updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
                     if (card.type !== 'commit-review') return card;
@@ -541,7 +607,7 @@ export function useChatCardActions({
               // an already-approved SAFE delivery to UNSAFE. The push-time
               // Auditor gate stays ON for DIRECT sandbox_push calls that bypass
               // prepare_push (this approved path is not one of those).
-              const pushResult = await createSandboxPushGit(sandboxId, {
+              const pushResult = await getActivePushGit(activeGitSession(sandboxId), {
                 secretScan: true,
                 protectMain: isMainProtectedRef.current,
                 defaultBranch: branchInfoRef.current?.defaultBranch,
@@ -630,7 +696,7 @@ export function useChatCardActions({
             // already ran at the prepare step, so this approved commit needs no
             // gate; the backend shell-escapes the message and marks the
             // workspace mutated.
-            const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
+            const pushGit = getActivePushGit(activeGitSession(sandboxId), { secretScan: true });
             // Non-blocking desync check: warn (don't block) if the sandbox HEAD
             // drifted from the branch Push tracks as active. PushGit only
             // verifies the invariant; any future enforcement is the caller's.
