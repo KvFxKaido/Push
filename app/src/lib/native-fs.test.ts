@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildGitignoreMatcher,
   NativeFsBackend,
   resolveNativeFs,
   toWorktreeRelative,
@@ -47,6 +48,11 @@ function fakePlugin(): NativeGitPlugin {
       entries: [{ name: 'a.ts', type: 'file' as const }],
       truncated: false,
     })),
+    diff: vi.fn(async () => ({
+      diff: 'diff --git a/a.ts b/a.ts\n',
+      truncated: false,
+      git_status: ' M a.ts',
+    })),
   } as unknown as NativeGitPlugin;
 }
 
@@ -78,6 +84,177 @@ describe('NativeFsBackend', () => {
     const plugin = fakePlugin();
     await new NativeFsBackend(plugin, '/data/clone').listDir();
     expect(plugin.listDir).toHaveBeenCalledWith({ dir: '/data/clone', path: undefined });
+  });
+
+  it('proxies git diff through the scoped plugin dir', async () => {
+    const plugin = fakePlugin();
+    const result = await new NativeFsBackend(plugin, '/data/clone').diff();
+    expect(plugin.diff).toHaveBeenCalledWith({ dir: '/data/clone' });
+    expect(result.diff).toContain('diff --git');
+  });
+
+  it('searches a single file path when listing it reports not-a-directory', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'needle\nother',
+      truncated: false,
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'src/a.ts');
+
+    expect(plugin.readFile).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      path: 'src/a.ts',
+      startLine: undefined,
+      endLine: undefined,
+    });
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:needle']);
+  });
+
+  it('treats the query as a regex, matching the cloud rg/grep semantics', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'foo here\nbar there\nneither',
+      truncated: false,
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('foo|bar', 'src/a.ts');
+
+    expect(result.lines).toEqual([
+      '/workspace/src/a.ts:1:foo here',
+      '/workspace/src/a.ts:2:bar there',
+    ]);
+  });
+
+  it('falls back to literal matching when the query is not a valid regex', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'call fn( now\nno paren',
+      truncated: false,
+    });
+
+    // `fn(` doesn't compile as a regex — literal fallback should still match.
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('fn(', 'src/a.ts');
+
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:call fn( now']);
+  });
+
+  it('paginates capped file reads so matches past the read cap are still found', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: big.ts',
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ startLine }: { startLine?: number }) => {
+      // 4-line file served in two capped chunks of 2.
+      if (!startLine) {
+        return { content: 'one\ntwo', truncated: true, totalLines: 4 };
+      }
+      expect(startLine).toBe(3);
+      return { content: 'three\nneedle four', truncated: false, totalLines: 4 };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'big.ts');
+
+    // Match lives past the cap; line number is absolute, not chunk-relative.
+    expect(result.lines).toEqual(['/workspace/big.ts:4:needle four']);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('reports a capped directory listing as a truncated search', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [{ name: 'a.ts', type: 'file' as const }],
+      truncated: true,
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '.gitignore') return { content: '', truncated: false, error: 'no file' };
+      return { content: 'nothing here', truncated: false };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle');
+
+    // 500-entry cap means unwalked files — never a silent "complete" result.
+    expect(result.truncated).toBe(true);
+  });
+
+  it('honors gitignore negations: a matching negation wins over an exclusion', async () => {
+    const matcher = buildGitignoreMatcher('generated/*\n!generated/keep.ts\n*.log\n!important.log');
+    expect(matcher('generated/junk.ts')).toBe(true);
+    expect(matcher('generated/keep.ts')).toBe(false);
+    expect(matcher('debug.log')).toBe(true);
+    expect(matcher('important.log')).toBe(false);
+    expect(matcher('src/a.ts')).toBe(false);
+  });
+
+  it('surfaces an error when the search path is neither a readable dir nor file', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'No such directory: nope',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: '',
+      truncated: false,
+      error: 'No such file: nope',
+      code: 'ENOENT',
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'nope');
+
+    // A bad path must NOT read as a clean "No matches" — the rg transport
+    // errors on nonexistent paths and native should too.
+    expect(result.lines).toEqual([]);
+    expect(result.error).toContain('not a readable directory or file');
+  });
+
+  it("skips node_modules and top-level .gitignore'd dirs during the walk", async () => {
+    const plugin = fakePlugin();
+    const listings: Record<string, { name: string; type: 'file' | 'directory' }[]> = {
+      '': [
+        { name: 'node_modules', type: 'directory' },
+        { name: 'dist', type: 'directory' },
+        { name: 'src', type: 'directory' },
+        { name: '.gitignore', type: 'file' },
+      ],
+      src: [{ name: 'a.ts', type: 'file' }],
+    };
+    vi.mocked(plugin.listDir).mockImplementation(async ({ path }: { path?: string }) => {
+      const entries = listings[path ?? ''];
+      if (!entries) return { entries: [], truncated: false, error: `unexpected listDir: ${path}` };
+      return { entries, truncated: false };
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '.gitignore') return { content: 'dist/\n# comment\n', truncated: false };
+      if (path === 'src/a.ts') return { content: 'needle here', truncated: false };
+      return { content: '', truncated: false, error: `unexpected read: ${path}` };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle');
+
+    expect(result.error).toBeUndefined();
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:needle here']);
+    // Neither ignored dir was ever listed — no bridge I/O into them.
+    const listedPaths = vi.mocked(plugin.listDir).mock.calls.map(([arg]) => arg.path);
+    expect(listedPaths).not.toContain('node_modules');
+    expect(listedPaths).not.toContain('dist');
   });
 });
 

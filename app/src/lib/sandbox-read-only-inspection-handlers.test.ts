@@ -170,7 +170,10 @@ describe('handleSearch', () => {
         "rg -n --hidden --glob '!.git' --color never -- 'API_KEY' '/workspace'",
       ),
     );
-    expect(result.text).toContain('Matches: 1 (truncated)');
+    // Hidden secret-file matches are reported on their own line, not folded
+    // into "(truncated)" — truncation now means "more output than we kept".
+    expect(result.text).toContain('Matches: 1');
+    expect(result.text).not.toContain('(truncated)');
     expect(result.text).toContain('Hidden matches: 1 secret-file result');
     expect(result.text).toContain('Redactions: secret-like values hidden.');
     expect(result.text).not.toContain('id_rsa');

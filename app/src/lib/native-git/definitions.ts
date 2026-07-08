@@ -56,6 +56,13 @@ export interface NativeGitPlugin {
   headSha(options: { dir: string; short?: boolean }): Promise<{ sha: string | null }>;
   /** Working-tree status as porcelain v1 with branch header (`--porcelain -b`). */
   status(options: NativeGitDirArg): Promise<{ porcelain: string }>;
+  /** Working-tree diff against HEAD, plus porcelain status for diagnostics. */
+  diff(options: NativeGitDirArg): Promise<{
+    diff: string;
+    truncated: boolean;
+    git_status?: string;
+    error?: string;
+  }>;
 
   // -- Sanctioned writes -----------------------------------------------------
   /** Create and switch to `name`, optionally from a ref. */

@@ -29,6 +29,9 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
   status(): Promise<never> {
     return this.notAvailable();
   }
+  diff(): Promise<never> {
+    return this.notAvailable();
+  }
   createBranch(): Promise<never> {
     return this.notAvailable();
   }
@@ -44,6 +47,15 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
   fetch(): Promise<never> {
     return this.notAvailable();
   }
+  readFile(): Promise<never> {
+    return this.notAvailable();
+  }
+  writeFile(): Promise<never> {
+    return this.notAvailable();
+  }
+  listDir(): Promise<never> {
+    return this.notAvailable();
+  }
   commitWorkingTree(): Promise<never> {
     return this.notAvailable();
   }
@@ -54,6 +66,18 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
     return this.notAvailable();
   }
   pruneCheckpoints(): Promise<never> {
+    return this.notAvailable();
+  }
+  dropCheckpoint(): Promise<never> {
+    return this.notAvailable();
+  }
+  clearCheckpoints(): Promise<never> {
+    return this.notAvailable();
+  }
+  listManifest(): Promise<never> {
+    return this.notAvailable();
+  }
+  commitDelta(): Promise<never> {
     return this.notAvailable();
   }
 }

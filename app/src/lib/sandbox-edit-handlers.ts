@@ -52,6 +52,7 @@ import {
   normalizeUnicode,
   retryOnContainerError,
 } from './sandbox-tool-utils';
+import { formatSensitivePathToolError, isSensitivePath } from './sensitive-data-guard';
 import {
   appendMutationPostconditions,
   buildHashlineChangedSpans,
@@ -132,6 +133,13 @@ export interface EditHandlerContext {
 
   // Symbol ledger
   invalidateSymbolLedger: (path: string) => void;
+
+  // Optional diagnostics override (native sessions have no shell/runtime).
+  runPerEditDiagnostics?: (sandboxId: string, path: string) => Promise<string | null>;
+  // Optional per-file diff override for surfaces without a shell (native
+  // sessions read the working-copy diff from the git plugin instead of
+  // `git diff` via exec).
+  getFileDiffHunks?: (sandboxId: string, path: string) => Promise<string | null>;
 }
 
 async function buildStaleEditAnchorLines(
@@ -168,6 +176,14 @@ export async function handleEditFile(
   args: EditFileArgs,
 ): Promise<ToolExecutionResult> {
   const { path, edits } = args;
+
+  // Sensitive-path refusal lives in the handler (not per-dispatch-case) so
+  // every surface — cloud, daemon, native — inherits it by construction,
+  // matching the read/list/search family. See the "Auth / allowlist seams"
+  // checklist entry in CLAUDE.md.
+  if (isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
 
   // --- Edit Guard: symbolic check before editing ---
   const editContentForGuard = edits
@@ -623,13 +639,19 @@ export async function handleEditFile(
     verifyWarning = `Post-write verification failed: ${msg}. The edit may not have persisted.`;
   }
 
-  // 5. Get the diff hunks for this file.
-  const escapedPath = path.replace(/'/g, "'\\''");
-  const diffResult = await ctx.execInSandbox(
-    ctx.sandboxId,
-    `cd /workspace && git diff -- '${escapedPath}'`,
-  );
-  const diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
+  // 5. Get the diff hunks for this file. Surfaces without a shell (native
+  // sessions) supply `getFileDiffHunks`; everything else shells out to git.
+  let diffHunks: string;
+  if (ctx.getFileDiffHunks) {
+    diffHunks = ((await ctx.getFileDiffHunks(ctx.sandboxId, path)) ?? '').trim();
+  } else {
+    const escapedPath = path.replace(/'/g, "'\\''");
+    const diffResult = await ctx.execInSandbox(
+      ctx.sandboxId,
+      `cd /workspace && git diff -- '${escapedPath}'`,
+    );
+    diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
+  }
 
   const editLines: string[] = [
     `[Tool Result — sandbox_edit_file]`,
@@ -660,7 +682,10 @@ export async function handleEditFile(
     editLines.push('', 'No diff hunks (file may be outside git or content identical).');
   }
 
-  const diagnostics = await runPerEditDiagnostics(ctx.sandboxId, path);
+  const diagnostics = await (ctx.runPerEditDiagnostics ?? runPerEditDiagnostics)(
+    ctx.sandboxId,
+    path,
+  );
   if (diagnostics) {
     editLines.push('', '[DIAGNOSTICS]', diagnostics);
   }
@@ -695,6 +720,10 @@ export async function handleEditRange(
   args: EditRangeArgs,
 ): Promise<ToolExecutionResult> {
   const { path, start_line, end_line, content, expected_version } = args;
+  // Refuse before the base read — same guard handleEditFile enforces.
+  if (isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const baseRead = (await ctx.readFromSandbox(ctx.sandboxId, path)) as FileReadResult & {
     error?: string;
   };
@@ -788,6 +817,10 @@ export async function handleSearchReplace(
 ): Promise<ToolExecutionResult> {
   const { path, search, replace, expected_version } = args;
 
+  // Refuse before the base read — same guard handleEditFile enforces.
+  if (isSensitivePath(path)) {
+    return { text: formatSensitivePathToolError(path) };
+  }
   const baseRead = (await ctx.readFromSandbox(ctx.sandboxId, path)) as FileReadResult & {
     error?: string;
   };

@@ -12,6 +12,7 @@ function fakePlugin(overrides: Partial<NativeGitPlugin> = {}): NativeGitPlugin {
     remoteUrl: vi.fn(async () => ({ url: 'https://github.com/owner/repo.git' })),
     headSha: vi.fn(async () => ({ sha: 'abc1234' })),
     status: vi.fn(async () => ({ porcelain: '## main...origin/main\n' })),
+    diff: vi.fn(async () => ({ diff: '', truncated: false })),
     createBranch: vi.fn(async () => ({ ok: true })),
     switchBranch: vi.fn(async () => ({ ok: true })),
     commit: vi.fn(async () => ({ ok: true })),

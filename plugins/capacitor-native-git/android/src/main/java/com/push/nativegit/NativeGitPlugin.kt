@@ -106,6 +106,72 @@ class NativeGitPlugin : Plugin() {
   }
 
   @PluginMethod
+  fun diff(call: PluginCall) = resolveAsync(call) {
+    val result = JGitEngine.diff(call.requireDir())
+    JSObject()
+      .put("diff", result.diff)
+      .put("truncated", result.truncated)
+      .put("git_status", result.gitStatus)
+      .also { if (result.error != null) it.put("error", result.error) }
+  }
+
+  @PluginMethod
+  fun readFile(call: PluginCall) = resolveAsync(call) {
+    val path = call.getString("path") ?: return@resolveAsync JSObject()
+      .put("content", "")
+      .put("truncated", false)
+      .put("error", "missing 'path'")
+      .put("code", "EINVAL")
+    val result = JGitEngine.readFile(
+      call.requireDir(),
+      path,
+      call.getInt("startLine"),
+      call.getInt("endLine"),
+    )
+    JSObject()
+      .put("content", result.content)
+      .put("truncated", result.truncated)
+      .also {
+        if (result.totalLines != null) it.put("totalLines", result.totalLines)
+        if (result.error != null) it.put("error", result.error)
+        if (result.code != null) it.put("code", result.code)
+      }
+  }
+
+  @PluginMethod
+  fun writeFile(call: PluginCall) = resolveAsync(call) {
+    val path = call.getString("path") ?: return@resolveAsync JSObject()
+      .put("ok", false)
+      .put("error", "missing 'path'")
+    val content = call.getString("content") ?: ""
+    val result = JGitEngine.writeFile(call.requireDir(), path, content)
+    JSObject()
+      .put("ok", result.ok)
+      .also {
+        if (result.bytesWritten != null) it.put("bytesWritten", result.bytesWritten)
+        if (result.error != null) it.put("error", result.error)
+      }
+  }
+
+  @PluginMethod
+  fun listDir(call: PluginCall) = resolveAsync(call) {
+    val result = JGitEngine.listDir(call.requireDir(), call.getString("path"))
+    val entries = JSArray()
+    for (entry in result.entries) {
+      entries.put(
+        JSObject()
+          .put("name", entry.name)
+          .put("type", entry.type)
+          .also { if (entry.size != null) it.put("size", entry.size) },
+      )
+    }
+    JSObject()
+      .put("entries", entries)
+      .put("truncated", result.truncated)
+      .also { if (result.error != null) it.put("error", result.error) }
+  }
+
+  @PluginMethod
   fun createBranch(call: PluginCall) {
     val name = call.getString("name") ?: return call.reject("missing 'name'")
     writeAsync(call) { JGitEngine.createBranch(call.requireDir(), name, call.getString("from")) }

@@ -30,6 +30,12 @@ export interface NativeGitPlugin {
   }>;
   headSha(options: { dir: string; short?: boolean }): Promise<{ sha: string | null }>;
   status(options: NativeGitDirArg): Promise<{ porcelain: string }>;
+  diff(options: NativeGitDirArg): Promise<{
+    diff: string;
+    truncated: boolean;
+    git_status?: string;
+    error?: string;
+  }>;
   createBranch(options: {
     dir: string;
     name: string;
@@ -56,6 +62,28 @@ export interface NativeGitPlugin {
     token?: string;
   }): Promise<NativeGitWriteResult>;
 
+  readFile(options: { dir: string; path: string; startLine?: number; endLine?: number }): Promise<{
+    content: string;
+    truncated: boolean;
+    totalLines?: number;
+    error?: string;
+    code?: string;
+  }>;
+  writeFile(options: {
+    dir: string;
+    path: string;
+    content: string;
+  }): Promise<{ ok: boolean; bytesWritten?: number; error?: string }>;
+  listDir(options: { dir: string; path?: string }): Promise<{
+    entries: Array<{
+      name: string;
+      type: 'file' | 'directory' | 'symlink' | 'other';
+      size?: number;
+    }>;
+    truncated: boolean;
+    error?: string;
+  }>;
+
   // -- Checkpoint operations (CheckpointStore native backend) ----------------
   commitWorkingTree(options: {
     dir: string;
@@ -70,4 +98,14 @@ export interface NativeGitPlugin {
     checkpoints: Array<{ commitId: string; message: string; timestampMs: number }>;
   }>;
   pruneCheckpoints(options: { dir: string; keep: number }): Promise<{ pruned: number }>;
+  dropCheckpoint(options: { dir: string; commitId: string }): Promise<{ dropped: boolean }>;
+  clearCheckpoints(options: { dir: string }): Promise<{ cleared: boolean }>;
+  listManifest(options: { dir: string }): Promise<{ manifest: Record<string, string> }>;
+  commitDelta(options: {
+    dir: string;
+    deltaArchiveBase64: string;
+    deletedPaths: string[];
+    expectedManifest: Record<string, string>;
+    message: string;
+  }): Promise<{ committed: boolean; commitId: string | null; treeId: string | null }>;
 }

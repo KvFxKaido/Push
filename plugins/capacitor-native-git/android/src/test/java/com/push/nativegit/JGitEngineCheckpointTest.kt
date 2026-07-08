@@ -15,8 +15,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.ObjectInserter
+import org.eclipse.jgit.lib.PersonIdent
 
 /**
  * Host-JVM tests for the checkpoint engine. The checkpoint methods use only JGit
@@ -51,6 +53,15 @@ class JGitEngineCheckpointTest {
 
   private fun tempDir(): String = Files.createTempDirectory("push-cp-test").toFile().absolutePath
 
+  private fun commitAll(git: Git, message: String) {
+    git.add().addFilepattern(".").call()
+    git.commit()
+      .setMessage(message)
+      .setAuthor(PersonIdent("Push Test", "test@push.local"))
+      .setCommitter(PersonIdent("Push Test", "test@push.local"))
+      .call()
+  }
+
   /** Git blob SHA-1 of raw content — the expected-manifest value commitDelta verifies. */
   private fun blobSha(content: String): String =
     ObjectInserter.Formatter().idFor(Constants.OBJ_BLOB, content.toByteArray()).name
@@ -67,6 +78,228 @@ class JGitEngineCheckpointTest {
     assertFalse("identical tree is unchanged", r2.committed)
     assertEquals(r1.commitId, r2.commitId)
     assertEquals(1, JGitEngine.listCheckpoints(dir).size)
+  }
+
+  @Test
+  fun workspaceFileOpsAreScopedAndSupportLineRanges() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+
+    val write = JGitEngine.writeFile(dir, "src/a.txt", "one\ntwo\nthree")
+    assertTrue(write.ok)
+    assertEquals(13, write.bytesWritten)
+
+    val read = JGitEngine.readFile(dir, "src/a.txt", 2, 3)
+    assertNull(read.error)
+    assertEquals("two\nthree", read.content)
+    assertEquals(3, read.totalLines)
+
+    val listed = JGitEngine.listDir(dir, "src")
+    assertNull(listed.error)
+    assertEquals(listOf("a.txt"), listed.entries.map { it.name })
+
+    val escaped = JGitEngine.writeFile(dir, "../outside.txt", "nope")
+    assertFalse("native side rejects traversal that escapes the clone", escaped.ok)
+  }
+
+  /**
+   * A file guaranteed to exceed READ_MAX_CHARS: `lineCount` lines of exactly
+   * 49 chars + '\n'. Written straight to disk (no git checkout involved), so
+   * host autocrlf can't smudge the content.
+   */
+  private fun writeBigFile(dir: String, lineCount: Int): List<String> {
+    val lines = (1..lineCount).map { "line-%05d-".format(it) + "x".repeat(38) }
+    File(dir, "big.txt").writeText(lines.joinToString("\n"))
+    return lines
+  }
+
+  @Test
+  fun unboundedReadOfLargeFileIsCappedAtLineBoundaryWithFullLineCount() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    val lineCount = 5000 // 5000 * 50 chars = 250k > READ_MAX_CHARS (200k)
+    val lines = writeBigFile(dir, lineCount)
+
+    val read = JGitEngine.readFile(dir, "big.txt", null, null)
+    assertNull(read.error)
+    assertTrue("capped read reports truncation", read.truncated)
+    assertEquals("totalLines counts the FULL file, not the capped slice", lineCount, read.totalLines)
+    assertTrue("content respects the cap", read.content.length <= JGitEngine.READ_MAX_CHARS)
+
+    // Truncation lands on a line boundary: the content is exactly the longest
+    // whole-line prefix that fits under the cap.
+    val expected = StringBuilder()
+    for (line in lines) {
+      val sep = if (expected.isEmpty()) 0 else 1
+      if (expected.length + sep + line.length > JGitEngine.READ_MAX_CHARS) break
+      if (sep == 1) expected.append('\n')
+      expected.append(line)
+    }
+    assertEquals(expected.toString(), read.content)
+  }
+
+  @Test
+  fun rangeReadBeyondTheCapBoundaryStillServesTheRequestedLines() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    val lines = writeBigFile(dir, 5000)
+
+    // Lines near EOF — far past where the unbounded read gets capped.
+    val read = JGitEngine.readFile(dir, "big.txt", 4990, 4995)
+    assertNull(read.error)
+    assertFalse("an in-cap range is not truncated", read.truncated)
+    assertEquals(5000, read.totalLines)
+    assertEquals(lines.subList(4989, 4995).joinToString("\n"), read.content)
+  }
+
+  @Test
+  fun singleRangeExceedingTheCapIsItselfCapped() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    writeBigFile(dir, 5000)
+
+    val read = JGitEngine.readFile(dir, "big.txt", 1, 5000)
+    assertNull(read.error)
+    assertTrue("a range wider than the cap truncates", read.truncated)
+    assertEquals(5000, read.totalLines)
+    assertTrue(read.content.length <= JGitEngine.READ_MAX_CHARS)
+  }
+
+  @Test
+  fun singleOversizedLineIsHardCutWithoutMaterializing() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    File(dir, "one-line.txt").writeText("y".repeat(JGitEngine.READ_MAX_CHARS + 50_000))
+
+    val read = JGitEngine.readFile(dir, "one-line.txt", null, null)
+    assertNull(read.error)
+    assertTrue(read.truncated)
+    assertEquals(1, read.totalLines)
+    assertEquals(JGitEngine.READ_MAX_CHARS, read.content.length)
+  }
+
+  @Test
+  fun smallFileReadIsUnchangedByTheCap() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+    JGitEngine.writeFile(dir, "small.txt", "one\ntwo\nthree")
+
+    val read = JGitEngine.readFile(dir, "small.txt", null, null)
+    assertNull(read.error)
+    assertFalse(read.truncated)
+    assertEquals("one\ntwo\nthree", read.content)
+    assertEquals(3, read.totalLines)
+  }
+
+  @Test
+  fun workspaceDiffIncludesTrackedAndUntrackedChanges() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().use { git ->
+      File(dir, "a.txt").writeText("one\n")
+      commitAll(git, "initial")
+    }
+
+    File(dir, "a.txt").writeText("two\n")
+    File(dir, "b.txt").writeText("new\n")
+    val diff = JGitEngine.diff(dir)
+
+    assertNull(diff.error)
+    assertTrue(diff.diff.contains("diff --git"))
+    assertTrue(diff.diff.contains("+two"))
+    assertTrue(diff.diff.contains("new file mode 100644"))
+    assertTrue(diff.gitStatus.contains(" M a.txt"))
+    assertTrue(diff.gitStatus.contains("?? b.txt"))
+  }
+
+  @Test
+  fun workspaceDiffDoesNotDuplicateUntrackedFiles() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().use { git ->
+      File(dir, "a.txt").writeText("one\n")
+      commitAll(git, "initial")
+    }
+
+    File(dir, "b.txt").writeText("new\n")
+    val diff = JGitEngine.diff(dir)
+
+    assertNull(diff.error)
+    val header = "diff --git a/b.txt b/b.txt"
+    val occurrences = Regex(Regex.escape(header)).findAll(diff.diff).count()
+    assertEquals("untracked file appears exactly once in the diff", 1, occurrences)
+    assertEquals("its content appears exactly once", 1, Regex(Regex.escape("+new")).findAll(diff.diff).count())
+  }
+
+  /**
+   * Remote with one commit on `main`, plus a fresh clone of it. Returns
+   * (remote, clone). File content deliberately carries NO newline: a host
+   * `core.autocrlf=true` (common on Windows) would smudge checked-out LFs to
+   * CRLF and break exact-content asserts.
+   */
+  private fun remoteAndClone(): Pair<String, String> {
+    val remote = tempDir()
+    Git.init().setDirectory(File(remote)).call().use { git ->
+      File(remote, "a.txt").writeText("one")
+      commitAll(git, "one")
+      git.branchCreate().setName("main").call()
+      git.checkout().setName("main").call()
+    }
+    val clone = tempDir()
+    File(clone).deleteRecursively()
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+    assertEquals("one", File(clone, "a.txt").readText())
+    return remote to clone
+  }
+
+  private fun advanceRemote(remote: String) {
+    Git.open(File(remote)).use { git ->
+      File(remote, "a.txt").writeText("two")
+      commitAll(git, "two")
+    }
+  }
+
+  @Test
+  fun cloneReconcilesCleanExistingRepoByFetchResetInsteadOfRecloning() {
+    val (remote, clone) = remoteAndClone()
+    advanceRemote(remote)
+
+    // Clean, not ahead of origin: reconciliation may safely reset to origin/main.
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("two", File(clone, "a.txt").readText())
+  }
+
+  @Test
+  fun cloneReconcilePreservesDirtyWorkingTree() {
+    val (remote, clone) = remoteAndClone()
+    advanceRemote(remote)
+
+    File(clone, "a.txt").writeText("local dirty edit")
+    File(clone, "scratch.txt").writeText("keep me")
+
+    // App-restart resume path: clone() on the existing dir must not destroy
+    // uncommitted edits or untracked files.
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("local dirty edit", File(clone, "a.txt").readText())
+    assertTrue("untracked file survives reconciliation", File(clone, "scratch.txt").exists())
+    assertEquals("keep me", File(clone, "scratch.txt").readText())
+  }
+
+  @Test
+  fun cloneReconcilePreservesLocalCommitsAheadOfOrigin() {
+    val (remote, clone) = remoteAndClone()
+
+    Git.open(File(clone)).use { git ->
+      File(clone, "a.txt").writeText("local commit")
+      commitAll(git, "unpushed local work")
+    }
+    val localHead = JGitEngine.headSha(clone, false)
+    assertNotNull(localHead)
+
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("unpushed local commit stays HEAD", localHead, JGitEngine.headSha(clone, false))
+    assertEquals("local commit", File(clone, "a.txt").readText())
   }
 
   @Test
