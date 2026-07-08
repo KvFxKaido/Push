@@ -77,7 +77,10 @@ class NativeGitPlugin : Plugin() {
     if (cp != base && !cp.startsWith(base + File.separator)) {
       throw IllegalArgumentException("relative dir escapes the app sandbox: $dir")
     }
-    return resolved.absolutePath
+    // Return the canonical path we just validated (not absolutePath, which
+    // would keep literal `..` segments from an input like `a/../b`), so the
+    // returned dir is exactly the in-sandbox location that passed the check.
+    return cp
   }
 
   private fun PluginCall.requireDir(): String =
