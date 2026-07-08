@@ -1356,8 +1356,8 @@ async function runInteractive(
 
       try {
         // `line` is already appended above — same contract the TUI uses for
-        // `runAssistantTurn`: kernel `leadMode` lead turn by default, with
-        // `delegated` / `engine` opt-outs, so the REPL matches the TUI.
+        // `runAssistantTurn`: a kernel `leadMode` lead turn (the `delegated` /
+        // `engine` opt-outs are retired), so the REPL matches the TUI.
         const result = await runAssistantTurn(
           state,
           ctx.providerConfig,

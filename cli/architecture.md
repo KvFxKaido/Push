@@ -37,7 +37,6 @@ Notable traits:
 Primary entry points and helpers:
 
 - `cli.ts` — `push run` command handling
-- `task-brief.ts` — shared delegation brief formatting for headless tasks
 - `tools.ts` — execution policy and mode-specific tool restrictions
 
 ### Full-screen TUI

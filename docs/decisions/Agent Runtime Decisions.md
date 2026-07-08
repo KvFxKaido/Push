@@ -194,9 +194,12 @@ Current state / gap: the web `inline` lane is the collapsed lead today
 On the CLI, the first convergence step landed 2026-06-12: interactive turns
 (TUI + daemon `send_user_message`) default to the single lead in-loop —
 `runAssistantTurn` no longer runs the Planner pre-pass or the subagent
-ceremony unless `delegationMode: 'delegated'` / `PUSH_DELEGATION_MODE=delegated`
-opts back in (the interactive analog of headless `--delegate`, sharing the
-web preference's opt-in rule via `lib/delegation-mode.ts`). The second step
+ceremony. (At the time a `delegationMode: 'delegated'` /
+`PUSH_DELEGATION_MODE=delegated` opt-in kept the wrapper reachable, the
+interactive analog of headless `--delegate`; it has since been retired along
+with the engine loop — the CLI no longer reads either knob, and
+`lib/delegation-mode.ts` is consumed by the web preference only. The dead
+headless brief shim `cli/task-brief.ts` was deleted 2026-07-08.) The second step
 landed the same day as an opt-in lane: `cli/lead-turn.ts` runs the terminal
 turn as a `leadMode: true` run of the **shared** coder kernel — same kernel +
 lead framing as the inline lane, assembled with the CLI's local reach
@@ -712,7 +715,7 @@ Source notes:
 
 ## Active Runtime Work
 
-1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite.
+1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite. Partial: the CLI's headless brief shim (`cli/task-brief.ts`, dead since the engine-loop retirement — test-only callers) was deleted 2026-07-08; the shared `lib/delegation-brief.ts` stays (live in the web's delegated Coder/Explorer arcs) until the web-side deletion lands.
 2. Ship auto-branch-on-commit as the universal commit-flow for scratchpad work.
 3. Decide scratchpad durable-storage substrate per platform.
 4. Finish TUI daemon-session controller extraction.
