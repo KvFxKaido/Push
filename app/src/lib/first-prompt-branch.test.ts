@@ -58,21 +58,52 @@ describe('maybeBranchOnFirstPrompt', () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
-  it('forks a prompt-derived branch and migrates the chat on success', async () => {
+  it('forks a worker-named branch and migrates the chat on success', async () => {
+    const branchSwitch = { name: 'owner-repo/stop-draft-branches', kind: 'forked' as const };
+    const fork = vi.fn().mockResolvedValue({ ok: true, branchSwitch });
+    const apply = vi.fn();
+    const proposeName = vi.fn(async () => 'stop-draft-branches');
+    const result = await maybeBranchOnFirstPrompt(
+      {
+        ...base,
+        promptText:
+          'could we stop the web app from creating draft branches and just create the branch if it needs one?',
+      },
+      ctx,
+      { fork, apply, proposeName },
+    );
+    expect(proposeName).toHaveBeenCalledWith({
+      promptText:
+        'could we stop the web app from creating draft branches and just create the branch if it needs one?',
+      repoFullName: 'owner/repo',
+      prefix: 'owner-repo',
+    });
+    expect(fork).toHaveBeenCalledWith('sb-1', 'owner-repo/stop-draft-branches');
+    expect(apply).toHaveBeenCalledWith(branchSwitch, ctx);
+    expect(result.branched).toBe(true);
+    expect(result.name).toBe('owner-repo/stop-draft-branches');
+  });
+
+  it('falls back to the deterministic prompt slug when the proposer fails', async () => {
     const branchSwitch = { name: 'owner-repo/add-a-feature', kind: 'forked' as const };
     const fork = vi.fn().mockResolvedValue({ ok: true, branchSwitch });
     const apply = vi.fn();
-    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply });
-    expect(fork).toHaveBeenCalledWith('sb-1', expect.stringContaining('add-a-feature'));
-    expect(apply).toHaveBeenCalledWith(branchSwitch, ctx);
-    expect(result.branched).toBe(true);
-    expect(result.name).toContain('add-a-feature');
+    const proposeName = vi.fn(async () => {
+      throw new Error('provider down');
+    });
+    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply, proposeName });
+    expect(fork).toHaveBeenCalledWith('sb-1', 'owner-repo/add-a-feature');
+    expect(result).toMatchObject({ branched: true, name: 'owner-repo/add-a-feature' });
   });
 
   it('reports the error and does not migrate when the fork fails', async () => {
     const fork = vi.fn().mockResolvedValue({ ok: false, errorMessage: 'no sandbox' });
     const apply = vi.fn();
-    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply });
+    const result = await maybeBranchOnFirstPrompt(base, ctx, {
+      fork,
+      apply,
+      proposeName: async () => null,
+    });
     expect(apply).not.toHaveBeenCalled();
     expect(result).toMatchObject({ branched: false, error: 'no sandbox' });
     expect(fork).toHaveBeenCalledTimes(1); // non-collision error → no retry
@@ -88,6 +119,7 @@ describe('maybeBranchOnFirstPrompt', () => {
     const result = await maybeBranchOnFirstPrompt({ ...base, promptText: 'Fix login' }, ctx, {
       fork,
       apply,
+      proposeName: async () => 'fix-login',
     });
     expect(fork).toHaveBeenCalledTimes(2);
     expect(fork.mock.calls[1][1]).toMatch(/-2$/); // second attempt is suffixed

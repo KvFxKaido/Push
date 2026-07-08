@@ -27,7 +27,10 @@ import { setLastUsedProvider, type PreferredProvider } from '@/lib/providers';
 import { getDefaultVerificationPolicy } from '@/lib/verification-policy';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { resolveWebAutoBranchOnCommitEnabled } from '@/lib/ensure-commit-target-branch';
-import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
+import {
+  maybeBranchOnFirstPrompt,
+  startFirstPromptBranchNameSuggestion,
+} from '@/lib/first-prompt-branch';
 import type { BranchForkMigrationContext } from '@/lib/branch-fork-migration';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { createId, generateTitle } from './chat-persistence';
@@ -195,6 +198,7 @@ export async function prepareSendContext(
     ...(branch !== undefined ? { branch } : {}),
   });
   const firstAssistant = buildStreamingAssistant(currentWriteBranch);
+  const autoBranchOnFirstPromptEnabled = resolveWebAutoBranchOnCommitEnabled();
 
   // When branch-on-first-prompt may fire below, defer the streaming-assistant
   // placeholder until *after* the fork so it is written with the post-fork
@@ -209,11 +213,22 @@ export async function prepareSendContext(
   // immediate placeholder instead of deferring for a fork that won't happen.
   const mayBranchOnFirstPrompt = Boolean(
     branchDeps &&
+      autoBranchOnFirstPromptEnabled &&
       isFirstMessage &&
       branchDeps.repoFullName &&
       branchInfo?.currentBranch &&
       branchInfo.currentBranch === (branchInfo.defaultBranch ?? 'main'),
   );
+  const firstPromptBranchNameSuggestion = branchDeps
+    ? startFirstPromptBranchNameSuggestion({
+        enabled: autoBranchOnFirstPromptEnabled,
+        isFirstMessage,
+        promptText: trimmedText,
+        repoFullName: branchDeps.repoFullName,
+        currentBranch: branchInfo?.currentBranch,
+        defaultBranch: branchInfo?.defaultBranch,
+      })
+    : undefined;
 
   callbacks.updateConversations((prev) => {
     const messages =
@@ -270,7 +285,7 @@ export async function prepareSendContext(
   if (branchDeps) {
     await maybeBranchOnFirstPrompt(
       {
-        enabled: resolveWebAutoBranchOnCommitEnabled(),
+        enabled: autoBranchOnFirstPromptEnabled,
         isFirstMessage,
         promptText: trimmedText,
         repoFullName: branchDeps.repoFullName,
@@ -291,6 +306,7 @@ export async function prepareSendContext(
         dirtyConversationIdsRef: refs.dirtyConversationIdsRef,
         runtimeHandlersRef: branchDeps.runtimeHandlersRef,
       },
+      { proposedName: firstPromptBranchNameSuggestion },
     );
   }
 

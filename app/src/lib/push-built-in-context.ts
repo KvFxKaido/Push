@@ -56,7 +56,7 @@ Safety and delivery:
 Sandbox:
 - Cloudflare Sandbox is the default ephemeral Linux workspace; Modal remains an explicit fallback
 - Hashline-based edits and workspace-revision stale checks are the preferred safe write path
-- sandbox_save_draft is an intentional unaudited WIP checkpoint, not a normal save action`;
+- sandbox_save_draft is an intentional unaudited WIP checkpoint on the active branch, not a normal save action`;
 
 export function isPushRepo(repoFullName?: string | null): boolean {
   const value = (repoFullName || '').trim().toLowerCase();

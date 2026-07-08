@@ -32,7 +32,7 @@ export type Capability =
   | 'sandbox:download' // Download or promote workspace artifacts
   | 'git:commit' // Create commits (prepare + auditor review)
   | 'git:push' // Push commits to the remote
-  | 'git:draft' // Quick-save uncommitted changes to a draft branch
+  | 'git:draft' // Quick-save uncommitted changes as a WIP commit
   | 'git:branch' // Create a new branch and switch to it
   | 'pr:read' // Read PRs, check mergeability, find existing PRs
   | 'pr:write' // Create or merge PRs, delete branches, edit PR metadata
@@ -800,7 +800,7 @@ export const CAPABILITY_LABELS: Readonly<Record<Capability, string>> = {
   'sandbox:download': 'download workspace',
   'git:commit': 'create commits',
   'git:push': 'push to remote',
-  'git:draft': 'save draft branches',
+  'git:draft': 'save WIP commits',
   'git:branch': 'create branches',
   'pr:read': 'read pull requests',
   'pr:write': 'create/merge pull requests',

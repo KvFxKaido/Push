@@ -59,6 +59,39 @@ export function deriveBranchNameFromPrompt(promptText: string, prefix: string): 
   return `${normalizedPrefix}/${slug || 'session'}`;
 }
 
+/**
+ * Normalize a worker/model-suggested first-prompt branch name. Unlike the raw
+ * prompt fallback above, this treats the suggestion as an intent summary:
+ * strip labels/prefixes, force Push's repo-derived namespace, and apply the
+ * same short-topic budget so a verbose response cannot become a bloated ref.
+ */
+export function deriveBranchNameFromPromptSuggestion(raw: string, prefix: string): string {
+  const normalizedPrefix = sanitizeBranchName(prefix).replace(/\//g, '-') || 'work';
+  let topic = unwrapFirstLine(raw)
+    .replace(/^(branch name|branch)\s*:\s*/i, '')
+    .replace(/^refs\/heads\//i, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .trim();
+
+  const ownPrefix = `${normalizedPrefix}/`;
+  if (topic.toLowerCase().startsWith(ownPrefix)) {
+    topic = topic.slice(ownPrefix.length);
+  } else if (topic.includes('/')) {
+    topic = topic.split('/').filter(Boolean).at(-1) ?? topic;
+  }
+
+  const slug = sanitizeBranchName(topic)
+    .replace(/\//g, '-')
+    .split('-')
+    .filter(Boolean)
+    .slice(0, 8)
+    .join('-')
+    .slice(0, 48)
+    .replace(/-+$/, '');
+
+  return `${normalizedPrefix}/${slug || 'session'}`;
+}
+
 export function normalizeSuggestedBranchName(raw: string, prefix: string): string {
   const normalizedPrefix = sanitizeBranchName(prefix).replace(/\//g, '-') || 'work';
   const firstLine = unwrapFirstLine(raw)

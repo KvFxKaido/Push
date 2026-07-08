@@ -82,7 +82,6 @@ import {
 import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import type { PushGit } from '@push/lib/git/push-git';
 import type { PushPlan } from '@push/lib/git/push-plan';
-import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
 import { isDefinitivelyGoneMessage } from './sandbox-error-utils';
 import {
   classifyError,
@@ -229,9 +228,8 @@ export interface PromoteToGithubArgs {
 /** Args accepted by `sandbox_save_draft`. */
 export interface SaveDraftArgs {
   /**
-   * Optional draft branch name. If provided, must start with `draft/`
-   * (the case arm rejects non-draft branch names because this tool
-   * skips the Auditor — drafts are WIP and unaudited).
+   * Deprecated compatibility input. The save-draft tool no longer creates or
+   * switches to caller-supplied branches; use `sandbox_create_branch` first.
    */
   branch_name?: string;
   /** Commit message; defaults to `'WIP: draft save'` when omitted. */
@@ -1169,58 +1167,85 @@ export async function handleSaveDraft(
     };
   }
 
+  if (args.branch_name?.trim()) {
+    return {
+      text: '[Tool Error — sandbox_save_draft]\nbranch_name is no longer supported. Use sandbox_create_branch(name) first, then call sandbox_save_draft(message).',
+    };
+  }
+
   // Step 2: Get current branch (null → '' when detached / not a repo).
   // `secretScan` matters most here: save_draft is the one release path that
   // skips the Auditor, so the deterministic pre-push scan is the only gate
-  // standing between a draft credential and origin.
+  // standing between a WIP credential and origin.
   const pushGit = createReleasePushGit(ctx, {
     secretScan: true,
   });
-  const currentBranch = (await pushGit.currentBranch()) ?? '';
+  const liveBranch = (await pushGit.currentBranch()) ?? '';
+  const trackedBranch = ctx.currentBranch?.trim() || '';
+  const currentBranchForPolicy = liveBranch || trackedBranch;
+  const defaultBranchForPolicy =
+    ctx.defaultBranch?.trim() ||
+    (currentBranchForPolicy === 'main' || currentBranchForPolicy === 'master'
+      ? currentBranchForPolicy
+      : undefined);
+  const draftMessage = args.message || 'WIP: draft save';
 
-  // Step 3: Determine draft branch name — must be a valid ref and start with
-  // draft/ (unaudited path). Validate ref shape like the typed branch tools
-  // so a malformed/leading-hyphen name can't reach createBranch.
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  if (args.branch_name && isInvalidGitRef(args.branch_name)) {
+  // Step 3: If saving from the default branch, fork first so the unaudited WIP
+  // commit does not land on main. This intentionally reuses the normal commit
+  // auto-branch seam instead of minting a special draft/* branch.
+  let branchTarget: Awaited<ReturnType<typeof ensureCommitTargetBranch>>;
+  try {
+    branchTarget = await ensureCommitTargetBranch({
+      sandboxId: ctx.sandboxId,
+      currentBranch: currentBranchForPolicy,
+      defaultBranch: defaultBranchForPolicy,
+      diff: draftDiffResult.diff,
+      commitMessage: draftMessage,
+      proposeName: createModelCommitBranchNameProposer(),
+      fork: ctx.forkCommitTargetBranch,
+      branchExists: ctx.branchExists,
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : 'branch creation failed';
     return {
-      text: `[Tool Error — sandbox_save_draft]\nInvalid branch name "${args.branch_name}". ${GIT_REF_VALIDATION_DETAIL}`,
+      text: `[Tool Error — sandbox_save_draft]\nFailed to create branch for WIP save: ${reason}`,
     };
   }
-  if (args.branch_name && !args.branch_name.startsWith('draft/')) {
-    return {
-      text: '[Tool Error — sandbox_save_draft]\nbranch_name must start with "draft/". This tool skips Auditor review and is restricted to draft branches. Use sandbox_commit for non-draft branches.',
-    };
-  }
-  const draftBranchName = args.branch_name || `draft/${currentBranch || 'main'}-${timestamp}`;
 
-  // Step 4: Create draft branch if not already on the requested one. If the
-  // caller passed an explicit branch_name and it differs from the current
-  // branch, honor the request even when the current branch is also a draft/
-  // branch — otherwise an explicit target is silently ignored.
-  const needsNewBranch = args.branch_name
-    ? args.branch_name !== currentBranch
-    : !currentBranch.startsWith('draft/');
-  if (needsNewBranch) {
-    const checkoutResult = await pushGit.createBranch(draftBranchName);
-    if (!checkoutResult.ok) {
+  if (!branchTarget.switched && ctx.isMainProtected) {
+    const protectedBranches = new Set(['main', 'master']);
+    if (ctx.defaultBranch) protectedBranches.add(ctx.defaultBranch);
+    if (!liveBranch || protectedBranches.has(liveBranch)) {
+      const protectErr: StructuredToolError = {
+        type: 'PROTECT_MAIN_BLOCKED',
+        retryable: false,
+        message:
+          'Protect Main is enabled and auto-branch is off — this WIP save would land on the protected branch. Create a feature branch first, then retry.',
+      };
       return {
-        text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
+        text: formatStructuredError(
+          protectErr,
+          `[Tool Error — sandbox_save_draft]\n${protectErr.message}`,
+        ),
+        structuredError: protectErr,
       };
     }
-    ctx.onBranchChanged?.(draftBranchName);
   }
 
-  const activeDraftBranch = needsNewBranch ? draftBranchName : currentBranch;
+  const activeBranch = branchTarget.switched ? branchTarget.branch : liveBranch;
+  if (!activeBranch) {
+    return {
+      text: '[Tool Error — sandbox_save_draft]\nCannot save WIP because the working copy is not on a branch. Use sandbox_create_branch(name) first, then retry.',
+    };
+  }
 
-  // Step 5: Stage + commit (no Auditor — drafts are WIP). The backend stages
-  // (`add -A`) then commits in one call.
-  const draftMessage = args.message || 'WIP: draft save';
+  // Step 4: Stage + commit (no Auditor — this is an intentional WIP save). The
+  // backend stages (`add -A`) then commits in one call.
   const commitResult = await pushGit.commit({ message: draftMessage });
   if (!commitResult.ok) {
     notifyWorkspaceMutation(ctx.sandboxId);
     return {
-      text: `[Tool Error — sandbox_save_draft]\nFailed to commit draft: ${commitResult.result?.stderr ?? ''}`,
+      text: `[Tool Error — sandbox_save_draft]\nFailed to commit WIP save: ${commitResult.result?.stderr ?? ''}`,
     };
   }
   // Read the new HEAD via plumbing rather than parsing the commit's human
@@ -1230,22 +1255,23 @@ export async function handleSaveDraft(
   ctx.clearFileVersionCache(ctx.sandboxId);
   ctx.clearPrefetchedEditFileCache(ctx.sandboxId);
 
-  // Step 6: Push to remote
-  const pushResult = await pushGit.push({ setUpstream: true, ref: activeDraftBranch });
+  // Step 5: Push to remote
+  const pushResult = await pushGit.push({ setUpstream: true, ref: activeBranch });
 
   const pushOk = pushResult.ok;
   const draftStats = parseDiffStats(draftDiffResult.diff);
 
   const draftLines: string[] = [
     `[Tool Result — sandbox_save_draft]`,
-    `Draft saved to branch: ${activeDraftBranch}`,
+    `Saved WIP to branch: ${activeBranch}`,
+    ...(branchTarget.switched ? ['Forked off the default branch first.'] : []),
     `Commit: ${commitSha}`,
     `Message: ${draftMessage}`,
     `${draftStats.filesChanged} file${draftStats.filesChanged !== 1 ? 's' : ''} changed, +${draftStats.additions} -${draftStats.deletions}`,
     pushOk
       ? 'Pushed to remote.'
       : pushResult.blocked
-        ? `Push blocked: ${pushResult.stderr} The draft is committed locally; remove the secret, then use sandbox_push() to retry.`
+        ? `Push blocked: ${pushResult.stderr} The WIP commit is local; remove the secret, then use sandbox_push() to retry.`
         : `Push failed: ${pushResult.stderr}. Use sandbox_push() to retry.`,
   ];
 
@@ -1260,18 +1286,6 @@ export async function handleSaveDraft(
   return {
     text: draftLines.join('\n'),
     card: { type: 'diff-preview', data: draftCardData },
-    // Propagate branch switch to app state so chat/merge context stays in
-    // sync. 'switched' (not 'forked'): user intent here is checkpointing /
-    // staging a commit, not "fork my work into a new conversation". Slice 2
-    // may revisit if runtime usage proves this wrong.
-    ...(needsNewBranch
-      ? {
-          branchSwitch: {
-            name: activeDraftBranch,
-            kind: 'switched' as const,
-            source: 'release_draft' as const,
-          },
-        }
-      : {}),
+    ...(branchTarget.switched ? { branchSwitch: branchTarget.branchSwitch } : {}),
   };
 }

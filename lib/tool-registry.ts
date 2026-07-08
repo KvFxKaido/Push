@@ -591,8 +591,9 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'sandbox',
     readOnly: false,
     statusLabel: 'Sandbox operation...',
-    protocolSignature: 'draft(message?, branch_name?)',
-    protocolDescription: 'Quick-save all uncommitted changes to a draft branch',
+    protocolSignature: 'draft(message?)',
+    protocolDescription:
+      'Quick-save uncommitted changes on the active branch, auto-branching off the default branch when needed',
     exampleJson: '{"tool": "draft", "args": {"message": "WIP: checkpoint"}}',
   },
   {

@@ -32,13 +32,26 @@ vi.mock('./chat-persistence', async (importOriginal) => {
   };
 });
 
+const firstPromptBranchMocks = vi.hoisted(() => ({
+  maybeBranchOnFirstPrompt: vi.fn(async () => ({ branched: false })),
+  startFirstPromptBranchNameSuggestion: vi.fn(() => undefined),
+}));
+
 vi.mock('@/lib/first-prompt-branch', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/first-prompt-branch')>();
-  return { ...actual, maybeBranchOnFirstPrompt: vi.fn(async () => ({ branched: false })) };
+  return {
+    ...actual,
+    maybeBranchOnFirstPrompt: firstPromptBranchMocks.maybeBranchOnFirstPrompt,
+    startFirstPromptBranchNameSuggestion:
+      firstPromptBranchMocks.startFirstPromptBranchNameSuggestion,
+  };
 });
 
 import { setLastUsedProvider } from '@/lib/providers';
-import { maybeBranchOnFirstPrompt } from '@/lib/first-prompt-branch';
+import {
+  maybeBranchOnFirstPrompt,
+  startFirstPromptBranchNameSuggestion,
+} from '@/lib/first-prompt-branch';
 import type { FirstPromptBranchDeps } from './chat-prepare-send';
 
 function makeRefs(initial: Partial<PrepareSendRefs> = {}): PrepareSendRefs {
@@ -473,6 +486,41 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(input.repoFullName).toBe('owner/repo');
     // Migration targets THIS send's chat, not whatever activeChatIdRef holds.
     expect(migrationCtx.activeChatIdRef.current).toBe('chat-1');
+  });
+
+  it('starts branch naming before sandbox prewarm and passes the promise into the fork helper', async () => {
+    const order: string[] = [];
+    vi.mocked(startFirstPromptBranchNameSuggestion).mockImplementationOnce(() => {
+      order.push('name');
+      return Promise.resolve('owner-repo/smarter-branch-name');
+    });
+    vi.mocked(maybeBranchOnFirstPrompt).mockImplementationOnce(async (_input, _ctx, deps) => {
+      order.push('fork');
+      await expect(deps?.proposedName).resolves.toBe('owner-repo/smarter-branch-name');
+      return { branched: false };
+    });
+    const refs = makeRefs({
+      conversationsRef: { current: { 'chat-1': makeConversation({ messages: [] }) } },
+      ensureSandboxRef: {
+        current: vi.fn(async () => {
+          order.push('sandbox');
+          return 'sb-99';
+        }),
+      },
+    });
+    await prepareSendContext(
+      {
+        trimmedText: 'Add a feature',
+        attachments: undefined,
+        options: undefined,
+        chatId: 'chat-1',
+      },
+      refs,
+      makeCallbacks(),
+      makeBranchDeps(),
+    );
+
+    expect(order).toEqual(['name', 'sandbox', 'fork']);
   });
 
   it('passes isFirstMessage:false for a follow-up so the helper no-ops', async () => {

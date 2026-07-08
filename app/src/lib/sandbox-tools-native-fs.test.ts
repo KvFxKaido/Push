@@ -348,23 +348,25 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('Forked off the default branch first');
   });
 
-  it('rekeys the on-device working-copy registry when native save-draft creates a branch', async () => {
+  it('rekeys the on-device working-copy registry when native save-draft auto-forks off default', async () => {
+    fakeNativeGit.currentBranch.mockResolvedValueOnce({ branch: 'main' });
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_save_draft', args: { branch_name: 'draft/native-save', message: 'WIP' } },
+      { tool: 'sandbox_save_draft', args: { message: 'WIP' } },
       '',
-      { nativeFsScope: scope },
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
     );
     expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
       dir: '/data/clone',
-      name: 'draft/native-save',
+      name: 'feature/native-auto',
       from: undefined,
     });
     expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
       repoFullName: 'owner/repo',
-      branch: 'draft/native-save',
+      branch: 'feature/native-auto',
     });
-    expect(result.branchSwitch?.name).toBe('draft/native-save');
-    expect(result.text).toContain('Draft saved to branch: draft/native-save');
+    expect(result.branchSwitch?.name).toBe('feature/native-auto');
+    expect(result.text).toContain('Saved WIP to branch: feature/native-auto');
+    expect(result.text).toContain('Forked off the default branch first.');
   });
 
   it('blocks native sandbox_push on secrets found in the pushed patch series', async () => {

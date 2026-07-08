@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deriveBranchNameFromPrompt } from './branch-names';
+import { deriveBranchNameFromPrompt, deriveBranchNameFromPromptSuggestion } from './branch-names';
 
 describe('deriveBranchNameFromPrompt', () => {
   it('namespaces a slug of the first line under the prefix', () => {
@@ -38,5 +38,36 @@ describe('deriveBranchNameFromPrompt', () => {
     const slug = name.slice('push/'.length);
     expect(slug.length).toBeLessThanOrEqual(48);
     expect(slug.endsWith('-')).toBe(false);
+  });
+});
+
+describe('deriveBranchNameFromPromptSuggestion', () => {
+  it('forces the repo prefix even when the worker returns only a topic', () => {
+    expect(deriveBranchNameFromPromptSuggestion('stop-draft-branches', 'owner-repo')).toBe(
+      'owner-repo/stop-draft-branches',
+    );
+  });
+
+  it('strips labels, refs, quotes, and a repeated prefix', () => {
+    expect(
+      deriveBranchNameFromPromptSuggestion(
+        'Branch name: "refs/heads/owner-repo/native-gates"',
+        'owner-repo',
+      ),
+    ).toBe('owner-repo/native-gates');
+  });
+
+  it('does not accept a different namespace from the worker', () => {
+    expect(deriveBranchNameFromPromptSuggestion('feature/native-push-gates', 'owner-repo')).toBe(
+      'owner-repo/native-push-gates',
+    );
+  });
+
+  it('bounds verbose worker output with no trailing hyphen', () => {
+    const name = deriveBranchNameFromPromptSuggestion(
+      'one two three four five six seven eight nine ten eleven twelve',
+      'push',
+    );
+    expect(name).toBe('push/one-two-three-four-five-six-seven-eight');
   });
 });
