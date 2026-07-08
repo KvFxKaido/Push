@@ -20,6 +20,8 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import {
   enforceRoleCapability,
   formatRoleCapabilityDenial,
+  getEffectiveCapabilities,
+  getToolCapabilities,
   roleCanUseTool,
   type ExecutionMode,
 } from '../lib/capabilities.ts';
@@ -2239,6 +2241,39 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       remoteGitHubAvailable: resolvedGitHubToken.length > 0,
     });
     if (!check.ok) {
+      // Symmetric structured log so a main-loop capability denial is greppable
+      // in ops. Returning the denial only to the model (as `text`/
+      // `structuredError`) leaves operators blind to a misconfigured grant that
+      // quietly burns tokens — the OpenCode silent-failure class. The event name
+      // and payload shape match the CLI Explorer gate (`cli/pushd.ts`) so a
+      // single grep/dashboard covers both; the *stream* follows the Symmetric
+      // structured logs convention — `console.error` with a semantic `level`
+      // field, decoupled (cf. `lib/context-memory.ts` / `lib/verbatim-retain.ts`
+      // doing `console.error({ level: 'warn', … })`). stderr keeps it off the
+      // user-output / --json stdout channel.
+      try {
+        const granted =
+          check.type === 'ROLE_CAPABILITY_DENIED'
+            ? Array.from(
+                getEffectiveCapabilities(options.role as AgentRole, CLI_EXECUTION_MODE, {
+                  remoteGitHubAvailable: resolvedGitHubToken.length > 0,
+                }),
+              )
+            : [];
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'role_capability_denied',
+            type: check.type,
+            role: typeof options.role === 'string' ? options.role : null,
+            tool: canonicalForCheck || (typeof call?.tool === 'string' ? call.tool : null),
+            required: getToolCapabilities(canonicalForCheck),
+            granted,
+          }),
+        );
+      } catch {
+        // JSON.stringify cycle guard — never let logging crash the executor.
+      }
       return {
         ok: false,
         text: formatRoleCapabilityDenial(call?.tool ?? '(unknown)', check),

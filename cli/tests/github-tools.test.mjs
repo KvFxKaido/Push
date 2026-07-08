@@ -191,14 +191,45 @@ describe('GitHub tool dispatch (with token, mocked fetch)', () => {
       fetched = true;
       return new Response('{}', { status: 200 });
     };
-    const result = await _rawExecuteToolCall(
-      { tool: 'pr_create', args: { repo: 'owner/repo', title: 't', head: 'f', base: 'main' } },
-      process.cwd(),
-      { role: 'explorer' },
-    );
+    // Capture the symmetric structured log so operators can grep the denial —
+    // returning the block only to the model (structuredError) is not enough.
+    const errCalls = [];
+    const originalError = console.error;
+    console.error = (...args) => {
+      errCalls.push(args);
+    };
+    let result;
+    try {
+      result = await _rawExecuteToolCall(
+        { tool: 'pr_create', args: { repo: 'owner/repo', title: 't', head: 'f', base: 'main' } },
+        process.cwd(),
+        { role: 'explorer' },
+      );
+    } finally {
+      console.error = originalError;
+    }
     assert.equal(result.ok, false);
     assert.equal(result.structuredError?.code, 'ROLE_CAPABILITY_DENIED');
     assert.equal(fetched, false, 'must not hit the API when capability-denied');
+
+    const denialLog = errCalls
+      .map(([m]) => {
+        try {
+          return JSON.parse(m);
+        } catch {
+          return null;
+        }
+      })
+      .find((p) => p && p.event === 'role_capability_denied');
+    assert.ok(denialLog, 'expected a role_capability_denied structured log on stderr');
+    assert.equal(denialLog.type, 'ROLE_CAPABILITY_DENIED');
+    assert.equal(denialLog.role, 'explorer');
+    assert.equal(denialLog.tool, 'create_pr');
+    assert.deepEqual(denialLog.required, ['pr:write']);
+    assert.deepEqual(
+      new Set(denialLog.granted),
+      new Set(getEffectiveCapabilities('explorer', 'local-daemon')),
+    );
   });
 
   it('converts a thrown GitHub core error into a structured tool result (no rejection)', async () => {

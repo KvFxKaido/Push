@@ -27,6 +27,8 @@ import {
   type CapabilityLedger,
   enforceRoleCapability,
   formatRoleCapabilityDenial,
+  getEffectiveCapabilities,
+  getToolCapabilities,
 } from './capabilities.js';
 import {
   correlationToSpanAttributes,
@@ -476,6 +478,31 @@ export function buildCoderToolExec<
     // delegation.
     const roleCheck = enforceRoleCapability('coder', call.call.tool);
     if (!roleCheck.ok) {
+      // Symmetric structured log so a delegated-Coder denial is greppable in
+      // ops. Without it, a misconfigured Coder grant would bounce every
+      // delegated call back to the model as `reason` — visible to the model,
+      // invisible to operators — which is exactly the silent token-burn failure
+      // the OpenCode audit called out at the subagent layer. The event name and
+      // payload shape match the CLI Explorer gate (`cli/pushd.ts`) so one
+      // grep/dashboard covers both; the *stream* follows the Symmetric
+      // structured logs convention for shared `lib/` — `console.error` with a
+      // semantic `level` field, decoupled (cf. `lib/context-memory.ts` /
+      // `lib/verbatim-retain.ts`), keeping it off the CLI's --json stdout.
+      try {
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'role_capability_denied',
+            type: roleCheck.type,
+            role: 'coder',
+            tool: call.call.tool,
+            required: getToolCapabilities(call.call.tool),
+            granted: Array.from(getEffectiveCapabilities('coder')),
+          }),
+        );
+      } catch {
+        // JSON.stringify cycle guard — never let logging crash the executor.
+      }
       // Use the shared formatter so the denial body matches byte-for-byte
       // what the web runtime and CLI kernel emit. The Coder result shape
       // surfaces this as `reason` rather than a structured tool result,
