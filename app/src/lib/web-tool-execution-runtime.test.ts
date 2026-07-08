@@ -68,6 +68,8 @@ vi.mock('@push/lib/context-memory-store', () => ({
 }));
 
 import { WebToolExecutionRuntime } from './web-tool-execution-runtime';
+import { ApprovalGateRegistry } from './approval-gates';
+import type { ToolHookRegistry } from './tool-hooks';
 import * as sandboxTools from './sandbox-tools';
 import * as githubTools from './github-tools';
 import * as memoryExec from '@push/lib/memory-tool-exec';
@@ -217,6 +219,89 @@ describe('WebToolExecutionRuntime — runtime-level role capability invariant', 
       expect(completeEvent.error?.type).toBe('ROLE_CAPABILITY_DENIED');
       expect(completeEvent.error?.retryable).toBe(false);
       expect(typeof completeEvent.durationMs).toBe('number');
+    });
+  });
+
+  describe('non-capability denial paths also emit a paired terminal lifecycle', () => {
+    // The capability gate pairs start↔complete (test above); the sibling
+    // pre-hook and approval-gate denials used to return early WITHOUT the
+    // complete emit, leaving any attached observer with a tool stuck
+    // in-flight forever. These pin that they now emit the terminal event.
+    function captureEmit() {
+      const events: Array<{ kind: 'start' | 'complete'; payload: unknown }> = [];
+      return {
+        events,
+        emit: {
+          toolExecutionStart: (e: unknown) => events.push({ kind: 'start', payload: e }),
+          toolExecutionComplete: (e: unknown) => events.push({ kind: 'complete', payload: e }),
+          toolCallMalformed: () => {},
+        },
+      };
+    }
+
+    it('pre-hook deny emits toolExecutionComplete with the hook error type', async () => {
+      const { events, emit } = captureEmit();
+      // A read tool the explorer CAN use capability-wise, denied by an
+      // injected pre-hook — isolates the pre-hook path from the capability gate.
+      const hooks: ToolHookRegistry = {
+        pre: [
+          {
+            matcher: 'sandbox_read_file',
+            hook: () => ({
+              decision: 'deny' as const,
+              reason: 'blocked by test hook',
+              errorType: 'PRE_HOOK_BLOCKED',
+            }),
+          },
+        ],
+        post: [],
+      };
+
+      const result = await runtime.execute(readCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-1',
+        isMainProtected: false,
+        role: 'explorer',
+        hooks,
+        emit,
+      });
+
+      expect(result.structuredError?.type).toBe('PRE_HOOK_BLOCKED');
+      expect(events.map((e) => e.kind)).toEqual(['start', 'complete']);
+      const complete = events[1].payload as { error?: { type: string; retryable?: boolean } };
+      expect(complete.error?.type).toBe('PRE_HOOK_BLOCKED');
+      expect(complete.error?.retryable).toBe(false);
+      // The executor must never run when a pre-hook denies.
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
+    });
+
+    it('approval-gate blocked emits toolExecutionComplete with APPROVAL_GATE_BLOCKED', async () => {
+      const { events, emit } = captureEmit();
+      const approvalGates = new ApprovalGateRegistry();
+      approvalGates.register({
+        id: 'test-block',
+        label: 'test',
+        category: 'destructive_sandbox',
+        matcher: 'sandbox_read_file',
+        evaluate: () => 'blocked',
+        blockedReason: 'gate says no',
+        recoveryPath: 'ask nicely',
+      });
+
+      const result = await runtime.execute(readCall(), {
+        allowedRepo: 'owner/repo',
+        sandboxId: 'sb-1',
+        isMainProtected: false,
+        role: 'explorer',
+        approvalGates,
+        emit,
+      });
+
+      expect(result.structuredError?.type).toBe('APPROVAL_GATE_BLOCKED');
+      expect(events.map((e) => e.kind)).toEqual(['start', 'complete']);
+      const complete = events[1].payload as { error?: { type: string } };
+      expect(complete.error?.type).toBe('APPROVAL_GATE_BLOCKED');
+      expect(vi.mocked(sandboxTools.executeSandboxToolCall)).not.toHaveBeenCalled();
     });
   });
 

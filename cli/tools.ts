@@ -2311,6 +2311,26 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
     );
     if (preResult?.decision === 'deny') {
       const reason = preResult.reason || 'Blocked by pre-execution hook.';
+      // Symmetric structured log so a pre-hook / Protect Main block is greppable
+      // in ops, matching the capability-denial (`role_capability_denied`) and
+      // auditor-gate (`auditor_gate_unsafe_blocked`) events. Without it a
+      // Protect Main refusal returns only to the model — the OpenCode
+      // silent-denial class, for a hook reason instead of a capability one.
+      // CLI path → `console.error` (stdout is reserved for user output / --json).
+      try {
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'pre_hook_denied',
+            type: preResult.errorType ?? 'PRE_HOOK_BLOCKED',
+            role: typeof options.role === 'string' ? options.role : null,
+            tool: toolNameForHooks || null,
+            reason,
+          }),
+        );
+      } catch {
+        // JSON.stringify cycle guard — never let logging crash the executor.
+      }
       return {
         ok: false,
         text: `[Tool Blocked — ${toolNameForHooks}]\n${reason}`,
