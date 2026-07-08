@@ -1662,11 +1662,19 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
       })
       .filter((p) => p && p.event === 'coder_run_cost');
 
-  it('emits a run-cost receipt on normal completion (policy halt)', async () => {
+  it('accounts provider usage into the receipt even when uncapped (no budget)', async () => {
+    // Regression pin for the Codex P2: the ledger.record used to be gated on
+    // `tokenBudget !== null`, so an uncapped run — the default — reported
+    // usedTokens: 0 despite the provider returning usage. The receipt exists to
+    // expose exactly this case, so it must reflect reported usage with no budget.
     const { stream } = makePushStream([
       [
         { type: 'text_delta', text: 'I am done.' },
-        { type: 'done', finishReason: 'stop' },
+        {
+          type: 'done',
+          finishReason: 'stop',
+          usage: { inputTokens: 1200, outputTokens: 300, totalTokens: 1500 },
+        },
       ],
     ]);
     const logged: string[] = [];
@@ -1682,14 +1690,17 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
     const receipts = parseReceipts(logged);
     expect(receipts).toHaveLength(1);
     const receipt = receipts[0];
-    expect(receipt.stopReason).toBe('completed');
+    // Default evaluateAfterModel halts → the after-model policy-halt path.
+    expect(receipt.stopReason).toBe('policy_halt');
     expect(receipt.model).toBe('coder-model');
     expect(receipt.leadMode).toBe(false);
     // No budget passed → uncapped.
     expect(receipt.limitTokens).toBeNull();
-    expect(typeof receipt.usedTokens).toBe('number');
-    expect(typeof receipt.reportedRounds).toBe('number');
-    expect(typeof receipt.estimatedRounds).toBe('number');
+    // The core of the regression: real provider usage, counted as reported,
+    // NOT zero.
+    expect(receipt.usedTokens).toBe(1500);
+    expect(receipt.reportedRounds).toBe(1);
+    expect(receipt.estimatedRounds).toBe(0);
   });
 
   it('emits exactly one receipt with stopReason max_rounds when the round cap is hit', async () => {
@@ -1731,5 +1742,85 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
     const receipts = parseReceipts(logged);
     expect(receipts).toHaveLength(1);
     expect(receipts[0].stopReason).toBe('max_rounds');
+  });
+
+  it('labels a loop halt as loop, not completed', async () => {
+    // A loop halt calls finishRound('completed') but returns stopReason 'loop';
+    // the receipt must reflect the run-level reason so a defensive halt does not
+    // read as a clean completion (fugu NOTE). Setup mirrors the exact-repeat
+    // breaker test above.
+    const rounds = Array.from({ length: 6 }, () => [
+      { type: 'text_delta', text: 'working' },
+      { type: 'done', finishReason: 'stop' },
+    ]);
+    const { stream } = makePushStream(rounds);
+    const call = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
+    const logged: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((arg) => {
+      if (typeof arg === 'string') logged.push(arg);
+    });
+    let result;
+    try {
+      result = await runCoderAgent(
+        baseCoderOptions({
+          stream,
+          leadMode: true,
+          harnessMaxRounds: 10,
+          detectAllToolCalls: () => ({
+            readOnly: [call],
+            mutating: null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          }),
+          detectAnyToolCall: () => call,
+          evaluateAfterModel: async () => null,
+        }),
+        { onStatus: () => {} },
+      );
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(result.stopReason).toBe('loop');
+    const receipts = parseReceipts(logged);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].stopReason).toBe('loop');
+  });
+
+  it('still emits the receipt when a host onRunEvent callback throws', async () => {
+    // The receipt must survive a misbehaving host callback (fugu WARNING): it is
+    // emitted before onRunEvent in finishRound, so a throwing turn_end handler
+    // unwinds the run but the cost line is already out.
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'I am done.' },
+        { type: 'done', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 5 } },
+      ],
+    ]);
+    const logged: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((arg) => {
+      if (typeof arg === 'string') logged.push(arg);
+    });
+    let threw = false;
+    try {
+      await runCoderAgent(baseCoderOptions({ stream }), {
+        onStatus: () => {},
+        onRunEvent: (e: { type: string }) => {
+          if (e.type === 'assistant.turn_end') throw new Error('host callback boom');
+        },
+      });
+    } catch {
+      threw = true;
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    expect(threw).toBe(true);
+    const receipts = parseReceipts(logged);
+    expect(receipts).toHaveLength(1);
+    // Default halt path — emitted (explicitly, before finishRound's onRunEvent)
+    // even though the turn_end handler threw.
+    expect(receipts[0].stopReason).toBe('policy_halt');
   });
 });
