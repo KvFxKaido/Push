@@ -368,13 +368,20 @@ describe('sandbox-tools native FS routing', () => {
   });
 
   it('blocks native sandbox_push on secrets found in the pushed patch series', async () => {
+    // Assemble the fake key from fragments so THIS test file's own source line
+    // doesn't itself match the secret scanner. The push-time scanner scans the
+    // pushed diff, which includes this file — a literal `sk-proj-…` here means
+    // every push touching this test blocks on its own fixture. The joined value
+    // is still a valid OpenAI key shape, so the block assertion below is
+    // unchanged; the test still proves the scanner catches key-shaped strings.
+    const fakeOpenAiKey = ['sk', 'proj', 'abcdefghijklmnopqrstuvwxyz1234567890'].join('-');
     fakeNativeGit.logPatch.mockResolvedValueOnce({
       patch:
         'commit abc123\n' +
         'diff --git a/keys.txt b/keys.txt\n' +
         '+++ b/keys.txt\n' +
         '@@ -0,0 +1 @@\n' +
-        '+OPENAI_API_KEY=sk-proj-abcdefghijklmnopqrstuvwxyz1234567890\n',
+        `+OPENAI_API_KEY=${fakeOpenAiKey}\n`,
     });
     const result = await executeSandboxToolCall({ tool: 'sandbox_push', args: {} }, '', {
       nativeFsScope: scope,
