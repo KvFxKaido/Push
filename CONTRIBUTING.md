@@ -41,12 +41,12 @@ Those constraints are part of the product, not temporary limitations.
 
 ## Local development
 
-The TypeScript toolchain is mid-transition to 7.0 and is split by package:
+The TypeScript toolchain is on **TS 7.0 GA**, still split by package:
 
-- **`cli/` and `mcp/github-server`** run **TS 7.0 RC** (`typescript@rc`). Both typecheck **and** emit go through the native `tsc` — `npm run typecheck` (root, covers `cli/`), `cd mcp/github-server && npm run typecheck`, plus `build:cli` and the MCP server's `build`. TS 7's `tsc` ships a platform-specific native binary under `optionalDependencies`.
-- **`app/`** stays on **TS 7 native-preview** typecheck (`tsgo` from `@typescript/native-preview`, also platform-specific `optionalDependencies`) plus **TS 6** (`typescript@^6.0.3`) for emit and ESLint. The app can't move to TS 7's `typescript` package yet: TS 7.0 only exposes the `./unstable/*` programmatic API, and `typescript-eslint` needs the legacy API that lands in **TS 7.1**. `cd app && npm run typecheck` covers the two leaf tsconfigs (`tsconfig.app.json`, `tsconfig.node.json`); emit is Vite's job.
+- **`cli/` and `mcp/github-server`** run **TS 7.0 GA** (`typescript@~7.0.2`). Both typecheck **and** emit go through the native `tsc` — `npm run typecheck` (root, covers `cli/`, which has no `package.json` of its own and compiles with the root's `typescript`), `cd mcp/github-server && npm run typecheck`, plus `build:cli` and the MCP server's `build`. TS 7's `tsc` ships a platform-specific native binary under `optionalDependencies`.
+- **`app/`** stays on **TS 7 native-preview** typecheck (`tsgo` from `@typescript/native-preview`, also platform-specific `optionalDependencies`) plus **TS 6** (`typescript@^6.0.3`) for ESLint (emit is Vite's job — no `tsc` involved). The app can't move to TS 7's `typescript` package yet: TS 7.0 GA ships **no** programmatic API (7.1 is expected to introduce a new one), and `typescript-eslint` still hard-caps its `typescript` peer at `<6.1.0` (as of 8.63.0). It keeps `tsgo` (a distinct binary) rather than GA `tsc` on purpose — GA `typescript@7`'s only bin is `tsc`, which would collide in `.bin/tsc` with the app's TS 6 copy. `cd app && npm run typecheck` covers the two leaf tsconfigs (`tsconfig.app.json`, `tsconfig.node.json`).
 
-`npm run typecheck:all` at the root runs everything (cli + mcp on `tsc`, app on `tsgo`). If you install with `--no-optional`, run on an unsupported platform, or otherwise see `tsgo: not found`, fall back to `npx tsc --noEmit` (cli, mcp/github-server) or `npx tsc -b` (app). When typescript-eslint supports TS 7.1, the app folds onto `typescript@rc`/`latest` too and the `tsgo` split goes away.
+`npm run typecheck:all` at the root runs everything (cli + mcp on `tsc`, app on `tsgo`). If you install with `--no-optional`, run on an unsupported platform, or otherwise see `tsgo: not found`, fall back to `npx tsc --noEmit` (cli, mcp/github-server) or `npx tsc -b` (app). When typescript-eslint supports TS 7, the app drops native-preview and folds onto `typescript@7` too, and the `tsgo` split goes away.
 
 ## Environments (WSL / Linux / macOS / Windows)
 

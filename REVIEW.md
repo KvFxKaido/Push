@@ -210,7 +210,7 @@ their spec at "Draft". See `docs/decisions/README.md` for the label vocabulary.
 PRs should keep these green (canonical commands in `AGENTS.md`):
 
 - **Test:** `TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github` (web: `cd app && npm test`)
-- **Typecheck:** `npm run typecheck:all` (cli + mcp run TS 7.0 RC `tsc`; app
+- **Typecheck:** `npm run typecheck:all` (cli + mcp run TS 7.0 GA `tsc`; app
   runs `tsgo`, falling back to `npx tsc -b` where `tsgo` is unavailable)
 - **Lint/format:** `npm run lint` (ESLint, app-scoped) / `npm run format:check`
   (Biome). Biome's linter is intentionally disabled repo-wide; don't flag that as
