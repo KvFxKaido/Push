@@ -1,5 +1,31 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const modelProposerMocks = vi.hoisted(() => ({
+  getActiveProvider: vi.fn(() => 'demo'),
+  getProviderPushStream: vi.fn((provider: string) => `stream:${provider}`),
+  getModelForRole: vi.fn(() => ({ id: 'global-model' })),
+  iteratePushStreamText: vi.fn(async () => ({
+    error: false,
+    text: 'owner-repo/chat-route-name',
+  })),
+}));
+
+vi.mock('./orchestrator-provider-routing', () => ({
+  getActiveProvider: modelProposerMocks.getActiveProvider,
+  getProviderPushStream: modelProposerMocks.getProviderPushStream,
+}));
+
+vi.mock('./providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./providers')>()),
+  getModelForRole: modelProposerMocks.getModelForRole,
+}));
+
+vi.mock('@push/lib/stream-utils', () => ({
+  iteratePushStreamText: modelProposerMocks.iteratePushStreamText,
+}));
+
 import {
+  createModelFirstPromptBranchNameProposer,
   type FirstPromptBranchInput,
   maybeBranchOnFirstPrompt,
   shouldBranchOnFirstPrompt,
@@ -15,6 +41,48 @@ const base: FirstPromptBranchInput = {
   currentBranch: 'main',
   defaultBranch: 'main',
 };
+
+beforeEach(() => {
+  modelProposerMocks.getActiveProvider.mockClear();
+  modelProposerMocks.getProviderPushStream.mockClear();
+  modelProposerMocks.getModelForRole.mockClear();
+  modelProposerMocks.iteratePushStreamText.mockClear();
+  modelProposerMocks.iteratePushStreamText.mockResolvedValue({
+    error: false,
+    text: 'owner-repo/chat-route-name',
+  });
+});
+
+describe('createModelFirstPromptBranchNameProposer', () => {
+  it('uses the chat-locked provider and model when they are supplied', async () => {
+    const proposeName = createModelFirstPromptBranchNameProposer({
+      providerOverride: 'openai',
+      modelOverride: 'gpt-5-mini',
+    });
+
+    await expect(
+      proposeName({
+        promptText: 'stop creating draft branches',
+        repoFullName: 'owner/repo',
+        prefix: 'owner-repo',
+      }),
+    ).resolves.toBe('owner-repo/chat-route-name');
+
+    expect(modelProposerMocks.getActiveProvider).not.toHaveBeenCalled();
+    expect(modelProposerMocks.getProviderPushStream).toHaveBeenCalledWith('openai');
+    expect(modelProposerMocks.getModelForRole).not.toHaveBeenCalled();
+    expect(modelProposerMocks.iteratePushStreamText).toHaveBeenCalledWith(
+      'stream:openai',
+      expect.objectContaining({
+        provider: 'openai',
+        model: 'gpt-5-mini',
+        hasSandbox: false,
+      }),
+      2500,
+      expect.stringContaining('2.5s'),
+    );
+  });
+});
 
 describe('shouldBranchOnFirstPrompt', () => {
   it('is true on the happy path', () => {
@@ -58,21 +126,52 @@ describe('maybeBranchOnFirstPrompt', () => {
     expect(apply).not.toHaveBeenCalled();
   });
 
-  it('forks a prompt-derived branch and migrates the chat on success', async () => {
+  it('forks a worker-named branch and migrates the chat on success', async () => {
+    const branchSwitch = { name: 'owner-repo/stop-draft-branches', kind: 'forked' as const };
+    const fork = vi.fn().mockResolvedValue({ ok: true, branchSwitch });
+    const apply = vi.fn();
+    const proposeName = vi.fn(async () => 'stop-draft-branches');
+    const result = await maybeBranchOnFirstPrompt(
+      {
+        ...base,
+        promptText:
+          'could we stop the web app from creating draft branches and just create the branch if it needs one?',
+      },
+      ctx,
+      { fork, apply, proposeName },
+    );
+    expect(proposeName).toHaveBeenCalledWith({
+      promptText:
+        'could we stop the web app from creating draft branches and just create the branch if it needs one?',
+      repoFullName: 'owner/repo',
+      prefix: 'owner-repo',
+    });
+    expect(fork).toHaveBeenCalledWith('sb-1', 'owner-repo/stop-draft-branches');
+    expect(apply).toHaveBeenCalledWith(branchSwitch, ctx);
+    expect(result.branched).toBe(true);
+    expect(result.name).toBe('owner-repo/stop-draft-branches');
+  });
+
+  it('falls back to the deterministic prompt slug when the proposer fails', async () => {
     const branchSwitch = { name: 'owner-repo/add-a-feature', kind: 'forked' as const };
     const fork = vi.fn().mockResolvedValue({ ok: true, branchSwitch });
     const apply = vi.fn();
-    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply });
-    expect(fork).toHaveBeenCalledWith('sb-1', expect.stringContaining('add-a-feature'));
-    expect(apply).toHaveBeenCalledWith(branchSwitch, ctx);
-    expect(result.branched).toBe(true);
-    expect(result.name).toContain('add-a-feature');
+    const proposeName = vi.fn(async () => {
+      throw new Error('provider down');
+    });
+    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply, proposeName });
+    expect(fork).toHaveBeenCalledWith('sb-1', 'owner-repo/add-a-feature');
+    expect(result).toMatchObject({ branched: true, name: 'owner-repo/add-a-feature' });
   });
 
   it('reports the error and does not migrate when the fork fails', async () => {
     const fork = vi.fn().mockResolvedValue({ ok: false, errorMessage: 'no sandbox' });
     const apply = vi.fn();
-    const result = await maybeBranchOnFirstPrompt(base, ctx, { fork, apply });
+    const result = await maybeBranchOnFirstPrompt(base, ctx, {
+      fork,
+      apply,
+      proposeName: async () => null,
+    });
     expect(apply).not.toHaveBeenCalled();
     expect(result).toMatchObject({ branched: false, error: 'no sandbox' });
     expect(fork).toHaveBeenCalledTimes(1); // non-collision error → no retry
@@ -88,6 +187,7 @@ describe('maybeBranchOnFirstPrompt', () => {
     const result = await maybeBranchOnFirstPrompt({ ...base, promptText: 'Fix login' }, ctx, {
       fork,
       apply,
+      proposeName: async () => 'fix-login',
     });
     expect(fork).toHaveBeenCalledTimes(2);
     expect(fork.mock.calls[1][1]).toMatch(/-2$/); // second attempt is suffixed

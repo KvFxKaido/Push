@@ -1507,9 +1507,9 @@ async function executeSandboxToolCallInner(
         return {
           text: lines.join('\n'),
           // 'forked' tells the foreground app the active conversation should
-          // follow this branch (slice 2). Other producers (github_create_branch,
-          // release_draft) emit 'switched' because their UX expectation is
-          // "branch changed but conversation stays put".
+          // follow this branch (slice 2). Other producers can emit 'switched'
+          // when their UX expectation is "branch changed but conversation stays
+          // put".
           branchSwitch: { name, kind: 'forked', source: 'sandbox_create_branch' },
         };
       }
@@ -1715,7 +1715,16 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_save_draft': {
         return handleSaveDraft(
-          buildGitReleaseContext(stateSandboxId, undefined, nativeFs, options?.nativeFsScope),
+          buildGitReleaseContext(
+            stateSandboxId,
+            {
+              currentBranch: options?.currentBranch,
+              defaultBranch: options?.defaultBranch,
+              isMainProtected: options?.isMainProtected,
+            },
+            nativeFs,
+            options?.nativeFsScope,
+          ),
           call.args,
         );
       }

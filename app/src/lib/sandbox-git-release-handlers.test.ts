@@ -92,6 +92,8 @@ interface MakeContextOpts {
   auditorVerdict?: RunAuditorReturn;
   authToken?: string;
   createdRepo?: CreatedRepoResponse;
+  originHeadBranch?: string;
+  remoteShowDefaultBranch?: string;
   /** The diff the pre-push secret scan (`computePushedDiff`) sees, if any. */
   pushedDiff?: string;
 }
@@ -128,6 +130,17 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
       // (incl. the real `git 'push'`) is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'HEAD'")) return ok('main');
+      if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'refs/remotes/origin/HEAD'")) {
+        return opts.originHeadBranch ? ok(`origin/${opts.originHeadBranch}`) : fail();
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' 'origin/HEAD'")) {
+        return opts.originHeadBranch ? ok(`origin/${opts.originHeadBranch}`) : fail();
+      }
+      if (cmd.includes("'remote' 'show' 'origin'")) {
+        return opts.remoteShowDefaultBranch
+          ? ok(`  HEAD branch: ${opts.remoteShowDefaultBranch}\n`)
+          : fail();
+      }
       // Base is resolved through the fully-qualified remote-tracking ref
       // (refs/remotes/<remote>/...), never the bare `origin/...` shorthand.
       if (/ 'rev-parse' '--verify' '--quiet' 'refs\/remotes\/[^']+'/.test(cmd)) {
@@ -906,6 +919,11 @@ describe('handlePromoteToGithub', () => {
 // ---------------------------------------------------------------------------
 
 describe('handleSaveDraft', () => {
+  beforeEach(() => {
+    ensureCommitTargetBranchMock.mockReset();
+    ensureCommitTargetBranchMock.mockResolvedValue({ switched: false });
+  });
+
   it('returns no-changes text and skips all execs when the diff is empty', async () => {
     const ctx = makeContext({ diffResults: [{ diff: '', truncated: false }] });
     const result = await handleSaveDraft(ctx, {});
@@ -924,85 +942,135 @@ describe('handleSaveDraft', () => {
     expect(ctx.execInSandbox).not.toHaveBeenCalled();
   });
 
-  it('rejects branch_name that does not start with draft/', async () => {
+  it('rejects caller-supplied branch_name instead of creating a caller branch', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+y\n', truncated: false }],
-      execResults: [ok('main')],
     });
-    const result = await handleSaveDraft(ctx, { branch_name: 'main' });
-    expect(result.text).toContain('branch_name must start with "draft/"');
-    // Only the branch-detect exec ran (via the GitBackend's currentBranch()).
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(ctx.execCalls[0][1]).toContain("git 'branch' '--show-current'");
+    const result = await handleSaveDraft(ctx, { branch_name: 'draft/requested' });
+    expect(result.text).toContain('branch_name is no longer supported');
+    expect(result.text).toContain('Use sandbox_create_branch(name) first');
+    expect(ctx.execInSandbox).not.toHaveBeenCalled();
+    expect(ensureCommitTargetBranchMock).not.toHaveBeenCalled();
   });
 
-  it('rejects an invalid branch_name before reaching createBranch', async () => {
-    const ctx = makeContext({
-      diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+y\n', truncated: false }],
-      execResults: [ok('main')],
-    });
-    const result = await handleSaveDraft(ctx, { branch_name: '-bad' });
-    expect(result.text).toContain('Invalid branch name "-bad"');
-    // Only the branch-detect exec ran — no checkout/stage/commit/push.
-    expect(ctx.execInSandbox).toHaveBeenCalledTimes(1);
-  });
-
-  it('runs checkout/stage/commit/push with mutation flags and returns branchSwitch on the auto-generated-branch path', async () => {
+  it('saves WIP on the current feature branch without creating a branch', async () => {
     const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
     const ctx = makeContext({
       diffResults: [{ diff, truncated: false }],
       execResults: [
-        ok('main'), // git branch --show-current
-        ok(), // git checkout -b
+        ok('feature/work'), // git branch --show-current
         ok(), // git add -A
-        ok('[draft/main-x abc1234] WIP: draft save'), // git commit
+        ok('[feature/work abc1234] WIP: draft save'), // git commit
         ok('abc1234'), // git rev-parse --short HEAD
         ok(), // git push
       ],
     });
+    ctx.defaultBranch = 'main';
     const result = await handleSaveDraft(ctx, {});
-    expect(result.text).toContain('Draft saved to branch: draft/main-');
+    expect(result.text).toContain('Saved WIP to branch: feature/work');
     expect(result.text).toContain('Commit: abc1234');
     expect(result.text).toContain('Pushed to remote.');
     expect(result.card?.type).toBe('diff-preview');
-    // Slice 2: release_draft emits 'switched' (not 'forked') because user
-    // intent here is checkpointing, not forking the conversation.
-    expect(result.branchSwitch?.name).toMatch(/^draft\/main-/);
-    expect(result.branchSwitch?.kind).toBe('switched');
-    expect(result.branchSwitch?.source).toBe('release_draft');
+    expect(result.branchSwitch).toBeUndefined();
+    expect(ensureCommitTargetBranchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentBranch: 'feature/work',
+        defaultBranch: 'main',
+        commitMessage: 'WIP: draft save',
+      }),
+    );
 
     const mutationCalls = ctx.execCalls.filter((c) => c[3]?.markWorkspaceMutated === true);
-    expect(mutationCalls).toHaveLength(4);
+    expect(mutationCalls).toHaveLength(3);
 
     // After commit, both caches are cleared (git operations change file hashes).
     expect(ctx.clearFileVersionCache).toHaveBeenCalledWith('sb-1');
     expect(ctx.clearPrefetchedEditFileCache).toHaveBeenCalledWith('sb-1');
   });
 
-  it('skips checkout and omits branchSwitch when already on a draft/ branch', async () => {
+  it('auto-forks to a normal branch before saving WIP on the default branch', async () => {
+    const branchSwitch = {
+      name: 'push/wip-save-260708-1200',
+      kind: 'forked' as const,
+      source: 'sandbox_create_branch' as const,
+    };
+    ensureCommitTargetBranchMock.mockResolvedValueOnce({
+      switched: true as const,
+      branch: 'push/wip-save-260708-1200',
+      branchSwitch,
+    });
+    const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
     const ctx = makeContext({
-      diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
+      diffResults: [{ diff, truncated: false }],
       execResults: [
-        ok('draft/existing'),
+        ok('main'), // git branch --show-current
         ok(), // git add -A
-        ok('[draft/existing def5678] WIP: draft save'), // git commit
-        ok('def5678'), // git rev-parse --short HEAD
+        ok('[push/wip-save-260708-1200 abc1234] WIP: draft save'), // git commit
+        ok('abc1234'), // git rev-parse --short HEAD
         ok(), // git push
       ],
     });
+    ctx.currentBranch = 'main';
+    ctx.defaultBranch = 'main';
     const result = await handleSaveDraft(ctx, {});
-    expect(result.text).toContain('Draft saved to branch: draft/existing');
-    expect(result.branchSwitch).toBeUndefined();
-    // 5 handler execs: branch-detect, stage, commit, rev-parse (sha), push
-    // (no checkout). execCalls excludes the transparent pre-push scan reads.
+    expect(result.text).toContain('Saved WIP to branch: push/wip-save-260708-1200');
+    expect(result.text).toContain('Forked off the default branch first.');
+    expect(result.branchSwitch).toEqual(branchSwitch);
+    expect(ensureCommitTargetBranchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentBranch: 'main',
+        defaultBranch: 'main',
+        commitMessage: 'WIP: draft save',
+      }),
+    );
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'checkout'"))).toBe(false);
     expect(ctx.execCalls).toHaveLength(5);
   });
 
-  it('signals auto-back when the draft commit fails after a possible hook rewrite (#982)', async () => {
+  it('discovers a custom default branch before deciding whether WIP can save in place', async () => {
+    const branchSwitch = {
+      name: 'push/wip-save-260708-1200',
+      kind: 'forked' as const,
+      source: 'sandbox_create_branch' as const,
+    };
+    ensureCommitTargetBranchMock.mockResolvedValueOnce({
+      switched: true as const,
+      branch: 'push/wip-save-260708-1200',
+      branchSwitch,
+    });
+    const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
+    const ctx = makeContext({
+      diffResults: [{ diff, truncated: false }],
+      originHeadBranch: 'develop',
+      execResults: [
+        ok('develop'), // git branch --show-current
+        ok(), // git add -A
+        ok('[push/wip-save-260708-1200 abc1234] WIP: draft save'), // git commit
+        ok('abc1234'), // git rev-parse --short HEAD
+        ok(), // git push
+      ],
+    });
+    ctx.currentBranch = 'develop';
+
+    const result = await handleSaveDraft(ctx, {});
+
+    expect(result.text).toContain('Saved WIP to branch: push/wip-save-260708-1200');
+    expect(result.text).toContain('Forked off the default branch first.');
+    expect(result.branchSwitch).toEqual(branchSwitch);
+    expect(ensureCommitTargetBranchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentBranch: 'develop',
+        defaultBranch: 'develop',
+        commitMessage: 'WIP: draft save',
+      }),
+    );
+  });
+
+  it('signals auto-back when the WIP commit fails after a possible hook rewrite (#982)', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
       execResults: [
-        ok('draft/existing'),
+        ok('feature/work'),
         ok(), // git add -A
         fail('', 'pre-commit rejected rewritten files', 1), // git commit
       ],
@@ -1011,39 +1079,24 @@ describe('handleSaveDraft', () => {
     const off = onWorkspaceMutation((id) => seen.push(id));
     try {
       const result = await handleSaveDraft(ctx, {});
-      expect(result.text).toContain('Failed to commit draft');
+      expect(result.text).toContain('Failed to commit WIP save');
     } finally {
       off();
     }
     expect(seen).toEqual(['sb-1']);
   });
 
-  it('checks out a different draft branch when an explicit branch_name is requested while already on a draft branch', async () => {
-    // Regression test for PR #325 review: the original logic skipped checkout
-    // whenever the current branch started with `draft/`, silently ignoring an
-    // explicitly-requested target. Now an explicit branch_name is honored
-    // when it differs from the current branch.
+  it('blocks on a protected default branch when auto-branching is disabled', async () => {
     const ctx = makeContext({
       diffResults: [{ diff: 'diff --git a/x.ts b/x.ts\n+a\n', truncated: false }],
-      execResults: [
-        ok('draft/existing'), // branch --show-current
-        ok(), // git checkout -b draft/requested
-        ok(), // git add -A
-        ok('[draft/requested abc1234] WIP: draft save'), // git commit
-        ok('abc1234'), // git rev-parse --short HEAD
-        ok(), // git push
-      ],
+      execResults: [ok('main')],
     });
-    const result = await handleSaveDraft(ctx, { branch_name: 'draft/requested' });
-    expect(result.text).toContain('Draft saved to branch: draft/requested');
-    expect(result.branchSwitch).toEqual({
-      name: 'draft/requested',
-      kind: 'switched',
-      source: 'release_draft',
-    });
-    // 6 handler execs (execCalls excludes the transparent pre-push scan reads).
-    expect(ctx.execCalls).toHaveLength(6);
-    // Second exec is the checkout — confirm it targets the requested branch.
-    expect(ctx.execCalls[1][1]).toContain("git 'checkout' '-b' 'draft/requested'");
+    ctx.currentBranch = 'main';
+    ctx.defaultBranch = 'main';
+    ctx.isMainProtected = true;
+    const result = await handleSaveDraft(ctx, {});
+    expect(result.structuredError?.type).toBe('PROTECT_MAIN_BLOCKED');
+    expect(result.text).toContain('this WIP save would land on the protected branch');
+    expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'commit'"))).toBe(false);
   });
 });

@@ -541,6 +541,7 @@ const CHECK_TYPES_TOOL = getToolPublicName('sandbox_check_types');
 const VERIFY_WORKSPACE_TOOL = getToolPublicName('sandbox_verify_workspace');
 const DOWNLOAD_TOOL = getToolPublicName('sandbox_download');
 const SAVE_DRAFT_TOOL = getToolPublicName('sandbox_save_draft');
+const CREATE_BRANCH_TOOL = getToolPublicName('sandbox_create_branch');
 const PROMOTE_TOOL = getToolPublicName('promote_to_github');
 const READ_SYMBOLS_TOOL = getToolPublicName('sandbox_read_symbols');
 const APPLY_PATCHSET_TOOL = getToolPublicName('sandbox_apply_patchset');
@@ -566,7 +567,7 @@ Additional tools available when sandbox is active:
 - ${RUN_TESTS_TOOL}(framework?) — Run the test suite. Auto-detects npm/pytest/cargo/go if framework not specified. Returns pass/fail counts and output.
 - ${CHECK_TYPES_TOOL}() — Run type checker (tsc for TypeScript, pyright/mypy for Python). Auto-detects from config files. Returns errors with file:line locations.
 - ${VERIFY_WORKSPACE_TOOL}() — Best-effort verification pass for common repo workflows. Uses workspace readiness hints to install JS dependencies when missing, then runs inferred typecheck and test commands in sequence. Stops on the first failing step and summarizes what happened.
-- ${SAVE_DRAFT_TOOL}(message?, branch_name?) — Quick-save all uncommitted changes to a draft branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review (drafts are WIP). If not already on a draft/ branch, creates one automatically. Use this for checkpoints, WIP saves, or before sandbox expiry.
+- ${SAVE_DRAFT_TOOL}(message?) — Quick-save all uncommitted changes on the active branch. Stages everything, commits with the message (default: "WIP: draft save"), and pushes. Skips Auditor review because this is a WIP checkpoint. If the active branch is the default branch, creates a normal feature branch first using the same auto-branch policy as ${COMMIT_TOOL}. Use ${SAVE_DRAFT_TOOL} for checkpoints, WIP saves, or before sandbox expiry; use ${CREATE_BRANCH_TOOL} first when you want a specific branch name.
 - ${DOWNLOAD_TOOL}(path?) — Download workspace files as a compressed archive (tar.gz). Path defaults to /workspace. Returns a download card the user can save.
 - ${READ_SYMBOLS_TOOL}(path) — Extract a symbol index from a source file (functions, classes, interfaces, types, imports with line numbers). Works on .py (via ast), .ts/.tsx/.js/.jsx (via regex). Use this to understand file structure before editing — cheaper than reading the whole file.
 - ${REFS_TOOL}(symbol, scope?) — Find all references to a symbol name (imports, call sites). Returns file, line, context, and classification (import/call). Scope defaults to /workspace/. Use after ${READ_SYMBOLS_TOOL} to understand what depends on a symbol.

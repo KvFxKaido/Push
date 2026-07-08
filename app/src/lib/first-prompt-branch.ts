@@ -22,14 +22,134 @@
  */
 
 import { applyBranchSwitchPayload, type BranchForkMigrationContext } from './branch-fork-migration';
-import { deriveBranchNameFromPrompt, getBranchSuggestionPrefix } from './branch-names';
+import {
+  deriveBranchNameFromPrompt,
+  deriveBranchNameFromPromptSuggestion,
+  getBranchSuggestionPrefix,
+} from './branch-names';
 import { isBranchExistsMessage } from './ensure-commit-target-branch';
 import { forkBranchInWorkspace } from './fork-branch-in-workspace';
+import {
+  getActiveProvider,
+  getProviderPushStream,
+  type ActiveProvider,
+} from './orchestrator-provider-routing';
+import { getModelForRole } from './providers';
+import { iteratePushStreamText } from '@push/lib/stream-utils';
+import type { ChatMessage } from '@/types';
 
 /** Bounded suffix retries on a name collision, mirroring the commit-time
  *  fail-safe's `withNumericSuffix` loop. Keeps common/repeated first prompts
  *  ("Fix login") in the same repo from silently staying on the default branch. */
 const MAX_BRANCH_NAME_ATTEMPTS = 5;
+const PROMPT_BRANCH_NAME_TIMEOUT_MS = 2500;
+
+const PROMPT_BRANCH_NAME_SYSTEM_PROMPT = `You generate git branch names.
+
+Return ONLY one branch name, nothing else.
+
+Rules:
+- lowercase only
+- kebab-case words
+- use the required prefix exactly
+- summarize the user's intent; do not copy the whole prompt
+- no spaces, quotes, markdown, bullets, or explanations
+- keep the topic to 2-5 words`;
+
+export type FirstPromptBranchNameProposer = (input: {
+  promptText: string;
+  repoFullName: string;
+  prefix: string;
+}) => Promise<string | null | undefined>;
+
+type FirstPromptBranchNameInput = Pick<
+  FirstPromptBranchInput,
+  | 'enabled'
+  | 'isFirstMessage'
+  | 'promptText'
+  | 'repoFullName'
+  | 'currentBranch'
+  | 'defaultBranch'
+  | 'provider'
+  | 'model'
+>;
+
+export interface ModelFirstPromptBranchNameProposerOptions {
+  providerOverride?: ActiveProvider | null;
+  modelOverride?: string | null;
+}
+
+export function createModelFirstPromptBranchNameProposer(
+  options: ModelFirstPromptBranchNameProposerOptions = {},
+): FirstPromptBranchNameProposer {
+  return async ({ promptText, repoFullName, prefix }) => {
+    const provider = options.providerOverride || getActiveProvider();
+    if (provider === 'demo') return null;
+    const model = options.modelOverride?.trim() || getModelForRole(provider, 'orchestrator')?.id;
+    if (!model) return null;
+
+    const messages: ChatMessage[] = [
+      {
+        id: 'first-prompt-branch-name-request',
+        role: 'user',
+        content: [
+          "Name the git branch for this new workspace from the user's first prompt.",
+          `Required prefix: ${prefix}/`,
+          `Repository: ${repoFullName}`,
+          'Return exactly one branch name.',
+          '',
+          'First prompt:',
+          promptText.slice(0, 2000),
+        ].join('\n'),
+        timestamp: Date.now(),
+      },
+    ];
+
+    const { error, text } = await iteratePushStreamText(
+      getProviderPushStream(provider),
+      {
+        provider,
+        model,
+        messages,
+        systemPromptOverride: PROMPT_BRANCH_NAME_SYSTEM_PROMPT,
+        hasSandbox: false,
+      },
+      PROMPT_BRANCH_NAME_TIMEOUT_MS,
+      `Branch name suggestion timed out after ${PROMPT_BRANCH_NAME_TIMEOUT_MS / 1000}s.`,
+    );
+
+    return error ? null : text;
+  };
+}
+
+export function shouldStartFirstPromptBranchNameSuggestion(
+  input: FirstPromptBranchNameInput,
+): boolean {
+  if (!input.enabled) return false;
+  if (!input.isFirstMessage) return false;
+  if (!input.repoFullName) return false;
+  if (!input.currentBranch) return false;
+  const defaultBranch = input.defaultBranch ?? 'main';
+  return input.currentBranch === defaultBranch;
+}
+
+export function startFirstPromptBranchNameSuggestion(
+  input: FirstPromptBranchNameInput,
+  proposer: FirstPromptBranchNameProposer = createModelFirstPromptBranchNameProposer({
+    providerOverride: input.provider,
+    modelOverride: input.model,
+  }),
+): Promise<string | null | undefined> | undefined {
+  if (!shouldStartFirstPromptBranchNameSuggestion(input)) return undefined;
+  const repoFullName = input.repoFullName;
+  if (!repoFullName) return undefined;
+  const prefix = getBranchSuggestionPrefix(repoFullName);
+  return proposer({
+    promptText: input.promptText,
+    repoFullName,
+    prefix,
+  }).catch(() => null);
+}
 
 export interface FirstPromptBranchInput {
   /** Operator/setting gate. Mirrors auto-branch-on-commit's enablement. */
@@ -50,6 +170,9 @@ export interface FirstPromptBranchInput {
    */
   currentBranch?: string;
   defaultBranch?: string;
+  /** Provider/model already locked for this chat send. */
+  provider?: ActiveProvider | null;
+  model?: string | null;
 }
 
 export interface FirstPromptBranchResult {
@@ -74,13 +197,8 @@ export interface FirstPromptBranchResult {
  * default branch, so erring toward "don't branch" here loses no protection.
  */
 export function shouldBranchOnFirstPrompt(input: FirstPromptBranchInput): boolean {
-  if (!input.enabled) return false;
-  if (!input.isFirstMessage) return false;
-  if (!input.repoFullName) return false;
   if (!input.sandboxId) return false;
-  if (!input.currentBranch) return false;
-  const defaultBranch = input.defaultBranch ?? 'main';
-  return input.currentBranch === defaultBranch;
+  return shouldStartFirstPromptBranchNameSuggestion(input);
 }
 
 /**
@@ -97,16 +215,40 @@ export async function maybeBranchOnFirstPrompt(
   deps: {
     fork?: typeof forkBranchInWorkspace;
     apply?: typeof applyBranchSwitchPayload;
+    proposedName?: Promise<string | null | undefined>;
+    proposeName?: FirstPromptBranchNameProposer;
   } = {},
 ): Promise<FirstPromptBranchResult> {
   if (!shouldBranchOnFirstPrompt(input)) return { branched: false };
 
+  const repoFullName = input.repoFullName;
+  if (!repoFullName) return { branched: false };
+
   const fork = deps.fork ?? forkBranchInWorkspace;
   const apply = deps.apply ?? applyBranchSwitchPayload;
-  const base = deriveBranchNameFromPrompt(
-    input.promptText,
-    getBranchSuggestionPrefix(input.repoFullName ?? undefined),
-  );
+  const prefix = getBranchSuggestionPrefix(repoFullName);
+  const fallbackBase = deriveBranchNameFromPrompt(input.promptText, prefix);
+  let base = fallbackBase;
+
+  const proposeName =
+    deps.proposeName ??
+    createModelFirstPromptBranchNameProposer({
+      providerOverride: input.provider,
+      modelOverride: input.model,
+    });
+  try {
+    const proposed = await (deps.proposedName ??
+      proposeName({
+        promptText: input.promptText,
+        repoFullName,
+        prefix,
+      }));
+    if (proposed?.trim()) {
+      base = deriveBranchNameFromPromptSuggestion(proposed, prefix);
+    }
+  } catch {
+    base = fallbackBase;
+  }
 
   let lastError: string | undefined;
   for (let attempt = 0; attempt < MAX_BRANCH_NAME_ATTEMPTS; attempt++) {
@@ -119,7 +261,7 @@ export async function maybeBranchOnFirstPrompt(
           level: 'info',
           event: 'branch_on_first_prompt_created',
           name,
-          repoFullName: input.repoFullName,
+          repoFullName,
         }),
       );
       return { branched: true, name };
@@ -135,7 +277,7 @@ export async function maybeBranchOnFirstPrompt(
       level: 'warn',
       event: 'branch_on_first_prompt_failed',
       name: base,
-      repoFullName: input.repoFullName,
+      repoFullName,
       error: lastError,
     }),
   );

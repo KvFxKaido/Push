@@ -1625,15 +1625,19 @@ type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number
 // Read-only pre-push machinery the handlers run before the actual push: the
 // upstream check, the cumulative-diff scan, and — since the force-with-lease
 // push plan (#1054) — the local-tip rev-parse + remote-tip ls-remote. These are
-// read-only and deterministic; the tests script the *mutating* push call, so
-// both the mock queue and the call-count filter must skip past them. One
-// predicate so the two can't drift.
+// read-only and deterministic; save-draft may also probe origin's default
+// branch before deciding whether to auto-fork. The tests script the *mutating*
+// calls, so both the mock queue and the call-count filter must skip past the
+// read-only probes. One predicate so the two can't drift.
 function isPrePushRead(cmd: string): boolean {
   return (
     cmd.includes('@{upstream}') ||
     / 'log' '-p' '--no-color'/.test(cmd) ||
     cmd.includes("'ls-remote'") ||
-    cmd.includes("'rev-parse' '--verify' '--quiet'")
+    cmd.includes("'rev-parse' '--verify' '--quiet'") ||
+    cmd.includes("'symbolic-ref' '--quiet' '--short' 'refs/remotes/origin/HEAD'") ||
+    cmd.includes("'rev-parse' '--abbrev-ref' 'origin/HEAD'") ||
+    cmd.includes("'remote' 'show' 'origin'")
   );
 }
 function mockExecScan(handlerResults: DispatcherExecResult[]) {
@@ -1930,68 +1934,54 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
     expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 
-  it('rejects branch_name that does not start with draft/', async () => {
+  it('rejects caller-supplied branch_name instead of creating a caller branch', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/x.ts b/x.ts\n+y\n',
       truncated: false,
     });
-    // The case arm calls git branch --show-current before validating branch_name,
-    // so we mock that one call to keep the path reaching the validation.
-    vi.mocked(sandboxClient.execInSandbox).mockResolvedValueOnce({
-      stdout: 'main',
-      stderr: '',
-      exitCode: 0,
-      truncated: false,
-    });
 
     const result = await executeSandboxToolCall(
-      { tool: 'sandbox_save_draft', args: { branch_name: 'main' } },
+      { tool: 'sandbox_save_draft', args: { branch_name: 'draft/requested' } },
       'sb-1',
     );
 
     expect(result.text).toContain('[Tool Error — sandbox_save_draft]');
-    expect(result.text).toContain('branch_name must start with "draft/"');
-    // Only the branch-detect exec ran — no checkout/stage/commit/push.
-    expect(sandboxClient.execInSandbox).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(sandboxClient.execInSandbox).mock.calls[0][1]).toContain(
-      "git 'branch' '--show-current'",
-    );
+    expect(result.text).toContain('branch_name is no longer supported');
+    expect(result.text).toContain('Use sandbox_create_branch(name) first');
+    expect(sandboxClient.execInSandbox).not.toHaveBeenCalled();
   });
 
-  it('runs checkout/stage/commit/push and returns branchSwitch on the auto-generated-branch path', async () => {
+  it('saves WIP on the current feature branch without creating a branch', async () => {
     const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({ diff, truncated: false });
     mockExecScan([
-      { stdout: 'main', exitCode: 0 }, // git branch --show-current
-      { exitCode: 0 }, // git checkout -b draft/...
+      { stdout: 'feature/work', exitCode: 0 }, // git branch --show-current
       { exitCode: 0 }, // git add -A
-      { stdout: '[draft/main-x abc1234] WIP: draft save', exitCode: 0 }, // git commit -m
+      { stdout: '[feature/work abc1234] WIP: draft save', exitCode: 0 }, // git commit -m
       { stdout: 'abc1234', exitCode: 0 }, // git rev-parse --short HEAD
-      { exitCode: 0 }, // git push -u origin draft/...
+      { exitCode: 0 }, // git push -u origin feature/work
     ]);
 
-    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
+    const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1', {
+      currentBranch: 'feature/work',
+      defaultBranch: 'main',
+    });
 
     expect(result.text).toContain('[Tool Result — sandbox_save_draft]');
-    expect(result.text).toContain('Draft saved to branch: draft/main-');
+    expect(result.text).toContain('Saved WIP to branch: feature/work');
     expect(result.text).toContain('Commit: abc1234');
     expect(result.text).toContain('Pushed to remote.');
     expect(result.card?.type).toBe('diff-preview');
-    // branchSwitch is propagated when a new draft branch was created.
-    // Slice 2: release_draft emits 'switched' (not 'forked') because user
-    // intent is checkpointing, not forking the conversation.
-    expect(result.branchSwitch?.name).toMatch(/^draft\/main-/);
-    expect(result.branchSwitch?.kind).toBe('switched');
-    expect(result.branchSwitch?.source).toBe('release_draft');
+    expect(result.branchSwitch).toBeUndefined();
 
-    // checkout, stage, commit, push all set markWorkspaceMutated: true
+    // stage, commit, push all set markWorkspaceMutated: true
     const mutationCalls = vi
       .mocked(sandboxClient.execInSandbox)
       .mock.calls.filter((c) => c[3]?.markWorkspaceMutated === true);
-    expect(mutationCalls).toHaveLength(4);
+    expect(mutationCalls).toHaveLength(3);
   });
 
-  it('skips checkout and omits branchSwitch when already on a draft/ branch', async () => {
+  it('does not mint another branch when the active branch already happens to be draft-named', async () => {
     vi.mocked(sandboxClient.getSandboxDiff).mockResolvedValue({
       diff: 'diff --git a/x.ts b/x.ts\n+a\n',
       truncated: false,
@@ -2006,10 +1996,10 @@ describe('executeSandboxToolCall -- sandbox_save_draft', () => {
 
     const result = await executeSandboxToolCall({ tool: 'sandbox_save_draft', args: {} }, 'sb-1');
 
-    expect(result.text).toContain('Draft saved to branch: draft/existing');
+    expect(result.text).toContain('Saved WIP to branch: draft/existing');
     expect(result.branchSwitch).toBeUndefined();
-    // 5 handler execs (no checkout): branch-detect, stage, commit, rev-parse
-    // (sha), push — excluding the transparent pre-push scan reads.
+    // 5 handler execs: branch-detect, stage, commit, rev-parse (sha), push —
+    // excluding the transparent pre-push scan reads.
     expect(handlerExecCalls()).toHaveLength(5);
   });
 });
