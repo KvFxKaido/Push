@@ -32,6 +32,15 @@ export class NativeGitWeb extends WebPlugin implements NativeGitPlugin {
   diff(): Promise<never> {
     return this.notAvailable();
   }
+  revParse(): Promise<never> {
+    return this.notAvailable();
+  }
+  mergeBase(): Promise<never> {
+    return this.notAvailable();
+  }
+  logPatch(): Promise<never> {
+    return this.notAvailable();
+  }
   createBranch(): Promise<never> {
     return this.notAvailable();
   }

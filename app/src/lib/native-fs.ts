@@ -150,7 +150,7 @@ export function toWorktreeRelative(path: string | undefined): string {
 /** File I/O over one on-device clone at `dir`. Constructed by {@link resolveNativeFs}. */
 export class NativeFsBackend {
   private readonly plugin: NativeGitPlugin;
-  private readonly dir: string;
+  readonly dir: string;
 
   constructor(plugin: NativeGitPlugin, dir: string) {
     this.plugin = plugin;

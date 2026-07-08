@@ -21,7 +21,9 @@ import type {
   SandboxStateCardData,
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
-import { computeSandboxPushPlan, createSandboxPushGit } from '@/lib/git-backend';
+import { computeSandboxPushPlan } from '@/lib/git-backend';
+import { getActivePushGit } from '@/lib/git-session';
+import { nativeFsScopeFrom } from '@/lib/native-fs';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import { executeSandboxToolCall } from '@/lib/sandbox-tools';
@@ -228,10 +230,20 @@ export function useChatCardActions({
         return lines.slice(1).join('\n').trim() || lines[0];
       };
 
+      const activeBranch = () =>
+        branchInfoRef.current?.currentBranch ?? branchInfoRef.current?.defaultBranch;
+      const activeNativeScope = () => nativeFsScopeFrom(repoRef.current, activeBranch());
+      const activeGitSession = (sandboxId: string) => ({
+        sandboxId,
+        repoFullName: repoRef.current ?? undefined,
+        branch: activeBranch(),
+      });
+
       switch (action.type) {
         case 'commit-refresh': {
-          const sandboxId = sandboxIdRef.current;
-          if (!sandboxId) {
+          const sandboxId = sandboxIdRef.current ?? '';
+          const nativeFsScope = activeNativeScope();
+          if (!sandboxId && !nativeFsScope) {
             updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
               if (card.type !== 'commit-review') return card;
               return {
@@ -279,6 +291,7 @@ export function useChatCardActions({
                     ? (lockedProvider as ActiveProvider)
                     : undefined,
                 auditorModelOverride: lockedModel ?? null,
+                ...(nativeFsScope ? { nativeFsScope } : {}),
               },
             );
 
@@ -314,8 +327,9 @@ export function useChatCardActions({
         }
 
         case 'commit-approve': {
-          const sandboxId = sandboxIdRef.current;
-          if (!sandboxId) {
+          const sandboxId = sandboxIdRef.current ?? '';
+          const nativeFsScope = activeNativeScope();
+          if (!sandboxId && !nativeFsScope) {
             updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
               if (card.type !== 'commit-review') return card;
               return {
@@ -344,7 +358,9 @@ export function useChatCardActions({
           // the push boundary gate is the authoritative backstop for push-kind).
           if (isMainProtectedRef.current) {
             try {
-              const currentBranch = await createSandboxPushGit(sandboxId).currentBranch();
+              const currentBranch = await getActivePushGit(
+                activeGitSession(sandboxId),
+              ).currentBranch();
               const mainBranches = new Set(['main', 'master']);
               const defBranch = branchInfoRef.current?.defaultBranch;
               if (defBranch) mainBranches.add(defBranch);
@@ -411,7 +427,7 @@ export function useChatCardActions({
               const auditedBranch = approveSourceData?.auditedBranch;
               const auditedUpstream = approveSourceData?.auditedUpstream ?? null;
               const auditedRemoteUrl = approveSourceData?.auditedRemoteUrl;
-              const pushGit = createSandboxPushGit(sandboxId);
+              const pushGit = getActivePushGit(activeGitSession(sandboxId));
               const [liveHeadSha, liveBranch, liveUpstream, liveRemoteUrl] = await Promise.all([
                 pushGit.headSha(),
                 pushGit.currentBranch(),
@@ -541,7 +557,7 @@ export function useChatCardActions({
               // an already-approved SAFE delivery to UNSAFE. The push-time
               // Auditor gate stays ON for DIRECT sandbox_push calls that bypass
               // prepare_push (this approved path is not one of those).
-              const pushResult = await createSandboxPushGit(sandboxId, {
+              const pushResult = await getActivePushGit(activeGitSession(sandboxId), {
                 secretScan: true,
                 protectMain: isMainProtectedRef.current,
                 defaultBranch: branchInfoRef.current?.defaultBranch,
@@ -630,7 +646,7 @@ export function useChatCardActions({
             // already ran at the prepare step, so this approved commit needs no
             // gate; the backend shell-escapes the message and marks the
             // workspace mutated.
-            const pushGit = createSandboxPushGit(sandboxId, { secretScan: true });
+            const pushGit = getActivePushGit(activeGitSession(sandboxId), { secretScan: true });
             // Non-blocking desync check: warn (don't block) if the sandbox HEAD
             // drifted from the branch Push tracks as active. PushGit only
             // verifies the invariant; any future enforcement is the caller's.

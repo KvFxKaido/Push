@@ -1,20 +1,13 @@
 # Native Git Runtime Integration
 
 Date: 2026-06-21
-Status: **Deferred** (2026-06-22) — native-as-live-push-path is no longer the next
-increment. The current next increment is the APK-local **Native Checkpoint Store**
-(see [`Native Checkpoint Store.md`](<Native Checkpoint Store.md>)), which sidesteps
-the pushed-diff/gate problem entirely (local checkpoints never push). The Option E
-decision below remains the chosen design *if and when* the live-native-push path is
-picked back up; it is not wasted, just not next. Increment 1 (selection seam) shipped
-(PR #1069) and stays dormant under the checkpoint approach. Owner: Push mobile/git.
-
-> **Why deferred:** the pre-push gates exist to protect *the remote*. A checkpoint
-> store that keeps work durably **on the device** never pushes, so it needs none of
-> the native `getDiff` / pushed-diff-source / device-validated-DiffFormatter work
-> this doc specifies. The checkpoint store reaches the mobile work-loss goal sooner,
-> behind a flag, with the gnarliest part removed. This doc reactivates only if we
-> later want native commits/pushes to ship to GitHub directly.
+Status: **Current** (2026-07-08) — live native push resumed for #1352 slice 3.
+Increment 2's code path is now implemented: `computePushedDiff` / push-destination
+resolution run over `PushedDiffSource`, the native plugin exposes `revParse` /
+`mergeBase` / `logPatch`, and native `PushGit` composes the same Protect Main,
+secret-scan, and Auditor gates as sandbox. Device validation of JGit `logPatch`
+output is still required before treating native push as fully proven live.
+Owner: Push mobile/git.
 
 ## Context
 
@@ -127,19 +120,19 @@ device-validated** before native gating is relied on.
 
 ## Increment 2 decomposition
 
-- **2a — the port (pure TS, no device).** Define `PushedDiffSource`; refactor
+- **2a — the port (pure TS, no device) — shipped 2026-07-08.** Define `PushedDiffSource`; refactor
   `computePushedDiff` and `resolvePushDestination` onto it; ship
   `pushedDiffSourceFromGitExec`; keep all web/CLI/push-plan/auditor-gate tests
   green; add port + algorithm-over-fake-source tests. This is the keystone and is
   fully testable in CI without a device.
-- **2c — gate-composition unification (pure TS).** Promote the gate-composition
+- **2c — gate-composition unification (pure TS) — shipped 2026-07-08.** Promote the gate-composition
   block out of `createSandboxPushGit` into a shared builder; grow
   `createNativePushGit` to accept `secretScan` / `protectMain` / `auditAtPush` +
   a native `getDiff`. (Does not depend on 2b — it composes over whatever `getDiff`
   it is handed.)
-- **2b — native primitives (Kotlin + device).** Add `revParse`, `mergeBase`,
-  `logPatch` to `JGitEngine` + plugin definitions + web stub + `NativeGitBackend`
-  passthroughs; ship `pushedDiffSourceFromNativePlugin`. **Device-validate** that
+- **2b — native primitives (Kotlin + device) — code shipped 2026-07-08; device validation pending.** Add `revParse`, `mergeBase`,
+  `logPatch` to `JGitEngine` + plugin definitions + web stub; ship
+  `pushedDiffSourceFromNativePlugin`. **Device-validate** that
   `logPatch` output is acceptable to the secret-scan gate before the path is
   trusted. This is the only part that needs the physical phone.
 

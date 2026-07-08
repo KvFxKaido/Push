@@ -13,23 +13,20 @@
  * dispatches it to the matching factory; `resolveActiveGitBinding` picks the
  * binding for the running platform.
  *
- * Scope (increment 1): the **`GitBackend`** contract only — typed reads plus
- * the raw branch/commit/push writes, which both backends implement identically.
- * The gated `PushGit` facade (`createSandboxPushGit`) is deliberately NOT routed
- * here yet: its secret-scan / Protect-Main / Auditor gates read an
- * about-to-be-pushed *diff* that the native plugin doesn't expose, so unifying
- * gate composition is its own later increment.
+ * Scope: the **`GitBackend`** contract plus the gated `PushGit` facade. Native
+ * push gates now read the about-to-be-pushed patch series through typed JGit
+ * primitives, so commit/push call sites can resolve the active surface here
+ * instead of hardcoding the sandbox factory.
  *
- * Dormant native arm: `resolveActiveGitBinding` only returns a `native` binding
- * once an on-device working copy is registered. That registry (clone-on-session
- * lifecycle) lands in a later increment, so on native today this falls through
- * to the sandbox binding. The `native` dispatch path itself is wired and
- * unit-tested via an explicit binding.
+ * Native arm: `resolveActiveGitBinding` only returns a `native` binding once an
+ * on-device working copy is registered and ready. Until then, native sessions
+ * fall through to the sandbox binding instead of inventing a half-ready clone.
  */
 
 import type { GitBackend } from '@push/lib/git/backend';
-import { createSandboxGitBackend } from './git-backend';
-import { createNativeGitBackend } from './native-git';
+import type { PushGit } from '@push/lib/git/push-git';
+import { createSandboxGitBackend, createSandboxPushGit } from './git-backend';
+import { createNativeGitBackend, createNativePushGit } from './native-git';
 import type { GitHubTokenProvider } from './native-git-backend';
 import { getActiveGitHubToken } from './github-auth';
 import { isNativePlatform } from './platform';
@@ -67,7 +64,8 @@ export interface GitSessionRef {
  * into the native clone/fetch/push transiently. Public/no-auth sessions get
  * `undefined` and the native engine runs unauthenticated.
  */
-const defaultNativeTokenProvider: GitHubTokenProvider = () => getActiveGitHubToken() || undefined;
+export const defaultNativeTokenProvider: GitHubTokenProvider = () =>
+  getActiveGitHubToken() || undefined;
 
 export interface ResolveGitBackendDeps {
   /** Token provider injected into the native backend (defaults to the active GitHub token). */
@@ -163,4 +161,29 @@ export function getActiveGitBackend(
   deps: ResolveGitBackendDeps & ResolveBindingDeps = {},
 ): GitBackend {
   return resolveGitBackend(resolveActiveGitBinding(session, deps), deps);
+}
+
+type ActivePushGitOptions = NonNullable<Parameters<typeof createSandboxPushGit>[1]>;
+
+export function getActivePushGit(
+  session: GitSessionRef,
+  opts?: ActivePushGitOptions,
+  deps: ResolveGitBackendDeps & ResolveBindingDeps = {},
+): PushGit {
+  const binding = resolveActiveGitBinding(session, deps);
+  if (binding.kind === 'sandbox') return createSandboxPushGit(binding.sandboxId, opts);
+
+  const tokenProvider = opts?.getGitHubToken
+    ? () => opts.getGitHubToken?.() || undefined
+    : (deps.getNativeToken ?? defaultNativeTokenProvider);
+  return createNativePushGit({
+    dir: binding.dir,
+    getToken: tokenProvider,
+    preCommit: opts?.preCommit,
+    prePush: opts?.prePush,
+    secretScan: opts?.secretScan,
+    protectMain: opts?.protectMain,
+    defaultBranch: opts?.defaultBranch,
+    auditAtPush: opts?.auditAtPush,
+  });
 }

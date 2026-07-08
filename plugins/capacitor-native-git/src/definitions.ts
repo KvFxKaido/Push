@@ -36,6 +36,9 @@ export interface NativeGitPlugin {
     git_status?: string;
     error?: string;
   }>;
+  revParse(options: { dir: string; ref: string }): Promise<{ sha: string | null }>;
+  mergeBase(options: { dir: string; a: string; b: string }): Promise<{ sha: string | null }>;
+  logPatch(options: { dir: string; range: string }): Promise<{ patch: string | null }>;
   createBranch(options: {
     dir: string;
     name: string;

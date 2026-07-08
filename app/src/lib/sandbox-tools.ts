@@ -82,6 +82,7 @@ import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { retainReducedOutput } from '@push/lib/verbatim-retain';
 import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { createSandboxPushGit } from './git-backend';
+import { computeNativePushedDiff, createNativePushGit } from './native-git';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
@@ -215,6 +216,27 @@ function buildVerificationContext(
   };
 }
 
+type ToolPushGitOptions = NonNullable<Parameters<typeof createSandboxPushGit>[1]>;
+
+function createToolPushGit(
+  sandboxId: string,
+  nativeFs?: NativeFsBackend | null,
+  opts?: ToolPushGitOptions,
+) {
+  if (!nativeFs) return createSandboxPushGit(sandboxId, opts);
+  const tokenProvider = opts?.getGitHubToken ?? getActiveGitHubToken;
+  return createNativePushGit({
+    dir: nativeFs.dir,
+    getToken: () => tokenProvider() || undefined,
+    preCommit: opts?.preCommit,
+    prePush: opts?.prePush,
+    secretScan: opts?.secretScan,
+    protectMain: opts?.protectMain,
+    defaultBranch: opts?.defaultBranch,
+    auditAtPush: opts?.auditAtPush,
+  });
+}
+
 /**
  * Wire up the git/release-handler context with the dispatcher's actual
  * infrastructure dependencies. Kept as a local helper (not exported) so
@@ -235,13 +257,46 @@ function buildGitReleaseContext(
     getSandboxDiff: nativeFs
       ? async () => sanitizeNativeDiff(await nativeFs.diff())
       : getSandboxDiff,
-    readFromSandbox,
+    readFromSandbox: nativeFs ? nativeReadFile(nativeFs) : readFromSandbox,
     runAuditor,
     fetchAuditorFileContexts,
     createGitHubRepo,
     getActiveGitHubToken,
     clearFileVersionCache,
     clearPrefetchedEditFileCache,
+    ...(nativeFs
+      ? {
+          createPushGit: (opts?: ToolPushGitOptions) =>
+            createToolPushGit(sandboxId, nativeFs, opts),
+          computePushedDiff: (opts?: { ref?: string; remote?: string }) =>
+            computeNativePushedDiff(nativeFs.dir, opts),
+          computePushPlan: null,
+          runPreCommitHook: async () => ({
+            stdout: '',
+            stderr: '',
+            exitCode: 0,
+            truncated: false,
+          }),
+          collectUntrackedDiff: async () => '',
+          branchExists: async () => false,
+          forkCommitTargetBranch: async (branch: string) => {
+            const result = await createToolPushGit(sandboxId, nativeFs).createBranch(branch);
+            return result.ok
+              ? {
+                  ok: true,
+                  branchSwitch: {
+                    name: branch,
+                    kind: 'forked' as const,
+                    source: 'sandbox_create_branch' as const,
+                  },
+                }
+              : {
+                  ok: false,
+                  errorMessage: result.stderr || result.stdout || 'create branch failed',
+                };
+          },
+        }
+      : {}),
   };
 }
 
@@ -367,11 +422,10 @@ function nativeFileDiffHunks(
 }
 
 /**
- * The native working-copy diff includes untracked files as additions (the
- * about-to-push gates need them), which the cloud `git diff` never surfaces —
- * so it can carry contents no other native read path would return raw. Apply
- * the same defenses as read/search: drop whole blocks for sensitive paths,
- * value-redact the rest.
+ * The native working-copy diff includes untracked files as additions so commit
+ * preview/stats see the same files JGit will stage. It can carry contents no
+ * other native read path would return raw, so apply the same defenses as
+ * read/search: drop whole blocks for sensitive paths, value-redact the rest.
  */
 function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
   // Porcelain status names files too (`?? .env`) — filter it with the same
@@ -1348,7 +1402,7 @@ async function executeSandboxToolCallInner(
 
         // Sanctioned write: atomic `checkout -b` (only moves HEAD on success),
         // shell-escaped and marked workspace-mutating by the backend.
-        const result = await createSandboxPushGit(sandboxId).createBranch(name, from);
+        const result = await createToolPushGit(sandboxId, nativeFs).createBranch(name, from);
 
         if (!result.ok) {
           const reason = result.stderr || result.stdout || 'git checkout -b failed';
@@ -1363,8 +1417,8 @@ async function executeSandboxToolCallInner(
         // and ledgers the same way sandbox_exec does for mutating commands,
         // otherwise subsequent edits use versions from the previous branch
         // and trip stale-write / workspace-changed errors.
-        clearFileVersionCache(sandboxId);
-        clearPrefetchedEditFileCache(sandboxId);
+        clearFileVersionCache(stateSandboxId);
+        clearPrefetchedEditFileCache(stateSandboxId);
         const staleMarked = fileLedger.markAllStale();
 
         const lines = [
@@ -1405,7 +1459,7 @@ async function executeSandboxToolCallInner(
           };
         }
 
-        const pushGit = createSandboxPushGit(sandboxId);
+        const pushGit = createToolPushGit(sandboxId, nativeFs);
 
         // Capture the current branch before switching so the result can carry
         // `previous` (null when detached). Failures here are non-fatal: we
@@ -1436,8 +1490,8 @@ async function executeSandboxToolCallInner(
 
         // Same cache/ledger invalidation as sandbox_create_branch — switching
         // changes the entire working tree.
-        clearFileVersionCache(sandboxId);
-        clearPrefetchedEditFileCache(sandboxId);
+        clearFileVersionCache(stateSandboxId);
+        clearPrefetchedEditFileCache(stateSandboxId);
         const staleMarked = fileLedger.markAllStale();
 
         const lines = [
@@ -1463,14 +1517,18 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_commit': {
         return handleSandboxCommit(
-          buildGitReleaseContext(sandboxId, {
-            currentBranch: options?.currentBranch,
-            defaultBranch: options?.defaultBranch,
-            // Threaded so handleSandboxCommit's fail-closed Protect Main check
-            // (for the auto-branch-disabled case) actually runs — see #4 of the
-            // Codex review. Without it ctx.isMainProtected is undefined.
-            isMainProtected: options?.isMainProtected,
-          }),
+          buildGitReleaseContext(
+            stateSandboxId,
+            {
+              currentBranch: options?.currentBranch,
+              defaultBranch: options?.defaultBranch,
+              // Threaded so handleSandboxCommit's fail-closed Protect Main check
+              // (for the auto-branch-disabled case) actually runs — see #4 of the
+              // Codex review. Without it ctx.isMainProtected is undefined.
+              isMainProtected: options?.isMainProtected,
+            },
+            nativeFs,
+          ),
           call.args,
           {
             providerOverride: options?.auditorProviderOverride,
@@ -1481,11 +1539,15 @@ async function executeSandboxToolCallInner(
 
       case 'prepare_push': {
         return handlePreparePush(
-          buildGitReleaseContext(sandboxId, {
-            currentBranch: options?.currentBranch,
-            defaultBranch: options?.defaultBranch,
-            isMainProtected: options?.isMainProtected,
-          }),
+          buildGitReleaseContext(
+            stateSandboxId,
+            {
+              currentBranch: options?.currentBranch,
+              defaultBranch: options?.defaultBranch,
+              isMainProtected: options?.isMainProtected,
+            },
+            nativeFs,
+          ),
           {
             providerOverride: options?.auditorProviderOverride,
             modelOverride: options?.auditorModelOverride ?? undefined,
@@ -1495,11 +1557,15 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_push': {
         return handleSandboxPush(
-          buildGitReleaseContext(sandboxId, {
-            currentBranch: options?.currentBranch,
-            defaultBranch: options?.defaultBranch,
-            isMainProtected: options?.isMainProtected,
-          }),
+          buildGitReleaseContext(
+            stateSandboxId,
+            {
+              currentBranch: options?.currentBranch,
+              defaultBranch: options?.defaultBranch,
+              isMainProtected: options?.isMainProtected,
+            },
+            nativeFs,
+          ),
           {
             providerOverride: options?.auditorProviderOverride,
             modelOverride: options?.auditorModelOverride ?? undefined,
@@ -1570,7 +1636,10 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_save_draft': {
-        return handleSaveDraft(buildGitReleaseContext(sandboxId), call.args);
+        return handleSaveDraft(
+          buildGitReleaseContext(stateSandboxId, undefined, nativeFs),
+          call.args,
+        );
       }
 
       case 'promote_to_github': {

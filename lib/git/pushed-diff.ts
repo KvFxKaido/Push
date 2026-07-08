@@ -7,8 +7,9 @@
  * history). Crucially this is the per-commit PATCH SERIES (`git log -p`), not the
  * net tree diff: a secret added in one commit and removed in a later one is
  * invisible to `git diff base..HEAD` but is still uploaded with the earlier
- * commit, so the gates must see every commit's patch. Resolved *uncapped* through
- * the same `GitExec` port the backend uses, so it works on every surface.
+ * commit, so the gates must see every commit's patch. Resolved *uncapped*
+ * through a typed read source; sandbox/CLI adapt that from `GitExec`, while
+ * native adapts it from JGit plugin methods.
  *
  * Base resolution mirrors the push destination (`git push <remote> <ref>`):
  *   1. `<remote>/<destination-branch>` — the branch the push updates;
@@ -24,40 +25,34 @@
  */
 
 import type { GitExec } from './backend.js';
-import { resolvePushDestination } from './push-destination.js';
+import { resolvePushDestinationFromSource } from './push-destination.js';
+import { pushedDiffSourceFromGitExec, type PushedDiffSource } from './pushed-diff-source.js';
 
 export interface PushedDiffOptions {
   ref?: string;
   remote?: string;
 }
 
-async function ok(exec: GitExec, args: string[]): Promise<string | null> {
-  const res = await exec(args);
-  if (res.exitCode !== 0) return null;
-  const out = res.stdout.trim();
-  return out || null;
-}
-
-export async function computePushedDiff(
-  exec: GitExec,
+export async function computePushedDiffFromSource(
+  source: PushedDiffSource,
   opts?: PushedDiffOptions,
 ): Promise<string | null> {
   const remote = opts?.remote?.trim() || 'origin';
-  const target = await resolvePushDestination(exec, opts);
+  const target = await resolvePushDestinationFromSource(source, opts);
   if (!target.sourceRef) return '';
 
   // 1. <remote>/<destination-branch> for the branch this push updates.
   let base: string | null = null;
   if (target.branch) {
     const remoteRef = `${remote}/${target.branch}`;
-    if (await ok(exec, ['rev-parse', '--verify', '--quiet', remoteRef])) base = remoteRef;
+    if (await source.verifyRef(remoteRef)) base = remoteRef;
   }
 
   // 2. fork point from <remote>/HEAD (a new branch with no remote counterpart).
   if (!base) {
     const remoteHead = `${remote}/HEAD`;
-    if (await ok(exec, ['rev-parse', '--verify', '--quiet', remoteHead])) {
-      base = await ok(exec, ['merge-base', remoteHead, target.sourceRef]);
+    if (await source.verifyRef(remoteHead)) {
+      base = await source.mergeBase(remoteHead, target.sourceRef);
     }
   }
 
@@ -73,8 +68,10 @@ export async function computePushedDiff(
   // When no remote baseline resolves (step 1-3 all missed: fresh/empty remote),
   // every commit reachable from the ref is new — scan the whole history (`ref`
   // with no range).
-  const range = base ? [`${base}..${target.sourceRef}`] : [target.sourceRef];
-  const res = await exec(['log', '-p', '--no-color', ...range]);
-  if (res.exitCode !== 0) return null;
-  return res.stdout;
+  const range = base ? `${base}..${target.sourceRef}` : target.sourceRef;
+  return source.logPatch(range);
+}
+
+export function computePushedDiff(exec: GitExec, opts?: PushedDiffOptions): Promise<string | null> {
+  return computePushedDiffFromSource(pushedDiffSourceFromGitExec(exec), opts);
 }

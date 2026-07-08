@@ -16,9 +16,9 @@
  * Failure posture is deliberately split by *source*:
  *   - **A local diff read failing** (`getDiff` returns null/empty or throws)
  *     fails OPEN — same posture, same condition, same justification as the
- *     secret-scan gate: `computePushedDiff` is local git, a read hiccup must not
- *     brick every push, and the secret scan already fails open on the identical
- *     failure, so this adds no exposure beyond the accepted baseline.
+ *     secret-scan gate: `computePushedDiff` is a local git/JGit read, a hiccup
+ *     must not brick every push, and the secret scan already fails open on the
+ *     identical failure, so this adds no exposure beyond the accepted baseline.
  *   - **The Auditor backend failing** (`audit` throws — provider down, timeout,
  *     rate-limit) fails CLOSED and marks the verdict `retryable`. Unlike the
  *     deterministic local read, the LLM call is the unreliable part; failing
@@ -53,9 +53,10 @@ export interface AuditorPushVerdict {
 export interface AuditorPrePushGateOptions {
   /**
    * Resolve the cumulative diff a push will upload — the handler wires this to
-   * `computePushedDiff` over the same `GitExec` the backend uses. Receives the
-   * push options so it can scope to the destination `ref`. Return `null`/empty
-   * when nothing resolves (the gate then skips, logging `auditor_push_no_diff`).
+   * `computePushedDiff` over the same git/JGit source the backend uses.
+   * Receives the push options so it can scope to the destination `ref`. Return
+   * `null`/empty when nothing resolves (the gate then skips, logging
+   * `auditor_push_no_diff`).
    */
   getDiff: (opts?: PushOptions) => Promise<string | null> | string | null;
   /**

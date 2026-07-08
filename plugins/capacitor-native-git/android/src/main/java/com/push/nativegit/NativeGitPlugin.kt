@@ -116,6 +116,25 @@ class NativeGitPlugin : Plugin() {
   }
 
   @PluginMethod
+  fun revParse(call: PluginCall) = resolveAsync(call) {
+    val ref = call.getString("ref") ?: return@resolveAsync JSObject().put("sha", JSONObject.NULL)
+    JSObject().put("sha", JGitEngine.revParse(call.requireDir(), ref) ?: JSONObject.NULL)
+  }
+
+  @PluginMethod
+  fun mergeBase(call: PluginCall) = resolveAsync(call) {
+    val a = call.getString("a") ?: return@resolveAsync JSObject().put("sha", JSONObject.NULL)
+    val b = call.getString("b") ?: return@resolveAsync JSObject().put("sha", JSONObject.NULL)
+    JSObject().put("sha", JGitEngine.mergeBase(call.requireDir(), a, b) ?: JSONObject.NULL)
+  }
+
+  @PluginMethod
+  fun logPatch(call: PluginCall) = resolveAsync(call) {
+    val range = call.getString("range") ?: return@resolveAsync JSObject().put("patch", JSONObject.NULL)
+    JSObject().put("patch", JGitEngine.logPatch(call.requireDir(), range) ?: JSONObject.NULL)
+  }
+
+  @PluginMethod
   fun readFile(call: PluginCall) = resolveAsync(call) {
     val path = call.getString("path") ?: return@resolveAsync JSObject()
       .put("content", "")

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   getActiveGitBackend,
+  getActivePushGit,
   resolveActiveGitBinding,
   resolveGitBackend,
   type GitSessionBinding,
@@ -10,16 +11,22 @@ import {
 // constructing real sandbox/native backends.
 vi.mock('./git-backend', () => ({
   createSandboxGitBackend: vi.fn((sandboxId: string) => ({ tag: 'sandbox', sandboxId })),
+  createSandboxPushGit: vi.fn((sandboxId: string, opts?: unknown) => ({
+    tag: 'sandbox-push',
+    sandboxId,
+    opts,
+  })),
 }));
 vi.mock('./native-git', () => ({
   createNativeGitBackend: vi.fn((opts: { dir: string }) => ({ tag: 'native', dir: opts.dir })),
+  createNativePushGit: vi.fn((opts: { dir: string }) => ({ tag: 'native-push', dir: opts.dir })),
 }));
 vi.mock('./github-auth', () => ({
   getActiveGitHubToken: vi.fn(() => 'tok_default'),
 }));
 
-import { createSandboxGitBackend } from './git-backend';
-import { createNativeGitBackend } from './native-git';
+import { createSandboxGitBackend, createSandboxPushGit } from './git-backend';
+import { createNativeGitBackend, createNativePushGit } from './native-git';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -135,5 +142,24 @@ describe('getActiveGitBackend end-to-end', () => {
     const native: GitSessionBinding = { kind: 'native', dir: '/x' };
     expect(sandbox.kind).toBe('sandbox');
     expect(native.kind).toBe('native');
+  });
+});
+
+describe('getActivePushGit end-to-end', () => {
+  it('routes the gated facade to native when the active binding is native', () => {
+    getActivePushGit(
+      { sandboxId: 'sb_e2e', repoFullName: 'owner/repo', branch: 'main' },
+      { secretScan: true },
+      { isNative: () => true, nativeWorkingCopyDir: () => '/clone' },
+    );
+    const opts = (createNativePushGit as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(opts.dir).toBe('/clone');
+    expect(opts.secretScan).toBe(true);
+    expect(createSandboxPushGit).not.toHaveBeenCalled();
+  });
+
+  it('falls through to sandbox PushGit on web', () => {
+    getActivePushGit({ sandboxId: 'sb_web' }, { secretScan: true }, { isNative: () => false });
+    expect(createSandboxPushGit).toHaveBeenCalledWith('sb_web', { secretScan: true });
   });
 });

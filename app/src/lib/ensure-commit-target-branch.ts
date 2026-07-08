@@ -56,6 +56,8 @@ export interface EnsureCommitTargetBranchArgs {
    *  `forkBranchInWorkspace` (model-path semantics: returns the payload, no
    *  chat migration). UI surfaces pass a `forkBranchFromUI` wrapper. */
   fork?: CommitTargetForkFn;
+  /** Branch collision check. Defaults to sandbox local + origin refs. */
+  branchExists?: (branch: string) => Promise<boolean>;
 }
 
 export interface ModelBranchNameProposerOptions {
@@ -245,6 +247,7 @@ export async function ensureCommitTargetBranch({
   commitMessage,
   proposeName = createModelCommitBranchNameProposer(),
   fork,
+  branchExists: branchExistsOverride,
 }: EnsureCommitTargetBranchArgs): Promise<EnsureCommitTargetBranchResult> {
   const current = currentBranch?.trim();
   const fallbackDefault = defaultBranch?.trim();
@@ -256,6 +259,8 @@ export async function ensureCommitTargetBranch({
   }
   const forkBranch: CommitTargetForkFn =
     fork ?? ((branch) => forkBranchInWorkspace(sandboxId, branch));
+  const checkBranchExists =
+    branchExistsOverride ?? ((branch: string) => branchExists(sandboxId, branch));
 
   const diffSummary = summarizeDiffForBranchName(diff);
   let proposed: string | null;
@@ -292,7 +297,7 @@ export async function ensureCommitTargetBranch({
     for (let i = 0; i < MAX_BRANCH_ATTEMPTS; i++) {
       const branch = i === 0 ? base : withNumericSuffix(base, i + 1);
       if (!branch || isInvalidGitRef(branch)) break; // bad base — next candidate
-      if (await branchExists(sandboxId, branch)) continue;
+      if (await checkBranchExists(branch)) continue;
 
       const forked = await forkBranch(branch);
       if (forked.ok && forked.branchSwitch) {

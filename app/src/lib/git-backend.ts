@@ -13,21 +13,16 @@
 
 import { SandboxPlumbingBackend, type GitBackend, type GitExec } from '@push/lib/git/backend';
 import { gitWorkingCopyLockScope } from '@push/lib/git/repo-lock';
-import {
-  PushGit,
-  composePrePushGates,
-  type PreCommitGate,
-  type PrePushGate,
-} from '@push/lib/git/push-git';
+import { PushGit, type PreCommitGate, type PrePushGate } from '@push/lib/git/push-git';
 import { computePushedDiff } from '@push/lib/git/pushed-diff';
 import { computePushPlan, type PushPlan } from '@push/lib/git/push-plan';
-import { makeSecretScanPrePushGate } from '@push/lib/git/secret-scan-gate';
-import { makeProtectMainPrePushGate } from '@push/lib/git/protect-main-gate';
-import { makeAuditorPrePushGate, type AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
-import { resolveSecretScanEnabled } from '@push/lib/secret-scan';
+import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
 import { execInSandbox, type ExecResult } from './sandbox-client';
 import { getActiveGitHubToken } from './github-auth';
 import { shellEscape } from './sandbox-tool-utils';
+import { buildPushPrePushGate } from './push-git-gates';
+
+export { resolveWebAuditAtPushEnabled, resolveWebSecretScanEnabled } from './push-git-gates';
 
 type SandboxExecFn = (
   sandboxId: string,
@@ -107,41 +102,6 @@ function makeSandboxGitExec(
       return { stdout: '', stderr: message, exitCode: 1, error: message };
     }
   };
-}
-
-/**
- * Resolve the web secret-scan opt-out. Vite exposes build-time vars on
- * `import.meta.env`; `VITE_PUSH_SECRET_SCAN=0` disables the gate on the client
- * (process env isn't readable in the browser). Guarded so it's safe under any
- * bundler/test runner.
- */
-export function resolveWebSecretScanEnabled(): boolean {
-  const env = (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_SECRET_SCAN;
-  return resolveSecretScanEnabled({ env });
-}
-
-/**
- * Resolve whether the Auditor runs at the push boundary (Gate-at-Push Move A).
- *
- * Default ON (Move A flipped): the SAFE/UNSAFE Auditor gate now lives at the
- * push step. The agent commits silently via `sandbox_commit` (no audit), then
- * ships via `prepare_push` / `sandbox_push`, where this gate audits the
- * cumulative push diff. The gate MUST stay on while silent commits exist, else
- * committed work would ship unaudited — so this default and the retirement of
- * the prepare-time audit move together. `VITE_PUSH_AUDIT_AT_PUSH=0` (or
- * `'false'`) is the kill switch. Guarded so it's safe under any bundler/test
- * runner.
- */
-export function resolveWebAuditAtPushEnabled(): boolean {
-  // Read `process.env` first so vitest's `stubEnv` / a Node runtime can drive it,
-  // then fall back to `import.meta.env` (Vite inlines `VITE_*` at build time for
-  // production) — the same precedence used by other Vite env helpers.
-  const raw =
-    typeof process !== 'undefined' && process.env?.VITE_PUSH_AUDIT_AT_PUSH !== undefined
-      ? process.env.VITE_PUSH_AUDIT_AT_PUSH
-      : (import.meta as { env?: Record<string, unknown> }).env?.VITE_PUSH_AUDIT_AT_PUSH;
-  // Default ON: only an explicit opt-out disables the live gate.
-  return !(raw === '0' || raw === 'false');
 }
 
 /**
@@ -243,31 +203,15 @@ export function createSandboxPushGit(
   const backend = new SandboxPlumbingBackend(exec, {
     lockScope: gitWorkingCopyLockScope(sandboxId),
   });
-  const prePush =
-    opts?.prePush ??
-    composePrePushGates([
-      opts?.protectMain
-        ? makeProtectMainPrePushGate({
-            enabled: true,
-            defaultBranch: opts.defaultBranch,
-            // Authoritative read of the real HEAD right before the push.
-            getCurrentBranch: () => backend.currentBranch(),
-          })
-        : undefined,
-      opts?.secretScan
-        ? makeSecretScanPrePushGate({
-            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
-            enabled: resolveWebSecretScanEnabled(),
-          })
-        : undefined,
-      opts?.auditAtPush
-        ? makeAuditorPrePushGate({
-            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
-            audit: opts.auditAtPush.audit,
-            enabled: opts.auditAtPush.enabled,
-          })
-        : undefined,
-    ]);
+  const prePush = buildPushPrePushGate({
+    prePush: opts?.prePush,
+    protectMain: opts?.protectMain,
+    defaultBranch: opts?.defaultBranch,
+    getCurrentBranch: () => backend.currentBranch(),
+    secretScan: opts?.secretScan,
+    getPushedDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
+    auditAtPush: opts?.auditAtPush,
+  });
   return new PushGit({
     backend,
     preCommit: opts?.preCommit,
