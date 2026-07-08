@@ -254,6 +254,22 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.text).toContain('sandbox_search');
   });
 
+  it('maps a capped native read onto cloud-parity truncation metadata', async () => {
+    fakeBackend.readFile.mockResolvedValueOnce({
+      content: 'one\ntwo',
+      truncated: true,
+      totalLines: 50,
+    });
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_read_file', args: { path: '/workspace/big.ts' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    // 2 lines served → truncation begins at line 3; downstream pagination
+    // ("use as the next start_line") depends on this field.
+    expect(result.text).toContain('truncated_at_line: 3');
+  });
+
   it('reports a truncated native directory listing instead of presenting it as complete', async () => {
     fakeBackend.listDir.mockResolvedValueOnce({
       entries: [{ name: 'a.ts', type: 'file' as const, size: 3 }],

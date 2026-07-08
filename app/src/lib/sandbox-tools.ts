@@ -255,11 +255,19 @@ function nativeReadFile(
 ): ReadOnlyInspectionHandlerContext['readFromSandbox'] {
   return async (_sandboxId, path, startLine, endLine): Promise<FileReadResult> => {
     const result = await nativeFs.readFile(path, { startLine, endLine });
+    // Cloud-parity truncation metadata: a capped read reports where it
+    // stopped so downstream ("use as the next start_line") pagination and the
+    // truncation hint in the tool result keep working on native.
+    const truncatedAtLine =
+      result.truncated && !result.error && result.content
+        ? (startLine ?? 1) + result.content.split('\n').length
+        : undefined;
     return {
       content: result.content,
       truncated: result.truncated,
       ...(typeof startLine === 'number' ? { start_line: startLine } : {}),
       ...(typeof endLine === 'number' ? { end_line: endLine } : {}),
+      ...(truncatedAtLine !== undefined ? { truncated_at_line: truncatedAtLine } : {}),
       ...(result.error ? { error: result.error } : {}),
       ...(result.code ? { code: result.code } : {}),
     };

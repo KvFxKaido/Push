@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  buildGitignoreMatcher,
   NativeFsBackend,
   resolveNativeFs,
   toWorktreeRelative,
@@ -151,6 +152,55 @@ describe('NativeFsBackend', () => {
     const result = await new NativeFsBackend(plugin, '/data/clone').search('fn(', 'src/a.ts');
 
     expect(result.lines).toEqual(['/workspace/src/a.ts:1:call fn( now']);
+  });
+
+  it('paginates capped file reads so matches past the read cap are still found', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: big.ts',
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ startLine }: { startLine?: number }) => {
+      // 4-line file served in two capped chunks of 2.
+      if (!startLine) {
+        return { content: 'one\ntwo', truncated: true, totalLines: 4 };
+      }
+      expect(startLine).toBe(3);
+      return { content: 'three\nneedle four', truncated: false, totalLines: 4 };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'big.ts');
+
+    // Match lives past the cap; line number is absolute, not chunk-relative.
+    expect(result.lines).toEqual(['/workspace/big.ts:4:needle four']);
+    expect(result.error).toBeUndefined();
+  });
+
+  it('reports a capped directory listing as a truncated search', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [{ name: 'a.ts', type: 'file' as const }],
+      truncated: true,
+    });
+    vi.mocked(plugin.readFile).mockImplementation(async ({ path }: { path: string }) => {
+      if (path === '.gitignore') return { content: '', truncated: false, error: 'no file' };
+      return { content: 'nothing here', truncated: false };
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle');
+
+    // 500-entry cap means unwalked files — never a silent "complete" result.
+    expect(result.truncated).toBe(true);
+  });
+
+  it('honors gitignore negations: a matching negation wins over an exclusion', async () => {
+    const matcher = buildGitignoreMatcher('generated/*\n!generated/keep.ts\n*.log\n!important.log');
+    expect(matcher('generated/junk.ts')).toBe(true);
+    expect(matcher('generated/keep.ts')).toBe(false);
+    expect(matcher('debug.log')).toBe(true);
+    expect(matcher('important.log')).toBe(false);
+    expect(matcher('src/a.ts')).toBe(false);
   });
 
   it('surfaces an error when the search path is neither a readable dir nor file', async () => {

@@ -76,32 +76,47 @@ function escapeRegExpLiteral(text: string): string {
  * consistent with the rg/grep transports (which honor ignore rules) and
  * doesn't pump generated trees through the Capacitor bridge file-by-file.
  * Supported subset: comments/blank lines, trailing-slash dir patterns, `*`
- * within a segment, and root-anchored patterns containing `/`. Negations
- * (`!`) and `**` are ignored — unsupported patterns simply don't exclude,
- * which errs toward searching too much rather than silently missing matches.
+ * within a segment, root-anchored patterns containing `/`, and negations
+ * (`!pattern`) — a matching negation always wins over a matching exclusion,
+ * ignoring git's last-match-wins ordering and re-inclusion-inside-excluded-dir
+ * rules. `**` and unparseable patterns don't exclude. Every simplification
+ * errs toward searching too much rather than silently missing matches.
  */
 export function buildGitignoreMatcher(content: string): (relPath: string) => boolean {
-  const nameGlobs: RegExp[] = [];
-  const rootedGlobs: RegExp[] = [];
-  for (const raw of content.split('\n')) {
-    const line = raw.trim();
-    if (!line || line.startsWith('#') || line.startsWith('!')) continue;
-    const pattern = line.replace(/\/+$/, '');
-    if (!pattern || pattern.includes('**')) continue;
-    const anchored = pattern.includes('/');
-    const cleaned = pattern.replace(/^\//, '');
+  const compile = (pattern: string, nameGlobs: RegExp[], rootedGlobs: RegExp[]) => {
+    const trimmed = pattern.replace(/\/+$/, '');
+    if (!trimmed || trimmed.includes('**')) return;
+    const anchored = trimmed.includes('/');
+    const cleaned = trimmed.replace(/^\//, '');
     const source = `^${cleaned.split('*').map(escapeRegExpLiteral).join('[^/]*')}$`;
     try {
       (anchored ? rootedGlobs : nameGlobs).push(new RegExp(source));
     } catch {
       // Unparseable pattern → doesn't exclude.
     }
+  };
+  const nameGlobs: RegExp[] = [];
+  const rootedGlobs: RegExp[] = [];
+  const negatedNameGlobs: RegExp[] = [];
+  const negatedRootedGlobs: RegExp[] = [];
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    if (line.startsWith('!')) {
+      compile(line.slice(1), negatedNameGlobs, negatedRootedGlobs);
+    } else {
+      compile(line, nameGlobs, rootedGlobs);
+    }
   }
   return (relPath) => {
     const name = relPath.split('/').pop() ?? relPath;
-    return (
-      nameGlobs.some((glob) => glob.test(name)) || rootedGlobs.some((glob) => glob.test(relPath))
-    );
+    const excluded =
+      nameGlobs.some((glob) => glob.test(name)) || rootedGlobs.some((glob) => glob.test(relPath));
+    if (!excluded) return false;
+    const reIncluded =
+      negatedNameGlobs.some((glob) => glob.test(name)) ||
+      negatedRootedGlobs.some((glob) => glob.test(relPath));
+    return !reIncluded;
   };
 }
 
@@ -186,21 +201,36 @@ export class NativeFsBackend {
 
     // Returns the read error (if any) so the root-path case can surface it;
     // per-file errors during a directory walk are skipped like rg skips
-    // unreadable files.
+    // unreadable files. The plugin caps reads (~200KB), so a large file is
+    // read in chunks — matching only the first chunk would silently miss
+    // matches past the cap that rg would find. `totalLines` (full-file count,
+    // reported even on capped reads) drives the pagination.
     const searchFile = async (rel: string): Promise<string | null> => {
-      const read = await this.readFile(rel);
-      if (read.error) return read.error;
-      const fileLines = read.content.split('\n');
       const displayPath = `/workspace/${rel}`;
-      for (let i = 0; i < fileLines.length; i += 1) {
-        if (!matchesLine(fileLines[i])) continue;
-        lines.push(`${displayPath}:${i + 1}:${fileLines[i]}`);
-        if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
-          truncated = true;
-          break;
+      let lineOffset = 0;
+      let knownTotalLines: number | undefined;
+      for (;;) {
+        const read = await this.readFile(
+          rel,
+          lineOffset === 0 ? {} : { startLine: lineOffset + 1 },
+        );
+        if (read.error) return lineOffset === 0 ? read.error : null;
+        const fileLines = read.content.split('\n');
+        for (let i = 0; i < fileLines.length; i += 1) {
+          if (!matchesLine(fileLines[i])) continue;
+          lines.push(`${displayPath}:${lineOffset + i + 1}:${fileLines[i]}`);
+          if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
+            truncated = true;
+            return null;
+          }
         }
+        knownTotalLines ??= read.totalLines;
+        lineOffset += fileLines.length;
+        // Done when the transport says so, when progress stalls (safety), or
+        // when the full extent is unknown (older transports: single pass).
+        if (!read.truncated || fileLines.length === 0 || knownTotalLines === undefined) return null;
+        if (lineOffset >= knownTotalLines) return null;
       }
-      return null;
     };
 
     // Honor the repo's top-level .gitignore so the walk matches the rg/grep
@@ -219,7 +249,12 @@ export class NativeFsBackend {
         if (isIgnored(child)) continue;
         if (entry.type === 'directory') {
           const listing = await this.listDir(child);
-          if (!listing.error) await walkEntries(child, listing.entries);
+          if (!listing.error) {
+            // A capped listing (500 entries) means unwalked files — report
+            // the search as truncated rather than silently incomplete.
+            if (listing.truncated) truncated = true;
+            await walkEntries(child, listing.entries);
+          }
           continue;
         }
         if (entry.type !== 'file') continue;
@@ -244,6 +279,7 @@ export class NativeFsBackend {
         }
         return { lines, truncated };
       }
+      if (rootListing.truncated) truncated = true;
       const ignoreRead = await this.readFile('.gitignore');
       if (!ignoreRead.error) isIgnored = buildGitignoreMatcher(ignoreRead.content);
       await walkEntries(root, rootListing.entries);
