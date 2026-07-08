@@ -45,6 +45,16 @@ export function buildPushPrePushGate(opts: {
   };
 }): PrePushGate | undefined {
   if (opts.prePush) return opts.prePush;
+  const secretScanEnabled = Boolean(opts.secretScan && resolveWebSecretScanEnabled());
+  const auditAtPushEnabled = Boolean(opts.auditAtPush && opts.auditAtPush.enabled !== false);
+  const missingDiffProviderGate: PrePushGate | undefined =
+    !opts.getPushedDiff && (secretScanEnabled || auditAtPushEnabled)
+      ? async () => ({
+          ok: false,
+          reason:
+            'Push blocked: pushed-diff provider is unavailable, so enabled push gates cannot inspect this delivery.',
+        })
+      : undefined;
   const getDiff = opts.getPushedDiff ?? (() => null);
   return composePrePushGates([
     opts.protectMain
@@ -54,10 +64,11 @@ export function buildPushPrePushGate(opts: {
           getCurrentBranch: opts.getCurrentBranch,
         })
       : undefined,
+    missingDiffProviderGate,
     opts.secretScan
       ? makeSecretScanPrePushGate({
           getDiff,
-          enabled: resolveWebSecretScanEnabled(),
+          enabled: secretScanEnabled,
         })
       : undefined,
     opts.auditAtPush

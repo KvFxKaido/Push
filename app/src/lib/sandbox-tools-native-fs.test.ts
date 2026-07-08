@@ -39,6 +39,9 @@ const fakeNativeGit = vi.hoisted(() => ({
 const nativeFs = vi.hoisted(() => ({
   resolveNativeFs: vi.fn((): typeof fakeBackend | null => fakeBackend),
 }));
+const nativeWorkingCopy = vi.hoisted(() => ({
+  rekeyWorkingCopyScope: vi.fn(() => true),
+}));
 
 vi.mock('./native-fs', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./native-fs')>()),
@@ -47,6 +50,16 @@ vi.mock('./native-fs', async (importOriginal) => ({
 
 vi.mock('./native-git/plugin', () => ({
   NativeGit: fakeNativeGit,
+}));
+
+vi.mock('./native-working-copy', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./native-working-copy')>()),
+  rekeyWorkingCopyScope: nativeWorkingCopy.rekeyWorkingCopyScope,
+}));
+
+vi.mock('./ensure-commit-target-branch', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./ensure-commit-target-branch')>()),
+  createModelCommitBranchNameProposer: vi.fn(() => async () => 'feature/native-auto'),
 }));
 
 import { executeSandboxToolCall } from './sandbox-tools';
@@ -69,6 +82,7 @@ beforeEach(() => {
   fakeBackend.search.mockClear();
   fakeBackend.diff.mockClear();
   nativeFs.resolveNativeFs.mockReturnValue(fakeBackend);
+  nativeWorkingCopy.rekeyWorkingCopyScope.mockReset().mockReturnValue(true);
 
   fakeNativeGit.currentBranch.mockReset().mockResolvedValue({ branch: 'feature/native' });
   fakeNativeGit.upstreamRef.mockReset().mockResolvedValue({ ref: 'origin/feature/native' });
@@ -193,6 +207,27 @@ describe('sandbox-tools native FS routing', () => {
       from: undefined,
     });
     expect(result.branchSwitch?.name).toBe('feature/native-2');
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-2',
+    });
+  });
+
+  it('rekeys the on-device working-copy registry after native branch switches', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'feature/native-3' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(fakeNativeGit.switchBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      branch: 'feature/native-3',
+    });
+    expect(result.branchSwitch?.name).toBe('feature/native-3');
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-3',
+    });
   });
 
   it('routes sandbox_commit to native PushGit without requiring a shell hook', async () => {
@@ -208,6 +243,44 @@ describe('sandbox-tools native FS routing', () => {
     });
     expect(result.text).toContain('[Tool Result — sandbox_commit]');
     expect(result.text).toContain('Committed: "Native commit"');
+  });
+
+  it('rekeys the on-device working-copy registry when native commit auto-forks', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_commit', args: { message: 'feat: native auto' } },
+      '',
+      { nativeFsScope: scope, currentBranch: 'main', defaultBranch: 'main' },
+    );
+    expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      name: 'feature/native-auto',
+      from: undefined,
+    });
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'feature/native-auto',
+    });
+    expect(result.branchSwitch?.name).toBe('feature/native-auto');
+    expect(result.text).toContain('Forked off the default branch first');
+  });
+
+  it('rekeys the on-device working-copy registry when native save-draft creates a branch', async () => {
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_save_draft', args: { branch_name: 'draft/native-save', message: 'WIP' } },
+      '',
+      { nativeFsScope: scope },
+    );
+    expect(fakeNativeGit.createBranch).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      name: 'draft/native-save',
+      from: undefined,
+    });
+    expect(nativeWorkingCopy.rekeyWorkingCopyScope).toHaveBeenCalledWith(scope, {
+      repoFullName: 'owner/repo',
+      branch: 'draft/native-save',
+    });
+    expect(result.branchSwitch?.name).toBe('draft/native-save');
+    expect(result.text).toContain('Draft saved to branch: draft/native-save');
   });
 
   it('blocks native sandbox_push on secrets found in the pushed patch series', async () => {

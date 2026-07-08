@@ -194,6 +194,8 @@ export interface GitReleaseHandlerContext {
   branchExists?: (branch: string) => Promise<boolean>;
   /** Optional fork implementation for auto-branch-on-commit. */
   forkCommitTargetBranch?: CommitTargetForkFn;
+  /** Optional notification after a handler-created branch switch succeeds. */
+  onBranchChanged?: (branch: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,6 +1207,7 @@ export async function handleSaveDraft(
         text: `[Tool Error — sandbox_save_draft]\nFailed to create draft branch: ${checkoutResult.stderr}`,
       };
     }
+    ctx.onBranchChanged?.(draftBranchName);
   }
 
   const activeDraftBranch = needsNewBranch ? draftBranchName : currentBranch;

@@ -93,6 +93,7 @@ import {
   type NativeFsDiffResult,
   type NativeFsWriteResult,
 } from './native-fs';
+import { rekeyWorkingCopyScope, type WorkingCopyScope } from './native-working-copy';
 
 import {
   setPrefetchedEditFile,
@@ -247,6 +248,7 @@ function buildGitReleaseContext(
   sandboxId: string,
   branchInfo?: { currentBranch?: string; defaultBranch?: string; isMainProtected?: boolean },
   nativeFs?: NativeFsBackend | null,
+  nativeFsScope?: WorkingCopyScope,
 ): GitReleaseHandlerContext {
   return {
     sandboxId,
@@ -278,9 +280,11 @@ function buildGitReleaseContext(
             truncated: false,
           }),
           collectUntrackedDiff: async () => '',
+          onBranchChanged: (branch: string) => rekeyNativeWorkingCopyScope(nativeFsScope, branch),
           branchExists: async () => false,
           forkCommitTargetBranch: async (branch: string) => {
             const result = await createToolPushGit(sandboxId, nativeFs).createBranch(branch);
+            if (result.ok) rekeyNativeWorkingCopyScope(nativeFsScope, branch);
             return result.ok
               ? {
                   ok: true,
@@ -298,6 +302,28 @@ function buildGitReleaseContext(
         }
       : {}),
   };
+}
+
+function rekeyNativeWorkingCopyScope(
+  currentScope: WorkingCopyScope | undefined,
+  nextBranch: string,
+): void {
+  if (!currentScope) return;
+  const moved = rekeyWorkingCopyScope(currentScope, {
+    repoFullName: currentScope.repoFullName,
+    branch: nextBranch,
+  });
+  if (!moved) {
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'native_working_copy_rekey_failed',
+        repo: currentScope.repoFullName,
+        fromBranch: currentScope.branch,
+        toBranch: nextBranch,
+      }),
+    );
+  }
 }
 
 function nativePathForEntry(parentPath: string, name: string): string {
@@ -1328,7 +1354,9 @@ async function executeSandboxToolCallInner(
       case 'sandbox_diff': {
         if (nativeFs) {
           return runNativeFsTool('sandbox_diff', () =>
-            handleSandboxDiff(buildGitReleaseContext(stateSandboxId, undefined, nativeFs)),
+            handleSandboxDiff(
+              buildGitReleaseContext(stateSandboxId, undefined, nativeFs, options?.nativeFsScope),
+            ),
           );
         }
         if (options?.localDaemonBinding) {
@@ -1413,6 +1441,8 @@ async function executeSandboxToolCallInner(
           };
         }
 
+        if (nativeFs) rekeyNativeWorkingCopyScope(options?.nativeFsScope, name);
+
         // Branch switch changes the entire working tree — invalidate caches
         // and ledgers the same way sandbox_exec does for mutating commands,
         // otherwise subsequent edits use versions from the previous branch
@@ -1488,6 +1518,8 @@ async function executeSandboxToolCallInner(
           };
         }
 
+        if (nativeFs) rekeyNativeWorkingCopyScope(options?.nativeFsScope, branch);
+
         // Same cache/ledger invalidation as sandbox_create_branch — switching
         // changes the entire working tree.
         clearFileVersionCache(stateSandboxId);
@@ -1528,6 +1560,7 @@ async function executeSandboxToolCallInner(
               isMainProtected: options?.isMainProtected,
             },
             nativeFs,
+            options?.nativeFsScope,
           ),
           call.args,
           {
@@ -1547,6 +1580,7 @@ async function executeSandboxToolCallInner(
               isMainProtected: options?.isMainProtected,
             },
             nativeFs,
+            options?.nativeFsScope,
           ),
           {
             providerOverride: options?.auditorProviderOverride,
@@ -1565,6 +1599,7 @@ async function executeSandboxToolCallInner(
               isMainProtected: options?.isMainProtected,
             },
             nativeFs,
+            options?.nativeFsScope,
           ),
           {
             providerOverride: options?.auditorProviderOverride,
@@ -1637,7 +1672,7 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_save_draft': {
         return handleSaveDraft(
-          buildGitReleaseContext(stateSandboxId, undefined, nativeFs),
+          buildGitReleaseContext(stateSandboxId, undefined, nativeFs, options?.nativeFsScope),
           call.args,
         );
       }

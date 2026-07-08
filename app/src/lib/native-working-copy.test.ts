@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import {
   ensureWorkingCopy,
   forgetWorkingCopy,
+  rekeyWorkingCopyScope,
   workingCopyDir,
   workingCopyPath,
   __resetWorkingCopyRegistryForTests,
@@ -50,6 +51,36 @@ describe('workingCopyDir', () => {
     const clone = vi.fn(async () => ({ ok: false, message: 'no network' }));
     await ensureWorkingCopy(scope, { clone, log: () => {} });
     expect(workingCopyDir(scope)).toBeUndefined();
+  });
+});
+
+describe('rekeyWorkingCopyScope', () => {
+  it('moves a ready registry entry to the new branch key while preserving the clone dir', async () => {
+    const clone = vi.fn(async () => ({ ok: true }));
+    await ensureWorkingCopy(scope, { clone, log: () => {} });
+
+    const nextScope: WorkingCopyScope = { repoFullName: 'owner/repo', branch: 'feature/native' };
+    const log = vi.fn();
+
+    expect(rekeyWorkingCopyScope(scope, nextScope, { log })).toBe(true);
+    expect(workingCopyDir(scope)).toBeUndefined();
+    expect(workingCopyDir(nextScope)).toBe(workingCopyPath(scope));
+    expect(log).toHaveBeenCalledWith(
+      'info',
+      'native_working_copy_rekeyed',
+      expect.objectContaining({
+        repo: 'owner/repo',
+        fromBranch: 'main',
+        toBranch: 'feature/native',
+        dir: workingCopyPath(scope),
+      }),
+    );
+  });
+
+  it('returns false when the source scope is not ready', () => {
+    const nextScope: WorkingCopyScope = { repoFullName: 'owner/repo', branch: 'feature/native' };
+    expect(rekeyWorkingCopyScope(scope, nextScope, { log: () => {} })).toBe(false);
+    expect(workingCopyDir(nextScope)).toBeUndefined();
   });
 });
 

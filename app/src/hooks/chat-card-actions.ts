@@ -22,7 +22,7 @@ import type {
 } from '@/types';
 import { execInSandbox, writeToSandbox } from '@/lib/sandbox-client';
 import { computeSandboxPushPlan } from '@/lib/git-backend';
-import { getActivePushGit } from '@/lib/git-session';
+import { getActivePushGit, resolveActiveGitBinding } from '@/lib/git-session';
 import { nativeFsScopeFrom } from '@/lib/native-fs';
 import { executeToolCall } from '@/lib/github-tools';
 import type { ActiveProvider } from '@/lib/orchestrator';
@@ -238,23 +238,34 @@ export function useChatCardActions({
         repoFullName: repoRef.current ?? undefined,
         branch: activeBranch(),
       });
+      const hasActiveGitSurface = (sandboxId: string) => {
+        const binding = resolveActiveGitBinding(activeGitSession(sandboxId));
+        return binding.kind === 'native' || Boolean(binding.sandboxId);
+      };
+      const markCommitReviewError = (messageId: string, cardIndex: number, error: string) => {
+        updateCardInMessage(chatId, messageId, cardIndex, (card) => {
+          if (card.type !== 'commit-review') return card;
+          return {
+            ...card,
+            data: {
+              ...card.data,
+              status: 'error',
+              error,
+            } as CommitReviewCardData,
+          };
+        });
+      };
 
       switch (action.type) {
         case 'commit-refresh': {
           const sandboxId = sandboxIdRef.current ?? '';
           const nativeFsScope = activeNativeScope();
-          if (!sandboxId && !nativeFsScope) {
-            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
-              if (card.type !== 'commit-review') return card;
-              return {
-                ...card,
-                data: {
-                  ...card.data,
-                  status: 'error',
-                  error: 'Sandbox expired. Start a new sandbox.',
-                } as CommitReviewCardData,
-              };
-            });
+          if (!hasActiveGitSurface(sandboxId)) {
+            markCommitReviewError(
+              action.messageId,
+              action.cardIndex,
+              'Sandbox expired. Start a new sandbox.',
+            );
             return;
           }
 
@@ -328,19 +339,12 @@ export function useChatCardActions({
 
         case 'commit-approve': {
           const sandboxId = sandboxIdRef.current ?? '';
-          const nativeFsScope = activeNativeScope();
-          if (!sandboxId && !nativeFsScope) {
-            updateCardInMessage(chatId, action.messageId, action.cardIndex, (card) => {
-              if (card.type !== 'commit-review') return card;
-              return {
-                ...card,
-                data: {
-                  ...card.data,
-                  status: 'error',
-                  error: 'Sandbox expired. Start a new sandbox.',
-                } as CommitReviewCardData,
-              };
-            });
+          if (!hasActiveGitSurface(sandboxId)) {
+            markCommitReviewError(
+              action.messageId,
+              action.cardIndex,
+              'Sandbox expired. Start a new sandbox.',
+            );
             return;
           }
 

@@ -398,6 +398,50 @@ describe('chat-card-actions', () => {
     };
   }
 
+  it('refuses refresh when only a native scope is present but no git surface is ready', async () => {
+    const harness = createPushReviewActionHarness();
+    (harness.params.sandboxIdRef as { current: string | null }).current = null;
+
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-refresh',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error: 'Sandbox expired. Start a new sandbox.',
+      },
+    });
+    expect(mockExecuteSandboxToolCall).not.toHaveBeenCalled();
+  });
+
+  it('refuses push-kind approval when only a native scope is present but no git surface is ready', async () => {
+    const harness = createPushReviewActionHarness();
+    (harness.params.sandboxIdRef as { current: string | null }).current = null;
+
+    const { handleCardAction } = useChatCardActions(harness.params);
+    await handleCardAction({
+      type: 'commit-approve',
+      messageId: 'message-1',
+      cardIndex: 0,
+      commitMessage: '',
+    });
+
+    expect(harness.getCard()).toMatchObject({
+      type: 'commit-review',
+      data: {
+        status: 'error',
+        error: 'Sandbox expired. Start a new sandbox.',
+      },
+    });
+    expect(mockExecInSandbox).not.toHaveBeenCalled();
+  });
+
   it('refuses push-kind approval when the sandbox branch changed since review', async () => {
     mockExecInSandbox.mockImplementation(async (_sandboxId, command) => {
       const cmd = String(command);
