@@ -337,11 +337,10 @@ export class WebToolExecutionRuntime
           };
           // Pair the start event with a matching complete event so any
           // attached observer sees the block as a terminal tool lifecycle
-          // rather than an in-flight tool stuck forever. The other
-          // pre-execution denial paths in this function (pre-hook,
-          // approval gate, Protect Main) omit the complete emit today —
-          // that is a pre-existing inconsistency, out of scope here;
-          // the new code path at least gets it right.
+          // rather than an in-flight tool stuck forever. The sibling
+          // pre-execution denial paths (pre-hook and the approval-gate
+          // branches) emit the same terminal complete — every early-return
+          // denial in this function pairs its start.
           context.emit?.toolExecutionComplete({
             toolName,
             durationMs: Date.now() - startTime,
