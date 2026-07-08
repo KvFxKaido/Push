@@ -471,7 +471,7 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
       {
         trimmedText: 'Add a feature',
         attachments: undefined,
-        options: undefined,
+        options: { provider: 'openai', model: 'gpt-5-mini' },
         chatId: 'chat-1',
       },
       refs,
@@ -484,6 +484,8 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     expect(input.sandboxId).toBe('sb-99'); // resolved by the prewarm above
     expect(input.promptText).toBe('Add a feature');
     expect(input.repoFullName).toBe('owner/repo');
+    expect(input.provider).toBe('openai');
+    expect(input.model).toBe('gpt-5-mini');
     // Migration targets THIS send's chat, not whatever activeChatIdRef holds.
     expect(migrationCtx.activeChatIdRef.current).toBe('chat-1');
   });
@@ -512,7 +514,7 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
       {
         trimmedText: 'Add a feature',
         attachments: undefined,
-        options: undefined,
+        options: { provider: 'openai', model: 'gpt-5-mini' },
         chatId: 'chat-1',
       },
       refs,
@@ -521,6 +523,12 @@ describe('prepareSendContext — branch-on-first-prompt wiring', () => {
     );
 
     expect(order).toEqual(['name', 'sandbox', 'fork']);
+    expect(startFirstPromptBranchNameSuggestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'openai',
+        model: 'gpt-5-mini',
+      }),
+    );
   });
 
   it('passes isFirstMessage:false for a follow-up so the helper no-ops', async () => {

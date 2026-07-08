@@ -77,6 +77,7 @@ import {
   computeSandboxPushedDiff,
   computeSandboxPushPlan,
   createSandboxPushGit,
+  gitHubAuthCommandPrefix,
   resolveWebAuditAtPushEnabled,
 } from './git-backend';
 import type { AuditorPushVerdict } from '@push/lib/git/auditor-push-gate';
@@ -423,6 +424,55 @@ function createReleasePushGit(
     ...opts,
     execFn: opts?.execFn ?? ctx.execInSandbox,
   });
+}
+
+function normalizeDefaultBranchName(raw: string | undefined): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  const branch = value
+    .replace(/^refs\/remotes\/origin\//, '')
+    .replace(/^origin\//, '')
+    .trim();
+  return branch && branch !== 'HEAD' && !/\s/.test(branch) ? branch : undefined;
+}
+
+function parseRemoteShowDefaultBranch(stdout: string | undefined): string | undefined {
+  const match = stdout?.match(/^\s*HEAD branch:\s*(\S+)\s*$/im);
+  return normalizeDefaultBranchName(match?.[1]);
+}
+
+async function readDefaultBranchFromGit(
+  ctx: GitReleaseHandlerContext,
+): Promise<string | undefined> {
+  try {
+    const localHead = await ctx.execInSandbox(
+      ctx.sandboxId,
+      `git ${['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']
+        .map(shellEscape)
+        .join(' ')}`,
+      '/workspace',
+    );
+    const localDefault = normalizeDefaultBranchName(localHead.stdout);
+    if (localDefault) return localDefault;
+
+    const parsedHead = await ctx.execInSandbox(
+      ctx.sandboxId,
+      `git ${['rev-parse', '--abbrev-ref', 'origin/HEAD'].map(shellEscape).join(' ')}`,
+      '/workspace',
+    );
+    const parsedDefault = normalizeDefaultBranchName(parsedHead.stdout);
+    if (parsedDefault) return parsedDefault;
+
+    const authPrefix = gitHubAuthCommandPrefix(ctx.getActiveGitHubToken);
+    const remoteShow = await ctx.execInSandbox(
+      ctx.sandboxId,
+      `git ${authPrefix}${['remote', 'show', 'origin'].map(shellEscape).join(' ')}`,
+      '/workspace',
+    );
+    return parseRemoteShowDefaultBranch(remoteShow.stdout);
+  } catch {
+    return undefined;
+  }
 }
 
 function computeReleasePushedDiff(
@@ -1183,11 +1233,16 @@ export async function handleSaveDraft(
   const liveBranch = (await pushGit.currentBranch()) ?? '';
   const trackedBranch = ctx.currentBranch?.trim() || '';
   const currentBranchForPolicy = liveBranch || trackedBranch;
-  const defaultBranchForPolicy =
-    ctx.defaultBranch?.trim() ||
-    (currentBranchForPolicy === 'main' || currentBranchForPolicy === 'master'
-      ? currentBranchForPolicy
-      : undefined);
+  let defaultBranchForPolicy = ctx.defaultBranch?.trim();
+  if (
+    !defaultBranchForPolicy &&
+    (currentBranchForPolicy === 'main' || currentBranchForPolicy === 'master')
+  ) {
+    defaultBranchForPolicy = currentBranchForPolicy;
+  }
+  if (!defaultBranchForPolicy && currentBranchForPolicy && ctx.gitSurface !== 'native') {
+    defaultBranchForPolicy = await readDefaultBranchFromGit(ctx);
+  }
   const draftMessage = args.message || 'WIP: draft save';
 
   // Step 3: If saving from the default branch, fork first so the unaudited WIP
@@ -1214,7 +1269,7 @@ export async function handleSaveDraft(
 
   if (!branchTarget.switched && ctx.isMainProtected) {
     const protectedBranches = new Set(['main', 'master']);
-    if (ctx.defaultBranch) protectedBranches.add(ctx.defaultBranch);
+    if (defaultBranchForPolicy) protectedBranches.add(defaultBranchForPolicy);
     if (!liveBranch || protectedBranches.has(liveBranch)) {
       const protectErr: StructuredToolError = {
         type: 'PROTECT_MAIN_BLOCKED',

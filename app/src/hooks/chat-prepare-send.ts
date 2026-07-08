@@ -227,6 +227,8 @@ export async function prepareSendContext(
         repoFullName: branchDeps.repoFullName,
         currentBranch: branchInfo?.currentBranch,
         defaultBranch: branchInfo?.defaultBranch,
+        provider: lockedProviderForChat as ActiveProvider,
+        model: resolvedModelForChat ?? null,
       })
     : undefined;
 
@@ -292,6 +294,8 @@ export async function prepareSendContext(
         sandboxId: refs.sandboxIdRef.current,
         currentBranch: branchDeps.branchInfoRef.current?.currentBranch,
         defaultBranch: branchDeps.branchInfoRef.current?.defaultBranch,
+        provider: lockedProviderForChat as ActiveProvider,
+        model: resolvedModelForChat ?? null,
       },
       {
         // Target THIS send's chat, not `activeChatIdRef` ("active at resolution

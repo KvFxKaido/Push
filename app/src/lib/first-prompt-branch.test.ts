@@ -1,5 +1,31 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const modelProposerMocks = vi.hoisted(() => ({
+  getActiveProvider: vi.fn(() => 'demo'),
+  getProviderPushStream: vi.fn((provider: string) => `stream:${provider}`),
+  getModelForRole: vi.fn(() => ({ id: 'global-model' })),
+  iteratePushStreamText: vi.fn(async () => ({
+    error: false,
+    text: 'owner-repo/chat-route-name',
+  })),
+}));
+
+vi.mock('./orchestrator-provider-routing', () => ({
+  getActiveProvider: modelProposerMocks.getActiveProvider,
+  getProviderPushStream: modelProposerMocks.getProviderPushStream,
+}));
+
+vi.mock('./providers', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./providers')>()),
+  getModelForRole: modelProposerMocks.getModelForRole,
+}));
+
+vi.mock('@push/lib/stream-utils', () => ({
+  iteratePushStreamText: modelProposerMocks.iteratePushStreamText,
+}));
+
 import {
+  createModelFirstPromptBranchNameProposer,
   type FirstPromptBranchInput,
   maybeBranchOnFirstPrompt,
   shouldBranchOnFirstPrompt,
@@ -15,6 +41,48 @@ const base: FirstPromptBranchInput = {
   currentBranch: 'main',
   defaultBranch: 'main',
 };
+
+beforeEach(() => {
+  modelProposerMocks.getActiveProvider.mockClear();
+  modelProposerMocks.getProviderPushStream.mockClear();
+  modelProposerMocks.getModelForRole.mockClear();
+  modelProposerMocks.iteratePushStreamText.mockClear();
+  modelProposerMocks.iteratePushStreamText.mockResolvedValue({
+    error: false,
+    text: 'owner-repo/chat-route-name',
+  });
+});
+
+describe('createModelFirstPromptBranchNameProposer', () => {
+  it('uses the chat-locked provider and model when they are supplied', async () => {
+    const proposeName = createModelFirstPromptBranchNameProposer({
+      providerOverride: 'openai',
+      modelOverride: 'gpt-5-mini',
+    });
+
+    await expect(
+      proposeName({
+        promptText: 'stop creating draft branches',
+        repoFullName: 'owner/repo',
+        prefix: 'owner-repo',
+      }),
+    ).resolves.toBe('owner-repo/chat-route-name');
+
+    expect(modelProposerMocks.getActiveProvider).not.toHaveBeenCalled();
+    expect(modelProposerMocks.getProviderPushStream).toHaveBeenCalledWith('openai');
+    expect(modelProposerMocks.getModelForRole).not.toHaveBeenCalled();
+    expect(modelProposerMocks.iteratePushStreamText).toHaveBeenCalledWith(
+      'stream:openai',
+      expect.objectContaining({
+        provider: 'openai',
+        model: 'gpt-5-mini',
+        hasSandbox: false,
+      }),
+      2500,
+      expect.stringContaining('2.5s'),
+    );
+  });
+});
 
 describe('shouldBranchOnFirstPrompt', () => {
   it('is true on the happy path', () => {

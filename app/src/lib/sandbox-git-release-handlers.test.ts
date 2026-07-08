@@ -92,6 +92,8 @@ interface MakeContextOpts {
   auditorVerdict?: RunAuditorReturn;
   authToken?: string;
   createdRepo?: CreatedRepoResponse;
+  originHeadBranch?: string;
+  remoteShowDefaultBranch?: string;
   /** The diff the pre-push secret scan (`computePushedDiff`) sees, if any. */
   pushedDiff?: string;
 }
@@ -128,6 +130,17 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
       // (incl. the real `git 'push'`) is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'HEAD'")) return ok('main');
+      if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'refs/remotes/origin/HEAD'")) {
+        return opts.originHeadBranch ? ok(`origin/${opts.originHeadBranch}`) : fail();
+      }
+      if (cmd.includes("'rev-parse' '--abbrev-ref' 'origin/HEAD'")) {
+        return opts.originHeadBranch ? ok(`origin/${opts.originHeadBranch}`) : fail();
+      }
+      if (cmd.includes("'remote' 'show' 'origin'")) {
+        return opts.remoteShowDefaultBranch
+          ? ok(`  HEAD branch: ${opts.remoteShowDefaultBranch}\n`)
+          : fail();
+      }
       // Base is resolved through the fully-qualified remote-tracking ref
       // (refs/remotes/<remote>/...), never the bare `origin/...` shorthand.
       if (/ 'rev-parse' '--verify' '--quiet' 'refs\/remotes\/[^']+'/.test(cmd)) {
@@ -1012,6 +1025,45 @@ describe('handleSaveDraft', () => {
     );
     expect(ctx.execCalls.some((c) => String(c[1]).includes("git 'checkout'"))).toBe(false);
     expect(ctx.execCalls).toHaveLength(5);
+  });
+
+  it('discovers a custom default branch before deciding whether WIP can save in place', async () => {
+    const branchSwitch = {
+      name: 'push/wip-save-260708-1200',
+      kind: 'forked' as const,
+      source: 'sandbox_create_branch' as const,
+    };
+    ensureCommitTargetBranchMock.mockResolvedValueOnce({
+      switched: true as const,
+      branch: 'push/wip-save-260708-1200',
+      branchSwitch,
+    });
+    const diff = 'diff --git a/x.ts b/x.ts\n+a\n';
+    const ctx = makeContext({
+      diffResults: [{ diff, truncated: false }],
+      originHeadBranch: 'develop',
+      execResults: [
+        ok('develop'), // git branch --show-current
+        ok(), // git add -A
+        ok('[push/wip-save-260708-1200 abc1234] WIP: draft save'), // git commit
+        ok('abc1234'), // git rev-parse --short HEAD
+        ok(), // git push
+      ],
+    });
+    ctx.currentBranch = 'develop';
+
+    const result = await handleSaveDraft(ctx, {});
+
+    expect(result.text).toContain('Saved WIP to branch: push/wip-save-260708-1200');
+    expect(result.text).toContain('Forked off the default branch first.');
+    expect(result.branchSwitch).toEqual(branchSwitch);
+    expect(ensureCommitTargetBranchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        currentBranch: 'develop',
+        defaultBranch: 'develop',
+        commitMessage: 'WIP: draft save',
+      }),
+    );
   });
 
   it('signals auto-back when the WIP commit fails after a possible hook rewrite (#982)', async () => {

@@ -29,7 +29,11 @@ import {
 } from './branch-names';
 import { isBranchExistsMessage } from './ensure-commit-target-branch';
 import { forkBranchInWorkspace } from './fork-branch-in-workspace';
-import { getActiveProvider, getProviderPushStream } from './orchestrator-provider-routing';
+import {
+  getActiveProvider,
+  getProviderPushStream,
+  type ActiveProvider,
+} from './orchestrator-provider-routing';
 import { getModelForRole } from './providers';
 import { iteratePushStreamText } from '@push/lib/stream-utils';
 import type { ChatMessage } from '@/types';
@@ -60,14 +64,28 @@ export type FirstPromptBranchNameProposer = (input: {
 
 type FirstPromptBranchNameInput = Pick<
   FirstPromptBranchInput,
-  'enabled' | 'isFirstMessage' | 'promptText' | 'repoFullName' | 'currentBranch' | 'defaultBranch'
+  | 'enabled'
+  | 'isFirstMessage'
+  | 'promptText'
+  | 'repoFullName'
+  | 'currentBranch'
+  | 'defaultBranch'
+  | 'provider'
+  | 'model'
 >;
 
-export function createModelFirstPromptBranchNameProposer(): FirstPromptBranchNameProposer {
+export interface ModelFirstPromptBranchNameProposerOptions {
+  providerOverride?: ActiveProvider | null;
+  modelOverride?: string | null;
+}
+
+export function createModelFirstPromptBranchNameProposer(
+  options: ModelFirstPromptBranchNameProposerOptions = {},
+): FirstPromptBranchNameProposer {
   return async ({ promptText, repoFullName, prefix }) => {
-    const provider = getActiveProvider();
+    const provider = options.providerOverride || getActiveProvider();
     if (provider === 'demo') return null;
-    const model = getModelForRole(provider, 'orchestrator')?.id;
+    const model = options.modelOverride?.trim() || getModelForRole(provider, 'orchestrator')?.id;
     if (!model) return null;
 
     const messages: ChatMessage[] = [
@@ -117,7 +135,10 @@ export function shouldStartFirstPromptBranchNameSuggestion(
 
 export function startFirstPromptBranchNameSuggestion(
   input: FirstPromptBranchNameInput,
-  proposer: FirstPromptBranchNameProposer = createModelFirstPromptBranchNameProposer(),
+  proposer: FirstPromptBranchNameProposer = createModelFirstPromptBranchNameProposer({
+    providerOverride: input.provider,
+    modelOverride: input.model,
+  }),
 ): Promise<string | null | undefined> | undefined {
   if (!shouldStartFirstPromptBranchNameSuggestion(input)) return undefined;
   const repoFullName = input.repoFullName;
@@ -149,6 +170,9 @@ export interface FirstPromptBranchInput {
    */
   currentBranch?: string;
   defaultBranch?: string;
+  /** Provider/model already locked for this chat send. */
+  provider?: ActiveProvider | null;
+  model?: string | null;
 }
 
 export interface FirstPromptBranchResult {
@@ -206,7 +230,12 @@ export async function maybeBranchOnFirstPrompt(
   const fallbackBase = deriveBranchNameFromPrompt(input.promptText, prefix);
   let base = fallbackBase;
 
-  const proposeName = deps.proposeName ?? createModelFirstPromptBranchNameProposer();
+  const proposeName =
+    deps.proposeName ??
+    createModelFirstPromptBranchNameProposer({
+      providerOverride: input.provider,
+      modelOverride: input.model,
+    });
   try {
     const proposed = await (deps.proposedName ??
       proposeName({

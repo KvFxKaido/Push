@@ -1625,15 +1625,19 @@ type DispatcherExecResult = { stdout?: string; stderr?: string; exitCode: number
 // Read-only pre-push machinery the handlers run before the actual push: the
 // upstream check, the cumulative-diff scan, and — since the force-with-lease
 // push plan (#1054) — the local-tip rev-parse + remote-tip ls-remote. These are
-// read-only and deterministic; the tests script the *mutating* push call, so
-// both the mock queue and the call-count filter must skip past them. One
-// predicate so the two can't drift.
+// read-only and deterministic; save-draft may also probe origin's default
+// branch before deciding whether to auto-fork. The tests script the *mutating*
+// calls, so both the mock queue and the call-count filter must skip past the
+// read-only probes. One predicate so the two can't drift.
 function isPrePushRead(cmd: string): boolean {
   return (
     cmd.includes('@{upstream}') ||
     / 'log' '-p' '--no-color'/.test(cmd) ||
     cmd.includes("'ls-remote'") ||
-    cmd.includes("'rev-parse' '--verify' '--quiet'")
+    cmd.includes("'rev-parse' '--verify' '--quiet'") ||
+    cmd.includes("'symbolic-ref' '--quiet' '--short' 'refs/remotes/origin/HEAD'") ||
+    cmd.includes("'rev-parse' '--abbrev-ref' 'origin/HEAD'") ||
+    cmd.includes("'remote' 'show' 'origin'")
   );
 }
 function mockExecScan(handlerResults: DispatcherExecResult[]) {
