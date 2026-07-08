@@ -27,6 +27,14 @@ import {
   listDirectory,
   downloadFromSandbox,
 } from './sandbox-client';
+import type {
+  BatchWriteEntry,
+  BatchWriteResult,
+  ExecResult,
+  FileEntry,
+  FileReadResult,
+  WriteResult,
+} from './sandbox-client';
 import { runAuditor } from './auditor-agent';
 import {
   LocalDaemonUnreachableError,
@@ -44,7 +52,7 @@ import {
 } from './sensitive-data-guard';
 import { fetchAuditorFileContexts } from './auditor-file-context';
 import { recordReadFileMetric, recordWriteFileMetric } from './edit-metrics';
-import { fileLedger } from './file-awareness-ledger';
+import { extractSignaturesWithLines, fileLedger } from './file-awareness-ledger';
 import { symbolLedger } from './symbol-persistence-ledger';
 import { getActiveGitHubToken } from './github-auth';
 import {
@@ -78,7 +86,13 @@ import { createSandboxPushGit } from './git-backend';
 import { getApprovalMode } from './approval-mode';
 
 import type { SandboxToolCall, SandboxExecutionOptions } from './sandbox-tool-detection';
-import { resolveNativeFs } from './native-fs';
+import {
+  resolveNativeFs,
+  toWorktreeRelative,
+  type NativeFsBackend,
+  type NativeFsDiffResult,
+  type NativeFsWriteResult,
+} from './native-fs';
 
 import {
   setPrefetchedEditFile,
@@ -211,6 +225,7 @@ function buildVerificationContext(
 function buildGitReleaseContext(
   sandboxId: string,
   branchInfo?: { currentBranch?: string; defaultBranch?: string; isMainProtected?: boolean },
+  nativeFs?: NativeFsBackend | null,
 ): GitReleaseHandlerContext {
   return {
     sandboxId,
@@ -218,7 +233,9 @@ function buildGitReleaseContext(
     defaultBranch: branchInfo?.defaultBranch,
     isMainProtected: branchInfo?.isMainProtected,
     execInSandbox,
-    getSandboxDiff,
+    getSandboxDiff: nativeFs
+      ? async () => sanitizeNativeDiff(await nativeFs.diff())
+      : getSandboxDiff,
     readFromSandbox,
     runAuditor,
     fetchAuditorFileContexts,
@@ -229,14 +246,172 @@ function buildGitReleaseContext(
   };
 }
 
-function buildReadOnlyInspectionContext(sandboxId: string): ReadOnlyInspectionHandlerContext {
+function nativePathForEntry(parentPath: string, name: string): string {
+  const base = parentPath.replace(/\/+$/, '') || '/workspace';
+  return `${base}/${name}`.replace(/\/+/g, '/');
+}
+
+function nativeReadFile(
+  nativeFs: NativeFsBackend,
+): ReadOnlyInspectionHandlerContext['readFromSandbox'] {
+  return async (_sandboxId, path, startLine, endLine): Promise<FileReadResult> => {
+    const result = await nativeFs.readFile(path, { startLine, endLine });
+    return {
+      content: result.content,
+      truncated: result.truncated,
+      ...(typeof startLine === 'number' ? { start_line: startLine } : {}),
+      ...(typeof endLine === 'number' ? { end_line: endLine } : {}),
+      ...(result.error ? { error: result.error } : {}),
+      ...(result.code ? { code: result.code } : {}),
+    };
+  };
+}
+
+/** One place for the plugin write-result → `WriteResult` field mapping. */
+function shapeNativeWriteResult(result: NativeFsWriteResult): WriteResult {
+  return {
+    ok: result.ok,
+    ...(result.error ? { error: result.error } : {}),
+    ...(typeof result.bytesWritten === 'number' ? { bytes_written: result.bytesWritten } : {}),
+  };
+}
+
+function nativeWriteFile(nativeFs: NativeFsBackend): EditHandlerContext['writeToSandbox'] {
+  return async (_sandboxId, path, content): Promise<WriteResult> => {
+    return shapeNativeWriteResult(await nativeFs.writeFile(path, content));
+  };
+}
+
+function nativeBatchWrite(nativeFs: NativeFsBackend): WriteHandlerContext['batchWriteToSandbox'] {
+  return async (_sandboxId, entries: BatchWriteEntry[]): Promise<BatchWriteResult> => {
+    const results = await Promise.all(
+      entries.map(async (entry) => ({
+        path: entry.path,
+        ...shapeNativeWriteResult(await nativeFs.writeFile(entry.path, entry.content)),
+      })),
+    );
+    return {
+      ok: results.every((result) => result.ok),
+      results,
+    };
+  };
+}
+
+function nativeListDirectory(
+  nativeFs: NativeFsBackend,
+): ReadOnlyInspectionHandlerContext['listDirectory'] {
+  return async (_sandboxId, path = '/workspace'): Promise<FileEntry[]> => {
+    const result = await nativeFs.listDir(path);
+    if (result.error) throw new Error(result.error);
+    return result.entries
+      .filter((entry) => entry.type === 'file' || entry.type === 'directory')
+      .map((entry) => ({
+        name: entry.name,
+        path: nativePathForEntry(path, entry.name),
+        type: entry.type === 'directory' ? 'directory' : 'file',
+        size: entry.size ?? 0,
+      }));
+  };
+}
+
+function nativeReadSymbols(
+  nativeFs: NativeFsBackend,
+): NonNullable<ReadOnlyInspectionHandlerContext['readSymbolsNative']> {
+  return async (path) => {
+    const result = await nativeFs.readFile(path);
+    if (result.error) throw new Error(result.error);
+    const sourceLines = result.content.split('\n');
+    const symbols = extractSignaturesWithLines(result.content).map((symbol) => ({
+      name: symbol.name,
+      kind: symbol.kind,
+      line: symbol.lineRange.start,
+      signature: sourceLines[symbol.lineRange.start - 1]?.trim() || symbol.name,
+    }));
+    return {
+      symbols,
+      totalLines: result.content ? sourceLines.length : 0,
+    };
+  };
+}
+
+/**
+ * Per-file diff hunks for the edit-result card on native sessions (no shell,
+ * so `git diff -- <path>` via exec isn't available). Reads the working-copy
+ * diff from the git plugin and extracts just this file's block.
+ */
+function nativeFileDiffHunks(
+  nativeFs: NativeFsBackend,
+): NonNullable<EditHandlerContext['getFileDiffHunks']> {
+  return async (_sandboxId, path) => {
+    const rel = toWorktreeRelative(path);
+    if (!rel) return null;
+    const result = await nativeFs.diff();
+    if (result.error || !result.diff) return null;
+    const block = result.diff
+      .split(/^(?=diff --git )/m)
+      .find((candidate) => candidate.startsWith(`diff --git a/${rel} b/${rel}`));
+    return block ? block.trimEnd() : null;
+  };
+}
+
+/**
+ * The native working-copy diff includes untracked files as additions (the
+ * about-to-push gates need them), which the cloud `git diff` never surfaces —
+ * so it can carry contents no other native read path would return raw. Apply
+ * the same defenses as read/search: drop whole blocks for sensitive paths,
+ * value-redact the rest.
+ */
+function sanitizeNativeDiff(result: NativeFsDiffResult): NativeFsDiffResult {
+  if (!result.diff) return result;
+  let hidden = 0;
+  const kept = result.diff.split(/^(?=diff --git )/m).filter((block) => {
+    const header = /^diff --git a\/(\S+) /.exec(block);
+    if (header && isSensitivePath(header[1])) {
+      hidden += 1;
+      return false;
+    }
+    return true;
+  });
+  const redaction = redactSensitiveText(kept.join(''));
+  const notes = [
+    ...(hidden > 0 ? [`[${hidden} sensitive file diff${hidden === 1 ? '' : 's'} hidden]`] : []),
+    ...(redaction.redacted ? ['[secret-like values redacted]'] : []),
+  ];
+  const diff = [redaction.text.trimEnd(), ...notes].filter(Boolean).join('\n');
+  return { ...result, diff };
+}
+
+function unsupportedNativeExec(): EditHandlerContext['execInSandbox'] {
+  return async (): Promise<ExecResult> => ({
+    stdout: '',
+    stderr: 'shell execution is unavailable on the on-device working copy',
+    exitCode: 127,
+    truncated: false,
+  });
+}
+
+function nativeSandboxStateId(
+  sandboxId: string,
+  scope: SandboxExecutionOptions['nativeFsScope'] | undefined,
+): string {
+  if (sandboxId) return sandboxId;
+  if (!scope) return 'native:unknown';
+  return `native:${scope.repoFullName}:${scope.branch}`;
+}
+
+function buildReadOnlyInspectionContext(
+  sandboxId: string,
+  nativeFs?: NativeFsBackend | null,
+): ReadOnlyInspectionHandlerContext {
   return {
     sandboxId,
-    readFromSandbox,
+    readFromSandbox: nativeFs ? nativeReadFile(nativeFs) : readFromSandbox,
     execInSandbox,
-    listDirectory,
+    listDirectory: nativeFs ? nativeListDirectory(nativeFs) : listDirectory,
     readSymbolsFromSandbox,
     findReferencesInSandbox,
+    readSymbolsNative: nativeFs ? nativeReadSymbols(nativeFs) : undefined,
+    searchNative: nativeFs ? (query, path) => nativeFs.search(query, path) : undefined,
     syncReadSnapshot,
     invalidateWorkspaceSnapshots,
     deleteFileVersion: versionCacheDeletePath,
@@ -324,12 +499,15 @@ export async function readFilesForCoderPreload(
   );
 }
 
-function buildEditContext(sandboxId: string): EditHandlerContext {
+function buildEditContext(
+  sandboxId: string,
+  nativeFs?: NativeFsBackend | null,
+): EditHandlerContext {
   return {
     sandboxId,
-    readFromSandbox,
-    writeToSandbox,
-    execInSandbox,
+    readFromSandbox: nativeFs ? nativeReadFile(nativeFs) : readFromSandbox,
+    writeToSandbox: nativeFs ? nativeWriteFile(nativeFs) : writeToSandbox,
+    execInSandbox: nativeFs ? unsupportedNativeExec() : execInSandbox,
     versionCacheSet,
     versionCacheDelete,
     getWorkspaceRevisionByKey,
@@ -351,16 +529,21 @@ function buildEditContext(sandboxId: string): EditHandlerContext {
       fileLedger.checkSymbolicEditAllowed(path, editContent),
     checkLinesCovered: (path, lineNumbers) => fileLedger.checkLinesCovered(path, lineNumbers),
     invalidateSymbolLedger: (path) => symbolLedger.invalidate(path),
+    runPerEditDiagnostics: nativeFs ? async () => null : undefined,
+    getFileDiffHunks: nativeFs ? nativeFileDiffHunks(nativeFs) : undefined,
   };
 }
 
-function buildWriteContext(sandboxId: string): WriteHandlerContext {
+function buildWriteContext(
+  sandboxId: string,
+  nativeFs?: NativeFsBackend | null,
+): WriteHandlerContext {
   return {
     sandboxId,
-    readFromSandbox,
-    writeToSandbox,
-    batchWriteToSandbox,
-    execInSandbox,
+    readFromSandbox: nativeFs ? nativeReadFile(nativeFs) : readFromSandbox,
+    writeToSandbox: nativeFs ? nativeWriteFile(nativeFs) : writeToSandbox,
+    batchWriteToSandbox: nativeFs ? nativeBatchWrite(nativeFs) : batchWriteToSandbox,
+    execInSandbox: nativeFs ? unsupportedNativeExec() : execInSandbox,
     versionCacheGet,
     versionCacheSet,
     versionCacheDelete,
@@ -388,6 +571,12 @@ function buildWriteContext(sandboxId: string): WriteHandlerContext {
       fileLedger.checkSymbolicEditAllowed(path, editContent),
     checkLinesCovered: (path, lineNumbers) => fileLedger.checkLinesCovered(path, lineNumbers),
     invalidateSymbolLedger: (path) => symbolLedger.invalidate(path),
+    runPerEditDiagnostics: nativeFs ? async () => null : undefined,
+    runPatchsetDiagnostics: nativeFs ? async () => null : undefined,
+    // No shell on native: never run patchset `checks` through the exec stub —
+    // its universal exit 127 would read as a failed check and roll back
+    // writes that succeeded.
+    checksUnavailable: nativeFs ? true : undefined,
     recordWriteFileMetric,
   };
 }
@@ -522,6 +711,7 @@ async function executeSandboxToolCallInner(
   // flag-off / no-ready-clone, so every other surface is unchanged. Resolved
   // once and shared across the file-op cases below.
   const nativeFs = resolveNativeFs(options?.nativeFsScope);
+  const stateSandboxId = nativeSandboxStateId(sandboxId, options?.nativeFsScope);
 
   if (!sandboxId && !options?.localDaemonBinding && !nativeFs) {
     const err = classifyError('Sandbox unreachable — no active sandbox', 'executeSandboxToolCall');
@@ -857,38 +1047,9 @@ async function executeSandboxToolCallInner(
 
       case 'sandbox_read_file': {
         if (nativeFs) {
-          // Sensitive-path refusal BEFORE the read, matching the cloud/daemon
-          // paths (keeps the model's context clean of blocked round-trips).
-          if (isSensitivePath(call.args.path)) {
-            return { text: formatSensitivePathToolError(call.args.path) };
-          }
-          return runNativeFsTool('sandbox_read_file', async () => {
-            const local = await nativeFs.readFile(call.args.path, {
-              startLine: call.args.start_line,
-              endLine: call.args.end_line,
-            });
-            if (local.error) {
-              const err = classifyError(local.error, call.args.path);
-              if (local.code === 'ENOENT') err.type = 'FILE_NOT_FOUND';
-              err.detail = `Path: ${call.args.path}`;
-              return {
-                text: formatStructuredError(
-                  err,
-                  `[Tool Error — sandbox_read_file]\n${local.error}`,
-                ),
-                structuredError: err,
-              };
-            }
-            // Same untrusted-content defenses as the cloud/daemon read paths.
-            const redaction = redactSensitiveText(local.content);
-            const sanitized = sanitizeUntrustedSource(redaction.text);
-            const header = `[Tool Result — sandbox_read_file]\nPath: ${call.args.path}${
-              local.totalLines !== undefined ? ` (${local.totalLines} lines)` : ''
-            }${local.truncated ? ' [truncated]' : ''}${
-              redaction.redacted ? ' [secrets redacted]' : ''
-            }`;
-            return { text: `${header}\n\n${sanitized}` };
-          });
+          return runNativeFsTool('sandbox_read_file', () =>
+            handleReadFile(buildReadOnlyInspectionContext(stateSandboxId, nativeFs), call.args),
+          );
         }
         if (options?.localDaemonBinding) {
           // Match cloud `handleReadFile` semantics: refuse sensitive paths
@@ -941,46 +1102,14 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_search': {
-        return handleSearch(buildReadOnlyInspectionContext(sandboxId), call.args);
+        return handleSearch(buildReadOnlyInspectionContext(stateSandboxId, nativeFs), call.args);
       }
 
       case 'sandbox_list_dir': {
         if (nativeFs) {
-          const dirPath = call.args.path ?? '(cwd)';
-          if (call.args.path && isSensitivePath(call.args.path)) {
-            return { text: formatSensitivePathToolError(call.args.path) };
-          }
-          return runNativeFsTool('sandbox_list_dir', async () => {
-            const local = await nativeFs.listDir(call.args.path);
-            if (local.error) {
-              const err = classifyError(local.error, dirPath);
-              err.detail = `Path: ${dirPath}`;
-              return {
-                text: formatStructuredError(err, `[Tool Error — sandbox_list_dir]\n${local.error}`),
-                structuredError: err,
-              };
-            }
-            const filtered = filterSensitiveDirectoryEntries(call.args.path ?? '', local.entries);
-            const rows = filtered.entries
-              .map((e) =>
-                e.type === 'directory'
-                  ? `${e.name}/`
-                  : e.size !== undefined
-                    ? `${e.name}\t${e.size}`
-                    : e.name,
-              )
-              .join('\n');
-            const hiddenNote =
-              filtered.hiddenCount > 0
-                ? ` (${filtered.hiddenCount} sensitive entr${
-                    filtered.hiddenCount === 1 ? 'y' : 'ies'
-                  } hidden)`
-                : '';
-            const header = `[Tool Result — sandbox_list_dir]\nPath: ${dirPath}${
-              local.truncated ? ` [truncated to ${local.entries.length}]` : ''
-            }${hiddenNote}`;
-            return { text: `${header}\n\n${rows}` };
-          });
+          return runNativeFsTool('sandbox_list_dir', () =>
+            handleListDir(buildReadOnlyInspectionContext(stateSandboxId, nativeFs), call.args),
+          );
         }
         if (options?.localDaemonBinding) {
           const dirPath = call.args.path ?? '(cwd)';
@@ -1026,45 +1155,26 @@ async function executeSandboxToolCallInner(
         return handleListDir(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
+      // Sensitive-path refusal for the edit/write family lives inside the
+      // handlers (like the read/list/search family), so every surface —
+      // cloud, daemon, native — inherits it without per-case copies here.
       case 'sandbox_edit_file': {
-        return handleEditFile(buildEditContext(sandboxId), call.args);
+        return handleEditFile(buildEditContext(stateSandboxId, nativeFs), call.args);
       }
 
       case 'sandbox_edit_range': {
-        return handleEditRange(buildEditContext(sandboxId), call.args);
+        return handleEditRange(buildEditContext(stateSandboxId, nativeFs), call.args);
       }
 
       case 'sandbox_search_replace': {
-        return handleSearchReplace(buildEditContext(sandboxId), call.args);
+        return handleSearchReplace(buildEditContext(stateSandboxId, nativeFs), call.args);
       }
 
       case 'sandbox_write_file': {
         if (nativeFs) {
-          // Same sensitive-path guard as the cloud/daemon write paths.
-          if (isSensitivePath(call.args.path)) {
-            return { text: formatSensitivePathToolError(call.args.path) };
-          }
-          return runNativeFsTool('sandbox_write_file', async () => {
-            const local = await nativeFs.writeFile(call.args.path, call.args.content);
-            if (!local.ok || local.error) {
-              const err = classifyError(local.error || 'Native write failed', call.args.path);
-              if (err.type === 'UNKNOWN') err.type = 'WRITE_FAILED';
-              err.detail = `Path: ${call.args.path}`;
-              return {
-                text: formatStructuredError(
-                  err,
-                  `[Tool Error — sandbox_write_file]\n${err.message}`,
-                ),
-                structuredError: err,
-              };
-            }
-            return {
-              text:
-                `[Tool Result — sandbox_write_file]\n` +
-                `Path: ${call.args.path}\n` +
-                `Bytes written: ${local.bytesWritten ?? 'n/a'}`,
-            };
-          });
+          return runNativeFsTool('sandbox_write_file', () =>
+            handleWriteFile(buildWriteContext(stateSandboxId, nativeFs), call.args),
+          );
         }
         if (options?.localDaemonBinding) {
           // The cloud `handleWriteFile` has its own guards (file ledger,
@@ -1108,6 +1218,11 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_diff': {
+        if (nativeFs) {
+          return runNativeFsTool('sandbox_diff', () =>
+            handleSandboxDiff(buildGitReleaseContext(stateSandboxId, undefined, nativeFs)),
+          );
+        }
         if (options?.localDaemonBinding) {
           return runLocalDaemonTool('sandbox_diff', async () => {
             const local = await getDiffLocalDaemon(options.localDaemonBinding!);
@@ -1376,15 +1491,38 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_read_symbols': {
-        return handleReadSymbols(buildReadOnlyInspectionContext(sandboxId), call.args);
+        return handleReadSymbols(
+          buildReadOnlyInspectionContext(stateSandboxId, nativeFs),
+          call.args,
+        );
       }
 
       case 'sandbox_find_references': {
+        // Reference lookup runs a python analyzer via exec — there is no
+        // native implementation, so refuse with the same typed error as
+        // `sandbox_exec` instead of dead-ending on an unreachable sandbox.
+        if (nativeFs) {
+          const err: StructuredToolError = {
+            type: 'NATIVE_TOOL_UNSUPPORTED',
+            retryable: false,
+            message: 'sandbox_find_references is unavailable on the on-device working copy',
+            detail:
+              'Reference lookup needs the sandbox analyzer runtime, which the native shell ' +
+              'does not have. Use sandbox_search to find usages instead.',
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_find_references]\nReference lookup is not supported on the on-device working copy. Use sandbox_search to find usages instead.`,
+            ),
+            structuredError: err,
+          };
+        }
         return handleFindReferences(buildReadOnlyInspectionContext(sandboxId), call.args);
       }
 
       case 'sandbox_apply_patchset': {
-        return handleApplyPatchset(buildWriteContext(sandboxId), call.args);
+        return handleApplyPatchset(buildWriteContext(stateSandboxId, nativeFs), call.args);
       }
 
       default:

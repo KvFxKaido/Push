@@ -15,8 +15,10 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.eclipse.jgit.api.Git
 import org.eclipse.jgit.lib.Constants
 import org.eclipse.jgit.lib.ObjectInserter
+import org.eclipse.jgit.lib.PersonIdent
 
 /**
  * Host-JVM tests for the checkpoint engine. The checkpoint methods use only JGit
@@ -51,6 +53,15 @@ class JGitEngineCheckpointTest {
 
   private fun tempDir(): String = Files.createTempDirectory("push-cp-test").toFile().absolutePath
 
+  private fun commitAll(git: Git, message: String) {
+    git.add().addFilepattern(".").call()
+    git.commit()
+      .setMessage(message)
+      .setAuthor(PersonIdent("Push Test", "test@push.local"))
+      .setCommitter(PersonIdent("Push Test", "test@push.local"))
+      .call()
+  }
+
   /** Git blob SHA-1 of raw content — the expected-manifest value commitDelta verifies. */
   private fun blobSha(content: String): String =
     ObjectInserter.Formatter().idFor(Constants.OBJ_BLOB, content.toByteArray()).name
@@ -67,6 +78,139 @@ class JGitEngineCheckpointTest {
     assertFalse("identical tree is unchanged", r2.committed)
     assertEquals(r1.commitId, r2.commitId)
     assertEquals(1, JGitEngine.listCheckpoints(dir).size)
+  }
+
+  @Test
+  fun workspaceFileOpsAreScopedAndSupportLineRanges() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().close()
+
+    val write = JGitEngine.writeFile(dir, "src/a.txt", "one\ntwo\nthree")
+    assertTrue(write.ok)
+    assertEquals(13, write.bytesWritten)
+
+    val read = JGitEngine.readFile(dir, "src/a.txt", 2, 3)
+    assertNull(read.error)
+    assertEquals("two\nthree", read.content)
+    assertEquals(3, read.totalLines)
+
+    val listed = JGitEngine.listDir(dir, "src")
+    assertNull(listed.error)
+    assertEquals(listOf("a.txt"), listed.entries.map { it.name })
+
+    val escaped = JGitEngine.writeFile(dir, "../outside.txt", "nope")
+    assertFalse("native side rejects traversal that escapes the clone", escaped.ok)
+  }
+
+  @Test
+  fun workspaceDiffIncludesTrackedAndUntrackedChanges() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().use { git ->
+      File(dir, "a.txt").writeText("one\n")
+      commitAll(git, "initial")
+    }
+
+    File(dir, "a.txt").writeText("two\n")
+    File(dir, "b.txt").writeText("new\n")
+    val diff = JGitEngine.diff(dir)
+
+    assertNull(diff.error)
+    assertTrue(diff.diff.contains("diff --git"))
+    assertTrue(diff.diff.contains("+two"))
+    assertTrue(diff.diff.contains("new file mode 100644"))
+    assertTrue(diff.gitStatus.contains(" M a.txt"))
+    assertTrue(diff.gitStatus.contains("?? b.txt"))
+  }
+
+  @Test
+  fun workspaceDiffDoesNotDuplicateUntrackedFiles() {
+    val dir = tempDir()
+    Git.init().setDirectory(File(dir)).call().use { git ->
+      File(dir, "a.txt").writeText("one\n")
+      commitAll(git, "initial")
+    }
+
+    File(dir, "b.txt").writeText("new\n")
+    val diff = JGitEngine.diff(dir)
+
+    assertNull(diff.error)
+    val header = "diff --git a/b.txt b/b.txt"
+    val occurrences = Regex(Regex.escape(header)).findAll(diff.diff).count()
+    assertEquals("untracked file appears exactly once in the diff", 1, occurrences)
+    assertEquals("its content appears exactly once", 1, Regex(Regex.escape("+new")).findAll(diff.diff).count())
+  }
+
+  /**
+   * Remote with one commit on `main`, plus a fresh clone of it. Returns
+   * (remote, clone). File content deliberately carries NO newline: a host
+   * `core.autocrlf=true` (common on Windows) would smudge checked-out LFs to
+   * CRLF and break exact-content asserts.
+   */
+  private fun remoteAndClone(): Pair<String, String> {
+    val remote = tempDir()
+    Git.init().setDirectory(File(remote)).call().use { git ->
+      File(remote, "a.txt").writeText("one")
+      commitAll(git, "one")
+      git.branchCreate().setName("main").call()
+      git.checkout().setName("main").call()
+    }
+    val clone = tempDir()
+    File(clone).deleteRecursively()
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+    assertEquals("one", File(clone, "a.txt").readText())
+    return remote to clone
+  }
+
+  private fun advanceRemote(remote: String) {
+    Git.open(File(remote)).use { git ->
+      File(remote, "a.txt").writeText("two")
+      commitAll(git, "two")
+    }
+  }
+
+  @Test
+  fun cloneReconcilesCleanExistingRepoByFetchResetInsteadOfRecloning() {
+    val (remote, clone) = remoteAndClone()
+    advanceRemote(remote)
+
+    // Clean, not ahead of origin: reconciliation may safely reset to origin/main.
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("two", File(clone, "a.txt").readText())
+  }
+
+  @Test
+  fun cloneReconcilePreservesDirtyWorkingTree() {
+    val (remote, clone) = remoteAndClone()
+    advanceRemote(remote)
+
+    File(clone, "a.txt").writeText("local dirty edit")
+    File(clone, "scratch.txt").writeText("keep me")
+
+    // App-restart resume path: clone() on the existing dir must not destroy
+    // uncommitted edits or untracked files.
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("local dirty edit", File(clone, "a.txt").readText())
+    assertTrue("untracked file survives reconciliation", File(clone, "scratch.txt").exists())
+    assertEquals("keep me", File(clone, "scratch.txt").readText())
+  }
+
+  @Test
+  fun cloneReconcilePreservesLocalCommitsAheadOfOrigin() {
+    val (remote, clone) = remoteAndClone()
+
+    Git.open(File(clone)).use { git ->
+      File(clone, "a.txt").writeText("local commit")
+      commitAll(git, "unpushed local work")
+    }
+    val localHead = JGitEngine.headSha(clone, false)
+    assertNotNull(localHead)
+
+    JGitEngine.clone(File(remote).toURI().toString(), clone, "main", null, null)
+
+    assertEquals("unpushed local commit stays HEAD", localHead, JGitEngine.headSha(clone, false))
+    assertEquals("local commit", File(clone, "a.txt").readText())
   }
 
   @Test

@@ -46,6 +46,19 @@ export interface NativeFsListResult {
   truncated: boolean;
   error?: string;
 }
+export interface NativeFsSearchResult {
+  lines: string[];
+  truncated: boolean;
+  error?: string;
+}
+export interface NativeFsDiffResult {
+  diff: string;
+  truncated: boolean;
+  git_status?: string;
+  error?: string;
+}
+
+const NATIVE_SEARCH_MAX_RESULTS = 120;
 
 /**
  * Map a tool path onto a path relative to the clone root. Strips the cloud
@@ -105,6 +118,84 @@ export class NativeFsBackend {
       dir: this.dir,
       path: path ? toWorktreeRelative(path) : undefined,
     });
+  }
+
+  async search(query: string, path?: string): Promise<NativeFsSearchResult> {
+    const root = toWorktreeRelative(path || '');
+    const lines: string[] = [];
+    let truncated = false;
+
+    // The cloud/daemon `sandbox_search` runs the query through rg/grep as a
+    // regex, and the tool is presented identically on every surface — so the
+    // model sends regex syntax here too. Compile it (case-sensitive, matching
+    // rg's default); fall back to literal substring only when the pattern
+    // doesn't parse as a regex, which is also what a model typing plain text
+    // expects.
+    let matchesLine: (line: string) => boolean;
+    try {
+      const pattern = new RegExp(query);
+      matchesLine = (line) => pattern.test(line);
+    } catch {
+      matchesLine = (line) => line.includes(query);
+    }
+
+    const searchFile = async (rel: string): Promise<void> => {
+      const read = await this.readFile(rel);
+      if (read.error) return;
+      const fileLines = read.content.split('\n');
+      const displayPath = `/workspace/${rel}`;
+      for (let i = 0; i < fileLines.length; i += 1) {
+        if (!matchesLine(fileLines[i])) continue;
+        lines.push(`${displayPath}:${i + 1}:${fileLines[i]}`);
+        if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
+          truncated = true;
+          return;
+        }
+      }
+    };
+
+    const walk = async (rel: string): Promise<void> => {
+      if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
+        truncated = true;
+        return;
+      }
+      const listing = await this.listDir(rel);
+      if (listing.error) {
+        await searchFile(rel);
+        return;
+      }
+
+      for (const entry of listing.entries) {
+        if (lines.length >= NATIVE_SEARCH_MAX_RESULTS) {
+          truncated = true;
+          return;
+        }
+        if (entry.name === '.git') continue;
+        const child = rel ? `${rel}/${entry.name}` : entry.name;
+        if (entry.type === 'directory') {
+          await walk(child);
+          continue;
+        }
+        if (entry.type !== 'file') continue;
+
+        await searchFile(child);
+      }
+    };
+
+    try {
+      await walk(root);
+      return { lines, truncated };
+    } catch (err) {
+      return {
+        lines,
+        truncated,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  diff(): Promise<NativeFsDiffResult> {
+    return this.plugin.diff({ dir: this.dir });
   }
 }
 

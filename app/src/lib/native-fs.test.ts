@@ -47,6 +47,11 @@ function fakePlugin(): NativeGitPlugin {
       entries: [{ name: 'a.ts', type: 'file' as const }],
       truncated: false,
     })),
+    diff: vi.fn(async () => ({
+      diff: 'diff --git a/a.ts b/a.ts\n',
+      truncated: false,
+      git_status: ' M a.ts',
+    })),
   } as unknown as NativeGitPlugin;
 }
 
@@ -78,6 +83,74 @@ describe('NativeFsBackend', () => {
     const plugin = fakePlugin();
     await new NativeFsBackend(plugin, '/data/clone').listDir();
     expect(plugin.listDir).toHaveBeenCalledWith({ dir: '/data/clone', path: undefined });
+  });
+
+  it('proxies git diff through the scoped plugin dir', async () => {
+    const plugin = fakePlugin();
+    const result = await new NativeFsBackend(plugin, '/data/clone').diff();
+    expect(plugin.diff).toHaveBeenCalledWith({ dir: '/data/clone' });
+    expect(result.diff).toContain('diff --git');
+  });
+
+  it('searches a single file path when listing it reports not-a-directory', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'needle\nother',
+      truncated: false,
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('needle', 'src/a.ts');
+
+    expect(plugin.readFile).toHaveBeenCalledWith({
+      dir: '/data/clone',
+      path: 'src/a.ts',
+      startLine: undefined,
+      endLine: undefined,
+    });
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:needle']);
+  });
+
+  it('treats the query as a regex, matching the cloud rg/grep semantics', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'foo here\nbar there\nneither',
+      truncated: false,
+    });
+
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('foo|bar', 'src/a.ts');
+
+    expect(result.lines).toEqual([
+      '/workspace/src/a.ts:1:foo here',
+      '/workspace/src/a.ts:2:bar there',
+    ]);
+  });
+
+  it('falls back to literal matching when the query is not a valid regex', async () => {
+    const plugin = fakePlugin();
+    vi.mocked(plugin.listDir).mockResolvedValueOnce({
+      entries: [],
+      truncated: false,
+      error: 'Not a directory: src/a.ts',
+    });
+    vi.mocked(plugin.readFile).mockResolvedValueOnce({
+      content: 'call fn( now\nno paren',
+      truncated: false,
+    });
+
+    // `fn(` doesn't compile as a regex — literal fallback should still match.
+    const result = await new NativeFsBackend(plugin, '/data/clone').search('fn(', 'src/a.ts');
+
+    expect(result.lines).toEqual(['/workspace/src/a.ts:1:call fn( now']);
   });
 });
 

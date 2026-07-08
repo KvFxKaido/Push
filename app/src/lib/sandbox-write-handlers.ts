@@ -58,6 +58,7 @@ import {
   formatStructuredError,
   retryOnContainerError,
 } from './sandbox-tool-utils';
+import { formatSensitivePathToolError, isSensitivePath } from './sensitive-data-guard';
 import {
   appendMutationPostconditions,
   buildHashlineChangedSpans,
@@ -151,6 +152,15 @@ export interface WriteHandlerContext {
     outcome: 'success' | 'error' | 'stale';
     errorCode?: string;
   }) => void;
+
+  // Optional diagnostics overrides (native sessions have no shell/runtime).
+  runPerEditDiagnostics?: (sandboxId: string, path: string) => Promise<string | null>;
+  runPatchsetDiagnostics?: (sandboxId: string, changedFiles: string[]) => Promise<string | null>;
+  // No shell on this surface: post-write `checks` can't run. When set, the
+  // patchset handler SKIPS checks (reporting them skipped) instead of running
+  // them through an exec stub whose universal exit 127 would read as "check
+  // failed" and roll back writes that actually succeeded.
+  checksUnavailable?: boolean;
 }
 
 // --- Patchset-local pure helpers ---
@@ -308,6 +318,14 @@ export async function handleWriteFile(
 ): Promise<ToolExecutionResult> {
   const writeStart = Date.now();
   const cacheKey = fileVersionKey(ctx.sandboxId, args.path);
+
+  // Sensitive-path refusal lives in the handler (not per-dispatch-case) so
+  // every surface — cloud, daemon, native — inherits it by construction,
+  // matching the read/list/search family. See the "Auth / allowlist seams"
+  // checklist entry in CLAUDE.md.
+  if (isSensitivePath(args.path)) {
+    return { text: formatSensitivePathToolError(args.path) };
+  }
 
   // --- Edit Guard: check that the model has read this file ---
   const guardVerdict = ctx.checkWriteAllowed(args.path);
@@ -580,7 +598,10 @@ export async function handleWriteFile(
     ctx.recordLedgerMutation(args.path, 'agent');
     ctx.invalidateSymbolLedger(args.path);
 
-    const writeDiagnostics = await runPerEditDiagnostics(ctx.sandboxId, args.path);
+    const writeDiagnostics = await (ctx.runPerEditDiagnostics ?? runPerEditDiagnostics)(
+      ctx.sandboxId,
+      args.path,
+    );
     if (writeDiagnostics) {
       lines.push('', '[DIAGNOSTICS]', writeDiagnostics);
     }
@@ -630,6 +651,13 @@ export async function handleApplyPatchset(
 
   if (!edits || edits.length === 0) {
     return { text: '[Tool Error — sandbox_apply_patchset] No edits provided.' };
+  }
+
+  // Sensitive-path refusal lives in the handler so every surface inherits it
+  // (see handleWriteFile). Checked before any read/guard work.
+  const sensitivePath = edits.find((edit) => isSensitivePath(edit.path))?.path;
+  if (sensitivePath) {
+    return { text: formatSensitivePathToolError(sensitivePath) };
   }
 
   // Reject duplicate file paths.
@@ -1275,7 +1303,16 @@ export async function handleApplyPatchset(
   // Phase 3: Run post-write checks (if provided)
   const checksResults: ToolMutationCheckResult[] = [];
   let checksFailed = false;
-  if (checks?.length) {
+  // No shell on this surface (native): running checks through the exec stub
+  // would return exit 127 for every command — read as "check failed" — and
+  // rollbackOnFailure would then destroy writes that actually succeeded.
+  // Skip the checks and say so instead; writes are kept.
+  const checksSkippedNote =
+    checks?.length && ctx.checksUnavailable
+      ? `${checks.length} post-write check(s) skipped: shell execution is unavailable on the ` +
+        'on-device working copy. Writes were kept; verify with CI after push.'
+      : null;
+  if (checks?.length && !checksSkippedNote) {
     for (const check of checks) {
       const timeoutMs = check.timeoutMs ?? 10000;
       const expectedExit = check.exitCode ?? 0;
@@ -1415,11 +1452,17 @@ export async function handleApplyPatchset(
       lines.push(`  ✓ ${cr.command} (exit ${cr.exitCode})`);
     }
   }
+  if (checksSkippedNote) {
+    lines.push('', `⚠ ${checksSkippedNote}`);
+  }
 
   let patchDiagnostics: string | null = null;
   if (args.diagnostics !== false) {
     const changedPaths = editResults.map((r) => r.path);
-    patchDiagnostics = await runPatchsetDiagnostics(ctx.sandboxId, changedPaths);
+    patchDiagnostics = await (ctx.runPatchsetDiagnostics ?? runPatchsetDiagnostics)(
+      ctx.sandboxId,
+      changedPaths,
+    );
     if (patchDiagnostics) {
       lines.push('', '[DIAGNOSTICS — project typecheck]', patchDiagnostics);
     }

@@ -88,6 +88,11 @@ export interface ReadOnlyInspectionHandlerContext {
     scope?: string,
     maxResults?: number,
   ) => Promise<SandboxFindReferencesResult>;
+  readSymbolsNative?: (path: string) => Promise<SandboxReadSymbolsResult>;
+  searchNative?: (
+    query: string,
+    path: string,
+  ) => Promise<{ lines: string[]; truncated: boolean; error?: string }>;
   syncReadSnapshot: (sandboxId: string, path: string, result: FileReadResult) => void;
   invalidateWorkspaceSnapshots: (
     sandboxId: string,
@@ -295,6 +300,56 @@ export async function handleReadFile(
   };
 }
 
+/**
+ * Shared result formatting for both search transports (native walk and
+ * rg/grep exec): sensitive-file filtering, secret-value redaction, the
+ * 320-char line cap, the all-hidden branch, and the result header. Keeping
+ * one copy means the two transports can't drift on presentation or on the
+ * security filtering.
+ */
+function formatSearchResultLines(
+  rawLines: string[],
+  opts: { query: string; searchPath: string; truncated: boolean },
+): string {
+  const visibleLines: string[] = [];
+  let hiddenMatches = 0;
+  let redactedMatches = false;
+  for (const rawLine of rawLines) {
+    const matchPath = extractSandboxSearchResultPath(rawLine);
+    if (matchPath && isSensitivePath(matchPath)) {
+      hiddenMatches += 1;
+      continue;
+    }
+    const safeLine = redactSensitiveText(rawLine);
+    redactedMatches ||= safeLine.redacted;
+    visibleLines.push(
+      safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text,
+    );
+  }
+
+  if (visibleLines.length === 0 && hiddenMatches > 0) {
+    return [
+      '[Tool Result — sandbox_search]',
+      `Query: ${opts.query}`,
+      `Path: ${opts.searchPath}`,
+      'Matches were found only in protected secret files and were hidden.',
+    ].join('\n');
+  }
+
+  return [
+    '[Tool Result — sandbox_search]',
+    `Query: ${opts.query}`,
+    `Path: ${opts.searchPath}`,
+    `Matches: ${visibleLines.length}${opts.truncated ? ' (truncated)' : ''}`,
+    hiddenMatches > 0
+      ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}`
+      : '',
+    redactedMatches ? 'Redactions: secret-like values hidden.' : '',
+    '',
+    ...visibleLines,
+  ].join('\n');
+}
+
 export async function handleSearch(
   ctx: ReadOnlyInspectionHandlerContext,
   args: SearchArgs,
@@ -307,6 +362,34 @@ export async function handleSearch(
   }
   if (isSensitivePath(searchPath)) {
     return { text: formatSensitivePathToolError(searchPath) };
+  }
+
+  if (ctx.searchNative) {
+    const result = await ctx.searchNative(query, searchPath);
+    if (result.error) {
+      return {
+        text: formatSandboxError(result.error, `sandbox_search (${searchPath})`),
+      };
+    }
+    if (result.lines.length === 0) {
+      const hints = buildSearchNoResultsHints(query, searchPath);
+      return {
+        text: [
+          `[Tool Result — sandbox_search]`,
+          `No matches for "${query}" in ${searchPath}.`,
+          '',
+          'Suggestions:',
+          ...hints.map((hint) => `- ${hint}`),
+        ].join('\n'),
+      };
+    }
+    return {
+      text: formatSearchResultLines(result.lines, {
+        query,
+        searchPath,
+        truncated: result.truncated,
+      }),
+    };
   }
 
   const escapedQuery = shellEscape(query);
@@ -358,49 +441,17 @@ export async function handleSearch(
     };
   }
 
-  const visibleLines: string[] = [];
-  let hiddenMatches = 0;
-  let redactedMatches = false;
-  for (const rawLine of output.split('\n').slice(0, 120)) {
-    const matchPath = extractSandboxSearchResultPath(rawLine);
-    if (matchPath && isSensitivePath(matchPath)) {
-      hiddenMatches += 1;
-      continue;
-    }
-    const safeLine = redactSensitiveText(rawLine);
-    redactedMatches ||= safeLine.redacted;
-    visibleLines.push(
-      safeLine.text.length > 320 ? `${safeLine.text.slice(0, 320)}...` : safeLine.text,
-    );
-  }
-
-  if (visibleLines.length === 0 && hiddenMatches > 0) {
-    return {
-      text: [
-        '[Tool Result — sandbox_search]',
-        `Query: ${query}`,
-        `Path: ${searchPath}`,
-        'Matches were found only in protected secret files and were hidden.',
-      ].join('\n'),
-    };
-  }
-
-  const matchCount = visibleLines.length;
-  const truncated = output.split('\n').length > visibleLines.length || result.truncated;
-
+  const allLines = output.split('\n');
+  const rawLines = allLines.slice(0, 120);
   return {
-    text: [
-      '[Tool Result — sandbox_search]',
-      `Query: ${query}`,
-      `Path: ${searchPath}`,
-      `Matches: ${matchCount}${truncated ? ' (truncated)' : ''}`,
-      hiddenMatches > 0
-        ? `Hidden matches: ${hiddenMatches} secret-file result${hiddenMatches === 1 ? '' : 's'}`
-        : '',
-      redactedMatches ? 'Redactions: secret-like values hidden.' : '',
-      '',
-      ...visibleLines,
-    ].join('\n'),
+    text: formatSearchResultLines(rawLines, {
+      query,
+      searchPath,
+      // Truncation = more raw output than we kept, or the exec transport
+      // itself truncated. (Hidden secret-file matches are reported on their
+      // own line, not folded into "(truncated)".)
+      truncated: allLines.length > rawLines.length || result.truncated,
+    }),
   };
 }
 
@@ -480,6 +531,11 @@ export async function handleReadSymbols(
   args: ReadSymbolsArgs,
 ): Promise<ToolExecutionResult> {
   const filePath = args.path;
+  // Handler-level refusal so every surface (cloud, daemon, native) inherits
+  // it — matches read_file/search/list_dir in this module.
+  if (isSensitivePath(filePath)) {
+    return { text: formatSensitivePathToolError(filePath) };
+  }
   const ext = filePath.split('.').pop()?.toLowerCase() || '';
 
   try {
@@ -491,7 +547,9 @@ export async function handleReadSymbols(
       symbols = cached.symbols;
       totalLines = cached.totalLines;
     } else {
-      const result = await ctx.readSymbolsFromSandbox(ctx.sandboxId, filePath);
+      const result = ctx.readSymbolsNative
+        ? await ctx.readSymbolsNative(filePath)
+        : await ctx.readSymbolsFromSandbox(ctx.sandboxId, filePath);
       symbols = result.symbols;
       totalLines = result.totalLines;
       ctx.storeCachedSymbols(filePath, result.symbols, totalLines);

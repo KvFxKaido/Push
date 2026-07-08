@@ -9,7 +9,11 @@ import java.util.Date
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
+import org.eclipse.jgit.api.CreateBranchCommand
 import org.eclipse.jgit.api.Git
+import org.eclipse.jgit.api.ResetCommand
+import org.eclipse.jgit.diff.DiffFormatter
+import org.eclipse.jgit.diff.RawTextComparator
 import org.eclipse.jgit.dircache.DirCacheEntry
 import org.eclipse.jgit.lib.BranchConfig
 import org.eclipse.jgit.lib.BranchTrackingStatus
@@ -24,6 +28,8 @@ import org.eclipse.jgit.revwalk.RevWalk
 import org.eclipse.jgit.transport.CredentialsProvider
 import org.eclipse.jgit.transport.RefSpec
 import org.eclipse.jgit.transport.UsernamePasswordCredentialsProvider
+import org.eclipse.jgit.treewalk.CanonicalTreeParser
+import org.eclipse.jgit.treewalk.FileTreeIterator
 import org.eclipse.jgit.treewalk.TreeWalk
 
 /**
@@ -49,15 +55,118 @@ object JGitEngine {
   private fun <T> withRepo(dir: String, block: (Git) -> T): T =
     Git.open(File(dir)).use(block)
 
+  private const val DIFF_MAX_BYTES = 30 * 1024
+
+  data class FileReadResult(
+    val content: String,
+    val truncated: Boolean,
+    val totalLines: Int?,
+    val error: String? = null,
+    val code: String? = null,
+  )
+  data class FileWriteResult(val ok: Boolean, val bytesWritten: Int? = null, val error: String? = null)
+  data class DirEntry(val name: String, val type: String, val size: Long?)
+  data class ListDirResult(
+    val entries: List<DirEntry>,
+    val truncated: Boolean,
+    val error: String? = null,
+  )
+  data class DiffResult(
+    val diff: String,
+    val truncated: Boolean,
+    val gitStatus: String,
+    val error: String? = null,
+  )
+
   // -- Lifecycle --------------------------------------------------------------
 
   fun clone(url: String, dir: String, branch: String?, token: String?, depth: Int?) {
+    val target = File(dir)
+    if (target.exists() && File(target, ".git").exists()) {
+      reconcileExistingClone(url, dir, branch, token, depth)
+      return
+    }
     val cmd = Git.cloneRepository().setURI(url).setDirectory(File(dir))
     if (!branch.isNullOrEmpty()) cmd.setBranch(branch)
     credentials(token)?.let { cmd.setCredentialsProvider(it) }
     if (depth != null && depth > 0) cmd.setDepth(depth)
     cmd.call().use { /* close the returned Git handle */ }
   }
+
+  private fun reconcileExistingClone(url: String, dir: String, branch: String?, token: String?, depth: Int?) =
+    withRepo(dir) { git ->
+      val repo = git.repository
+      val config = repo.config
+      if (config.getString("remote", "origin", "url") != url) {
+        config.setString("remote", "origin", "url", url)
+        config.save()
+      }
+
+      val fetch = git.fetch().setRemote("origin")
+      credentials(token)?.let { fetch.setCredentialsProvider(it) }
+      if (depth != null && depth > 0) fetch.setDepth(depth)
+      if (!branch.isNullOrEmpty()) {
+        fetch.setRefSpecs(RefSpec("+refs/heads/$branch:refs/remotes/origin/$branch"))
+      }
+      fetch.call()
+
+      // Data-loss guard: the TS working-copy registry is process-lifetime, so
+      // after Android kills the app a resume re-invokes clone() on a dir that
+      // may hold uncommitted edits or unpushed local commits. Only reset+clean
+      // when it is provably safe — the working tree is clean AND HEAD has no
+      // commits unreachable from the fetched origin ref. Otherwise keep local
+      // state and reuse the clone as-is (still a success).
+      if (!isResetSafe(git, branch)) {
+        println("""{"level":"info","event":"native_git_reconcile_preserved","dir":${jsonString(dir)}}""")
+        return@withRepo
+      }
+
+      if (!branch.isNullOrEmpty()) {
+        val remoteRef = "refs/remotes/origin/$branch"
+        if (repo.findRef("refs/heads/$branch") == null) {
+          git.checkout()
+            .setCreateBranch(true)
+            .setName(branch)
+            .setStartPoint(remoteRef)
+            .setUpstreamMode(CreateBranchCommand.SetupUpstreamMode.TRACK)
+            .call()
+        } else {
+          git.checkout().setName(branch).call()
+        }
+        git.reset().setMode(ResetCommand.ResetType.HARD).setRef(remoteRef).call()
+      } else {
+        val head = repo.resolve("refs/remotes/origin/HEAD") ?: repo.resolve("HEAD")
+        if (head != null) {
+          git.reset().setMode(ResetCommand.ResetType.HARD).setRef(head.name).call()
+        }
+      }
+      git.clean().setCleanDirectories(true).setIgnore(false).call()
+      println("""{"level":"info","event":"native_git_reconcile_reset","dir":${jsonString(dir)}}""")
+    }
+
+  /**
+   * True when hard-resetting the reconciled clone to origin cannot lose local
+   * work: the working tree is clean (isClean covers staged, unstaged, AND
+   * untracked) and every HEAD commit is reachable from the fetched origin ref
+   * (HEAD merged into origin ⇒ not ahead). An unborn HEAD has nothing to lose;
+   * an unresolvable origin ref means safety can't be proven, so preserve.
+   */
+  private fun isResetSafe(git: Git, branch: String?): Boolean {
+    if (!git.status().call().isClean) return false
+    val repo = git.repository
+    val originId = if (!branch.isNullOrEmpty()) {
+      repo.resolve("refs/remotes/origin/$branch")
+    } else {
+      repo.resolve("refs/remotes/origin/HEAD")
+    } ?: return false
+    val headId = repo.resolve(Constants.HEAD) ?: return true
+    return RevWalk(repo).use { walk ->
+      walk.isMergedInto(walk.parseCommit(headId), walk.parseCommit(originId))
+    }
+  }
+
+  private fun jsonString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
   // -- Reads ------------------------------------------------------------------
 
@@ -100,6 +209,11 @@ object JGitEngine {
    * from the sandbox/CLI status because it goes through the same parser.
    */
   fun statusPorcelain(dir: String): String = withRepo(dir) { git ->
+    formatPorcelain(git, git.status().call())
+  }
+
+  /** Porcelain-v1 formatting for an already-computed [status] on an open [git]. */
+  private fun formatPorcelain(git: Git, status: org.eclipse.jgit.api.Status): String {
     val repo = git.repository
     val out = StringBuilder()
     val branch = repo.branch
@@ -126,7 +240,6 @@ object JGitEngine {
     // Merge JGit's per-category sets into porcelain XY columns (X=index/staged,
     // Y=worktree/unstaged). Untracked are emitted as `??` after the tracked
     // entries, matching git's ordering closely enough for the parser.
-    val status = git.status().call()
     val xy = sortedMapOf<String, CharArray>()
     fun mark(path: String, x: Char?, y: Char?) {
       val cell = xy.getOrPut(path) { charArrayOf(' ', ' ') }
@@ -142,7 +255,104 @@ object JGitEngine {
 
     for ((path, cell) in xy) out.append(cell[0]).append(cell[1]).append(' ').append(path).append("\n")
     status.untracked.sorted().forEach { out.append("?? ").append(it).append("\n") }
-    out.toString()
+    return out.toString()
+  }
+
+  fun readFile(dir: String, path: String, startLine: Int?, endLine: Int?): FileReadResult {
+    val root = File(dir)
+    val file = safeChild(root, path)
+      ?: return FileReadResult("", false, null, "path escapes working copy", "EACCES")
+    if (!file.exists()) return FileReadResult("", false, null, "No such file: $path", "ENOENT")
+    if (!file.isFile) return FileReadResult("", false, null, "Not a file: $path", "EISDIR")
+
+    return try {
+      val text = file.readText(Charsets.UTF_8)
+      val lines = if (text.isEmpty()) emptyList() else text.split('\n')
+      val totalLines = lines.size
+      if (startLine == null && endLine == null) {
+        FileReadResult(text, false, totalLines)
+      } else {
+        val start = (startLine ?: 1).coerceAtLeast(1)
+        val end = (endLine ?: totalLines).coerceAtLeast(start)
+        val selected =
+          if (start > totalLines) emptyList() else lines.subList(start - 1, end.coerceAtMost(totalLines))
+        FileReadResult(selected.joinToString("\n"), false, totalLines)
+      }
+    } catch (e: Exception) {
+      FileReadResult("", false, null, e.message ?: "read failed", "EIO")
+    }
+  }
+
+  fun writeFile(dir: String, path: String, content: String): FileWriteResult {
+    val root = File(dir)
+    val file = safeChild(root, path) ?: return FileWriteResult(false, null, "path escapes working copy")
+    return try {
+      file.parentFile?.mkdirs()
+      file.writeText(content, Charsets.UTF_8)
+      FileWriteResult(true, content.toByteArray(Charsets.UTF_8).size)
+    } catch (e: Exception) {
+      FileWriteResult(false, null, e.message ?: "write failed")
+    }
+  }
+
+  fun listDir(dir: String, path: String?): ListDirResult {
+    val root = File(dir)
+    val target = safeChild(root, path ?: "")
+      ?: return ListDirResult(emptyList(), false, "path escapes working copy")
+    if (!target.exists()) return ListDirResult(emptyList(), false, "No such directory: ${path ?: ""}")
+    if (!target.isDirectory) return ListDirResult(emptyList(), false, "Not a directory: ${path ?: ""}")
+
+    val children = target.listFiles()?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name })
+      ?: emptyList()
+    val limit = 500
+    val entries = children.take(limit).map { child ->
+      val type = when {
+        java.nio.file.Files.isSymbolicLink(child.toPath()) -> "symlink"
+        child.isDirectory -> "directory"
+        child.isFile -> "file"
+        else -> "other"
+      }
+      DirEntry(child.name, type, if (child.isFile) child.length() else null)
+    }
+    return ListDirResult(entries, children.size > limit)
+  }
+
+  fun diff(dir: String): DiffResult = withRepo(dir) { git ->
+    try {
+      val repo = git.repository
+      val head = repo.resolve(Constants.HEAD + "^{tree}")
+      val out = ByteArrayOutputStream()
+
+      if (head != null) {
+        repo.newObjectReader().use { reader ->
+          val oldTree = CanonicalTreeParser().apply { reset(reader, head) }
+          val newTree = FileTreeIterator(repo)
+          // Note: with a working-tree iterator on side B, JGit's scan already
+          // includes untracked non-ignored files as additions — do NOT render
+          // untracked files separately or they appear twice.
+          DiffFormatter(out).use { formatter ->
+            formatter.setRepository(repo)
+            formatter.setDiffComparator(RawTextComparator.DEFAULT)
+            formatter.isDetectRenames = true
+            for (entry in formatter.scan(oldTree, newTree)) {
+              formatter.format(entry)
+              if (out.size() > DIFF_MAX_BYTES) break
+            }
+          }
+        }
+      }
+
+      val raw = out.toByteArray()
+      val truncated = raw.size > DIFF_MAX_BYTES
+      val diff = if (truncated) {
+        String(raw.copyOf(DIFF_MAX_BYTES), Charsets.UTF_8) + "\n...(diff truncated at 30KB)"
+      } else {
+        String(raw, Charsets.UTF_8)
+      }
+      DiffResult(diff, truncated, formatPorcelain(git, git.status().call()))
+    } catch (e: Exception) {
+      DiffResult("", false, "", e.message ?: "diff failed")
+    }
   }
 
   // -- Writes (throw on failure; the bridge maps to { ok:false, message }) ----
