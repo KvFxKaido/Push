@@ -266,9 +266,19 @@ async function resolveAncestry(
   descendant: string,
 ): Promise<boolean | null> {
   if (source.isAncestor) return source.isAncestor(ancestor, descendant);
+  // Fallback for sources without a native `--is-ancestor` (JGit): compare the
+  // merge-base to the ancestor. A null merge-base is ambiguous here — it means
+  // EITHER genuinely-unrelated histories OR a transient read failure (the
+  // native source maps a thrown bridge/JGit error to null) — and this branch is
+  // only reached when the ancestor tip is already present locally, so a normal
+  // divergence would still have a common base. Return `unknown` (not `force`):
+  // per this file's doctrine an unproven state must not block, and git's own
+  // non-fast-forward rejection remains the backstop. Treating null as a proven
+  // force would surface a spurious "diverged — open a PR" block on a flaky
+  // bridge.
   const resolvedAncestor = await source.verifyRef(ancestor);
   if (!resolvedAncestor) return null;
   const base = await source.mergeBase(ancestor, descendant);
-  if (!base) return false;
+  if (!base) return null;
   return base === resolvedAncestor || base === ancestor;
 }
