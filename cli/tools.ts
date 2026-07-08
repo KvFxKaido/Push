@@ -2242,11 +2242,15 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
     });
     if (!check.ok) {
       // Symmetric structured log so a main-loop capability denial is greppable
-      // in ops, matching the CLI Explorer gate's `role_capability_denied` emit.
-      // Returning the denial only to the model (as `text`/`structuredError`)
-      // leaves operators blind to a misconfigured grant that quietly burns
-      // tokens — the OpenCode silent-failure class. CLI path → `console.error`
-      // (stdout is reserved for user output / --json payloads).
+      // in ops. Returning the denial only to the model (as `text`/
+      // `structuredError`) leaves operators blind to a misconfigured grant that
+      // quietly burns tokens — the OpenCode silent-failure class. The event name
+      // and payload shape match the CLI Explorer gate (`cli/pushd.ts`) so a
+      // single grep/dashboard covers both; the *stream* follows the Symmetric
+      // structured logs convention — `console.error` with a semantic `level`
+      // field, decoupled (cf. `lib/context-memory.ts` / `lib/verbatim-retain.ts`
+      // doing `console.error({ level: 'warn', … })`). stderr keeps it off the
+      // user-output / --json stdout channel.
       try {
         const granted =
           check.type === 'ROLE_CAPABILITY_DENIED'

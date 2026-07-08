@@ -479,13 +479,15 @@ export function buildCoderToolExec<
     const roleCheck = enforceRoleCapability('coder', call.call.tool);
     if (!roleCheck.ok) {
       // Symmetric structured log so a delegated-Coder denial is greppable in
-      // ops the same way the CLI Explorer gate (`cli/pushd.ts`) already emits
-      // `role_capability_denied`. Without it, a misconfigured Coder grant would
-      // bounce every delegated call back to the model as `reason` — visible to
-      // the model, invisible to operators — which is exactly the silent
-      // token-burn failure the OpenCode audit called out at the subagent layer.
-      // Shared `lib/` module → `console.error` (CLI stdout is reserved for user
-      // output / --json). Event name matches the Explorer gate for dashboards.
+      // ops. Without it, a misconfigured Coder grant would bounce every
+      // delegated call back to the model as `reason` — visible to the model,
+      // invisible to operators — which is exactly the silent token-burn failure
+      // the OpenCode audit called out at the subagent layer. The event name and
+      // payload shape match the CLI Explorer gate (`cli/pushd.ts`) so one
+      // grep/dashboard covers both; the *stream* follows the Symmetric
+      // structured logs convention for shared `lib/` — `console.error` with a
+      // semantic `level` field, decoupled (cf. `lib/context-memory.ts` /
+      // `lib/verbatim-retain.ts`), keeping it off the CLI's --json stdout.
       try {
         console.error(
           JSON.stringify({
