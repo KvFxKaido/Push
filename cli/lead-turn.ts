@@ -31,6 +31,7 @@ import {
   type CoderToolExecResult,
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
+import { groupCallsByPhase } from '../lib/tool-call-grouping.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isEditDiff } from '../lib/edit-diff.ts';
 import { createRuntimeContext } from '../lib/runtime-context.ts';
@@ -79,6 +80,11 @@ import type { Message } from './context-manager.js';
 import { maybeCompactLeadHistory } from './lead-compaction.js';
 import { isHandoffBlock } from '../lib/llm-compaction.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
+import {
+  LEAD_EXPLORER_DELEGATION_PROTOCOL,
+  LEAD_MAX_PARALLEL_EXPLORERS,
+  runLeadExplorerDelegation,
+} from './lead-explorer.js';
 import type { RunOptions, RunResult } from './engine.js';
 import type { NativeToolCall } from '../lib/provider-contract.js';
 import { MAX_ALLOWED_ROUNDS } from './engine.js';
@@ -111,39 +117,61 @@ function wrapCall(call: CliToolCall): CliKernelCall {
 }
 
 /**
+ * Per-call classifier options. The parallel-delegation bucket is opt-in and
+ * lead-only: `runLeadKernelTurn` passes `LEAD_MAX_PARALLEL_EXPLORERS` so the
+ * lead can fan out Explorers alongside its reads; every other caller (the
+ * daemon's delegated Coder/Explorer nodes, tests calling the bare wrappers)
+ * omits it and keeps the historical shape — a `delegate_explorer` call falls
+ * through to the trailing `mutating` slot exactly as before.
+ */
+export interface CliDetectOptions {
+  maxParallelDelegations?: number | null;
+}
+
+/**
  * Wrap `cli/tools.ts`'s flat `{ calls, malformed }` detector output into the
  * `DetectedToolCalls` shape the lib Coder kernel expects.
  *
- * Classification:
+ * Classification (shared state machine — `lib/tool-call-grouping.ts`):
  * - `READ_ONLY_TOOLS` → `readOnly`
+ * - `delegate_explorer` → `parallelDelegations` when the caller opts in
+ *   (lead lane only; rides the read phase), else the trailing slot
  * - `FILE_MUTATION_TOOLS` (pure file writes/edits) → `fileMutations`,
  *   batched into one mutation transaction per turn
  * - Anything else (`exec`, `git_commit`, etc.) → the trailing `mutating`
  *   side-effect slot (at most one)
- * - Overflow after the trailing slot, or a second side-effect → `extraMutations`
+ * - Overflow after the trailing slot, a second side-effect, or delegation
+ *   fan-out past the cap → `extraMutations`
  *
  * Reads that appear after a mutation has started are treated as a boundary:
  * the sequence stops there so we don't silently reorder the model's intent.
  *
  * Moved here from `cli/pushd.ts` so both the daemon's delegated nodes and the
  * lead-kernel lane share one classifier; pushd re-exports it for its tests.
+ * The hand-rolled state machine was replaced by the shared
+ * `groupCallsByPhase` kernel when the delegation bucket landed — caps stay
+ * disabled (`null`) so the reads/mutations behavior is unchanged.
  */
-export function wrapCliDetectAllToolCalls(text: string): DetectedToolCalls<CliKernelCall> {
+export function wrapCliDetectAllToolCalls(
+  text: string,
+  options?: CliDetectOptions,
+): DetectedToolCalls<CliKernelCall> {
   const { calls, malformed } = cliDetectAllToolCalls(text) as {
     calls: CliToolCall[];
     malformed?: { reason: string; sample: string; rawToolName?: string }[];
   };
-  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []), options);
 }
 
 export function wrapCliDetectNativeToolCalls(
   nativeCalls: readonly NativeToolCall[],
+  options?: CliDetectOptions,
 ): DetectedToolCalls<CliKernelCall> {
   const { calls, malformed } = cliDetectNativeToolCalls(nativeCalls) as {
     calls: CliToolCall[];
     malformed?: { reason: string; sample: string; rawToolName?: string }[];
   };
-  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []));
+  return classifyCliToolCalls(calls, malformedReportsToDroppedCandidates(malformed ?? []), options);
 }
 
 function malformedReportsToDroppedCandidates(
@@ -163,50 +191,43 @@ function malformedReportsToDroppedCandidates(
   }));
 }
 
+/**
+ * Grouping predicates over the kernel-wrapped CLI call shape. The
+ * parallel-delegation predicate matches the lead's Explorer fan-out tool
+ * only; the shared grouper consults it solely when the caller enables the
+ * bucket via `maxParallelDelegations`.
+ */
+const CLI_GROUPING_PREDICATES = {
+  isReadOnly: (wrapped: CliKernelCall): boolean => READ_ONLY_TOOLS.has(wrapped.call.tool),
+  isFileMutation: (wrapped: CliKernelCall): boolean => FILE_MUTATION_TOOLS.has(wrapped.call.tool),
+  isParallelDelegation: (wrapped: CliKernelCall): boolean =>
+    wrapped.call.tool === 'delegate_explorer',
+};
+
 function classifyCliToolCalls(
   calls: readonly CliToolCall[],
   droppedCandidates: DetectedToolCalls<CliKernelCall>['droppedCandidates'] = [],
+  options?: CliDetectOptions,
 ): DetectedToolCalls<CliKernelCall> {
-  const readOnly: CliKernelCall[] = [];
-  const fileMutations: CliKernelCall[] = [];
-  const extraMutations: CliKernelCall[] = [];
-  let mutating: CliKernelCall | null = null;
-  let phase: 'reads' | 'mutations' | 'done' = 'reads';
-  for (const call of calls) {
-    const wrapped = wrapCall(call);
-    const isRead = READ_ONLY_TOOLS.has(call.tool);
-    const isFileMut = !isRead && FILE_MUTATION_TOOLS.has(call.tool);
-
-    if (phase === 'done') {
-      extraMutations.push(wrapped);
-      continue;
-    }
-
-    if (isRead) {
-      if (phase === 'reads') {
-        readOnly.push(wrapped);
-        continue;
-      }
-      // Read after a mutation started — ordering violation. Push it
-      // into `extraMutations` (and flip `phase` so any remaining calls
-      // land there too) so the caller can surface a structured error
-      // instead of silently dropping the call.
-      extraMutations.push(wrapped);
-      phase = 'done';
-      continue;
-    }
-
-    if (isFileMut) {
-      phase = 'mutations';
-      fileMutations.push(wrapped);
-      continue;
-    }
-
-    // Side-effecting call (exec, git_commit, save_memory, etc.)
-    mutating = wrapped;
-    phase = 'done';
-  }
-  return { readOnly, fileMutations, mutating, extraMutations, droppedCandidates };
+  // Shared per-turn grouping kernel (`lib/tool-call-grouping.ts`) — the same
+  // state machine the web dispatcher runs. Read/mutation caps stay disabled
+  // (`null`) to preserve this classifier's historical uncapped behavior; the
+  // delegation cap is the caller's opt-in (lead lane only). With the caps
+  // null, `batchOverflow` is empty by construction — merged defensively so a
+  // future cap can't silently drop calls.
+  const grouped = groupCallsByPhase(calls.map(wrapCall), CLI_GROUPING_PREDICATES, {
+    maxParallelReads: null,
+    maxFileMutationBatch: null,
+    maxParallelDelegations: options?.maxParallelDelegations ?? null,
+  });
+  return {
+    readOnly: grouped.readOnly,
+    parallelDelegations: grouped.parallelDelegations,
+    fileMutations: grouped.fileMutations,
+    mutating: grouped.mutating,
+    extraMutations: [...grouped.extraMutations, ...grouped.batchOverflow],
+    droppedCandidates,
+  };
 }
 
 /**
@@ -439,7 +460,14 @@ export async function runLeadKernelTurn(
     providerConfig.id,
     leadModelId,
   )
-    ? getCliNativeToolSchemas({ includeGitHub: Boolean(githubProtocol) })
+    ? getCliNativeToolSchemas({
+        includeGitHub: Boolean(githubProtocol),
+        // Lead-only surface: the Explorer fan-out schema parses from the same
+        // protocol block advertised below, so prompt text and native schema
+        // can't drift. The daemon's delegated nodes don't thread this — a
+        // delegated sub-Coder neither advertises nor executes delegation.
+        extraProtocolBlocks: [LEAD_EXPLORER_DELEGATION_PROTOCOL],
+      })
     : undefined;
 
   // Tee the provider stream into the engine event vocabulary so the TUI /
@@ -582,6 +610,41 @@ export async function runLeadKernelTurn(
       toolCall && typeof toolCall === 'object' && toolCall.call
         ? toolCall.call
         : (toolCall as unknown as CliToolCall);
+    // Explorer-only delegation arc (§10): the lead offloads read-only
+    // investigation but does its own coding — `delegate_explorer` is the
+    // only delegation tool the lead executes (there is no `delegate_coder`
+    // on this surface; unknown tools keep hitting executeToolCall's
+    // UNKNOWN_TOOL error below). Routed before the `tool.execution_start`
+    // synthesis: the delegation renders through its own `subagent.*`
+    // lifecycle events (same as the daemon's delegated runs), not as a
+    // sandbox-tool transcript row. Never throws — a failed Explorer must not
+    // take down the siblings sharing the kernel's parallel batch.
+    if (rawCall.tool === 'delegate_explorer') {
+      const { resultText } = await runLeadExplorerDelegation(rawCall.args ?? {}, {
+        cwd: state.cwd,
+        sessionId: state.sessionId,
+        providerConfig,
+        apiKey,
+        model: state.model,
+        roleRouting: state.roleRouting,
+        projectInstructions: instructions?.content || undefined,
+        instructionFilename: instructions?.file || undefined,
+        signal,
+        // Default (no parallel-delegation bucket) detectors: an Explorer
+        // cannot fan out further Explorers.
+        detectors: {
+          detectAllToolCalls: wrapCliDetectAllToolCalls,
+          detectNativeToolCalls: wrapCliDetectNativeToolCalls,
+          detectAnyToolCall: wrapCliDetectAnyToolCall,
+        },
+        onStatus: (phase, detail) => dispatchEvent('status', { source: 'explorer', phase, detail }),
+        emitEvent: (type, payload) => {
+          void persistEvent(type, payload);
+          dispatchEvent(type, payload);
+        },
+      });
+      return { kind: 'executed', resultText };
+    }
     // Synthesize the start event the engine loop emits before each tool run
     // (Codex P2, PR #904): the TUI creates the transcript tool entry and its
     // file-awareness args queue on `tool.execution_start` — the kernel's own
@@ -719,14 +782,31 @@ export async function runLeadKernelTurn(
         taskPreamble,
         symbolSummary: null,
         toolExec,
-        detectAllToolCalls: wrapCliDetectAllToolCalls,
-        detectNativeToolCalls: wrapCliDetectNativeToolCalls,
+        // Lead surface: enable the parallel-delegation bucket so the lead can
+        // fan out up to LEAD_MAX_PARALLEL_EXPLORERS Explorers in one turn
+        // (they ride the kernel's read-phase Promise.all). The daemon's
+        // delegated nodes keep the default (no bucket — a delegation call
+        // falls through to the trailing slot).
+        detectAllToolCalls: (text: string) =>
+          wrapCliDetectAllToolCalls(text, {
+            maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS,
+          }),
+        detectNativeToolCalls: (calls: readonly NativeToolCall[]) =>
+          wrapCliDetectNativeToolCalls(calls, {
+            maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS,
+          }),
         detectAnyToolCall: wrapCliDetectAnyToolCall,
         webSearchToolProtocol: '',
         // The CLI's full tool protocol rides the kernel's sandbox slot, same
         // as the daemon's delegated Coder nodes.
         sandboxToolProtocol: TOOL_PROTOCOL,
-        extraToolProtocols: githubProtocol ? [githubProtocol] : undefined,
+        // Lead-only extras: GitHub (when a token resolves) plus the Explorer
+        // fan-out arc — advertised only because the matching executor paths
+        // are wired above (toolExec's delegate_explorer route).
+        extraToolProtocols: [
+          ...(githubProtocol ? [githubProtocol] : []),
+          LEAD_EXPLORER_DELEGATION_PROTOCOL,
+        ],
         nativeToolSchemas,
         projectInstructions: instructions?.content || undefined,
         instructionFilename: instructions?.file || undefined,

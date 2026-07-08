@@ -22,6 +22,12 @@ import {
   resolveDefaultExecMode,
   wrapCliDetectAllToolCalls,
 } from '../lead-turn.ts';
+import {
+  LEAD_EXPLORER_DELEGATION_PROTOCOL,
+  LEAD_MAX_PARALLEL_EXPLORERS,
+} from '../lead-explorer.ts';
+import { getCliNativeToolSchemas } from '../tool-function-schemas.ts';
+import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
@@ -408,6 +414,227 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         const toolEvent = emitted[completeIdx];
         assert.equal(toolEvent.payload.toolName, 'read_file');
         assert.equal(toolEvent.payload.isError, false);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});
+
+function fencedCall(tool, args) {
+  return `\`\`\`json\n${JSON.stringify({ tool, args })}\n\`\`\``;
+}
+
+describe('wrapCliDetectAllToolCalls — lead Explorer fan-out bucket', () => {
+  it('keeps delegate_explorer in the trailing slot by default (delegated nodes unchanged)', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      [
+        fencedCall('read_file', { path: 'a.txt' }),
+        fencedCall('delegate_explorer', { task: 'Trace flow A' }),
+      ].join('\n'),
+    );
+
+    assert.equal(detected.readOnly.length, 1);
+    assert.equal((detected.parallelDelegations ?? []).length, 0);
+    assert.equal(detected.mutating?.call.tool, 'delegate_explorer');
+  });
+
+  it('rides delegations alongside reads when the lead cap is enabled', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      [
+        fencedCall('delegate_explorer', { task: 'Trace flow A' }),
+        fencedCall('read_file', { path: 'a.txt' }),
+        fencedCall('delegate_explorer', { task: 'Trace flow B' }),
+      ].join('\n'),
+      { maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS },
+    );
+
+    assert.equal(detected.readOnly.length, 1);
+    assert.equal(detected.parallelDelegations.length, 2);
+    assert.equal(detected.mutating, null);
+    assert.equal(detected.extraMutations.length, 0);
+  });
+
+  it('rejects fan-out past the cap into extraMutations (no silent drop)', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      [
+        fencedCall('delegate_explorer', { task: 'A' }),
+        fencedCall('delegate_explorer', { task: 'B' }),
+        fencedCall('delegate_explorer', { task: 'C' }),
+      ].join('\n'),
+      { maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS },
+    );
+
+    assert.equal(detected.parallelDelegations.length, 2);
+    assert.equal(detected.extraMutations.length, 1);
+    assert.equal(detected.extraMutations[0].call.args.task, 'C');
+  });
+
+  it('treats a delegation after a mutation as an ordering violation', () => {
+    const detected = wrapCliDetectAllToolCalls(
+      [
+        fencedCall('write_file', { path: 'a.txt', content: 'x' }),
+        fencedCall('delegate_explorer', { task: 'A' }),
+      ].join('\n'),
+      { maxParallelDelegations: LEAD_MAX_PARALLEL_EXPLORERS },
+    );
+
+    assert.equal(detected.fileMutations.length, 1);
+    assert.equal(detected.parallelDelegations.length, 0);
+    assert.equal(detected.extraMutations.length, 1);
+    assert.equal(detected.extraMutations[0].call.tool, 'delegate_explorer');
+  });
+});
+
+describe('LEAD_EXPLORER_DELEGATION_PROTOCOL — advertise/executor drift pins', () => {
+  it('parses into a native function schema from the same block the prompt advertises', () => {
+    const schemas = getCliNativeToolSchemas({
+      extraProtocolBlocks: [LEAD_EXPLORER_DELEGATION_PROTOCOL],
+    });
+    const schema = schemas.find((s) => s.name === 'delegate_explorer');
+    assert.ok(schema, 'delegate_explorer schema missing from extraProtocolBlocks parse');
+    assert.deepEqual(schema.input_schema.required, ['task']);
+    assert.equal(schema.input_schema.properties.files.type, 'array');
+    assert.equal(schema.input_schema.properties.knownContext.type, 'array');
+  });
+
+  it('is absent from the default schema set (delegated nodes advertise no delegation)', () => {
+    const schemas = getCliNativeToolSchemas();
+    assert.ok(!schemas.some((s) => s.name === 'delegate_explorer'));
+  });
+
+  it('matches the shared capability table: lead-capable coder yes, explorer no', () => {
+    // The lead runs under the `coder` grant, which carries `delegate:explorer`
+    // (lib/capabilities.ts). Explorer itself must NOT be able to fan out
+    // further Explorers — the runner hands sub-runs the default detectors and
+    // the capability gate refuses the call.
+    assert.equal(roleCanUseTool('coder', 'delegate_explorer'), true);
+    assert.equal(roleCanUseTool('explorer', 'delegate_explorer'), false);
+  });
+
+  it('states the fan-out cap it enforces', () => {
+    assert.ok(
+      LEAD_EXPLORER_DELEGATION_PROTOCOL.includes(
+        `up to ${LEAD_MAX_PARALLEL_EXPLORERS} delegate_explorer calls`,
+      ),
+      'protocol text must state the cap the classifier enforces',
+    );
+  });
+});
+
+describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', needsLoopback, () => {
+  it('fans out two Explorers in one turn and feeds their reports back to the lead', async () => {
+    await withTempWorkspace(async (cwd) => {
+      await fs.writeFile(path.join(cwd, 'notes.txt'), 'fan-out sentinel', 'utf8');
+      const fanOut = [
+        fencedCall('delegate_explorer', { task: 'Trace flow A', files: ['notes.txt'] }),
+        fencedCall('delegate_explorer', { task: 'Trace flow B' }),
+      ].join('\n');
+      // Request order: lead round 1 → two concurrent Explorer runs (one
+      // provider request each; interchangeable plans) → lead round 2.
+      const server = await startSequencedProviderServer([
+        { tokens: [fanOut] },
+        { tokens: ['Findings: alpha beta'] },
+        { tokens: ['Findings: alpha beta'] },
+        { tokens: ['Both flows traced. All done.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(
+          state,
+          providerConfig,
+          'mock-key',
+          'Investigate both flows',
+          5,
+          { emit: (event) => emitted.push(event) },
+        );
+
+        assert.equal(result.outcome, 'success');
+        assert.ok(result.finalAssistantText.includes('All done.'));
+        assert.equal(server.requests.length, 4, 'expected lead + 2 explorers + lead');
+
+        // The lead advertises the fan-out arc it executes.
+        assert.ok(
+          JSON.stringify(server.requests[0]).includes('[DELEGATE_EXPLORER]'),
+          'Explorer delegation protocol missing from the lead prompt',
+        );
+
+        // Both Explorer runs hit the provider under the Explorer identity,
+        // each with its own delegation brief.
+        const explorerRequests = [server.requests[1], server.requests[2]].map((r) =>
+          JSON.stringify(r),
+        );
+        for (const requestText of explorerRequests) {
+          assert.ok(
+            requestText.includes('You are the Explorer agent'),
+            'Explorer identity missing from delegated request',
+          );
+        }
+        assert.ok(explorerRequests.some((r) => r.includes('Task: Trace flow A')));
+        assert.ok(explorerRequests.some((r) => r.includes('Task: Trace flow B')));
+
+        // The lead's next round sees both compact reports.
+        const leadRound2 = JSON.stringify(server.requests[3]);
+        assert.ok(leadRound2.includes('EXPLORER_RESULT'));
+        assert.ok(leadRound2.includes('Findings: alpha beta'));
+
+        // Delegation lifecycle events, one pair per Explorer — the TUI/REPL
+        // delegation renderers key on these.
+        const started = emitted.filter((e) => e.type === 'subagent.started');
+        const completed = emitted.filter((e) => e.type === 'subagent.completed');
+        assert.equal(started.length, 2);
+        assert.equal(completed.length, 2);
+        for (const event of [...started, ...completed]) {
+          assert.equal(event.payload.agent, 'explorer');
+          assert.ok(event.payload.executionId);
+        }
+        for (const event of completed) {
+          assert.equal(event.payload.status, 'complete');
+          assert.ok(event.payload.summary.includes('Findings'));
+        }
+
+        // Lifecycle events are persisted to the session log too.
+        const events = await loadSessionEventsEventually(
+          state.sessionId,
+          (loaded) => loaded.filter((e) => e.type === 'subagent.completed').length === 2,
+        );
+        assert.equal(events.filter((e) => e.type === 'subagent.started').length, 2);
+        assert.equal(events.filter((e) => e.type === 'subagent.completed').length, 2);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('rejects a task-less delegation with a tool error and no Explorer spawn', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: [fencedCall('delegate_explorer', {})] },
+        { tokens: ['Understood, giving a direct answer.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd);
+        const emitted = [];
+
+        const result = await runLeadKernelTurn(state, providerConfig, 'mock-key', 'Go', 5, {
+          emit: (event) => emitted.push(event),
+        });
+
+        assert.equal(result.outcome, 'success');
+        // Only the two lead rounds — no Explorer provider request was made.
+        assert.equal(server.requests.length, 2);
+        // (JSON.stringify escapes the quotes around "task" in the body.)
+        assert.ok(
+          JSON.stringify(server.requests[1]).includes('delegate_explorer requires a non-empty'),
+          'validation error not fed back to the lead',
+        );
+        assert.ok(!emitted.some((e) => e.type.startsWith('subagent.')));
       } finally {
         await server.stop();
       }

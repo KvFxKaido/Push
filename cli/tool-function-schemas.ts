@@ -33,6 +33,10 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   edits: 'array',
   paths: 'array',
   files: 'array',
+  // delegate_explorer brief fields (lead Explorer fan-out — see
+  // `cli/lead-explorer.ts:LEAD_EXPLORER_DELEGATION_PROTOCOL`).
+  knownContext: 'array',
+  constraints: 'array',
   dependencies: 'array',
   choices: 'array',
   kinds: 'array',
@@ -90,13 +94,27 @@ let readOnlyCliSchemas: ToolFunctionSchema[] | null = null;
 
 export interface CliToolSchemaOptions extends ToolSchemaContext {
   includeGitHub?: boolean;
+  /**
+   * Additional CLI-format protocol blocks to parse for native schemas beyond
+   * `TOOL_PROTOCOL` — each block's `- name(params) — description` lines are
+   * parsed with the same grammar. The lead lane threads its Explorer
+   * delegation block here (`cli/lead-explorer.ts`) so the advertised prompt
+   * text and the native function schema come from one definition; surfaces
+   * that don't wire the matching executor omit it, keeping advertising
+   * aligned with executor support.
+   */
+  extraProtocolBlocks?: string[];
 }
 
 export function getCliNativeToolSchemas(options: CliToolSchemaOptions = {}): ToolFunctionSchema[] {
   if (!fullCliSchemas) fullCliSchemas = parseProtocolSchemas(TOOL_PROTOCOL);
-  if (!options.includeGitHub) return fullCliSchemas;
+  const extras = (options.extraProtocolBlocks ?? []).flatMap((block) =>
+    parseProtocolSchemas(block),
+  );
+  const base = extras.length > 0 ? [...fullCliSchemas, ...extras] : fullCliSchemas;
+  if (!options.includeGitHub) return base;
   return [
-    ...fullCliSchemas,
+    ...base,
     ...getToolFunctionSchemasForSources(GITHUB_TOOL_SOURCE, {
       activeRepo: options.activeRepo,
       excludeTools: options.excludeTools,

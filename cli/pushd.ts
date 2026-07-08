@@ -674,7 +674,6 @@ import { isPathAllowed, snapshotAllowlist } from './pushd-allowlist.js';
 import { runReviewer } from '../lib/reviewer-agent.ts';
 import { runDeepReviewer } from '../lib/deep-reviewer-agent.ts';
 import { buildReviewerContextBlock } from '../lib/role-context.ts';
-import { getSubagentLabel } from '../lib/role-display.ts';
 import {
   capReviewGuidanceLines,
   REVIEW_GUIDANCE_FILENAME,
@@ -698,12 +697,6 @@ import {
 } from '../lib/daemon-runtime-settings.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import { nextWorkspaceStateEvent, readWorkspaceStateFromGit } from './workspace-state-emitter.js';
-import {
-  roleCanUseTool,
-  getToolCapabilities,
-  isCapabilityMapped,
-  ROLE_CAPABILITIES,
-} from '../lib/capabilities.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.ts';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.ts';
@@ -711,6 +704,7 @@ import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-f
 import { createFileVerbatimLog, getVerbatimLogBaseDir } from './verbatim-log-file-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
+import { makeCliReadOnlyToolExec } from './lead-explorer.ts';
 import { getBuildStamp, peekBuildStamp, RUNTIME_VERSION } from './build-stamp.js';
 
 const VERSION = RUNTIME_VERSION;
@@ -3201,126 +3195,23 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
  * `CapabilityLedger` gating, no `TurnPolicyRegistry`.
  */
 export function makeDaemonExplorerToolExec({ entry, signal, role = 'explorer' }) {
-  const workspaceRoot = entry.state.cwd;
   // Read-only roles that share this executor (Explorer, Deep Reviewer). The
   // gate + executor case-dispatch run under this role so capability-gated
   // cases attribute correctly. Defaults to 'explorer' so the two existing
   // call sites are unchanged; the deep-reviewer handler passes 'reviewer'.
-  // User-facing label comes from the shared display seam (`lib/role-display.ts`)
-  // rather than being spelled here. The deep-reviewer runs under the `reviewer`
-  // role but is tagged distinctly in events, so map it to the `deep_reviewer`
-  // subagent for display; the plain read-only role is the Explorer.
-  const roleLabel = getSubagentLabel(role === 'reviewer' ? 'deep_reviewer' : role);
-  return async (toolCall, _execCtx) => {
-    // Unwrap the `{ source, call: { tool, args } }` shape produced by
-    // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall`. Tests
-    // that hand in a bare CLI call fall through unchanged.
-    const rawCall =
-      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
-
-    // Enforce the role capability grant. The Explorer kernel happily
-    // routes a mutating slot through `toolExec` when the model emits
-    // one — but Explorer is inspection-only by design. Return a denial
-    // resultText so the kernel feeds the refusal back into the next
-    // round as a user message and the model can adapt.
-    //
-    // Three-layer gate (deny if ANY layer says no):
-    //   (1) `toolName` must be a non-empty string (defense against
-    //       malformed detector output).
-    //   (2) `isCapabilityMapped(toolName)` must be true — the name
-    //       must have an own-property entry in `TOOL_CAPABILITIES`.
-    //       This is stricter than `roleCanUseTool`'s documented
-    //       fail-open semantics and diverges intentionally from the
-    //       web runtime's fail-open behavior at
-    //       `app/src/lib/web-tool-execution-runtime.ts:147`. The
-    //       rationale (Copilot PR #331): if a new CLI tool ever
-    //       reaches `executeToolCall` without a matching
-    //       `TOOL_CAPABILITIES` entry, Explorer should refuse it at
-    //       the gate rather than have `roleCanUseTool` fail-open and
-    //       silently admit it. The web runtime has other layers that
-    //       catch unknown names (per-source executor dispatch table);
-    //       the daemon Explorer gate is closer to the model and
-    //       should be fail-closed.
-    //   (3) `roleCanUseTool('explorer', toolName)` must be true for
-    //       the known tool. This is the core Gap 2 check.
-    //
-    // Layer (2) also defends against prototype-key attacks (`__proto__`,
-    // `constructor`, `toString`, `valueOf`, `hasOwnProperty`,
-    // `isPrototypeOf`) — `getToolCapabilities` uses `Object.hasOwn`
-    // to avoid resolving those to inherited prototype values, but
-    // `isCapabilityMapped` belt-and-braces the same concern at the
-    // gate. Codex review on PR #331.
-    const toolName = typeof rawCall?.tool === 'string' ? rawCall.tool : null;
-    if (!toolName || !isCapabilityMapped(toolName) || !roleCanUseTool(role, toolName)) {
-      // Phrasing note: we deliberately do NOT name `delegate_coder`
-      // here because Explorer cannot invoke it from inside the kernel
-      // (delegation is an RPC initiated by the orchestrator / client,
-      // not a tool the Explorer model can emit). Naming it would send
-      // the model down a dead-end loop of trying to call it as a tool
-      // (Copilot review on PR #284).
-      //
-      // Structured log so operators can grep for ROLE_CAPABILITY_DENIED
-      // the same way they do on web. Console.warn keeps this out of
-      // the session event protocol (no new event types) while still
-      // giving observability parity with the web runtime's structured
-      // error at `web-tool-execution-runtime.ts:152`.
-      if (toolName) {
-        const required = getToolCapabilities(toolName);
-        const granted = Array.from(ROLE_CAPABILITIES[role] ?? []);
-        try {
-          console.warn(
-            JSON.stringify({
-              level: 'warn',
-              event: 'role_capability_denied',
-              type: 'ROLE_CAPABILITY_DENIED',
-              role,
-              tool: toolName,
-              required,
-              granted,
-              sessionId: entry?.sessionId ?? null,
-            }),
-          );
-        } catch {
-          // JSON.stringify cycle guard — don't let a malformed log
-          // crash the executor.
-        }
-      }
-      return {
-        resultText: `[pushd] tool "${toolName ?? '(unknown)'}" is not available to ${roleLabel}. ${roleLabel} is read-only; if mutation is needed, report it in your summary and the orchestrator will request a Coder delegation after you finish.`,
-      };
-    }
-
-    try {
-      const result = await executeToolCall(rawCall, workspaceRoot, {
-        // Explorer never gates on approvals — it's read-only.
-        approvalFn: null,
-        signal,
-        // `allowExec: false` keeps the tool surface genuinely read-only
-        // even if the capability table ever accidentally grants an
-        // exec-family tool to Explorer. Defense in depth behind
-        // `roleCanUseTool`.
-        allowExec: false,
-        execMode: 'auto',
-        // Same rationale as the Coder wrapper above: pass the actual
-        // role so capability-gated executor cases (artifact dispatch
-        // etc.) deny correctly rather than defaulting to orchestrator.
-        // Written `role: role` (not shorthand) so the role-required drift
-        // detector (cli/tests/role-required-drift.test.mjs) sees the `role:`
-        // key it scans for.
-        role: role,
-      });
-      const resultText = typeof result?.text === 'string' ? result.text : '';
-      return { resultText };
-    } catch (err) {
-      // `executeToolCall` throwing is the rare exception path (abort
-      // during read, catastrophic I/O). Surface the message as a
-      // resultText so the kernel can see what went wrong rather than
-      // crashing the delegation. Matches Coder's "don't spin forever"
-      // stance.
-      const message = err instanceof Error ? err.message : String(err);
-      return { resultText: `[pushd] ${roleLabel} tool executor error: ${message}` };
-    }
-  };
+  //
+  // The implementation lives in `cli/lead-explorer.ts:makeCliReadOnlyToolExec`
+  // — extracted when the lead's Explorer fan-out became the second consumer,
+  // so the daemon's delegated runs and the lead lane enforce the read-only
+  // contract (three-layer capability gate, `role_capability_denied` log,
+  // approval-free `executeToolCall`) through one implementation. This
+  // wrapper only binds the daemon's session entry shape.
+  return makeCliReadOnlyToolExec({
+    workspaceRoot: entry.state.cwd,
+    sessionId: entry?.sessionId ?? null,
+    signal,
+    role,
+  });
 }
 
 /**

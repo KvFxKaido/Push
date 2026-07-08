@@ -163,8 +163,9 @@ export interface DetectedToolCalls<TCall> {
   /**
    * Parallel-safe delegations (concurrent Explorers) collected during the
    * read phase. Optional and empty on surfaces that don't opt into the
-   * parallel-delegation bucket (Orchestrator, CLI, deep-reviewer) — only the
-   * Inline Foreground Lane populates it. Consumers default to `[] `.
+   * parallel-delegation bucket (Orchestrator, delegated sub-agent nodes,
+   * deep-reviewer) — only the lead surfaces populate it (web Inline
+   * Foreground Lane, CLI lead lane). Consumers default to `[]`.
    */
   parallelDelegations?: TCall[];
   fileMutations: TCall[];
