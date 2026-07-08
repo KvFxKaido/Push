@@ -75,7 +75,11 @@ import {
   isLikelyMutatingSandboxExec,
   createGitHubRepo,
 } from './sandbox-tool-utils';
-import { GIT_REF_VALIDATION_DETAIL, isInvalidGitRef } from './git-ref-validation';
+import {
+  GIT_REF_VALIDATION_DETAIL,
+  isInvalidGitRef,
+  isRemoteTrackingShadowBranchName,
+} from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
@@ -271,7 +275,10 @@ function buildGitReleaseContext(
           createPushGit: (opts?: ToolPushGitOptions) =>
             createToolPushGit(sandboxId, nativeFs, opts),
           computePushedDiff: (opts?: { ref?: string; remote?: string }) =>
-            computeNativePushedDiff(nativeFs.dir, opts),
+            computeNativePushedDiff(nativeFs.dir, {
+              ...opts,
+              defaultBranch: branchInfo?.defaultBranch,
+            }),
           computePushPlan: null,
           runPreCommitHook: async () => ({
             stdout: '',
@@ -1406,6 +1413,22 @@ async function executeSandboxToolCallInner(
             text: formatStructuredError(
               err,
               `[Tool Error — sandbox_create_branch] Invalid branch name "${name}".`,
+            ),
+            structuredError: err,
+          };
+        }
+        if (isRemoteTrackingShadowBranchName(name)) {
+          const err: StructuredToolError = {
+            type: 'INVALID_ARG',
+            retryable: false,
+            message: 'Branch name shadows the remote-tracking namespace',
+            detail:
+              'A local branch named "origin/…" shadows the remote-tracking ref of the same name and has no legitimate use. Choose a name without the "origin/" prefix.',
+          };
+          return {
+            text: formatStructuredError(
+              err,
+              `[Tool Error — sandbox_create_branch] Refusing to create "${name}": names under "origin/" shadow remote-tracking refs.`,
             ),
             structuredError: err,
           };

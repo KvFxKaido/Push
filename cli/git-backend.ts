@@ -128,7 +128,8 @@ export function createLocalPushGit(
         : undefined,
       opts?.secretScan
         ? makeSecretScanPrePushGate({
-            getDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
+            getDiff: (pushOpts) =>
+              computePushedDiff(exec, { ...pushOpts, defaultBranch: opts?.defaultBranch }),
             enabled: resolveSecretScanEnabled({ env: process.env.PUSH_SECRET_SCAN }),
           })
         : undefined,

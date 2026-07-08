@@ -530,7 +530,16 @@ object JGitEngine {
         }
       }
       String(out.toByteArray(), Charsets.UTF_8)
-    } catch (_: Exception) {
+    } catch (t: Throwable) {
+      // Catch Throwable, not Exception: a whole-history range on a large repo
+      // buffers the entire patch series in memory, so OutOfMemoryError (an
+      // Error, not Exception) is a real failure mode here. Degrade to null so
+      // the bridge reports a read failure the gate can handle, rather than
+      // letting an uncaught Error crash the app mid-push. Logged so a swallowed
+      // failure is distinguishable from an empty diff.
+      println(
+        """{"level":"error","event":"native_git_log_patch_failed","error":${jsonString(t.message ?: t.javaClass.simpleName)}}""",
+      )
       null
     }
   }

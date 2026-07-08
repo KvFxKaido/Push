@@ -128,8 +128,16 @@ function makeContext(opts: MakeContextOpts = {}): MockedContext {
       // (incl. the real `git 'push'`) is recorded and draws from the queue.
       const cmd = String(args[1]);
       if (cmd.includes("'symbolic-ref' '--quiet' '--short' 'HEAD'")) return ok('main');
-      if (/ 'rev-parse' '--verify' '--quiet' 'origin\/[^']+'/.test(cmd)) {
+      // Base is resolved through the fully-qualified remote-tracking ref
+      // (refs/remotes/<remote>/...), never the bare `origin/...` shorthand.
+      if (/ 'rev-parse' '--verify' '--quiet' 'refs\/remotes\/[^']+'/.test(cmd)) {
         return ok('origin/main');
+      }
+      // The new-branch fork-point probe (merge-base of a remote-tracking ref
+      // with the source ref); scoped so it can't swallow the push plan's
+      // `merge-base --is-ancestor`.
+      if (/ 'merge-base' 'refs\/remotes\/[^']+' '[^']+'/.test(cmd)) {
+        return ok('forkbase');
       }
       if (/ 'log' '-p' '--no-color'/.test(cmd)) return ok(opts.pushedDiff ?? '');
       execCalls.push(args);

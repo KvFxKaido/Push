@@ -209,7 +209,8 @@ export function createSandboxPushGit(
     defaultBranch: opts?.defaultBranch,
     getCurrentBranch: () => backend.currentBranch(),
     secretScan: opts?.secretScan,
-    getPushedDiff: (pushOpts) => computePushedDiff(exec, pushOpts),
+    getPushedDiff: (pushOpts) =>
+      computePushedDiff(exec, { ...pushOpts, defaultBranch: opts?.defaultBranch }),
     auditAtPush: opts?.auditAtPush,
   });
   return new PushGit({

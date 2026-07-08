@@ -61,7 +61,8 @@ export function createNativePushGit(opts: NativePushGitOptions): PushGit {
     defaultBranch: opts.defaultBranch,
     getCurrentBranch: () => backend.currentBranch(),
     secretScan: opts.secretScan,
-    getPushedDiff: (pushOpts) => computePushedDiffFromSource(source, pushOpts),
+    getPushedDiff: (pushOpts) =>
+      computePushedDiffFromSource(source, { ...pushOpts, defaultBranch: opts.defaultBranch }),
     auditAtPush: opts.auditAtPush,
   });
   return new PushGit({

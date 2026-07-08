@@ -91,11 +91,14 @@ beforeEach(() => {
     .mockResolvedValue({ url: 'https://github.com/owner/repo.git' });
   fakeNativeGit.headSha.mockReset().mockResolvedValue({ sha: 'abc123' });
   fakeNativeGit.status.mockReset().mockResolvedValue({ porcelain: '## feature/native\n' });
+  // Base resolution asks for the FULLY-QUALIFIED remote-tracking ref
+  // (refs/remotes/origin/...), never the bare `origin/...` shorthand — a local
+  // decoy branch must not be able to shadow it.
   fakeNativeGit.revParse.mockReset().mockImplementation(async ({ ref }: { ref: string }) => ({
     sha:
-      ref === 'origin/feature/native'
+      ref === 'refs/remotes/origin/feature/native'
         ? 'base123'
-        : ref === 'origin/HEAD'
+        : ref === 'refs/remotes/origin/HEAD'
           ? 'originhead123'
           : ref === 'feature/native' || ref === 'HEAD'
             ? 'abc123'
@@ -300,7 +303,7 @@ describe('sandbox-tools native FS routing', () => {
     expect(result.structuredError?.type).toBe('GIT_GUARD_BLOCKED');
     expect(fakeNativeGit.logPatch).toHaveBeenCalledWith({
       dir: '/data/clone',
-      range: 'origin/feature/native..HEAD',
+      range: 'refs/remotes/origin/feature/native..HEAD',
     });
     expect(fakeNativeGit.push).not.toHaveBeenCalled();
     expect(fakeBackend.diff).not.toHaveBeenCalled();
