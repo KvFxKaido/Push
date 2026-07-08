@@ -19,6 +19,9 @@
 import type { ReducedOutput } from './tool-output-reducers.js';
 import { getDefaultVerbatimLog, type VerbatimLog } from './verbatim-log.js';
 
+/** Provenance tag for spans retained by LLM compaction (vs. `tool_output`). */
+export const COMPACTED_SPAN_KIND = 'compacted_span';
+
 export interface RetainReducedOutputInput {
   reduced: ReducedOutput;
   /** The full, unreduced text to retain (exactly what the model would have seen
@@ -45,6 +48,80 @@ export interface RetainReducedOutputResult {
 function logRetain(level: 'debug' | 'warn', event: string, ctx: Record<string, unknown>): void {
   // stderr, matching the memory layer (CLI stdout is the user/--json channel).
   console.error(JSON.stringify({ level, event, ...ctx }));
+}
+
+export interface RetainCompactedSpanInput {
+  /** The rendered raw span the summarizer saw (`renderSpanForSummary` output) —
+   *  retaining exactly the summarizer's input means a recall reproduces every
+   *  detail the summary could have dropped. */
+  spanText: string;
+  /** Session scope, same contract as `RetainReducedOutputInput.scope`:
+   *  retention is skipped when `repoFullName` is empty/absent. `branch` is
+   *  accepted (callers pass their whole runtime scope) but deliberately not
+   *  persisted — see the `log.append` scope in `retainCompactedSpan`. */
+  scope: { repoFullName?: string; branch?: string; chatId?: string };
+  /** Human label for `ls`/debug, e.g. `context compaction (12 messages)`. */
+  label?: string;
+  /** Defaults to the process verbatim log (IndexedDB web, file-backed CLI). */
+  verbatimLog?: VerbatimLog;
+}
+
+export interface RetainCompactedSpanResult {
+  /** Verbatim ref for the retained span, when retention happened. The caller
+   *  embeds it in the handoff block (`buildHandoffBlock({ recallRef })`). */
+  ref?: string;
+}
+
+/**
+ * Retain the raw span an LLM compaction is about to summarize away, so the
+ * handoff summary can carry a `memory_expand` ref back to the exact original
+ * turns. Same best-effort contract as `retainReducedOutput`: a missing scope or
+ * log failure is a logged no-op — retention must never block a compaction that
+ * is already committed to running.
+ */
+export async function retainCompactedSpan(
+  input: RetainCompactedSpanInput,
+): Promise<RetainCompactedSpanResult> {
+  if (!input.scope.repoFullName) {
+    logRetain('debug', 'compaction_span_retain_skipped_no_scope', {
+      spanChars: input.spanText.length,
+    });
+    return {};
+  }
+  if (!input.spanText) {
+    logRetain('debug', 'compaction_span_retain_skipped_empty', {});
+    return {};
+  }
+
+  const log = input.verbatimLog ?? getDefaultVerbatimLog();
+  try {
+    const entry = await log.append({
+      // Compacted spans are chat-durable, not branch-moment artifacts: the chat
+      // (and the handoff carrying this recall ref) is repo-scoped and survives
+      // switch_branch/create_branch, so branch-stamping the entry would make the
+      // ref unresolvable after a switch — `verbatimScopeMatches` rejects a query
+      // whose branch differs from the entry's. Scope to repo (+chat), never
+      // branch, so the handoff's recall promise still holds across switches.
+      scope: {
+        repoFullName: input.scope.repoFullName,
+        ...(input.scope.chatId ? { chatId: input.scope.chatId } : {}),
+      },
+      text: input.spanText,
+      kind: COMPACTED_SPAN_KIND,
+      label: input.label,
+    });
+    logRetain('debug', 'compaction_span_retained', {
+      ref: entry.ref,
+      bytes: input.spanText.length,
+    });
+    return { ref: entry.ref };
+  } catch (err) {
+    logRetain('warn', 'compaction_span_retain_failed', {
+      bytes: input.spanText.length,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return {};
+  }
 }
 
 export async function retainReducedOutput(

@@ -124,6 +124,16 @@ describe('handoff block', () => {
     expect(isHandoffBlock(block)).toBe(true);
     expect(isHandoffBlock('a normal assistant message')).toBe(false);
   });
+
+  it('embeds a memory_expand recall line only when a recallRef is provided', () => {
+    const withRef = buildHandoffBlock('Goal: ship it.', { recallRef: 'vb_1a2b3c4d_5120' });
+    expect(withRef).toContain('memory_expand refs=["vb_1a2b3c4d_5120"]');
+    expect(isHandoffBlock(withRef)).toBe(true);
+    // No ref (retention skipped/failed) → the legacy shape, no dangling recall
+    // instruction pointing at nothing.
+    expect(buildHandoffBlock('Goal: ship it.')).not.toContain('memory_expand');
+    expect(buildHandoffBlock('Goal: ship it.', {})).not.toContain('memory_expand');
+  });
 });
 
 // --- summarizeContextViaModel against a fake PushStream -------------------

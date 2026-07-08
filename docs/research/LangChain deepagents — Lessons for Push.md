@@ -46,7 +46,10 @@ their context-engineering mechanics, which are independently reimplementable.
 
 ## What's worth borrowing (ranked)
 
-1. **A model-facing recall path for compacted history.** deepagents' summary
+1. **A model-facing recall path for compacted history.** *(Shipped 2026-07-02:
+   `retainCompactedSpan` in `lib/verbatim-retain.ts` appends the raw span at
+   compaction time on both surfaces and `buildHandoffBlock` embeds the
+   `memory_expand` ref in the handoff.)* deepagents' summary
    message embeds `/conversation_history/{thread_id}.md`; the agent can reopen
    its own evicted past with `read_file`. Push keeps the compacted span in the
    durable transcript (`visibleToModel: false`) — lossless for *audit*, but

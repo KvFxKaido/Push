@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { ChatMessage } from '@/types';
 import type { PushStreamEvent } from '@push/lib/provider-contract';
 
@@ -35,6 +35,7 @@ vi.mock('@/lib/orchestrator-context', () => ({
 
 import { maybeCompactBeforeTurn } from './chat-compaction';
 import { isHandoffBlock } from '@push/lib/llm-compaction';
+import { createInMemoryVerbatimLog, setDefaultVerbatimLog } from '@push/lib/verbatim-log';
 import { COMPACTION_DEGRADATION_THRESHOLD } from '@/lib/chat-message';
 
 const m = (
@@ -92,6 +93,12 @@ beforeEach(() => {
     { type: 'done' },
   ] as PushStreamEvent[];
   lastSpanText = null;
+  // Span retention logs its skip/store branches to stderr; keep output quiet.
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
 describe('maybeCompactBeforeTurn', () => {
@@ -257,5 +264,54 @@ describe('maybeCompactBeforeTurn', () => {
     const out = await maybeCompactBeforeTurn(ctx, { apiMessages, provider: 'demo', model: 'demo' });
     expect(out).toBe(apiMessages);
     expect(updateAgentStatus).not.toHaveBeenCalled();
+  });
+
+  it('retains the raw span in the verbatim log and embeds a recall ref in the handoff', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    setDefaultVerbatimLog(verbatimLog);
+    try {
+      const { ctx, state } = makeCtx();
+      (ctx as { runtimeContext?: unknown }).runtimeContext = {
+        memory: { scope: { repoFullName: 'owner/repo', branch: 'main', chatId: 'c1' } },
+      };
+      state.conversations.c1.messages = conversation();
+
+      const out = await maybeCompactBeforeTurn(ctx, {
+        apiMessages: conversation(),
+        provider: 'anthropic',
+        model: 'claude-x',
+      });
+
+      const handoff = out.find((x) => isHandoffBlock(x.content));
+      const refMatch = String(handoff?.content ?? '').match(/memory_expand refs=\["(vb_[^"]+)"\]/);
+      expect(refMatch).toBeTruthy();
+      // The retained entry is the exact rendered span the summarizer received
+      // (its user message wraps it in a "span to compact" preamble), scope-
+      // guarded to the repo+chat and tagged with the compaction provenance kind.
+      // branch is deliberately omitted so the recall ref survives a branch
+      // switch (the chat carries across branches; a branch-stamped entry would
+      // stop resolving after switch_branch).
+      const entry = await verbatimLog.read(refMatch![1]);
+      expect(entry?.text).toMatch(/^### ASSISTANT\n/);
+      expect(lastSpanText).toContain(entry?.text);
+      expect(entry?.kind).toBe('compacted_span');
+      expect(entry?.scope).toEqual({ repoFullName: 'owner/repo', chatId: 'c1' });
+    } finally {
+      setDefaultVerbatimLog(null); // reset the lazy process default for other suites
+    }
+  });
+
+  it('omits the recall line when no repo scope is available (scratch chat)', async () => {
+    // makeCtx carries no runtimeContext → retention skips, compaction still lands.
+    const { ctx, state } = makeCtx();
+    state.conversations.c1.messages = conversation();
+    const out = await maybeCompactBeforeTurn(ctx, {
+      apiMessages: conversation(),
+      provider: 'anthropic',
+      model: 'claude-x',
+    });
+    const handoff = out.find((x) => isHandoffBlock(x.content));
+    expect(handoff).toBeDefined();
+    expect(String(handoff?.content ?? '')).not.toContain('memory_expand');
   });
 });
