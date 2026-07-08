@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCoderDetectors,
   buildCoderEvaluateAfterModel,
+  buildCoderToolExec,
   CODER_INTERNAL_TOOL_NAMES,
   isCoderInternalToolName,
 } from './coder-agent-bindings.js';
+import { getEffectiveCapabilities, getToolCapabilities } from './capabilities.js';
 import { ANNOUNCED_NO_ACTION_POLICY_MARKER } from './tool-call-recovery.js';
 
 // Pins the contract from PR #605: Coder-internal tool names — handled
@@ -158,6 +160,68 @@ describe('buildCoderDetectors — memory source (LCM)', () => {
   it('detectAnyToolCall recovers a memory-source call (single-call path)', () => {
     const { detectAnyToolCall } = buildCoderDetectors(makeServices({ anyCall: memCall }));
     expect(detectAnyToolCall('anything')).toEqual(memCall);
+  });
+});
+
+describe('buildCoderToolExec — role-capability denial observability', () => {
+  // A delegated Coder that hits a capability denial must leave an ops-greppable
+  // trail, not only a `reason` the model consumes. This is the exact
+  // subagent-layer blind spot the OpenCode silent-failure audit called out:
+  // returning the block only to the model lets a misconfigured grant burn
+  // tokens with no `role_capability_denied` signal for operators to see.
+  function makeExecServices() {
+    return {
+      policy: { evaluateBeforeTool: async () => null },
+      capabilityLedger: { recordToolUse: () => {} },
+      turnCtx: { round: 0, phase: undefined },
+      onStatus: () => {},
+      activeProvider: 'openrouter',
+      activeModel: undefined,
+      sandboxId: 'sbx',
+      tracing: {} as never,
+      executeSandboxToolCall: async () => ({}) as never,
+      executeWebSearch: async () => ({}) as never,
+      sandboxStatus: async () => ({}) as never,
+    } as never;
+  }
+
+  it('emits a role_capability_denied structured log on stderr when Coder lacks a capability', async () => {
+    const toolExec = buildCoderToolExec(makeExecServices());
+    // `plan_tasks` requires delegate:coder + delegate:explorer; the Coder grant
+    // has delegate:explorer but NOT delegate:coder, so it is denied. Tagged as
+    // a sandbox-source call so it clears the source gate and reaches the
+    // kernel role check.
+    const call = { source: 'sandbox', call: { tool: 'plan_tasks', args: {} } } as never;
+
+    const errCalls: unknown[][] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errCalls.push(args);
+    };
+    let result: { kind: string; reason?: string };
+    try {
+      result = (await toolExec(call, { round: 1 })) as { kind: string; reason?: string };
+    } finally {
+      console.error = originalError;
+    }
+
+    expect(result.kind).toBe('denied');
+
+    const denialLog = errCalls
+      .map(([m]) => {
+        try {
+          return JSON.parse(m as string);
+        } catch {
+          return null;
+        }
+      })
+      .find((p) => p && p.event === 'role_capability_denied');
+    expect(denialLog, 'expected a role_capability_denied log on stderr').toBeTruthy();
+    expect(denialLog.type).toBe('ROLE_CAPABILITY_DENIED');
+    expect(denialLog.role).toBe('coder');
+    expect(denialLog.tool).toBe('plan_tasks');
+    expect(denialLog.required).toEqual([...getToolCapabilities('plan_tasks')]);
+    expect(new Set(denialLog.granted)).toEqual(new Set(getEffectiveCapabilities('coder')));
   });
 });
 
