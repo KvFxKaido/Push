@@ -49,6 +49,10 @@ export const SIZE_BUDGETS = Object.freeze({
   workspaceMemory: 4_000,
   /** REVIEW.md reviewer guidance — primary repo-specific review input. */
   reviewGuidance: 8_000,
+  /** Prior-review findings block fed to a re-review (cross-review memory) —
+   *  supporting context for diffing against the previous pass, so it gets
+   *  less room than the primary REVIEW.md guidance. */
+  priorReviewFindings: 6_000,
   /** Tool-result truncation for the read-only investigation agents. */
   toolResultReadOnly: 8_000,
   /** Tool-result truncation for the Coder — larger window (~400 lines/read). */

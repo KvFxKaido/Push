@@ -26,6 +26,27 @@ export interface RolePromptContextBase {
   projectInstructions?: string | null;
 }
 
+/**
+ * The most recent posted review of the same PR — cross-review memory. Fed to a
+ * re-review so it can verify prior findings against the current head and report
+ * "addressed vs remaining" instead of re-reviewing from scratch. A structural
+ * subset of `ReviewResult` (summary + comments), duplicated here so this pure
+ * prompt-assembly module stays import-free.
+ */
+export interface PriorReviewContext {
+  /** Head SHA the prior review was posted against. */
+  headSha: string;
+  /** Epoch ms the prior review finished, when known. */
+  reviewedAt?: number | null;
+  summary: string;
+  comments: Array<{
+    file: string;
+    severity: 'critical' | 'warning' | 'suggestion' | 'note';
+    comment: string;
+    line?: number;
+  }>;
+}
+
 export interface ReviewerPromptContext extends RolePromptContextBase {
   source?: ReviewerPromptSource;
   /**
@@ -34,6 +55,12 @@ export interface ReviewerPromptContext extends RolePromptContextBase {
    * absent, the reviewer falls back to its default guidance unchanged.
    */
   reviewGuidance?: string | null;
+  /**
+   * Cross-review memory: the most recent review already posted to this PR.
+   * Present only on re-reviews (new head after a posted review, or an explicit
+   * re-request); absent on a PR's first review.
+   */
+  priorReview?: PriorReviewContext | null;
 }
 
 export interface AuditorPromptContext extends RolePromptContextBase {
@@ -61,6 +88,35 @@ function formatReviewGuidance(reviewGuidance?: string | null): string | null {
   let sanitized = sanitizeProjectInstructions(raw);
   if (sanitized.length > MAX_REVIEW_GUIDANCE_CHARS) {
     sanitized = `${sanitized.slice(0, MAX_REVIEW_GUIDANCE_CHARS)}\n\n[REVIEW.md truncated for this review]`;
+  }
+  return sanitized;
+}
+
+const MAX_PRIOR_REVIEW_CHARS = SIZE_BUDGETS.priorReviewFindings;
+
+function formatPriorReview(priorReview?: PriorReviewContext | null): string | null {
+  if (!priorReview) return null;
+
+  const lines: string[] = [
+    `Previously reviewed head: ${priorReview.headSha}`,
+    `Prior summary: ${priorReview.summary.trim() || '(none)'}`,
+  ];
+  if (priorReview.comments.length === 0) {
+    lines.push('Prior findings: none (the previous pass posted no findings).');
+  } else {
+    lines.push(`Prior findings (${priorReview.comments.length}):`);
+    for (const c of priorReview.comments) {
+      const anchor = c.line != null ? `${c.file}:${c.line}` : c.file;
+      lines.push(`- [${c.severity}] ${anchor} — ${c.comment.trim()}`);
+    }
+  }
+
+  // Same delimiter-escaping defense as REVIEW.md: prior findings are our own
+  // reviewer's output, but they quote diff content, which on a PR can be
+  // fork-author-controlled.
+  let sanitized = sanitizeProjectInstructions(lines.join('\n'));
+  if (sanitized.length > MAX_PRIOR_REVIEW_CHARS) {
+    sanitized = `${sanitized.slice(0, MAX_PRIOR_REVIEW_CHARS)}\n\n[Prior review findings truncated for this review]`;
   }
   return sanitized;
 }
@@ -123,6 +179,16 @@ export function buildReviewerContextBlock(context?: ReviewerPromptContext): stri
       '## Repository Review Guidance (REVIEW.md)',
       reviewGuidance,
       'This is repo-specific review guidance from REVIEW.md. Apply it on top of your standard criteria — it tells you what this repo cares about and how to weight findings. It refines priorities and severity; it does not lower the bar on correctness or security.',
+    );
+  }
+
+  const priorReview = formatPriorReview(context.priorReview);
+  if (priorReview) {
+    lines.push(
+      '',
+      '## Prior Push Review (earlier pass on this PR)',
+      priorReview,
+      'This PR was reviewed before. Verify each prior finding against the CURRENT head, and state explicitly in your summary which prior findings are now addressed and which remain (e.g. "3 of 5 prior findings addressed"). Re-post a remaining finding only if it still applies — re-anchored to the current diff, not repeated verbatim. Do not assume a finding was addressed just because the code moved; verify. New findings are reported as usual.',
     );
   }
 

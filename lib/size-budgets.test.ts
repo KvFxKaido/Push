@@ -12,6 +12,7 @@ describe('SIZE_BUDGETS', () => {
       roleProjectHints: 2_500,
       workspaceMemory: 4_000,
       reviewGuidance: 8_000,
+      priorReviewFindings: 6_000,
       toolResultReadOnly: 8_000,
       toolResultCoder: 24_000,
       auditorDiff: 15_000,
@@ -32,6 +33,9 @@ describe('SIZE_BUDGETS', () => {
     // reviewers' — it trades diff breadth for prompt headroom (file context +
     // security prompt). Keep this ordering if the values are ever retuned.
     expect(SIZE_BUDGETS.auditorDiffChunk).toBeLessThan(SIZE_BUDGETS.reviewerDiffChunk);
+    // Prior-review memory is supporting context — smaller than the primary
+    // REVIEW.md guidance budget.
+    expect(SIZE_BUDGETS.priorReviewFindings).toBeLessThan(SIZE_BUDGETS.reviewGuidance);
     // Every budget is a positive integer.
     for (const value of Object.values(SIZE_BUDGETS)) {
       expect(Number.isInteger(value) && value > 0).toBe(true);

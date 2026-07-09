@@ -46,6 +46,65 @@ describe('buildReviewerContextBlock', () => {
 
     expect(block).not.toContain('Repository Review Guidance');
   });
+
+  it('renders prior-review findings with addressed-vs-remaining instructions', () => {
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'pr-diff',
+      priorReview: {
+        headSha: 'abc1234',
+        reviewedAt: 1_700_000_000_000,
+        summary: 'Two issues around the retry loop.',
+        comments: [
+          {
+            file: 'src/retry.ts',
+            severity: 'critical',
+            comment: 'Unbounded await in loop',
+            line: 12,
+          },
+          { file: 'src/retry.ts', severity: 'note', comment: 'Naming nit' },
+        ],
+      },
+    });
+
+    expect(block).toContain('## Prior Push Review (earlier pass on this PR)');
+    expect(block).toContain('Previously reviewed head: abc1234');
+    expect(block).toContain('Prior findings (2):');
+    expect(block).toContain('- [critical] src/retry.ts:12 — Unbounded await in loop');
+    expect(block).toContain('- [note] src/retry.ts — Naming nit');
+    expect(block).toContain('which prior findings are now addressed and which remain');
+  });
+
+  it('notes a clean prior pass and omits the section entirely when absent', () => {
+    const clean = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'pr-diff',
+      priorReview: { headSha: 'abc1234', summary: 'Looks clean.', comments: [] },
+    });
+    expect(clean).toContain('Prior findings: none');
+
+    const none = buildReviewerContextBlock({ repoFullName: 'owner/repo', source: 'pr-diff' });
+    expect(none).not.toContain('Prior Push Review');
+  });
+
+  it('truncates an oversized prior-review block', () => {
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'pr-diff',
+      priorReview: {
+        headSha: 'abc1234',
+        summary: 'big',
+        comments: Array.from({ length: 200 }, (_, i) => ({
+          file: `src/file-${i}.ts`,
+          severity: 'warning' as const,
+          comment: 'x'.repeat(200),
+          line: i + 1,
+        })),
+      },
+    });
+
+    expect(block).toContain('[Prior review findings truncated for this review]');
+  });
 });
 
 describe('buildAuditorContextBlock', () => {
