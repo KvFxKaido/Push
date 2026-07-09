@@ -1810,8 +1810,11 @@ describe('handleGoogleChat', () => {
         CF_AI_GATEWAY_TOKEN: 'aig-secret',
       }),
     );
+    // The gateway path must carry the SAME API version as the direct call
+    // (v1beta, from GOOGLE_API_BASE) — the google-ai-studio proxy is a
+    // passthrough, so a version mismatch here routes to a different upstream.
     expect(captured?.url).toBe(
-      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/google-ai-studio/v1/models/test-model:streamGenerateContent?alt=sse',
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/google-ai-studio/v1beta/models/test-model:streamGenerateContent?alt=sse',
     );
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers['x-goog-api-key']).toBe('AIza-server');

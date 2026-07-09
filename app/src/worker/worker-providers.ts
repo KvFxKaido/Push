@@ -2385,9 +2385,15 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   const directUpstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`;
+  // The AIG google-ai-studio proxy base is generativelanguage.googleapis.com
+  // (no version), so the API version lives in the path we supply. Derive the
+  // gateway path from the direct upstream URL so it always mirrors
+  // GOOGLE_API_BASE's version — a hardcoded `/v1/` had drifted from the
+  // `/v1beta` direct call, routing gateway traffic to a different API surface.
+  const directUpstream = new URL(directUpstreamUrl);
   const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(env, directUpstreamUrl, {
     provider: 'google-ai-studio',
-    pathSuffix: `/v1/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+    pathSuffix: `${directUpstream.pathname}${directUpstream.search}`,
   });
 
   wlog('info', 'request', {
