@@ -9,6 +9,7 @@ import {
   RESTORE_MAX_BODY_SIZE_BYTES,
 } from './worker-middleware';
 import { SANDBOX_ROUTES, resolveModalSandboxBase } from '../lib/sandbox-routes';
+import { hasServerCredentials } from './worker-provider-capabilities';
 import { recordSnapshotEvent } from './snapshot-index';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import { buildSessionClearCookie, buildSessionSetCookie, mintSessionToken } from './worker-session';
@@ -357,16 +358,19 @@ interface HealthStatus {
 
 export async function handleHealthCheck(env: Env, request?: Request): Promise<Response> {
   const healthStartTime = Date.now();
-  const ollamaConfigured = Boolean(env.OLLAMA_API_KEY);
-  const openRouterConfigured = Boolean(env.OPENROUTER_API_KEY);
-  const cloudflareConfigured = Boolean(env.AI);
-  const zenConfigured = Boolean(env.ZEN_API_KEY);
-  const nvidiaConfigured = Boolean(env.NVIDIA_API_KEY);
-  const kiloCodeConfigured = Boolean(env.KILOCODE_API_KEY);
-  const fireworksConfigured = Boolean(env.FIREWORKS_API_KEY);
-  const anthropicConfigured = Boolean(env.ANTHROPIC_API_KEY);
-  const openaiConfigured = Boolean(env.OPENAI_API_KEY);
-  const googleConfigured = Boolean(env.GOOGLE_API_KEY);
+  // "Configured" means a server-resolvable credential — Worker secret, the
+  // Workers AI binding, or gateway BYOK — not a bare env-key probe, which
+  // reported BYOK providers "unconfigured" once their secrets retired.
+  const ollamaConfigured = hasServerCredentials('ollama', env);
+  const openRouterConfigured = hasServerCredentials('openrouter', env);
+  const cloudflareConfigured = hasServerCredentials('cloudflare', env);
+  const zenConfigured = hasServerCredentials('zen', env);
+  const nvidiaConfigured = hasServerCredentials('nvidia', env);
+  const kiloCodeConfigured = hasServerCredentials('kilocode', env);
+  const fireworksConfigured = hasServerCredentials('fireworks', env);
+  const anthropicConfigured = hasServerCredentials('anthropic', env);
+  const openaiConfigured = hasServerCredentials('openai', env);
+  const googleConfigured = hasServerCredentials('google', env);
   const sandboxUrl = env.MODAL_SANDBOX_BASE_URL;
 
   let sandboxStatus: 'ok' | 'unconfigured' | 'misconfigured' = 'unconfigured';

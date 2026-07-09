@@ -125,8 +125,18 @@ function resolveEnvCredentialSource(
   return env[envKey] ? 'worker-secret' : null;
 }
 
-function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
+/**
+ * True when the provider has a server-resolvable credential — Worker secret,
+ * Workers AI binding, or gateway BYOK (with its slug gate). Exported for
+ * `/api/health`, which used to probe bare env keys and reported BYOK
+ * providers "unconfigured" (the 58143aa7 cosmetic flag).
+ */
+export function hasServerCredentials(provider: AIProviderType, env: Env): boolean {
   return resolveEnvCredentialSource(provider, env) !== null;
+}
+
+function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
+  return hasServerCredentials(provider, env);
 }
 
 /**

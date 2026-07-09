@@ -181,6 +181,28 @@ describe('handleHealthCheck', () => {
     const response = await handleHealthCheck(makeEnv());
     expect(response.headers.get('Cache-Control')).toBe('no-store');
   });
+
+  it('reports a gateway-BYOK provider as configured with no Worker secret (58143aa7 cosmetic)', async () => {
+    const body = await handleHealthCheck(
+      makeEnv({
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+        CF_AI_GATEWAY_SLUG: 'push-gate',
+        CF_AI_GATEWAY_BYOK: 'anthropic',
+      }),
+    ).then((r) => r.json());
+    expect(body.services.anthropic).toEqual({ status: 'ok', configured: true });
+    // BYOK contributes to overall health too — the provider IS usable.
+    expect(body.status).toBe('degraded'); // LLM yes, sandbox no
+    // A provider that is neither keyed nor BYOK stays unconfigured.
+    expect(body.services.openai.configured).toBe(false);
+  });
+
+  it('does NOT report a BYOK listing as configured when the gateway is unconfigured', async () => {
+    const body = await handleHealthCheck(makeEnv({ CF_AI_GATEWAY_BYOK: 'anthropic' })).then((r) =>
+      r.json(),
+    );
+    expect(body.services.anthropic.configured).toBe(false);
+  });
 });
 
 // ===========================================================================

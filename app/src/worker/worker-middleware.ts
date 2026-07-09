@@ -848,9 +848,17 @@ export function createStreamProxyHandler(
   config: StreamProxyConfig,
 ): (request: Request, env: Env) => Promise<Response> {
   return async (request, env) => {
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     // BYOK: this provider's key lives in the gateway; route keyless and let the
     // gateway inject it (omit Authorization below, skip the key-missing 401).
-    const byok = config.gateway ? isGatewayByokProvider(env, config.gateway.provider) : false;
+    // Gated on the gateway URL actually resolving: for a custom binding whose
+    // slug isn't enabled, buildAiGatewayUrl falls back to direct, where a
+    // keyless call would 401 at the upstream instead of here — so the key
+    // gate must stay on.
+    const byok =
+      gatewayUrl !== null && config.gateway
+        ? isGatewayByokProvider(env, config.gateway.provider)
+        : false;
     const preamble = await runPreamble(request, env, {
       buildAuth: config.buildAuth,
       keyMissingError: config.keyMissingError,
@@ -886,7 +894,6 @@ export function createStreamProxyHandler(
 
     const directUrl =
       typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
-    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     const upstreamUrl = gatewayUrl ?? directUrl;
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
@@ -1077,10 +1084,21 @@ export function createJsonProxyHandler(
   const needsBody = config.needsBody ?? method === 'POST';
 
   return async (request, env) => {
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
+    // BYOK: when this provider's key is stored in the gateway, route keyless
+    // and let the gateway inject it. Gated on the gateway URL actually
+    // resolving — for a custom binding whose slug isn't enabled,
+    // buildAiGatewayUrl falls back to direct, where a keyless call would 401
+    // at the upstream instead of here.
+    const byok =
+      gatewayUrl !== null && config.gateway
+        ? isGatewayByokProvider(env, config.gateway.provider)
+        : false;
     const preamble = await runPreamble(request, env, {
       buildAuth: config.buildAuth,
       keyMissingError: config.keyMissingError,
       needsBody,
+      allowMissingKey: byok,
     });
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText, requestId, spanCtx } = preamble;
@@ -1090,7 +1108,6 @@ export function createJsonProxyHandler(
     let upstreamStatus = 0;
     let bytesOut = 0;
 
-    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     const upstreamUrl = gatewayUrl ?? config.upstreamUrl;
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
@@ -1142,7 +1159,8 @@ export function createJsonProxyHandler(
         const fetchInit: RequestInit = {
           method,
           headers: {
-            Authorization: authHeader,
+            // BYOK omits Authorization so the gateway injects the stored key.
+            ...(byok ? {} : { Authorization: authHeader }),
             [REQUEST_ID_HEADER]: requestId,
             traceparent: buildTraceparent(upstreamCtx),
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),

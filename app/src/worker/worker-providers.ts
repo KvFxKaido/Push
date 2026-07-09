@@ -654,6 +654,10 @@ export const handleOllamaModels = createJsonProxyHandler({
   keyMissingError:
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
+  // Same binding as chat so BYOK model refresh keeps working once the Worker
+  // secret retires — without this, a BYOK-only provider degrades to the static
+  // model list (the 58143aa7 known-limitation).
+  gateway: { provider: 'custom-ollama', pathSuffix: '/v1/models' },
 });
 export const handleOllamaChat = createStreamProxyHandler({
   name: 'Ollama Cloud API',
@@ -761,6 +765,9 @@ export const handleOpenRouterModels = createJsonProxyHandler({
   buildAuth: standardAuth('OPENROUTER_API_KEY'),
   keyMissingError: OPENROUTER_KEY_MISSING_ERROR,
   timeoutError: 'OpenRouter model list timed out after 30 seconds',
+  // The openrouter slug absorbs the `/api/v1` prefix (same as the chat
+  // binding), so the suffix is just `/models`. Keeps BYOK model refresh live.
+  gateway: { provider: 'openrouter', pathSuffix: '/models' },
 });
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
@@ -800,6 +807,8 @@ export const handleZenModels = createJsonProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
+  // Same binding as chat (base_url https://opencode.ai; /zen prefix in the path).
+  gateway: { provider: 'custom-zen', pathSuffix: '/zen/v1/models' },
 });
 
 // --- Kilo Code (OpenAI-compatible gateway) ---
@@ -850,6 +859,9 @@ export const handleFireworksModels = createJsonProxyHandler({
   keyMissingError:
     'Fireworks AI API key not configured. Add it in Settings or set FIREWORKS_API_KEY on the Worker.',
   timeoutError: 'Fireworks AI model list timed out after 30 seconds',
+  // Same binding as chat (base_url https://api.fireworks.ai; /inference prefix
+  // in the path).
+  gateway: { provider: 'custom-fireworks', pathSuffix: '/inference/v1/models' },
 });
 
 // --- DeepSeek (Anthropic Messages transport) ---
@@ -877,7 +889,7 @@ function buildDeepSeekAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleDeepSeekChat(request: Request, env: Env): Promise<Response> {
-  const byok = isGatewayByokProvider(env, 'deepseek');
+  const byok = gatewayByokActive(env, 'deepseek');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildDeepSeekAuth,
     keyMissingError:
@@ -1024,6 +1036,10 @@ export const handleDeepSeekModels = createJsonProxyHandler({
   keyMissingError:
     'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
   timeoutError: 'DeepSeek model list timed out after 30 seconds',
+  // First-party deepseek slug maps to api.deepseek.com's root (the chat
+  // binding's /anthropic/v1/messages passthrough proved it), so the suffix
+  // mirrors the direct path.
+  gateway: { provider: 'deepseek', pathSuffix: '/models' },
 });
 
 // --- Sakana AI (Fugu orchestration) ---
@@ -1042,6 +1058,8 @@ export const handleSakanaModels = createJsonProxyHandler({
   keyMissingError:
     'Sakana AI API key not configured. Add it in Settings or set SAKANA_API_KEY on the Worker.',
   timeoutError: 'Sakana AI model list timed out after 30 seconds',
+  // Same binding as chat (base_url https://api.sakana.ai).
+  gateway: { provider: 'custom-sakana', pathSuffix: '/v1/models' },
 });
 
 // --- OpenCode Zen Go tier (mixed OpenAI + Anthropic transports) ---
@@ -1298,6 +1316,8 @@ export const handleNvidiaModels = createJsonProxyHandler({
   keyMissingError:
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
+  // Same binding as chat (base_url https://integrate.api.nvidia.com).
+  gateway: { provider: 'custom-nvidia', pathSuffix: '/v1/models' },
 });
 
 // --- OpenRouter + OpenAI + Sakana + Fireworks (/v1/responses) ---
@@ -1413,13 +1433,36 @@ function resolveAiGatewayFetchTarget(
   env: Env,
   directUrl: string,
   gateway?: AiGatewayBinding,
-): { upstreamUrl: string; gatewayHeaders: Record<string, string> } {
+): { upstreamUrl: string; gatewayHeaders: Record<string, string>; byok: boolean } {
   const gatewayUrl = gateway ? buildAiGatewayUrl(env, gateway) : null;
   const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
   return {
     upstreamUrl: gatewayUrl ?? directUrl,
     gatewayHeaders: aigAuth ? { 'cf-aig-authorization': aigAuth } : {},
+    // BYOK is only real when the request actually routes through the gateway:
+    // a BYOK-listed custom binding whose slug isn't enabled falls back to the
+    // direct URL above, where a keyless call 401s at the upstream — callers
+    // must keep sending the key (and keep the key-missing gate) in that case.
+    byok: gatewayUrl !== null && gateway ? isGatewayByokProvider(env, gateway.provider) : false,
   };
+}
+
+/**
+ * BYOK is only safe to act on (omit the provider auth header, skip the
+ * key-missing fallback) when a keyless call would ACTUALLY route through the
+ * gateway — `buildAiGatewayUrl` resolving (account + slug set; and for a custom
+ * binding, its slug enabled) — AND the provider is BYOK-listed. Otherwise the
+ * request falls back to the direct provider, where a keyless call 401s, so the
+ * caller must keep sending the key. Mirrors the `resolveAiGatewayFetchTarget`
+ * gate for handlers that need the decision before the fetch (allowMissingKey).
+ * `gatewaySlug` is the CF gateway binding string, which differs from the
+ * canonical BYOK id for google (`google-ai-studio` vs `google`).
+ */
+export function gatewayByokActive(env: Env, byokId: string, gatewaySlug: string = byokId): boolean {
+  return (
+    buildAiGatewayUrl(env, { provider: gatewaySlug, pathSuffix: '' }) !== null &&
+    isGatewayByokProvider(env, byokId)
+  );
 }
 
 /**
@@ -1437,7 +1480,14 @@ async function handleResponsesProxy(
 ): Promise<Response> {
   // BYOK: when this provider's key is stored in the gateway, route keyless and
   // let the gateway inject it (omit Authorization below, skip the key gate).
-  const byok = opts.gateway ? isGatewayByokProvider(env, opts.gateway.provider) : false;
+  // The resolver ties byok to the gateway URL actually resolving — for a
+  // custom binding (sakana/fireworks here) whose slug isn't enabled, the fetch
+  // goes DIRECT, so the key must keep flowing and the key gate must stay on.
+  const { upstreamUrl, gatewayHeaders, byok } = resolveAiGatewayFetchTarget(
+    env,
+    opts.upstreamUrl,
+    opts.gateway,
+  );
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth(opts.authSecret),
     keyMissingError: opts.keyMissingError,
@@ -1468,11 +1518,6 @@ async function handleResponsesProxy(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), RESPONSES_TIMEOUT_MS);
   const upstreamCtx = createChildContext(spanCtx);
-  const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(
-    env,
-    opts.upstreamUrl,
-    opts.gateway,
-  );
   const extraHeaders =
     typeof opts.extraFetchHeaders === 'function'
       ? opts.extraFetchHeaders(request)
@@ -1661,21 +1706,35 @@ export async function handleOpenAIModels(request: Request, env: Env): Promise<Re
   if (preamble instanceof Response) return preamble;
   const { requestId } = preamble;
 
-  const apiKey = resolveDirectProviderKey(env.OPENAI_API_KEY, request);
-  if (!apiKey) {
+  // BYOK: the gateway injects the stored openai key, so the live list stays
+  // reachable with no key anywhere client- or Worker-side. Otherwise a
+  // resolvable key goes direct; no key at all falls back to curated.
+  const byok = gatewayByokActive(env, 'openai');
+  const apiKey = byok ? null : resolveDirectProviderKey(env.OPENAI_API_KEY, request);
+  if (!byok && !apiKey) {
     return curatedOpenAIModelsResponse(requestId);
   }
+  // The openai slug absorbs the /v1 prefix (same as the chat binding's
+  // `/responses` suffix), so the suffix is just `/models`.
+  const { upstreamUrl, gatewayHeaders } = byok
+    ? resolveAiGatewayFetchTarget(env, OPENAI_MODELS_URL, {
+        provider: 'openai',
+        pathSuffix: '/models',
+      })
+    : { upstreamUrl: OPENAI_MODELS_URL, gatewayHeaders: {} as Record<string, string> };
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), OPENAI_MODELS_TIMEOUT_MS);
     let upstream: Response;
     try {
-      upstream = await fetch(OPENAI_MODELS_URL, {
+      upstream = await fetch(upstreamUrl, {
         method: 'GET',
         headers: {
-          Authorization: `Bearer ${apiKey}`,
+          // BYOK omits Authorization so the gateway injects the stored key.
+          ...(byok ? {} : { Authorization: `Bearer ${apiKey}` }),
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         signal: controller.signal,
         // Skip the edge cache so each refresh reflects the live catalog (see
@@ -1788,7 +1847,7 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   // BYOK: when anthropic's key is stored in the gateway, the caller sends no
   // key and the gateway injects it — so don't 401 on a missing key and omit the
   // x-api-key header below.
-  const byok = isGatewayByokProvider(env, 'anthropic');
+  const byok = gatewayByokActive(env, 'anthropic');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildAnthropicAuth,
     keyMissingError:
@@ -1990,7 +2049,7 @@ function buildGoogleAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleGoogleChat(request: Request, env: Env): Promise<Response> {
-  const byok = isGatewayByokProvider(env, 'google');
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildGoogleAuth,
     keyMissingError:
@@ -2151,21 +2210,38 @@ export async function handleGoogleModels(request: Request, env: Env): Promise<Re
   if (preamble instanceof Response) return preamble;
   const { requestId } = preamble;
 
-  const apiKey = resolveDirectProviderKey(env.GOOGLE_API_KEY, request);
-  if (!apiKey) {
+  // BYOK: the gateway injects the stored google key — see handleOpenAIModels
+  // for the fallback ordering (byok → gateway keyless; key → direct; neither
+  // → curated).
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
+  const apiKey = byok ? null : resolveDirectProviderKey(env.GOOGLE_API_KEY, request);
+  if (!byok && !apiKey) {
     return curatedGoogleModelsResponse(requestId);
   }
+  // The google-ai-studio proxy base carries no API version — derive the
+  // gateway path from the direct URL so it always mirrors GOOGLE_API_BASE's
+  // version (the #1376 lesson; a hardcoded /v1/ drifted from /v1beta).
+  const directModelsUrl = `${GOOGLE_API_BASE}/models?pageSize=200`;
+  const directModels = new URL(directModelsUrl);
+  const { upstreamUrl, gatewayHeaders } = byok
+    ? resolveAiGatewayFetchTarget(env, directModelsUrl, {
+        provider: 'google-ai-studio',
+        pathSuffix: `${directModels.pathname}${directModels.search}`,
+      })
+    : { upstreamUrl: directModelsUrl, gatewayHeaders: {} as Record<string, string> };
 
   try {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), GOOGLE_MODELS_TIMEOUT_MS);
     let upstream: Response;
     try {
-      upstream = await fetch(`${GOOGLE_API_BASE}/models?pageSize=200`, {
+      upstream = await fetch(upstreamUrl, {
         method: 'GET',
         headers: {
-          'x-goog-api-key': apiKey,
+          // BYOK omits x-goog-api-key so the gateway injects the stored key.
+          ...(byok ? {} : { 'x-goog-api-key': apiKey as string }),
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         signal: controller.signal,
         // Skip the edge cache so each refresh reflects the live catalog (see
@@ -2515,11 +2591,16 @@ export function parseGeminiGroundingResponse(json: unknown): {
 }
 
 export async function handleGoogleSearch(request: Request, env: Env): Promise<Response> {
+  // BYOK: same treatment as handleGoogleChat — keyless through the gateway,
+  // which injects the stored google key. Closes the 58143aa7 known-limitation
+  // where grounded search degraded once the Worker secret retired.
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildGoogleAuth,
     keyMissingError:
       'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
     needsBody: true,
+    allowMissingKey: byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
@@ -2541,7 +2622,16 @@ export async function handleGoogleSearch(request: Request, env: Env): Promise<Re
   }
 
   const model = (env.PUSH_GOOGLE_GROUNDING_MODEL ?? '').trim() || GROUNDING_DEFAULT_MODEL;
-  const upstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+  const directSearchUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(model)}:generateContent`;
+  // Derive the gateway path from the direct URL so it mirrors
+  // GOOGLE_API_BASE's version (the #1376 lesson), same as handleGoogleChat.
+  const directSearch = new URL(directSearchUrl);
+  const { upstreamUrl, gatewayHeaders } = byok
+    ? resolveAiGatewayFetchTarget(env, directSearchUrl, {
+        provider: 'google-ai-studio',
+        pathSuffix: `${directSearch.pathname}${directSearch.search}`,
+      })
+    : { upstreamUrl: directSearchUrl, gatewayHeaders: {} as Record<string, string> };
   const upstreamBody = JSON.stringify({
     contents: [{ role: 'user', parts: [{ text: query }] }],
     tools: [{ googleSearch: {} }],
@@ -2557,9 +2647,11 @@ export async function handleGoogleSearch(request: Request, env: Env): Promise<Re
       upstream = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
-          'x-goog-api-key': apiKey,
+          // BYOK omits x-goog-api-key so the gateway injects the stored key.
+          ...(byok ? {} : { 'x-goog-api-key': apiKey }),
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         body: upstreamBody,
         signal: controller.signal,
