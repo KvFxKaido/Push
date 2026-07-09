@@ -3,7 +3,6 @@ import type { ModelCatalog } from '@/hooks/useModelCatalog';
 import { useSetting } from '@/hooks/useSetting';
 import {
   normalizeFireworksModelName,
-  normalizeKilocodeModelName,
   normalizeSakanaModelName,
   type PreferredProvider,
 } from '@/lib/providers';
@@ -23,7 +22,6 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   anthropic: '',
   openai: '',
   google: '',
-  kilocode: '',
   fireworks: '',
   sakana: '',
   deepseek: '',
@@ -41,8 +39,6 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
     openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
     google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
-    kilocode:
-      typeof parsed.kilocode === 'string' ? normalizeKilocodeModelName(parsed.kilocode) : '',
     fireworks:
       typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
     sakana: typeof parsed.sakana === 'string' ? normalizeSakanaModelName(parsed.sakana) : '',
@@ -113,7 +109,6 @@ export function useWorkspaceComposerState({
       cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
       nvidia: catalog.nvidia.model,
-      kilocode: catalog.kilocode.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
       anthropic: catalog.anthropic.model,
@@ -128,7 +123,6 @@ export function useWorkspaceComposerState({
       catalog.cloudflare.model,
       catalog.fireworks.model,
       catalog.sakana.model,
-      catalog.kilocode.model,
       catalog.nvidia.model,
       catalog.ollama.model,
       catalog.openRouter.model,
@@ -171,13 +165,11 @@ export function useWorkspaceComposerState({
     (provider: PreferredProvider, model: string | null | undefined) => {
       const trimmed =
         typeof model === 'string'
-          ? provider === 'kilocode'
-            ? normalizeKilocodeModelName(model)
-            : provider === 'fireworks'
-              ? normalizeFireworksModelName(model)
-              : provider === 'sakana'
-                ? normalizeSakanaModelName(model)
-                : model.trim()
+          ? provider === 'fireworks'
+            ? normalizeFireworksModelName(model)
+            : provider === 'sakana'
+              ? normalizeSakanaModelName(model)
+              : model.trim()
           : '';
       if (!trimmed) return;
       // Read fresh from the store rather than a possibly-stale closure value.
@@ -212,11 +204,6 @@ export function useWorkspaceComposerState({
           draft?.models?.openai?.trim() || rememberedChatModels.openai || defaultChatModels.openai,
         google:
           draft?.models?.google?.trim() || rememberedChatModels.google || defaultChatModels.google,
-        kilocode: normalizeKilocodeModelName(
-          draft?.models?.kilocode?.trim() ||
-            rememberedChatModels.kilocode ||
-            defaultChatModels.kilocode,
-        ),
         fireworks: normalizeFireworksModelName(
           draft?.models?.fireworks?.trim() ||
             rememberedChatModels.fireworks ||
@@ -261,13 +248,11 @@ export function useWorkspaceComposerState({
     const storedDraft = activeChatId ? chatDrafts[activeChatId] : null;
     const baseDraft = normalizeChatDraft(storedDraft);
     const lockedConversationModel =
-      activeConversation?.provider === 'kilocode' && activeConversation.model
-        ? normalizeKilocodeModelName(activeConversation.model)
-        : activeConversation?.provider === 'fireworks' && activeConversation.model
-          ? normalizeFireworksModelName(activeConversation.model)
-          : activeConversation?.provider === 'sakana' && activeConversation.model
-            ? normalizeSakanaModelName(activeConversation.model)
-            : activeConversation?.model;
+      activeConversation?.provider === 'fireworks' && activeConversation.model
+        ? normalizeFireworksModelName(activeConversation.model)
+        : activeConversation?.provider === 'sakana' && activeConversation.model
+          ? normalizeSakanaModelName(activeConversation.model)
+          : activeConversation?.model;
 
     if (activeConversation?.provider && activeConversation.provider !== 'demo') {
       return normalizeChatDraft({
@@ -396,16 +381,6 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
-  const handleSelectKilocodeModelFromChat = useCallback(
-    (model: string) => {
-      const normalizedModel = normalizeKilocodeModelName(model);
-      rememberChatModel('kilocode', normalizedModel);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { kilocode: normalizedModel } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
   const handleSelectFireworksModelFromChat = useCallback(
     (model: string) => {
       const normalizedModel = normalizeFireworksModelName(model);
@@ -480,7 +455,6 @@ export function useWorkspaceComposerState({
     handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,
-    handleSelectKilocodeModelFromChat,
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,
     handleSelectDeepSeekModelFromChat,

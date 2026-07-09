@@ -84,14 +84,6 @@ describe('buildModelCapabilityAwarenessBlock', () => {
     expect(block).toContain('Image generation: unverified');
   });
 
-  it('formats Kilo Code with a human-readable provider label', () => {
-    const block = buildModelCapabilityAwarenessBlock('kilocode', 'google/gemini-3-flash-preview', {
-      hasImageAttachments: true,
-    });
-
-    expect(block).toContain('Provider: Kilo Code');
-  });
-
   it('formats Fireworks AI with a human-readable provider label', () => {
     const block = buildModelCapabilityAwarenessBlock(
       'fireworks',

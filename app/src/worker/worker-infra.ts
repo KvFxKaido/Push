@@ -340,7 +340,6 @@ interface HealthStatus {
     cloudflare: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
     nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
-    kilocode: { status: 'ok' | 'unconfigured'; configured: boolean };
     fireworks: { status: 'ok' | 'unconfigured'; configured: boolean };
     anthropic: { status: 'ok' | 'unconfigured'; configured: boolean };
     openai: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -366,7 +365,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const cloudflareConfigured = hasServerCredentials('cloudflare', env);
   const zenConfigured = hasServerCredentials('zen', env);
   const nvidiaConfigured = hasServerCredentials('nvidia', env);
-  const kiloCodeConfigured = hasServerCredentials('kilocode', env);
   const fireworksConfigured = hasServerCredentials('fireworks', env);
   const anthropicConfigured = hasServerCredentials('anthropic', env);
   const openaiConfigured = hasServerCredentials('openai', env);
@@ -392,7 +390,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     cloudflareConfigured ||
     zenConfigured ||
     nvidiaConfigured ||
-    kiloCodeConfigured ||
     fireworksConfigured ||
     anthropicConfigured ||
     openaiConfigured ||
@@ -420,10 +417,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
       },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
       nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
-      kilocode: {
-        status: kiloCodeConfigured ? 'ok' : 'unconfigured',
-        configured: kiloCodeConfigured,
-      },
       fireworks: {
         status: fireworksConfigured ? 'ok' : 'unconfigured',
         configured: fireworksConfigured,

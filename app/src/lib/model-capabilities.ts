@@ -88,7 +88,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['kilocode', 'fireworks', 'sakana'],
+    providers: ['fireworks', 'sakana'],
     match: /.*/,
     capabilities: {
       visionInput: 'supported',

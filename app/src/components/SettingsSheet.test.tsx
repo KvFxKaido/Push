@@ -58,7 +58,7 @@ function emptyProfile(): SettingsProfileProps {
 
 function emptyAI(): SettingsAIProps {
   return {
-    activeProviderLabel: 'kilocode',
+    activeProviderLabel: 'zen',
     activeBackend: null,
     setActiveBackend: vi.fn(),
     isProviderLocked: false,

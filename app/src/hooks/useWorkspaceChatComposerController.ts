@@ -30,7 +30,6 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectNvidiaModelFromChat'
-  | 'handleSelectKilocodeModelFromChat'
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
   | 'handleSelectDeepSeekModelFromChat'
@@ -60,7 +59,6 @@ export function useWorkspaceChatComposerController({
   handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectNvidiaModelFromChat,
-  handleSelectKilocodeModelFromChat,
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
   handleSelectDeepSeekModelFromChat,
@@ -256,16 +254,6 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshNvidiaModels,
       isLocked: isProviderModelLocked('nvidia'),
       ariaLabel: 'Select Nvidia NIM model',
-    }),
-    kilocode: buildPickerControl('kilocode', {
-      options: catalog.kilocodeModelOptions,
-      onChange: handleSelectKilocodeModelFromChat,
-      loading: catalog.kilocodeModels.loading,
-      error: catalog.kilocodeModels.error,
-      updatedAt: catalog.kilocodeModels.updatedAt,
-      refreshModels: catalog.refreshKilocodeModels,
-      isLocked: isProviderModelLocked('kilocode'),
-      ariaLabel: 'Select Kilo Code model',
     }),
     fireworks: buildPickerControl('fireworks', {
       options: catalog.fireworksModelOptions,

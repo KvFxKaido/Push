@@ -260,7 +260,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `kilocode`, `fireworks`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `zen`, `nvidia`, `fireworks`, `deepseek`, `sakana`, `openai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `minimax-m3`) |
@@ -274,9 +274,6 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_NVIDIA_URL` | Nvidia NIM endpoint (default: `https://integrate.api.nvidia.com/v1/chat/completions`) |
 | `PUSH_NVIDIA_API_KEY` | Nvidia NIM API key |
 | `PUSH_NVIDIA_MODEL` | Nvidia NIM model (default: `nvidia/llama-3.1-nemotron-70b-instruct`) |
-| `PUSH_KILOCODE_URL` | Kilo Code endpoint (default: `https://api.kilo.ai/api/gateway/chat/completions`) |
-| `PUSH_KILOCODE_API_KEY` | Kilo Code API key |
-| `PUSH_KILOCODE_MODEL` | Kilo Code model (default: `google/gemini-3-flash-preview`) |
 | `PUSH_FIREWORKS_URL` | Fireworks AI endpoint (default: `https://api.fireworks.ai/inference/v1/responses`) |
 | `PUSH_FIREWORKS_API_KEY` | Fireworks AI API key |
 | `PUSH_FIREWORKS_MODEL` | Fireworks AI model (default: `accounts/fireworks/models/deepseek-v4-pro`) |
@@ -315,7 +312,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships ten providers. Three (`ollama`, `zen`, `nvidia`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -323,7 +320,6 @@ The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) spe
 | `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
-| `kilocode` | `google/gemini-3-flash-preview` | Yes |
 | `fireworks` | `accounts/fireworks/models/deepseek-v4-pro` | Yes |
 | `deepseek` | `deepseek-v4-pro` | Yes |
 | `sakana` | `fugu` | Yes |
@@ -331,7 +327,7 @@ The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) spe
 | `anthropic` | `claude-sonnet-4-6` | Yes |
 | `google` | `gemini-3.5-flash` | Yes |
 
-Removed providers (`mistral`, `zai`, `minimax`, `azure`, `bedrock`, `vertex`) are gracefully redirected to `openrouter` with a warning.
+Removed providers (`mistral`, `zai`, `minimax`, `azure`, `bedrock`, `vertex`, `kilocode`) are gracefully redirected to `openrouter` with a warning.
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 
@@ -542,7 +538,7 @@ TUI Remote flow:
                                     phone (tap a Connected row there to resume the session)
 
 Options:
-  --provider <name>       ollama | openrouter | zen | nvidia | kilocode | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
+  --provider <name>       ollama | openrouter | zen | nvidia | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

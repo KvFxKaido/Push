@@ -58,7 +58,6 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   openrouter: 'OPENROUTER_API_KEY',
   zen: 'ZEN_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
-  kilocode: 'KILOCODE_API_KEY',
   fireworks: 'FIREWORKS_API_KEY',
   deepseek: 'DEEPSEEK_API_KEY',
   sakana: 'SAKANA_API_KEY',
@@ -72,8 +71,7 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
  * binding in `worker-providers.ts`. `isGatewayByokProvider` normalizes the
  * `custom-` prefix (76f6fdc1), so BYOK *matching* no longer needs this table —
  * its two remaining jobs are (a) knowing whether a provider has a gateway
- * binding at all (`kilocode` doesn't — dropped, egress-discriminating origin —
- * so BYOK can never apply to it), and (b) carrying the exact binding string
+ * binding at all, and (b) carrying the exact binding string
  * for the custom-slug gate below. Load-bearing copies like PROVIDER_ENV_KEY
  * above — change in lockstep with the handlers.
  */

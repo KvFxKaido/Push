@@ -20,7 +20,6 @@ import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zenStream } from './zen-stream';
-import { kilocodeStream } from './kilocode-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
@@ -36,7 +35,6 @@ import {
   getOpenRouterModelName,
   getZenModelName,
   getNvidiaModelName,
-  getKiloCodeModelName,
   getFireworksModelName,
   getDeepSeekModelName,
   getSakanaModelName,
@@ -184,7 +182,6 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   cloudflare: cloudflareStream,
   openrouter: openrouterStream,
   zen: zenStream,
-  kilocode: kilocodeStream,
   fireworks: fireworksStream,
   sakana: sakanaStream,
   deepseek: deepseekStream,
@@ -286,8 +283,6 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getZenModelName();
     case 'nvidia':
       return getNvidiaModelName();
-    case 'kilocode':
-      return getKiloCodeModelName();
     case 'fireworks':
       return getFireworksModelName();
     case 'sakana':

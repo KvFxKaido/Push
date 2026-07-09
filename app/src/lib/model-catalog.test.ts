@@ -5,7 +5,6 @@ import {
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
   fetchGoogleModels,
-  fetchKilocodeModels,
   fetchNvidiaModels,
   fetchOllamaModels,
   fetchOpenAIModels,
@@ -23,7 +22,6 @@ import {
   ANTHROPIC_MODELS,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
-  KILOCODE_MODELS,
   OPENAI_MODELS,
 } from '@push/lib/provider-models';
 
@@ -912,29 +910,6 @@ describe('fetchOpenAIModels', () => {
   });
 });
 
-describe('fetchKilocodeModels', () => {
-  it('keeps only canonical model ids from the OpenAI-style Kilo catalog payload', async () => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () =>
-        jsonResponse({
-          data: [
-            { id: 'google/gemini-3-flash-preview', name: 'Google: Gemini 3 Flash Preview' },
-            { id: 'anthropic/claude-sonnet-4.6', name: 'Anthropic: Claude Sonnet 4.6' },
-            { name: 'OpenAI: GPT 5.2' },
-          ],
-        }),
-      ),
-    );
-
-    await expect(fetchKilocodeModels()).resolves.toEqual([
-      'anthropic/claude-sonnet-4.6',
-      'google/gemini-3-flash-preview',
-    ]);
-  });
-});
-
 describe('filterModelByContext', () => {
   const prioritySet = new Set(['priority-model-1', 'priority-model-2']);
 
@@ -1320,11 +1295,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     stubWindow();
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-4o')).toBe(true);
-
-    expect(providerModelSupportsNativeToolCalling('kilocode', 'anthropic/claude-sonnet-4.6')).toBe(
-      true,
-    );
-    expect(providerModelSupportsNativeToolCalling('kilocode', 'unknown/model')).toBe(false);
   });
 
   it('gates direct Anthropic native tool calling against the curated catalog allowlist', () => {
@@ -1347,7 +1317,6 @@ describe('providerModelSupportsStructuredOutput', () => {
       ['anthropic', ANTHROPIC_MODELS],
       ['fireworks', FIREWORKS_MODELS],
       ['google', GOOGLE_MODELS],
-      ['kilocode', KILOCODE_MODELS],
       ['openai', [...OPENAI_MODELS, 'gpt-5-mini', 'gpt-4o', 'not-a-model']],
     ];
     const disagreements: string[] = [];

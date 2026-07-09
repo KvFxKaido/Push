@@ -1,5 +1,5 @@
 import type { AIProviderType, ChatMessage, Conversation } from '@/types';
-import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
+import { normalizeFireworksModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
 import { isRealProviderId } from '@push/lib/provider-definition';
@@ -48,7 +48,6 @@ export function normalizeConversationModel(
   if (typeof model !== 'string') return null;
   const trimmed = model.trim();
   if (!trimmed) return null;
-  if (provider === 'kilocode') return normalizeKilocodeModelName(trimmed);
   if (provider === 'fireworks') return normalizeFireworksModelName(trimmed);
   return trimmed;
 }

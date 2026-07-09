@@ -15,7 +15,7 @@ export type { ContextBudget };
 export { DEFAULT_CONTEXT_BUDGET };
 
 // Catalog metadata (models.dev) only loads for providers that fetch it:
-// openrouter, nvidia, ollama, zen. Other providers (cloudflare, kilocode,
+// openrouter, nvidia, ollama, zen. Other providers (cloudflare,
 // fireworks, sakana) hand us a model name with no metadata, so we probe
 // sibling catalogs by name and finally fall through to the shared name-pattern
 // table that captures the major model families' real context windows.

@@ -33,7 +33,6 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
-  KILOCODE_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
   DEEPSEEK_DEFAULT_MODEL,
@@ -150,7 +149,6 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
   google: 'push:review:model:google',
-  kilocode: 'push:review:model:kilocode',
   fireworks: 'push:review:model:fireworks',
   sakana: 'push:review:model:sakana',
   deepseek: 'push:review:model:deepseek',
@@ -165,7 +163,6 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,
-  kilocode: KILOCODE_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
@@ -190,7 +187,6 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'anthropic' ||
     value === 'openai' ||
     value === 'google' ||
-    value === 'kilocode' ||
     value === 'fireworks' ||
     value === 'deepseek' ||
     value === 'sakana'
@@ -215,7 +211,6 @@ function readReviewModels(): Record<PreferredProvider, string> {
     cloudflare: pick('cloudflare'),
     zen: pick('zen'),
     nvidia: pick('nvidia'),
-    kilocode: pick('kilocode'),
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),
     deepseek: pick('deepseek'),

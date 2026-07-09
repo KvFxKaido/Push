@@ -5,7 +5,6 @@ import {
   getModelDisplayGroupKey,
   getModelDisplayLeafName,
   normalizeFireworksModelName,
-  normalizeKilocodeModelName,
   normalizeOllamaModelName,
   PROVIDER_URLS,
   PROVIDERS,
@@ -86,30 +85,10 @@ describe('formatModelDisplayName', () => {
     );
   });
 
-  it('formats Kilo auto routes with a readable provider label', () => {
-    expect(formatModelDisplayName('kilocode', 'kilo-auto/balanced')).toBe('Kilo Auto / balanced');
-  });
-
   it('formats Cloudflare model ids with readable provider grouping', () => {
     expect(formatModelDisplayName('cloudflare', '@cf/qwen/qwen3-30b-a3b-fp8')).toBe(
       'Qwen / qwen3-30b-a3b-fp8',
     );
-  });
-});
-
-describe('normalizeKilocodeModelName', () => {
-  it('migrates retired Kilo defaults and rejects label-shaped selections', () => {
-    expect(normalizeKilocodeModelName('google/gemini-2.0-flash')).toBe(
-      'google/gemini-3-flash-preview',
-    );
-    expect(normalizeKilocodeModelName('anthropic/claude-3.5-sonnet')).toBe(
-      'anthropic/claude-sonnet-4.6',
-    );
-    expect(normalizeKilocodeModelName('openai/gpt-4o')).toBe('openai/gpt-5.2');
-    expect(normalizeKilocodeModelName('Anthropic: Claude Sonnet 4.6')).toBe(
-      'google/gemini-3-flash-preview',
-    );
-    expect(normalizeKilocodeModelName('kilo-auto/balanced')).toBe('kilo-auto/balanced');
   });
 });
 

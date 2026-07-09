@@ -6,7 +6,6 @@ type MockPreferredProvider = import('./providers').PreferredProvider;
 function mockProviderState(options?: {
   cloudflareConfigured?: boolean;
   cloudflareModel?: string;
-  kilocodeKey?: string;
   fireworksKey?: string;
   preferredProvider?: MockPreferredProvider | null;
   lastUsedProvider?: MockPreferredProvider | null;
@@ -14,7 +13,6 @@ function mockProviderState(options?: {
   const {
     cloudflareConfigured = false,
     cloudflareModel = '@cf/qwen/qwen3-30b-a3b-fp8',
-    kilocodeKey = '',
     fireworksKey = '',
     preferredProvider = null,
     lastUsedProvider = null,
@@ -24,7 +22,6 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
-  vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => kilocodeKey }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
   vi.doMock('./providers', async () => {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
@@ -43,31 +40,22 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('Kilo Code provider routing', () => {
-  // The dynamic `import('./orchestrator')` inside each test transforms a large
-  // module graph on first touch. When the full suite has already loaded dozens
-  // of modules, that transform can brush past the default 5s timeout. Bump so
-  // the test doesn't flake under full-suite contention.
-  it('falls back to kilocode when it is the only configured provider', async () => {
-    mockProviderState({ kilocodeKey: 'kilo-key' });
-
-    const { getActiveProvider } = await import('./orchestrator');
-
-    expect(getActiveProvider()).toBe('kilocode');
-  }, 15_000);
-
-  it('returns a PushStream for the kilocode provider', async () => {
+describe('OpenCode Zen provider routing', () => {
+  // The dynamic `import('./orchestrator')` inside the test transforms a large
+  // module graph on first touch; bump past the default 5s so it doesn't flake
+  // under full-suite contention.
+  it('returns a PushStream for the zen provider', async () => {
     mockProviderState();
 
     const { getProviderPushStream } = await import('./orchestrator');
 
     // Per-provider memoization: same provider returns the same PushStream
     // identity (preserves lib-side coalescing dedupe).
-    const a = getProviderPushStream('kilocode');
-    const b = getProviderPushStream('kilocode');
+    const a = getProviderPushStream('zen');
+    const b = getProviderPushStream('zen');
     expect(typeof a).toBe('function');
     expect(a).toBe(b);
-  });
+  }, 15_000);
 });
 
 describe('Fireworks AI provider routing', () => {
@@ -176,7 +164,6 @@ function mockFailoverState(opts?: {
   }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
-  vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
   vi.doMock('@/hooks/useAnthropicConfig', () => ({
     getAnthropicKey: () => '',

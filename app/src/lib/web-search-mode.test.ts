@@ -107,7 +107,7 @@ describe('isNativeWebSearchEnabled', () => {
   it('leaves native-less providers on the prompt-engineered path under "auto"', () => {
     // Fireworks speaks the Responses API but does NOT implement the built-in
     // `web_search` tool, so it must stay off the native path.
-    for (const provider of ['fireworks', 'ollama', 'zen', 'kilocode', 'nvidia']) {
+    for (const provider of ['fireworks', 'ollama', 'zen', 'nvidia']) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'auto')).toBe(false);
     }
   });
@@ -137,7 +137,7 @@ describe('getAutoNativeSearchLabel', () => {
 
   it('returns null for providers without a native tool (Auto falls back to prompt-engineered)', () => {
     // Fireworks included: Responses-API, but no built-in web_search tool.
-    for (const provider of ['fireworks', 'ollama', 'zen', 'kilocode', 'nvidia']) {
+    for (const provider of ['fireworks', 'ollama', 'zen', 'nvidia']) {
       expect(getAutoNativeSearchLabel(provider)).toBeNull();
     }
   });
