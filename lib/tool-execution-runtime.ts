@@ -146,7 +146,7 @@ export interface ToolExecutionContext<THooks = unknown, TGates = unknown> {
    * Promoted from optional to required to close audit item #3 from the
    * OpenCode silent-failure inventory: when `role` was optional, a
    * binding that forgot to set it would silently bypass the kernel
-   * check. The required type makes tsgo the drift-detector for TS call
+   * check. The required type makes `tsc` the drift-detector for TS call
    * sites; the runtime additionally emits `ROLE_REQUIRED` if the field
    * arrives undefined from a JS caller (see `enforceRoleCapability`
    * in `lib/capabilities.ts`).
