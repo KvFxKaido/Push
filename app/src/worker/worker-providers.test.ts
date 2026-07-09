@@ -27,10 +27,15 @@ import {
   handleOpenRouterChat,
   handleOpenRouterModels,
   handleZenChat,
+  handleZenModels,
   handleZenGoChat,
   handleNvidiaChat,
+  handleNvidiaModels,
   handleSakanaChat,
+  handleSakanaModels,
   handleFireworksChat,
+  handleFireworksModels,
+  handleDeepSeekModels,
   parseGeminiGroundingResponse,
   WORKER_PROVIDER_API_ROUTES,
   WORKER_PROVIDER_HANDLERS,
@@ -1003,6 +1008,139 @@ describe('AI Gateway BYOK — first-party providers route keyless', () => {
       expect(captured.current).toBeNull();
     });
   }
+});
+
+describe('models endpoints — AI Gateway BYOK keeps the live list reachable keyless', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('{"data":[]}', { status: 200 });
+      }),
+    );
+    return captured;
+  }
+
+  const gw = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+  const GW_BASE = 'https://gateway.ai.cloudflare.com/v1/acc123/push-prod';
+
+  const CASES = [
+    {
+      name: 'ollama',
+      handler: handleOllamaModels,
+      env: { CF_AI_GATEWAY_BYOK: 'ollama', CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama' },
+      url: `${GW_BASE}/custom-ollama/v1/models`,
+    },
+    {
+      name: 'openrouter',
+      handler: handleOpenRouterModels,
+      env: { CF_AI_GATEWAY_BYOK: 'openrouter' },
+      url: `${GW_BASE}/openrouter/models`,
+    },
+    {
+      name: 'zen',
+      handler: handleZenModels,
+      env: { CF_AI_GATEWAY_BYOK: 'zen', CF_AI_GATEWAY_CUSTOM_SLUGS: 'zen' },
+      url: `${GW_BASE}/custom-zen/zen/v1/models`,
+    },
+    {
+      name: 'nvidia',
+      handler: handleNvidiaModels,
+      env: { CF_AI_GATEWAY_BYOK: 'nvidia', CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia' },
+      url: `${GW_BASE}/custom-nvidia/v1/models`,
+    },
+    {
+      name: 'sakana',
+      handler: handleSakanaModels,
+      env: { CF_AI_GATEWAY_BYOK: 'sakana', CF_AI_GATEWAY_CUSTOM_SLUGS: 'sakana' },
+      url: `${GW_BASE}/custom-sakana/v1/models`,
+    },
+    {
+      name: 'fireworks',
+      handler: handleFireworksModels,
+      env: { CF_AI_GATEWAY_BYOK: 'fireworks', CF_AI_GATEWAY_CUSTOM_SLUGS: 'fireworks' },
+      url: `${GW_BASE}/custom-fireworks/inference/v1/models`,
+    },
+    {
+      name: 'deepseek',
+      handler: handleDeepSeekModels,
+      env: { CF_AI_GATEWAY_BYOK: 'deepseek' },
+      url: `${GW_BASE}/deepseek/models`,
+    },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`${c.name}: keyless models GET routes through the gateway without Authorization`, async () => {
+      const captured = captureFetch();
+      const res = await c.handler(makeModelsRequest(), makeEnv({ ...gw, ...c.env }));
+      expect(res.status).not.toBe(401);
+      expect(captured.current?.url).toBe(c.url);
+      expect(captured.current?.headers.Authorization).toBeUndefined();
+      expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    });
+  }
+
+  it('ollama: BYOK-listed but custom slug NOT enabled still 401s keyless (never fetches direct keyless)', async () => {
+    // buildAiGatewayUrl falls back to direct for an unlisted custom slug — a
+    // keyless direct call would 401 at the upstream, so the key gate must
+    // stay on (the tightened byok-requires-gateway-resolution pattern).
+    const captured = captureFetch();
+    const res = await handleOllamaModels(
+      makeModelsRequest(),
+      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'ollama' }),
+    );
+    expect(res.status).toBe(401);
+    expect(captured.current).toBeNull();
+  });
+
+  it('openai: BYOK keyless GETs the gateway /openai/models without Authorization', async () => {
+    const captured = captureFetch();
+    await handleOpenAIModels(makeModelsRequest(), makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'openai' }));
+    expect(captured.current?.url).toBe(`${GW_BASE}/openai/models`);
+    expect(captured.current?.headers.Authorization).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('google: BYOK keyless GETs the gateway models path at the SAME version as the direct call', async () => {
+    const captured = captureFetch();
+    await handleGoogleModels(makeModelsRequest(), makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'google' }));
+    // Derived from GOOGLE_API_BASE (the #1376 lesson): v1beta, not a hardcoded v1.
+    expect(captured.current?.url).toBe(`${GW_BASE}/google-ai-studio/v1beta/models?pageSize=200`);
+    expect(captured.current?.headers['x-goog-api-key']).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('google search: BYOK keyless POSTs the grounded query through the gateway', async () => {
+    const captured = captureFetch();
+    const req = new Request('https://push.example.test/api/google/search', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: 'push gateway' }),
+    });
+    const res = await handleGoogleSearch(req, makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'google' }));
+    expect(res.status).not.toBe(401);
+    expect(captured.current?.url).toContain(`${GW_BASE}/google-ai-studio/v1beta/models/`);
+    expect(captured.current?.url).toContain(':generateContent');
+    expect(captured.current?.headers['x-goog-api-key']).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('openai: keyless without BYOK still serves the curated list, no fetch', async () => {
+    const captured = captureFetch();
+    const res = await handleOpenAIModels(makeModelsRequest(), makeEnv(gw));
+    expect(res.status).toBe(200);
+    expect(captured.current).toBeNull();
+    const body = (await res.json()) as { data: Array<{ id: string }> };
+    expect(body.data.length).toBeGreaterThan(0);
+  });
 });
 
 describe('handleDeepSeekChat — AI Gateway first-party /anthropic variant (Bucket B)', () => {
