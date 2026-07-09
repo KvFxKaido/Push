@@ -34,6 +34,22 @@ describe('isProviderEngineCapable', () => {
     expect(isProviderEngineCapable('openrouter', { OPENROUTER_API_KEY: '' } as Env)).toBe(false);
   });
 
+  it('reports a BYOK provider capable with no secret (gateway injects the key)', () => {
+    const byokEnv = {
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-prod',
+      CF_AI_GATEWAY_BYOK: 'anthropic',
+    } as Env;
+    // No ANTHROPIC_API_KEY, but the gateway holds it → server-side turns can run.
+    expect(isProviderEngineCapable('anthropic', byokEnv)).toBe(true);
+    // A different provider not on the BYOK list still needs its own secret.
+    expect(isProviderEngineCapable('openai', byokEnv)).toBe(false);
+    // BYOK without a configured gateway is not enough.
+    expect(isProviderEngineCapable('anthropic', { CF_AI_GATEWAY_BYOK: 'anthropic' } as Env)).toBe(
+      false,
+    );
+  });
+
   it('reports cloudflare capable from the AI binding, not a secret', () => {
     expect(isProviderEngineCapable('cloudflare', {} as Env)).toBe(false);
     expect(isProviderEngineCapable('cloudflare', { AI: {} as Ai } as Env)).toBe(true);

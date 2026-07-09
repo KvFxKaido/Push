@@ -36,6 +36,7 @@ import { resolveProviderHandler } from './coder-job-stream-adapter';
 import { resolveSettingsUserId } from './settings-config';
 import { getUserProviderKey, listUserProviderKeyMeta } from './user-secrets';
 import type { Env } from './worker-middleware';
+import { isGatewayByokProvider } from './worker-middleware';
 
 // Re-exported for existing importers; the canonical home moved to the shared
 // provider contract so user-secrets.ts can validate without an import cycle.
@@ -64,6 +65,10 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
 
 function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
   if (provider === 'cloudflare') return Boolean(env.AI);
+  // BYOK: the provider's key lives in the gateway, which injects it — so a
+  // server-side turn can run with no Worker secret. Treat it as credentialed
+  // even when the env key is absent (that's the whole point of retiring it).
+  if (isGatewayByokProvider(env, provider)) return true;
   const envKey = PROVIDER_ENV_KEY[provider];
   if (!envKey) return false;
   return Boolean(env[envKey]);
