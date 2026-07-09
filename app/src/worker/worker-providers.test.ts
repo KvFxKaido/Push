@@ -28,6 +28,10 @@ import {
   handleVertexChat,
   handleZenChat,
   handleZenGoChat,
+  handleNvidiaChat,
+  handleKiloCodeChat,
+  handleSakanaChat,
+  handleFireworksChat,
   parseGeminiGroundingResponse,
   translateVertexOpenApiBody,
   WORKER_PROVIDER_API_ROUTES,
@@ -941,6 +945,106 @@ describe('handleOllamaChat — AI Gateway custom-provider gate (Bucket C)', () =
       makeEnv({ ...gatewayEnv, CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia, ollama , fireworks' }),
     );
     expect(captured.current?.url).toContain('/custom-ollama/v1/chat/completions');
+  });
+});
+
+describe('Bucket C custom providers — AI Gateway custom-provider routing', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  // First-party account+slug are set (as in prod); only the per-slug allow-list
+  // flips each provider onto its custom-provider path.
+  const gatewayBase = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+
+  const CASES = [
+    {
+      name: 'nvidia',
+      keyEnv: 'NVIDIA_API_KEY',
+      handler: handleNvidiaChat,
+      req: () => makeChatRequest(),
+      direct: 'https://integrate.api.nvidia.com/v1/chat/completions',
+      gateway:
+        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-nvidia/v1/chat/completions',
+    },
+    {
+      name: 'zen',
+      keyEnv: 'ZEN_API_KEY',
+      handler: handleZenChat,
+      req: () => makeChatRequest(),
+      direct: 'https://opencode.ai/zen/v1/chat/completions',
+      gateway:
+        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-zen/zen/v1/chat/completions',
+    },
+    {
+      name: 'kilocode',
+      keyEnv: 'KILOCODE_API_KEY',
+      handler: handleKiloCodeChat,
+      req: () => makeChatRequest(),
+      direct: 'https://api.kilo.ai/api/gateway/chat/completions',
+      gateway:
+        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-kilocode/api/gateway/chat/completions',
+    },
+    {
+      name: 'sakana',
+      keyEnv: 'SAKANA_API_KEY',
+      handler: handleSakanaChat,
+      req: () => makeOpenRouterResponsesRequest(),
+      direct: 'https://api.sakana.ai/v1/responses',
+      gateway: 'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-sakana/v1/responses',
+    },
+    {
+      name: 'fireworks',
+      keyEnv: 'FIREWORKS_API_KEY',
+      handler: handleFireworksChat,
+      req: () => makeOpenRouterResponsesRequest(),
+      direct: 'https://api.fireworks.ai/inference/v1/responses',
+      gateway:
+        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-fireworks/inference/v1/responses',
+    },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`${c.name}: stays direct when its slug is not allow-listed`, async () => {
+      const captured = captureFetch();
+      await c.handler(c.req(), makeEnv({ [c.keyEnv]: 'k', ...gatewayBase }));
+      expect(captured.current?.url).toBe(c.direct);
+      expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+    });
+
+    it(`${c.name}: routes through custom-${c.name} when allow-listed`, async () => {
+      const captured = captureFetch();
+      await c.handler(
+        c.req(),
+        makeEnv({ [c.keyEnv]: 'k', ...gatewayBase, CF_AI_GATEWAY_CUSTOM_SLUGS: c.name }),
+      );
+      expect(captured.current?.url).toBe(c.gateway);
+      expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    });
+  }
+
+  it('a slug enables only its own provider, not a sibling', async () => {
+    // Listing only `nvidia` must NOT route zen through the gateway.
+    const captured = captureFetch();
+    await handleZenChat(
+      makeChatRequest(),
+      makeEnv({ ZEN_API_KEY: 'k', ...gatewayBase, CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia' }),
+    );
+    expect(captured.current?.url).toBe('https://opencode.ai/zen/v1/chat/completions');
   });
 });
 

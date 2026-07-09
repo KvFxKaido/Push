@@ -791,6 +791,10 @@ export const handleZenChat = createStreamProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen request timed out after 120 seconds',
+  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://opencode.ai (the
+  // /zen/... prefix lives in the path here); dormant until `zen` is registered +
+  // listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-zen', pathSuffix: '/zen/v1/chat/completions' },
   // Mirror the OpenRouter handler: route the upstream body through the shared
   // extractor (preserves the HTML 5xx guard) and tag 429s with the same
   // structured code the other native providers emit, so a Zen quota / rate
@@ -826,6 +830,9 @@ export const handleKiloCodeChat = createStreamProxyHandler({
   keyMissingError:
     'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code request timed out after 120 seconds',
+  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://api.kilo.ai;
+  // dormant until `kilocode` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-kilocode', pathSuffix: '/api/gateway/chat/completions' },
 });
 
 export const handleKiloCodeModels = createJsonProxyHandler({
@@ -1275,6 +1282,9 @@ export const handleNvidiaChat = createStreamProxyHandler({
   keyMissingError:
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM request timed out after 120 seconds',
+  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://integrate.api.nvidia.com;
+  // dormant until `nvidia` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-nvidia', pathSuffix: '/v1/chat/completions' },
 });
 
 export const handleNvidiaModels = createJsonProxyHandler({
@@ -1935,6 +1945,10 @@ export async function handleSakanaChat(request: Request, env: Env): Promise<Resp
     upstreamUrl: SAKANA_RESPONSES_UPSTREAM_URL,
     route: 'api/sakana/chat',
     timeoutError: 'Sakana AI request timed out after 120 seconds',
+    // Bucket C custom provider (AIG v2 Path 1.5), Responses-native: base_url
+    // https://api.sakana.ai; dormant until `sakana` is registered + listed in
+    // CF_AI_GATEWAY_CUSTOM_SLUGS.
+    gateway: { provider: 'custom-sakana', pathSuffix: '/v1/responses' },
   });
 }
 
@@ -1947,6 +1961,10 @@ export async function handleFireworksChat(request: Request, env: Env): Promise<R
     upstreamUrl: FIREWORKS_RESPONSES_UPSTREAM_URL,
     route: 'api/fireworks/chat',
     timeoutError: 'Fireworks AI request timed out after 120 seconds',
+    // Bucket C custom provider (AIG v2 Path 1.5), Responses-native: base_url
+    // https://api.fireworks.ai (the /inference prefix lives in the path here);
+    // dormant until `fireworks` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+    gateway: { provider: 'custom-fireworks', pathSuffix: '/inference/v1/responses' },
   });
 }
 

@@ -76,6 +76,18 @@ Two design outputs that generalize to the rest of Bucket C (`fireworks / nvidia 
 - **Per-slug opt-in gate (`CF_AI_GATEWAY_CUSTOM_SLUGS`).** Prod already has `CF_AI_GATEWAY_*` set, so a bare `custom-` binding would have instantly flipped prod onto an *unregistered* custom provider and 502'd it. Custom providers therefore opt in per-slug via `isCustomGatewaySlugEnabled` (`worker-middleware.ts`); an unlisted `custom-` binding falls back to direct. Each additional Bucket C provider = register it + add its slug.
 - **Register before allow-listing.** Routing to `custom-{slug}` before the provider exists returns `AiGatewayError` 2006 / 502 (observed at 09:26, resolved to 200 at 09:53 once registered). The gate makes this safe by default — the slug isn't listed until the provider is live.
 
+**Fleet wired + verified 2026-07-09 — the remaining five.** `nvidia`, `zen`, `kilocode` (openai-compat, `/…/chat/completions`) and `sakana`, `fireworks` (Responses-native, `/…/responses`) all carry `custom-{slug}` bindings; every one routes to its correct path (confirmed in push-gate logs as `provider: custom-{slug}`). Live results split into "works" and "provider-side operational issue" — none were wiring bugs:
+
+| provider | direct | gateway | note |
+|---|---|---|---|
+| sakana | — | **200** | Responses-over-custom-proxy passthrough works |
+| fireworks | — | **200** | Responses-over-custom-proxy passthrough works |
+| nvidia | 404 | 404 | gateway **transparent**; 404 is a stale default model id, not the proxy |
+| zen | 200 | 429 | zen rate-limits Cloudflare's shared egress IP (provider-side) |
+| kilocode | 200 | 404 | gateway returned kilo.ai's **marketing 404** → registered `base_url` must be exactly `https://api.kilo.ai` (not `kilo.ai`/`app.kilo.ai`); if correct, the provider routes CF-egress requests to its frontend |
+
+Takeaway for the tail: the custom-provider path is transparent (proven by nvidia's identical direct/gateway result and the two Responses 200s), but each provider can carry its own operational wrinkle — a wrong-host registration (kilocode) or per-IP throttling of Cloudflare's egress (zen) — that only shows up live, not in the URL wiring.
+
 **Path 2 — adopt the REST API (bigger lift, unified billing).** New wiring against `api.cloudflare.com/…/ai/v1` — this is what delivers the clean Cloudflare-auth / unified-billing model. It likely needs model-id mapping (`openai/...`, `anthropic/...`, `google-ai-studio/...`), request-schema choices per provider, and a separate rollback plan from the provider-native proxy.
 
 **Bucket D** stays direct-to-provider until there is an explicit credential-placement decision.
