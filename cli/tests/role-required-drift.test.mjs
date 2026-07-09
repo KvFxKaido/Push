@@ -3,7 +3,7 @@
  * #3 from the OpenCode silent-failure inventory).
  *
  * `ToolExecutionContext.role` is required at the TypeScript level so
- * tsgo catches missing-role bindings in TS code. JS callers (CLI
+ * `tsc` catches missing-role bindings in TS code. JS callers (CLI
  * engine, pushd daemon, mjs tests) escape compile-time enforcement;
  * this test scans those files statically and asserts every
  * `executeToolCall(` invocation either:
