@@ -38,6 +38,7 @@ import {
   spinnerFrame,
   verbForActivity,
 } from './tui-spinner.js';
+import { shimmerCell, shimmerColorsFor, shimmerEligible, shimmerText } from './tui-shimmer.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { isEditDiff } from '../lib/edit-diff.ts';
 import { reduceWorkspaceStateEvent } from '../lib/workspace-state.js';
@@ -435,8 +436,17 @@ function renderHeader(
     runState === 'running' ? (verbForActivity(activity) ?? moodVerb(session)) : runState;
   const verb = runState === 'running' ? `${baseVerb}${animatedEllipsis(tick, 5)}` : baseVerb;
 
+  // Verb shimmer: a brightness band sweeps the live verb (the label *is* the
+  // loader — see tui-shimmer.ts), but only for talking/thinking verbs, not
+  // tool "phase" verbs. When shimmering we brighten only the base verb and
+  // keep the ellipsis a static dim '…' so the two don't fight; otherwise the
+  // whole verb reads in fg.dim as before.
   const sep = theme.style('fg.dim', '·');
-  const stateLabel = theme.style('fg.dim', verb);
+  const shimmerVerb = runState === 'running' && shimmerEligible(activity, theme.tier);
+  const stateLabel = shimmerVerb
+    ? shimmerText(baseVerb, Date.now(), shimmerColorsFor(theme)) +
+      theme.style('fg.dim', animatedEllipsis(tick, 5))
+    : theme.style('fg.dim', verb);
   const providerStr = theme.style('accent.link', provider);
   const modelStr = theme.bold(theme.style('fg.primary', model));
   const homeDir = process.env.HOME || '';
@@ -699,9 +709,19 @@ function renderActivityIndicator(buf, layout, theme, tuiState, tokens, sessionId
   const elapsed = formatElapsed(Date.now() - tuiState.turnStartedAt);
   const tokenStr = typeof tokens === 'number' ? formatTokenCount(tokens) : null;
 
+  // The hexagon here is the "avatar": it glints on its own slower cadence so
+  // it stays a live anchor even when the verb shimmer is clipped off the right
+  // edge. The verb shimmers under the same rules as the header.
+  const now = Date.now();
+  const shimmerColors = shimmerColorsFor(theme);
+  const doShimmer = shimmerEligible(tuiState.activity, theme.tier);
   const sep = theme.style('fg.dim', '·');
-  const marker = theme.style('fg.dim', theme.glyphs.hexagon);
-  const verbStyled = theme.style('fg.muted', verb);
+  const marker = doShimmer
+    ? shimmerCell(theme.glyphs.hexagon, now, shimmerColors)
+    : theme.style('fg.dim', theme.glyphs.hexagon);
+  const verbStyled = doShimmer
+    ? shimmerText(baseVerb, now, shimmerColors) + theme.style('fg.muted', dots)
+    : theme.style('fg.muted', verb);
   const metaInner = tokenStr ? `${elapsed} ${sep} ${tokenStr} tokens` : elapsed;
   const meta = theme.style('fg.dim', `(${metaInner})`);
   const row = `${marker} ${verbStyled} ${meta}`;
@@ -2407,6 +2427,12 @@ export async function runTUI(options = {}) {
   // animate only the footer's elapsed-time row).
   const spinnerVisible = () =>
     spinner.name !== 'off' && tuiState.runState === 'running' && theme.unicode;
+  // The verb shimmer is the default motion (independent of the opt-in Braille
+  // spinner): while running on a shimmer-eligible verb it animates the header
+  // every tick, so the header needs repainting even when no spinner is pinned.
+  // Gated to eligible verbs so a static tool-phase header isn't dirtied 10×/s.
+  const shimmerAnimating = () =>
+    tuiState.runState === 'running' && shimmerEligible(tuiState.activity, theme.tier);
   // The daemon-reconnect chip is a second animated footer consumer: while
   // the coordinator is mid-wait, the `reconnect Ns (try N)` countdown needs
   // to tick down once per second. Reusing the frame ticker is cheaper than
@@ -2453,7 +2479,7 @@ export async function runTUI(options = {}) {
         // (header) only when it is actually drawn.
         if (spinnerVisible() || activityRowVisible() || reconnectChipNeedsPaint) {
           tuiState.dirty.add('footer');
-          if (spinnerVisible()) tuiState.dirty.add('header');
+          if (spinnerVisible() || shimmerAnimating()) tuiState.dirty.add('header');
           scheduler.flush();
         }
       }
