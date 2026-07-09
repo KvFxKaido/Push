@@ -866,6 +866,37 @@ describe('Anthropic structured outputs', () => {
     expect(native.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
   });
 
+  it('keeps summarized thinking alongside regular + web_search tools (no forced tool_choice)', () => {
+    // Boundary the forced-tool gate pins: ordinary function tools and the
+    // web_search server tool populate `tools` but never a forced `tool_choice`,
+    // so a think-by-default id keeps thinking. Only the structured-output
+    // forced-tool fallback (strict:false) sets tool_choice and drops thinking.
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'read it' }],
+      stream: true,
+      anthropic_web_search: true,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            parameters: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+    });
+    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(body).toHaveProperty('tools');
+    expect(body).not.toHaveProperty('tool_choice');
+  });
+
   it('omits tool_choice when no responseFormat is set', () => {
     const body = toAnthropicMessages({
       provider: 'anthropic',
