@@ -834,6 +834,38 @@ describe('Anthropic structured outputs', () => {
     expect(body).not.toHaveProperty('output_config');
   });
 
+  it('drops summarized thinking on the forced-tool fallback for think-by-default ids', () => {
+    // strict:false forces the tool_choice-pinned bridge even on a native-capable
+    // model. Anthropic rejects a forced tool_choice alongside thinking, so a
+    // think-by-default id (Sonnet 5) must NOT carry the thinking config here.
+    const forced = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema, strict: false },
+      },
+    });
+    expect(forced.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+    expect(forced).not.toHaveProperty('thinking');
+
+    // The native output_config path (default for Sonnet 5) is thinking-compatible,
+    // so it keeps summarized thinking.
+    const native = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema },
+      },
+    });
+    expect(native).toHaveProperty('output_config');
+    expect(native).not.toHaveProperty('tool_choice');
+    expect(native.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+  });
+
   it('omits tool_choice when no responseFormat is set', () => {
     const body = toAnthropicMessages({
       provider: 'anthropic',

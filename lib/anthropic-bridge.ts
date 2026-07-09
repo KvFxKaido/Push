@@ -528,6 +528,17 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
     }
   }
 
+  // Native `output_config.format` is used only when the model's structured-output
+  // mode is `strict` AND the caller didn't force `strict: false`. Any other
+  // structured-output request falls back to the forced-tool bridge below, which
+  // pins `tool_choice` to a single tool. Computed here so the thinking gate can
+  // see it; the structured-output block reuses it.
+  const useNativeOutputConfig =
+    parts.structuredOutput != null &&
+    parts.structuredOutputMode === 'strict' &&
+    parts.structuredOutput.strict !== false;
+  const usesForcedToolStructuredOutput = parts.structuredOutput != null && !useNativeOutputConfig;
+
   // Fable/Mythos 5 think always-on and Sonnet 5 runs adaptive thinking by
   // default, both with `display: "omitted"` — so an omitted-display think emits
   // empty thinking deltas and no user-visible content. Request summarized
@@ -535,10 +546,15 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // progress to the user AND keeps the client's content-stall timer alive (a
   // silent >60s think would otherwise trip the 60s no-content abort before the
   // first answer token). Opus 4.7/4.8 and Sonnet 4.6 run thinking off when it is
-  // omitted, so they keep their existing request surface. Structured output on
-  // these models uses native `output_config.format` (thinking-compatible), not
-  // the forced-tool path, so there is no `tool_choice`+thinking conflict.
-  if (anthropicModelThinksByDefault(parts.samplingModel)) {
+  // omitted, so they keep their existing request surface.
+  //
+  // Skip thinking when the request takes the forced-tool structured-output
+  // fallback (`strict: false` on an otherwise-native model): Anthropic rejects a
+  // pinned `tool_choice` alongside extended thinking, so adding it would 400 an
+  // otherwise-valid best-effort structured-output request. The native
+  // `output_config.format` path (the default for these models) is
+  // thinking-compatible, so it still gets summarized thinking.
+  if (anthropicModelThinksByDefault(parts.samplingModel) && !usesForcedToolStructuredOutput) {
     body.thinking = { type: 'adaptive', display: 'summarized' };
   }
 
@@ -565,8 +581,6 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // content (not a tool call), so callers `JSON.parse` the accumulated text
   // exactly as they do with OpenAI `response_format`.
   if (parts.structuredOutput) {
-    const useNativeOutputConfig =
-      parts.structuredOutputMode === 'strict' && parts.structuredOutput.strict !== false;
     if (useNativeOutputConfig) {
       body.output_config = {
         format: {
