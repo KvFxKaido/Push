@@ -32,6 +32,7 @@ import {
   setAcknowledgedUserTokenInjection,
 } from '@/lib/sandbox-auth-gate';
 import { useAuditorGate } from '@/hooks/useAuditorGate';
+import { useProviderCredentials } from '@/hooks/useProviderCredentials';
 import type { AIProviderType } from '@/types';
 import { getRoleLabel } from '@push/lib/role-display';
 
@@ -150,6 +151,10 @@ export function SettingsSectionContent({
   // commit call sites read it on demand via `getIsAuditorGateEnabled`. Keyed by
   // the active repo so the per-repo override matches what those call sites read.
   const auditorGate = useAuditorGate(workspace.activeRepoFullName ?? undefined);
+  // Credential provenance (gateway BYOK / Worker secret / user key) — read
+  // directly rather than threaded through SettingsAIProps: it's a module-level
+  // cached snapshot, and no other layer needs to transform it.
+  const credentials = useProviderCredentials();
   const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<
     Record<BuiltInSettingsProviderId, boolean>
   >(() => {
@@ -1132,6 +1137,28 @@ export function SettingsSectionContent({
               </p>
             </div>
 
+            {/* AI Gateway status — requests take an extra hop when active;
+                the surface should say so rather than hide it. */}
+            {credentials.gatewayActive && (
+              <div className="flex items-start gap-2.5 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2.5">
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-emerald-400" />
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-push-fg-secondary">AI Gateway active</p>
+                  <p className="mt-0.5 text-[11px] text-push-fg-dim">
+                    Requests route through Cloudflare AI Gateway for observability.
+                    {(() => {
+                      const byok = BUILT_IN_SETTINGS_PROVIDER_ORDER.filter(
+                        (id) => credentials.sources[id] === 'gateway-byok',
+                      );
+                      return byok.length > 0
+                        ? ` Keys held in the gateway: ${byok.map((id) => PROVIDER_LABELS[id]).join(', ')}.`
+                        : '';
+                    })()}
+                  </p>
+                </div>
+              </div>
+            )}
+
             {BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => {
               const provider = ai.builtInProviders[providerId];
               const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
@@ -1140,6 +1167,15 @@ export function SettingsSectionContent({
               const modelLabel = meta.labelTransform
                 ? meta.labelTransform(provider.model)
                 : provider.model;
+              const source = credentials.sources[providerId] ?? null;
+              const headerStatus =
+                source === 'gateway-byok'
+                  ? 'Key in gateway'
+                  : source === 'worker-secret'
+                    ? 'Server key'
+                    : provider.hasKey || source === 'user-key'
+                      ? 'Connected'
+                      : 'No key configured';
 
               return (
                 <div
@@ -1157,9 +1193,9 @@ export function SettingsSectionContent({
                       <div className="min-w-0">
                         <p className="text-xs font-medium text-push-fg-secondary">{label}</p>
                         <p className="truncate text-[11px] text-push-fg-dim">
-                          {provider.hasKey
-                            ? `Connected${modelLabel ? ` · ${modelLabel}` : ''}`
-                            : 'No key configured'}
+                          {headerStatus === 'No key configured'
+                            ? headerStatus
+                            : `${headerStatus}${modelLabel ? ` · ${modelLabel}` : ''}`}
                         </p>
                       </div>
                     </div>
@@ -1183,6 +1219,7 @@ export function SettingsSectionContent({
                         placeholder={meta.placeholder}
                         saveLabel={meta.saveLabel}
                         hint={meta.hint}
+                        credentialSource={source}
                         model={{
                           value: provider.model,
                           set: provider.setModel,

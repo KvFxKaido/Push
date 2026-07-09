@@ -248,4 +248,62 @@ describe('ProviderKeySection', () => {
     expect(html).toContain('Save key');
     expect(html).toContain('Stored locally in your browser.');
   });
+
+  it('renders connected with NO key input when the key lives in the gateway (BYOK)', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey={false} credentialSource="gateway-byok" />,
+    );
+
+    expect(html).toContain('Key in gateway');
+    expect(html).toContain('stored in the AI Gateway');
+    // No password input, no save button, no remove button: there is no
+    // browser-held key to enter or delete.
+    expect(html).not.toContain('sk-or-...');
+    expect(html).not.toContain('Save key');
+    expect(html).not.toContain('Remove');
+  });
+
+  it('marks a lingering local key as unused under BYOK and keeps the remove affordance', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey credentialSource="gateway-byok" />,
+    );
+
+    expect(html).toContain('Key in gateway');
+    expect(html).toContain('Your local key is unused.');
+    expect(html).toContain('Remove unused local OpenRouter key');
+  });
+
+  it('renders connected for a Worker-secret credential without an input', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey={false} credentialSource="worker-secret" />,
+    );
+
+    expect(html).toContain('Server key');
+    expect(html).toContain('set on the Worker');
+    expect(html).not.toContain('Save key');
+  });
+
+  it('renders connected with a remove affordance for an account-held key with no local copy', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey={false} credentialSource="user-key" />,
+    );
+
+    // Selectable via the server-mirrored key (Codex P2): no empty password
+    // form pretending nothing is configured, and the trash removes the
+    // account copy via clearKey's server-store mirror.
+    expect(html).toContain('Connected');
+    expect(html).toContain('saved to your account');
+    expect(html).toContain('Remove OpenRouter key');
+    expect(html).not.toContain('sk-or-...');
+    expect(html).not.toContain('Save key');
+  });
+
+  it('keeps the plain key input for a provider with no credential anywhere', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey={false} credentialSource={null} />,
+    );
+
+    expect(html).toContain('sk-or-...');
+    expect(html).toContain('Save key');
+  });
 });

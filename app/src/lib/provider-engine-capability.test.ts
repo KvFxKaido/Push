@@ -21,11 +21,13 @@ vi.mock('./safe-storage', () => ({
 
 import {
   __resetEngineCapabilityCacheForTests,
+  getProviderCapabilitySnapshot,
   isProviderEngineCapable,
   refreshEngineCapabilities,
+  subscribeProviderCapabilities,
 } from './provider-engine-capability';
 
-const STORAGE_KEY = 'push:provider-engine-capabilities';
+const STORAGE_KEY = 'push:provider-engine-capabilities:v2';
 
 function mockFetchOnce(body: unknown, ok = true): ReturnType<typeof vi.fn> {
   const fn = vi.fn(async () => ({
@@ -61,7 +63,7 @@ describe('isProviderEngineCapable (client cache)', () => {
   });
 
   it('seeds from storage before any fetch resolves', () => {
-    storage.set(STORAGE_KEY, JSON.stringify({ openrouter: false, ollama: true }));
+    storage.set(STORAGE_KEY, JSON.stringify({ providers: { openrouter: false, ollama: true } }));
     mockFetchOnce({ providers: {} });
     expect(isProviderEngineCapable('openrouter')).toBe(false);
     expect(isProviderEngineCapable('ollama')).toBe(true);
@@ -75,13 +77,12 @@ describe('isProviderEngineCapable (client cache)', () => {
     expect(isProviderEngineCapable('openrouter')).toBe(false);
     expect(isProviderEngineCapable('zen')).toBe(true);
     expect(JSON.parse(storage.get(STORAGE_KEY) ?? '{}')).toMatchObject({
-      openrouter: false,
-      zen: true,
+      providers: { openrouter: false, zen: true },
     });
   });
 
   it('keeps the previous map and logs when the probe fails', async () => {
-    storage.set(STORAGE_KEY, JSON.stringify({ openrouter: false }));
+    storage.set(STORAGE_KEY, JSON.stringify({ providers: { openrouter: false } }));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockFetchOnce({}, false);
     refreshEngineCapabilities();
@@ -98,5 +99,47 @@ describe('isProviderEngineCapable (client cache)', () => {
     isProviderEngineCapable('ollama');
     await flushInflight();
     expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a stale v1 (flat boolean map) storage value', () => {
+    // v1 lived under a different key; a hand-migrated flat map under the v2
+    // key must not parse (no `providers` field) — optimistic default applies.
+    storage.set(STORAGE_KEY, JSON.stringify({ openrouter: false }));
+    mockFetchOnce({ providers: {} });
+    expect(isProviderEngineCapable('openrouter')).toBe(true);
+  });
+});
+
+describe('getProviderCapabilitySnapshot', () => {
+  it('exposes sources and gatewayActive from the probe, and notifies subscribers', async () => {
+    mockFetchOnce({
+      providers: { anthropic: true, zen: false },
+      sources: { anthropic: 'gateway-byok', zen: null },
+      gatewayActive: true,
+    });
+    const seen: boolean[] = [];
+    const unsubscribe = subscribeProviderCapabilities(() => {
+      seen.push(getProviderCapabilitySnapshot().gatewayActive);
+    });
+    expect(getProviderCapabilitySnapshot().probed).toBe(false); // kicks refresh
+    await flushInflight();
+    const snap = getProviderCapabilitySnapshot();
+    expect(snap.probed).toBe(true);
+    expect(snap.gatewayActive).toBe(true);
+    expect(snap.sources.anthropic).toBe('gateway-byok');
+    expect(snap.sources.zen).toBeNull();
+    expect(seen).toEqual([true]);
+    unsubscribe();
+  });
+
+  it('drops unknown source enum values instead of trusting them', async () => {
+    mockFetchOnce({
+      providers: { anthropic: true },
+      sources: { anthropic: 'quantum-vault' },
+      gatewayActive: false,
+    });
+    getProviderCapabilitySnapshot();
+    await flushInflight();
+    expect(getProviderCapabilitySnapshot().sources.anthropic).toBeUndefined();
   });
 });

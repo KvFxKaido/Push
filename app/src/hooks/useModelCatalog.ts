@@ -53,6 +53,7 @@ import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
+import { useProviderCredentials } from '@/hooks/useProviderCredentials';
 import {
   shouldAutoFetchProviderModels,
   scheduleAutoFetch,
@@ -477,20 +478,28 @@ export function useModelCatalog(): ModelCatalog {
   );
   const activeProviderLabel = getActiveProvider();
 
-  // Available providers (filtered by key presence)
+  // Available providers: a provider is usable with a local key OR a
+  // server-resolvable credential (gateway BYOK, Worker secret, user-stored
+  // key — see worker-provider-capabilities.ts). Local keys alone under-report
+  // now that keys can live entirely server-side; the proxy prefers the server
+  // credential anyway (standardAuth / BYOK header omission), so a keyless
+  // client is fully functional against a credentialed server.
+  const credentials = useProviderCredentials();
+  const serverUnlocked = (provider: PreferredProvider): boolean =>
+    (credentials.sources[provider] ?? null) !== null;
   const providerAvailability = {
-    ollama: ollamaCfg.hasKey,
-    openrouter: openRouterCfg.hasKey,
-    cloudflare: cloudflareConfigured,
-    zen: zenCfg.hasKey,
-    nvidia: nvidiaCfg.hasKey,
-    kilocode: kilocodeCfg.hasKey,
-    fireworks: fireworksCfg.hasKey,
-    deepseek: deepseekCfg.hasKey,
-    sakana: sakanaCfg.hasKey,
-    anthropic: anthropicCfg.hasKey,
-    openai: openaiCfg.hasKey,
-    google: googleCfg.hasKey,
+    ollama: ollamaCfg.hasKey || serverUnlocked('ollama'),
+    openrouter: openRouterCfg.hasKey || serverUnlocked('openrouter'),
+    cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
+    zen: zenCfg.hasKey || serverUnlocked('zen'),
+    nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
+    kilocode: kilocodeCfg.hasKey || serverUnlocked('kilocode'),
+    fireworks: fireworksCfg.hasKey || serverUnlocked('fireworks'),
+    deepseek: deepseekCfg.hasKey || serverUnlocked('deepseek'),
+    sakana: sakanaCfg.hasKey || serverUnlocked('sakana'),
+    anthropic: anthropicCfg.hasKey || serverUnlocked('anthropic'),
+    openai: openaiCfg.hasKey || serverUnlocked('openai'),
+    google: googleCfg.hasKey || serverUnlocked('google'),
   } satisfies Record<PreferredProvider, boolean>;
 
   const availableProviders = REAL_PROVIDERS.map(

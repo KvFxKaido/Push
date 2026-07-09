@@ -20,9 +20,13 @@
  * to keep those turns on the foreground loop instead (see
  * `app/src/lib/provider-engine-capability.ts`).
  *
- * The response is booleans only — never key material, never key shape. The
- * answer is per-identity (session-resolved), which is why the handler resolves
- * the caller before building the map.
+ * The response is booleans and provenance enums only — never key material,
+ * never key shape. `sources` reports WHERE each provider's credential resolves
+ * from (in dispatch-precedence order: gateway BYOK, then Worker secret /
+ * binding, then user-stored key) so Settings can render the truth instead of
+ * inferring unlock state from localStorage. The answer is per-identity
+ * (session-resolved), which is why the handler resolves the caller before
+ * building the map.
  *
  * Drift note: the env-key names here mirror each handler's
  * `standardAuth('<KEY>')` literal in `worker-providers.ts` (and
@@ -36,7 +40,7 @@ import { resolveProviderHandler } from './coder-job-stream-adapter';
 import { resolveSettingsUserId } from './settings-config';
 import { getUserProviderKey, listUserProviderKeyMeta } from './user-secrets';
 import type { Env } from './worker-middleware';
-import { isGatewayByokProvider } from './worker-middleware';
+import { isCustomGatewaySlugEnabled, isGatewayByokProvider } from './worker-middleware';
 
 // Re-exported for existing importers; the canonical home moved to the shared
 // provider contract so user-secrets.ts can validate without an import cycle.
@@ -63,15 +67,66 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   google: 'GOOGLE_API_KEY',
 };
 
-function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
-  if (provider === 'cloudflare') return Boolean(env.AI);
+/**
+ * Gateway binding provider strings, mirroring each handler's `gateway:`
+ * binding in `worker-providers.ts`. `isGatewayByokProvider` normalizes the
+ * `custom-` prefix (76f6fdc1), so BYOK *matching* no longer needs this table —
+ * its two remaining jobs are (a) knowing whether a provider has a gateway
+ * binding at all (`kilocode` doesn't — dropped, egress-discriminating origin —
+ * so BYOK can never apply to it), and (b) carrying the exact binding string
+ * for the custom-slug gate below. Load-bearing copies like PROVIDER_ENV_KEY
+ * above — change in lockstep with the handlers.
+ */
+const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
+  ollama: 'custom-ollama',
+  openrouter: 'openrouter',
+  zen: 'custom-zen',
+  nvidia: 'custom-nvidia',
+  fireworks: 'custom-fireworks',
+  deepseek: 'deepseek',
+  sakana: 'custom-sakana',
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'google',
+};
+
+/**
+ * True when a keyless dispatch on this provider would ACTUALLY route through
+ * the gateway with an injected key. Three conditions, all mirroring dispatch:
+ * the provider has a gateway binding, that binding is BYOK-listed, and — for
+ * `custom-*` bindings — the custom slug is enabled (an unlisted custom binding
+ * makes `buildAiGatewayUrl` fall back to direct, where a keyless call 401s
+ * at the upstream).
+ */
+function isByokDispatchable(provider: AIProviderType, env: Env): boolean {
+  const binding = GATEWAY_BINDING_PROVIDER[provider];
+  if (!binding) return false;
+  return isGatewayByokProvider(env, binding) && isCustomGatewaySlugEnabled(env, binding);
+}
+
+/**
+ * Which server-resolvable credential (if any) a provider would dispatch with,
+ * in dispatch-precedence order. BYOK outranks a Worker secret deliberately:
+ * when a provider is BYOK-listed, handlers omit the auth header entirely and
+ * the gateway injects its stored key — a lingering Worker secret (or user key)
+ * is dead weight, and reporting it as the source would misrepresent dispatch.
+ */
+function resolveEnvCredentialSource(
+  provider: AIProviderType,
+  env: Env,
+): ProviderCredentialSource | null {
+  if (provider === 'cloudflare') return env.AI ? 'binding' : null;
   // BYOK: the provider's key lives in the gateway, which injects it — so a
   // server-side turn can run with no Worker secret. Treat it as credentialed
   // even when the env key is absent (that's the whole point of retiring it).
-  if (isGatewayByokProvider(env, provider)) return true;
+  if (isByokDispatchable(provider, env)) return 'gateway-byok';
   const envKey = PROVIDER_ENV_KEY[provider];
-  if (!envKey) return false;
-  return Boolean(env[envKey]);
+  if (!envKey) return null;
+  return env[envKey] ? 'worker-secret' : null;
+}
+
+function hasEnvCredentials(provider: AIProviderType, env: Env): boolean {
+  return resolveEnvCredentialSource(provider, env) !== null;
 }
 
 /**
@@ -86,8 +141,20 @@ export function isProviderEngineCapable(provider: AIProviderType, env: Env): boo
   return resolveProviderHandler(provider, false) !== null && hasEnvCredentials(provider, env);
 }
 
+/**
+ * Where a provider's credential resolves from, mirroring dispatch precedence:
+ * `gateway-byok` (key stored in the AI Gateway, injected there — any client or
+ * Worker key is ignored), `binding` (Workers AI), `worker-secret` (env),
+ * `user-key` (identity-keyed store / browser key), or null (no credential —
+ * the provider is locked until a key is added).
+ */
+export type ProviderCredentialSource = 'gateway-byok' | 'binding' | 'worker-secret' | 'user-key';
+
 export interface ProviderEngineCapabilities {
   providers: Record<AIProviderType, boolean>;
+  sources: Record<AIProviderType, ProviderCredentialSource | null>;
+  /** True when the AI Gateway is configured (account + slug) and routing. */
+  gatewayActive: boolean;
 }
 
 /**
@@ -103,21 +170,34 @@ export async function handleProviderEngineCapabilities(
   const identity = await resolveSettingsUserId(request, env);
   const userKeys = await listUserProviderKeyMeta(env, identity.userId);
   const entries = await Promise.all(
-    ALL_PROVIDERS.map(async (provider): Promise<[AIProviderType, boolean]> => {
-      if (resolveProviderHandler(provider, false) === null) return [provider, false];
-      if (hasEnvCredentials(provider, env)) return [provider, true];
-      // User-key arm resolves through the SAME path dispatch uses
-      // (getUserProviderKey: secret present + decryptable), not metadata
-      // presence — a rotated/missing PUSH_SESSION_SECRET must read as
-      // not-capable here, or the client routes turns into a guaranteed
-      // 401 (Codex P2, PR #890). Metadata short-circuits the decrypt for
-      // the common no-key case.
-      if (!userKeys[provider]) return [provider, false];
-      const key = await getUserProviderKey(env, identity.userId, provider);
-      return [provider, key !== null];
-    }),
+    ALL_PROVIDERS.map(
+      async (provider): Promise<[AIProviderType, ProviderCredentialSource | null]> => {
+        if (resolveProviderHandler(provider, false) === null) return [provider, null];
+        const envSource = resolveEnvCredentialSource(provider, env);
+        if (envSource !== null) return [provider, envSource];
+        // User-key arm resolves through the SAME path dispatch uses
+        // (getUserProviderKey: secret present + decryptable), not metadata
+        // presence — a rotated/missing PUSH_SESSION_SECRET must read as
+        // not-capable here, or the client routes turns into a guaranteed
+        // 401 (Codex P2, PR #890). Metadata short-circuits the decrypt for
+        // the common no-key case.
+        if (!userKeys[provider]) return [provider, null];
+        const key = await getUserProviderKey(env, identity.userId, provider);
+        return [provider, key !== null ? 'user-key' : null];
+      },
+    ),
   );
-  const providers = Object.fromEntries(entries) as Record<AIProviderType, boolean>;
-  const body: ProviderEngineCapabilities = { providers };
+  const providers = Object.fromEntries(
+    entries.map(([provider, source]) => [provider, source !== null]),
+  ) as Record<AIProviderType, boolean>;
+  const sources = Object.fromEntries(entries) as Record<
+    AIProviderType,
+    ProviderCredentialSource | null
+  >;
+  const body: ProviderEngineCapabilities = {
+    providers,
+    sources,
+    gatewayActive: Boolean(env.CF_AI_GATEWAY_ACCOUNT_ID?.trim() && env.CF_AI_GATEWAY_SLUG?.trim()),
+  };
   return Response.json(body, { headers: { 'Cache-Control': 'no-store' } });
 }

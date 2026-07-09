@@ -103,7 +103,96 @@ describe('handleProviderEngineCapabilities', () => {
     for (const value of Object.values(body.providers)) {
       expect(typeof value).toBe('boolean');
     }
-    expect(JSON.stringify(body)).not.toContain('secret');
+    // No key MATERIAL in the response ('worker-secret' as a provenance enum
+    // value is fine; the configured key strings are not).
+    expect(JSON.stringify(body)).not.toContain('sk-secret-value');
+    expect(JSON.stringify(body)).not.toContain('sk-other-secret');
+  });
+
+  it('reports credential sources in dispatch-precedence order', async () => {
+    const res = await handleProviderEngineCapabilities(makeRequest(), {
+      AI: {} as Ai,
+      OLLAMA_API_KEY: 'sk-secret-value',
+      // anthropic has BOTH a Worker secret and a BYOK listing — BYOK must win,
+      // because dispatch omits the auth header for a BYOK provider and the
+      // lingering secret is dead weight.
+      ANTHROPIC_API_KEY: 'sk-ant-unused',
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-gate',
+      CF_AI_GATEWAY_BYOK: 'anthropic,openai',
+    } as Env);
+    const body = (await res.json()) as {
+      providers: Record<string, boolean>;
+      sources: Record<string, string | null>;
+      gatewayActive: boolean;
+    };
+    expect(Object.keys(body.sources).sort()).toEqual([...ALL_PROVIDERS].sort());
+    expect(body.sources.anthropic).toBe('gateway-byok');
+    expect(body.sources.openai).toBe('gateway-byok');
+    expect(body.sources.ollama).toBe('worker-secret');
+    expect(body.sources.cloudflare).toBe('binding');
+    expect(body.sources.zen).toBeNull();
+    // The boolean map and the sources map can't disagree.
+    for (const provider of ALL_PROVIDERS) {
+      expect(body.providers[provider]).toBe(body.sources[provider] !== null);
+    }
+    expect(body.gatewayActive).toBe(true);
+  });
+
+  it('reports custom-provider BYOK only when dispatch would route it through the gateway', async () => {
+    const base = {
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-gate',
+    };
+    // Canonical id + custom slug enabled → dispatch routes keyless-through-
+    // gateway (isGatewayByokProvider normalizes the custom- prefix, 76f6fdc1).
+    let res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'ollama',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
+    } as Env);
+    let body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBe('gateway-byok');
+
+    // BYOK-listed but custom slug NOT enabled → buildAiGatewayUrl falls back
+    // to direct, where a keyless call 401s at the upstream — must not report
+    // byok (Codex P2, PR #1380).
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'ollama',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBeNull();
+
+    // First-party bindings have no slug gate — BYOK alone is enough.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'openai',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.openai).toBe('gateway-byok');
+
+    // kilocode has no gateway binding at all — BYOK can never apply.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'kilocode',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'kilocode',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.kilocode).toBeNull();
+  });
+
+  it('reports gatewayActive false and no BYOK sources when the gateway is unconfigured', async () => {
+    const res = await handleProviderEngineCapabilities(makeRequest(), {
+      CF_AI_GATEWAY_BYOK: 'anthropic',
+    } as Env);
+    const body = (await res.json()) as {
+      sources: Record<string, string | null>;
+      gatewayActive: boolean;
+    };
+    expect(body.gatewayActive).toBe(false);
+    // BYOK-listed but no gateway → not a credential.
+    expect(body.sources.anthropic).toBeNull();
   });
 });
 
@@ -124,10 +213,15 @@ describe('handleProviderEngineCapabilities — user-stored keys', () => {
     await putUserProviderKey(env, 'anon', 'openrouter', 'sk-or-user-key');
 
     const res = await handleProviderEngineCapabilities(makeRequest(), env);
-    const body = (await res.json()) as { providers: Record<string, boolean> };
+    const body = (await res.json()) as {
+      providers: Record<string, boolean>;
+      sources: Record<string, string | null>;
+    };
     expect(body.providers.openrouter).toBe(true);
+    expect(body.sources.openrouter).toBe('user-key');
     // Providers with neither env nor user key stay false.
     expect(body.providers.nvidia).toBe(false);
+    expect(body.sources.nvidia).toBeNull();
   });
 });
 
