@@ -10,6 +10,7 @@ import type { ApprovalMode } from '@/lib/approval-mode';
 import type { RepoOverride } from '@/hooks/useProtectMain';
 import type { BuiltInSettingsProviderId } from '@/components/settings-shared';
 import { SETTINGS_SECTION_ICONS } from '@/components/settings-shared';
+import type { ProviderCredentialSource } from '@/lib/provider-engine-capability';
 
 export type SettingsTabKey = 'you' | 'workspace' | 'ai';
 
@@ -183,6 +184,15 @@ interface ProviderKeySectionProps {
   saveLabel: string;
   hint: string;
   savedHint?: string;
+  /**
+   * Where this provider's credential actually resolves server-side
+   * (`useProviderCredentials`). When the key lives outside the browser —
+   * gateway BYOK, Worker secret — the section renders connected WITHOUT a
+   * key input: dispatch prefers the server credential (and BYOK omits the
+   * auth header entirely), so a typed key would be dead weight pretending
+   * to work.
+   */
+  credentialSource?: ProviderCredentialSource | null;
   model?: {
     value: string;
     set: (v: string) => void;
@@ -197,6 +207,13 @@ interface ProviderKeySectionProps {
     updatedAt: number | null;
   };
 }
+
+/** Human labels for server-held credential sources. */
+const CREDENTIAL_SOURCE_LABELS: Partial<Record<ProviderCredentialSource, string>> = {
+  'gateway-byok': 'Key in gateway',
+  'worker-secret': 'Server key',
+  binding: 'Worker binding',
+};
 
 export function ProviderKeySection({
   label,
@@ -213,33 +230,59 @@ export function ProviderKeySection({
   saveLabel,
   hint,
   savedHint,
+  credentialSource,
   model,
   refresh,
 }: ProviderKeySectionProps) {
-  if (hasKey) {
+  // A credential held outside the browser (gateway BYOK / Worker secret /
+  // binding) connects the provider regardless of any local key — and takes
+  // precedence over one at dispatch. `user-key` is the browser-owned path and
+  // renders through the existing hasKey branch.
+  const serverHeld =
+    credentialSource === 'gateway-byok' ||
+    credentialSource === 'worker-secret' ||
+    credentialSource === 'binding';
+  if (hasKey || serverHeld) {
+    const statusLabel = serverHeld
+      ? (CREDENTIAL_SOURCE_LABELS[credentialSource as ProviderCredentialSource] ?? 'Connected')
+      : 'Connected';
     return (
       <div className="space-y-3 rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.015))] p-3 shadow-[0_12px_24px_rgba(0,0,0,0.18)]">
         <div className="flex items-center justify-between rounded-xl border border-emerald-500/20 bg-emerald-500/8 px-3 py-2">
           <div className="flex items-center gap-2">
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
-            <p className="text-sm text-push-fg-secondary">Connected</p>
+            <p className="text-sm text-push-fg-secondary">{statusLabel}</p>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              clearKey();
-              if (activeBackend === backendId) {
-                clearPreferredProvider();
-                setActiveBackend(null);
-              }
-            }}
-            className="text-push-fg-dim hover:text-red-400 transition-colors"
-            aria-label={`Remove ${label} key`}
-            title="Remove key"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          {hasKey && (
+            <button
+              type="button"
+              onClick={() => {
+                clearKey();
+                // Removing a local key only unsets the active backend when it
+                // was the provider's ONLY credential — a server-held key keeps
+                // the provider usable, so the selection stands.
+                if (activeBackend === backendId && !serverHeld) {
+                  clearPreferredProvider();
+                  setActiveBackend(null);
+                }
+              }}
+              className="text-push-fg-dim hover:text-red-400 transition-colors"
+              aria-label={serverHeld ? `Remove unused local ${label} key` : `Remove ${label} key`}
+              title={serverHeld ? 'Remove unused local key' : 'Remove key'}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
+        {serverHeld && (
+          <p className="text-xs text-push-fg-dim">
+            {credentialSource === 'gateway-byok'
+              ? `The ${label} key is stored in the AI Gateway, which injects it per request.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`
+              : credentialSource === 'binding'
+                ? 'Authenticates via the deployed Worker binding. No key needed.'
+                : `The ${label} key is set on the Worker.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`}
+          </p>
+        )}
         {model && (
           <div className="flex items-center gap-2 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
             <span className="shrink-0 text-xs text-push-fg-muted">Use for new chats</span>
