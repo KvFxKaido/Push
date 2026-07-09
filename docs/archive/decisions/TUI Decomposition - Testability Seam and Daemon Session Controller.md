@@ -1,8 +1,11 @@
 # TUI Decomposition — Testability Seam and Daemon Session Controller
 
-Date: 2026-05-31 (Phase 0 shipped 2026-06-01)
-Status: **Current** — Phase 0 (testability seam) shipped; now ROADMAP-tracked
-("TUI Decomposition" in the active cycle). Phases 1–2 remain planned.
+Date: 2026-05-31 (Phase 0 shipped 2026-06-01; Phase 1 shipped 2026-07-09)
+Status: **Current** — Phases 0–1 shipped (`cli/tui-daemon-session.ts` is the
+`DaemonSessionController`; the #740 characterization suite survived the cut
+unchanged and `cli/tests/tui-daemon-session-controller.test.mjs` adds
+disconnect→backoff-reconnect coverage). Phase 2 (command-handler module)
+remains optional — reassess only if `tui.ts` is still unwieldy. Issue #1369.
 Owner: Push
 
 Sketch for decomposing the `runTUI` monolith. Came out of PR #740 (TUI addressable
@@ -113,11 +116,32 @@ coverage of the verbs — even if Phases 1–2 never happen.
 **Risk:** low. Additive (new optional params + a test file); no production path
 changes when `options.io`/`options.deps` are omitted.
 
-### Phase 1 — DaemonSessionController (the structural payoff)
+### Phase 1 — DaemonSessionController (the structural payoff) — ✅ shipped 2026-07-09
 
-**The cut:** extract `cli/tui-daemon-session.ts` owning the daemon-session state
-and lifecycle. It holds `client` / `sessionId` / `attachToken` privately and
-exposes:
+**What landed** (matches the plan below, with the boundary sharpened in
+implementation): `cli/tui-daemon-session.ts` owns the trio plus the
+connection-scoped state that had to move with it — reconnect backoff +
+timer, the once-only autostart guard, the hello build stamp, the
+per-connection event-seq cursor (`noteSeenSeq`), and the unknown-event warn
+registry. `runTUI` holds one `const daemon = createDaemonSession({ …hooks })`;
+the ~100 ambient reads collapsed to `daemon.*` and the scattered assignments
+became controller-internal transitions. Deliberately NOT moved: the spawn
+machinery and stale-runtime self-heal (they decide *whether* to connect —
+injected as hooks, with the socket-close hook owning the respawn-vs-reconnect
+branch), `daemonActiveRunId` (run-loop state), and every hydration/approval/
+snapshot reaction (TUI render state). The verb methods are typed
+(`SessionRevertPayload` etc. — the audit #7 ride-along). Phase 0's flagged
+grafting points landed too: the resume-modal `listSessions`/`deleteSession`
+calls now route through `options.deps`. Verified: the #740 characterization
+suite passed unchanged, a new headless suite covers socket-close →
+disconnect UI → 1s-backoff reconnect → verb recovery
+(`cli/tests/tui-daemon-session-controller.test.mjs`), and the source guards
+in `tui-session-snapshot-source.test.mjs` / `session-bearer-grace.test.mjs`
+now pin both halves of the split close path.
+
+**The cut (original plan):** extract `cli/tui-daemon-session.ts` owning the
+daemon-session state and lifecycle. It holds `client` / `sessionId` /
+`attachToken` privately and exposes:
 
 - lifecycle: `connect()`, `attachOrStart()`, `ensureReady()`, reconnect wiring
   (folding in `tui-daemon-reconnect` usage), teardown

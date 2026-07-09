@@ -11,6 +11,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
 const readTuiSource = () => fs.readFile(path.join(import.meta.dirname, '..', 'tui.ts'), 'utf8');
+const readControllerSource = () =>
+  fs.readFile(path.join(import.meta.dirname, '..', 'tui-daemon-session.ts'), 'utf8');
 
 describe('TUI session snapshot source guards', () => {
   it('advertises and requests session_snapshot_v1 after daemon attach', async () => {
@@ -31,7 +33,7 @@ describe('TUI session snapshot source guards', () => {
     );
     assert.match(
       src,
-      /daemonClient\.request\(\s*'get_session_snapshot'/,
+      /daemon\.client\.request\(\s*'get_session_snapshot'/,
       'the TUI should request a daemon session snapshot',
     );
     assert.match(
@@ -67,9 +69,19 @@ describe('TUI session snapshot source guards', () => {
 
   it('clears daemon workspace state on disconnect and leaves header branch to the git poll', async () => {
     const src = await readTuiSource();
+    // The socket-close wiring split with the DaemonSessionController
+    // extraction (Phase 1): the controller clears its client/session state
+    // and calls the TUI's `onSocketClose` hook, which owns the disconnect UI
+    // — pin both halves so neither can silently drop its side.
+    const controllerSrc = await readControllerSource();
+    assert.match(
+      controllerSrc,
+      /client\._socket\.on\('close', \(\) => \{[\s\S]*this\.#hooks\.onSocketClose\(\);/,
+      'the controller close path must hand off to the TUI socket-close hook',
+    );
     assert.match(
       src,
-      /client\._socket\.on\('close', \(\) => \{[\s\S]*tuiState\.workspaceStateView = null;[\s\S]*tuiState\.dirty\.add\('footer'\);/,
+      /onSocketClose: \(\) => \{[\s\S]*tuiState\.workspaceStateView = null;[\s\S]*tuiState\.dirty\.add\('footer'\);/,
       'the daemon close path should clear stale workspace-state guards from the footer',
     );
     assert.match(
@@ -96,10 +108,18 @@ describe('TUI session snapshot source guards', () => {
       /const isWorkspaceStateEvent =\s*event\.type === 'workspace\.state_snapshot' \|\| event\.type === 'workspace\.state_delta'/,
       'workspace-state event detection should be explicit at the replay cursor boundary',
     );
+    // The cursor itself lives on the DaemonSessionController; the TUI gates
+    // which events reach it, the controller enforces monotonicity.
     assert.match(
       src,
-      /if \(!isWorkspaceStateEvent && typeof event\.seq === 'number' && event\.seq > lastSeenDaemonSeq\)/,
+      /if \(!isWorkspaceStateEvent && typeof event\.seq === 'number'\) \{\s*daemon\.noteSeenSeq\(event\.seq\);/,
       'live-only workspace-state seqs must not become durable replay checkpoints',
+    );
+    const controllerSrc = await readControllerSource();
+    assert.match(
+      controllerSrc,
+      /noteSeenSeq\(seq: number\): void \{\s*if \(seq > this\.#lastSeenSeq\) this\.#lastSeenSeq = seq;/,
+      'the replay cursor must only advance monotonically',
     );
   });
 
