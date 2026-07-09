@@ -1333,6 +1333,36 @@ describe('handleAnthropicChat', () => {
     expect(headers.Authorization).toBeUndefined();
   });
 
+  it('routes through Cloudflare AI Gateway when account + slug are configured', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleAnthropicChat(
+      makeChatRequest(),
+      makeEnv({
+        ANTHROPIC_API_KEY: 'sk-ant-test',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+      }),
+    );
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/anthropic/v1/messages',
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers['x-api-key']).toBe('sk-ant-test');
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    expect(headers.Authorization).toBeUndefined();
+  });
+
   it('strips a client-side Bearer prefix when ANTHROPIC_API_KEY is not set on the Worker', async () => {
     let captured: Record<string, string> = {};
     vi.stubGlobal(
@@ -1469,6 +1499,35 @@ describe('handleOpenAIChat', () => {
       store: false,
       input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hello' }] }],
     });
+  });
+
+  it('routes Responses requests through Cloudflare AI Gateway when account + slug are configured', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleOpenAIChat(
+      makeOpenAIResponsesRequest(),
+      makeEnv({
+        OPENAI_API_KEY: 'sk-server',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+      }),
+    );
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/openai/responses',
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-server');
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-secret');
   });
 
   it('returns 401 when OPENAI_API_KEY is not configured and the client supplies no Authorization', async () => {
@@ -1728,6 +1787,36 @@ describe('handleGoogleChat', () => {
     const body = JSON.parse(String(captured?.init.body));
     expect(body.contents).toEqual([{ role: 'user', parts: [{ text: 'hello' }] }]);
     expect(body).not.toHaveProperty('messages');
+  });
+
+  it('routes native Gemini requests through Cloudflare AI Gateway when account + slug are configured', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    await handleGoogleChat(
+      makeChatRequest(),
+      makeEnv({
+        GOOGLE_API_KEY: 'AIza-server',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+      }),
+    );
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/google-ai-studio/v1/models/test-model:streamGenerateContent?alt=sse',
+    );
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers['x-goog-api-key']).toBe('AIza-server');
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    expect(headers.Authorization).toBeUndefined();
   });
 
   it('returns 401 when GOOGLE_API_KEY is not configured and the client supplies no Authorization', async () => {

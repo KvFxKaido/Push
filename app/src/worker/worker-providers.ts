@@ -1758,6 +1758,19 @@ interface ResponsesProxyOptions {
   gateway?: AiGatewayBinding;
 }
 
+function resolveAiGatewayFetchTarget(
+  env: Env,
+  directUrl: string,
+  gateway?: AiGatewayBinding,
+): { upstreamUrl: string; gatewayHeaders: Record<string, string> } {
+  const gatewayUrl = gateway ? buildAiGatewayUrl(env, gateway) : null;
+  const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
+  return {
+    upstreamUrl: gatewayUrl ?? directUrl,
+    gatewayHeaders: aigAuth ? { 'cf-aig-authorization': aigAuth } : {},
+  };
+}
+
 /**
  * Shared `/v1/responses` reverse proxy for the Responses-native providers
  * (OpenRouter, direct OpenAI, Sakana Fugu, Fireworks AI). Runs the standard
@@ -1800,10 +1813,11 @@ async function handleResponsesProxy(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), RESPONSES_TIMEOUT_MS);
   const upstreamCtx = createChildContext(spanCtx);
-  const gatewayUrl = opts.gateway ? buildAiGatewayUrl(env, opts.gateway) : null;
-  const upstreamUrl = gatewayUrl ?? opts.upstreamUrl;
-  const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
-  const gatewayHeaders: Record<string, string> = aigAuth ? { 'cf-aig-authorization': aigAuth } : {};
+  const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(
+    env,
+    opts.upstreamUrl,
+    opts.gateway,
+  );
   const extraHeaders =
     typeof opts.extraFetchHeaders === 'function'
       ? opts.extraFetchHeaders(request)
@@ -1900,6 +1914,7 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
     upstreamUrl: OPENAI_RESPONSES_UPSTREAM_URL,
     route: 'api/openai/chat',
     timeoutError: 'OpenAI request timed out after 120 seconds',
+    gateway: { provider: 'openai', pathSuffix: '/responses' },
   });
 }
 
@@ -2196,13 +2211,19 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
     let upstream: Response;
 
     try {
-      upstream = await fetch(ANTHROPIC_MESSAGES_URL, {
+      const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(
+        env,
+        ANTHROPIC_MESSAGES_URL,
+        { provider: 'anthropic', pathSuffix: '/v1/messages' },
+      );
+      upstream = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,
           'anthropic-version': ANTHROPIC_API_VERSION,
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         body: upstreamBody,
         signal: controller.signal,
@@ -2361,9 +2382,13 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
   // Gemini puts the model in the URL path and selects SSE framing via
   // `?alt=sse`. Auth is the API key in the `x-goog-api-key` header (preferred
   // over the legacy `?key=` query-param so the secret stays out of access logs).
-  const upstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
+  const directUpstreamUrl = `${GOOGLE_API_BASE}/models/${encodeURIComponent(
     model,
   )}:streamGenerateContent?alt=sse`;
+  const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(env, directUpstreamUrl, {
+    provider: 'google-ai-studio',
+    pathSuffix: `/v1/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`,
+  });
 
   wlog('info', 'request', {
     requestId,
@@ -2384,6 +2409,7 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
           'x-goog-api-key': apiKey,
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         body: upstreamBody,
         signal: controller.signal,
