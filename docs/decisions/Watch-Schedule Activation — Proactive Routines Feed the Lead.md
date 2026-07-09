@@ -97,7 +97,8 @@ depends on the prose being obeyed is a runtime bug, not a prompt bug.
 1. **Cloud `watch` first.** Generalize `github-webhook.ts` from "pull_request → review job" to
    "event → matching routines". Smallest step; every hard piece (receiver, DO, alarms, dedupe,
    Checks gating) already exists. The PR-review pipeline becomes the first routine expressed in
-   the new vocabulary rather than a parallel special case.
+   the new vocabulary rather than a parallel special case (see
+   [First consumer: the autonomous reviewer](#first-consumer-the-autonomous-reviewer)).
 2. **Cloud `schedule`** via DO alarms.
 3. **CLI daemon (pushd) parity** — polling watch + local timers. Also the only legitimate home
    for MCP-sourced events, per the CLI-scoped MCP rule in `CLAUDE.md`: an ungoverned event
@@ -118,6 +119,54 @@ next open), and much better with it.
 3. **One vocabulary:** the `watch` event names are a shared capability table in
    `lib/capabilities.ts`; the routine frontmatter schema pins in `lib/protocol-schema.ts`
    strict mode, with drift tests in the same PR.
+
+## First consumer: the autonomous reviewer
+
+The webhook-triggered PR reviewer is the natural first consumer — it grounds this proposal in a
+shipped subsystem rather than a hypothetical routine, and it already owns the infrastructure an
+activation layer needs (a per-PR Durable Object with SQLite history, alarms, dedupe/coalescing,
+budgets). Today all of that machinery serves **crash-safety within a single firing** — checkpoint
+relaunch, watchdog, one auto-retry — and none of it serves **intelligence across firings**. Each
+gap below is a daemon-shaped idea expressed in this doc's vocabulary:
+
+- **Cross-review memory (durable state across activations).** The DO persists every review's
+  full findings (`result_json` in the `review` table, `pr-review-job-do.ts`), but a re-review
+  never reads them: the executor builds each pass from the fresh diff + REVIEW.md only. So
+  `@push-agent review` after a fix round re-reviews from scratch — it can re-state findings
+  verbatim and cannot say "3 of 5 addressed, 2 remain," the most useful thing a re-review could
+  say. The storage already exists; the change is feeding prior findings + the previously
+  reviewed SHA into the re-review context with instructions to diff against them. Directly
+  attacks the multi-round review churn named in `CLAUDE.md` (the #1089–#1093 arc).
+- **Own-thread resolution (a `capabilities` ceiling test case).** The reviewer is fire-and-
+  forget: it posts a `COMMENT` review and never touches the PR again. On re-review it should be
+  able to **resolve threads it authored** that the new head addresses — and nothing else. The
+  deep reviewer's tool blocklist forbids all mutation today (correctly); this is a deliberate,
+  narrow widening and the first real exercise of the runtime-enforced capability ceiling this
+  doc proposes.
+- **Condition sweeps (the `schedule` mechanism, reusing the existing alarm).** Triggers today
+  are instant-shaped (`opened` / `reopened` / `ready_for_review`; `synchronize` deliberately
+  excluded as noisy). Daemons watch *conditions over time* — the non-noisy middle ground: a
+  periodic sweep noticing "unaddressed critical finding *and* new commits since the last
+  review" → coalesced re-review, or "review died past terminal retry" → re-arm. The DO already
+  holds an alarm used only as a 90-second crash watchdog; a condition sweep is the same
+  primitive pointed at product behavior. It also retires the current terminal advice ("close
+  and reopen the PR"), which exists only because nothing ever fires twice.
+- **Risk-scaled depth.** The autonomous path unconditionally runs the deep reviewer (up to 12
+  rounds, sandbox provisioning) even for a docs-only diff, while the quick `runReviewer` ships
+  unused on this path. Classify the diff (paths, size, whether it crosses REVIEW.md's named
+  seams) and route trivial diffs to the quick pass, reserving deep review + gating for risky
+  ones. Cheaper and less noisy at once.
+- **Per-repo policy as repo contract (the frontmatter split).** `REVIEW.md` is already the
+  prose contract with the right trust posture (fetched from the base ref, never the fork
+  head), but the machine policy lives in worker env (`PR_REVIEW_GATING_REPOS`, installation
+  allowlist) and a global owner setting. Frontmatter on `REVIEW.md` — gating threshold, path
+  ignores, depth policy, whether condition sweeps run — applies this doc's prose/frontmatter
+  split under the same base-ref trust rule.
+
+What the reviewer does **not** borrow from daemons is autonomy of action: advisory-only
+(`event: 'COMMENT'`, never `REQUEST_CHANGES`, no auto-fix) is a settled decision this track
+keeps. The items above make the reviewer more *persistent*, not more *powerful* — the sole
+carve-out being resolution of its own threads.
 
 ## What this is not
 
