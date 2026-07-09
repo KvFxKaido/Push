@@ -7,6 +7,7 @@ import process from 'node:process';
 import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
 import type { DelegationOutcome } from '../lib/runtime-contract.ts';
 import { renameWithRetry } from './fs-atomic.ts';
+import { PROVIDER_CONFIGS, redirectDeprecatedProvider } from './provider.js';
 
 // PROTOCOL_VERSION moved to lib/protocol-schema.ts (the canonical
 // owner of the wire contract). Re-exported here so the ~6 CLI files
@@ -587,6 +588,50 @@ export async function loadSessionState(sessionId: string): Promise<SessionState>
     throw new Error(`Invalid session state: ${sessionId}`);
   }
   const stateObj = parsed as SessionState;
+
+  // Retired-provider migration: persisted sessions (and their role routing)
+  // can reference a provider that has since been removed from the roster.
+  // Coerce on read — the single chokepoint every resume path shares (TUI
+  // resume/load-session, daemon session reads) — so downstream
+  // `PROVIDER_CONFIGS[state.provider]` lookups can't crash a resumable
+  // session. The next save persists the redirect. Mirrors `parseProvider`'s
+  // flag/env fallback (Codex P2, PR #1382); stderr because CLI stdout is
+  // reserved for user output / --json payloads.
+  const redirected = redirectDeprecatedProvider(stateObj.provider);
+  if (redirected) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'session_provider_redirected',
+        sessionId,
+        from: stateObj.provider,
+        to: redirected,
+      }),
+    );
+    stateObj.provider = redirected;
+    // The stale model id belongs to the removed provider — snap to the
+    // replacement's default (the update_session atomic-selection rule).
+    stateObj.model = PROVIDER_CONFIGS[redirected]?.defaultModel ?? stateObj.model;
+  }
+  if (stateObj.roleRouting) {
+    for (const [role, entry] of Object.entries(stateObj.roleRouting)) {
+      const roleRedirect = entry?.provider ? redirectDeprecatedProvider(entry.provider) : null;
+      if (roleRedirect) {
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'session_role_provider_redirected',
+            sessionId,
+            role,
+            from: entry.provider,
+            to: roleRedirect,
+          }),
+        );
+        entry.provider = roleRedirect;
+        entry.model = PROVIDER_CONFIGS[roleRedirect]?.defaultModel ?? entry.model;
+      }
+    }
+  }
 
   // Hydrate messages from the append-only log. Slim state.json (post-PR 4)
   // omits `messages` entirely; legacy state.json (pre-PR 4) carries them

@@ -99,7 +99,12 @@ import {
   renderEntryLines,
   summarizeToolArgs,
 } from './tui-framers.js';
-import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
+import {
+  PROVIDER_CONFIGS,
+  redirectDeprecatedProvider,
+  resolveApiKey,
+  getProviderList,
+} from './provider.js';
 import { getCuratedModels, fetchModels } from './model-catalog.js';
 import {
   createSessionState,
@@ -1490,8 +1495,16 @@ export async function runTUI(options = {}) {
     // Optional resume overrides
     let stateChanged = false;
 
-    const overrideProvider = normalizeProviderInput(options.provider);
+    let overrideProvider = normalizeProviderInput(options.provider);
     if (overrideProvider) {
+      const redirected = redirectDeprecatedProvider(overrideProvider);
+      if (redirected) {
+        process.stderr.write(
+          `Warning: provider "${overrideProvider}" has been removed. Falling back to "${redirected}".
+`,
+        );
+        overrideProvider = redirected;
+      }
       const overrideConfig = PROVIDER_CONFIGS[overrideProvider];
       if (!overrideConfig) throw new Error(`Unknown provider: ${overrideProvider}`);
       if (overrideProvider !== state.provider) {
@@ -1518,11 +1531,21 @@ export async function runTUI(options = {}) {
       await saveSessionState(state);
     }
   } else {
-    const providerName =
+    const requestedProvider =
       normalizeProviderInput(options.provider) ||
       normalizeProviderInput(process.env.PUSH_PROVIDER) ||
       normalizeProviderInput(config.provider) ||
       'ollama';
+    // Retired providers redirect instead of crashing startup — same
+    // treatment as cli.ts parseProvider (Codex P2, PR #1382).
+    const redirectedName = redirectDeprecatedProvider(requestedProvider);
+    if (redirectedName) {
+      process.stderr.write(
+        `Warning: provider "${requestedProvider}" has been removed. Falling back to "${redirectedName}".
+`,
+      );
+    }
+    const providerName = redirectedName ?? requestedProvider;
     const cwd = path.resolve(options.cwd || process.cwd());
     const providerConfig = PROVIDER_CONFIGS[providerName];
     if (!providerConfig) throw new Error(`Unknown provider: ${providerName}`);

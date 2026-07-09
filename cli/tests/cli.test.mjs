@@ -1127,7 +1127,15 @@ describe('deprecated provider migration', needsChildStdout, () => {
   // `google` was previously a deprecated alias for openrouter; it now
   // resolves natively to the direct Google Gemini provider, so it's no
   // longer in this iteration.
-  for (const deprecated of ['mistral', 'zai', 'minimax', 'azure', 'bedrock', 'vertex']) {
+  for (const deprecated of [
+    'mistral',
+    'zai',
+    'minimax',
+    'azure',
+    'bedrock',
+    'vertex',
+    'kilocode',
+  ]) {
     it(`warns and falls back for --provider ${deprecated}`, async () => {
       // run --task will parse the provider, emit a warning, then proceed.
       // It will eventually fail (no API key / no server), but the warning
