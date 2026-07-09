@@ -155,11 +155,20 @@ gap below is a daemon-shaped idea expressed in this doc's vocabulary:
   holds an alarm used only as a 90-second crash watchdog; a condition sweep is the same
   primitive pointed at product behavior. It also retires the current terminal advice ("close
   and reopen the PR"), which exists only because nothing ever fires twice.
-- **Risk-scaled depth.** The autonomous path unconditionally runs the deep reviewer (up to 12
-  rounds, sandbox provisioning) even for a docs-only diff, while the quick `runReviewer` ships
-  unused on this path. Classify the diff (paths, size, whether it crosses REVIEW.md's named
-  seams) and route trivial diffs to the quick pass, reserving deep review + gating for risky
-  ones. Cheaper and less noisy at once.
+- **Risk-scaled depth.** *(Rejected 2026-07-09 — the uniform deep pass (16 rounds, raised from
+  12 to make room for the verification rounds below) is a trusted
+  floor, not a cost to optimize; for a solo repo the review's job is catching what the author
+  missed, and token cost is noise. The real enforcement gap was verification, shipped as the
+  next bullet.)* ~~Classify the diff and route trivial diffs to the quick pass.~~
+- **Verify-before-clean-pass (runtime-gated verification).** *(Shipped 2026-07-09.)* The
+  reviewer's verification was doubly prompt-suggested: the only verifier tool was typecheck,
+  and nothing checked whether it ran. Now: a `tests` verifier (base-ref `# test:` hint command,
+  unavailable without one), runtime tracking of verifier runs (`ReviewVerification` on
+  `ReviewResult`, persisted with round checkpoints), a `completionGate` in the deep reviewer
+  that bounces an unverified zero-findings completion once with a nudge, and a check-run policy
+  where `success` on a clean pass requires a verifier to have run and passed — everything else
+  concludes `neutral` with the reason in the title (unverified / verification failed /
+  verification unavailable). The same didn't-happen ≠ clean-pass rule as the degraded path.
 - **Per-repo policy as repo contract (the frontmatter split).** `REVIEW.md` is already the
   prose contract with the right trust posture (fetched from the base ref, never the fork
   head), but the machine policy lives in worker env (`PR_REVIEW_GATING_REPOS`, installation
