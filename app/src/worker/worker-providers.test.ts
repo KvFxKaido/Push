@@ -16,6 +16,7 @@ import {
   handleAnthropicModels,
   handleCloudflareChat,
   handleCloudflareModels,
+  handleDeepSeekChat,
   handleOllamaChat,
   handleOllamaModels,
   handleOpenAIChat,
@@ -884,6 +885,50 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     );
     expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+});
+
+describe('handleDeepSeekChat — AI Gateway first-party /anthropic variant (Bucket B)', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  it('goes direct to the /anthropic endpoint when gateway env is unset', async () => {
+    const captured = captureFetch();
+    await handleDeepSeekChat(makeChatRequest(), makeEnv({ DEEPSEEK_API_KEY: 'ds-key' }));
+    expect(captured.current?.url).toBe('https://api.deepseek.com/anthropic/v1/messages');
+    expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+
+  it('routes the /anthropic variant through the first-party deepseek proxy when configured', async () => {
+    // Verified live 2026-07-09: CF's first-party deepseek proxy passes the
+    // non-standard /anthropic/v1/messages path (200 identical to direct).
+    const captured = captureFetch();
+    await handleDeepSeekChat(
+      makeChatRequest(),
+      makeEnv({
+        DEEPSEEK_API_KEY: 'ds-key',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+      }),
+    );
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/deepseek/anthropic/v1/messages',
+    );
+    // x-api-key (not Bearer) still flows to deepseek; gateway token rides alongside.
+    expect(captured.current?.headers['x-api-key']).toBe('ds-key');
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
   });
 });
 

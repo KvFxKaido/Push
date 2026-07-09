@@ -958,13 +958,25 @@ export async function handleDeepSeekChat(request: Request, env: Env): Promise<Re
     const timeoutId = setTimeout(() => controller.abort(), 180_000);
     let upstream: Response;
     try {
-      upstream = await fetch(DEEPSEEK_ANTHROPIC_URL, {
+      // AIG Bucket B: deepseek is a first-party gateway provider whose
+      // provider-native proxy passes Push's non-standard `/anthropic` variant
+      // (verified 2026-07-09 — gateway 200 byte-identical to direct). Derive the
+      // pathSuffix from DEEPSEEK_ANTHROPIC_URL so the two can't drift. No-op
+      // unless CF_AI_GATEWAY_* is set; `x-api-key` still flows to deepseek.
+      const deepseekDirect = new URL(DEEPSEEK_ANTHROPIC_URL);
+      const { upstreamUrl: deepseekUpstream, gatewayHeaders } = resolveAiGatewayFetchTarget(
+        env,
+        DEEPSEEK_ANTHROPIC_URL,
+        { provider: 'deepseek', pathSuffix: `${deepseekDirect.pathname}${deepseekDirect.search}` },
+      );
+      upstream = await fetch(deepseekUpstream, {
         method: 'POST',
         headers: {
           'x-api-key': apiKey,
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
         },
         body: upstreamBody,
         signal: controller.signal,
