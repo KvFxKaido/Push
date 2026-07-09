@@ -2,11 +2,13 @@
 
 **Status:** Draft — design-in-motion; needs roadmap promotion before implementation.
 **Date:** 2026-07-09
-Related: [`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>) (the
-execution substrate this rides on), [`Platform, Sessions, and Sandbox Decisions.md`](<Platform,
-Sessions, and Sandbox Decisions.md>) §9 (the shipped webhook→PR-review special case this
-generalizes), [`Repo-Scoped Chats — Branch as Session State.md`](<Repo-Scoped Chats — Branch as
-Session State.md>) (the chat model activations post into).
+Related:
+[`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>)
+(the execution substrate this rides on);
+[`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
+§9 (the shipped webhook→PR-review special case this generalizes);
+[`Repo-Scoped Chats — Branch as Session State.md`](<Repo-Scoped Chats — Branch as Session State.md>)
+(the chat model activations post into).
 
 ## Problem
 
