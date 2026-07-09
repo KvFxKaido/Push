@@ -1,7 +1,7 @@
 # Cloudflare AI Gateway v2 — Re-eval Against Current Roster
 
 Date: 2026-07-09
-Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred (no creds); Path 2 remains design.
+Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred then removed with Bucket D (#1378); Path 2 remains design (settings two-tier unlock spec'd below).
 
 ## Why re-open this
 
@@ -90,7 +90,20 @@ So Bucket C via custom proxy covers **five** — `ollama`, `nvidia`, `zen`, `sak
 
 **Path 2 — adopt the REST API (bigger lift, unified billing).** New wiring against `api.cloudflare.com/…/ai/v1` — this is what delivers the clean Cloudflare-auth / unified-billing model. It likely needs model-id mapping (`openai/...`, `anthropic/...`, `google-ai-studio/...`), request-schema choices per provider, and a separate rollback plan from the provider-native proxy.
 
-**Bucket D** stays direct-to-provider until there is an explicit credential-placement decision.
+### Path 2 product design — the settings key wall becomes two-tier
+
+Most of Path 2's real design is not the wiring — it's what happens to the unlock model. Today a provider lights up when its credentials resolve server-side: a Worker env secret or a user-stored key (`worker-provider-capabilities.ts`, same resolution path dispatch uses). Key = unlock, one per provider. Paths 1/1.5 don't touch this — they're BYOK, so the per-key unlock stays correct as long as the gateway is proxy-only. Path 2 changes it from *N keys, N unlocks* to **two tiers**:
+
+- **Tier 1 — one Cloudflare token unlocks the unified-billing subset.** No provider key needed for CF-supported models (openai, anthropic, google, deepseek, …). One key in Settings lights up that whole slice of the catalog.
+- **Tier 2 — per-provider keys remain, with two jobs.** (a) The **only** path for custom providers — `fireworks / ollama / zen / nvidia / sakana` stay BYOK even on the REST API, so their unlocks are unchanged forever. (b) An **override** for CF-supported providers — a direct key skips the CF fee and one hop.
+
+**Precedence rule: direct key wins; the CF token fills gaps.** When both a CF token and a direct provider key exist, dispatch uses the direct key. Rationale: direct is cheaper (no unified-billing fee) and fewer hops, and it keeps the CF token's role legible — "unlocks what you haven't keyed directly," never a shadow re-route of billing for a provider the user deliberately keyed. Adding the CF token is therefore strictly additive: it can light up new models but can never silently change how an existing provider bills. (The inverse rule — CF-token-wins — fails the honest-surfaces test for exactly that reason.)
+
+Eval-safety note: unified billing does **not** reintroduce OpenRouter's routing opacity. The backend is still the named provider — CF fronts the bill, not the routing — so Tier 1 selections remain pinned-upstream and eval-safe.
+
+Pre-Path 2, one small settings change is already warranted: a **gateway status row** ("Routing via `push-gate` · observability active" when `CF_AI_GATEWAY_*` resolves). Bucket A/C traffic currently takes an extra hop that the UI doesn't disclose anywhere.
+
+**Bucket D — dissolved by removal (2026-07-09).** `azure` / `bedrock` (and `vertex` from Bucket B) were deleted outright in #1378 rather than migrated — they were inert/unconfigured experimental providers, and removing them took the credential-placement question with them. If any returns, it re-enters as a fresh provider through this doc's buckets.
 
 Net: "too unique to move" is now false for the **majority** of the roster — but *what* you get depends on the surface. The provider-native proxy buys observability on first-party providers now; custom providers can extend that observability to the non-first-party tail; the REST API is a separate unified-billing migration. The routing brain stays in `lib/` regardless.
 
