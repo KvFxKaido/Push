@@ -781,7 +781,7 @@ describe('executeSandboxToolCall -- prepare_push auditor overrides', () => {
     });
 
     await executeSandboxToolCall({ tool: 'prepare_push', args: {} }, 'sb-123', {
-      auditorProviderOverride: 'vertex',
+      auditorProviderOverride: 'google',
       auditorModelOverride: 'google/gemini-2.5-pro',
     });
 
@@ -793,7 +793,7 @@ describe('executeSandboxToolCall -- prepare_push auditor overrides', () => {
       }),
       undefined,
       expect.objectContaining({
-        providerOverride: 'vertex',
+        providerOverride: 'google',
         modelOverride: 'google/gemini-2.5-pro',
       }),
       expect.any(Array),

@@ -25,15 +25,10 @@ import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
 import { nvidiaStream } from './nvidia-stream';
 import { deepseekStream } from './deepseek-stream';
-import { azureStream } from './azure-stream';
-import { bedrockStream } from './bedrock-stream';
-import { vertexStream } from './vertex-stream';
 import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
 import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
-import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
-import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { resolvePushCapabilityProfile } from './model-catalog';
 import {
   getCloudflareModelName,
@@ -90,18 +85,17 @@ const SAKANA_TIMEOUTS = {
  * to the browser after server-side translation, but the reasoning round-trip
  * compatibility that matters for failover follows the native contract.
  *
- * Some routes are Anthropic-transport *per model* (Vertex Claude, Zen Go
- * MiniMax/Qwen), which a provider-id registry cannot express. Those are
- * handled by the `routesThroughAnthropicBridge` guard in
- * `resolveFailoverCandidates`.
+ * Some routes are Anthropic-transport *per model* (Zen Go MiniMax/Qwen), which
+ * a provider-id registry cannot express. Those are handled by the
+ * `routesThroughAnthropicBridge` guard in `resolveFailoverCandidates`.
  */
 export type ProviderWireShape = ProviderStreamShape;
 
 /**
  * Whether a provider+model pair speaks the Anthropic Messages transport (and so
  * round-trips signed reasoning blocks). Single source of truth shared with
- * `orchestrator.ts`'s reasoning-block emission gate. Model-aware: `zen` and
- * `vertex` route through the bridge only for specific models.
+ * `orchestrator.ts`'s reasoning-block emission gate. Model-aware: `zen` routes
+ * through the bridge only for specific models.
  */
 export function routesThroughAnthropicBridge(
   provider: Exclude<ActiveProvider, 'demo'> | undefined,
@@ -140,7 +134,7 @@ function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): Pr
  *
  * Reasoning-block safety (decision #13): if the LOCKED route is
  * Anthropic-transport — direct `anthropic`, or a model-dependent bridge route
- * (`vertex` Claude, `zen` Go MiniMax/Qwen) — the history carries signed
+ * (`zen` Go MiniMax/Qwen) — the history carries signed
  * thinking blocks bound to that route's account, so we **never** fail over
  * (signatures can't be replayed elsewhere). Candidate routes are checked with
  * their configured model too, so a non-Anthropic lock cannot fail over into a
@@ -195,9 +189,6 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   sakana: sakanaStream,
   deepseek: deepseekStream,
   nvidia: nvidiaStream,
-  azure: azureStream,
-  bedrock: bedrockStream,
-  vertex: vertexStream,
   anthropic: anthropicStream,
   openai: openaiStream,
   google: geminiStream,
@@ -303,12 +294,6 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getSakanaModelName();
     case 'deepseek':
       return getDeepSeekModelName();
-    case 'azure':
-      return getAzureModelName();
-    case 'bedrock':
-      return getBedrockModelName();
-    case 'vertex':
-      return getVertexModelName();
     case 'anthropic':
       return getAnthropicModelName();
     case 'openai':

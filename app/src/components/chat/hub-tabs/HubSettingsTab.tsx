@@ -162,8 +162,6 @@ export function HubSettingsTab({
 
   const configuredProviderCount = [
     ...Object.values(ai.builtInProviders).map((provider) => provider.hasKey),
-    ...Object.values(ai.experimentalProviders).map((provider) => provider.hasKey),
-    ai.vertexProvider.hasKey,
   ].filter(Boolean).length;
 
   const defaultProvider =

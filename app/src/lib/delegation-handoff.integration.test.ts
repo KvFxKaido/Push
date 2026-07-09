@@ -304,8 +304,8 @@ describe('delegation handoff integration', () => {
       {
         task: 'Trace auth fallback behavior',
         files: [],
-        provider: 'vertex',
-        model: 'google/gemini-2.5-pro',
+        provider: 'google',
+        model: 'gemini-2.5-pro',
       },
       null,
       'KvFxKaido/Push',

@@ -40,7 +40,7 @@ describe('isProviderEngineCapable', () => {
   });
 
   it('reports non-DO-dispatchable providers incapable regardless of env', () => {
-    for (const provider of ['azure', 'bedrock', 'vertex', 'demo'] as const) {
+    for (const provider of ['demo'] as const) {
       expect(resolveProviderHandler(provider, false)).toBeNull();
       expect(isProviderEngineCapable(provider, { OLLAMA_API_KEY: 'k' } as Env)).toBe(false);
     }
@@ -110,13 +110,8 @@ describe('handleProviderEngineCapabilities — user-stored keys', () => {
     const res = await handleProviderEngineCapabilities(makeRequest(), env);
     const body = (await res.json()) as { providers: Record<string, boolean> };
     expect(body.providers.openrouter).toBe(true);
-    // Still gated on DO dispatchability — a stored key can't make vertex capable.
-    await putUserProviderKey(env, 'anon', 'vertex', 'some-key');
-    const res2 = await handleProviderEngineCapabilities(makeRequest(), env);
-    const body2 = (await res2.json()) as { providers: Record<string, boolean> };
-    expect(body2.providers.vertex).toBe(false);
-    // And providers with neither env nor user key stay false.
-    expect(body2.providers.nvidia).toBe(false);
+    // Providers with neither env nor user key stay false.
+    expect(body.providers.nvidia).toBe(false);
   });
 });
 

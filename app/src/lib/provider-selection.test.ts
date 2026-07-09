@@ -34,7 +34,7 @@ describe('provider selection', () => {
 
   it('drops stale persisted models when the locked provider is unavailable', () => {
     const result = resolveChatProviderSelection({
-      existingProvider: 'vertex',
+      existingProvider: 'anthropic',
       existingModel: 'google/gemini-2.5-pro',
       fallbackProvider: 'openrouter',
       isProviderAvailable: (provider) => provider === 'openrouter',
@@ -50,7 +50,7 @@ describe('provider selection', () => {
 
   it('ignores explicit model overrides when their provider no longer matches', () => {
     expect(
-      resolveProviderSpecificModel('openrouter', 'google/gemini-2.5-pro', 'vertex'),
+      resolveProviderSpecificModel('openrouter', 'google/gemini-2.5-pro', 'anthropic'),
     ).toBeUndefined();
     expect(
       resolveProviderSpecificModel('openrouter', ' anthropic/claude-sonnet ', 'openrouter'),

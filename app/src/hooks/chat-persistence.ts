@@ -2,6 +2,7 @@ import type { AIProviderType, ChatMessage, Conversation } from '@/types';
 import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
+import { isRealProviderId } from '@push/lib/provider-definition';
 import { backfillConversationMessageBranches } from '@/lib/chat-message';
 
 export { createId };
@@ -87,15 +88,31 @@ export function loadConversations(): Record<string, Conversation> {
         const cleaned = (convs[id].messages || [])
           .map(sanitizeSandboxStateCards)
           .filter((m): m is ChatMessage => m !== null);
-        const normalizedModel = normalizeConversationModel(
-          conversation.provider ?? null,
-          conversation.model ?? null,
-        );
+        // Drop a persisted provider lock that no longer resolves to a real
+        // provider (e.g. a since-removed provider). Downstream reuse outside
+        // send-message preparation — the commit/push auditor, compaction —
+        // hands the lock straight to getProviderPushStream, which has no factory
+        // for an unknown id and throws on use. isRealProviderId gates stored
+        // provider selection the same way (see readStoredProvider in lib/providers).
+        const rawProvider = conversation.provider ?? null;
+        const providerRetired = rawProvider !== null && !isRealProviderId(rawProvider);
+        const normalizedProvider = providerRetired ? null : rawProvider;
+        // Drop the model alongside a retired provider lock. resolveChatProviderSelection
+        // prefers existingModel over the requested/default (provider-selection.ts), so a
+        // leftover retired-provider model id would be sent to whatever provider is now
+        // active and fail on send. A model with no lock or a valid lock is normalized as before.
+        const normalizedModel = providerRetired
+          ? null
+          : normalizeConversationModel(normalizedProvider, conversation.model ?? null);
         convs[id] = {
           ...conversation,
           messages: cleaned,
+          provider: normalizedProvider ?? undefined,
           model: normalizedModel ?? undefined,
         };
+        if ((conversation.provider ?? null) !== normalizedProvider) {
+          migrated = true;
+        }
         if ((conversation.model ?? null) !== normalizedModel) {
           migrated = true;
         }

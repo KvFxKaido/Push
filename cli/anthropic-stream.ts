@@ -8,8 +8,8 @@
  * Anthropic SSE directly into neutral `PushStreamEvent`s via
  * `anthropicEventStream` (no OpenAI-SSE serialize/reparse round-trip). Every web
  * Anthropic-Messages route now uses this same native pump — the direct Anthropic
- * provider plus the multiplexed Vertex-Claude / Zen-Go routes (their Workers
- * proxy the raw upstream SSE) — so the OpenAI-SSE translator is fully retired.
+ * provider plus the multiplexed Zen-Go routes (their Workers proxy the raw
+ * upstream SSE) — so the OpenAI-SSE translator is fully retired.
  *
  * Shape mirrors the Worker's `handleAnthropicChat`: build body, POST,
  * translate response, yield events. Difference vs the Worker version: the CLI

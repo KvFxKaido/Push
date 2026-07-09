@@ -98,13 +98,6 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.openaiModelOptions;
     case 'google':
       return catalog.googleModelOptions;
-    // Experimental providers expose only the configured model.
-    case 'azure':
-    case 'bedrock':
-    case 'vertex': {
-      const single = defaultModelForProvider(catalog, provider);
-      return single ? [single] : [];
-    }
     default:
       return [];
   }
@@ -131,12 +124,6 @@ function defaultModelForProvider(
       return catalog.fireworks.model || null;
     case 'sakana':
       return catalog.sakana.model || null;
-    case 'azure':
-      return catalog.azure.model || null;
-    case 'bedrock':
-      return catalog.bedrock.model || null;
-    case 'vertex':
-      return catalog.vertex.model || null;
     case 'anthropic':
       return catalog.anthropic.model || null;
     case 'openai':
@@ -291,8 +278,8 @@ export function ComposerDraftScreen({
     // Lazy-fetch model lists for every configured provider that has a
     // dynamic catalog when the picker opens. Skips already-loaded ones
     // — the refresh handlers are idempotent and short-circuit if the
-    // list is fresh. Anthropic / OpenAI / Google / Azure / Bedrock /
-    // Vertex ship static model lists, so nothing to refresh there.
+    // list is fresh. Anthropic / OpenAI / Google ship static model lists,
+    // so nothing to refresh there.
     for (const [provider] of catalog.availableProviders) {
       if (provider === 'openrouter' && catalog.openRouterModelOptions.length === 0)
         void catalog.refreshOpenRouterModels();

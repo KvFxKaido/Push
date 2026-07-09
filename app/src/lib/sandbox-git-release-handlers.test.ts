@@ -649,7 +649,7 @@ describe('handlePreparePush', () => {
   it('threads provider/model overrides through to the Auditor call', async () => {
     const ctx = makeContext({ pushedDiff: cleanDiff, auditorVerdict: safeAuditorVerdict() });
     await handlePreparePush(ctx, {
-      providerOverride: 'vertex',
+      providerOverride: 'google',
       modelOverride: 'google/gemini-2.5-pro',
     });
     expect(ctx.runAuditor).toHaveBeenCalledWith(
@@ -658,7 +658,7 @@ describe('handlePreparePush', () => {
       expect.objectContaining({ source: 'sandbox-push' }),
       undefined,
       expect.objectContaining({
-        providerOverride: 'vertex',
+        providerOverride: 'google',
         modelOverride: 'google/gemini-2.5-pro',
       }),
       expect.any(Array),

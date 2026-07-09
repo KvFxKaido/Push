@@ -1030,17 +1030,17 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(errors[0]!.message).toContain('502');
   });
 
-  it('throws for unsupported providers (azure in Phase 1)', async () => {
+  it('throws for unsupported providers (demo)', async () => {
     const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
-      provider: 'azure',
-      modelId: 'gpt-4o',
+      provider: 'demo',
+      modelId: 'demo-model',
       jobId: 'job-test-1',
     });
     const { errors } = await drain(stream);
     expect(errors.length).toBe(1);
-    expect(errors[0]!.message).toContain('azure');
+    expect(errors[0]!.message).toContain('demo');
     expect(providerHandlerMocks.handleOpenRouterChat).not.toHaveBeenCalled();
   });
 

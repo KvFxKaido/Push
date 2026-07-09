@@ -11,16 +11,12 @@ import { Button } from '@/components/ui/button';
 import {
   BUILT_IN_SETTINGS_PROVIDER_META,
   BUILT_IN_SETTINGS_PROVIDER_ORDER,
-  EXPERIMENTAL_SETTINGS_PROVIDER_META,
-  EXPERIMENTAL_SETTINGS_PROVIDER_ORDER,
   PROVIDER_LABELS,
   TAVILY_SETTINGS_META,
   type BuiltInSettingsProviderId,
 } from '@/components/settings-shared';
 import {
-  ExperimentalProviderSection,
   ProviderKeySection,
-  VertexProviderSection,
   type SettingsAIProps,
   type SettingsAuthProps,
   type SettingsDataProps,
@@ -41,34 +37,6 @@ import { getRoleLabel } from '@push/lib/role-display';
 
 const SECTION_CARD_CLASS =
   'space-y-3 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]';
-
-function PrivateConnectorsDisclosure({ children }: { children: React.ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="min-w-0 rounded-2xl border border-push-edge bg-push-surface/55 p-4 shadow-[0_14px_28px_rgba(0,0,0,0.18)]">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between text-left text-sm font-medium text-push-fg"
-      >
-        Private connectors (experimental)
-        <ChevronDown
-          className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${open ? 'rotate-180' : ''}`}
-        />
-      </button>
-      {open && (
-        <div className="mt-3 space-y-3">
-          <p className="text-xs text-push-fg-dim">
-            Direct Azure/Bedrock connectors use one shared API key and base URL per provider, plus
-            saved deployment/model entries on top. Vertex still uses a Google-native service-account
-            setup so Gemini and Claude can share one provider entry.
-          </p>
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * Honest surface for the active GitHub credential: names the regime, its blast
@@ -1321,79 +1289,6 @@ export function SettingsSectionContent({
               </div>
             </div>
           </div>
-
-          <PrivateConnectorsDisclosure>
-            {EXPERIMENTAL_SETTINGS_PROVIDER_ORDER.map((providerId) => {
-              const provider = ai.experimentalProviders[providerId];
-              const meta = EXPERIMENTAL_SETTINGS_PROVIDER_META[providerId];
-              const label = PROVIDER_LABELS[providerId];
-
-              return (
-                <ExperimentalProviderSection
-                  key={providerId}
-                  label={label}
-                  backendId={providerId}
-                  activeBackend={ai.activeBackend}
-                  setActiveBackend={ai.setActiveBackend}
-                  clearPreferredProvider={ai.clearPreferredProvider}
-                  helperText={meta.helperText}
-                  configured={provider.isConfigured}
-                  hasKey={provider.hasKey}
-                  keyInput={provider.keyInput}
-                  setKeyInput={provider.setKeyInput}
-                  setKey={provider.setKey}
-                  clearKey={provider.clearKey}
-                  baseUrl={provider.baseUrl}
-                  baseUrlInput={provider.baseUrlInput}
-                  setBaseUrlInput={provider.setBaseUrlInput}
-                  baseUrlError={provider.baseUrlError}
-                  setBaseUrl={provider.setBaseUrl}
-                  clearBaseUrl={provider.clearBaseUrl}
-                  baseUrlPlaceholder={meta.baseUrlPlaceholder}
-                  model={provider.model}
-                  modelInput={provider.modelInput}
-                  setModelInput={provider.setModelInput}
-                  clearModel={provider.clearModel}
-                  deployments={provider.deployments}
-                  activeDeploymentId={provider.activeDeploymentId}
-                  saveDeployment={provider.saveDeployment}
-                  selectDeployment={provider.selectDeployment}
-                  removeDeployment={provider.removeDeployment}
-                  clearDeployments={provider.clearDeployments}
-                  modelPlaceholder={meta.modelPlaceholder}
-                />
-              );
-            })}
-
-            <VertexProviderSection
-              activeBackend={ai.activeBackend}
-              setActiveBackend={ai.setActiveBackend}
-              clearPreferredProvider={ai.clearPreferredProvider}
-              configured={ai.vertexProvider.isConfigured}
-              hasKey={ai.vertexProvider.hasKey}
-              keyInput={ai.vertexProvider.keyInput}
-              setKeyInput={ai.vertexProvider.setKeyInput}
-              keyError={ai.vertexProvider.keyError}
-              setKey={ai.vertexProvider.setKey}
-              clearKey={ai.vertexProvider.clearKey}
-              region={ai.vertexProvider.region}
-              regionInput={ai.vertexProvider.regionInput}
-              setRegionInput={ai.vertexProvider.setRegionInput}
-              regionError={ai.vertexProvider.regionError}
-              setRegion={ai.vertexProvider.setRegion}
-              clearRegion={ai.vertexProvider.clearRegion}
-              model={ai.vertexProvider.model}
-              modelInput={ai.vertexProvider.modelInput}
-              setModelInput={ai.vertexProvider.setModelInput}
-              modelOptions={ai.vertexProvider.modelOptions}
-              setModel={ai.vertexProvider.setModel}
-              clearModel={ai.vertexProvider.clearModel}
-              mode={ai.vertexProvider.mode}
-              transport={ai.vertexProvider.transport}
-              projectId={ai.vertexProvider.projectId}
-              hasLegacyConfig={ai.vertexProvider.hasLegacyConfig}
-            />
-          </PrivateConnectorsDisclosure>
 
           {/* Web Search (Tavily) */}
           <div className={SECTION_CARD_CLASS}>

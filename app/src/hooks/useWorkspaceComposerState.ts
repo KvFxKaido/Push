@@ -20,9 +20,6 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   cloudflare: '',
   zen: '',
   nvidia: '',
-  azure: '',
-  bedrock: '',
-  vertex: '',
   anthropic: '',
   openai: '',
   google: '',
@@ -41,9 +38,6 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
     nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
-    azure: typeof parsed.azure === 'string' ? parsed.azure.trim() : '',
-    bedrock: typeof parsed.bedrock === 'string' ? parsed.bedrock.trim() : '',
-    vertex: typeof parsed.vertex === 'string' ? parsed.vertex.trim() : '',
     anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
     openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
     google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
@@ -122,9 +116,6 @@ export function useWorkspaceComposerState({
       kilocode: catalog.kilocode.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
-      azure: catalog.azure.model,
-      bedrock: catalog.bedrock.model,
-      vertex: catalog.vertex.model,
       anthropic: catalog.anthropic.model,
       openai: catalog.openai.model,
       google: catalog.google.model,
@@ -134,8 +125,6 @@ export function useWorkspaceComposerState({
       catalog.anthropic.model,
       catalog.openai.model,
       catalog.google.model,
-      catalog.azure.model,
-      catalog.bedrock.model,
       catalog.cloudflare.model,
       catalog.fireworks.model,
       catalog.sakana.model,
@@ -143,7 +132,6 @@ export function useWorkspaceComposerState({
       catalog.nvidia.model,
       catalog.ollama.model,
       catalog.openRouter.model,
-      catalog.vertex.model,
       catalog.zen.model,
       catalog.deepseek.model,
     ],
@@ -216,14 +204,6 @@ export function useWorkspaceComposerState({
         zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
         nvidia:
           draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
-        azure:
-          draft?.models?.azure?.trim() || rememberedChatModels.azure || defaultChatModels.azure,
-        bedrock:
-          draft?.models?.bedrock?.trim() ||
-          rememberedChatModels.bedrock ||
-          defaultChatModels.bedrock,
-        vertex:
-          draft?.models?.vertex?.trim() || rememberedChatModels.vertex || defaultChatModels.vertex,
         anthropic:
           draft?.models?.anthropic?.trim() ||
           rememberedChatModels.anthropic ||
@@ -455,33 +435,6 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
-  const handleSelectAzureModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('azure', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { azure: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
-  const handleSelectBedrockModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('bedrock', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { bedrock: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
-  const handleSelectVertexModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('vertex', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { vertex: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
   const handleSelectAnthropicModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('anthropic', model);
@@ -531,9 +484,6 @@ export function useWorkspaceComposerState({
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,
     handleSelectDeepSeekModelFromChat,
-    handleSelectAzureModelFromChat,
-    handleSelectBedrockModelFromChat,
-    handleSelectVertexModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
     handleSelectGoogleModelFromChat,

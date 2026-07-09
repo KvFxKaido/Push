@@ -318,23 +318,6 @@ export const GOOGLE_MODELS: string[] = [
   'gemini-2.5-flash',
 ];
 
-/**
- * Vertex model ids (the `id` field of `VERTEX_MODEL_OPTIONS` in
- * `app/src/lib/vertex-provider.ts`). Lives here in shared `lib/` so the native
- * function-calling gate can be resolved identically on the web and CLI surfaces
- * (the option objects carry web-only metadata and can't be imported by the CLI).
- * A consistency test pins this list to `VERTEX_MODEL_OPTIONS`.
- */
-export const VERTEX_MODELS: string[] = [
-  'google/gemini-2.5-pro',
-  'google/gemini-2.5-flash',
-  'google/gemini-2.5-flash-lite',
-  'claude-sonnet-4-5@20250929',
-  'claude-haiku-4-5@20251001',
-  'claude-sonnet-4@20250514',
-  'claude-opus-4-1@20250805',
-];
-
 export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,

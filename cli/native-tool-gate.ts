@@ -10,10 +10,8 @@ import {
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
-  looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
   OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
-  VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '../lib/native-tool-gate.ts';
 
 // Name-based curated allowlists. For the providers also gated by name on the web
@@ -43,11 +41,9 @@ export function cliProviderModelSupportsNativeToolCalling(
   if (!modelId) return false;
   // Shared name-based decisions (single definition in `lib/native-tool-gate.ts`),
   // kept identical to the web gate.
-  if (provider === 'openai' || provider === 'azure') {
+  if (provider === 'openai') {
     return looksLikeOpenAIToolCallingModel(modelId);
   }
-  if (provider === 'vertex') return VERTEX_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
   const allowlist = CURATED_NATIVE_TOOL_MODELS[provider];
   return allowlist ? allowlist.has(modelId) : false;
 }

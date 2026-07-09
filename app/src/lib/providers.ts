@@ -1,10 +1,7 @@
 import type { AIProviderType, AIProviderConfig, AIModel, AgentRole } from '@/types';
-import { getAzureModelName, getBedrockModelName } from '@/hooks/useExperimentalProviderConfig';
-import { getVertexModelName } from '@/hooks/useVertexConfig';
 import { resolveApiUrl } from './api-url';
 import { getModelCapabilities } from './model-capabilities';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
-import { VERTEX_DEFAULT_MODEL as SHARED_VERTEX_DEFAULT_MODEL } from './vertex-provider';
 import { ZEN_GO_DEFAULT_MODEL, ZEN_GO_MODELS as SHARED_ZEN_GO_MODELS } from './zen-go';
 import {
   PROVIDER_DEFINITIONS,
@@ -111,11 +108,6 @@ export const PROVIDER_URLS: Record<AIProviderType, ProviderUrlPair> = {
   demo: { chat: '', models: '' },
 };
 
-// Experimental direct-deployment defaults — only used as placeholders before the user
-// configures a concrete deployment/model.
-export const AZURE_DEFAULT_MODEL = 'gpt-4.1';
-export const BEDROCK_DEFAULT_MODEL = 'anthropic.claude-3-7-sonnet-20250219-v1:0';
-export const VERTEX_DEFAULT_MODEL = SHARED_VERTEX_DEFAULT_MODEL;
 export const ZEN_GO_MODELS: string[] = [...SHARED_ZEN_GO_MODELS];
 export { ZEN_GO_DEFAULT_MODEL };
 
@@ -402,18 +394,6 @@ const nvidiaModel = createModelNameStorage(requireModelStorageKey('nvidia'), NVI
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;
 
-const azureModel = createModelNameStorage(requireModelStorageKey('azure'), AZURE_DEFAULT_MODEL);
-export const setAzureModelName = azureModel.set;
-
-const bedrockModel = createModelNameStorage(
-  requireModelStorageKey('bedrock'),
-  BEDROCK_DEFAULT_MODEL,
-);
-export const setBedrockModelName = bedrockModel.set;
-
-const vertexModel = createModelNameStorage(requireModelStorageKey('vertex'), VERTEX_DEFAULT_MODEL);
-export const setVertexModelName = vertexModel.set;
-
 const kiloCodeModel = createModelNameStorage(
   requireModelStorageKey('kilocode'),
   KILOCODE_DEFAULT_MODEL,
@@ -470,9 +450,6 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   cloudflare: getCloudflareModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,
-  azure: getAzureModelName,
-  bedrock: getBedrockModelName,
-  vertex: getVertexModelName,
   kilocode: getKiloCodeModelName,
   fireworks: getFireworksModelName,
   sakana: getSakanaModelName,

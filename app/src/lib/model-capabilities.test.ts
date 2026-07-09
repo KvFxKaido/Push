@@ -13,7 +13,7 @@ describe('getModelCapabilities', () => {
   });
 
   it('marks Imagen-family models as image-generation capable', () => {
-    const capabilities = getModelCapabilities('vertex', 'google/imagen-4');
+    const capabilities = getModelCapabilities('google', 'imagen-4');
     expect(capabilities.imageGeneration).toBe('supported');
     expect(capabilities.visionInput).toBe('supported');
   });

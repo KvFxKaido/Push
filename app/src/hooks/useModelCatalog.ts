@@ -52,10 +52,7 @@ import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
-import { useAzureConfig, useBedrockConfig } from '@/hooks/useExperimentalProviderConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
-import type { ExperimentalDeployment } from '@/lib/experimental-providers';
-import { useVertexConfig, type VertexConfiguredMode } from '@/hooks/useVertexConfig';
 import {
   shouldAutoFetchProviderModels,
   scheduleAutoFetch,
@@ -92,59 +89,6 @@ interface WorkerBoundProviderConfig {
   setModel: (m: string) => void;
 }
 
-interface ExperimentalProviderConfig {
-  keyInput: string;
-  setKeyInput: (value: string) => void;
-  setKey: (k: string) => void;
-  clearKey: () => void;
-  hasKey: boolean;
-  baseUrlInput: string;
-  setBaseUrlInput: (value: string) => void;
-  baseUrl: string;
-  baseUrlError: string | null;
-  setBaseUrl: (value: string) => void;
-  clearBaseUrl: () => void;
-  modelInput: string;
-  setModelInput: (value: string) => void;
-  model: string;
-  setModel: (m: string) => void;
-  clearModel: () => void;
-  deployments: ExperimentalDeployment[];
-  activeDeploymentId: string | null;
-  saveDeployment: (model: string) => boolean;
-  selectDeployment: (id: string) => void;
-  removeDeployment: (id: string) => void;
-  clearDeployments: () => void;
-  deploymentLimitReached: boolean;
-  isConfigured: boolean;
-}
-
-interface VertexProviderConfig {
-  keyInput: string;
-  setKeyInput: (value: string) => void;
-  setKey: (value: string) => void;
-  clearKey: () => void;
-  hasKey: boolean;
-  keyError: string | null;
-  regionInput: string;
-  setRegionInput: (value: string) => void;
-  region: string;
-  regionError: string | null;
-  setRegion: (value: string) => void;
-  clearRegion: () => void;
-  modelInput: string;
-  setModelInput: (value: string) => void;
-  model: string;
-  modelOptions: string[];
-  setModel: (value: string) => void;
-  clearModel: () => void;
-  mode: VertexConfiguredMode;
-  transport: 'openapi' | 'anthropic';
-  projectId: string | null;
-  hasLegacyConfig: boolean;
-  isConfigured: boolean;
-}
-
 interface TavilyKeyConfig {
   setKey: (k: string) => void;
   clearKey: () => void;
@@ -164,9 +108,6 @@ export interface ModelCatalog {
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
   deepseek: ProviderKeyConfig;
-  azure: ExperimentalProviderConfig;
-  bedrock: ExperimentalProviderConfig;
-  vertex: VertexProviderConfig;
   anthropic: ProviderKeyConfig;
   openai: ProviderKeyConfig;
   google: ProviderKeyConfig;
@@ -398,42 +339,6 @@ export function buildModelControl(
         error: catalog.sakanaModels.error,
         onRefresh: catalog.refreshSakanaModels,
       };
-    case 'azure': {
-      const value = lockedModel ?? catalog.azure.model;
-      const options = catalog.azure.deployments.map((deployment) => deployment.model);
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'Azure OpenAI'),
-        value,
-        options: includeSelectedModel(options, value),
-        onChange: catalog.azure.setModel,
-        allowCustom: true,
-      };
-    }
-    case 'bedrock': {
-      const value = lockedModel ?? catalog.bedrock.model;
-      const options = catalog.bedrock.deployments.map((deployment) => deployment.model);
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'AWS Bedrock'),
-        value,
-        options: includeSelectedModel(options, value),
-        onChange: catalog.bedrock.setModel,
-        allowCustom: true,
-      };
-    }
-    case 'vertex':
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'Google Vertex'),
-        value: lockedModel ?? catalog.vertex.model,
-        options: includeSelectedModel(
-          catalog.vertex.modelOptions,
-          lockedModel ?? catalog.vertex.model,
-        ),
-        onChange: catalog.vertex.setModel,
-        allowCustom: true,
-      };
     case 'anthropic':
       return {
         provider,
@@ -498,9 +403,6 @@ export function useModelCatalog(): ModelCatalog {
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
   const googleCfg = useGoogleConfig();
-  const azureCfg = useAzureConfig();
-  const bedrockCfg = useBedrockConfig();
-  const vertexCfg = useVertexConfig();
   const tavilyCfg = useTavilyConfig();
 
   // Key input state (controlled text fields for Settings UI)
@@ -515,15 +417,6 @@ export function useModelCatalog(): ModelCatalog {
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
-  const [azureKeyInput, setAzureKeyInput] = useState('');
-  const [azureBaseUrlInput, setAzureBaseUrlInput] = useState('');
-  const [azureModelInput, setAzureModelInput] = useState('');
-  const [bedrockKeyInput, setBedrockKeyInput] = useState('');
-  const [bedrockBaseUrlInput, setBedrockBaseUrlInput] = useState('');
-  const [bedrockModelInput, setBedrockModelInput] = useState('');
-  const [vertexKeyInput, setVertexKeyInput] = useState('');
-  const [vertexRegionInput, setVertexRegionInput] = useState('');
-  const [vertexModelInput, setVertexModelInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [cloudflareConfigured, setCloudflareConfiguredState] = useState<boolean>(() =>
     getCloudflareWorkerConfigured(),
@@ -595,9 +488,6 @@ export function useModelCatalog(): ModelCatalog {
     fireworks: fireworksCfg.hasKey,
     deepseek: deepseekCfg.hasKey,
     sakana: sakanaCfg.hasKey,
-    azure: azureCfg.isConfigured,
-    bedrock: bedrockCfg.isConfigured,
-    vertex: vertexCfg.isConfigured,
     anthropic: anthropicCfg.hasKey,
     openai: openaiCfg.hasKey,
     google: googleCfg.hasKey,
@@ -1507,10 +1397,6 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [googleModelList, googleCfg.model],
   );
-  const vertexModelOptions = useMemo(
-    () => includeSelectedModel(vertexCfg.modelOptions, vertexCfg.model),
-    [vertexCfg.modelOptions, vertexCfg.model],
-  );
 
   return {
     ollama: {
@@ -1592,58 +1478,6 @@ export function useModelCatalog(): ModelCatalog {
       keyInput: deepseekKeyInput,
       setKeyInput: setDeepseekKeyInput,
     },
-    azure: {
-      keyInput: azureKeyInput,
-      setKeyInput: setAzureKeyInput,
-      setKey: azureCfg.setKey,
-      clearKey: azureCfg.clearKey,
-      hasKey: azureCfg.hasKey,
-      baseUrlInput: azureBaseUrlInput,
-      setBaseUrlInput: setAzureBaseUrlInput,
-      baseUrl: azureCfg.baseUrl,
-      baseUrlError: azureCfg.baseUrlError,
-      setBaseUrl: azureCfg.setBaseUrl,
-      clearBaseUrl: azureCfg.clearBaseUrl,
-      modelInput: azureModelInput,
-      setModelInput: setAzureModelInput,
-      model: azureCfg.model,
-      setModel: azureCfg.setModel,
-      clearModel: azureCfg.clearModel,
-      deployments: azureCfg.deployments,
-      activeDeploymentId: azureCfg.activeDeploymentId,
-      saveDeployment: azureCfg.saveDeployment,
-      selectDeployment: azureCfg.selectDeployment,
-      removeDeployment: azureCfg.removeDeployment,
-      clearDeployments: azureCfg.clearDeployments,
-      deploymentLimitReached: azureCfg.deploymentLimitReached,
-      isConfigured: azureCfg.isConfigured,
-    },
-    bedrock: {
-      keyInput: bedrockKeyInput,
-      setKeyInput: setBedrockKeyInput,
-      setKey: bedrockCfg.setKey,
-      clearKey: bedrockCfg.clearKey,
-      hasKey: bedrockCfg.hasKey,
-      baseUrlInput: bedrockBaseUrlInput,
-      setBaseUrlInput: setBedrockBaseUrlInput,
-      baseUrl: bedrockCfg.baseUrl,
-      baseUrlError: bedrockCfg.baseUrlError,
-      setBaseUrl: bedrockCfg.setBaseUrl,
-      clearBaseUrl: bedrockCfg.clearBaseUrl,
-      modelInput: bedrockModelInput,
-      setModelInput: setBedrockModelInput,
-      model: bedrockCfg.model,
-      setModel: bedrockCfg.setModel,
-      clearModel: bedrockCfg.clearModel,
-      deployments: bedrockCfg.deployments,
-      activeDeploymentId: bedrockCfg.activeDeploymentId,
-      saveDeployment: bedrockCfg.saveDeployment,
-      selectDeployment: bedrockCfg.selectDeployment,
-      removeDeployment: bedrockCfg.removeDeployment,
-      clearDeployments: bedrockCfg.clearDeployments,
-      deploymentLimitReached: bedrockCfg.deploymentLimitReached,
-      isConfigured: bedrockCfg.isConfigured,
-    },
     anthropic: {
       setKey: anthropicCfg.setKey,
       clearKey: anthropicCfg.clearKey,
@@ -1670,31 +1504,6 @@ export function useModelCatalog(): ModelCatalog {
       setModel: googleCfg.setModel,
       keyInput: googleKeyInput,
       setKeyInput: setGoogleKeyInput,
-    },
-    vertex: {
-      keyInput: vertexKeyInput,
-      setKeyInput: setVertexKeyInput,
-      setKey: vertexCfg.setKey,
-      clearKey: vertexCfg.clearKey,
-      hasKey: vertexCfg.hasKey,
-      keyError: vertexCfg.keyError,
-      regionInput: vertexRegionInput,
-      setRegionInput: setVertexRegionInput,
-      region: vertexCfg.region,
-      regionError: vertexCfg.regionError,
-      setRegion: vertexCfg.setRegion,
-      clearRegion: vertexCfg.clearRegion,
-      modelInput: vertexModelInput,
-      setModelInput: setVertexModelInput,
-      model: vertexCfg.model,
-      modelOptions: vertexModelOptions,
-      setModel: vertexCfg.setModel,
-      clearModel: vertexCfg.clearModel,
-      mode: vertexCfg.mode,
-      transport: vertexCfg.transport,
-      projectId: vertexCfg.projectId,
-      hasLegacyConfig: vertexCfg.hasLegacyConfig,
-      isConfigured: vertexCfg.isConfigured,
     },
     tavily: {
       setKey: tavilyCfg.setKey,

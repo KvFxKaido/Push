@@ -7,14 +7,11 @@ import {
   MAX_BODY_SIZE_BYTES,
   SECURITY_HEADERS,
   applySecurityHeaders,
-  buildVertexPreambleAuth,
   corsHeadersFor,
   createJsonProxyHandler,
   createStreamProxyHandler,
   getAllowedOrigins,
   getClientIp,
-  getExperimentalUpstreamUrl,
-  hasVertexNativeCredentials,
   normalizeOrigin,
   passthroughAuth,
   readBodyText,
@@ -442,64 +439,6 @@ describe('passthroughAuth', () => {
 
   it('returns null when no Authorization header is present', () => {
     expect(passthroughAuth(makeEnv(), makeRequest('https://x.test/'))).toBeNull();
-  });
-});
-
-describe('hasVertexNativeCredentials / buildVertexPreambleAuth', () => {
-  it('reports true when the Vertex service-account header is present', () => {
-    const request = makeRequest('https://x.test/', {
-      headers: { 'X-Push-Vertex-Service-Account': 'opaque-value' },
-    });
-    expect(hasVertexNativeCredentials(request)).toBe(true);
-    expect(buildVertexPreambleAuth(makeEnv(), request)).toBe('VertexNative');
-  });
-
-  it('falls back to the Authorization header when no native credentials', () => {
-    const request = makeRequest('https://x.test/', {
-      headers: { Authorization: 'Bearer x' },
-    });
-    expect(hasVertexNativeCredentials(request)).toBe(false);
-    expect(buildVertexPreambleAuth(makeEnv(), request)).toBe('Bearer x');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getExperimentalUpstreamUrl
-// ---------------------------------------------------------------------------
-
-describe('getExperimentalUpstreamUrl', () => {
-  it('returns 400 when the upstream base URL is missing', async () => {
-    const request = makeRequest('https://x.test/');
-    const result = getExperimentalUpstreamUrl(request, 'azure', '/models');
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.response.status).toBe(400);
-      const body = await result.response.json();
-      expect(body.error).toMatch(/azure base URL is invalid/);
-    }
-  });
-
-  it('returns 400 for a malformed base URL', async () => {
-    const request = makeRequest('https://x.test/', {
-      headers: { 'X-Push-Upstream-Base': 'not a url' },
-    });
-    const result = getExperimentalUpstreamUrl(request, 'azure', '/chat/completions');
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.response.status).toBe(400);
-  });
-
-  it('appends the suffix to a normalized base URL', () => {
-    const request = makeRequest('https://x.test/', {
-      headers: {
-        'X-Push-Upstream-Base': 'https://my-resource.openai.azure.com/openai/v1',
-      },
-    });
-    const result = getExperimentalUpstreamUrl(request, 'azure', '/chat/completions');
-    expect(result.ok).toBe(true);
-    if (result.ok) {
-      expect(result.url.endsWith('/openai/v1/chat/completions')).toBe(true);
-      expect(result.url.startsWith('https://my-resource.openai.azure.com')).toBe(true);
-    }
   });
 });
 

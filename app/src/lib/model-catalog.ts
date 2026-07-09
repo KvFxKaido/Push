@@ -24,8 +24,6 @@ import {
   ZEN_MODELS,
 } from './providers';
 import { getZenGoTransport } from './zen-go';
-import { getVertexModelTransport } from './vertex-provider';
-import { getVertexMode } from '@/hooks/useVertexConfig';
 import { asRecord } from './utils';
 import {
   DEFAULT_PUSH_CAPABILITY_PROFILE,
@@ -35,10 +33,8 @@ import {
 } from './capabilities';
 import { anthropicModelSupportsNativeStructuredOutput } from '@push/lib/anthropic-structured-output';
 import {
-  looksLikeBedrockAnthropicToolCallingModel,
   looksLikeOpenAIToolCallingModel,
   OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
-  VERTEX_NATIVE_TOOL_CALLING_MODELS,
 } from '@push/lib/native-tool-gate';
 import {
   providerCarriesReasoningBlocksByDefault,
@@ -454,8 +450,8 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
  * Providers whose web adapter can honor Push's neutral `ResponseFormatSpec`.
  * OpenAI-compatible endpoints serialize it as `response_format`; Anthropic
  * Messages routes serialize it as native `output_config.format` when supported
- * and fall back to the forced-tool bridge otherwise. Gemini native serializers,
- * Bedrock, and Ollama are omitted because their structured-output support is
+ * and fall back to the forced-tool bridge otherwise. Gemini native serializers
+ * and Ollama are omitted because their structured-output support is
  * either absent or unconfirmed, so attaching one would route around the
  * prompt-only `parseStructured` fallback. `cloudflare` IS included: the
  * Workers AI binding accepts the OpenAI `response_format` shape for the models
@@ -469,7 +465,6 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
   'openai',
-  'azure',
   'nvidia',
   'kilocode',
   'fireworks',
@@ -477,7 +472,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'zen',
   'cloudflare',
   'anthropic',
-  'vertex',
   'google',
 ]);
 
@@ -542,7 +536,6 @@ function routeCarriesReasoningBlocks(provider: string, modelId: string | undefin
   if (!modelId) return false;
   if (providerCarriesReasoningBlocksByDefault(provider)) return true;
   if (provider === 'zen') return getZenGoTransport(modelId) === 'anthropic';
-  if (provider === 'vertex') return getVertexModelTransport(modelId) === 'anthropic';
   return false;
 }
 
@@ -553,9 +546,6 @@ function modelSupportsMultimodal(
 ): boolean {
   if (capabilities.vision) return true;
   if (provider === 'anthropic' || provider === 'google') return true;
-  if (provider === 'vertex') {
-    return getVertexModelTransport(modelId) === 'anthropic' || /gemini/i.test(modelId);
-  }
   return /(?:gpt-4o|gpt-4\.1|gpt-5|claude|gemini|vision|vl\b|llava|bakllava)/i.test(modelId);
 }
 
@@ -574,22 +564,8 @@ function resolveStructuredOutputMode(
   if (provider === 'anthropic') {
     return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
   }
-  // Anthropic-transport routes share the Messages serializer. Claude models on
-  // Vertex can use `output_config.format`; older Claude ids and Zen-Go
-  // MiniMax/Qwen routes keep the forced-tool fallback.
-  if (provider === 'vertex') {
-    if (getVertexModelTransport(modelId) !== 'anthropic') return 'none';
-    // Only the native (push.stream.v1) Vertex wire reaches `toAnthropicMessages`,
-    // where the constraint becomes `output_config.format` / the forced tool. The
-    // legacy OpenAI-proxy wire (`vertexStream`'s `legacyBase`) never serializes
-    // `response_format`, and its upstream base URL is user-configured/unconfirmed —
-    // attaching a constraint there would silently route around the prompt-only
-    // `parseStructured` fallback. Keep legacy Vertex prompt-only. Reads the same
-    // `getVertexMode()` ground truth `vertexStream` uses for its `requestWire`, so
-    // gate and wire stay in lockstep.
-    if (getVertexMode() !== 'native') return 'none';
-    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
-  }
+  // Anthropic-transport routes share the Messages serializer. Zen-Go MiniMax/Qwen
+  // routes keep the forced-tool fallback.
   if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
     return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
   }
@@ -660,8 +636,7 @@ const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MO
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
 const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
-// `looksLikeOpenAIToolCallingModel`, `looksLikeBedrockAnthropicToolCallingModel`,
-// and `VERTEX_NATIVE_TOOL_CALLING_MODELS` are shared with the CLI gate via
+// `looksLikeOpenAIToolCallingModel` is shared with the CLI gate via
 // `@push/lib/native-tool-gate` (single definition; pinned by the web↔CLI drift
 // test below). Capability-based providers stay resolved here (models.dev).
 
@@ -688,17 +663,11 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *     direct serializer translates OpenAI-shaped tools into Gemini
  *     `functionDeclarations` and the bridge normalizes `functionCall` parts
  *     back into dispatcher JSON.
- *   - **Google Vertex AI** — name-based against the curated Vertex model list;
- *     Gemini models use the OpenAI-compatible endpoint (`tools` straight
- *     through) and Claude models use the Anthropic custom-tool bridge.
- *   - **AWS Bedrock** — name-based for Claude 3+ / Claude 4-style Anthropic
- *     model ids routed through the OpenAI-compatible proxy (`tools` straight
- *     through).
  *   - **Ollama Cloud / Nvidia NIM** — capability-based, using the
  *     existing models.dev metadata caches.
- *   - **OpenAI / Azure OpenAI / Kilo Code** — name-based against
- *     curated OpenAI-compatible catalogs or OpenAI-family model ids. Free-text
- *     unknowns stay text-dispatch.
+ *   - **OpenAI / Kilo Code** — name-based against curated OpenAI-compatible
+ *     catalogs or OpenAI-family model ids. Free-text unknowns stay
+ *     text-dispatch.
  *   - **Direct Anthropic** — name-based against the curated direct-provider
  *     catalog; the neutral Worker path translates schemas to Anthropic custom
  *     tools and surfaces `tool_use` as structured native tool-call events.
@@ -714,8 +683,6 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'sakana') return SAKANA_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'vertex') return VERTEX_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'bedrock') return looksLikeBedrockAnthropicToolCallingModel(modelId);
   if (provider === 'ollama') {
     return (
       !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(modelId) &&
@@ -724,7 +691,6 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   }
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
-  if (provider === 'azure') return looksLikeOpenAIToolCallingModel(modelId);
   if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;

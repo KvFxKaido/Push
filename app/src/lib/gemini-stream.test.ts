@@ -42,8 +42,7 @@ vi.mock('./web-search-mode', () => ({
   isNativeWebSearchEnabled: (provider: string, _modelId?: string, mode?: string) => {
     const m = mode ?? webSearchMode;
     if (m === 'off') return false;
-    if (m === 'auto')
-      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'auto') return provider === 'google' || provider === 'anthropic';
     if (m === 'google-grounding') return provider === 'google';
     return false;
   },

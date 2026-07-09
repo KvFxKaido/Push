@@ -26,21 +26,6 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => kilocodeKey }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
-  vi.doMock('@/hooks/useExperimentalProviderConfig', () => ({
-    getAzureBaseUrl: () => '',
-    getAzureKey: () => '',
-    getAzureModelName: () => '',
-    getBedrockBaseUrl: () => '',
-    getBedrockKey: () => '',
-    getBedrockModelName: () => '',
-  }));
-  vi.doMock('@/hooks/useVertexConfig', () => ({
-    getVertexBaseUrl: () => '',
-    getVertexKey: () => '',
-    getVertexMode: () => 'native' as const,
-    getVertexModelName: () => '',
-    getVertexRegion: () => '',
-  }));
   vi.doMock('./providers', async () => {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
     return {
@@ -162,10 +147,11 @@ describe('provider PushStream registry', () => {
 /**
  * Mock every provider readiness input exactly once (no layering over
  * `mockProviderState`, whose duplicate `vi.doMock` of the same module races
- * with an override). Makes openai + openrouter + azure available — most
+ * with an override). Makes openai + openrouter + nvidia available — most
  * providers need only a key, model names resolve to non-empty defaults via the
  * real `./providers` — and drives the model-aware transport getters so the
- * Anthropic-bridge isolation guard is deterministic. Everything else is
+ * Anthropic-bridge isolation guard is deterministic. `nvidia` is the
+ * openai-compat peer used to prove same-shape failover. Everything else is
  * keyless → unavailable.
  */
 function mockFailoverState(opts?: {
@@ -173,31 +159,23 @@ function mockFailoverState(opts?: {
   openrouter?: boolean;
   google?: boolean;
   zen?: boolean;
-  azure?: boolean;
-  vertex?: boolean;
-  vertexModel?: string;
+  nvidia?: boolean;
   zenTransport?: 'anthropic' | 'openai';
-  vertexTransport?: 'anthropic' | 'gemini';
 }): void {
   const {
     openai = true,
     openrouter = true,
     google = false,
     zen = false,
-    azure = true,
-    vertex = false,
+    nvidia = true,
     zenTransport = 'openai',
-    vertexTransport = 'gemini',
-    vertexModel = vertexTransport === 'anthropic'
-      ? 'claude-sonnet-4-5@20250929'
-      : 'google/gemini-2.5-pro',
   } = opts ?? {};
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({
     getOpenRouterKey: () => (openrouter ? 'k-openrouter' : ''),
   }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
-  vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
+  vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
   vi.doMock('@/hooks/useKilocodeConfig', () => ({ getKilocodeKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
   vi.doMock('@/hooks/useAnthropicConfig', () => ({
@@ -207,21 +185,6 @@ function mockFailoverState(opts?: {
   vi.doMock('@/hooks/useOpenAIConfig', () => ({ getOpenAIKey: () => (openai ? 'k-openai' : '') }));
   vi.doMock('@/hooks/useGoogleConfig', () => ({
     getGoogleKey: () => (google ? 'k-google' : ''),
-  }));
-  vi.doMock('@/hooks/useExperimentalProviderConfig', () => ({
-    getAzureBaseUrl: () => (azure ? 'https://res.openai.azure.com/openai/v1' : ''),
-    getAzureKey: () => (azure ? 'k-azure' : ''),
-    getAzureModelName: () => (azure ? 'gpt-4o' : ''),
-    getBedrockBaseUrl: () => '',
-    getBedrockKey: () => '',
-    getBedrockModelName: () => '',
-  }));
-  vi.doMock('@/hooks/useVertexConfig', () => ({
-    getVertexBaseUrl: () => '',
-    getVertexKey: () => (vertex ? 'k-vertex' : ''),
-    getVertexMode: () => 'native' as const,
-    getVertexModelName: () => (vertex ? vertexModel : ''),
-    getVertexRegion: () => (vertex ? 'global' : ''),
   }));
   vi.doMock('./providers', async () => {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
@@ -236,10 +199,6 @@ function mockFailoverState(opts?: {
     ...(await vi.importActual<typeof import('./zen-go')>('./zen-go')),
     getZenGoTransport: () => zenTransport,
   }));
-  vi.doMock('./vertex-provider', async () => ({
-    ...(await vi.importActual<typeof import('./vertex-provider')>('./vertex-provider')),
-    getVertexModelTransport: () => vertexTransport,
-  }));
 }
 
 describe('routesThroughAnthropicBridge', () => {
@@ -250,11 +209,10 @@ describe('routesThroughAnthropicBridge', () => {
     expect(routesThroughAnthropicBridge('anthropic', undefined)).toBe(false);
   });
 
-  it('is model-dependent for zen and vertex', async () => {
-    mockFailoverState({ zenTransport: 'anthropic', vertexTransport: 'anthropic' });
+  it('is model-dependent for zen', async () => {
+    mockFailoverState({ zenTransport: 'anthropic' });
     const { routesThroughAnthropicBridge } = await import('./orchestrator-provider-routing');
     expect(routesThroughAnthropicBridge('zen', 'minimax')).toBe(true);
-    expect(routesThroughAnthropicBridge('vertex', 'claude-3')).toBe(true);
     expect(routesThroughAnthropicBridge('openai', 'gpt-4o')).toBe(false);
   });
 });
@@ -288,16 +246,10 @@ describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)
     expect(resolveFailoverCandidates('zen', 'minimax', new Set(['zen']))).toEqual([]);
   });
 
-  it('never fails over from a Vertex Claude chat', async () => {
-    mockFailoverState({ vertexTransport: 'anthropic' });
-    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('vertex', 'claude-3', new Set(['vertex']))).toEqual([]);
-  });
-
   it('DOES fail over from a Zen chat on a non-Anthropic model', async () => {
     mockFailoverState({ zenTransport: 'openai' });
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual(['azure']);
+    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual(['nvidia']);
   });
 });
 
@@ -323,36 +275,6 @@ describe('resolveFailoverCandidates — same-shape selection + ordering (Codex #
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
     expect(resolveFailoverCandidates('openrouter', 'gpt-4o', new Set(['openrouter']))).toEqual([
       'openai',
-    ]);
-  });
-
-  it('excludes Vertex Claude targets from Gemini failover', async () => {
-    mockFailoverState({
-      openai: false,
-      openrouter: false,
-      azure: false,
-      google: true,
-      vertex: true,
-      vertexTransport: 'anthropic',
-    });
-    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('google', 'gemini-3.5-flash', new Set(['google']))).toEqual(
-      [],
-    );
-  });
-
-  it('allows Vertex Gemini targets for Gemini failover', async () => {
-    mockFailoverState({
-      openai: false,
-      openrouter: false,
-      azure: false,
-      google: true,
-      vertex: true,
-      vertexTransport: 'gemini',
-    });
-    const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('google', 'gemini-3.5-flash', new Set(['google']))).toEqual([
-      'vertex',
     ]);
   });
 

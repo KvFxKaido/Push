@@ -121,14 +121,6 @@ export function resolveProviderHandler(
       return handleGoogleChat as unknown as ProviderHandler;
     case 'demo':
       return null;
-    // The remaining providers (azure, bedrock, vertex) exist on the
-    // Worker but require extra runtime configuration this DO can't
-    // exercise in Phase 1 — they stay gated until PR #3b validates them
-    // against a real job.
-    case 'azure':
-    case 'bedrock':
-    case 'vertex':
-      return null;
   }
   return null;
 }
