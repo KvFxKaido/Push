@@ -473,6 +473,129 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     expect(req0.systemPromptOverride).toContain('Deep Reviewer agent');
   });
 
+  it('completionGate rejects once with a nudge, then accepts the re-emission without re-invoking', async () => {
+    const cleanJson = JSON.stringify({ summary: 'Looks clean.', comments: [] });
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${cleanJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${cleanJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let toolCallReturn: Call | null = { call: { tool: 'sandbox_read_file', args: {} } };
+    const gateCalls: number[] = [];
+
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({
+          stream,
+          detectAnyToolCall: () => {
+            const next = toolCallReturn;
+            toolCallReturn = null;
+            return next;
+          },
+        }),
+        completionGate: (parsed) => {
+          gateCalls.push(parsed.comments.length);
+          return 'Run verification before concluding clean.';
+        },
+      },
+      { onStatus: () => {} },
+    );
+
+    // Gate fired exactly once (the message-id cap), despite two completions.
+    expect(gateCalls).toEqual([0]);
+    expect(result.summary).toBe('Looks clean.');
+    // The nudge reached the model as a user message on the third call.
+    const req2 = capturedRequests[2] as { messages: Array<{ role: string; content: string }> };
+    expect(
+      req2.messages.some(
+        (m) => m.role === 'user' && m.content.includes('Run verification before concluding clean.'),
+      ),
+    ).toBe(true);
+  });
+
+  it('completionGate returning null accepts the first completion untouched', async () => {
+    const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    let toolCallReturn: Call | null = { call: { tool: 'sandbox_read_file', args: {} } };
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({
+          stream,
+          detectAnyToolCall: () => {
+            const next = toolCallReturn;
+            toolCallReturn = null;
+            return next;
+          },
+        }),
+        completionGate: () => null,
+      },
+      { onStatus: () => {} },
+    );
+
+    expect(result.summary).toBe('Fine.');
+    expect(capturedRequests).toHaveLength(2);
+  });
+
+  it('completionGate is skipped on the final loop round (no room left to act on a nudge)', async () => {
+    const reportJson = JSON.stringify({ summary: 'Late but clean.', comments: [] });
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${reportJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    const gateCalls: number[] = [];
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({ stream }),
+        completionGate: (parsed) => {
+          gateCalls.push(parsed.comments.length);
+          return 'Would have nudged.';
+        },
+        // Resume directly INTO the last loop round with prior investigation
+        // banked, so the completion lands where a nudge could only bounce
+        // into the forced-output turn unactioned.
+        resumeState: {
+          messages: [
+            { id: 'seed', role: 'user', content: 'diff', timestamp: 1 },
+            { id: 'seed-tool', role: 'user', content: '[TOOL_RESULT] ok', timestamp: 2 },
+          ],
+          nextRound: MAX_DEEP_REVIEW_ROUNDS - 1,
+          totalToolCalls: 3,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        },
+      },
+      { onStatus: () => {} },
+    );
+
+    expect(gateCalls).toEqual([]);
+    expect(result.summary).toBe('Late but clean.');
+  });
+
   it('wraps project instructions in the canonical envelope and escapes forged boundaries', async () => {
     const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
     const { stream, capturedRequests } = makePushStream([

@@ -10,6 +10,7 @@ import type { ReviewResult } from '@push/lib/provider-contract';
 import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
+  cleanPassCheckStatus,
   repoGatingEnabled,
   type PrReviewExecutor,
   type PrReviewStartInput,
@@ -71,7 +72,10 @@ interface ReviewRow {
 
 function createMockCtx() {
   const reviews = new Map<string, ReviewRow>();
-  const checkpoints = new Map<string, { state_json: string; round: number; updated_at: number }>();
+  const checkpoints = new Map<
+    string,
+    { state_json: string; round: number; updated_at: number; verification_json: string | null }
+  >();
   const events: Array<{ seq: number; delivery_id: string; type: string; payload_json: string }> =
     [];
   const pending: Promise<unknown>[] = [];
@@ -81,6 +85,8 @@ function createMockCtx() {
     if (/^CREATE /i.test(sql) || /^ALTER TABLE/i.test(sql)) return [];
     // ensureColumns() probes for the post-v1 columns; report all present so
     // the mock never has to model ALTER.
+    if (/^PRAGMA table_info\(review_checkpoint\)/i.test(sql))
+      return [{ name: 'verification_json' }];
     if (/^PRAGMA table_info\(review\)/i.test(sql))
       return [
         { name: 'result_json' },
@@ -96,10 +102,13 @@ function createMockCtx() {
         state_json: p[1] as string,
         round: p[2] as number,
         updated_at: p[3] as number,
+        verification_json: (p[4] as string | null) ?? null,
       });
       return [];
     }
-    if (/^SELECT state_json, round, updated_at FROM review_checkpoint/i.test(sql)) {
+    if (
+      /^SELECT state_json, round, updated_at, verification_json FROM review_checkpoint/i.test(sql)
+    ) {
       const c = checkpoints.get(p[0] as string);
       return c ? [{ ...c }] : [];
     }
@@ -1067,6 +1076,146 @@ describe('PrReviewJob orphan sweep', () => {
 // (2026-06-11, PR #887) — the runtime reclaims the DO instance ~1–3 min into
 // an unwatched review, so from-scratch retries can never converge. Per-round
 // checkpoints + watchdog relaunch make progress monotone.
+describe('cleanPassCheckStatus', () => {
+  it('concludes success only when a verifier ran and passed', () => {
+    expect(cleanPassCheckStatus({ typecheck: 'pass', tests: 'not_run' })).toMatchObject({
+      conclusion: 'success',
+      title: 'No blocking findings — verified (typecheck)',
+    });
+    expect(cleanPassCheckStatus({ typecheck: 'pass', tests: 'pass' })).toMatchObject({
+      conclusion: 'success',
+      title: 'No blocking findings — verified (typecheck + tests)',
+    });
+  });
+
+  it('flags a failed verifier behind a clean pass as neutral, naming the verifier', () => {
+    const s1 = cleanPassCheckStatus({ typecheck: 'pass', tests: 'fail' });
+    expect(s1.conclusion).toBe('neutral');
+    expect(s1.title).toBe('No blocking findings — verification failed');
+    expect(s1.summary).toContain('tests failed');
+  });
+
+  it('labels never-verified clean passes neutral: unverified vs unavailable vs unknown', () => {
+    expect(cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' })).toMatchObject({
+      conclusion: 'neutral',
+      title: 'No blocking findings (unverified)',
+    });
+    expect(cleanPassCheckStatus({ typecheck: 'unavailable', tests: 'unavailable' })).toMatchObject({
+      conclusion: 'neutral',
+      title: 'No blocking findings (verification unavailable)',
+    });
+    // Absent record (pre-verification rows) must not read as verified.
+    expect(cleanPassCheckStatus(undefined).conclusion).toBe('neutral');
+  });
+});
+
+describe('PrReviewJob verification gate (check-run policy)', () => {
+  const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
+
+  it('finalizes a VERIFIED clean pass as success with the verifier in the title', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: {
+        ...RESULT,
+        comments: [],
+        verification: { typecheck: 'pass' as const, tests: 'pass' as const },
+      },
+      commentsPosted: 0,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[2]).toBe('success');
+    expect(lastFinalize?.[3].title).toContain('verified (typecheck + tests)');
+  });
+
+  it('finalizes an UNVERIFIED clean pass as neutral — never success', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: {
+        ...RESULT,
+        comments: [],
+        verification: { typecheck: 'not_run' as const, tests: 'not_run' as const },
+      },
+      commentsPosted: 0,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[2]).toBe('neutral');
+    expect(lastFinalize?.[3].title).toBe('No blocking findings (unverified)');
+  });
+
+  it('reviews WITH findings keep the success/finding-count check regardless of verification', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: {
+        ...RESULT,
+        verification: { typecheck: 'not_run' as const, tests: 'not_run' as const },
+      },
+      commentsPosted: 1,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1' })));
+    await Promise.allSettled(mock.pending);
+
+    const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
+    expect(lastFinalize?.[2]).toBe('success');
+    expect(lastFinalize?.[3].title).toBe('1 finding');
+  });
+
+  it('persists verifier outcomes with the round checkpoint and seeds them into a relaunch', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    // First attempt: records a typecheck pass, checkpoints a round, then dies
+    // (never resolves) — the sweep relaunches from the checkpoint.
+    __setPrReviewExecutorOverride('v1', async (_i, _e, _s, hooks) => {
+      hooks?.onVerification?.({ typecheck: 'pass', tests: 'not_run' });
+      hooks?.onRoundState?.({
+        messages: [],
+        nextRound: 3,
+        totalToolCalls: 2,
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      });
+      return new Promise(() => {});
+    });
+    await do_.fetch(startRequest(startInput({ deliveryId: 'v1' })));
+    // runReview runs under waitUntil and the executor never resolves — wait
+    // for the checkpoint write instead of settling the (hung) pending set.
+    await vi.waitFor(() => {
+      expect(mock.checkpoints.has('v1')).toBe(true);
+    });
+
+    // The persisted checkpoint carries the verification snapshot.
+    expect(JSON.parse(mock.checkpoints.get('v1')!.verification_json!)).toEqual({
+      typecheck: 'pass',
+      tests: 'not_run',
+    });
+
+    // Simulate instance death + relaunch: a fresh DO over the same storage
+    // sweeps the orphaned running row and relaunches with the checkpoint.
+    let resumed: unknown = null;
+    __setPrReviewExecutorOverride('v1', async (_i, _e, _s, hooks) => {
+      resumed = hooks?.resumeVerification ?? null;
+      return { result: { ...RESULT, comments: [] }, commentsPosted: 0, posted: true };
+    });
+    const do2 = new PrReviewJob(mock.ctx as never, {} as Env);
+    await do2.fetch(new Request('https://do/status?deliveryId=v1'));
+    await vi.waitFor(() => {
+      expect(mock.reviews.get('v1')!.status).toBe('completed');
+    });
+
+    expect(resumed).toEqual({ typecheck: 'pass', tests: 'not_run' });
+  });
+});
+
 describe('PrReviewJob relaunch-from-checkpoint', () => {
   function liveRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
     return {
@@ -1110,6 +1259,7 @@ describe('PrReviewJob relaunch-from-checkpoint', () => {
       state_json: JSON.stringify(CKPT_STATE),
       round: CKPT_STATE.nextRound,
       updated_at: updatedAt,
+      verification_json: null,
     });
   }
 

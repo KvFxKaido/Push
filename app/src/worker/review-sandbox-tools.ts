@@ -5,16 +5,17 @@
  * grep/read across the *checked-out PR head* so it can trace a changed symbol
  * into non-diff files (the gap that let the #1219 normalizer strip slip past
  * review). It provisions a sandbox with the PR head checked out and dispatches a
- * small tool set (search/read/ls/typecheck) into the reviewer's tool loop.
+ * small tool set (search/read/ls/typecheck/tests) into the reviewer's tool loop.
  *
  * Security posture — deliberately reuses the existing read-only inspection
  * handlers (`handleSearch`/`handleReadFile`/`handleListDir`) rather than calling
  * sandbox routes raw, so the reviewer inherits the SAME redaction the web
  * Coder/Explorer get: sensitive-path hiding + secret-value redaction
  * (`handleSearch`) and envelope-boundary escaping (`handleReadFile`). The raw
- * `sandbox_exec` route is NEVER exposed. The only executable verifier is
- * `sandbox_check_types`, and its command is supplied by the Durable Object from
- * trusted base-ref instructions, never from the model or the checked-out PR.
+ * `sandbox_exec` route is NEVER exposed. The only executable verifiers are
+ * `sandbox_check_types` and `sandbox_run_tests`, and their commands are
+ * supplied by the Durable Object from trusted base-ref instructions, never
+ * from the model or the checked-out PR.
  *
  * Reachability uses the internal, gate-free `dispatchSandboxRouteInternal`
  * (proved by the reachability spike): the DO is inside the trust boundary and
@@ -39,13 +40,47 @@ import type { SandboxToolCall } from '@/lib/sandbox-tool-detection';
 import type { ToolExecutionResult } from '@/types';
 import type { Env } from './worker-middleware';
 
-/** v1 sandbox tools wired into the reviewer. Advertised set and
+/** Sandbox tools wired into the reviewer. Advertised set and
  *  executor switch derive from this ONE list so they can't drift. */
-export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls', 'typecheck'] as const;
-/** Public names string for the reviewer tool-protocol `- Sandbox:` line. */
+export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls', 'typecheck', 'tests'] as const;
+/** Full public names string (every tool, tests included). */
 export const REVIEW_SANDBOX_TOOL_NAMES = REVIEW_SANDBOX_TOOLS.join(', ');
 
+/**
+ * Public names for the reviewer tool-protocol `- Sandbox:` line, narrowed to
+ * what this review can actually serve: `tests` is advertised only when the
+ * repo declares a test command (AGENTS.md `# test:` hint at the base ref) —
+ * there is no safe universal default the way typecheck has `npx tsc --noEmit`.
+ */
+export function reviewSandboxToolNames(testsAvailable: boolean): string {
+  return (
+    testsAvailable ? REVIEW_SANDBOX_TOOLS : REVIEW_SANDBOX_TOOLS.filter((t) => t !== 'tests')
+  ).join(', ');
+}
+
+/** Verifier commands the DO resolves from trusted base-ref instructions.
+ *  `tests: null` = no repo test command → the tests tool is unavailable. */
+export interface ReviewVerifierCommands {
+  typecheck: string;
+  tests: string | null;
+}
+
+/** Structured verifier outcome riding a verification tool's result, so the
+ *  executor can record pass/fail without parsing the model-facing text. */
+export interface ReviewVerificationOutcome {
+  kind: 'typecheck' | 'tests';
+  pass: boolean;
+}
+
+/** Tool result plus optional verification metadata (verifier tools only). */
+export type ReviewSandboxToolResult = ToolExecutionResult & {
+  verification?: ReviewVerificationOutcome;
+};
+
+// One deadline per verifier: test suites routinely run longer than tsc, but
+// both must fit inside the review's 15-min no-progress budget with headroom.
 const REVIEW_TYPECHECK_DEADLINE_MS = 480_000;
+const REVIEW_TESTS_DEADLINE_MS = 480_000;
 const FALLBACK_STREAM_CAP_CHARS = 80_000;
 
 export interface ReviewSandbox {
@@ -256,6 +291,7 @@ async function runDetachedReviewExec(
   env: Env,
   sandbox: ReviewSandbox,
   command: string,
+  deadlineMs: number,
 ): Promise<ReviewDetachedExecResult> {
   const auth = { sandbox_id: sandbox.sandboxId, owner_token: sandbox.ownerToken };
   const primitives: DetachedExecPrimitives = {
@@ -314,7 +350,7 @@ async function runDetachedReviewExec(
     const { runDetachedToCompletion } = await import('@push/lib/detached-exec-runner');
     const result = await runDetachedToCompletion(primitives, command, {
       workdir: '/workspace',
-      overallTimeoutMs: REVIEW_TYPECHECK_DEADLINE_MS,
+      overallTimeoutMs: deadlineMs,
     });
     return {
       stdout: result.stdout,
@@ -329,7 +365,7 @@ async function runDetachedReviewExec(
     const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     return {
       stdout: '',
-      stderr: `Detached typecheck transport failed: ${message}`,
+      stderr: `Detached verifier transport failed: ${message}`,
       exitCode: -1,
       truncated: false,
       timedOut: false,
@@ -366,51 +402,83 @@ async function reduceReviewTypecheckOutput(
 }
 
 /**
- * Run the base-ref-selected typecheck command against the checked-out PR head.
- * NEVER throws: failures are returned as model-facing tool results so the review
- * loop can keep going and reason about pass/fail.
+ * Run a base-ref-selected verifier command (typecheck or tests) against the
+ * checked-out PR head. NEVER throws: failures are returned as model-facing
+ * tool results so the review loop can keep going and reason about pass/fail.
+ * The structured `verification` field carries the same pass/fail for the
+ * executor's tracking (timeouts/transport failures are `pass: false`).
  */
-export async function runReviewTypecheck(
+async function runReviewVerifier(
   env: Env,
   sandbox: ReviewSandbox,
   command: string,
-): Promise<ToolExecutionResult> {
-  const trimmedCommand = command.trim() || 'npx tsc --noEmit';
+  kind: ReviewVerificationOutcome['kind'],
+  deadlineMs: number,
+): Promise<ReviewSandboxToolResult> {
+  const trimmedCommand = command.trim();
   const executedCommand = `cd /workspace && ${trimmedCommand}`;
-  const result = await runDetachedReviewExec(env, sandbox, executedCommand);
+  const result = await runDetachedReviewExec(env, sandbox, executedCommand, deadlineMs);
   const reduced = await reduceReviewTypecheckOutput(trimmedCommand, result);
   const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
 
+  const pass = result.exitCode === 0;
   const lines: string[] = [
-    '[Tool Result — typecheck]',
+    `[Tool Result — ${kind}]`,
     `Command: ${trimmedCommand}`,
     `Exit code: ${result.exitCode}`,
-    `Result: ${result.exitCode === 0 ? 'PASS' : 'FAIL'}`,
+    `Result: ${pass ? 'PASS' : 'FAIL'}`,
   ];
   if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
   if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
   if (result.truncated) lines.push('\n[Output truncated]');
   if (result.timedOut) {
-    lines.push(`\n[Timed out after ${REVIEW_TYPECHECK_DEADLINE_MS}ms]`);
+    lines.push(`\n[Timed out after ${deadlineMs}ms]`);
   }
   if (result.error) lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
 
-  return { text: lines.join('\n') };
+  return { text: lines.join('\n'), verification: { kind, pass } };
+}
+
+/** Typecheck verifier — falls back to the universal `npx tsc --noEmit`. */
+export async function runReviewTypecheck(
+  env: Env,
+  sandbox: ReviewSandbox,
+  command: string,
+): Promise<ReviewSandboxToolResult> {
+  return runReviewVerifier(
+    env,
+    sandbox,
+    command.trim() || 'npx tsc --noEmit',
+    'typecheck',
+    REVIEW_TYPECHECK_DEADLINE_MS,
+  );
+}
+
+/** Test verifier — command comes from the repo's base-ref `# test:` hint;
+ *  callers must not invoke this without one (there is no safe default). */
+export async function runReviewTests(
+  env: Env,
+  sandbox: ReviewSandbox,
+  command: string,
+): Promise<ReviewSandboxToolResult> {
+  return runReviewVerifier(env, sandbox, command, 'tests', REVIEW_TESTS_DEADLINE_MS);
 }
 
 /**
  * Execute an allowlisted sandbox tool call against the review's sandbox. Only
- * the v1 set (search/read/ls/typecheck) is honored; anything else returns a
- * model-readable error rather than reaching the sandbox. Inspection tools reuse
- * the redacting handlers, and typecheck runs only the command supplied by the
- * Durable Object from trusted base-ref instructions.
+ * the reviewer set (search/read/ls/typecheck/tests) is honored; anything else
+ * returns a model-readable error rather than reaching the sandbox. Inspection
+ * tools reuse the redacting handlers, and the verifiers run only commands
+ * supplied by the Durable Object from trusted base-ref instructions — never
+ * from the model or the checked-out PR head (the model's `framework` arg to
+ * `sandbox_run_tests` is deliberately ignored for the same reason).
  */
 export async function executeReviewSandboxTool(
   env: Env,
   sandbox: ReviewSandbox,
   call: SandboxToolCall,
-  typecheckCommand: string,
-): Promise<ToolExecutionResult> {
+  commands: ReviewVerifierCommands,
+): Promise<ReviewSandboxToolResult> {
   switch (call.tool) {
     case 'sandbox_search': {
       const ctx = buildReviewInspectionContext(env, sandbox);
@@ -428,10 +496,17 @@ export async function executeReviewSandboxTool(
       return handleListDir(ctx, call.args);
     }
     case 'sandbox_check_types':
-      return runReviewTypecheck(env, sandbox, typecheckCommand);
+      return runReviewTypecheck(env, sandbox, commands.typecheck);
+    case 'sandbox_run_tests':
+      if (!commands.tests) {
+        return {
+          text: '[Tool Error] This repository declares no test command (no `# test:` hint in AGENTS.md at the base ref) — tests are unavailable for this review. Use typecheck instead.',
+        };
+      }
+      return runReviewTests(env, sandbox, commands.tests);
     default:
       return {
-        text: `[Tool Error] ${call.tool} is not available in automated PR review (sandbox tools: ${REVIEW_SANDBOX_TOOL_NAMES}).`,
+        text: `[Tool Error] ${call.tool} is not available in automated PR review (sandbox tools: ${reviewSandboxToolNames(Boolean(commands.tests))}).`,
       };
   }
 }

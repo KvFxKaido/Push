@@ -327,6 +327,22 @@ export interface DeepReviewerOptions<TCall, TCard> extends ReviewerOptions {
    * dual-home precedent).
    */
   resumeState?: DeepReviewerResumeState;
+
+  /**
+   * Runtime completion gate. Invoked when the model emits a parseable
+   * ${REVIEW_COMPLETE} result during investigation rounds — return `null` to
+   * accept, or a nudge string to reject: the nudge is appended as a user
+   * message and the loop continues. Fires at most ONCE per review (the nudge
+   * message id is checked, so the once-cap rides the transcript through
+   * checkpoint relaunches), and never on the last loop round or the forced-
+   * output turn — there is no room left to act on it there, so the result is
+   * accepted as-is and the caller labels it instead.
+   *
+   * This is a code-enforced boundary, not prompt guidance: the webhook
+   * reviewer uses it to reject an unverified clean pass (zero findings with
+   * no typecheck/tests run despite an available sandbox).
+   */
+  completionGate?: (result: ReviewResult) => string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -363,7 +379,8 @@ Usage:
 Rules:
 - Include the fenced JSON block when requesting a tool. A brief sentence before or after the block is fine, but the JSON block must be present.
 - Use only the tools listed above.
-- If the Sandbox list includes typecheck, you may run that listed verification tool to check whether the PR compiles; do not run other command tools.
+- If the Sandbox list includes verification tools (typecheck, tests), you may run them to check whether the PR compiles and passes the repo's tests; do not run other command tools.
+- A clean-pass review (zero findings) that never ran an available verification tool is marked **unverified** on the PR's check run. Run typecheck (and tests, when listed) before concluding the diff is clean.
 - Do NOT call ${REVIEWER_MUTATION_BLOCKLIST}, scratchpad tools, todo tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
@@ -388,7 +405,7 @@ This is a two-phase process:
 ## Phase 1: Investigation
 Read files, trace callers of changed functions, check test coverage, search for import dependencies, and gather any context the diff alone doesn't show. Use tools aggressively — a deep review that doesn't investigate is worthless.
 
-You must stay strictly read-only. A listed sandbox verification tool such as typecheck is permitted for checking the PR because it does not modify the repo.
+You must stay strictly read-only. Listed sandbox verification tools such as typecheck and tests are permitted for checking the PR because they do not modify the repo.
 
 Never:
 - edit files
@@ -640,6 +657,7 @@ export async function runDeepReviewer<TCall, TCard>(
     sandboxToolNames,
     memoryToolProtocol,
     resumeState,
+    completionGate,
   } = options;
 
   const activeProvider: AIProviderType = provider;
@@ -874,8 +892,9 @@ export async function runDeepReviewer<TCall, TCard>(
 
       // Parse the review result
       callbacks.onStatus('Parsing deep review findings...');
+      let parsed: ReviewResult;
       try {
-        return parseReviewResult(reviewJson, activeProvider, modelId, coverage, finalizeUsage());
+        parsed = parseReviewResult(reviewJson, activeProvider, modelId, coverage, finalizeUsage());
       } catch {
         // JSON parse failed — try to salvage on the next round or fall through to fallback
         messages.push({
@@ -888,6 +907,30 @@ export async function runDeepReviewer<TCall, TCard>(
         });
         continue;
       }
+
+      // Runtime completion gate (see DeepReviewerOptions.completionGate).
+      // Once-capped via the message id — presence in a resumed transcript
+      // means the gate already fired in a prior attempt. Skipped on the last
+      // loop round: the wrap-up pressure there already forbade tool calls, so
+      // a rejection could only bounce into the forced-output turn unactioned.
+      const gateId = 'deep-review-completion-gate';
+      if (
+        completionGate &&
+        round < MAX_DEEP_REVIEW_ROUNDS - 1 &&
+        !messages.some((m) => m.id === gateId)
+      ) {
+        const gateNudge = completionGate(parsed);
+        if (gateNudge) {
+          messages.push({
+            id: gateId,
+            role: 'user',
+            content: formatAgentParseError(gateNudge),
+            timestamp: Date.now(),
+          });
+          continue;
+        }
+      }
+      return parsed;
     }
 
     // Handle tool calls (same pattern as Explorer). Deep Reviewer is

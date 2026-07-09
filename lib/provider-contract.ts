@@ -543,6 +543,21 @@ export interface ReviewComment {
   line?: number;
 }
 
+/**
+ * Outcome of one sandbox verifier over a review run. `pass`/`fail` mean the
+ * verifier ran (exit 0 / non-zero, timeouts and transport failures count as
+ * fail); `not_run` means it was available but the reviewer never invoked it;
+ * `unavailable` means it could not have run (no sandbox — cross-fork PRs — or
+ * no repo test command).
+ */
+export type ReviewVerifierStatus = 'pass' | 'fail' | 'not_run' | 'unavailable';
+
+/** Per-verifier record for a review run — see {@link ReviewVerifierStatus}. */
+export interface ReviewVerification {
+  typecheck: ReviewVerifierStatus;
+  tests: ReviewVerifierStatus;
+}
+
 export interface ReviewResult {
   summary: string;
   comments: ReviewComment[];
@@ -567,4 +582,9 @@ export interface ReviewResult {
    * result carries zero findings by construction; consumers must present it
    * as an incomplete review, never as a clean pass. */
   degraded?: boolean;
+  /** Sandbox verification record for the run (typecheck/tests). Attached by
+   * the webhook reviewer's executor; absent on paths that don't track it
+   * (web in-app reviews, rows persisted before the field existed) — treat a
+   * missing value as unknown, not as verified. */
+  verification?: ReviewVerification;
 }

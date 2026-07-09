@@ -27,10 +27,10 @@ vi.mock('@/lib/sandbox-read-only-inspection-handlers', () => ({
 }));
 
 import {
-  REVIEW_SANDBOX_TOOL_NAMES,
   cleanupReviewSandbox,
   executeReviewSandboxTool,
   provisionReviewSandbox,
+  reviewSandboxToolNames,
   runReviewTypecheck,
 } from './review-sandbox-tools';
 
@@ -106,6 +106,8 @@ describe('provisionReviewSandbox', () => {
 
 describe('executeReviewSandboxTool', () => {
   const sb = { sandboxId: 'sb1', ownerToken: 'tok1' };
+  const commands = { typecheck: 'npm run typecheck', tests: 'npm test' };
+  const noTestCommands = { typecheck: 'npm run typecheck', tests: null };
 
   it('routes search/read/ls to the redacting inspection handlers', async () => {
     expect(
@@ -117,7 +119,7 @@ describe('executeReviewSandboxTool', () => {
             tool: 'sandbox_search',
             args: { query: 'x' },
           } as never,
-          'npm run typecheck',
+          commands,
         )
       ).text,
     ).toBe('SEARCH_RESULT');
@@ -131,7 +133,7 @@ describe('executeReviewSandboxTool', () => {
             tool: 'sandbox_read_file',
             args: { path: 'a.ts' },
           } as never,
-          'npm run typecheck',
+          commands,
         )
       ).text,
     ).toBe('READ_RESULT');
@@ -142,7 +144,7 @@ describe('executeReviewSandboxTool', () => {
           env,
           sb,
           { tool: 'sandbox_list_dir', args: {} } as never,
-          'npm run typecheck',
+          commands,
         )
       ).text,
     ).toBe('LS_RESULT');
@@ -152,16 +154,74 @@ describe('executeReviewSandboxTool', () => {
   it('rejects non-allowlisted exec/verification tools without touching the sandbox', async () => {
     for (const call of [
       { tool: 'sandbox_exec', args: { command: 'rm -rf /' } },
-      { tool: 'sandbox_run_tests', args: {} },
       { tool: 'sandbox_verify_workspace', args: {} },
     ]) {
-      const r = await executeReviewSandboxTool(env, sb, call as never, 'npm run typecheck');
+      const r = await executeReviewSandboxTool(env, sb, call as never, noTestCommands);
       expect(r.text).toContain('not available in automated PR review');
-      expect(r.text).toContain(REVIEW_SANDBOX_TOOL_NAMES);
+      // The advertised list is availability-narrowed: no test command → no `tests`.
+      expect(r.text).toContain(reviewSandboxToolNames(false));
+      expect(r.text).not.toContain('tests');
     }
     expect(dispatchMock).not.toHaveBeenCalled();
     expect(handleSearchMock).not.toHaveBeenCalled();
     expect(runDetachedMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a model-readable error for sandbox_run_tests when the repo has no test command', async () => {
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: {} } as never,
+      noTestCommands,
+    );
+    expect(r.text).toContain('no test command');
+    expect(r.verification).toBeUndefined();
+    expect(runDetachedMock).not.toHaveBeenCalled();
+  });
+
+  it('routes sandbox_run_tests through the detached runner with the base-ref test command', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: '12 passed',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: { framework: 'ignored' } } as never,
+      commands,
+    );
+
+    expect(runDetachedMock).toHaveBeenCalledWith(
+      expect.anything(),
+      'cd /workspace && npm test',
+      expect.objectContaining({ workdir: '/workspace' }),
+    );
+    expect(r.text).toContain('[Tool Result — tests]');
+    expect(r.text).toContain('Result: PASS');
+    expect(r.verification).toEqual({ kind: 'tests', pass: true });
+  });
+
+  it('reports fail (verification metadata included) on a non-zero test exit', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: '1 failed',
+      stderr: '',
+      exitCode: 1,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: {} } as never,
+      commands,
+    );
+    expect(r.text).toContain('Result: FAIL');
+    expect(r.verification).toEqual({ kind: 'tests', pass: false });
   });
 
   it('routes sandbox_check_types through the detached runner and reports pass on exit 0', async () => {
@@ -217,7 +277,7 @@ describe('executeReviewSandboxTool', () => {
       env,
       sb,
       { tool: 'sandbox_check_types', args: {} } as never,
-      'npm run typecheck',
+      commands,
     );
 
     expect(r.text).toContain('[Tool Result — typecheck]');
@@ -263,6 +323,7 @@ describe('executeReviewSandboxTool', () => {
     expect(r.text).toContain('Exit code: 2');
     expect(r.text).toContain('Result: FAIL');
     expect(r.text).toContain('error TS2322');
+    expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
   });
 
   it('never throws when detached exec transport fails before start confirmation', async () => {
@@ -278,6 +339,7 @@ describe('executeReviewSandboxTool', () => {
     expect(r.text).toContain('Exit code: -1');
     expect(r.text).toContain('Result: FAIL');
     expect(r.text).toContain('transport down');
+    expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
   });
 });
 

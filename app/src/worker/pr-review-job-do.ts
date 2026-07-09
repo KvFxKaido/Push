@@ -27,6 +27,7 @@ import type {
   LlmMessage,
   PushStream,
   ReviewResult,
+  ReviewVerification,
 } from '@push/lib/provider-contract';
 import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
@@ -59,11 +60,12 @@ import { recordInflightReview } from './pr-review-inflight-index';
 import { createWebStreamAdapter } from './coder-job-stream-adapter';
 import { createWebDetectorAdapter, type AnyToolCall } from './coder-job-detector-adapter';
 import {
-  REVIEW_SANDBOX_TOOL_NAMES,
   cleanupReviewSandbox,
   executeReviewSandboxTool,
   provisionReviewSandbox,
+  reviewSandboxToolNames,
   type ReviewSandbox,
+  type ReviewVerifierCommands,
 } from './review-sandbox-tools';
 import type { ReviewablePullRequest } from './github-webhook';
 
@@ -214,6 +216,71 @@ export function repoGatingEnabled(repo: string, gatingReposEnv: string | undefin
   return allowed.has(repo.toLowerCase());
 }
 
+/**
+ * Check-run conclusion for a POSTED zero-findings review, decided by the
+ * runtime verification record — never by what the model claims. `success` is
+ * reserved for "reviewed AND verified": at least one verifier ran and passed,
+ * and none failed. Everything else is `neutral` with the reason in the title:
+ *
+ * - verifier failed        → the reviewer saw a red verifier and still posted
+ *                            no findings; surface the contradiction.
+ * - nothing ran, available → unverified (the model declined the nudge).
+ * - nothing available      → cross-fork / sandbox off; honestly unverifiable.
+ * - record absent          → pre-verification rows / unknown; treat as
+ *                            unverified rather than assuming.
+ */
+export function cleanPassCheckStatus(verification: ReviewVerification | undefined): {
+  conclusion: ReviewCheckConclusion;
+  title: string;
+  summary: string;
+} {
+  const v = verification;
+  const anyFail = v?.typecheck === 'fail' || v?.tests === 'fail';
+  const anyPass = v?.typecheck === 'pass' || v?.tests === 'pass';
+  const anyAvailable = v != null && (v.typecheck !== 'unavailable' || v.tests !== 'unavailable');
+
+  if (anyFail) {
+    const failed = [
+      v?.typecheck === 'fail' ? 'typecheck' : null,
+      v?.tests === 'fail' ? 'tests' : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    return {
+      conclusion: 'neutral',
+      title: 'No blocking findings — verification failed',
+      summary: `The reviewer posted no findings, but ${failed} failed on the PR head. Check the verifier output before trusting the clean pass.`,
+    };
+  }
+  if (anyPass) {
+    const passed = [
+      v?.typecheck === 'pass' ? 'typecheck' : null,
+      v?.tests === 'pass' ? 'tests' : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    return {
+      conclusion: 'success',
+      title: `No blocking findings — verified (${passed})`,
+      summary: `No blocking issues. Verified against the PR head: ${passed} passed.`,
+    };
+  }
+  if (!anyAvailable) {
+    return {
+      conclusion: 'neutral',
+      title: 'No blocking findings (verification unavailable)',
+      summary:
+        'No blocking issues found from the diff and code reading. No sandbox verifier was available for this PR (cross-fork or sandbox disabled), so the clean pass is unverified.',
+    };
+  }
+  return {
+    conclusion: 'neutral',
+    title: 'No blocking findings (unverified)',
+    summary:
+      'No blocking issues found, but the reviewer did not run typecheck/tests despite an available sandbox. The clean pass is unverified.',
+  };
+}
+
 /** Checkpoint/resume hooks the DO threads into the executor. Optional fourth
  *  parameter so test overrides (and any 3-arg executor) stay assignable. */
 export interface PrReviewExecutorHooks {
@@ -221,6 +288,17 @@ export interface PrReviewExecutorHooks {
   resumeState?: DeepReviewerResumeState;
   /** Per-round state snapshot — the DO persists it synchronously. */
   onRoundState?: (state: DeepReviewerResumeState) => void;
+  /**
+   * Seed the executor's verification record on relaunch. Verifier runs
+   * (typecheck/tests) live in executor memory; without this, a review that
+   * verified in rounds the checkpoint already banked would forget it after an
+   * eviction and finish "unverified" (or get nudged to re-run an 8-minute
+   * suite). Persisted next to the round checkpoint by the DO.
+   */
+  resumeVerification?: ReviewVerification;
+  /** Fired whenever a verifier records an outcome — the DO keeps the latest
+   *  snapshot and persists it with the next round checkpoint. */
+  onVerification?: (verification: ReviewVerification) => void;
 }
 
 /** Injectable model/network leaf — see `__setPrReviewExecutorOverride`. */
@@ -286,7 +364,8 @@ CREATE TABLE IF NOT EXISTS review_checkpoint (
   delivery_id TEXT PRIMARY KEY,
   state_json TEXT NOT NULL,
   round INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  verification_json TEXT
 );
 `;
 
@@ -318,6 +397,10 @@ export class PrReviewJob {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
   private readonly abortControllers = new Map<string, AbortController>();
+  // Latest verifier record per live delivery (fed by the executor's
+  // onVerification hook); persisted alongside each round checkpoint so it
+  // survives evictions with the rounds it belongs to.
+  private readonly verificationState = new Map<string, ReviewVerification>();
   // Reset on every cold start; the orphan sweep runs once per DO instance on
   // first fetch (a fresh instance has an empty abortControllers map, so any
   // `running` row it finds belonged to a prior, now-dead instance).
@@ -364,6 +447,13 @@ export class PrReviewJob {
         'ALTER TABLE review ADD COLUMN relaunch_count INTEGER NOT NULL DEFAULT 0',
       );
     }
+    const checkpointCols = this.ctx.storage.sql
+      .exec('PRAGMA table_info(review_checkpoint)')
+      .toArray() as Array<{ name: string }>;
+    const haveCheckpoint = new Set(checkpointCols.map((c) => c.name));
+    if (!haveCheckpoint.has('verification_json')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review_checkpoint ADD COLUMN verification_json TEXT');
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -373,13 +463,15 @@ export class PrReviewJob {
 
   private writeCheckpoint(deliveryId: string, state: DeepReviewerResumeState): void {
     const json = JSON.stringify(state);
+    const verification = this.verificationState.get(deliveryId) ?? null;
     this.ctx.storage.sql.exec(
-      'INSERT INTO review_checkpoint (delivery_id, state_json, round, updated_at) VALUES (?, ?, ?, ?) ' +
-        'ON CONFLICT(delivery_id) DO UPDATE SET state_json = excluded.state_json, round = excluded.round, updated_at = excluded.updated_at',
+      'INSERT INTO review_checkpoint (delivery_id, state_json, round, updated_at, verification_json) VALUES (?, ?, ?, ?, ?) ' +
+        'ON CONFLICT(delivery_id) DO UPDATE SET state_json = excluded.state_json, round = excluded.round, updated_at = excluded.updated_at, verification_json = excluded.verification_json',
       deliveryId,
       json,
       state.nextRound,
       Date.now(),
+      verification ? JSON.stringify(verification) : null,
     );
     log('info', 'pr_review_checkpoint_captured', {
       deliveryId,
@@ -388,21 +480,40 @@ export class PrReviewJob {
     });
   }
 
-  private readCheckpoint(
-    deliveryId: string,
-  ): { state: DeepReviewerResumeState; round: number; updatedAt: number } | null {
+  private readCheckpoint(deliveryId: string): {
+    state: DeepReviewerResumeState;
+    round: number;
+    updatedAt: number;
+    verification: ReviewVerification | null;
+  } | null {
     const rows = this.ctx.storage.sql
       .exec(
-        'SELECT state_json, round, updated_at FROM review_checkpoint WHERE delivery_id = ?',
+        'SELECT state_json, round, updated_at, verification_json FROM review_checkpoint WHERE delivery_id = ?',
         deliveryId,
       )
-      .toArray() as Array<{ state_json: string; round: number; updated_at: number }>;
+      .toArray() as Array<{
+      state_json: string;
+      round: number;
+      updated_at: number;
+      verification_json: string | null;
+    }>;
     if (!rows.length) return null;
     try {
+      // A corrupt verification blob degrades to null (the attempt restarts
+      // its record) without dropping the round checkpoint with it.
+      let verification: ReviewVerification | null = null;
+      if (rows[0].verification_json) {
+        try {
+          verification = JSON.parse(rows[0].verification_json) as ReviewVerification;
+        } catch {
+          verification = null;
+        }
+      }
       return {
         state: JSON.parse(rows[0].state_json) as DeepReviewerResumeState,
         round: rows[0].round,
         updatedAt: rows[0].updated_at,
+        verification,
       };
     } catch (err) {
       // A corrupt checkpoint must not wedge the sweep — drop it loudly so the
@@ -807,7 +918,7 @@ export class PrReviewJob {
 
   private async runReview(
     input: PrReviewStartInput,
-    resume?: { state: DeepReviewerResumeState },
+    resume?: { state: DeepReviewerResumeState; verification?: ReviewVerification | null },
   ): Promise<void> {
     const controller = new AbortController();
     // Registration is SYNCHRONOUS (before the first await) — the sweep's
@@ -862,9 +973,18 @@ export class PrReviewJob {
     }
 
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
+    // Seed the in-memory verifier record from the relaunch checkpoint so the
+    // next writeCheckpoint doesn't wipe what a prior attempt banked.
+    if (resume?.verification) {
+      this.verificationState.set(input.deliveryId, resume.verification);
+    }
     try {
       const outcome = await executor(input, this.env, controller.signal, {
         resumeState: resume?.state,
+        resumeVerification: resume?.verification ?? undefined,
+        onVerification: (verification) => {
+          this.verificationState.set(input.deliveryId, verification);
+        },
         onRoundState: (state) => {
           // Synchronous persist (the lib hands us its live array — serialize
           // now). Re-arming the watchdog is async; fire-and-forget under
@@ -922,6 +1042,7 @@ export class PrReviewJob {
         truncated: outcome.result.truncated,
         usage: outcome.result.usage ?? null,
         gated: outcome.gated ?? false,
+        verification: outcome.result.verification ?? null,
       });
       log('info', 'pr_review_completed', {
         deliveryId: input.deliveryId,
@@ -934,6 +1055,7 @@ export class PrReviewJob {
         // Surface token usage in ops logs when the provider reported it; null
         // keeps the field present (and greppable) when it didn't.
         totalTokens: outcome.result.usage?.totalTokens ?? null,
+        verification: outcome.result.verification ?? null,
       });
       if (checkToken) {
         const findings = outcome.result.comments.length;
@@ -964,16 +1086,19 @@ export class PrReviewJob {
                   title: 'Critical findings',
                   summary: outcome.result.summary || 'Critical issues found.',
                 }
-              : {
-                  conclusion: 'success' as ReviewCheckConclusion,
-                  title:
-                    findings === 0
-                      ? 'No blocking findings'
-                      : `${findings} finding${findings === 1 ? '' : 's'}`,
-                  summary:
-                    outcome.result.summary ||
-                    (findings === 0 ? 'No blocking issues.' : `${findings} finding(s) posted.`),
-                };
+              : findings === 0
+                ? // Clean pass: `success` is reserved for reviews that actually
+                  // VERIFIED (a sandbox verifier ran and passed). A zero-findings
+                  // review that never executed anything — or whose verifier
+                  // failed — concludes `neutral` with the reason in the title,
+                  // so "didn't check" can't launder into a green check (the
+                  // same didn't-happen ≠ clean-pass rule as the degraded path).
+                  cleanPassCheckStatus(outcome.result.verification)
+                : {
+                    conclusion: 'success' as ReviewCheckConclusion,
+                    title: `${findings} finding${findings === 1 ? '' : 's'}`,
+                    summary: outcome.result.summary || `${findings} finding(s) posted.`,
+                  };
         await this.finalizeCheckRun(
           input.repoFullName,
           input.headSha,
@@ -1047,6 +1172,7 @@ export class PrReviewJob {
       }
     } finally {
       this.abortControllers.delete(input.deliveryId);
+      this.verificationState.delete(input.deliveryId);
       // Every in-process exit is terminal for this attempt (completed, failed,
       // cancelled, superseded) — the checkpoint has served its purpose. The
       // relaunch path never reaches here: it exists precisely for promises
@@ -1416,7 +1542,7 @@ export class PrReviewJob {
                   pinnedProvider: row.pinned_provider ?? undefined,
                   pinnedModel: row.pinned_model ?? undefined,
                 },
-                { state: checkpoint.state },
+                { state: checkpoint.state, verification: checkpoint.verification },
               ),
             );
             continue;
@@ -1500,34 +1626,62 @@ export class PrReviewJob {
 // Default executor — the model + GitHub leaf
 // ---------------------------------------------------------------------------
 
-async function resolveReviewTypecheckCommand(
+/**
+ * Resolve the reviewer's verifier commands from the repo's instruction files
+ * at the BASE ref (trusted — never the head). Typecheck falls back to the
+ * universal `npx tsc --noEmit`; tests have no safe default, so a repo without
+ * a `# test:` hint gets `tests: null` and the tests tool is not advertised.
+ * Independent per kind: the first file that declares a kind wins for it.
+ */
+async function resolveReviewCommands(
   repoFullName: string,
   baseRef: string,
   auth: { token: string },
-): Promise<string> {
+): Promise<ReviewVerifierCommands> {
+  let typecheck: string | null = null;
+  let tests: string | null = null;
   for (const filename of ['AGENTS.md', 'CLAUDE.md'] as const) {
+    if (typecheck && tests) break;
     try {
       const content = await fetchRepoFileContent(repoFullName, filename, baseRef, auth);
       if (!content) continue;
-      const hit = parseAgentsMdHints(content).find((hint) => hint.kind === 'typecheck');
-      if (hit?.command.trim()) {
-        log('debug', 'pr_review_typecheck_command_resolved', {
-          source: filename,
-          command: hit.command,
-        });
-        return hit.command.trim();
+      const hints = parseAgentsMdHints(content);
+      if (!typecheck) {
+        const hit = hints.find((hint) => hint.kind === 'typecheck');
+        if (hit?.command.trim()) {
+          typecheck = hit.command.trim();
+          log('debug', 'pr_review_typecheck_command_resolved', {
+            source: filename,
+            command: typecheck,
+          });
+        }
+      }
+      if (!tests) {
+        const hit = hints.find((hint) => hint.kind === 'test');
+        if (hit?.command.trim()) {
+          tests = hit.command.trim();
+          log('debug', 'pr_review_test_command_resolved', {
+            source: filename,
+            command: tests,
+          });
+        }
       }
     } catch (err) {
-      log('warn', 'pr_review_typecheck_command_fetch_failed', {
+      log('warn', 'pr_review_verifier_command_fetch_failed', {
         source: filename,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
-  log('debug', 'pr_review_typecheck_command_defaulted', {
-    command: DEFAULT_REVIEW_TYPECHECK_COMMAND,
-  });
-  return DEFAULT_REVIEW_TYPECHECK_COMMAND;
+  if (!typecheck) {
+    log('debug', 'pr_review_typecheck_command_defaulted', {
+      command: DEFAULT_REVIEW_TYPECHECK_COMMAND,
+    });
+  }
+  if (!tests) {
+    log('debug', 'pr_review_test_command_absent', { repo: repoFullName });
+  }
+  return { typecheck: typecheck ?? DEFAULT_REVIEW_TYPECHECK_COMMAND, tests };
 }
 
 /**
@@ -1634,9 +1788,18 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     Boolean(env.Sandbox && env.SANDBOX_TOKENS) &&
     !input.isCrossFork &&
     env.PUSH_REVIEWER_SANDBOX !== '0';
-  const reviewTypecheckCommand = sandboxToolsEnabled
-    ? await resolveReviewTypecheckCommand(input.repoFullName, input.baseRef, auth)
-    : DEFAULT_REVIEW_TYPECHECK_COMMAND;
+  const reviewCommands: ReviewVerifierCommands = sandboxToolsEnabled
+    ? await resolveReviewCommands(input.repoFullName, input.baseRef, auth)
+    : { typecheck: DEFAULT_REVIEW_TYPECHECK_COMMAND, tests: null };
+
+  // Verification record for this attempt — runtime-tracked, never inferred
+  // from model claims. Seeded from the checkpoint on relaunch so verifier runs
+  // banked by earlier attempts survive DO evictions.
+  const verification: ReviewVerification = hooks?.resumeVerification
+    ? { ...hooks.resumeVerification }
+    : sandboxToolsEnabled
+      ? { typecheck: 'not_run', tests: reviewCommands.tests ? 'not_run' : 'unavailable' }
+      : { typecheck: 'unavailable', tests: 'unavailable' };
   let reviewSandbox: ReviewSandbox | null = null;
   let sandboxProvisionPromise: Promise<ReviewSandbox | null> | null = null;
   // Memoize the in-flight provision so concurrent (Promise.all) tool calls in a
@@ -1704,12 +1867,16 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
                   '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
               };
             }
-            const r = await executeReviewSandboxTool(
-              env,
-              sb,
-              toolCall.call,
-              reviewTypecheckCommand,
-            );
+            const r = await executeReviewSandboxTool(env, sb, toolCall.call, reviewCommands);
+            if (r.verification) {
+              verification[r.verification.kind] = r.verification.pass ? 'pass' : 'fail';
+              log('info', 'pr_review_verification_recorded', {
+                deliveryId: input.deliveryId,
+                verifier: r.verification.kind,
+                pass: r.verification.pass,
+              });
+              hooks?.onVerification?.({ ...verification });
+            }
             return { resultText: r.text };
           } catch {
             // toolExec must NEVER throw into the reviewer loop (it awaits this
@@ -1731,8 +1898,29 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       webSearchToolProtocol: '',
       webSearchAvailable: false,
       sandboxAvailable: sandboxToolsEnabled,
-      sandboxToolNames: REVIEW_SANDBOX_TOOL_NAMES,
+      sandboxToolNames: reviewSandboxToolNames(Boolean(reviewCommands.tests)),
       resumeState: hooks?.resumeState,
+      // Verify-before-clean-pass gate: a zero-findings review with an
+      // available sandbox and no verifier run gets one bounded nudge to run
+      // typecheck/tests (or stand by its conclusion — the second completion
+      // is accepted and the check-run labels it unverified). Runtime-tracked
+      // via `verification`, so a cooperative-sounding claim without a real
+      // tool run cannot satisfy it.
+      completionGate: (result) => {
+        if (!sandboxToolsEnabled) return null;
+        if (result.comments.length > 0) return null;
+        const ran =
+          verification.typecheck !== 'not_run' ||
+          verification.tests === 'pass' ||
+          verification.tests === 'fail';
+        if (ran) return null;
+        log('info', 'pr_review_verification_nudged', { deliveryId: input.deliveryId });
+        return (
+          'You are reporting zero findings without having run any verification tool. ' +
+          `Run typecheck${reviewCommands.tests ? ' (and tests)' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
+          'If you have a concrete reason verification cannot run, state it and re-emit; the review will be marked unverified.'
+        );
+      },
     },
     { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
   ).finally(async () => {
@@ -1743,6 +1931,11 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     }
   });
   if (signal.aborted) throw new Error('aborted');
+
+  // Attach the runtime verification record before ANY return path — the
+  // check-run policy labels clean passes off it, and the head-advanced /
+  // degraded exits still persist the result for cross-review memory.
+  result.verification = { ...verification };
 
   // Pin the post to the SHA we reviewed. `fetchPullRequestDiff` returns the PR's
   // *current* diff; if the head advanced between the webhook delivery and now
