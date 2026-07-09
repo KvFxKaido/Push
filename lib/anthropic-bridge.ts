@@ -87,6 +87,35 @@ export function anthropicModelEnforcesSamplingExclusivity(
   return Number(match[1]) >= 4;
 }
 
+/**
+ * Whether a Claude model runs *thinking by default* — Fable/Mythos 5 have
+ * thinking always on (an explicit `{type:"disabled"}` even 400s), and Sonnet 5
+ * runs adaptive thinking whenever `thinking` is omitted. Opus 4.7/4.8 and
+ * Sonnet 4.6-and-earlier run thinking *off* when it is omitted, so they keep
+ * their existing request surface and return false here.
+ *
+ * The default thinking `display` is `"omitted"`, which streams thinking blocks
+ * with empty text — so a silent think emits no user-visible content and no
+ * `reasoning_delta`. On the web lane that trips the 60s no-content stall abort
+ * (`contentTimeoutMs`) before the first answer token. We consult this predicate
+ * to request `thinking: {type:"adaptive", display:"summarized"}` for these
+ * models, which streams the reasoning as summary text — surfacing progress AND
+ * keeping the content-stall timer alive. Same family-parse shape as
+ * `anthropicModelRejectsSamplingParams`; non-Anthropic ids return false.
+ */
+export function anthropicModelThinksByDefault(model: string | null | undefined): boolean {
+  if (typeof model !== 'string') return false;
+  const match = model
+    .toLowerCase()
+    .match(/claude[-.](opus|sonnet|haiku|fable|mythos)[-.](\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  if (!match) return false;
+  const family = match[1];
+  const major = Number(match[2]);
+  if (family === 'fable' || family === 'mythos') return major >= 5;
+  if (family === 'sonnet') return major >= 5;
+  return false;
+}
+
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
   if (!match) return null;
@@ -497,6 +526,20 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
     if (hasTopP && !dropTopP) {
       body.top_p = parts.topP;
     }
+  }
+
+  // Fable/Mythos 5 think always-on and Sonnet 5 runs adaptive thinking by
+  // default, both with `display: "omitted"` — so an omitted-display think emits
+  // empty thinking deltas and no user-visible content. Request summarized
+  // thinking for these models so the reasoning streams as text: it surfaces
+  // progress to the user AND keeps the client's content-stall timer alive (a
+  // silent >60s think would otherwise trip the 60s no-content abort before the
+  // first answer token). Opus 4.7/4.8 and Sonnet 4.6 run thinking off when it is
+  // omitted, so they keep their existing request surface. Structured output on
+  // these models uses native `output_config.format` (thinking-compatible), not
+  // the forced-tool path, so there is no `tool_choice`+thinking conflict.
+  if (anthropicModelThinksByDefault(parts.samplingModel)) {
+    body.thinking = { type: 'adaptive', display: 'summarized' };
   }
 
   // Tools array: native function-calling schemas (translated to Anthropic's flat

@@ -7,6 +7,7 @@ import {
   anthropicEventStream,
   anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
+  anthropicModelThinksByDefault,
   buildAnthropicMessagesRequest,
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
@@ -130,7 +131,64 @@ describe('anthropicModelEnforcesSamplingExclusivity', () => {
   });
 });
 
+describe('anthropicModelThinksByDefault', () => {
+  it('flags Fable/Mythos 5 and Sonnet 5 (thinking on by default, omitted display)', () => {
+    for (const model of [
+      'claude-fable-5',
+      'claude-mythos-5',
+      'claude-sonnet-5',
+      'anthropic/claude-sonnet-5',
+      'claude-fable-5[1m]',
+      'CLAUDE-SONNET-5',
+    ]) {
+      expect(anthropicModelThinksByDefault(model), model).toBe(true);
+    }
+  });
+
+  it('leaves think-off-by-omission and non-Anthropic models alone', () => {
+    for (const model of [
+      // Opus 4.7/4.8 run thinking OFF when omitted — forcing adaptive would
+      // change their behavior, so they must stay false.
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5',
+      'claude-opus-4-20250514',
+      'gpt-5-mini',
+      'minimax-m2',
+      '',
+    ]) {
+      expect(anthropicModelThinksByDefault(model), model).toBe(false);
+    }
+    expect(anthropicModelThinksByDefault(undefined)).toBe(false);
+    expect(anthropicModelThinksByDefault(null)).toBe(false);
+  });
+});
+
 describe('buildAnthropicMessagesRequest', () => {
+  it('requests summarized thinking for Fable/Sonnet 5, but not for Opus 4.8', () => {
+    const base = {
+      messages: [{ role: 'user' as const, content: 'Hello' }],
+      stream: true,
+    };
+
+    for (const model of ['claude-fable-5', 'claude-sonnet-5']) {
+      const body = buildAnthropicMessagesRequest({ ...base, model });
+      // Summarized display makes the otherwise-silent (omitted) thinking phase
+      // stream reasoning text, which keeps the client content-stall timer alive.
+      expect(body.thinking, model).toEqual({ type: 'adaptive', display: 'summarized' });
+    }
+
+    // Opus 4.8 runs thinking off when omitted — the bridge must NOT enable it.
+    const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
+    expect(opus48).not.toHaveProperty('thinking');
+
+    // Sonnet 4.6 (existing picker entry) is likewise unaffected.
+    const sonnet46 = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
+    expect(sonnet46).not.toHaveProperty('thinking');
+  });
+
   it('strips temperature/top_p for newer Claude ids, and drops top_p when both set on Claude 4+', () => {
     const base = {
       messages: [{ role: 'user' as const, content: 'Hello' }],
