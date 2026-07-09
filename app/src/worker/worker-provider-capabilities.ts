@@ -69,12 +69,13 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
 
 /**
  * Gateway binding provider strings, mirroring each handler's `gateway:`
- * binding in `worker-providers.ts` — the BYOK env list matches against THESE
- * (e.g. `custom-ollama`), not the plain provider id, because that's what the
- * handlers pass to `isGatewayByokProvider` at dispatch (Codex P2, PR #1380).
- * `kilocode` has no binding (dropped — egress-discriminating origin), so BYOK
- * can never apply to it. Load-bearing copies like PROVIDER_ENV_KEY above —
- * change in lockstep with the handlers.
+ * binding in `worker-providers.ts`. `isGatewayByokProvider` normalizes the
+ * `custom-` prefix (76f6fdc1), so BYOK *matching* no longer needs this table —
+ * its two remaining jobs are (a) knowing whether a provider has a gateway
+ * binding at all (`kilocode` doesn't — dropped, egress-discriminating origin —
+ * so BYOK can never apply to it), and (b) carrying the exact binding string
+ * for the custom-slug gate below. Load-bearing copies like PROVIDER_ENV_KEY
+ * above — change in lockstep with the handlers.
  */
 const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
   ollama: 'custom-ollama',

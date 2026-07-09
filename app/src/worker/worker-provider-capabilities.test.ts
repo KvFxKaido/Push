@@ -139,45 +139,43 @@ describe('handleProviderEngineCapabilities', () => {
     expect(body.gatewayActive).toBe(true);
   });
 
-  it('matches BYOK against gateway binding slugs, not plain provider ids (Codex P2)', async () => {
+  it('reports custom-provider BYOK only when dispatch would route it through the gateway', async () => {
     const base = {
       CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
       CF_AI_GATEWAY_SLUG: 'push-gate',
     };
-    // Plain `ollama` in the BYOK list does NOT match dispatch's
-    // `custom-ollama` binding check — reporting it as byok would unlock a
-    // provider whose keyless dispatch 401s.
+    // Canonical id + custom slug enabled → dispatch routes keyless-through-
+    // gateway (isGatewayByokProvider normalizes the custom- prefix, 76f6fdc1).
     let res = await handleProviderEngineCapabilities(makeRequest(), {
       ...base,
       CF_AI_GATEWAY_BYOK: 'ollama',
       CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
     } as Env);
     let body = (await res.json()) as { sources: Record<string, string | null> };
-    expect(body.sources.ollama).toBeNull();
-
-    // The binding slug alone isn't enough either: an unlisted custom slug
-    // makes buildAiGatewayUrl fall back to direct, where keyless 401s.
-    res = await handleProviderEngineCapabilities(makeRequest(), {
-      ...base,
-      CF_AI_GATEWAY_BYOK: 'custom-ollama',
-    } as Env);
-    body = (await res.json()) as { sources: Record<string, string | null> };
-    expect(body.sources.ollama).toBeNull();
-
-    // Binding slug BYOK-listed AND custom slug enabled → dispatch actually
-    // routes keyless-through-gateway.
-    res = await handleProviderEngineCapabilities(makeRequest(), {
-      ...base,
-      CF_AI_GATEWAY_BYOK: 'custom-ollama',
-      CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
-    } as Env);
-    body = (await res.json()) as { sources: Record<string, string | null> };
     expect(body.sources.ollama).toBe('gateway-byok');
+
+    // BYOK-listed but custom slug NOT enabled → buildAiGatewayUrl falls back
+    // to direct, where a keyless call 401s at the upstream — must not report
+    // byok (Codex P2, PR #1380).
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'ollama',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBeNull();
+
+    // First-party bindings have no slug gate — BYOK alone is enough.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'openai',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.openai).toBe('gateway-byok');
 
     // kilocode has no gateway binding at all — BYOK can never apply.
     res = await handleProviderEngineCapabilities(makeRequest(), {
       ...base,
-      CF_AI_GATEWAY_BYOK: 'kilocode,custom-kilocode',
+      CF_AI_GATEWAY_BYOK: 'kilocode',
       CF_AI_GATEWAY_CUSTOM_SLUGS: 'kilocode',
     } as Env);
     body = (await res.json()) as { sources: Record<string, string | null> };
