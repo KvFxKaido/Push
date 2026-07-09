@@ -1433,12 +1433,17 @@ function resolveAiGatewayFetchTarget(
   env: Env,
   directUrl: string,
   gateway?: AiGatewayBinding,
-): { upstreamUrl: string; gatewayHeaders: Record<string, string> } {
+): { upstreamUrl: string; gatewayHeaders: Record<string, string>; byok: boolean } {
   const gatewayUrl = gateway ? buildAiGatewayUrl(env, gateway) : null;
   const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
   return {
     upstreamUrl: gatewayUrl ?? directUrl,
     gatewayHeaders: aigAuth ? { 'cf-aig-authorization': aigAuth } : {},
+    // BYOK is only real when the request actually routes through the gateway:
+    // a BYOK-listed custom binding whose slug isn't enabled falls back to the
+    // direct URL above, where a keyless call 401s at the upstream — callers
+    // must keep sending the key (and keep the key-missing gate) in that case.
+    byok: gatewayUrl !== null && gateway ? isGatewayByokProvider(env, gateway.provider) : false,
   };
 }
 
@@ -1457,7 +1462,14 @@ async function handleResponsesProxy(
 ): Promise<Response> {
   // BYOK: when this provider's key is stored in the gateway, route keyless and
   // let the gateway inject it (omit Authorization below, skip the key gate).
-  const byok = opts.gateway ? isGatewayByokProvider(env, opts.gateway.provider) : false;
+  // The resolver ties byok to the gateway URL actually resolving — for a
+  // custom binding (sakana/fireworks here) whose slug isn't enabled, the fetch
+  // goes DIRECT, so the key must keep flowing and the key gate must stay on.
+  const { upstreamUrl, gatewayHeaders, byok } = resolveAiGatewayFetchTarget(
+    env,
+    opts.upstreamUrl,
+    opts.gateway,
+  );
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth(opts.authSecret),
     keyMissingError: opts.keyMissingError,
@@ -1488,11 +1500,6 @@ async function handleResponsesProxy(
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), RESPONSES_TIMEOUT_MS);
   const upstreamCtx = createChildContext(spanCtx);
-  const { upstreamUrl, gatewayHeaders } = resolveAiGatewayFetchTarget(
-    env,
-    opts.upstreamUrl,
-    opts.gateway,
-  );
   const extraHeaders =
     typeof opts.extraFetchHeaders === 'function'
       ? opts.extraFetchHeaders(request)

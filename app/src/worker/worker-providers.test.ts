@@ -1010,6 +1010,79 @@ describe('AI Gateway BYOK — first-party providers route keyless', () => {
   }
 });
 
+describe('chat handlers — BYOK is gated on the gateway URL actually resolving', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  const gw = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+
+  it('stream proxy (ollama): BYOK-listed but slug disabled 401s keyless instead of going direct keyless', async () => {
+    // Without the gate, the handler would omit Authorization on a DIRECT
+    // upstream call (buildAiGatewayUrl fell back) — a guaranteed upstream 401
+    // that looks like a provider outage instead of a config error.
+    const captured = captureFetch();
+    const res = await handleOllamaChat(
+      makeChatRequest(),
+      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'ollama' }),
+    );
+    expect(res.status).toBe(401);
+    expect(captured.current).toBeNull();
+  });
+
+  it('stream proxy (ollama): BYOK + slug enabled routes keyless through the gateway', async () => {
+    const captured = captureFetch();
+    const res = await handleOllamaChat(
+      makeChatRequest(),
+      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'ollama', CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama' }),
+    );
+    expect(res.status).not.toBe(401);
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-ollama/v1/chat/completions',
+    );
+    expect(captured.current?.headers.Authorization).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('responses proxy (sakana): BYOK-listed but slug disabled 401s keyless instead of going direct keyless', async () => {
+    const captured = captureFetch();
+    const res = await handleSakanaChat(
+      makeOpenAIResponsesRequest(),
+      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'sakana' }),
+    );
+    expect(res.status).toBe(401);
+    expect(captured.current).toBeNull();
+  });
+
+  it('responses proxy (sakana): BYOK + slug enabled routes keyless through the gateway', async () => {
+    const captured = captureFetch();
+    const res = await handleSakanaChat(
+      makeOpenAIResponsesRequest(),
+      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'sakana', CF_AI_GATEWAY_CUSTOM_SLUGS: 'sakana' }),
+    );
+    expect(res.status).not.toBe(401);
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-sakana/v1/responses',
+    );
+    expect(captured.current?.headers.Authorization).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+});
+
 describe('models endpoints — AI Gateway BYOK keeps the live list reachable keyless', () => {
   function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
     const captured: { current: { url: string; headers: Record<string, string> } | null } = {

@@ -848,9 +848,17 @@ export function createStreamProxyHandler(
   config: StreamProxyConfig,
 ): (request: Request, env: Env) => Promise<Response> {
   return async (request, env) => {
+    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     // BYOK: this provider's key lives in the gateway; route keyless and let the
     // gateway inject it (omit Authorization below, skip the key-missing 401).
-    const byok = config.gateway ? isGatewayByokProvider(env, config.gateway.provider) : false;
+    // Gated on the gateway URL actually resolving: for a custom binding whose
+    // slug isn't enabled, buildAiGatewayUrl falls back to direct, where a
+    // keyless call would 401 at the upstream instead of here — so the key
+    // gate must stay on.
+    const byok =
+      gatewayUrl !== null && config.gateway
+        ? isGatewayByokProvider(env, config.gateway.provider)
+        : false;
     const preamble = await runPreamble(request, env, {
       buildAuth: config.buildAuth,
       keyMissingError: config.keyMissingError,
@@ -886,7 +894,6 @@ export function createStreamProxyHandler(
 
     const directUrl =
       typeof config.upstreamUrl === 'function' ? config.upstreamUrl(request) : config.upstreamUrl;
-    const gatewayUrl = config.gateway ? buildAiGatewayUrl(env, config.gateway) : null;
     const upstreamUrl = gatewayUrl ?? directUrl;
 
     const writeStat = (fields: Partial<ProviderStatFields>) => {
