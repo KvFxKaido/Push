@@ -237,12 +237,17 @@ export function ProviderKeySection({
   // A credential held outside the browser (gateway BYOK / Worker secret /
   // binding) connects the provider regardless of any local key — and takes
   // precedence over one at dispatch. `user-key` is the browser-owned path and
-  // renders through the existing hasKey branch.
+  // renders through the existing hasKey branch — EXCEPT when the key exists
+  // only in the account store (mirrored from another device, or local data
+  // was cleared): the provider is selectable and dispatch resolves the key
+  // from user-secrets, so an empty password form here would lie (Codex P2,
+  // PR #1380).
   const serverHeld =
     credentialSource === 'gateway-byok' ||
     credentialSource === 'worker-secret' ||
     credentialSource === 'binding';
-  if (hasKey || serverHeld) {
+  const accountHeld = credentialSource === 'user-key' && !hasKey;
+  if (hasKey || serverHeld || accountHeld) {
     const statusLabel = serverHeld
       ? (CREDENTIAL_SOURCE_LABELS[credentialSource as ProviderCredentialSource] ?? 'Connected')
       : 'Connected';
@@ -253,13 +258,16 @@ export function ProviderKeySection({
             <span className="h-2 w-2 rounded-full bg-emerald-400" />
             <p className="text-sm text-push-fg-secondary">{statusLabel}</p>
           </div>
-          {hasKey && (
+          {(hasKey || accountHeld) && (
             <button
               type="button"
               onClick={() => {
+                // For an account-held key, clearKey's local clear is a no-op
+                // but its server-store mirror deletion is the real removal
+                // (see useApiKeyConfig → deleteProviderKeyFromServer).
                 clearKey();
-                // Removing a local key only unsets the active backend when it
-                // was the provider's ONLY credential — a server-held key keeps
+                // Removing a key only unsets the active backend when it was
+                // the provider's ONLY credential — a server-held key keeps
                 // the provider usable, so the selection stands.
                 if (activeBackend === backendId && !serverHeld) {
                   clearPreferredProvider();
@@ -281,6 +289,12 @@ export function ProviderKeySection({
               : credentialSource === 'binding'
                 ? 'Authenticates via the deployed Worker binding. No key needed.'
                 : `The ${label} key is set on the Worker.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`}
+          </p>
+        )}
+        {accountHeld && (
+          <p className="text-xs text-push-fg-dim">
+            Your {label} key is saved to your account (added on another device or before this
+            browser&apos;s data was cleared). Removing it deletes the account copy.
           </p>
         )}
         {model && (

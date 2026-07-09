@@ -139,6 +139,51 @@ describe('handleProviderEngineCapabilities', () => {
     expect(body.gatewayActive).toBe(true);
   });
 
+  it('matches BYOK against gateway binding slugs, not plain provider ids (Codex P2)', async () => {
+    const base = {
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-gate',
+    };
+    // Plain `ollama` in the BYOK list does NOT match dispatch's
+    // `custom-ollama` binding check — reporting it as byok would unlock a
+    // provider whose keyless dispatch 401s.
+    let res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'ollama',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
+    } as Env);
+    let body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBeNull();
+
+    // The binding slug alone isn't enough either: an unlisted custom slug
+    // makes buildAiGatewayUrl fall back to direct, where keyless 401s.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'custom-ollama',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBeNull();
+
+    // Binding slug BYOK-listed AND custom slug enabled → dispatch actually
+    // routes keyless-through-gateway.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'custom-ollama',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.ollama).toBe('gateway-byok');
+
+    // kilocode has no gateway binding at all — BYOK can never apply.
+    res = await handleProviderEngineCapabilities(makeRequest(), {
+      ...base,
+      CF_AI_GATEWAY_BYOK: 'kilocode,custom-kilocode',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'kilocode',
+    } as Env);
+    body = (await res.json()) as { sources: Record<string, string | null> };
+    expect(body.sources.kilocode).toBeNull();
+  });
+
   it('reports gatewayActive false and no BYOK sources when the gateway is unconfigured', async () => {
     const res = await handleProviderEngineCapabilities(makeRequest(), {
       CF_AI_GATEWAY_BYOK: 'anthropic',

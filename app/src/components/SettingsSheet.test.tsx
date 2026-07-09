@@ -283,6 +283,21 @@ describe('ProviderKeySection', () => {
     expect(html).not.toContain('Save key');
   });
 
+  it('renders connected with a remove affordance for an account-held key with no local copy', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection {...baseProps} hasKey={false} credentialSource="user-key" />,
+    );
+
+    // Selectable via the server-mirrored key (Codex P2): no empty password
+    // form pretending nothing is configured, and the trash removes the
+    // account copy via clearKey's server-store mirror.
+    expect(html).toContain('Connected');
+    expect(html).toContain('saved to your account');
+    expect(html).toContain('Remove OpenRouter key');
+    expect(html).not.toContain('sk-or-...');
+    expect(html).not.toContain('Save key');
+  });
+
   it('keeps the plain key input for a provider with no credential anywhere', () => {
     const html = renderToStaticMarkup(
       <ProviderKeySection {...baseProps} hasKey={false} credentialSource={null} />,

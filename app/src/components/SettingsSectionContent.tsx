@@ -1173,7 +1173,7 @@ export function SettingsSectionContent({
                   ? 'Key in gateway'
                   : source === 'worker-secret'
                     ? 'Server key'
-                    : provider.hasKey
+                    : provider.hasKey || source === 'user-key'
                       ? 'Connected'
                       : 'No key configured';
 

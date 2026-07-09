@@ -40,7 +40,7 @@ import { resolveProviderHandler } from './coder-job-stream-adapter';
 import { resolveSettingsUserId } from './settings-config';
 import { getUserProviderKey, listUserProviderKeyMeta } from './user-secrets';
 import type { Env } from './worker-middleware';
-import { isGatewayByokProvider } from './worker-middleware';
+import { isCustomGatewaySlugEnabled, isGatewayByokProvider } from './worker-middleware';
 
 // Re-exported for existing importers; the canonical home moved to the shared
 // provider contract so user-secrets.ts can validate without an import cycle.
@@ -68,6 +68,42 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
 };
 
 /**
+ * Gateway binding provider strings, mirroring each handler's `gateway:`
+ * binding in `worker-providers.ts` — the BYOK env list matches against THESE
+ * (e.g. `custom-ollama`), not the plain provider id, because that's what the
+ * handlers pass to `isGatewayByokProvider` at dispatch (Codex P2, PR #1380).
+ * `kilocode` has no binding (dropped — egress-discriminating origin), so BYOK
+ * can never apply to it. Load-bearing copies like PROVIDER_ENV_KEY above —
+ * change in lockstep with the handlers.
+ */
+const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
+  ollama: 'custom-ollama',
+  openrouter: 'openrouter',
+  zen: 'custom-zen',
+  nvidia: 'custom-nvidia',
+  fireworks: 'custom-fireworks',
+  deepseek: 'deepseek',
+  sakana: 'custom-sakana',
+  anthropic: 'anthropic',
+  openai: 'openai',
+  google: 'google',
+};
+
+/**
+ * True when a keyless dispatch on this provider would ACTUALLY route through
+ * the gateway with an injected key. Three conditions, all mirroring dispatch:
+ * the provider has a gateway binding, that binding is BYOK-listed, and — for
+ * `custom-*` bindings — the custom slug is enabled (an unlisted custom binding
+ * makes `buildAiGatewayUrl` fall back to direct, where a keyless call 401s
+ * at the upstream).
+ */
+function isByokDispatchable(provider: AIProviderType, env: Env): boolean {
+  const binding = GATEWAY_BINDING_PROVIDER[provider];
+  if (!binding) return false;
+  return isGatewayByokProvider(env, binding) && isCustomGatewaySlugEnabled(env, binding);
+}
+
+/**
  * Which server-resolvable credential (if any) a provider would dispatch with,
  * in dispatch-precedence order. BYOK outranks a Worker secret deliberately:
  * when a provider is BYOK-listed, handlers omit the auth header entirely and
@@ -82,7 +118,7 @@ function resolveEnvCredentialSource(
   // BYOK: the provider's key lives in the gateway, which injects it — so a
   // server-side turn can run with no Worker secret. Treat it as credentialed
   // even when the env key is absent (that's the whole point of retiring it).
-  if (isGatewayByokProvider(env, provider)) return 'gateway-byok';
+  if (isByokDispatchable(provider, env)) return 'gateway-byok';
   const envKey = PROVIDER_ENV_KEY[provider];
   if (!envKey) return null;
   return env[envKey] ? 'worker-secret' : null;
