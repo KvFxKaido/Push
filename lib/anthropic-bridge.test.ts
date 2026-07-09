@@ -27,7 +27,7 @@ function createEventStreamResponse(lines: string[]): Response {
 }
 
 describe('anthropicModelRejectsSamplingParams', () => {
-  it('rejects sampling params on Opus 4.7 and later (incl. suffix/tag variants)', () => {
+  it('rejects sampling params on Opus 4.7+, Sonnet 5, and Fable/Mythos 5 variants', () => {
     for (const model of [
       'claude-opus-4-7',
       'claude-opus-4-8',
@@ -37,12 +37,16 @@ describe('anthropicModelRejectsSamplingParams', () => {
       'claude-opus-4-7@20260101',
       'claude-opus-5-0',
       'CLAUDE-OPUS-4-8',
+      'claude-sonnet-5',
+      'anthropic/claude-sonnet-5',
+      'claude-fable-5',
+      'claude-mythos-5',
     ]) {
       expect(anthropicModelRejectsSamplingParams(model), model).toBe(true);
     }
   });
 
-  it('keeps sampling params on Opus 4.6 and earlier, Sonnet/Haiku, and non-Anthropic models', () => {
+  it('keeps sampling params on Opus 4.6 and earlier, Sonnet 4.x, Haiku, and non-Anthropic models', () => {
     for (const model of [
       'claude-opus-4-6',
       'claude-opus-4-5',
@@ -65,6 +69,8 @@ describe('anthropicModelRejectsSamplingParams', () => {
 describe('anthropicModelSupportsNativeStructuredOutput', () => {
   it('recognizes supported Claude JSON-output model id shapes', () => {
     for (const model of [
+      'claude-fable-5',
+      'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-opus-4-8',
       'claude-haiku-4-5-20251001',
@@ -125,7 +131,7 @@ describe('anthropicModelEnforcesSamplingExclusivity', () => {
 });
 
 describe('buildAnthropicMessagesRequest', () => {
-  it('strips temperature/top_p for Opus 4.7+, and drops top_p when both set on Claude 4+', () => {
+  it('strips temperature/top_p for newer Claude ids, and drops top_p when both set on Claude 4+', () => {
     const base = {
       messages: [{ role: 'user' as const, content: 'Hello' }],
       stream: true,
@@ -137,6 +143,14 @@ describe('buildAnthropicMessagesRequest', () => {
     const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
     expect(opus48).not.toHaveProperty('temperature');
     expect(opus48).not.toHaveProperty('top_p');
+
+    const sonnet5 = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-5' });
+    expect(sonnet5).not.toHaveProperty('temperature');
+    expect(sonnet5).not.toHaveProperty('top_p');
+
+    const fable5 = buildAnthropicMessagesRequest({ ...base, model: 'claude-fable-5' });
+    expect(fable5).not.toHaveProperty('temperature');
+    expect(fable5).not.toHaveProperty('top_p');
 
     // Sonnet 4.6 accepts sampling but is Claude 4+, so temperature and top_p
     // are mutually exclusive — keep temperature, drop top_p (a 400 otherwise).
@@ -903,6 +917,17 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
       req: {
         provider: 'anthropic',
         model: 'claude-opus-4-8',
+        temperature: 0.4,
+        topP: 0.9,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'Sonnet 5 strips temperature + top_p',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
         temperature: 0.4,
         topP: 0.9,
         messages: [llm('1', 'user', 'hi')],

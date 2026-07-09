@@ -293,7 +293,13 @@ export const OPENAI_MODELS: string[] = [
   'gpt-5-mini',
 ];
 
+// Generally available current Claude models, refreshed against Anthropic's
+// models overview on 2026-07-09. Mythos remains free-text only because it is
+// limited-availability Project Glasswing access, not a general picker option.
 export const ANTHROPIC_MODELS: string[] = [
+  'claude-fable-5',
+  'claude-opus-4-8',
+  'claude-sonnet-5',
   'claude-opus-4-7',
   ANTHROPIC_DEFAULT_MODEL,
   'claude-haiku-4-5-20251001',

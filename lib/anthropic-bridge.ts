@@ -26,29 +26,42 @@ import type { PushStructuredOutputMode } from './capabilities.ts';
 export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /**
- * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
- * later Opus (4.8 inherits the same request surface). Sending any of them
- * returns a 400 (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and
- * Opus 4.6-and-earlier still accept them.
+ * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7+, Sonnet 5,
+ * and the Fable/Mythos 5 family. Sending any of them returns a 400
+ * (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and Opus 4.6-and-earlier
+ * still accept them.
  *
- * The model id reaching this bridge is the native Anthropic form
- * (`claude-opus-4-7`, `claude-opus-4-8`, optionally date- or `@`-suffixed, or
- * the `[1m]` long-context tag). We parse the Opus major/minor and reject 4.7+
- * (and any future Opus 5+). The single-digit-minor guard `(?!\d)` keeps the
- * dated 4.0 id `claude-opus-4-20250514` from being misread as "Opus 4.<date>".
+ * The model id reaching this bridge is usually the native Anthropic form
+ * (`claude-opus-4-8`, optionally date- or `@`-suffixed, or the `[1m]`
+ * long-context tag), but OpenRouter/Bedrock-ish prefixes can also appear in
+ * tests and local routing. We parse the Claude family + major/minor and reject
+ * only the families with the removed sampling surface. The single/double-digit
+ * minor guard `(?!\d)` keeps dated 4.0 ids such as `claude-opus-4-20250514`
+ * from being misread as "Opus 4.<date>".
  *
- * Non-Opus models (and non-Anthropic models that pass through this bridge, e.g.
- * Zen-Go's `minimax-*`) return false, so their sampling params flow unchanged.
+ * Other Claude models and non-Anthropic models that pass through this bridge
+ * (e.g. Zen-Go's `minimax-*`) return false, so their sampling params flow
+ * unchanged.
  */
 export function anthropicModelRejectsSamplingParams(model: string | null | undefined): boolean {
   if (typeof model !== 'string') return false;
-  const match = model.toLowerCase().match(/claude-opus-(\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  const match = model
+    .toLowerCase()
+    .match(/claude[-.](opus|sonnet|haiku|fable|mythos)[-.](\d+)(?:[-.](\d{1,2})(?!\d))?/);
   if (!match) return false;
-  const major = Number(match[1]);
-  const minor = match[2] === undefined ? 0 : Number(match[2]);
-  if (major > 4) return true; // future Opus generations inherit the removed surface
-  if (major < 4) return false; // Opus 3 and earlier accepted sampling params
-  return minor >= 7; // Opus 4.7 / 4.8 / 4.9 …
+  const family = match[1];
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+
+  if (family === 'opus') {
+    if (major > 4) return true;
+    if (major < 4) return false;
+    return minor >= 7;
+  }
+
+  if (family === 'sonnet') return major >= 5;
+  if (family === 'fable' || family === 'mythos') return major >= 5;
+  return false;
 }
 
 /**
