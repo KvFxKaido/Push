@@ -44,7 +44,7 @@ export { ALL_PROVIDERS };
 /**
  * Server-side credential presence per provider. `cloudflare` authenticates via
  * the Workers AI binding rather than a secret; providers absent from the
- * env-key table (azure/bedrock/vertex/demo) are unreachable from the DO anyway
+ * env-key table (e.g. `demo`) are unreachable from the DO anyway
  * (`resolveProviderHandler` returns null), so their credential answer never
  * matters — report false.
  */

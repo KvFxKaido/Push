@@ -21,11 +21,9 @@ import {
 } from '@/lib/model-catalog';
 import type { AIProviderType, AttachmentData, ChatSendOptions } from '@/types';
 import type { PreferredProvider } from '@/lib/providers';
-import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import {
   MODEL_LOCKED_MESSAGE,
-  type ComposerDeploymentModelControl,
   type ComposerPickerModelControl,
   type ComposerProviderControls,
 } from '@/lib/composer-provider-controls';
@@ -77,10 +75,6 @@ interface ChatInputProps {
     onCancel: () => void;
   } | null;
   providerControls?: ComposerProviderControls;
-}
-
-function formatDeploymentLabel(dep: ExperimentalDeployment): string {
-  return dep.model;
 }
 
 const MAX_PAYLOAD = 750 * 1024; // 750KB total
@@ -460,34 +454,6 @@ export function ChatInput({
     );
   };
 
-  const renderDeploymentModelControl = (control: ComposerDeploymentModelControl) => (
-    <>
-      {control.deployments.length > 0 ? (
-        <select
-          value={control.activeDeploymentId ?? ''}
-          disabled={!canChangeModel}
-          onChange={(e) => control.onSelectDeployment(e.target.value)}
-          className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus disabled:opacity-60"
-        >
-          {control.deployments.map((dep) => (
-            <option key={dep.id} value={dep.id}>
-              {formatDeploymentLabel(dep)}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <input
-          type="text"
-          value={control.value}
-          onChange={(e) => control.onChange(e.target.value)}
-          className="h-8 w-full rounded-lg border border-push-edge-hover bg-push-surface px-2.5 text-xs text-push-fg-soft outline-none focus:border-push-edge-focus"
-          placeholder={control.placeholder}
-        />
-      )}
-      {renderModelLockedMessage(control)}
-    </>
-  );
-
   const renderSelectedModelControl = () => {
     if (selectedProvider === 'demo') {
       return (
@@ -503,9 +469,7 @@ export function ChatInput({
         </div>
       );
     }
-    return selectedModelControl.kind === 'deployment'
-      ? renderDeploymentModelControl(selectedModelControl)
-      : renderPickerModelControl(selectedModelControl);
+    return renderPickerModelControl(selectedModelControl);
   };
 
   const readyImageAttachments = readyAttachments.filter(

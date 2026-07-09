@@ -95,7 +95,6 @@ describe('isNativeWebSearchEnabled', () => {
     for (const provider of [
       'google',
       'anthropic',
-      'vertex',
       'openrouter',
       // Responses-native providers that implement OpenAI's `web_search` tool.
       'openai',
@@ -114,7 +113,7 @@ describe('isNativeWebSearchEnabled', () => {
   });
 
   it('suppresses native search for every provider when mode is "off"', () => {
-    for (const provider of ['google', 'anthropic', 'vertex', 'openrouter', 'openai', 'sakana']) {
+    for (const provider of ['google', 'anthropic', 'openrouter', 'openai', 'sakana']) {
       expect(isNativeWebSearchEnabled(provider, undefined, 'off')).toBe(false);
     }
   });
@@ -132,7 +131,6 @@ describe('getAutoNativeSearchLabel', () => {
     expect(getAutoNativeSearchLabel('openrouter')).toBe('OpenRouter');
     expect(getAutoNativeSearchLabel('anthropic')).toBe('Anthropic');
     expect(getAutoNativeSearchLabel('google')).toBe('Google');
-    expect(getAutoNativeSearchLabel('vertex')).toBe('Vertex');
     expect(getAutoNativeSearchLabel('openai')).toBe('OpenAI');
     expect(getAutoNativeSearchLabel('sakana')).toBe('Sakana');
   });
@@ -149,7 +147,6 @@ describe('getAutoNativeSearchLabel', () => {
       'openrouter',
       'anthropic',
       'google',
-      'vertex',
       'openai',
       'sakana',
       'fireworks',

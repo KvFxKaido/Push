@@ -753,8 +753,8 @@ export function toLLMMessages(
 
   // Only emit `reasoning_blocks` on the wire when the route lands on the
   // Anthropic bridge. Other backends would forward the sidecar verbatim
-  // to a strict OpenAI-compatible upstream (Azure, OpenAI Chat, legacy
-  // Vertex), which may reject the unknown field. The persisted blocks
+  // to a strict OpenAI-compatible upstream (OpenAI Chat), which may reject
+  // the unknown field. The persisted blocks
   // stay on the ChatMessage either way — when the user later switches
   // back to an Anthropic-bridge route, future turns pick them up again.
   const emitReasoningBlocks = routesThroughAnthropicBridge(providerType, providerModel);

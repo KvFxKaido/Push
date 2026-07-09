@@ -44,7 +44,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['openrouter', 'azure'],
+    providers: ['openrouter'],
     match: /gpt-4o|gpt-4\.1|gpt-4\.5/i,
     capabilities: {
       visionInput: 'supported',
@@ -63,16 +63,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['bedrock', 'vertex'],
-    match: /claude/i,
-    capabilities: {
-      visionInput: 'supported',
-      toolCalls: 'supported',
-      streaming: 'supported',
-    },
-  },
-  {
-    providers: ['openrouter', 'vertex', 'zen'],
+    providers: ['openrouter', 'zen'],
     match: /gemini/i,
     capabilities: {
       visionInput: 'supported',

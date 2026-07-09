@@ -13,11 +13,6 @@ import type {
   R2Bucket,
   RateLimit,
 } from '@cloudflare/workers-types';
-import {
-  normalizeExperimentalBaseUrl,
-  type ExperimentalProviderType,
-} from '../lib/experimental-providers';
-import { decodeVertexServiceAccountHeader, normalizeVertexRegion } from '../lib/vertex-provider';
 import { validateAndNormalizeChatRequest } from '../lib/chat-request-guardrails';
 import { REQUEST_ID_HEADER, getOrCreateRequestId } from '../lib/request-id';
 import {
@@ -26,7 +21,6 @@ import {
   createChildContext,
   type WorkerSpanContext,
 } from './worker-tracing';
-import { base64UrlEncodeBytes, base64UrlEncodeString } from './worker-base64url';
 import { extractSessionToken, parseAllowedUserIds, verifySessionToken } from './worker-session';
 
 // ---------------------------------------------------------------------------
@@ -233,8 +227,6 @@ export interface Env {
 
 export const MAX_BODY_SIZE_BYTES = 5 * 1024 * 1024; // 5MB default (bumped from 1MB — models need headroom for large file writes)
 export const RESTORE_MAX_BODY_SIZE_BYTES = 12 * 1024 * 1024; // 12MB for snapshot restore payloads
-export const GOOGLE_OAUTH_SCOPE = 'https://www.googleapis.com/auth/cloud-platform';
-export const GOOGLE_TOKEN_ENDPOINT = 'https://oauth2.googleapis.com/token';
 
 // ---------------------------------------------------------------------------
 // Security response headers
@@ -304,109 +296,6 @@ export function applySecurityHeaders(headers: Headers): void {
       headers.set(key, value);
     }
   }
-}
-
-// ---------------------------------------------------------------------------
-// Google JWT / token utilities
-// ---------------------------------------------------------------------------
-
-interface CachedGoogleAccessToken {
-  token: string;
-  expiresAt: number;
-}
-
-const googleAccessTokenCache = new Map<string, CachedGoogleAccessToken>();
-
-function pemToArrayBuffer(pem: string): ArrayBuffer {
-  const normalized = pem
-    .replace(/-----BEGIN PRIVATE KEY-----/g, '')
-    .replace(/-----END PRIVATE KEY-----/g, '')
-    .replace(/\s+/g, '');
-  const binary = atob(normalized);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  return bytes.buffer;
-}
-
-export async function createGoogleJwtAssertion(serviceAccount: {
-  clientEmail: string;
-  privateKey: string;
-}): Promise<string> {
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const header = base64UrlEncodeString(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const payload = base64UrlEncodeString(
-    JSON.stringify({
-      iss: serviceAccount.clientEmail,
-      scope: GOOGLE_OAUTH_SCOPE,
-      aud: GOOGLE_TOKEN_ENDPOINT,
-      exp: nowSeconds + 3600,
-      iat: nowSeconds,
-    }),
-  );
-  const signingInput = `${header}.${payload}`;
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToArrayBuffer(serviceAccount.privateKey),
-    {
-      name: 'RSASSA-PKCS1-v1_5',
-      hash: 'SHA-256',
-    },
-    false,
-    ['sign'],
-  );
-  const signature = await crypto.subtle.sign(
-    'RSASSA-PKCS1-v1_5',
-    key,
-    new TextEncoder().encode(signingInput),
-  );
-  return `${signingInput}.${base64UrlEncodeBytes(signature)}`;
-}
-
-export async function getGoogleAccessToken(serviceAccount: {
-  projectId: string;
-  clientEmail: string;
-  privateKey: string;
-}): Promise<string> {
-  const cacheKey = `${serviceAccount.projectId}:${serviceAccount.clientEmail}`;
-  const cached = googleAccessTokenCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now() + 60_000) {
-    return cached.token;
-  }
-
-  const assertion = await createGoogleJwtAssertion(serviceAccount);
-  const response = await fetch(GOOGLE_TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion,
-    }),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => '');
-    throw new Error(
-      `Google OAuth token exchange failed (${response.status}): ${detail.slice(0, 200)}`,
-    );
-  }
-
-  const payload = (await response.json()) as {
-    access_token?: string;
-    expires_in?: number;
-  };
-  if (!payload.access_token) {
-    throw new Error('Google OAuth token exchange returned no access token');
-  }
-
-  googleAccessTokenCache.set(cacheKey, {
-    token: payload.access_token,
-    expiresAt: Date.now() + Math.max(0, (payload.expires_in ?? 3600) - 120) * 1000,
-  });
-  return payload.access_token;
 }
 
 // ---------------------------------------------------------------------------
@@ -787,84 +676,6 @@ export function standardAuth(envKey: keyof Env): AuthBuilder {
 
 export function passthroughAuth(_env: Env, request: Request): string | null {
   return request.headers.get('Authorization');
-}
-
-export function hasVertexNativeCredentials(request: Request): boolean {
-  return Boolean(request.headers.get('X-Push-Vertex-Service-Account'));
-}
-
-export function buildVertexPreambleAuth(_env: Env, request: Request): string | null {
-  if (hasVertexNativeCredentials(request)) {
-    return 'VertexNative';
-  }
-  return request.headers.get('Authorization');
-}
-
-// ---------------------------------------------------------------------------
-// Vertex native config
-// ---------------------------------------------------------------------------
-
-export interface VertexNativeConfig {
-  serviceAccount: {
-    projectId: string;
-    clientEmail: string;
-    privateKey: string;
-  };
-  region: string;
-}
-
-export function getVertexNativeConfig(
-  request: Request,
-): { ok: true; config: VertexNativeConfig } | { ok: false; response: Response } {
-  const decoded = decodeVertexServiceAccountHeader(
-    request.headers.get('X-Push-Vertex-Service-Account'),
-  );
-  if (!decoded.ok) {
-    return {
-      ok: false,
-      response: Response.json({ error: decoded.error }, { status: 400 }),
-    };
-  }
-
-  const region = normalizeVertexRegion(request.headers.get('X-Push-Vertex-Region'));
-  if (!region.ok) {
-    return {
-      ok: false,
-      response: Response.json({ error: region.error }, { status: 400 }),
-    };
-  }
-
-  return {
-    ok: true,
-    config: {
-      serviceAccount: decoded.parsed,
-      region: region.normalized,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Experimental upstream URL helper
-// ---------------------------------------------------------------------------
-
-export function getExperimentalUpstreamUrl(
-  request: Request,
-  provider: ExperimentalProviderType,
-  suffix: '/chat/completions' | '/models',
-): { ok: true; url: string } | { ok: false; response: Response } {
-  const rawBase = request.headers.get('X-Push-Upstream-Base');
-  const normalized = normalizeExperimentalBaseUrl(provider, rawBase);
-  if ('error' in normalized) {
-    return {
-      ok: false,
-      response: Response.json(
-        { error: `${provider} base URL is invalid: ${normalized.error}` },
-        { status: 400 },
-      ),
-    };
-  }
-
-  return { ok: true, url: `${normalized.normalized}${suffix}` };
 }
 
 // ---------------------------------------------------------------------------

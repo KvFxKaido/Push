@@ -1,11 +1,8 @@
 import type { ReactNode } from 'react';
-import type { ExperimentalDeployment } from '@/lib/experimental-providers';
 import type { PreferredProvider } from '@/lib/providers';
 import type { AIProviderType } from '@/types';
 
 export const MODEL_LOCKED_MESSAGE = 'Current chat locked; choosing a model starts a new chat.';
-export const DEPLOYMENT_LOCKED_MESSAGE =
-  'Current chat locked; choosing a deployment starts a new chat.';
 
 interface ComposerModelControlBase {
   provider: PreferredProvider;
@@ -32,16 +29,7 @@ export interface ComposerPickerModelControl extends ComposerModelControlBase {
   triggerTrailing?: ReactNode;
 }
 
-export interface ComposerDeploymentModelControl extends ComposerModelControlBase {
-  kind: 'deployment';
-  deployments: ExperimentalDeployment[];
-  activeDeploymentId: string | null;
-  onSelectDeployment: (id: string) => void;
-  onChange: (model: string) => void;
-  placeholder: string;
-}
-
-export type ComposerModelControl = ComposerPickerModelControl | ComposerDeploymentModelControl;
+export type ComposerModelControl = ComposerPickerModelControl;
 
 export interface ComposerProviderControls {
   selectedProvider: PreferredProvider | null;

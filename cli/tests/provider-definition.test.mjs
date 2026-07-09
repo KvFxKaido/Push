@@ -57,9 +57,6 @@ const EXPECTED_FAILOVER_ORDER = [
   'fireworks',
   'deepseek',
   'sakana',
-  'azure',
-  'bedrock',
-  'vertex',
   'anthropic',
   'openai',
   'google',
@@ -135,7 +132,7 @@ describe('ProviderDefinition', () => {
     assert.deepEqual([...getInitialFallbackProviderOrder()], EXPECTED_INITIAL_FALLBACK_ORDER);
   });
 
-  it('preserves same-shape failover order and includes private connectors', () => {
+  it('preserves same-shape failover order', () => {
     assert.deepEqual([...getFailoverProviderOrder()], EXPECTED_FAILOVER_ORDER);
   });
 
@@ -170,7 +167,6 @@ describe('ProviderDefinition', () => {
     assert.equal(getProviderDisplayName('openrouter'), 'OpenRouter');
     assert.equal(getProviderDisplayName('demo'), 'Demo');
     assert.equal(getProviderTimeoutDisplayName('ollama'), 'Ollama Cloud');
-    assert.equal(getProviderTimeoutDisplayName('azure'), 'Azure');
     assert.equal(getProviderTimeoutDisplayName('openai'), 'OpenAI');
   });
 

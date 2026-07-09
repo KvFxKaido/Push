@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
-import {
-  DEPLOYMENT_LOCKED_MESSAGE,
-  MODEL_LOCKED_MESSAGE,
-  type ComposerModelControl,
-} from '@/lib/composer-provider-controls';
+import { MODEL_LOCKED_MESSAGE, type ComposerModelControl } from '@/lib/composer-provider-controls';
 import { getVisionCapabilityNotice } from '@/lib/model-capabilities';
 import { buildQuickPromptMessage } from '@/lib/quick-prompts';
 import type { PreferredProvider } from '@/lib/providers';
@@ -38,9 +34,6 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
   | 'handleSelectDeepSeekModelFromChat'
-  | 'handleSelectAzureModelFromChat'
-  | 'handleSelectBedrockModelFromChat'
-  | 'handleSelectVertexModelFromChat'
   | 'handleSelectAnthropicModelFromChat'
   | 'handleSelectOpenAIModelFromChat'
   | 'handleSelectGoogleModelFromChat'
@@ -71,9 +64,6 @@ export function useWorkspaceChatComposerController({
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
   handleSelectDeepSeekModelFromChat,
-  handleSelectAzureModelFromChat,
-  handleSelectBedrockModelFromChat,
-  handleSelectVertexModelFromChat,
   handleSelectAnthropicModelFromChat,
   handleSelectOpenAIModelFromChat,
   handleSelectGoogleModelFromChat,
@@ -201,26 +191,6 @@ export function useWorkspaceChatComposerController({
     [handleCardAction, markSnapshotActivity],
   );
 
-  const handleSelectAzureDeploymentFromChat = useCallback(
-    (id: string) => {
-      const deployment = catalog.azure.deployments.find((candidate) => candidate.id === id);
-      if (!deployment) return;
-      catalog.azure.selectDeployment(id);
-      handleSelectAzureModelFromChat(deployment.model);
-    },
-    [catalog.azure, handleSelectAzureModelFromChat],
-  );
-
-  const handleSelectBedrockDeploymentFromChat = useCallback(
-    (id: string) => {
-      const deployment = catalog.bedrock.deployments.find((candidate) => candidate.id === id);
-      if (!deployment) return;
-      catalog.bedrock.selectDeployment(id);
-      handleSelectBedrockModelFromChat(deployment.model);
-    },
-    [catalog.bedrock, handleSelectBedrockModelFromChat],
-  );
-
   const isProviderModelLocked = (provider: PreferredProvider) =>
     isModelLocked && lockedProvider === provider;
 
@@ -287,18 +257,6 @@ export function useWorkspaceChatComposerController({
       isLocked: isProviderModelLocked('nvidia'),
       ariaLabel: 'Select Nvidia NIM model',
     }),
-    azure: {
-      kind: 'deployment',
-      provider: 'azure',
-      value: selectedChatModels.azure,
-      deployments: catalog.azure.deployments,
-      activeDeploymentId: catalog.azure.activeDeploymentId,
-      onSelectDeployment: handleSelectAzureDeploymentFromChat,
-      onChange: handleSelectAzureModelFromChat,
-      placeholder: 'Deployment or model',
-      isLocked: isProviderModelLocked('azure'),
-      lockedMessage: DEPLOYMENT_LOCKED_MESSAGE,
-    },
     kilocode: buildPickerControl('kilocode', {
       options: catalog.kilocodeModelOptions,
       onChange: handleSelectKilocodeModelFromChat,
@@ -328,24 +286,6 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshSakanaModels,
       isLocked: isProviderModelLocked('sakana'),
       ariaLabel: 'Select Sakana AI model',
-    }),
-    bedrock: {
-      kind: 'deployment',
-      provider: 'bedrock',
-      value: selectedChatModels.bedrock,
-      deployments: catalog.bedrock.deployments,
-      activeDeploymentId: catalog.bedrock.activeDeploymentId,
-      onSelectDeployment: handleSelectBedrockDeploymentFromChat,
-      onChange: handleSelectBedrockModelFromChat,
-      placeholder: 'Bedrock model id',
-      isLocked: isProviderModelLocked('bedrock'),
-      lockedMessage: MODEL_LOCKED_MESSAGE,
-    },
-    vertex: buildPickerControl('vertex', {
-      options: catalog.vertex.modelOptions,
-      onChange: handleSelectVertexModelFromChat,
-      isLocked: isProviderModelLocked('vertex'),
-      ariaLabel: 'Select Google Vertex model',
     }),
     deepseek: buildPickerControl('deepseek', {
       options: catalog.deepseekModelOptions,

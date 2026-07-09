@@ -10,21 +10,6 @@ import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import {
-  getAzureBaseUrl,
-  getAzureKey,
-  getAzureModelName,
-  getBedrockBaseUrl,
-  getBedrockKey,
-  getBedrockModelName,
-} from '@/hooks/useExperimentalProviderConfig';
-import {
-  getVertexKey,
-  getVertexModelName,
-  getVertexBaseUrl,
-  getVertexMode,
-  getVertexRegion,
-} from '@/hooks/useVertexConfig';
-import {
   getAnthropicModelName,
   getCloudflareWorkerConfigured,
   getGoogleModelName,
@@ -33,8 +18,6 @@ import {
   getPreferredProvider,
   type PreferredProvider,
 } from './providers';
-import { normalizeExperimentalBaseUrl } from './experimental-providers';
-import { normalizeVertexRegion } from './vertex-provider';
 import type { AIProviderType } from '@/types';
 import { getInitialFallbackProviderOrder } from '@push/lib/provider-definition';
 
@@ -53,31 +36,6 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   fireworks: () => Boolean(getFireworksKey()),
   deepseek: () => Boolean(getDeepSeekKey()),
   sakana: () => Boolean(getSakanaKey()),
-  azure: () =>
-    Boolean(
-      getAzureKey() &&
-        normalizeExperimentalBaseUrl('azure', getAzureBaseUrl()).ok &&
-        getAzureModelName(),
-    ),
-  bedrock: () =>
-    Boolean(
-      getBedrockKey() &&
-        normalizeExperimentalBaseUrl('bedrock', getBedrockBaseUrl()).ok &&
-        getBedrockModelName(),
-    ),
-  vertex: () => {
-    const mode = getVertexMode();
-    if (mode === 'native') {
-      return Boolean(
-        getVertexKey() && normalizeVertexRegion(getVertexRegion()).ok && getVertexModelName(),
-      );
-    }
-    return Boolean(
-      getVertexKey() &&
-        normalizeExperimentalBaseUrl('vertex', getVertexBaseUrl()).ok &&
-        getVertexModelName(),
-    );
-  },
   anthropic: () => Boolean(getAnthropicKey() && getAnthropicModelName()),
   openai: () => Boolean(getOpenAIKey() && getOpenAIModelName()),
   google: () => Boolean(getGoogleKey() && getGoogleModelName()),

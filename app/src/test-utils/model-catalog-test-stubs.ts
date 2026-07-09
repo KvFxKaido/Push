@@ -27,51 +27,6 @@ export function makeProviderStub(model = '') {
   };
 }
 
-export function makeExperimentalProviderStub() {
-  return {
-    ...makeProviderStub(),
-    baseUrl: '',
-    baseUrlInput: '',
-    setBaseUrlInput: vi.fn(),
-    baseUrlError: null,
-    setBaseUrl: vi.fn(),
-    clearBaseUrl: vi.fn(),
-    modelInput: '',
-    setModelInput: vi.fn(),
-    clearModel: vi.fn(),
-    deployments: [],
-    activeDeploymentId: null,
-    saveDeployment: vi.fn(),
-    selectDeployment: vi.fn(),
-    removeDeployment: vi.fn(),
-    clearDeployments: vi.fn(),
-    deploymentLimitReached: false,
-    isConfigured: false,
-  };
-}
-
-export function makeVertexProviderStub() {
-  return {
-    ...makeProviderStub(),
-    keyError: null,
-    region: '',
-    regionInput: '',
-    setRegionInput: vi.fn(),
-    regionError: null,
-    setRegion: vi.fn(),
-    clearRegion: vi.fn(),
-    modelInput: '',
-    setModelInput: vi.fn(),
-    modelOptions: [],
-    clearModel: vi.fn(),
-    mode: 'unconfigured' as const,
-    transport: 'openapi' as const,
-    projectId: null,
-    hasLegacyConfig: false,
-    isConfigured: false,
-  };
-}
-
 /**
  * Build a complete `useModelCatalog`-shaped object with Cloudflare set
  * as the active provider. Pass `cloudflareModel` to control the model
@@ -106,9 +61,6 @@ export function makeDaemonModelCatalogStub(opts: {
     fireworks: makeProviderStub(),
     sakana: makeProviderStub(),
     deepseek: makeProviderStub(),
-    azure: makeExperimentalProviderStub(),
-    bedrock: makeExperimentalProviderStub(),
-    vertex: makeVertexProviderStub(),
     anthropic: makeProviderStub(),
     openai: makeProviderStub(),
     google: makeProviderStub(),

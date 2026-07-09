@@ -5,16 +5,10 @@ import {
   createStreamProxyHandler,
   createJsonProxyHandler,
   standardAuth,
-  passthroughAuth,
-  buildVertexPreambleAuth,
   buildAiGatewayUrl,
   getAiGatewayAuthHeader,
   runPreamble,
   wlog,
-  hasVertexNativeCredentials,
-  getVertexNativeConfig,
-  getExperimentalUpstreamUrl,
-  getGoogleAccessToken,
 } from './worker-middleware';
 import { REQUEST_ID_HEADER } from '../lib/request-id';
 import {
@@ -34,18 +28,7 @@ import {
   toGeminiGenerateContent,
 } from '@push/lib/gemini-bridge';
 import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
-import {
-  buildVertexAnthropicEndpoint,
-  buildVertexOpenApiBaseUrl,
-  getVertexModelTransport,
-  VERTEX_MODEL_OPTIONS,
-} from '../lib/vertex-provider';
-import {
-  extractProviderHttpErrorDetail,
-  formatExperimentalProviderHttpError,
-  formatVertexProviderHttpError,
-} from '../lib/provider-error-utils';
-import type { ExperimentalProviderType } from '../lib/experimental-providers';
+import { extractProviderHttpErrorDetail } from '../lib/provider-error-utils';
 import { buildTraceparent, createChildContext } from './worker-tracing';
 
 // Gateway Abstraction imports
@@ -1238,7 +1221,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     // foreground `zenStream` via `anthropicEventStream`, the background coder /
     // PR-review job via the stream adapter's native branch — so there's no
     // OpenAI-SSE translator left on this route (parity with the direct Anthropic
-    // and Vertex-Claude routes).
+    // route).
     return new Response(upstream.body, {
       status: 200,
       headers: {
@@ -1312,374 +1295,6 @@ export const handleNvidiaModels = createJsonProxyHandler({
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
 });
-
-// --- Experimental private connectors (OpenAI-compatible upstreams) ---
-
-export function createExperimentalStreamProxyHandler(
-  provider: ExperimentalProviderType,
-  name: string,
-  logTag: string,
-): (request: Request, env: Env) => Promise<Response> {
-  return async (request, env) => {
-    const upstream = getExperimentalUpstreamUrl(request, provider, '/chat/completions');
-    if ('response' in upstream) return upstream.response;
-
-    return createStreamProxyHandler({
-      name,
-      logTag,
-      upstreamUrl: upstream.url,
-      timeoutMs: 180_000,
-      maxOutputTokens: 12_288,
-      buildAuth: passthroughAuth,
-      keyMissingError: `${name} API key not configured. Add it in Advanced AI settings.`,
-      timeoutError: `${name} request timed out after 180 seconds`,
-      formatUpstreamError: (status, bodyText) => ({
-        error: formatExperimentalProviderHttpError(name, status, bodyText),
-        code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-      }),
-    })(request, env);
-  };
-}
-
-export function createExperimentalModelsHandler(
-  provider: ExperimentalProviderType,
-  name: string,
-  logTag: string,
-): (request: Request, env: Env) => Promise<Response> {
-  return async (request, env) => {
-    const upstream = getExperimentalUpstreamUrl(request, provider, '/models');
-    if ('response' in upstream) return upstream.response;
-
-    return createJsonProxyHandler({
-      name,
-      logTag,
-      upstreamUrl: upstream.url,
-      method: 'GET',
-      timeoutMs: 30_000,
-      buildAuth: passthroughAuth,
-      keyMissingError: `${name} API key not configured. Add it in Advanced AI settings.`,
-      timeoutError: `${name} model list timed out after 30 seconds`,
-      needsBody: false,
-      formatUpstreamError: (status, bodyText) => ({
-        error: formatExperimentalProviderHttpError(name, status, bodyText),
-        code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-      }),
-    })(request, env);
-  };
-}
-
-export const handleAzureChat = createExperimentalStreamProxyHandler(
-  'azure',
-  'Azure OpenAI',
-  'api/azure/chat',
-);
-export const handleAzureModels = createExperimentalModelsHandler(
-  'azure',
-  'Azure OpenAI',
-  'api/azure/models',
-);
-export const handleBedrockChat = createExperimentalStreamProxyHandler(
-  'bedrock',
-  'AWS Bedrock',
-  'api/bedrock/chat',
-);
-export const handleBedrockModels = createExperimentalModelsHandler(
-  'bedrock',
-  'AWS Bedrock',
-  'api/bedrock/models',
-);
-export const handleLegacyVertexChat = createExperimentalStreamProxyHandler(
-  'vertex',
-  'Google Vertex',
-  'api/vertex/chat',
-);
-export const handleLegacyVertexModels = createExperimentalModelsHandler(
-  'vertex',
-  'Google Vertex',
-  'api/vertex/models',
-);
-
-/**
- * Vertex AI's OpenAI-compat `chat/completions` endpoint doesn't auto-translate
- * the OpenAI `web_search` tool shape into Gemini's `googleSearch` grounding
- * tool — the upstream Gemini just sees no tool and answers without grounding
- * (or rejects an unknown `web_search` type, depending on the Gemini version).
- *
- * When the client opts into grounding via the Push-private
- * `google_search_grounding: true` flag, this helper rewrites the body to
- * inject `tools: [{ googleSearch: {} }]` and strip the Push-private flag
- * before forwarding. Mirrors `lib/gemini-bridge.ts` for direct
- * Gemini — kept here so the Vertex Gemini path stays a thin pass-through
- * without invoking the bridge's full OpenAI→Gemini-native shape rewrite.
- *
- * Returns `bodyText` unchanged when grounding isn't requested.
- */
-/** Append Vertex's `googleSearch` grounding tool to an OpenAI-compat body.
- *  Append rather than overwrite — a hypothetical caller could already have set
- *  `tools` (Push doesn't today, but be defensive) — and dedupe by checking
- *  whether the `googleSearch` tool is already present. Shared by the legacy
- *  `translateVertexOpenApiBody` path and the neutral `toOpenAIChat` branch so
- *  the injection has one definition. */
-function appendVertexGoogleSearchTool<T extends object>(
-  body: T,
-): T & { tools: Array<Record<string, unknown>> } {
-  const existing = Array.isArray((body as { tools?: unknown }).tools)
-    ? ((body as { tools?: unknown }).tools as Array<Record<string, unknown>>)
-    : [];
-  // Gemini only supports combining the built-in `googleSearch` grounding tool
-  // with custom function tools on Gemini 3 (Preview, "Gemini 3 models only");
-  // gemini-2.5-* reject the combination. Vertex carries both Gemini and Claude,
-  // so when native function tools are present we skip grounding — function
-  // calling wins — mirroring the direct-Gemini bridge fix (#1086). Without this,
-  // a native-FC turn on a Vertex Gemini-2.5 model 400s before the model responds.
-  const hasFunctionTools = existing.some(
-    (t) =>
-      typeof t === 'object' &&
-      t !== null &&
-      ((t as { type?: unknown }).type === 'function' ||
-        'function' in t ||
-        'functionDeclarations' in t),
-  );
-  if (hasFunctionTools) return { ...body, tools: existing };
-  const hasGoogleSearch = existing.some(
-    (t) => typeof t === 'object' && t !== null && 'googleSearch' in t,
-  );
-  return { ...body, tools: hasGoogleSearch ? existing : [...existing, { googleSearch: {} }] };
-}
-
-export function translateVertexOpenApiBody(
-  parsedRequest: { google_search_grounding?: unknown },
-  bodyText: string,
-): string {
-  if (parsedRequest.google_search_grounding !== true) return bodyText;
-  let body: Record<string, unknown>;
-  try {
-    body = JSON.parse(bodyText) as Record<string, unknown>;
-  } catch {
-    // Validation already ran on `bodyText`; if it doesn't parse here
-    // something corrupted it downstream. Fall back to forwarding raw
-    // and let Vertex's error surface — better than masking the bug.
-    return bodyText;
-  }
-  // Strip the Push-private flag so Vertex's compat layer doesn't see an
-  // unknown root field.
-  delete body.google_search_grounding;
-  return JSON.stringify(appendVertexGoogleSearchTool(body));
-}
-
-export async function handleVertexChat(request: Request, env: Env): Promise<Response> {
-  if (!hasVertexNativeCredentials(request)) {
-    return handleLegacyVertexChat(request, env);
-  }
-
-  const preamble = await runPreamble(request, env, {
-    buildAuth: buildVertexPreambleAuth,
-    keyMissingError:
-      'Google Vertex service account not configured. Add it in Advanced AI settings.',
-    needsBody: true,
-  });
-  if (preamble instanceof Response) return preamble;
-  const { bodyText, requestId } = preamble;
-
-  // Dual-accept (push.stream.v1): a body carrying a `contract` field is the
-  // neutral wire shape; anything else is the legacy OpenAI Chat Completions
-  // shape. Native-mode clients send neutral since the #856 flip; a legacy body
-  // here is a pre-flip tab (upstream-base mode routes to handleLegacyVertexChat
-  // instead). The legacy branch retires at Step 5 once the `request` log's
-  // `contract` field reads zero legacy. See
-  // docs/runbooks/Anthropic Worker Contract Migration.md.
-  const dual = parseDualAcceptRequest(bodyText, {
-    routeLabel: 'Google Vertex',
-    maxOutputTokens: 12_288,
-    provider: 'vertex',
-  });
-  if (!dual.ok) {
-    return Response.json({ error: dual.error }, { status: dual.status });
-  }
-  if (dual.adjustments.length > 0) {
-    wlog('warn', 'chat_request_adjusted', {
-      requestId,
-      route: 'api/vertex/chat',
-      adjustments: dual.adjustments,
-    });
-  }
-
-  const model =
-    dual.contractKind === 'neutral'
-      ? dual.request.model.trim()
-      : typeof dual.parsed.model === 'string'
-        ? dual.parsed.model.trim()
-        : '';
-
-  const nativeConfig = getVertexNativeConfig(request);
-  if (!nativeConfig.ok) return nativeConfig.response;
-
-  const transport = getVertexModelTransport(model);
-  const upstreamUrl =
-    transport === 'anthropic'
-      ? buildVertexAnthropicEndpoint(
-          nativeConfig.config.serviceAccount.projectId,
-          nativeConfig.config.region,
-          model,
-        )
-      : `${buildVertexOpenApiBaseUrl(nativeConfig.config.serviceAccount.projectId, nativeConfig.config.region)}/chat/completions`;
-
-  // Both contract kinds carry the model out-of-band (Vertex puts it in the URL
-  // path), so the neutral Anthropic branch serializes with `emitModel: false`.
-  // The OpenAI-compat transport serializes via `toOpenAIChat` + the same
-  // `googleSearch` grounding injection the legacy path applies; the legacy path
-  // forwards the validated body verbatim.
-  let upstreamBody: string;
-  if (dual.contractKind === 'neutral') {
-    try {
-      upstreamBody =
-        transport === 'anthropic'
-          ? JSON.stringify(
-              toAnthropicMessages(dual.request, {
-                emitModel: false,
-                anthropicVersion: 'vertex-2023-10-16',
-                enableWebSearch: dual.request.anthropicWebSearch === true,
-                // Vertex-Claude does Anthropic server-side web search, which can
-                // pause_turn; forward the client's replayed paused blocks so the
-                // continuation resumes (parity with handleAnthropicChat).
-                replayAssistantTurns: dual.request.replayAssistantTurns,
-              }),
-            )
-          : JSON.stringify(
-              // Vertex's non-anthropic transport fronts Gemini, which 400s on the
-              // replay turn unless the prior call's first functionCall carries a
-              // thought_signature — backfill the documented placeholder when none
-              // was captured (gated on the model id; Vertex also serves non-Gemini
-              // openai-transport models).
-              dual.request.googleSearchGrounding === true
-                ? appendVertexGoogleSearchTool(
-                    toOpenAIChat(dual.request, {
-                      geminiThoughtSignatureFallback: isGeminiModelId(model),
-                    }),
-                  )
-                : toOpenAIChat(dual.request, {
-                    geminiThoughtSignatureFallback: isGeminiModelId(model),
-                  }),
-            );
-    } catch (err) {
-      return Response.json(
-        { error: `Google Vertex request: ${err instanceof Error ? err.message : String(err)}` },
-        { status: 400 },
-      );
-    }
-  } else {
-    upstreamBody =
-      transport === 'anthropic'
-        ? JSON.stringify(
-            buildAnthropicMessagesRequest(dual.parsed, { anthropicVersion: 'vertex-2023-10-16' }),
-          )
-        : translateVertexOpenApiBody(dual.parsed, dual.bodyText);
-  }
-
-  wlog('info', 'request', {
-    requestId,
-    route: 'api/vertex/chat',
-    mode: 'native',
-    transport,
-    model,
-    contract: dual.contractKind,
-    region: nativeConfig.config.region,
-  });
-
-  try {
-    const accessToken = await getGoogleAccessToken(nativeConfig.config.serviceAccount);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 180_000);
-    let upstream: Response;
-
-    try {
-      upstream = await fetch(upstreamUrl, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          [REQUEST_ID_HEADER]: requestId,
-        },
-        body: upstreamBody,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!upstream.ok) {
-      const errBody = await upstream.text().catch(() => '');
-      wlog('error', 'upstream_error', {
-        requestId,
-        route: 'api/vertex/chat',
-        mode: 'native',
-        transport,
-        status: upstream.status,
-        body: errBody.slice(0, 500),
-      });
-      return Response.json(
-        {
-          error: formatVertexProviderHttpError(upstream.status, errBody, transport),
-          code: upstream.status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
-        },
-        { status: upstream.status },
-      );
-    }
-
-    // Both transports proxy the raw upstream SSE. Vertex-Claude (anthropic
-    // transport) emits standard Anthropic Messages SSE, parsed natively by
-    // `vertexStream`'s `anthropicEventStream`; Gemini rides Vertex's OpenAI-compat
-    // endpoint. No OpenAI-SSE translator on this route anymore (parity with the
-    // direct Anthropic + Zen-Go routes).
-    return new Response(upstream.body, {
-      status: upstream.status,
-      headers: {
-        'Content-Type': upstream.headers.get('Content-Type') || 'text/event-stream; charset=utf-8',
-        'Cache-Control': 'no-cache, no-transform',
-        Connection: 'keep-alive',
-        [REQUEST_ID_HEADER]: requestId,
-        'X-Accel-Buffering': 'no',
-      },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const isTimeout = err instanceof Error && err.name === 'AbortError';
-    wlog('error', 'unhandled', {
-      requestId,
-      route: 'api/vertex/chat',
-      mode: 'native',
-      transport,
-      message,
-      timeout: isTimeout,
-    });
-    return Response.json(
-      { error: isTimeout ? 'Google Vertex request timed out after 180 seconds' : message },
-      { status: isTimeout ? 504 : 502 },
-    );
-  }
-}
-
-export async function handleVertexModels(request: Request, env: Env): Promise<Response> {
-  if (!hasVertexNativeCredentials(request)) {
-    return handleLegacyVertexModels(request, env);
-  }
-
-  const preamble = await runPreamble(request, env, {
-    buildAuth: buildVertexPreambleAuth,
-    needsBody: false,
-  });
-  if (preamble instanceof Response) return preamble;
-
-  return Response.json({
-    object: 'list',
-    data: VERTEX_MODEL_OPTIONS.map((model) => ({
-      id: model.id,
-      name: model.label,
-      transport: model.transport,
-      family: model.family,
-    })),
-  });
-}
 
 // --- OpenRouter + OpenAI + Sakana + Fireworks (/v1/responses) ---
 //
@@ -2140,10 +1755,9 @@ function resolveDirectProviderKey(serverKey: string | undefined, request: Reques
 // dropdown needs surface parity with new Claude releases the moment they
 // ship — at which point mirror handleOpenAIModels.
 //
-// Modeled on handleVertexChat's native-Anthropic transport path. Difference:
-// auth is a flat `x-api-key` header instead of OAuth, no project/region path
-// segments, and no `anthropic_version` in the body — the version goes in the
-// header. Reuses `buildAnthropicMessagesRequest` from the bridge; the raw
+// Native-Anthropic transport path: auth is a flat `x-api-key` header, and the
+// `anthropic_version` goes in the header rather than the body. Reuses
+// `buildAnthropicMessagesRequest` from the bridge; the raw
 // Anthropic SSE is proxied straight to the client, which parses it with the
 // native `anthropicEventStream` (no OpenAI-shaped intermediate).
 
@@ -2996,9 +2610,6 @@ export const WORKER_PROVIDER_HANDLERS = {
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
   deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },
   sakana: { chat: handleSakanaChat, models: handleSakanaModels },
-  azure: { chat: handleAzureChat, models: handleAzureModels },
-  bedrock: { chat: handleBedrockChat, models: handleBedrockModels },
-  vertex: { chat: handleVertexChat, models: handleVertexModels },
   anthropic: { chat: handleAnthropicChat, models: handleAnthropicModels },
   openai: { chat: handleOpenAIChat, models: handleOpenAIModels },
   google: { chat: handleGoogleChat, models: handleGoogleModels },

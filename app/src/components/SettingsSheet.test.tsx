@@ -8,7 +8,7 @@ import type {
   SettingsProfileProps,
   SettingsWorkspaceProps,
 } from './SettingsSheet';
-import { ExperimentalProviderSection, ProviderKeySection, SettingsSheet } from './SettingsSheet';
+import { ProviderKeySection, SettingsSheet } from './SettingsSheet';
 import { SettingsSectionContent } from './SettingsSectionContent';
 import {
   BUILT_IN_SETTINGS_PROVIDER_ORDER,
@@ -100,8 +100,6 @@ function emptyAI(): SettingsAIProps {
       isModelLocked: false,
       refreshModels: vi.fn(),
     },
-    experimentalProviders: {} as never,
-    vertexProvider: {} as never,
     tavilyProvider: {} as never,
   };
 }
@@ -249,88 +247,5 @@ describe('ProviderKeySection', () => {
     expect(html).toContain('sk-or-...');
     expect(html).toContain('Save key');
     expect(html).toContain('Stored locally in your browser.');
-  });
-});
-
-describe('ExperimentalProviderSection', () => {
-  const baseProps = {
-    label: 'Azure',
-    backendId: 'azure' as const,
-    activeBackend: null,
-    setActiveBackend: vi.fn(),
-    clearPreferredProvider: vi.fn(),
-    helperText: 'Bring your own Azure endpoint.',
-    hasKey: false,
-    keyInput: '',
-    setKeyInput: vi.fn(),
-    setKey: vi.fn(),
-    clearKey: vi.fn(),
-    baseUrl: '',
-    baseUrlInput: '',
-    setBaseUrlInput: vi.fn(),
-    baseUrlError: null,
-    setBaseUrl: vi.fn(),
-    clearBaseUrl: vi.fn(),
-    baseUrlPlaceholder: 'https://example.openai.azure.com/openai/v1',
-    model: '',
-    modelInput: '',
-    setModelInput: vi.fn(),
-    clearModel: vi.fn(),
-    activeDeploymentId: null,
-    saveDeployment: vi.fn(() => true),
-    selectDeployment: vi.fn(),
-    removeDeployment: vi.fn(),
-    clearDeployments: vi.fn(),
-    modelPlaceholder: 'gpt-4.1',
-  };
-
-  it('shows the "Bring your own" pill and empty deployments state when not configured', () => {
-    const html = renderToStaticMarkup(
-      <ExperimentalProviderSection {...baseProps} configured={false} deployments={[]} />,
-    );
-
-    expect(html).toContain('Bring your own');
-    expect(html).toContain('No saved deployments yet.');
-    expect(html).toContain('0/3 saved');
-  });
-
-  it('shows saved deployments and marks the active one', () => {
-    const html = renderToStaticMarkup(
-      <ExperimentalProviderSection
-        {...baseProps}
-        configured
-        hasKey
-        deployments={[
-          { id: 'd1', model: 'gpt-4.1' },
-          { id: 'd2', model: 'gpt-4o' },
-        ]}
-        activeDeploymentId="d2"
-      />,
-    );
-
-    expect(html).toContain('gpt-4.1');
-    expect(html).toContain('gpt-4o');
-    expect(html).toContain('Connected');
-    expect(html).toContain('2/3 saved');
-    // Active deployment shows the "Active" badge.
-    expect(html).toContain('Active');
-  });
-
-  it('warns when the deployment limit is reached', () => {
-    const html = renderToStaticMarkup(
-      <ExperimentalProviderSection
-        {...baseProps}
-        configured
-        hasKey
-        deployments={[
-          { id: 'd1', model: 'a' },
-          { id: 'd2', model: 'b' },
-          { id: 'd3', model: 'c' },
-        ]}
-        activeDeploymentId="d1"
-      />,
-    );
-
-    expect(html).toContain('Remove one before adding another');
   });
 });

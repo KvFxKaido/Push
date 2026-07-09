@@ -33,9 +33,6 @@ import {
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
-  AZURE_DEFAULT_MODEL,
-  BEDROCK_DEFAULT_MODEL,
-  VERTEX_DEFAULT_MODEL,
   KILOCODE_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
@@ -150,9 +147,6 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   cloudflare: 'push:review:model:cloudflare',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
-  azure: 'push:review:model:azure',
-  bedrock: 'push:review:model:bedrock',
-  vertex: 'push:review:model:vertex',
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
   google: 'push:review:model:google',
@@ -168,9 +162,6 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
-  azure: AZURE_DEFAULT_MODEL,
-  bedrock: BEDROCK_DEFAULT_MODEL,
-  vertex: VERTEX_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,
@@ -196,9 +187,6 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'cloudflare' ||
     value === 'zen' ||
     value === 'nvidia' ||
-    value === 'azure' ||
-    value === 'bedrock' ||
-    value === 'vertex' ||
     value === 'anthropic' ||
     value === 'openai' ||
     value === 'google' ||
@@ -231,9 +219,6 @@ function readReviewModels(): Record<PreferredProvider, string> {
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),
     deepseek: pick('deepseek'),
-    azure: pick('azure'),
-    bedrock: pick('bedrock'),
-    vertex: pick('vertex'),
     anthropic: pick('anthropic'),
     openai: pick('openai'),
     google: pick('google'),

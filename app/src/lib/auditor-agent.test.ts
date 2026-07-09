@@ -115,13 +115,13 @@ describe('runAuditor', () => {
       undefined,
       undefined,
       {
-        providerOverride: 'vertex',
+        providerOverride: 'google',
         modelOverride: 'google/gemini-2.5-pro',
       },
     );
 
     expect(result.verdict).toBe('safe');
-    expect(mockGetProviderPushStream).toHaveBeenCalledWith('vertex');
+    expect(mockGetProviderPushStream).toHaveBeenCalledWith('google');
     expect(captured[0]?.model).toBe('google/gemini-2.5-pro');
   });
 

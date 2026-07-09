@@ -14,8 +14,7 @@ vi.mock('./web-search-mode', () => ({
   isNativeWebSearchEnabled: (provider: string, _modelId?: string, mode?: string) => {
     const m = mode ?? webSearchModeForTest;
     if (m === 'off') return false;
-    if (m === 'auto')
-      return provider === 'google' || provider === 'anthropic' || provider === 'vertex';
+    if (m === 'auto') return provider === 'google' || provider === 'anthropic';
     return false;
   },
 }));
@@ -64,7 +63,7 @@ describe('getContextBudget', () => {
       handoffTokens: 400_000,
     };
     expect(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview:nitro')).toEqual(expected);
-    expect(getContextBudget('vertex', 'google/gemini-2.5-pro')).toEqual(expected);
+    expect(getContextBudget('google', 'gemini-2.5-pro')).toEqual(expected);
   });
 
   it('derives a 1M-class budget for non-Haiku Claude models', () => {
@@ -189,7 +188,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
 
   function buildLlm(
     messages: ChatMessage[],
-    provider: 'zen' | 'openrouter' | 'azure' | undefined = anthropicRoute[0],
+    provider: 'zen' | 'openrouter' | 'openai' | undefined = anthropicRoute[0],
     model: string | undefined = anthropicRoute[1],
   ) {
     return toLLMMessages(messages, { providerType: provider, providerModel: model });
@@ -242,8 +241,8 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
     expect(user?.reasoning_blocks).toBeUndefined();
   });
 
-  it('does NOT emit reasoning_blocks for non-Anthropic-bridge routes (e.g. Azure)', () => {
-    // Azure is a strict OpenAI-compatible upstream — sending the
+  it('does NOT emit reasoning_blocks for non-Anthropic-bridge routes (e.g. OpenAI)', () => {
+    // OpenAI is a strict OpenAI-compatible upstream — sending the
     // Push-private sidecar would be an unknown message parameter and
     // could be rejected. The persisted blocks stay on the ChatMessage
     // either way; they only leak onto the wire when the route hits the
@@ -258,7 +257,7 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
       }),
       makeMessage({ id: 'u2', role: 'user', content: 'q2' }),
     ];
-    const llm = buildLlm(messages, 'azure', 'gpt-5');
+    const llm = buildLlm(messages, 'openai', 'gpt-5');
     const assistant = llm.find((m) => m.role === 'assistant');
     expect(assistant?.reasoning_blocks).toBeUndefined();
   });
@@ -388,10 +387,12 @@ describe('toLLMMessages reasoning_blocks round-trip', () => {
       'openrouter',
       'anthropic/claude-sonnet-4.6:nitro',
     ).find((m) => m.role === 'assistant');
-    const azureAssistant = buildLlm(messages, 'azure', 'gpt-5').find((m) => m.role === 'assistant');
+    const openaiAssistant = buildLlm(messages, 'openai', 'gpt-5').find(
+      (m) => m.role === 'assistant',
+    );
     expect(zenAssistant?.reasoning_content).toBeUndefined();
     expect(openRouterAssistant?.reasoning_content).toBeUndefined();
-    expect(azureAssistant?.reasoning_content).toBeUndefined();
+    expect(openaiAssistant?.reasoning_content).toBeUndefined();
   });
 });
 

@@ -77,17 +77,6 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * server-side search behind their back. `'google-grounding'` is the
  * provider-specific opt-in that forces grounding on Gemini.
  *
- * Vertex carries both Claude and Gemini under one provider id and both
- * transports now have native search: Claude flows through
- * `anthropic_web_search` → bridge tool[], Gemini flows through
- * `google_search_grounding` → Worker-side translation to
- * `tools: [{ googleSearch: {} }]` on the upstream OpenAI-compat body
- * (Vertex's compat layer doesn't auto-translate the OpenAI `web_search`
- * tool shape). The Vertex stream picks the right field based on the
- * model id's transport; this helper just answers "is native available
- * at all?" so the orchestrator can drop the prompt-engineered tool
- * protocol when native is wired.
- *
  * Returns false for providers that don't have a native tool — the
  * prompt-engineered `web_search` (DuckDuckGo / Tavily / Ollama) covers
  * those.
@@ -104,7 +93,6 @@ export function isNativeWebSearchEnabled(
       return (
         provider === 'google' ||
         provider === 'anthropic' ||
-        provider === 'vertex' ||
         provider === 'openrouter' ||
         // Responses-native providers that implement OpenAI's server-side
         // `web_search` built-in tool: direct OpenAI (broad model support) and
@@ -141,8 +129,6 @@ export function getAutoNativeSearchLabel(provider: string): string | null {
       return 'Anthropic';
     case 'google':
       return 'Google';
-    case 'vertex':
-      return 'Vertex';
     case 'openai':
       return 'OpenAI';
     case 'sakana':

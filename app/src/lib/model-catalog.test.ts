@@ -25,20 +25,7 @@ import {
   GOOGLE_MODELS,
   KILOCODE_MODELS,
   OPENAI_MODELS,
-  VERTEX_MODELS,
 } from '@push/lib/provider-models';
-import { VERTEX_MODEL_OPTIONS } from './vertex-provider';
-
-// Vertex structured-output gating depends on the configured wire mode
-// (`getVertexMode()`): only native (push.stream.v1) Vertex reaches the Anthropic
-// serializer, so legacy/none resolve to no structured output. Default the mock to
-// 'native' so the existing provider/model gate tests exercise the supported path;
-// the legacy-mode test flips it.
-const vertexModeMock = vi.hoisted(() => ({ value: 'native' as 'native' | 'legacy' | 'none' }));
-vi.mock('@/hooks/useVertexConfig', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/hooks/useVertexConfig')>()),
-  getVertexMode: () => vertexModeMock.value,
-}));
 
 function createStorageMock() {
   const store = new Map<string, string>();
@@ -74,7 +61,6 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
-  vertexModeMock.value = 'native';
 });
 
 describe('parseOpenRouterCatalog', () => {
@@ -1031,24 +1017,6 @@ describe('providerModelSupportsStructuredOutput', () => {
   it('lets transport mode decide content-block emission inside the profile', () => {
     stubWindow();
     expect(
-      resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514', {
-        requestWire: 'openai',
-      }),
-    ).toMatchObject({
-      toolCalling: 'native',
-      contentBlocks: false,
-      reasoningBlocks: true,
-    });
-    expect(
-      resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514', {
-        requestWire: 'neutral',
-      }),
-    ).toMatchObject({
-      toolCalling: 'native',
-      contentBlocks: true,
-      reasoningBlocks: true,
-    });
-    expect(
       resolvePushCapabilityProfile('zen', 'kimi-k2.6', { requestWire: 'openai' }),
     ).toMatchObject({
       contentBlocks: false,
@@ -1064,13 +1032,12 @@ describe('providerModelSupportsStructuredOutput', () => {
 
   it('returns false for providers without a confirmed structured-output wire', () => {
     stubWindow();
-    // Gemini native serializers, bedrock, and ollama are unconfirmed or absent
-    // (Ollama Cloud does not support structured outputs); demo has no wire.
-    // None of these may attach a constraint regardless of catalog metadata.
-    for (const provider of ['google', 'bedrock', 'ollama', 'demo']) {
+    // Gemini native serializers and ollama are unconfirmed or absent (Ollama
+    // Cloud does not support structured outputs); demo has no wire. None of
+    // these may attach a constraint regardless of catalog metadata.
+    for (const provider of ['google', 'ollama', 'demo']) {
       expect(providerModelSupportsStructuredOutput(provider, 'any-model')).toBe(false);
     }
-    expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
   });
 
   it('gates Anthropic structured outputs as native when supported and fallback otherwise', () => {
@@ -1084,20 +1051,6 @@ describe('providerModelSupportsStructuredOutput', () => {
       structuredOutput: 'best-effort',
     });
     expect(providerModelSupportsStructuredOutput('anthropic', undefined)).toBe(false);
-  });
-
-  it('gates Vertex-Claude structured outputs through the Anthropic transport only', () => {
-    stubWindow();
-    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
-      true,
-    );
-    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4-5@20250929')).toMatchObject({
-      structuredOutput: 'strict',
-    });
-    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4@20250514')).toMatchObject({
-      structuredOutput: 'best-effort',
-    });
-    expect(providerModelSupportsStructuredOutput('vertex', 'google/gemini-2.5-pro')).toBe(false);
   });
 
   it('gates direct Gemini structured outputs (native responseSchema) on the catalog set', () => {
@@ -1114,25 +1067,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     );
     // Off-catalog google id → none (and tool calling agrees).
     expect(providerModelSupportsStructuredOutput('google', 'gemini-not-a-real-model')).toBe(false);
-  });
-
-  it('keeps legacy-mode Vertex prompt-only (the OpenAI-proxy wire never serializes the constraint)', () => {
-    stubWindow();
-    // The legacy (OpenAI-proxy) Vertex wire drops `responseFormat` and targets an
-    // unconfirmed user-configured base URL, so structured output must gate off even
-    // for a Claude model that would qualify on the native wire — otherwise the
-    // auditor/reviewer attach a constraint the stream silently discards.
-    vertexModeMock.value = 'legacy';
-    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
-      false,
-    );
-    expect(resolvePushCapabilityProfile('vertex', 'claude-sonnet-4-5@20250929')).toMatchObject({
-      structuredOutput: 'none',
-    });
-    vertexModeMock.value = 'none';
-    expect(providerModelSupportsStructuredOutput('vertex', 'claude-sonnet-4-5@20250929')).toBe(
-      false,
-    );
   });
 
   it('gates Zen-Go Anthropic-transport models on the fallback bridge; OpenAI-transport stays capability-based', () => {
@@ -1382,36 +1316,15 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('google', undefined)).toBe(false);
   });
 
-  it('gates Vertex native tool calling against the curated Vertex catalog allowlist', () => {
-    stubWindow();
-    expect(providerModelSupportsNativeToolCalling('vertex', 'google/gemini-2.5-pro')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('vertex', 'claude-sonnet-4@20250514')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('vertex', 'custom-vertex-model')).toBe(false);
-    expect(providerModelSupportsNativeToolCalling('vertex', undefined)).toBe(false);
-  });
-
   it('gates validated OpenAI-compatible adapters by catalog or OpenAI-family id', () => {
     stubWindow();
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-5.4')).toBe(true);
     expect(providerModelSupportsNativeToolCalling('openai', 'gpt-4o')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('azure', 'gpt-4.1')).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('azure', 'my-custom-deployment')).toBe(false);
 
     expect(providerModelSupportsNativeToolCalling('kilocode', 'anthropic/claude-sonnet-4.6')).toBe(
       true,
     );
     expect(providerModelSupportsNativeToolCalling('kilocode', 'unknown/model')).toBe(false);
-
-    expect(providerModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4')).toBe(
-      true,
-    );
-    expect(
-      providerModelSupportsNativeToolCalling(
-        'bedrock',
-        'anthropic.claude-3-7-sonnet-20250219-v1:0',
-      ),
-    ).toBe(true);
-    expect(providerModelSupportsNativeToolCalling('bedrock', 'anthropic.claude-v2')).toBe(false);
   });
 
   it('gates direct Anthropic native tool calling against the curated catalog allowlist', () => {
@@ -1424,13 +1337,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('anthropic', undefined)).toBe(false);
   });
 
-  it('keeps the shared VERTEX_MODELS list in sync with VERTEX_MODEL_OPTIONS', () => {
-    // The CLI gate can't import the web-only VERTEX_MODEL_OPTIONS (it carries
-    // browser metadata), so the gate resolves Vertex against the shared
-    // `lib/provider-models` VERTEX_MODELS. Pin the two so they can't drift.
-    expect([...VERTEX_MODELS].sort()).toEqual([...VERTEX_MODEL_OPTIONS.map((m) => m.id)].sort());
-  });
-
   it('web and CLI native-tool gates agree on every name-based provider (drift guard)', () => {
     stubWindow();
     // Name-based providers must decide identically across surfaces (single source
@@ -1441,14 +1347,8 @@ describe('providerModelSupportsStructuredOutput', () => {
       ['anthropic', ANTHROPIC_MODELS],
       ['fireworks', FIREWORKS_MODELS],
       ['google', GOOGLE_MODELS],
-      ['vertex', VERTEX_MODELS],
       ['kilocode', KILOCODE_MODELS],
       ['openai', [...OPENAI_MODELS, 'gpt-5-mini', 'gpt-4o', 'not-a-model']],
-      ['azure', [...OPENAI_MODELS, 'gpt-5-mini']],
-      [
-        'bedrock',
-        ['us.anthropic.claude-sonnet-4', 'anthropic.claude-3-5-sonnet', 'anthropic.claude-v2'],
-      ],
     ];
     const disagreements: string[] = [];
     for (const [provider, models] of nameBasedCases) {
@@ -1459,11 +1359,6 @@ describe('providerModelSupportsStructuredOutput', () => {
       }
     }
     expect(disagreements).toEqual([]);
-    // Both surfaces gate the new providers ON for a representative model.
-    expect(cliProviderModelSupportsNativeToolCalling('vertex', 'google/gemini-2.5-pro')).toBe(true);
-    expect(
-      cliProviderModelSupportsNativeToolCalling('bedrock', 'us.anthropic.claude-sonnet-4'),
-    ).toBe(true);
   });
 
   it('returns false for an allowlisted provider when the catalog reports no support', () => {

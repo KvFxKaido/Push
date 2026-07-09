@@ -7,8 +7,8 @@
  *
  * Some provider behavior is still intentionally imperative. Stream factories
  * live next to their concrete adapters, and model-dependent transport splits
- * (Vertex Claude, Zen Go Anthropic routes) stay behind the capability/profile
- * gates that can inspect the selected model.
+ * (Zen Go Anthropic routes) stay behind the capability/profile gates that can
+ * inspect the selected model.
  */
 
 import { ALL_PROVIDERS, type AIProviderType } from './provider-contract.ts';
@@ -148,9 +148,7 @@ export interface ProviderDefinition {
 
 /**
  * Registry order is policy order, not the raw id-vocabulary order. It preserves
- * the existing failover ordering and keeps experimental private connectors out
- * of the initial automatic provider fallback while still allowing them as
- * same-shape failover targets when explicitly configured.
+ * the existing failover ordering.
  */
 export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
   {
@@ -486,92 +484,6 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       defaultUrl: 'https://api.sakana.ai/v1/responses',
       urlEnvVars: ['PUSH_SAKANA_URL'],
       modelEnvVar: 'PUSH_SAKANA_MODEL',
-    },
-  },
-  {
-    id: 'azure',
-    displayName: 'Azure OpenAI',
-    timeoutDisplayName: 'Azure',
-    streamShape: 'openai-compat',
-    initialFallbackEligible: false,
-    failoverEligible: true,
-    adapterRouted: true,
-    defaultModel: 'gpt-4.1',
-    apiKeyEnvVars: [
-      'PUSH_AZURE_OPENAI_API_KEY',
-      'AZURE_OPENAI_API_KEY',
-      'VITE_AZURE_OPENAI_API_KEY',
-    ],
-    webProxyPath: '/api/azure/chat',
-    modelsProxyPath: '/api/azure/models',
-    icon: {
-      src: 'https://models.dev/logos/azure.svg',
-      alt: 'Azure OpenAI logo',
-      fallbackText: 'Az',
-    },
-    settings: {
-      description:
-        'Experimental private connector for direct Azure OpenAI and Azure AI Foundry deployments',
-      envKey: 'VITE_AZURE_OPENAI_API_KEY',
-      envUrl: 'https://your-resource.services.ai.azure.com/api/projects/PROJECT',
-      modelContextWindow: 200_000,
-      keyStorageKey: 'azure_api_key',
-      modelStorageKey: 'azure_model',
-    },
-  },
-  {
-    id: 'bedrock',
-    displayName: 'AWS Bedrock',
-    timeoutDisplayName: 'Bedrock',
-    streamShape: 'openai-compat',
-    initialFallbackEligible: false,
-    failoverEligible: true,
-    adapterRouted: true,
-    defaultModel: 'anthropic.claude-3-7-sonnet-20250219-v1:0',
-    apiKeyEnvVars: ['PUSH_BEDROCK_API_KEY', 'BEDROCK_API_KEY', 'VITE_BEDROCK_API_KEY'],
-    webProxyPath: '/api/bedrock/chat',
-    modelsProxyPath: '/api/bedrock/models',
-    icon: {
-      src: 'https://models.dev/logos/aws.svg',
-      alt: 'AWS Bedrock logo',
-      fallbackText: 'B',
-    },
-    settings: {
-      description: 'Experimental private connector for direct Bedrock OpenAI-compatible endpoints',
-      envKey: 'VITE_BEDROCK_API_KEY',
-      envUrl: 'https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1',
-      modelContextWindow: 200_000,
-      keyStorageKey: 'bedrock_api_key',
-      modelStorageKey: 'bedrock_model',
-    },
-  },
-  {
-    id: 'vertex',
-    displayName: 'Google Vertex',
-    streamShape: 'gemini',
-    initialFallbackEligible: false,
-    failoverEligible: true,
-    adapterRouted: true,
-    defaultModel: 'google/gemini-2.5-pro',
-    apiKeyEnvVars: [
-      'PUSH_VERTEX_SERVICE_ACCOUNT_JSON',
-      'GOOGLE_APPLICATION_CREDENTIALS_JSON',
-      'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
-    ],
-    webProxyPath: '/api/vertex/chat',
-    modelsProxyPath: '/api/vertex/models',
-    icon: {
-      src: 'https://models.dev/logos/google.svg',
-      alt: 'Google Vertex logo',
-      fallbackText: 'V',
-    },
-    settings: {
-      description:
-        'Experimental private connector for Google Vertex using service-account auth with Gemini OpenAPI and Claude partner-model routing',
-      envKey: 'VITE_VERTEX_SERVICE_ACCOUNT_JSON',
-      envUrl: 'global',
-      modelContextWindow: 1_000_000,
-      modelStorageKey: 'vertex_model',
     },
   },
   {
