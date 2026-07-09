@@ -735,7 +735,7 @@ Source notes:
 1. Delete the Planner/brief now that inline is the measured default (2026-06-11); attachments-on-engine-envelope is the prerequisite. Partial: the CLI's headless brief shim (`cli/task-brief.ts`, dead since the engine-loop retirement — test-only callers) was deleted 2026-07-08; the shared `lib/delegation-brief.ts` stays (live in the web's delegated Coder/Explorer arcs) until the web-side deletion lands.
 2. Ship auto-branch-on-commit as the universal commit-flow for scratchpad work.
 3. Decide scratchpad durable-storage substrate per platform.
-4. Finish TUI daemon-session controller extraction.
+4. Finish TUI daemon-session controller extraction — **shipped 2026-07-09** (#1369): `cli/tui-daemon-session.ts` owns the daemon-session state/lifecycle/verbs behind a hook seam; `runTUI`'s ~100 ambient reads collapsed to `daemon.*`. Phase 2 of the TUI decomposition (command-handler module) stays optional; see the archived decision doc.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution + reducer raw-retention/recall via `memory_expand` `refs`). Only the Worker durable backend remains, tracked in **#1063** (blocked on a Worker-side typed-memory store). See the LCM doc's Phase 3.
 7. Promote the diff/annotation envelope only when a roadmap item needs it.

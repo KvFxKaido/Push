@@ -48,21 +48,12 @@ import {
   renderKeybindHints,
   renderStatusBar,
 } from './tui-status.js';
-import {
-  createReconnectState,
-  planNextRetry,
-  recordAttemptResult,
-  secondsUntilNextRetry,
-} from './tui-daemon-reconnect.js';
-import { classifyDaemonSpawnError, readPushdLogTail } from './tui-daemon-errors.js';
+import { createDaemonSession } from './tui-daemon-session.js';
+import { readPushdLogTail } from './tui-daemon-errors.js';
 import { isBunRuntime, resolvePushdEntryCandidate, pushdSpawnPlan } from './daemon-spawn-args.js';
 import { createDefaultTuiIo } from './tui-io.js';
 import { FocusStack } from './tui-focus.js';
-import {
-  evaluateHelloResponse,
-  formatUnknownEventWarning,
-  shouldWarnAboutUnknownEvent,
-} from './tui-daemon-handshake.js';
+import { formatUnknownEventWarning, shouldWarnAboutUnknownEvent } from './tui-daemon-handshake.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions, scopeSessionsToWorkspace } from './tui-fuzzy.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
@@ -1382,9 +1373,13 @@ export async function runTUI(options = {}) {
   // the prior inline behavior; a headless harness overrides `tryConnect` to
   // return a stub daemon client (no real socket/spawn) and `loadConfig` /
   // `listSessions` for deterministic startup (no disk, no resume modal).
+  // `deleteSession` joined in Phase 1 (the resume-modal ops were the
+  // flagged Phase-0 grafting points); rename writes through the session
+  // state helpers, so there is no separate op to inject for it.
   const deps = {
     loadConfig,
     listSessions,
+    deleteSession,
     tryConnect: async (socketPath, timeoutMs) =>
       (await import('./daemon-client.js')).tryConnect(socketPath, timeoutMs),
     ...(options.deps ?? {}),
@@ -1622,16 +1617,23 @@ export async function runTUI(options = {}) {
   await refreshGitStatus();
 
   // ── Daemon mode (connect to pushd if running) ───────────────────
-  let daemonClient = null;
-  let daemonSessionId = null;
-  let daemonAttachToken = null;
+  // The daemon-session state and lifecycle live on the controller
+  // (`cli/tui-daemon-session.ts`, TUI Decomposition Phase 1): it privately
+  // owns the client / sessionId / attachToken trio plus the reconnect
+  // backoff, autostart guard, hello build stamp, and event-seq cursor. The
+  // hooks below are the seam back into this closure — UI notes, dirty
+  // marking, the event bridge, spawn/self-heal, and the durable session
+  // handle. Constructed here (after tuiState/state/config/deps exist);
+  // hook bodies only run once the TUI is live, so the later-declared
+  // helpers they close over (function declarations, `scheduler`) are safe.
+  //
   // Run id of a daemon-owned run we learned about from a snapshot (reattach to
   // a run started elsewhere) rather than from a local `runPrompt` turn. The
   // local turn path owns `runAbort`; this is the only cancel handle for a run
   // we didn't start locally, so Ctrl+C can still cancel it. Null whenever the
   // session isn't running (cleared in `setRunState('idle')`). Audit: Codex #744.
+  // Stays closure-local (run-loop state, not connection state).
   let daemonActiveRunId = null;
-  let daemonAutoStartAttempted = false;
   // Set right before send_user_message goes out, cleared on the matching
   // broadcast 'user_message' event: this TUI already rendered its own
   // submission locally (addTranscriptEntry at send time), so the daemon's
@@ -1650,55 +1652,91 @@ export async function runTUI(options = {}) {
   // NEWER pending send if the user fires another message inside the window.
   let pendingOwnUserMessage = null;
   let pendingOwnUserMessageNonce = 0;
-  // Code-freshness self-heal state (stale-runtime detection). `daemonBuildStamp`
-  // is the connected daemon's startup stamp from the hello handshake; comparing
-  // it to this process's own stamp detects a daemon running pre-`git pull` code.
-  // `daemonStale` pauses new runs while a refresh is mid-flight; `pendingDaemonRespawn`
-  // tells the socket-close handler to respawn a fresh daemon instead of plain
-  // reconnect; `daemonRefreshInProgress` guards against overlapping refreshes.
-  let daemonBuildStamp = null;
+  // Code-freshness self-heal state (stale-runtime detection). The connected
+  // daemon's startup build stamp lives on the controller (`daemon.buildStamp`,
+  // stashed at hello time); comparing it to this process's own stamp detects
+  // a daemon running pre-`git pull` code. `daemonStale` pauses new runs while
+  // a refresh is mid-flight; `pendingDaemonRespawn` tells the socket-close
+  // hook to respawn a fresh daemon instead of plain reconnect;
+  // `daemonRefreshInProgress` guards against overlapping refreshes. These
+  // stay closure-local: the self-heal decides *whether* a connection should
+  // exist, which is the TUI shell's policy, not connection state.
   let daemonStale = false;
   let pendingDaemonRespawn = false;
   let daemonRefreshInProgress = false;
-  // Auto-reconnect state. When the daemon socket dies the TUI used to
-  // permanently fall back to inline mode for the rest of the session —
-  // the reconnect coordinator (`cli/tui-daemon-reconnect.ts`) replaces
-  // that with an exponential-backoff retry loop. State is kept on this
-  // closure so the frame ticker can render a live countdown and so the
-  // `socket.on('close')` handler can reschedule without rebuilding any
-  // of it.
-  let daemonReconnectState = createReconnectState();
-  let daemonReconnectTimer = null;
-  // Set to true on first successful connect so the disconnect path can
-  // tell the difference between "never connected this session" (no
-  // reconnect attempt warranted) and "connection dropped" (start the
-  // retry loop). Without it a TUI that boots with no daemon would
-  // start hammering retries against a daemon that was never running.
-  let daemonEverConnected = false;
-  // Cursor for the highest envelope `seq` the TUI has observed from
-  // the daemon. The TUI was previously sending `state.eventSeq` as
-  // `lastSeenSeq` on attach, but `state.eventSeq` is the *local* event
-  // counter — incoming daemon events never bumped it — so a reconnect
-  // after any daemon output replayed everything from seq 0 and the
-  // user saw duplicated transcript and tool lines (codex review on
-  // PR #664). Tracking the per-connection observed seq separately
-  // means `attachExistingDaemonSession` asks for events strictly
-  // *after* the last one we already rendered, while leaving the
-  // local `state.eventSeq` alone for the file-on-disk denormalisation.
-  let lastSeenDaemonSeq = 0;
-  // Deferred hook so the reconnect helpers can wake the frame ticker
+  // Deferred hook so the reconnect coordinator can wake the frame ticker
   // without referencing `refreshTicker` before it's defined further
-  // down the closure (it lives in the TDZ at the point the helpers
-  // are declared, and a direct reference would throw if a disconnect
+  // down the closure (it lives in the TDZ at the point the controller
+  // is constructed, and a direct reference would throw if a disconnect
   // somehow fired before initialisation finished). The hook is
   // replaced with the real ticker refresh after the frame ticker is
   // initialised; before that, calling it is a safe no-op.
   let invalidateReconnectAnimators = () => {};
-  // Registry of unknown event types we've already surfaced a warning
-  // for on the current daemon connection. Cleared on each reconnect
-  // by `tryDaemonConnect` so a daemon upgrade resurfaces the warning
-  // for any genuinely-new types it starts emitting.
-  const unknownEventWarnedTypes = new Set();
+
+  const daemon = createDaemonSession({
+    tryConnectTransport: (socketPath, timeoutMs) => deps.tryConnect(socketPath, timeoutMs),
+    note: (kind, text) => {
+      addTranscriptEntry(tuiState, kind, text);
+    },
+    markFooterDirty: () => {
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
+    },
+    markAllDirty: () => {
+      tuiState.dirty.add('all');
+      scheduler?.schedule();
+    },
+    onEngineEvent: (event) => handleEngineEvent(event),
+    // Socket-close reaction. The controller has already cleared its
+    // client/session/token state; this hook owns the disconnect UI and the
+    // respawn-vs-reconnect decision. A drain-driven refresh exits the daemon
+    // on purpose — respawn a fresh one from current code instead of the plain
+    // reconnect loop (which would only re-dial the now-dead socket and never
+    // spawn).
+    onSocketClose: () => {
+      tuiState.workspaceStateView = null;
+      tuiState.dirty.add('footer');
+      scheduler?.schedule();
+      if (pendingDaemonRespawn) {
+        void respawnFreshDaemon();
+        return;
+      }
+      daemon.scheduleReconnect({ announce: true });
+      // Best-effort: tail the daemon log into the transcript so the user can
+      // see why pushd died. Fire-and-forget so the close path stays
+      // synchronous; the warning entry arrives a tick later and answers
+      // "what just happened?" without forcing a manual log tail.
+      void appendDaemonLogTail('Daemon log at disconnect:');
+    },
+    isAutoStartEnabled: () => isTuiDaemonAutoStartEnabled(config),
+    spawnDaemon: () => startDaemonForTui(),
+    onReusedDaemon: () => assessReusedDaemon(),
+    appendDaemonLogTail: (heading) => appendDaemonLogTail(heading),
+    // The durable session handle. The controller's transient copies are
+    // cleared on every disconnect; reconnect/attach re-reads these.
+    getDurableSession: () => ({
+      persisted: Boolean(sessionPersisted),
+      sessionId: state?.sessionId ?? null,
+      attachToken: state?.attachToken ?? null,
+    }),
+    setDurableAttachToken: (token) => {
+      if (state && typeof state === 'object') state.attachToken = token;
+    },
+    getStartSessionPayload: () => ({
+      provider: state.provider,
+      model: state.model,
+      cwd: state.cwd,
+    }),
+    // Attach-response reaction: hydrate provider/model from daemon truth,
+    // then fire-and-forget the session-snapshot refresh (it hydrates
+    // run/approval state a tick later, schedules its own redraw, and
+    // surfaces its own failure). Audit: Kilo #744.
+    onAttached: (payload) => {
+      hydrateSessionStateFromDaemon(payload);
+      void refreshDaemonSessionSnapshot('attach');
+    },
+    invalidateReconnectAnimators: () => invalidateReconnectAnimators(),
+  });
 
   async function readDaemonPidFile(pidPath) {
     try {
@@ -1831,6 +1869,7 @@ export async function runTUI(options = {}) {
     try {
       // No stamp ⇒ older daemon that can't participate; leave self-heal off and
       // let the mtime warn cover it.
+      const daemonBuildStamp = daemon.buildStamp;
       if (!daemonBuildStamp) return false;
       const localStamp = await getBuildStamp();
       if (daemonBuildStamp === localStamp) {
@@ -1878,7 +1917,7 @@ export async function runTUI(options = {}) {
     tuiState.dirty.add('footer');
     scheduler?.schedule();
     try {
-      const client = daemonClient;
+      const client = daemon.client;
       if (!client?.connected) {
         // Nothing connected to drain — e.g. it already died. Let the normal
         // reconnect path handle it; don't strand the user in paused state.
@@ -1948,14 +1987,13 @@ export async function runTUI(options = {}) {
    */
   async function respawnFreshDaemon() {
     pendingDaemonRespawn = false;
-    // Reset the once-only autostart guard so ensureDaemonConnected will spawn a
-    // fresh process (rather than treating autostart as already-spent).
-    daemonAutoStartAttempted = false;
-    daemonSessionId = null;
-    daemonAttachToken = null;
+    // Reset the session binding + the once-only autostart guard so
+    // `daemon.ensureConnected` will spawn a fresh process (rather than
+    // treating autostart as already-spent).
+    daemon.resetForRespawn();
     let ok = false;
     try {
-      ok = await ensureDaemonConnected({ announce: false });
+      ok = await daemon.ensureConnected({ announce: false });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       addTranscriptEntry(
@@ -1975,7 +2013,7 @@ export async function runTUI(options = {}) {
       );
       if (sessionPersisted && state?.sessionId) {
         try {
-          await attachExistingDaemonSession();
+          await daemon.attachExistingSession();
         } catch {
           /* best-effort re-attach; a fresh start_session will recover */
         }
@@ -2009,7 +2047,7 @@ export async function runTUI(options = {}) {
       // by an unrelated process (e.g. crash without pidfile cleanup);
       // (2) pushd is wedged. Returning `ready: false` here would
       // strand the session in inline-fallback mode for the rest of
-      // the TUI run — `daemonAutoStartAttempted` flips and the
+      // the TUI run — `daemon.autoStartAttempted` flips and the
       // autostart never retries. Fall through to the spawn path
       // instead: if the live pid is actually pushd, the duplicate
       // spawn will hit EADDRINUSE on the unix socket and exit
@@ -2113,242 +2151,6 @@ export async function runTUI(options = {}) {
     }
   }
 
-  async function tryDaemonConnect() {
-    let client = null;
-    let socketPath;
-    try {
-      const { getSocketPath } = await import('./pushd.js');
-      socketPath = getSocketPath();
-      client = await deps.tryConnect(socketPath, 500);
-      if (!client) return false;
-    } catch {
-      // Connection-level failures (socket not present, EACCES, etc.)
-      // are the "daemon not running" path — silently fall back to
-      // inline and let the auto-spawn path handle it.
-      return false;
-    }
-
-    // From here on, treat the hello round-trip as its own failure
-    // domain. `daemon-client.request` REJECTS the promise (not
-    // resolves with `ok: false`) when the daemon responds with a
-    // non-ok envelope — see `cli/daemon-client.ts:processLine`
-    // around lines 107-114. The previous shape (`if (!hello.ok)`)
-    // was dead code and the outer catch swallowed protocol-mismatch
-    // errors as silent disconnects (codex / copilot review on PR
-    // #665). Catching the RequestError here lets the user see the
-    // actual reason — `UNSUPPORTED_PROTOCOL_VERSION` is the most
-    // common one — instead of mysteriously falling back to inline.
-    let hello;
-    try {
-      hello = await client.request(
-        'hello',
-        { capabilities: [...TUI_DAEMON_CAPABILITIES] },
-        null,
-        500,
-      );
-    } catch (err) {
-      const code = err?.code ? `${err.code}: ` : '';
-      const message = err?.message || 'unknown error';
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        `Daemon hello rejected (${code}${message}). Running inline; restart pushd or rebuild the TUI.`,
-      );
-      try {
-        client.close();
-      } catch {
-        /* socket may already be torn down */
-      }
-      return false;
-    }
-
-    try {
-      const handshake = evaluateHelloResponse(hello.payload);
-      if (!handshake.accepted) {
-        addTranscriptEntry(tuiState, 'warning', handshake.reason);
-        client.close();
-        return false;
-      }
-      // Surface any non-fatal handshake warnings (e.g. missing
-      // runtimeVersion on older daemons) once per connect so the user
-      // knows what state they're in without it being a hard error.
-      for (const w of handshake.warnings) {
-        addTranscriptEntry(tuiState, 'warning', w);
-      }
-
-      // Stash the daemon's startup build stamp so the reuse-path freshness
-      // check (assessReusedDaemon) can compare it to this process's own stamp.
-      // Null for older daemons that don't advertise one — self-heal stays off.
-      daemonBuildStamp = handshake.buildStamp ?? null;
-
-      daemonClient = client;
-      tuiState.dirty.add('footer');
-      scheduler?.schedule();
-
-      // Reset the per-connection unknown-event registry so a daemon
-      // upgrade across a reconnect re-surfaces drift instead of
-      // remembering "we already warned about that type" from the
-      // previous link.
-      unknownEventWarnedTypes.clear();
-
-      // Register event handler — bridge daemon events to TUI
-      client.onEvent((event) => {
-        if (event.kind !== 'event') return;
-        handleEngineEvent(event);
-      });
-
-      // Daemon disconnects no longer demote the session to inline mode
-      // permanently — `scheduleDaemonReconnect` arms an exponential
-      // backoff timer and `daemonReconnectState` drives the footer
-      // chip so the user sees the retry countdown live.
-      client._socket.on('close', () => {
-        if (daemonClient === client) {
-          daemonClient = null;
-          // Null the session/attach tokens so any non-reconnect path
-          // (e.g. an unrelated `ensureDaemonConnected` invocation)
-          // doesn't short-circuit on `daemonSessionId` still being
-          // set and end up `send_user_message`-ing on a stale handle.
-          // The reconnect path stashes the pre-disconnect session id
-          // on `state.sessionId` and the attach token on
-          // `state.attachToken`, so `attachExistingDaemonSession`
-          // can restore both from there on success (copilot review
-          // on PR #664).
-          daemonSessionId = null;
-          daemonAttachToken = null;
-          tuiState.workspaceStateView = null;
-          tuiState.dirty.add('footer');
-          scheduler?.schedule();
-          // A drain-driven refresh exits the daemon on purpose. Respawn a
-          // fresh one from current code instead of the plain reconnect loop
-          // (which would only re-dial the now-dead socket and never spawn).
-          if (pendingDaemonRespawn) {
-            void respawnFreshDaemon();
-            return;
-          }
-          scheduleDaemonReconnect({ announce: true });
-          // Best-effort: tail the daemon log into the transcript so
-          // the user can see why pushd died. Fire-and-forget so the
-          // close handler stays synchronous; the warning entry
-          // arrives a tick later (often before the first reconnect
-          // attempt fires) and answers "what just happened?" without
-          // forcing the user to `tail -f ~/.push/run/pushd.log`.
-          void appendDaemonLogTail('Daemon log at disconnect:');
-        }
-      });
-
-      daemonEverConnected = true;
-      // Any in-flight backoff is stale once we've handed back a live
-      // client — clear it (preserving the attempt count is irrelevant
-      // here because we made it through).
-      cancelPendingReconnectTimer();
-      daemonReconnectState = recordAttemptResult(daemonReconnectState, 'success');
-      tuiState.dirty.add('footer');
-
-      return true;
-    } catch {
-      try {
-        client.close();
-      } catch {
-        /* best-effort */
-      }
-      return false;
-    }
-  }
-
-  /** Stop the pending retry timer if armed. Does not reset attempt
-   * count — `recordAttemptResult` is the only thing that does that. */
-  function cancelPendingReconnectTimer() {
-    if (daemonReconnectTimer) {
-      clearTimeout(daemonReconnectTimer);
-      daemonReconnectTimer = null;
-    }
-  }
-
-  /** Arm the next reconnect retry. Idempotent: calling twice in a row
-   * (e.g. socket close while a timer is already armed) cancels the
-   * pending timer first so we never end up with two firing in
-   * parallel. */
-  function scheduleDaemonReconnect({ announce } = { announce: false }) {
-    // Don't try to reconnect to a daemon we never connected to in the
-    // first place — that's the inline-by-design path, not a regression
-    // to recover from.
-    if (!daemonEverConnected) return;
-    cancelPendingReconnectTimer();
-    if (announce && daemonReconnectState.phase === 'idle') {
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        'Daemon disconnected. Reconnecting in the background; turns sent now run inline.',
-      );
-    }
-    const { next, delayMs } = planNextRetry(daemonReconnectState, Date.now());
-    daemonReconnectState = next;
-    daemonReconnectTimer = setTimeout(() => {
-      daemonReconnectTimer = null;
-      void attemptDaemonReconnect();
-    }, delayMs);
-    tuiState.dirty.add('footer');
-    scheduler?.schedule();
-    invalidateReconnectAnimators();
-  }
-
-  /** Single reconnect attempt. Tries to connect + re-attach to the
-   * existing session; on success the footer flips back to `daemon`
-   * and the user sees a one-line success entry. On failure we step
-   * the backoff and schedule the next attempt.
-   *
-   * Wrapped in try/catch defensively — `tryDaemonConnect` and
-   * `attachExistingDaemonSession` already swallow their own errors and
-   * return false, but a future helper that doesn't would otherwise
-   * silently kill the retry loop (a `void`-prefixed async function
-   * that throws unhooks itself from the schedule). On caught error we
-   * treat it as a failed attempt so the backoff still steps. */
-  async function attemptDaemonReconnect() {
-    try {
-      if (daemonClient?.connected) {
-        daemonReconnectState = recordAttemptResult(daemonReconnectState, 'success');
-        tuiState.dirty.add('footer');
-        scheduler?.schedule();
-        return;
-      }
-      const connected = await tryDaemonConnect();
-      if (connected) {
-        // `tryDaemonConnect` records the success itself (it sets
-        // `daemonEverConnected` + resets the reconnect state). If the
-        // persisted session is addressable, re-attach so events replay.
-        // The socket close handler clears `daemonSessionId`, so the
-        // reconnect path must use `state.sessionId` as the durable handle.
-        if (sessionPersisted && state?.sessionId) {
-          const previousSessionId = state.sessionId;
-          const attached = await attachExistingDaemonSession();
-          if (!attached) {
-            // Connected to a daemon that doesn't know our session
-            // (e.g. it was wiped). Surface the mismatch — don't let
-            // the user silently end up on a fresh session.
-            addTranscriptEntry(
-              tuiState,
-              'warning',
-              `Reconnected to pushd but session ${previousSessionId} is not available; new messages will start a fresh daemon session.`,
-            );
-            // daemonSessionId stays null — the next ensureDaemonSession
-            // call will start_session and the user keeps moving.
-          }
-        }
-        addTranscriptEntry(tuiState, 'status', 'Reconnected to pushd daemon.');
-        tuiState.dirty.add('all');
-        scheduler?.schedule();
-        invalidateReconnectAnimators();
-        return;
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      // Best-effort warning — don't let a thrown helper kill the loop.
-      addTranscriptEntry(tuiState, 'warning', `Daemon reconnect attempt failed: ${message}`);
-    }
-    daemonReconnectState = recordAttemptResult(daemonReconnectState, 'fail');
-    scheduleDaemonReconnect({ announce: false });
-  }
-
   /**
    * Copy daemon-truth provider/model into the local view. Called on
    * attach response and on `session_state_changed` events. Also updates
@@ -2447,14 +2249,14 @@ export async function runTUI(options = {}) {
       daemonApprovalId: approvalId,
     });
     approvalResolve = (approved) => {
-      daemonClient
+      daemon.client
         ?.request(
           'submit_approval',
           {
             sessionId,
             approvalId,
             decision: approved ? 'approve' : 'deny',
-            attachToken: daemonAttachToken,
+            attachToken: daemon.attachToken,
           },
           sessionId,
         )
@@ -2474,7 +2276,7 @@ export async function runTUI(options = {}) {
     const snapshotSessionId =
       typeof session.sessionId === 'string' && session.sessionId
         ? session.sessionId
-        : daemonSessionId;
+        : daemon.sessionId;
 
     if (session.state === 'running') {
       // Remember the daemon's run id (preferring the richer `activeRun`
@@ -2516,16 +2318,16 @@ export async function runTUI(options = {}) {
   }
 
   async function refreshDaemonSessionSnapshot(reason = 'unknown') {
-    if (!daemonClient?.connected || !daemonSessionId || !daemonAttachToken) return false;
+    if (!daemon.connected || !daemon.sessionId || !daemon.attachToken) return false;
     try {
-      const res = await daemonClient.request(
+      const res = await daemon.client.request(
         'get_session_snapshot',
         {
-          sessionId: daemonSessionId,
-          attachToken: daemonAttachToken,
+          sessionId: daemon.sessionId,
+          attachToken: daemon.attachToken,
           recentEventLimit: 1,
         },
-        daemonSessionId,
+        daemon.sessionId,
         1500,
       );
       // Hydration mutates UI state (run state, footer, approval pane) but
@@ -2561,170 +2363,8 @@ export async function runTUI(options = {}) {
     }
   }
 
-  async function attachExistingDaemonSession() {
-    // INVARIANT: the truthy-`daemonSessionId` short-circuit here is the
-    // double-attach guard — it assumes that on any disconnect the transient
-    // `daemonSessionId` was reset to null. The socket `'close'` handler is the
-    // single place that does this (it nulls `daemonSessionId`/`daemonAttachToken`
-    // before arming `scheduleDaemonReconnect`). The durable handle lives on
-    // `state.sessionId`, not here. If a future disconnect path forgets that
-    // clear, this guard will silently skip re-attach — keep the close handler's
-    // null in lockstep with this check. Audit: Kilo #744.
-    if (!daemonClient || daemonSessionId || !sessionPersisted || !state?.sessionId) {
-      return false;
-    }
-    try {
-      const res = await daemonClient.request(
-        'attach_session',
-        {
-          sessionId: state.sessionId,
-          // Use `lastSeenDaemonSeq`, not `state.eventSeq`, so reconnect
-          // resumes immediately after the last event we actually
-          // rendered. `state.eventSeq` is the LOCAL counter and is
-          // never advanced by inbound daemon events — using it here
-          // re-replayed everything from seq 0 on any reconnect after
-          // daemon output and duplicated the transcript (codex review
-          // on PR #664).
-          lastSeenSeq: lastSeenDaemonSeq,
-          attachToken: state.attachToken || undefined,
-          capabilities: [...TUI_DAEMON_CAPABILITIES],
-        },
-        null,
-        1500,
-      );
-      daemonSessionId = state.sessionId;
-      // Adopt the attach token from the response (Universal Session Bearer).
-      // For a legacy tokenless session we attached with `undefined`; the
-      // daemon's bootstrap grace claimed it and returned the freshly minted
-      // token here. Adopt it into both the in-memory daemon token and
-      // `state.attachToken` so the NEXT reconnect (which re-reads
-      // `state.attachToken`) presents the real token instead of `undefined`
-      // and is accepted — without this, the very next reconnect after a claim
-      // would be rejected (the lockout the audit flagged). For an already-
-      // tokened session the response echoes the same token we sent, so this
-      // is a no-op. Fall back to the prior in-memory token if the daemon
-      // (older build) omits it from the response.
-      const adoptedToken =
-        (typeof res.payload?.attachToken === 'string' && res.payload.attachToken) ||
-        state.attachToken ||
-        null;
-      if (adoptedToken) state.attachToken = adoptedToken;
-      daemonAttachToken = adoptedToken;
-      // Daemon is the source of truth for session-scoped state. Hydrate
-      // the local view from the attach response so a mid-session switch
-      // from another client (or a stale state.json on disk) doesn't
-      // leave the TUI showing the wrong provider/model after re-attach.
-      hydrateSessionStateFromDaemon(res.payload);
-      // Fire-and-forget: the attach response already hydrated provider/model,
-      // so don't block the "Reconnected" message + transcript refresh on the
-      // snapshot RPC's blocking 1500ms window. It hydrates run/approval state a
-      // tick later and schedules its own redraw (and surfaces its own failure).
-      // Safe to leave unawaited — the helper catches and reports internally.
-      // Audit: Kilo #744.
-      void refreshDaemonSessionSnapshot('attach');
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  async function ensureDaemonSession() {
-    if (!daemonClient || daemonSessionId) return;
-    if (await attachExistingDaemonSession()) return;
-    try {
-      const res = await daemonClient.request('start_session', {
-        provider: state.provider,
-        model: state.model,
-        repo: { rootPath: state.cwd },
-        mode: 'tui',
-        capabilities: [...TUI_DAEMON_CAPABILITIES],
-      });
-      daemonSessionId = res.payload.sessionId;
-      daemonAttachToken = res.payload.attachToken;
-    } catch (err) {
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        `Daemon session failed: ${err.message}. Using inline mode.`,
-      );
-      daemonClient.close();
-      daemonClient = null;
-      tuiState.dirty.add('footer');
-      scheduler?.schedule();
-    }
-  }
-
-  async function ensureDaemonConnected({ announce = true } = {}) {
-    if (daemonClient?.connected) return true;
-
-    // Fast probe first — if pushd is already running this stays below
-    // a second and avoids an unnecessary spawn path.
-    if (await tryDaemonConnect()) {
-      if (announce) {
-        addTranscriptEntry(
-          tuiState,
-          'status',
-          'Connected to pushd daemon. Sessions persist in background.',
-        );
-      }
-      // Reused a pre-existing daemon (not spawned here). If its code predates
-      // the current source, self-heal (drain + respawn) or, failing that, warn.
-      await assessReusedDaemon();
-      return true;
-    }
-
-    if (!isTuiDaemonAutoStartEnabled(config) || daemonAutoStartAttempted) {
-      return false;
-    }
-    daemonAutoStartAttempted = true;
-
-    try {
-      const started = await startDaemonForTui();
-      if (started.ready && (await tryDaemonConnect())) {
-        if (announce) {
-          const verb = started.status === 'already-running' ? 'Connected to' : 'Started';
-          addTranscriptEntry(
-            tuiState,
-            'status',
-            `${verb} pushd daemon. Sessions persist in background.`,
-          );
-        }
-        // Only the reuse path can be stale; a fresh spawn matches current
-        // source by construction.
-        if (started.status === 'already-running') await assessReusedDaemon();
-        return true;
-      }
-      // Spawn succeeded but the socket never answered. Show the log
-      // tail so the user can see what pushd actually wrote on its way
-      // up (most common cause: a missing dep, an unhandled exception
-      // in the dispatcher, or a bind failure that didn't throw at the
-      // spawn level). The tail is best-effort — when the log isn't
-      // readable we still print the headline.
-      addTranscriptEntry(
-        tuiState,
-        'warning',
-        `pushd ${started.status === 'started' ? 'spawned' : 'is running'} but is not responsive yet. Falling back to inline mode. Log: ${started.logPath}`,
-      );
-      await appendDaemonLogTail();
-      return false;
-    } catch (err) {
-      // Classify the spawn-path exception into a structured headline
-      // + actionable hint instead of dumping the raw `err.message`.
-      // EACCES / EADDRINUSE / TSX_LOADER_MISSING etc. now read like
-      // diagnostics instead of opaque errno codes.
-      const classified = classifyDaemonSpawnError(err);
-      addTranscriptEntry(tuiState, 'warning', classified.headline);
-      if (classified.hint) addTranscriptEntry(tuiState, 'warning', classified.hint);
-      // Even on spawn failure, a previous run's log tail may explain
-      // the problem (the spawn-path exception often fires before
-      // pushd writes anything, so this surfaces last-known state).
-      await appendDaemonLogTail();
-      return false;
-    }
-  }
-
   // Try daemon on startup; start it if TUI daemon autostart is enabled.
-  await ensureDaemonConnected({ announce: true });
+  await daemon.ensureConnected({ announce: true });
 
   const runtimeOriginWarning = getRuntimeOriginWarning(state.cwd);
   if (runtimeOriginWarning) {
@@ -2771,7 +2411,7 @@ export async function runTUI(options = {}) {
   // the coordinator is mid-wait, the `reconnect Ns (try N)` countdown needs
   // to tick down once per second. Reusing the frame ticker is cheaper than
   // a separate interval and avoids drift between the two.
-  const reconnectChipVisible = () => daemonReconnectState.phase === 'reconnecting';
+  const reconnectChipVisible = () => daemon.reconnecting;
   const anyConsumerVisible = () =>
     spinnerVisible() || activityRowVisible() || reconnectChipVisible();
   const anyConsumerEligible = () =>
@@ -2797,7 +2437,7 @@ export async function runTUI(options = {}) {
         // sub-second motion.
         let reconnectChipNeedsPaint = false;
         if (reconnectChipVisible()) {
-          const curSecs = secondsUntilNextRetry(daemonReconnectState, Date.now());
+          const curSecs = daemon.reconnectSnapshot(Date.now()).secondsUntilNextRetry;
           if (curSecs !== lastReconnectChipSecs) {
             lastReconnectChipSecs = curSecs;
             reconnectChipNeedsPaint = true;
@@ -3055,8 +2695,9 @@ export async function runTUI(options = {}) {
       // already marked the footer dirty renders the new state. While
       // the coordinator is mid-retry we expose the live attempt count
       // and countdown so the user can see we're working on it.
-      const connected = Boolean(daemonClient?.connected);
-      const reconnecting = !connected && daemonReconnectState.phase === 'reconnecting';
+      const connected = daemon.connected;
+      const reconnectSnapshot = daemon.reconnectSnapshot(Date.now());
+      const reconnecting = !connected && reconnectSnapshot.phase === 'reconnecting';
       const daemonStatus = connected
         ? { connected: true, phase: 'connected' as const, reconnect: null }
         : reconnecting
@@ -3064,8 +2705,8 @@ export async function runTUI(options = {}) {
               connected: false,
               phase: 'reconnecting' as const,
               reconnect: {
-                attempt: daemonReconnectState.attempts + 1,
-                secondsUntilNextRetry: secondsUntilNextRetry(daemonReconnectState, Date.now()),
+                attempt: reconnectSnapshot.attempts + 1,
+                secondsUntilNextRetry: reconnectSnapshot.secondsUntilNextRetry,
               },
             }
           : { connected: false, phase: 'inline' as const, reconnect: null };
@@ -3244,12 +2885,12 @@ export async function runTUI(options = {}) {
   // resync, surfaced in the status line so the user knows the history changed
   // under them rather than seeing it silently rewritten.
   function resyncDaemonTranscript(triggerType, payload = null) {
-    if (!daemonClient?.connected || !daemonSessionId) return;
-    daemonClient
+    if (!daemon.connected || !daemon.sessionId) return;
+    daemon.client
       .request(
         'get_session_messages',
-        { sessionId: daemonSessionId, attachToken: daemonAttachToken },
-        daemonSessionId,
+        { sessionId: daemon.sessionId, attachToken: daemon.attachToken },
+        daemon.sessionId,
       )
       .then((res) => {
         if (!res.ok || !Array.isArray(res.payload?.messages)) {
@@ -3322,10 +2963,10 @@ export async function runTUI(options = {}) {
     // after this point. Inline events have no `seq` field; daemon
     // events always do. Workspace-state events are live-only and reuse the
     // current durable seq, so they must not advance the replay cursor.
-    // See `lastSeenDaemonSeq` declaration above for why this isn't
+    // See `DaemonSessionController.noteSeenSeq` for why this isn't
     // `state.eventSeq`.
-    if (!isWorkspaceStateEvent && typeof event.seq === 'number' && event.seq > lastSeenDaemonSeq) {
-      lastSeenDaemonSeq = event.seq;
+    if (!isWorkspaceStateEvent && typeof event.seq === 'number') {
+      daemon.noteSeenSeq(event.seq);
     }
     const transcriptLenBefore = tuiState.transcript.length;
     const streamBufBefore = tuiState.streamBuf;
@@ -3516,7 +3157,7 @@ export async function runTUI(options = {}) {
 
       case 'approval_required':
         // Daemon mode: show approval modal and send decision back
-        if (daemonClient?.connected && event.payload?.approvalId) {
+        if (daemon.connected && event.payload?.approvalId) {
           const approvalId = event.payload.approvalId;
           setRunState('awaiting_approval');
           openApprovalPane({
@@ -3527,19 +3168,19 @@ export async function runTUI(options = {}) {
             daemonApprovalId: approvalId,
           });
           approvalResolve = (approved) => {
-            daemonClient
+            daemon.client
               ?.request(
                 'submit_approval',
                 {
-                  sessionId: daemonSessionId,
+                  sessionId: daemon.sessionId,
                   approvalId,
                   decision: approved ? 'approve' : 'deny',
                   // Bearer required since submit_approval is now session-gated
                   // (matches cancel_run). Without this the daemon rejects the
                   // decision with INVALID_TOKEN.
-                  attachToken: daemonAttachToken,
+                  attachToken: daemon.attachToken,
                 },
-                daemonSessionId,
+                daemon.sessionId,
               )
               .catch(() => {});
           };
@@ -3658,7 +3299,7 @@ export async function runTUI(options = {}) {
             addTranscriptEntry(tuiState, entry.role, entry.text);
             scheduler.schedule();
           }
-        } else if (shouldWarnAboutUnknownEvent(unknownEventWarnedTypes, event.type)) {
+        } else if (shouldWarnAboutUnknownEvent(daemon.unknownEventWarnedTypes, event.type)) {
           // Anything that isn't an explicit case, isn't a delegation
           // event, and isn't on the known-noop allowlist
           // (`TUI_KNOWN_NOOP_EVENT_TYPES`) is real protocol drift —
@@ -3901,18 +3542,18 @@ export async function runTUI(options = {}) {
     }
 
     // ── Daemon mode: delegate to pushd over socket ──
-    if (daemonClient?.connected) {
-      await ensureDaemonSession();
-      if (daemonClient?.connected && daemonSessionId) {
+    if (daemon.connected) {
+      await daemon.ensureSession();
+      if (daemon.connected && daemon.sessionId) {
         runAbort = new AbortController();
         try {
           // Register listener BEFORE sending the request to avoid missing
           // a fast run_complete that arrives before the listener is attached.
           let runId = null;
           const completionPromise = new Promise((resolve) => {
-            const unsub = daemonClient.onEvent((event) => {
+            const unsub = daemon.client.onEvent((event) => {
               // Filter by sessionId; also by runId once known
-              if (event.sessionId !== daemonSessionId) return;
+              if (event.sessionId !== daemon.sessionId) return;
               if (runId && event.runId && event.runId !== runId) return;
               if (event.type === 'run_complete') {
                 unsub();
@@ -3925,18 +3566,18 @@ export async function runTUI(options = {}) {
               'abort',
               () => {
                 if (runAbort?._userInitiated) {
-                  daemonClient
+                  daemon.client
                     ?.request(
                       'cancel_run',
                       {
-                        sessionId: daemonSessionId,
+                        sessionId: daemon.sessionId,
                         runId,
                         // Bearer required since cancel_run gates the session-ful
                         // path (Addressable Session Verbs phase 2). Without this
                         // the daemon rejects the cancel with INVALID_TOKEN.
-                        attachToken: daemonAttachToken,
+                        attachToken: daemon.attachToken,
                       },
-                      daemonSessionId,
+                      daemon.sessionId,
                     )
                     .catch(() => {});
                 }
@@ -3959,18 +3600,18 @@ export async function runTUI(options = {}) {
             // wipe a newer pending message's correlation state.
             if (pendingOwnUserMessageNonce === ownMessageNonce) pendingOwnUserMessage = null;
           }, 5000);
-          const res = await daemonClient.request(
+          const res = await daemon.client.request(
             'send_user_message',
             {
-              sessionId: daemonSessionId,
+              sessionId: daemon.sessionId,
               text,
-              attachToken: daemonAttachToken,
+              attachToken: daemon.attachToken,
               capabilities: [...TUI_DAEMON_CAPABILITIES],
               // Provider/model intentionally omitted — the daemon owns
               // session-scoped state. Mid-session switches route through
               // `update_session` in switchModel/switchProvider.
             },
-            daemonSessionId,
+            daemon.sessionId,
           );
           if (!res.ok) {
             // Rejected before the daemon ever broadcast user_message — no
@@ -4062,12 +3703,12 @@ export async function runTUI(options = {}) {
     // `session_summarize` verb instead. The `context_compacted` broadcast it
     // emits drives `resyncDaemonTranscript`, which renders the success status;
     // we only surface the no-op / error outcomes here (they emit no broadcast).
-    if (await ensureDaemonSessionReady()) {
+    if (await daemon.ensureReady()) {
       // A successful compaction converges via the `context_compacted` broadcast
       // → resync; only the ok-but-no-op outcome is surfaced here. Error
       // envelopes (RUN_IN_PROGRESS, etc.) reject into catch.
       try {
-        const res = await sendDaemonSessionVerb('session_summarize', { preserveTurns });
+        const res = await daemon.summarize(preserveTurns);
         if (res?.payload?.compacted === false) {
           addTranscriptEntry(
             tuiState,
@@ -4121,30 +3762,6 @@ export async function runTUI(options = {}) {
     scheduler.flush();
   }
 
-  // Send a bearer-gated session verb to the daemon for the current session.
-  // Returns the response envelope, or `null` when there is no daemon session
-  // (the caller prints mode-specific guidance). `sessionId` + `attachToken` are
-  // attached uniformly — every session-ful daemon verb requires both.
-  async function sendDaemonSessionVerb(type, extraPayload = {}) {
-    if (!daemonClient?.connected || !daemonSessionId) return null;
-    return daemonClient.request(
-      type,
-      { sessionId: daemonSessionId, attachToken: daemonAttachToken, ...extraPayload },
-      daemonSessionId,
-    );
-  }
-
-  // True when a daemon-backed session is available to address. The session id is
-  // populated lazily — a fresh connect (e.g. after /resume) has `daemonClient`
-  // connected but `daemonSessionId` still null until the first send. The
-  // session-verb commands need it eagerly, so attach/start here the same way the
-  // send path does (`ensureDaemonSession` is a no-op once the id is set).
-  async function ensureDaemonSessionReady() {
-    if (!daemonClient?.connected) return false;
-    if (!daemonSessionId) await ensureDaemonSession();
-    return Boolean(daemonSessionId);
-  }
-
   // `/revert [n]` — undo the last N user turns on the daemon (default 1).
   // Transcript-only; sandbox/git state is untouched (use the typed branch tools
   // for code rollback). Success converges via the `session_reverted` broadcast →
@@ -4163,7 +3780,7 @@ export async function runTUI(options = {}) {
       // because turns-to-revert and turns-to-preserve are different limits.
       turns = Math.max(1, Math.min(1024, Number.parseInt(arg, 10)));
     }
-    if (!(await ensureDaemonSessionReady())) {
+    if (!(await daemon.ensureReady())) {
       addTranscriptEntry(
         tuiState,
         'warning',
@@ -4177,7 +3794,7 @@ export async function runTUI(options = {}) {
     // `session_reverted` broadcast → resync, so only the ok-but-no-op outcome
     // (no user turns) is surfaced here.
     try {
-      const res = await sendDaemonSessionVerb('session_revert', { turns });
+      const res = await daemon.revert(turns);
       if (res?.payload?.reverted === false) {
         addTranscriptEntry(tuiState, 'status', 'Nothing to revert (no user turns yet).');
       }
@@ -4195,7 +3812,7 @@ export async function runTUI(options = {}) {
   // /revert(s). Fails if a new message already committed the fork. Success
   // converges via the `session_unreverted` broadcast → `resyncDaemonTranscript`.
   async function unrevertDaemonSession() {
-    if (!(await ensureDaemonSessionReady())) {
+    if (!(await daemon.ensureReady())) {
       addTranscriptEntry(tuiState, 'warning', '/unrevert needs a daemon session.');
       scheduler.flush();
       return;
@@ -4205,7 +3822,7 @@ export async function runTUI(options = {}) {
     // message committed the fork) — that's an expected outcome, not an error,
     // so it renders as a status; every other rejection is a real error.
     try {
-      await sendDaemonSessionVerb('session_unrevert', {});
+      await daemon.unrevert();
     } catch (err) {
       const code =
         err && typeof err === 'object' && 'code' in err
@@ -4225,7 +3842,7 @@ export async function runTUI(options = {}) {
   // read verbs, so the result is rendered directly (no broadcast / resync).
   async function inspectDaemonChildren(rawArg) {
     const arg = String(rawArg || '').trim();
-    if (!(await ensureDaemonSessionReady())) {
+    if (!(await daemon.ensureReady())) {
       addTranscriptEntry(
         tuiState,
         'warning',
@@ -4238,7 +3855,7 @@ export async function runTUI(options = {}) {
     // envelope (CHILD_NOT_FOUND, etc.) rejects into catch.
     try {
       if (arg) {
-        const res = await sendDaemonSessionVerb('get_child_session', { subagentId: arg });
+        const res = await daemon.getChild(arg);
         const c = res?.payload?.child || {};
         const ev = res?.payload?.eventSummary || {};
         const lines = [
@@ -4257,7 +3874,7 @@ export async function runTUI(options = {}) {
         );
         addTranscriptEntry(tuiState, 'status', lines.join('\n'));
       } else {
-        const res = await sendDaemonSessionVerb('list_children', { includeEventDerived: true });
+        const res = await daemon.listChildren();
         const children = Array.isArray(res?.payload?.children) ? res.payload.children : [];
         if (children.length === 0) {
           addTranscriptEntry(tuiState, 'status', 'No delegated children for this session.');
@@ -4497,7 +4114,7 @@ export async function runTUI(options = {}) {
     scheduler.flush();
 
     try {
-      const rows = await listSessions();
+      const rows = await deps.listSessions();
       // Default to the active workspace's sessions — the REPL picker has
       // always cwd-scoped, but this modal listed every workspace and the
       // current project's sessions drowned in unrelated history. Fall back
@@ -4637,7 +4254,7 @@ export async function runTUI(options = {}) {
 
     async function deleteResumeRow(row) {
       try {
-        const deleted = await deleteSession(row.sessionId);
+        const deleted = await deps.deleteSession(row.sessionId);
         if (deleted === 0) {
           ms.error = `Session not found: ${row.sessionId}`;
         } else {
@@ -4645,7 +4262,7 @@ export async function runTUI(options = {}) {
             ? `${JSON.stringify(row.sessionName)} (${row.sessionId})`
             : row.sessionId;
           addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
-          const nextRows = await listSessions();
+          const nextRows = await deps.listSessions();
           ms.rows = nextRows;
           updateFilteredRows(ms);
           ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
@@ -4681,7 +4298,7 @@ export async function runTUI(options = {}) {
           await saveSessionState(targetState);
         }
 
-        const nextRows = await listSessions();
+        const nextRows = await deps.listSessions();
         ms.rows = nextRows;
         updateFilteredRows(ms);
         const nextIndex = ms.filteredRows.findIndex((r) => r.item.sessionId === targetId);
@@ -4896,16 +4513,16 @@ export async function runTUI(options = {}) {
     // only after the daemon confirms — a rejection (active run, bad
     // provider) surfaces in the transcript and the picker stays open
     // with the old value selected.
-    if (daemonClient?.connected && daemonSessionId) {
+    if (daemon.connected && daemon.sessionId) {
       try {
-        const res = await daemonClient.request(
+        const res = await daemon.client.request(
           'update_session',
           {
-            sessionId: daemonSessionId,
-            attachToken: daemonAttachToken,
+            sessionId: daemon.sessionId,
+            attachToken: daemon.attachToken,
             patch: { model: target },
           },
-          daemonSessionId,
+          daemon.sessionId,
         );
         if (!res.ok) {
           addTranscriptEntry(
@@ -5081,13 +4698,13 @@ export async function runTUI(options = {}) {
     payload = {},
     { timeoutMs = 2000, startDaemon = false } = {},
   ) {
-    if (!daemonClient?.connected && startDaemon) {
-      await ensureDaemonConnected({ announce: false });
+    if (!daemon.connected && startDaemon) {
+      await daemon.ensureConnected({ announce: false });
     }
 
-    if (daemonClient?.connected) {
+    if (daemon.connected) {
       try {
-        const response = await daemonClient.request(type, payload, null, timeoutMs);
+        const response = await daemon.client.request(type, payload, null, timeoutMs);
         return {
           ok: Boolean(response.ok),
           payload: response.payload || {},
@@ -5189,16 +4806,16 @@ export async function runTUI(options = {}) {
       lines.push(`Autostart: ${autostart ? 'auto' : 'off'}`);
 
       // Connection state from the TUI's POV. Order matters: check
-      // !autostart BEFORE daemonAutoStartAttempted. `ensureDaemonConnected`
-      // returns early without setting `daemonAutoStartAttempted = true`
-      // when autostart is off (cli/tui.ts:1651), so the
-      // `attempted && !autostart` combination is unreachable.
-      if (daemonClient?.connected) {
+      // !autostart BEFORE daemon.autoStartAttempted. `daemon.ensureConnected`
+      // returns early without consuming the autostart guard when autostart
+      // is off (cli/tui-daemon-session.ts), so the `attempted && !autostart`
+      // combination is unreachable.
+      if (daemon.connected) {
         lines.push('Connected: yes');
-        if (daemonSessionId) lines.push(`Session: ${daemonSessionId}`);
+        if (daemon.sessionId) lines.push(`Session: ${daemon.sessionId}`);
       } else if (!autostart) {
         lines.push('Connected: no (autostart off, running inline)');
-      } else if (daemonAutoStartAttempted) {
+      } else if (daemon.autoStartAttempted) {
         lines.push('Connected: no (autostart attempted, fell back to inline)');
       } else {
         lines.push('Connected: no (inline mode, autostart pending)');
@@ -5255,10 +4872,10 @@ export async function runTUI(options = {}) {
       // this automatically on a stale reuse — but useful when the user wants to
       // force a clean daemon (e.g. after an uncommitted edit the stamp can't
       // see, or just to be sure).
-      if (!daemonClient?.connected) {
+      if (!daemon.connected) {
         // No daemon to drain. If autostart is on, spawn a fresh one; otherwise
         // there's nothing to restart.
-        const connected = await ensureDaemonConnected({ announce: true });
+        const connected = await daemon.ensureConnected({ announce: true });
         addTranscriptEntry(
           tuiState,
           connected ? 'status' : 'warning',
@@ -5287,12 +4904,12 @@ export async function runTUI(options = {}) {
   // bundle targeting the CURRENT TUI session, so pasting it on the phone
   // lands in this exact conversation.
   async function mintPairBundleForActiveSession() {
-    await ensureDaemonConnected({ announce: false });
-    if (!daemonClient?.connected) {
+    await daemon.ensureConnected({ announce: false });
+    if (!daemon.connected) {
       return { ok: false, code: 'DAEMON_OFFLINE', error: 'daemon not running' };
     }
-    await ensureDaemonSession();
-    if (!daemonSessionId) {
+    await daemon.ensureSession();
+    if (!daemon.sessionId) {
       return {
         ok: false,
         code: 'NO_DAEMON_SESSION',
@@ -5302,8 +4919,8 @@ export async function runTUI(options = {}) {
     return requestDaemonAdmin(
       'mint_remote_pair_bundle',
       {
-        targetSessionId: daemonSessionId,
-        ...(daemonAttachToken ? { targetAttachToken: daemonAttachToken } : {}),
+        targetSessionId: daemon.sessionId,
+        ...(daemon.attachToken ? { targetAttachToken: daemon.attachToken } : {}),
       },
       { timeoutMs: 5000 },
     );
@@ -5318,7 +4935,7 @@ export async function runTUI(options = {}) {
     const attachTokenId = String(payload?.attachTokenId || '');
     const deploymentUrl = String(payload?.deploymentUrl || '');
     const relaySessionId = String(payload?.sessionId || '');
-    const targetSessionId = String(payload?.targetSessionId || daemonSessionId || '');
+    const targetSessionId = String(payload?.targetSessionId || daemon.sessionId || '');
     // If the daemon minted a fresh attach token for this (previously
     // tokenless) session, adopt it: update the live token and the in-memory
     // session state so a reconnect carries the now-required bearer. The
@@ -5326,7 +4943,7 @@ export async function runTUI(options = {}) {
     // TUI-side write is needed (and skipping it avoids racing that write).
     const mintedTargetAttachToken = String(payload?.mintedTargetAttachToken || '');
     if (mintedTargetAttachToken) {
-      daemonAttachToken = mintedTargetAttachToken;
+      daemon.adoptAttachToken(mintedTargetAttachToken);
       if (state && typeof state === 'object') state.attachToken = mintedTargetAttachToken;
     }
     tuiState.lastRemotePairBundle = bundle || null;
@@ -5760,9 +5377,9 @@ export async function runTUI(options = {}) {
     // confirm. requestDaemonAdmin can succeed over a transient socket
     // even when the TUI itself runs inline, so re-check the TUI's own
     // daemon attachment explicitly.
-    await ensureDaemonConnected({ announce: false });
-    if (daemonClient?.connected) await ensureDaemonSession();
-    if (!daemonClient?.connected || !daemonSessionId) {
+    await daemon.ensureConnected({ announce: false });
+    if (daemon.connected) await daemon.ensureSession();
+    if (!daemon.connected || !daemon.sessionId) {
       addTranscriptEntry(
         tuiState,
         'warning',
@@ -5772,7 +5389,7 @@ export async function runTUI(options = {}) {
       return;
     }
 
-    const sessionLabel = state.sessionName ? `"${state.sessionName}"` : daemonSessionId;
+    const sessionLabel = state.sessionName ? `"${state.sessionName}"` : daemon.sessionId;
     addTranscriptEntry(
       tuiState,
       'status',
@@ -5924,8 +5541,8 @@ export async function runTUI(options = {}) {
       process.env.PUSH_TUI_DAEMON_AUTOSTART = String(enabled);
       await saveConfig(config);
       if (enabled) {
-        daemonAutoStartAttempted = false;
-        await ensureDaemonConnected({ announce: true });
+        daemon.resetAutoStart();
+        await daemon.ensureConnected({ announce: true });
       }
       addTranscriptEntry(tuiState, 'status', `TUI daemon autostart: ${enabled ? 'auto' : 'off'}`);
       scheduler.flush();
@@ -6516,16 +6133,16 @@ export async function runTUI(options = {}) {
   // was dispatched. Audit: Codex #744 (without this, Ctrl+C on a reattached run
   // hit `cancelRun()`'s null-`runAbort` no-op — neither cancelling nor exiting).
   function cancelDaemonRun() {
-    if (!daemonClient?.connected || !daemonSessionId || !daemonActiveRunId) return false;
-    daemonClient
+    if (!daemon.connected || !daemon.sessionId || !daemonActiveRunId) return false;
+    daemon.client
       .request(
         'cancel_run',
         {
-          sessionId: daemonSessionId,
+          sessionId: daemon.sessionId,
           runId: daemonActiveRunId,
-          attachToken: daemonAttachToken,
+          attachToken: daemon.attachToken,
         },
-        daemonSessionId,
+        daemon.sessionId,
       )
       .catch(() => {});
     addTranscriptEntry(tuiState, 'status', 'Cancelling daemon run…');
@@ -6907,16 +6524,16 @@ export async function runTUI(options = {}) {
     // rule (a provider change snaps the model to the new provider's
     // default if no model is supplied — we supply one explicitly here
     // to preserve any per-provider model preference from the config).
-    if (daemonClient?.connected && daemonSessionId) {
+    if (daemon.connected && daemon.sessionId) {
       try {
-        const res = await daemonClient.request(
+        const res = await daemon.client.request(
           'update_session',
           {
-            sessionId: daemonSessionId,
-            attachToken: daemonAttachToken,
+            sessionId: daemon.sessionId,
+            attachToken: daemon.attachToken,
             patch: { provider: target.id, model: targetModel },
           },
-          daemonSessionId,
+          daemon.sessionId,
         );
         if (!res.ok) {
           addTranscriptEntry(
@@ -7153,8 +6770,8 @@ export async function runTUI(options = {}) {
       process.env.PUSH_TUI_DAEMON_AUTOSTART = String(!isOn);
       await saveConfig(config);
       if (!isOn) {
-        daemonAutoStartAttempted = false;
-        await ensureDaemonConnected({ announce: true });
+        daemon.resetAutoStart();
+        await daemon.ensureConnected({ announce: true });
       }
     } else if (index === providers.length + 5) {
       // TUI mouse mode -> toggle directly
@@ -7181,7 +6798,7 @@ export async function runTUI(options = {}) {
   // the on-disk write already succeeded, so a daemon that's gone, mid-restart,
   // or too old to know the verb just picks the key up on its next (re)start.
   async function notifyDaemonConfigReload() {
-    const client = daemonClient;
+    const client = daemon.client;
     if (!client?.connected) return;
     try {
       await client.request('reload_config', {}, null, 3000);
@@ -7838,7 +7455,7 @@ export async function runTUI(options = {}) {
   } finally {
     // ── Cleanup ──────────────────────────────────────────────────
     clearInterval(gitStatusInterval);
-    cancelPendingReconnectTimer();
+    daemon.cancelPendingReconnectTimer();
     stopFrameTicker();
     scheduler.destroy();
     io.stdin.removeListener('data', onData);
@@ -7850,10 +7467,7 @@ export async function runTUI(options = {}) {
     if (runAbort) runAbort.abort();
 
     // Disconnect from daemon (session continues in background)
-    if (daemonClient) {
-      daemonClient.close();
-      daemonClient = null;
-    }
+    daemon.teardown();
 
     io.stdout.write(
       ESC.mouseOff +

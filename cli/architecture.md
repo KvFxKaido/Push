@@ -46,6 +46,7 @@ The TUI is the experimental full-screen terminal surface for session-based codin
 Primary entry points and helpers:
 
 - `tui.ts` — main TUI loop and screen orchestration
+- `tui-daemon-session.ts` — `DaemonSessionController`: the daemon-session state, connect/reconnect lifecycle, and typed session verbs behind a hook seam
 - `tui-renderer.ts` — rendering and layout helpers
 - `tui-input.ts` / `tui-modal-input.ts` — inline and modal input behavior
 - `tui-status.ts` — status line and compact state summaries

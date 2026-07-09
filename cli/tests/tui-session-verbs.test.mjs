@@ -3,13 +3,14 @@
  * PR #740, inline in `runTUI`). They pin the input→dispatch→send contract via
  * the headless harness (TUI Decomposition Phase 0), exercising the REAL path:
  * keystrokes → parseKey → composer → sendMessage → handleSlashCommand →
- * sendDaemonSessionVerb → daemon `request()`.
+ * the DaemonSessionController's verb methods (`cli/tui-daemon-session.ts`)
+ * → daemon `request()`.
  *
  * This retroactively closes the "no automated test" gap consciously punted in
  * #740, and — unlike a formatter unit test — a wiring regression anywhere on
  * that path (key parse, command dispatch, payload shape, error rendering)
- * fails these. It is also the behavior-preservation net for the eventual
- * Phase 1 DaemonSessionController extraction.
+ * fails these. It was the behavior-preservation net for the Phase 1
+ * DaemonSessionController extraction, which it survived unchanged.
  *
  * Each test runs a fresh `runTUI` instance for isolation (no busy-state bleed,
  * independent request log). The stub daemon client answers the connect

@@ -236,17 +236,27 @@ describe('adopt-from-response source guards', () => {
     );
   });
 
-  it('the TUI adopts res.payload.attachToken into state.attachToken on attach', async () => {
-    const src = await read('tui.ts');
+  it('the TUI adopts res.payload.attachToken into durable state on attach', async () => {
+    // The attach path lives on the DaemonSessionController (TUI Decomposition
+    // Phase 1): it reads the token from the attach response and persists it
+    // through the durable-session hook, which the TUI wires to
+    // `state.attachToken`.
+    const controllerSrc = await read('tui-daemon-session.ts');
     assert.match(
-      src,
+      controllerSrc,
       /res\.payload\?\.attachToken/,
-      'attachExistingDaemonSession must read the token from the attach response',
+      'attachExistingSession must read the token from the attach response',
     );
     assert.match(
-      src,
-      /state\.attachToken = adoptedToken/,
-      'the TUI must persist the adopted token into in-memory state for the next reconnect',
+      controllerSrc,
+      /if \(adoptedToken\) this\.#hooks\.setDurableAttachToken\(adoptedToken\);/,
+      'the controller must persist the adopted token through the durable-session hook',
+    );
+    const tuiSrc = await read('tui.ts');
+    assert.match(
+      tuiSrc,
+      /setDurableAttachToken: \(token\) => \{\s*if \(state && typeof state === 'object'\) state\.attachToken = token;/,
+      'the TUI must wire the durable-token hook to in-memory state for the next reconnect',
     );
   });
 });
