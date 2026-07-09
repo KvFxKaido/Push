@@ -191,6 +191,13 @@ export interface Env {
   CF_AI_GATEWAY_ACCOUNT_ID?: string;
   CF_AI_GATEWAY_SLUG?: string;
   CF_AI_GATEWAY_TOKEN?: string;
+  // Comma-separated allow-list of *custom* (non-first-party) AI Gateway provider
+  // slugs known to be registered + enabled on the gateway (e.g. `ollama`). A
+  // `custom-{slug}` binding routes through the gateway only when its slug is
+  // listed here; otherwise it falls back to direct. Decouples custom providers
+  // from the global CF_AI_GATEWAY_* toggle so enabling first-party routing can't
+  // flip an unregistered custom provider onto a path that 404s.
+  CF_AI_GATEWAY_CUSTOM_SLUGS?: string;
   // Workers Analytics Engine for provider observability
   PROVIDER_STATS?: {
     writeDataPoint(data: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
@@ -885,7 +892,27 @@ export function buildAiGatewayUrl(env: Env, binding: AiGatewayBinding): string |
   const account = env.CF_AI_GATEWAY_ACCOUNT_ID?.trim();
   const slug = env.CF_AI_GATEWAY_SLUG?.trim();
   if (!account || !slug) return null;
+  if (!isCustomGatewaySlugEnabled(env, binding.provider)) return null;
   return `https://gateway.ai.cloudflare.com/v1/${account}/${slug}/${binding.provider}${binding.pathSuffix}`;
+}
+
+/**
+ * First-party gateway providers (e.g. `openai`, `anthropic`) are always eligible
+ * once the gateway env is set. A **custom** provider (`custom-{slug}`) is not: the
+ * `custom-{slug}` path 404s unless that provider has been registered + enabled on
+ * the gateway, so it must opt in per-slug via `CF_AI_GATEWAY_CUSTOM_SLUGS` rather
+ * than ride the global CF_AI_GATEWAY_* toggle (already set in prod). An unlisted
+ * custom binding returns false here and `buildAiGatewayUrl` falls back to direct.
+ */
+export function isCustomGatewaySlugEnabled(env: Env, provider: string): boolean {
+  const CUSTOM_PREFIX = 'custom-';
+  if (!provider.startsWith(CUSTOM_PREFIX)) return true;
+  const wanted = provider.slice(CUSTOM_PREFIX.length);
+  return (env.CF_AI_GATEWAY_CUSTOM_SLUGS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(wanted);
 }
 
 /**

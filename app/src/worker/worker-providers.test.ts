@@ -884,6 +884,66 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
   });
 });
 
+describe('handleOllamaChat — AI Gateway custom-provider gate (Bucket C)', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  // First-party account+slug are set (as they are in prod); only the custom
+  // slug allow-list flips ollama onto the custom-provider path.
+  const gatewayEnv = {
+    OLLAMA_API_KEY: 'oll-key',
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+
+  it('stays direct when the gateway is set but ollama is NOT allow-listed', async () => {
+    // The prod-safety gate: enabling first-party routing (account+slug, already
+    // live in prod) must NOT flip ollama onto custom-ollama, which 404s until the
+    // custom provider is registered. Without CF_AI_GATEWAY_CUSTOM_SLUGS it's direct.
+    const captured = captureFetch();
+    await handleOllamaChat(makeChatRequest(), makeEnv(gatewayEnv));
+    expect(captured.current?.url).toBe('https://ollama.com/v1/chat/completions');
+    expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+
+  it('routes through custom-ollama when the slug is allow-listed', async () => {
+    const captured = captureFetch();
+    await handleOllamaChat(
+      makeChatRequest(),
+      makeEnv({ ...gatewayEnv, CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama' }),
+    );
+    // base_url (ollama.com) is the registered custom provider's; pathSuffix
+    // supplies /v1/chat/completions after custom-ollama/.
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-ollama/v1/chat/completions',
+    );
+    // Upstream ollama key still flows to the provider; gateway token rides alongside.
+    expect(captured.current?.headers.Authorization).toBe('Bearer oll-key');
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('tolerates whitespace and other slugs in the allow-list', async () => {
+    const captured = captureFetch();
+    await handleOllamaChat(
+      makeChatRequest(),
+      makeEnv({ ...gatewayEnv, CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia, ollama , fireworks' }),
+    );
+    expect(captured.current?.url).toContain('/custom-ollama/v1/chat/completions');
+  });
+});
+
 describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
   it('passes the gateway id to env.AI.run when account + slug are set', async () => {
     const run = vi.fn(async () => new ReadableStream());

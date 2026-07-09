@@ -681,6 +681,14 @@ export const handleOllamaChat = createStreamProxyHandler({
   keyMissingError:
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud request timed out after 180 seconds',
+  // Bucket C spike (AIG v2 doc, Path 1.5): Ollama Cloud is not a first-party AI
+  // Gateway provider, so it rides the *custom provider* proxy —
+  // `custom-ollama/{path}` where the registered provider's base_url is the domain
+  // (`https://ollama.com`) and this pathSuffix supplies the rest, yielding the
+  // same upstream as the direct call. Dormant until `ollama` is registered +
+  // enabled as a gateway custom provider AND listed in CF_AI_GATEWAY_CUSTOM_SLUGS
+  // (see isCustomGatewaySlugEnabled) — otherwise custom-ollama would 404.
+  gateway: { provider: 'custom-ollama', pathSuffix: '/v1/chat/completions' },
 });
 
 // --- OpenRouter ---

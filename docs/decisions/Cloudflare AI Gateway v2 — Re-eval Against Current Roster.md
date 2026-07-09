@@ -1,7 +1,7 @@
 # Cloudflare AI Gateway v2 — Re-eval Against Current Roster
 
 Date: 2026-07-09
-Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 / Path 2 remain design.
+Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` custom provider verified live 2026-07-09; Path 2 remains design.
 
 ## Why re-open this
 
@@ -69,7 +69,12 @@ Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's
 
 **Path 1 — shipped 2026-07-09.** The provider-native proxy now covers Bucket A (`openrouter`, Workers AI, `openai`, `anthropic`, `google`). Same env-var gating as v1 (dormant until `CF_AI_GATEWAY_*` set; rollback = delete the vars). This buys observability / caching / fallback on the frontier roles with BYO keys. It does **not** get Push onto the REST API or remove provider keys. Spike **Bucket B** separately (`deepseek` `/anthropic` variant, `vertex` SA auth) before committing those.
 
-**Path 1.5 — spike one custom provider.** Configure one OpenAI-compat provider (`nvidia` or `ollama`) and one Responses-native provider (`fireworks` or `sakana`) as AIG custom providers, then route them through `custom-{slug}/...` using the existing gateway helper. This proves the cheap observability path for Bucket C without accepting the REST API migration cost.
+**Path 1.5 — spike one custom provider. `ollama` done 2026-07-09, verified live.** Configure a Bucket C provider as an AIG custom provider, then route it through `custom-{slug}/...` using the existing gateway helper — **no URL-format change needed**: `buildAiGatewayUrl` with `provider: 'custom-ollama'`, `pathSuffix: '/v1/chat/completions'` already yields `.../custom-ollama/v1/chat/completions`, and the registered provider's `base_url` (`https://ollama.com`, domain-only) + that path reconstruct the direct upstream. Confirmed live in push-gate logs: `provider: custom-ollama`, 200, tokens/cost recorded. This proves the cheap observability path for Bucket C without the REST API migration cost.
+
+Two design outputs that generalize to the rest of Bucket C (`fireworks / nvidia / zen / kilocode / sakana`):
+
+- **Per-slug opt-in gate (`CF_AI_GATEWAY_CUSTOM_SLUGS`).** Prod already has `CF_AI_GATEWAY_*` set, so a bare `custom-` binding would have instantly flipped prod onto an *unregistered* custom provider and 502'd it. Custom providers therefore opt in per-slug via `isCustomGatewaySlugEnabled` (`worker-middleware.ts`); an unlisted `custom-` binding falls back to direct. Each additional Bucket C provider = register it + add its slug.
+- **Register before allow-listing.** Routing to `custom-{slug}` before the provider exists returns `AiGatewayError` 2006 / 502 (observed at 09:26, resolved to 200 at 09:53 once registered). The gate makes this safe by default — the slug isn't listed until the provider is live.
 
 **Path 2 — adopt the REST API (bigger lift, unified billing).** New wiring against `api.cloudflare.com/…/ai/v1` — this is what delivers the clean Cloudflare-auth / unified-billing model. It likely needs model-id mapping (`openai/...`, `anthropic/...`, `google-ai-studio/...`), request-schema choices per provider, and a separate rollback plan from the provider-native proxy.
 
