@@ -95,12 +95,15 @@ export function loadConversations(): Record<string, Conversation> {
         // for an unknown id and throws on use. isRealProviderId gates stored
         // provider selection the same way (see readStoredProvider in lib/providers).
         const rawProvider = conversation.provider ?? null;
-        const normalizedProvider =
-          rawProvider && isRealProviderId(rawProvider) ? rawProvider : null;
-        const normalizedModel = normalizeConversationModel(
-          normalizedProvider,
-          conversation.model ?? null,
-        );
+        const providerRetired = rawProvider !== null && !isRealProviderId(rawProvider);
+        const normalizedProvider = providerRetired ? null : rawProvider;
+        // Drop the model alongside a retired provider lock. resolveChatProviderSelection
+        // prefers existingModel over the requested/default (provider-selection.ts), so a
+        // leftover retired-provider model id would be sent to whatever provider is now
+        // active and fail on send. A model with no lock or a valid lock is normalized as before.
+        const normalizedModel = providerRetired
+          ? null
+          : normalizeConversationModel(normalizedProvider, conversation.model ?? null);
         convs[id] = {
           ...conversation,
           messages: cleaned,

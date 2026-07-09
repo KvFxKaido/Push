@@ -38,14 +38,23 @@ describe('loadConversations — retired provider lock normalization', () => {
       alsoStale: conv('alsoStale', { provider: 'bedrock', model: 'm' }),
       valid: conv('valid', { provider: 'anthropic', model: 'claude-haiku-4-5' }),
       unset: conv('unset', {}),
+      unsetWithModel: conv('unsetWithModel', { model: 'claude-haiku-4-5' }),
     });
 
     const loaded = loadConversations();
 
+    // Retired provider lock AND its model are dropped together — a leftover model
+    // id would otherwise be preferred by resolveChatProviderSelection on resume.
     expect(loaded.stale.provider).toBeUndefined();
+    expect(loaded.stale.model).toBeUndefined();
     expect(loaded.alsoStale.provider).toBeUndefined();
+    expect(loaded.alsoStale.model).toBeUndefined();
+    // A valid lock keeps both.
     expect(loaded.valid.provider).toBe('anthropic');
+    expect(loaded.valid.model).toBe('claude-haiku-4-5');
+    // No lock at all: provider stays unset, and a standalone model is NOT dropped.
     expect(loaded.unset.provider).toBeUndefined();
+    expect(loaded.unsetWithModel.model).toBe('claude-haiku-4-5');
   });
 
   it('persists the cleared lock back to storage (migration flag fires)', () => {
@@ -59,5 +68,6 @@ describe('loadConversations — retired provider lock normalization', () => {
     // is gone from persisted storage, not just the in-memory copy.
     const persisted = JSON.parse(store[CONVERSATIONS_KEY]);
     expect(persisted.stale.provider).toBeUndefined();
+    expect(persisted.stale.model).toBeUndefined();
   });
 });
