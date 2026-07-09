@@ -131,7 +131,9 @@ budgets). Today all of that machinery serves **crash-safety within a single firi
 relaunch, watchdog, one auto-retry — and none of it serves **intelligence across firings**. Each
 gap below is a daemon-shaped idea expressed in this doc's vocabulary:
 
-- **Cross-review memory (durable state across activations).** The DO persists every review's
+- **Cross-review memory (durable state across activations).** *(Shipped 2026-07-09 —
+  the DO feeds the latest posted review's findings + reviewed SHA into re-review
+  context as `priorReview`, with addressed-vs-remaining instructions.)* The DO persists every review's
   full findings (`result_json` in the `review` table, `pr-review-job-do.ts`), but a re-review
   never reads them: the executor builds each pass from the fresh diff + REVIEW.md only. So
   `@push-agent review` after a fix round re-reviews from scratch — it can re-state findings

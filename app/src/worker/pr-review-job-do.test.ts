@@ -11,6 +11,7 @@ import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
   repoGatingEnabled,
+  type PrReviewExecutor,
   type PrReviewStartInput,
 } from './pr-review-job-do';
 import type { Env } from './worker-middleware';
@@ -134,6 +135,25 @@ function createMockCtx() {
             (r.status === 'queued' || r.status === 'running'),
         )
         .map((r) => ({ delivery_id: r.delivery_id }));
+    }
+    // Cross-review memory: latest posted review excluding the given delivery.
+    if (/^SELECT delivery_id, head_sha, finished_at, result_json FROM review/i.test(sql)) {
+      return [...reviews.values()]
+        .filter(
+          (r) =>
+            r.status === 'completed' &&
+            r.posted === 1 &&
+            r.result_json !== null &&
+            r.delivery_id !== (p[0] as string),
+        )
+        .sort((a, b) => (b.finished_at ?? 0) - (a.finished_at ?? 0))
+        .slice(0, 1)
+        .map((r) => ({
+          delivery_id: r.delivery_id,
+          head_sha: r.head_sha,
+          finished_at: r.finished_at,
+          result_json: r.result_json,
+        }));
     }
     if (/^SELECT \* FROM review WHERE delivery_id/i.test(sql)) {
       const r = reviews.get(p[0] as string);
@@ -396,6 +416,77 @@ describe('PrReviewJob', () => {
     expect(byId.d1).toMatchObject({ status: 'completed', commentsPosted: 1 });
     expect(byId.d1.result?.summary).toBe('looks fine');
     expect(byId.d2.result?.summary).toBe('second review');
+  });
+
+  it('feeds the latest posted review into a re-review as priorReview', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    const first = vi.fn<PrReviewExecutor>(async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    const second = vi.fn<PrReviewExecutor>(async () => ({
+      result: { ...RESULT, summary: 'second review' },
+      commentsPosted: 0,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('d1', first);
+    __setPrReviewExecutorOverride('d2', second);
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await Promise.allSettled(mock.pending);
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));
+    await Promise.allSettled(mock.pending);
+
+    // First review of the PR has no prior.
+    expect(first.mock.calls[0][0]).toMatchObject({ deliveryId: 'd1' });
+    expect(first.mock.calls[0][0].priorReview).toBeUndefined();
+
+    // Re-review carries the first pass's posted findings + reviewed SHA.
+    const secondInput = second.mock.calls[0][0];
+    expect(secondInput.priorReview).toMatchObject({
+      headSha: 'shaA',
+      summary: 'looks fine',
+    });
+    expect(secondInput.priorReview?.comments).toEqual(RESULT.comments);
+  });
+
+  it('skips unposted and corrupt prior rows for cross-review memory', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    // d1 completes but never posts (head advanced) — its findings were never
+    // on the PR, so they must not count as a prior review.
+    __setPrReviewExecutorOverride('d1', async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: false,
+    }));
+    const second = vi.fn<PrReviewExecutor>(async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('d2', second);
+    const third = vi.fn<PrReviewExecutor>(async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: true,
+    }));
+    __setPrReviewExecutorOverride('d3', third);
+
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await Promise.allSettled(mock.pending);
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd2', headSha: 'shaB' })));
+    await Promise.allSettled(mock.pending);
+    expect(second.mock.calls[0][0].priorReview).toBeUndefined();
+
+    // A posted row whose result blob is corrupt degrades to no prior, not a throw.
+    mock.reviews.get('d2')!.result_json = '{not json';
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd3', headSha: 'shaC' })));
+    await Promise.allSettled(mock.pending);
+    expect(mock.reviews.get('d3')).toMatchObject({ status: 'completed' });
+    expect(third.mock.calls[0][0].priorReview).toBeUndefined();
   });
 
   it('emits gated on review.completed (true when set, false when omitted)', async () => {

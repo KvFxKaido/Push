@@ -30,7 +30,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
-import { buildReviewerContextBlock } from '@push/lib/role-context';
+import { buildReviewerContextBlock, type PriorReviewContext } from '@push/lib/role-context';
 import { runDeepReviewer, type DeepReviewerResumeState } from '@push/lib/deep-reviewer-agent';
 import {
   createInProgressReviewCheckRun,
@@ -140,6 +140,15 @@ export interface PrReviewStartInput extends ReviewablePullRequest {
    * review has no competitor left to supersede.
    */
   supersedeSameHead?: boolean;
+  /**
+   * Cross-review memory: the most recent review already POSTED to this PR,
+   * fed to the executor so a re-review verifies prior findings against the
+   * new head ("3 of 5 addressed") instead of starting from scratch. Computed
+   * by the DO in runReview per attempt — start, relaunch, and auto-retry all
+   * pass through there — from rows this DO already holds. Never sent by the
+   * webhook receiver and never persisted; absent on a PR's first review.
+   */
+  priorReview?: PriorReviewContext;
 }
 
 export interface PrReviewStatusSnapshot {
@@ -835,6 +844,23 @@ export class PrReviewJob {
     const checkRunId =
       existingCheckRunId ?? (checkToken ? await this.startCheckRun(input, checkToken) : null);
 
+    // Attach cross-review memory for this attempt. Computed here (not in
+    // handleStart) so relaunches and auto-retries — which rebuild their input
+    // from the row — pick it up uniformly. The prior set cannot change while
+    // this delivery is live: a newer completed review would have superseded it.
+    const prior = this.latestPostedReview(input.deliveryId);
+    if (prior) {
+      input.priorReview = prior.context;
+      log('info', 'pr_review_prior_context_attached', {
+        deliveryId: input.deliveryId,
+        priorDeliveryId: prior.deliveryId,
+        priorHeadSha: prior.context.headSha,
+        priorFindings: prior.context.comments.length,
+      });
+    } else {
+      log('info', 'pr_review_prior_context_none', { deliveryId: input.deliveryId });
+    }
+
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
     try {
       const outcome = await executor(input, this.env, controller.signal, {
@@ -1127,6 +1153,49 @@ export class PrReviewJob {
       this.ctx.waitUntil(this.closeCheckCancelledFromRow(row));
     }
     return true;
+  }
+
+  /**
+   * Cross-review memory source: the most recent review actually POSTED to this
+   * PR (completed, `posted = 1`, with a persisted result), excluding the given
+   * delivery. Unposted rows (head-advanced skips, degraded runs) never reached
+   * the PR, so their findings are not "prior review" in the sense the re-review
+   * instructions promise ("addressed vs remaining" refers to posted comments).
+   */
+  private latestPostedReview(
+    excludeDeliveryId: string,
+  ): { deliveryId: string; context: PriorReviewContext } | null {
+    const rows = this.ctx.storage.sql
+      .exec(
+        "SELECT delivery_id, head_sha, finished_at, result_json FROM review WHERE status = 'completed' AND posted = 1 AND result_json IS NOT NULL AND delivery_id != ? ORDER BY finished_at DESC LIMIT 1",
+        excludeDeliveryId,
+      )
+      .toArray() as Array<{
+      delivery_id: string;
+      head_sha: string;
+      finished_at: number | null;
+      result_json: string;
+    }>;
+    if (!rows.length) return null;
+    try {
+      const result = JSON.parse(rows[0].result_json) as ReviewResult;
+      return {
+        deliveryId: rows[0].delivery_id,
+        context: {
+          headSha: rows[0].head_sha,
+          reviewedAt: rows[0].finished_at,
+          summary: result.summary,
+          comments: result.comments,
+        },
+      };
+    } catch (err) {
+      // A corrupt result blob degrades to a from-scratch review, loudly.
+      log('warn', 'pr_review_prior_context_parse_failed', {
+        priorDeliveryId: rows[0].delivery_id,
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
   }
 
   private reviewRow(deliveryId: string): ReviewRow | null {
@@ -1600,6 +1669,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         defaultBranch: input.baseRef,
         source: 'pr-diff',
         reviewGuidance,
+        priorReview: input.priorReview ?? null,
       },
       allowedRepo: input.repoFullName,
       branchContext: {
