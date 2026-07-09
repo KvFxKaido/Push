@@ -29,7 +29,10 @@ export interface RetainReducedOutputInput {
   rawText: string;
   /** Session scope. `repoFullName` is optional at the call site (web threads it
    *  from context, CLI from workspace identity); retention is skipped when it is
-   *  empty/absent, since there is then no scope to guard a recall to. */
+   *  empty/absent, since there is then no scope to guard a recall to. `branch`
+   *  is accepted because callers pass their whole runtime scope, but reduced
+   *  output refs are persisted at repo (+chat) scope so a chat-carried marker
+   *  remains recallable after switch_branch/create_branch. */
   scope: { repoFullName?: string; branch?: string; chatId?: string };
   /** The command, used as the entry label for `ls`/debug. */
   command?: string;
@@ -143,10 +146,14 @@ export async function retainReducedOutput(
   const log = input.verbatimLog ?? getDefaultVerbatimLog();
   try {
     const entry = await log.append({
+      // Reduced-output markers live inline in the chat transcript, and the
+      // transcript survives switch_branch/create_branch. If the retained entry
+      // is branch-stamped, the marker can point at a ref that memory_expand
+      // rejects after the branch changes, so scope it to repo (+chat), never
+      // branch.
       scope: {
         repoFullName: input.scope.repoFullName,
-        branch: input.scope.branch,
-        chatId: input.scope.chatId,
+        ...(input.scope.chatId ? { chatId: input.scope.chatId } : {}),
       },
       text,
       kind: 'tool_output',
