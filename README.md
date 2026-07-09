@@ -22,7 +22,7 @@ On a phone especially, running a repo normally means bouncing between the GitHub
 - **One capable agent, not a relay** — a single lead reads, edits, runs, and ships in one loop; pulls in read-only investigation or independent review only when it earns its keep
 - **Self-hosted and provider-flexible** — use your own model stack instead of buying into one AI platform
 - **Scratch workspaces** — prototype in an ephemeral sandbox without GitHub auth, export anytime
-- **GitHub-native flow** — branch-aware chats, PR reviews, commit/push, and merge flow
+- **GitHub-native flow** — repo-scoped chats, active-branch state, PR reviews, commit/push, and merge flow
 - **Execution-first reliability** — safe reads, surgical edits, and checkpoints over model hype
 
 ## Who it's for
@@ -41,7 +41,7 @@ Push runs on **your** infrastructure against **your** provider keys — your own
 ```
   Web app  ─┐                          ┌─▶  Sandbox  (Cloudflare Sandbox · Modal)
   Android  ─┴─▶  Cloudflare Worker  ───┤
- (Capacitor)      API · auth · relay   └─▶  GitHub  (branch-scoped chats · PRs · commits)
+ (Capacitor)      API · auth · relay   └─▶  GitHub  (repo-scoped chats · PRs · commits)
 
   CLI · pushd  ─▶  your machine: real shell + filesystem
                    (optionally pairs via the Worker relay for Remote sessions)

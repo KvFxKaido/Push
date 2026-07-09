@@ -1,8 +1,9 @@
 /**
  * HTTP handler for /api/sandbox-cf/* — Cloudflare Sandbox SDK backend.
  *
- * Provides the Cloudflare counterpart to /api/sandbox/* (Modal). Request and
- * response shapes match Modal's snake_case wire format (sandbox_id,
+ * Provides the Cloudflare backend for /api/sandbox-cf/* and, when selected,
+ * the provider-dispatched /api/sandbox/* route. Request and response shapes
+ * match Modal's snake_case wire format (sandbox_id,
  * owner_token, github_identity, workspace_revision, exit_code, ...) so the
  * Worker-side provider toggle can switch backends without any client change.
  *

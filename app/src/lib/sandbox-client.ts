@@ -1,8 +1,9 @@
 /**
- * Thin HTTP client for the sandbox proxy at /api/sandbox/*.
+ * Thin HTTP client for the provider-selected sandbox proxy at /api/sandbox/*.
  *
- * All calls go through the Cloudflare Worker which proxies to Modal.
- * No Modal SDK or gRPC — just plain fetch().
+ * Calls go through the Cloudflare Worker, which dispatches to Cloudflare
+ * Sandbox by default or Modal when PUSH_SANDBOX_PROVIDER=modal.
+ * No provider SDK or gRPC — just plain fetch().
  */
 
 import {
