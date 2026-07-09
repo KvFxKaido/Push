@@ -1,7 +1,7 @@
 # Cloudflare AI Gateway v2 — Re-eval Against Current Roster
 
 Date: 2026-07-09
-Status: **Draft** — Path 1 shipped 2026-07-09; Path 1.5 / Path 2 remain design.
+Status: **Draft** — Path 1 shipped **and verified live** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; see Open questions); Path 1.5 / Path 2 remain design.
 
 ## Why re-open this
 
@@ -80,6 +80,6 @@ Net: "too unique to move" is now false for the **majority** of the roster — bu
 ## Open questions / verification to-dos
 
 - Does AIG's first-party DeepSeek provider proxy the `/anthropic` endpoint, or only the standard `deepseek-chat` path? (Determines whether `deepseek` is Bucket A or C.)
-- Unified billing currently charges a credit-purchase fee while passing through provider inference pricing; confirm the practical per-token delta before routing cost-sensitive volume through it.
-- Are the `CF_AI_GATEWAY_*` vars currently set in production, i.e., is v1 live or dormant today?
+- **Gateway config itself taxes every request — partly answered 2026-07-09.** The per-request cost delta is *not* just the unified-billing credit-purchase fee. `push-gate` has **Guardrails enabled in FLAG mode** (all `prompt`/`response` categories `S1`–`S13` + `P1` = `FLAG`), so every routed request fires an extra Workers-AI `@cf/meta/llama-guard-3-8b` scan (prompt + response, same `event_id` as the provider call). Observed in the live logs: a single llama-guard scan billed **1,786 tokens_in / $0.00085 — larger than the `gpt-4o-mini` call it guarded ($0.0000033)**. FLAG mode never blocks or rewrites, so this has been observe-only cost since the gateway was created (2026-04-25), applied to **prod Workers-AI traffic too** (the `user_agent: cloudflare-worker` llama-guard entries), not just newly-routed providers. On the growing main loop this tax scales with prompt size and can dominate. **Before routing cost-sensitive volume: disable the guardrails (or move them to a surface that acts on the flags), and confirm the unified-billing per-token delta separately.** Also note `push-gate`'s 50 req/60s rate limit.
+- ~~Are the `CF_AI_GATEWAY_*` vars currently set in production, i.e., is v1 live or dormant today?~~ **Partly answered 2026-07-09:** dormant by default — `buildAiGatewayUrl` returns null unless *both* `CF_AI_GATEWAY_ACCOUNT_ID` and `CF_AI_GATEWAY_SLUG` are set, and `.dev.vars` carried only an orphaned `CF_AI_GATEWAY_TOKEN`. Path 1 was verified live end-to-end once both were set locally (account `9dcfdc35…`, slug `push-gate`): `openai`→`/openai/responses`, `anthropic`→`/anthropic/v1/messages`, and `google`→`/google-ai-studio/v1beta/models/…:streamGenerateContent` all returned 200s confirmed in CF's own gateway logs, with `authentication:true` accepted. The `#1376` fix is validated — google routes at **v1beta**, matching the direct call. **Still open:** whether the vars are set as production Worker secrets (the local run doesn't answer prod).
 - Cache hit-rate is low on the evolving main loop (context grows per turn); the win is on repeated sub-calls. Don't budget caching as a blanket latency fix.
