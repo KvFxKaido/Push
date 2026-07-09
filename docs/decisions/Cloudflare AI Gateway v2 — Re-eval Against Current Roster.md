@@ -38,7 +38,7 @@ AIG is **transport + observability + caching + fallback**. It is **not** the rou
 
 ## Current roster × AIG support
 
-Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's current first-party list and the custom-provider proxy:
+The 15 network providers as of the re-eval (`lib/provider-definition.ts`), mapped against AIG's current first-party list and the custom-provider proxy. Three (`vertex` / `azure` / `bedrock`) were subsequently **removed outright in #1378** (2026-07-09) — their rows are kept for the record of the analysis, marked accordingly; the live roster is 12:
 
 | Provider | Wire shape | AIG path | Bucket |
 |---|---|---|---|
@@ -48,22 +48,22 @@ Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's
 | **anthropic** | anthropic | first-party provider-native (`/anthropic/v1/messages`) | **A — wired** |
 | **google** (AI Studio) | gemini | first-party provider-native (`/google-ai-studio/v1/models/...`) | **A — wired** |
 | **deepseek** | anthropic (`/anthropic` endpoint) | first-party, but Push uses the non-standard `/anthropic` variant | B — verify variant |
-| **vertex** | gemini | first-party, but service-account auth | B — auth wrinkle |
+| ~~**vertex**~~ | gemini | first-party, but service-account auth | B — deferred, then **removed #1378** |
 | **fireworks** | openai-responses | custom provider-specific (`/responses`) | C — spike |
 | **nvidia** | openai-compat | custom provider | C — new unlock |
 | **zen** | openai-compat | custom provider | C — new unlock |
 | **kilocode** | openai-compat | custom provider | C — new unlock |
 | **sakana** | openai-responses | custom provider-specific (`/responses`) | C — spike |
 | **ollama** (Ollama Cloud) | openai-compat | custom provider (public `ollama.com/v1` endpoint) | C — new unlock |
-| **azure** | openai-compat | region-derived URLs, custom auth | D — deferred |
-| **bedrock** | openai-compat | AWS SigV4 auth | D — deferred |
+| ~~**azure**~~ | openai-compat | region-derived URLs, custom auth | D — **removed #1378** |
+| ~~**bedrock**~~ | openai-compat | AWS SigV4 auth | D — **removed #1378** |
 
 ### Buckets
 
 - **A — first-party, ride the provider-native proxy (5).** OpenRouter, Workers AI, OpenAI, Anthropic, and Google AI Studio are now wired through the provider-native gateway surface when `CF_AI_GATEWAY_*` is configured. This buys **observability / caching / fallback with the current provider key** — **not** the REST API migration. Google's native `gemini` request (`:streamGenerateContent` in `handleGoogleChat`) passes through the provider-native `google-ai-studio` path transparently, so it works even though it matches none of the REST compat endpoints.
-- **B — verified 2026-07-09 (2, split).** `deepseek` **done** — the first-party proxy passes Push's `/anthropic` variant (200 A/B, wired as a first-party binding). `vertex` **blocked on creds** — no service account is configured to test with, and it can't use a custom provider (its region lives in the host, `{region}-aiplatform.googleapis.com`, so a fixed `base_url` can't carry it). The design is clear (first-party `google-vertex-ai`, derive pathSuffix from the direct URL, `Authorization: Bearer <OAuth>` passthrough — CF's Claude Code integration confirms Bearer works), but shipping an untested first-party binding would go live in prod immediately and risk breaking vertex; deferred until a service account exists to verify against.
+- **B — verified 2026-07-09 (2, split).** `deepseek` **done** — the first-party proxy passes Push's `/anthropic` variant (200 A/B, wired as a first-party binding). `vertex` **blocked on creds** — no service account is configured to test with, and it can't use a custom provider (its region lives in the host, `{region}-aiplatform.googleapis.com`, so a fixed `base_url` can't carry it). The design is clear (first-party `google-vertex-ai`, derive pathSuffix from the direct URL, `Authorization: Bearer <OAuth>` passthrough — CF's Claude Code integration confirms Bearer works), but shipping an untested first-party binding would go live in prod immediately and risk breaking vertex; deferred until a service account exists to verify against. **Overtaken by events: `vertex` was removed outright in #1378** — the design stands only as reference if it ever returns.
 - **C — non-first-party custom-provider proxy candidates (6).** `fireworks / nvidia / zen / kilocode / sakana / ollama` are all public HTTPS endpoints. For observability, each can be configured as an AIG custom provider and routed through `custom-{slug}/...`; Responses-native providers should use the provider-specific path, not the deprecated `/compat/chat/completions` surface. This is *not* "one line on v1" because Push needs custom provider slugs/config plus per-provider path bindings, but it is smaller than adopting the REST API.
-- **D — auth/shape deferrals (2).** `azure` and `bedrock` are supported by AIG provider-native docs, but Push should not casually move those credentials into AIG or BYOK without an explicit security/ops decision. Treat them as deferred, not impossible.
+- **D — auth/shape deferrals (2), since removed.** `azure` and `bedrock` are supported by AIG provider-native docs, but Push should not casually move those credentials into AIG or BYOK without an explicit security/ops decision. That was the state at re-eval time; **both were removed outright in #1378**, dissolving the question (see "Bucket D — dissolved by removal" below).
 
 ## Recommendation — two paths, sequenced
 
