@@ -155,7 +155,8 @@ gap below is a daemon-shaped idea expressed in this doc's vocabulary:
   holds an alarm used only as a 90-second crash watchdog; a condition sweep is the same
   primitive pointed at product behavior. It also retires the current terminal advice ("close
   and reopen the PR"), which exists only because nothing ever fires twice.
-- **Risk-scaled depth.** *(Rejected 2026-07-09 — the uniform 12-round deep pass is a trusted
+- **Risk-scaled depth.** *(Rejected 2026-07-09 — the uniform deep pass (16 rounds, raised from
+  12 to make room for the verification rounds below) is a trusted
   floor, not a cost to optimize; for a solo repo the review's job is catching what the author
   missed, and token cost is noise. The real enforcement gap was verification, shipped as the
   next bullet.)* ~~Classify the diff and route trivial diffs to the quick pass.~~

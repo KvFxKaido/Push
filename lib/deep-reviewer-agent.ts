@@ -58,7 +58,14 @@ import { formatAgentToolResult, formatAgentParseError } from './agent-loop-utils
 // posted as the review body, zero findings). The forced-output round after the
 // loop still bounds the worst case. Exported so the loop-exhaustion tests
 // script exactly this many rounds instead of pinning a stale literal.
-export const MAX_DEEP_REVIEW_ROUNDS = 12;
+//
+// 12 → 16 with the verification gate: the verifiers (typecheck, tests) are
+// trailing calls — one per round, no batching with reads — so a gated clean
+// pass costs up to 4 extra rounds (nudge response, typecheck, tests,
+// re-emission). Without the headroom, a model that investigates for 8–9
+// rounds has no room left to verify and the gate mostly produces
+// "(unverified)" neutrals instead of verified reviews.
+export const MAX_DEEP_REVIEW_ROUNDS = 16;
 const DEEP_REVIEW_ROUND_TIMEOUT_MS = 60_000;
 // Wall-clock backstop for verbose-but-progressing models. The activity timer
 // above resets on every `text_delta`, so a model that streams content
