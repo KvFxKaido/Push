@@ -2,6 +2,7 @@ import type { AIProviderType, ChatMessage, Conversation } from '@/types';
 import { normalizeFireworksModelName, normalizeKilocodeModelName } from '@/lib/providers';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/lib/safe-storage';
 import { createId } from '@push/lib/id-utils';
+import { isRealProviderId } from '@push/lib/provider-definition';
 import { backfillConversationMessageBranches } from '@/lib/chat-message';
 
 export { createId };
@@ -87,15 +88,28 @@ export function loadConversations(): Record<string, Conversation> {
         const cleaned = (convs[id].messages || [])
           .map(sanitizeSandboxStateCards)
           .filter((m): m is ChatMessage => m !== null);
+        // Drop a persisted provider lock that no longer resolves to a real
+        // provider (e.g. a since-removed provider). Downstream reuse outside
+        // send-message preparation — the commit/push auditor, compaction —
+        // hands the lock straight to getProviderPushStream, which has no factory
+        // for an unknown id and throws on use. isRealProviderId gates stored
+        // provider selection the same way (see readStoredProvider in lib/providers).
+        const rawProvider = conversation.provider ?? null;
+        const normalizedProvider =
+          rawProvider && isRealProviderId(rawProvider) ? rawProvider : null;
         const normalizedModel = normalizeConversationModel(
-          conversation.provider ?? null,
+          normalizedProvider,
           conversation.model ?? null,
         );
         convs[id] = {
           ...conversation,
           messages: cleaned,
+          provider: normalizedProvider ?? undefined,
           model: normalizedModel ?? undefined,
         };
+        if ((conversation.provider ?? null) !== normalizedProvider) {
+          migrated = true;
+        }
         if ((conversation.model ?? null) !== normalizedModel) {
           migrated = true;
         }
