@@ -633,7 +633,12 @@ function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
   }
 }
 
-import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
+import {
+  PROVIDER_CONFIGS,
+  redirectDeprecatedProvider,
+  resolveApiKey,
+  getProviderList,
+} from './provider.js';
 import { getCuratedModels } from './model-catalog.js';
 import {
   getConfigPath,
@@ -1630,10 +1635,24 @@ async function handleStartSession(req) {
   // Same fallback chain as cli.ts/tui.ts (explicit → PUSH_PROVIDER →
   // 'ollama'): a caller that omits `provider` should land on the daemon's
   // configured default, not a hardcoded one unrelated to the user's setup.
-  const provider =
+  const requestedProvider =
     normalizeProviderInput(payload.provider) ||
     normalizeProviderInput(process.env.PUSH_PROVIDER) ||
     'ollama';
+  // Retired providers redirect instead of failing the start — same treatment
+  // as cli.ts parseProvider / the TUI startup chain (Codex P2, PR #1382).
+  const redirectedProvider = redirectDeprecatedProvider(requestedProvider);
+  if (redirectedProvider) {
+    console.error(
+      JSON.stringify({
+        level: 'warn',
+        event: 'start_session_provider_redirected',
+        from: requestedProvider,
+        to: redirectedProvider,
+      }),
+    );
+  }
+  const provider = redirectedProvider ?? requestedProvider;
   const providerConfig = PROVIDER_CONFIGS[provider];
   if (!providerConfig) {
     return makeErrorResponse(

@@ -208,6 +208,75 @@ describe('session persistence', () => {
   });
 });
 
+// ─── retired-provider migration on load ──────────────────────────
+
+describe('loadSessionState retired-provider migration', () => {
+  it('redirects a removed provider (and its stale model) to the replacement default', async () => {
+    const sessionId = makeSessionId();
+    await saveSessionState({
+      sessionId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'kilocode',
+      model: 'google/gemini-3-flash-preview',
+      cwd: '/tmp/test',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+    });
+    const loaded = await loadSessionState(sessionId);
+    // Coerced on read so TUI/daemon resume paths can't crash on
+    // PROVIDER_CONFIGS[state.provider] (Codex P2, PR #1382).
+    assert.equal(loaded.provider, 'openrouter');
+    // The stale model belonged to the removed provider — snapped to the
+    // replacement's default (atomic-selection rule).
+    assert.equal(loaded.model, 'anthropic/claude-sonnet-4.6:nitro');
+  });
+
+  it('redirects removed providers inside roleRouting entries', async () => {
+    const sessionId = makeSessionId();
+    await saveSessionState({
+      sessionId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/tmp/test',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+      roleRouting: {
+        reviewer: { provider: 'vertex', model: 'gemini-old' },
+        coder: { provider: 'ollama', model: 'test-model' },
+      },
+    });
+    const loaded = await loadSessionState(sessionId);
+    assert.equal(loaded.roleRouting.reviewer.provider, 'openrouter');
+    assert.equal(loaded.roleRouting.reviewer.model, 'anthropic/claude-sonnet-4.6:nitro');
+    // Live providers are untouched.
+    assert.equal(loaded.roleRouting.coder.provider, 'ollama');
+    assert.equal(loaded.roleRouting.coder.model, 'test-model');
+  });
+
+  it('leaves sessions on live providers untouched', async () => {
+    const sessionId = makeSessionId();
+    await saveSessionState({
+      sessionId,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      provider: 'zen',
+      model: 'big-pickle',
+      cwd: '/tmp/test',
+      rounds: 0,
+      eventSeq: 0,
+      messages: [],
+    });
+    const loaded = await loadSessionState(sessionId);
+    assert.equal(loaded.provider, 'zen');
+    assert.equal(loaded.model, 'big-pickle');
+  });
+});
+
 // ─── event serialization shape ───────────────────────────────────
 
 describe('event serialization', () => {

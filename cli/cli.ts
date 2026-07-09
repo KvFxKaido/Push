@@ -6,7 +6,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
-import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
+import {
+  PROVIDER_CONFIGS,
+  DEPRECATED_PROVIDERS,
+  resolveApiKey,
+  getProviderList,
+} from './provider.js';
 import { isInvalidGitRef, matchingRiskPatternIndex, suggestApprovalPrefix } from './tools.js';
 import {
   addWorktree,
@@ -270,7 +275,7 @@ Usage:
   push memory backfill          Embed stored memory records that lack an embedding (semantic recall)
 
 Options:
-  --provider <name>             ollama | openrouter | zen | nvidia | kilocode | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
+  --provider <name>             ollama | openrouter | zen | nvidia | fireworks | deepseek | sakana | openai | anthropic | google (default: ollama)
   --model <name>                Override model
   --url <endpoint>              Override provider endpoint URL
   --api-key <secret>            Set provider API key (for push config set/init)
@@ -872,7 +877,7 @@ async function handleProviderCommand(arg, ctx, state, config) {
 
   if (!target) {
     process.stdout.write(
-      `Unknown provider: ${arg}. Use: ollama, openrouter, zen, nvidia, kilocode, fireworks, deepseek, sakana, openai, anthropic, google\n`,
+      `Unknown provider: ${arg}. Use: ollama, openrouter, zen, nvidia, fireworks, deepseek, sakana, openai, anthropic, google\n`,
     );
     return;
   }
@@ -1487,22 +1492,6 @@ async function initSession(sessionId, provider, model, cwd, mode = 'interactive'
   // before the first user_message event.
   return state;
 }
-
-// `google` was previously a deprecated alias for `openrouter` (when the
-// only Gemini access was via OpenRouter's google/* model family). The
-// direct Google provider now exists in `PROVIDER_CONFIGS`, so `google`
-// resolves natively — it's no longer in this redirect table.
-const DEPRECATED_PROVIDERS = {
-  mistral: 'openrouter',
-  zai: 'openrouter',
-  minimax: 'openrouter',
-  // Experimental providers removed with the azure/bedrock/vertex roster drop.
-  // Without these, a CLI config or PUSH_PROVIDER still set to one of them would
-  // throw "Unsupported provider" at startup instead of warning + falling back.
-  azure: 'openrouter',
-  bedrock: 'openrouter',
-  vertex: 'openrouter',
-};
 
 function normalizeProviderInput(value) {
   if (typeof value !== 'string') return '';

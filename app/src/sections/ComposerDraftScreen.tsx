@@ -86,8 +86,6 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.zenModelOptions;
     case 'nvidia':
       return catalog.nvidiaModelOptions;
-    case 'kilocode':
-      return catalog.kilocodeModelOptions;
     case 'fireworks':
       return catalog.fireworksModelOptions;
     case 'sakana':
@@ -118,8 +116,6 @@ function defaultModelForProvider(
       return catalog.zen.model || null;
     case 'nvidia':
       return catalog.nvidia.model || null;
-    case 'kilocode':
-      return catalog.kilocode.model || null;
     case 'fireworks':
       return catalog.fireworks.model || null;
     case 'sakana':
@@ -291,8 +287,6 @@ export function ComposerDraftScreen({
         void catalog.refreshZenModels();
       if (provider === 'nvidia' && catalog.nvidiaModelOptions.length === 0)
         void catalog.refreshNvidiaModels();
-      if (provider === 'kilocode' && catalog.kilocodeModelOptions.length === 0)
-        void catalog.refreshKilocodeModels();
       if (provider === 'fireworks' && catalog.fireworksModelOptions.length === 0)
         void catalog.refreshFireworksModels();
       if (provider === 'sakana' && catalog.sakanaModelOptions.length === 0)

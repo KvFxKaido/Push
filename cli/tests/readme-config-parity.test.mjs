@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-import { PROVIDER_CONFIGS } from '../provider.ts';
+import { DEPRECATED_PROVIDERS, PROVIDER_CONFIGS } from '../provider.ts';
 import { getCliProviderDefinitions } from '../../lib/provider-definition.ts';
 
 const readmeSource = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
@@ -53,15 +53,6 @@ function extractSetValues(source, setName) {
   return [...match[1].matchAll(/'([^']+)'/g)].map(([, value]) => value);
 }
 
-function extractObjectEntries(source, constName) {
-  const match = source.match(new RegExp(`const ${constName} = \\{([\\s\\S]*?)\\n\\};`));
-  assert.ok(match, `Expected to find ${constName}`);
-  return [...match[1].matchAll(/^\s+([a-z]+):\s+'([^']+)',?$/gm)].map(([, key, value]) => ({
-    key,
-    value,
-  }));
-}
-
 function extractReadmeTableRows(source) {
   return source
     .split('\n')
@@ -109,7 +100,12 @@ describe('README config parity', () => {
   const readmeProviderRows = extractReadmeProviderRows(readmeSource);
   const searchBackendsFromCli = extractSetValues(cliSource, 'SEARCH_BACKENDS');
   const searchBackendsFromTools = extractSetValues(toolsSource, 'WEB_SEARCH_BACKENDS');
-  const deprecatedProviders = extractObjectEntries(cliSource, 'DEPRECATED_PROVIDERS');
+  // The map lives in provider.ts (shared by cli/tui/pushd/session-store) and
+  // is imported directly — no source parsing needed.
+  const deprecatedProviders = Object.entries(DEPRECATED_PROVIDERS).map(([key, value]) => ({
+    key,
+    value,
+  }));
 
   it('documents provider URLs and default models that match cli/provider.ts', () => {
     for (const provider of providerEntries) {

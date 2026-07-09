@@ -2,7 +2,6 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
@@ -15,7 +14,6 @@ import {
   compareProviderModelIds,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
-  KILOCODE_MODELS,
   NVIDIA_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
@@ -466,7 +464,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
   'openai',
   'nvidia',
-  'kilocode',
   'fireworks',
   'sakana',
   'zen',
@@ -634,7 +631,6 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
 const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
 const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MODELS);
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
-const KILOCODE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(KILOCODE_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
 // `looksLikeOpenAIToolCallingModel` is shared with the CLI gate via
 // `@push/lib/native-tool-gate` (single definition; pinned by the web↔CLI drift
@@ -691,7 +687,6 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   }
   if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
   if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
-  if (provider === 'kilocode') return KILOCODE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   return false;
 }
@@ -1512,43 +1507,6 @@ export async function fetchNvidiaModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
-        { cause: err },
-      );
-    }
-    throw err;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-export async function fetchKilocodeModels(): Promise<string[]> {
-  const key = getKilocodeKey();
-  const headers: HeadersInit = {};
-  if (key) headers.Authorization = `Bearer ${key}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
-
-  try {
-    const res = await fetch(PROVIDER_URLS.kilocode.models, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
-
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '');
-      throw new Error(`Kilo Code model list failed (${res.status}): ${detail.slice(0, 200)}`);
-    }
-
-    const payload = (await res.json()) as unknown;
-    return normalizeModelList(payload).sort((left, right) =>
-      compareProviderModelIds('kilocode', left, right),
-    );
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(
-        `Kilo Code model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

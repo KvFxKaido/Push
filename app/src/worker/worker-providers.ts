@@ -811,37 +811,6 @@ export const handleZenModels = createJsonProxyHandler({
   gateway: { provider: 'custom-zen', pathSuffix: '/zen/v1/models' },
 });
 
-// --- Kilo Code (OpenAI-compatible gateway) ---
-
-export const handleKiloCodeChat = createStreamProxyHandler({
-  name: 'Kilo Code API',
-  logTag: 'api/kilocode/chat',
-  upstreamUrl: 'https://api.kilo.ai/api/gateway/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('KILOCODE_API_KEY'),
-  keyMissingError:
-    'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
-  timeoutError: 'Kilo Code request timed out after 120 seconds',
-  // No AI Gateway custom-provider binding (Bucket C spike, AIG v2 Path 1.5): on
-  // every base_url config tried (domain-only `https://api.kilo.ai` and fixed-prefix
-  // `https://api.kilo.ai/api/gateway`), kilo.ai answered Cloudflare's egress with
-  // its marketing frontend (HTML 404) while answering direct requests with JSON —
-  // so kilocode can't ride the custom proxy. Left direct-to-provider.
-});
-
-export const handleKiloCodeModels = createJsonProxyHandler({
-  name: 'Kilo Code API',
-  logTag: 'api/kilocode/models',
-  upstreamUrl: 'https://api.kilo.ai/api/gateway/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('KILOCODE_API_KEY'),
-  keyMissingError:
-    'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
-  timeoutError: 'Kilo Code model list timed out after 30 seconds',
-});
-
 // --- Fireworks AI (OpenAI Responses-native gateway) ---
 //
 // Fireworks exposes an OpenAI-compatible `/v1/responses` endpoint, so its chat
@@ -2716,7 +2685,6 @@ export const WORKER_PROVIDER_HANDLERS = {
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },
-  kilocode: { chat: handleKiloCodeChat, models: handleKiloCodeModels },
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
   deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },
   sakana: { chat: handleSakanaChat, models: handleSakanaModels },

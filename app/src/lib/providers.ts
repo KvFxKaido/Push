@@ -21,8 +21,6 @@ export {
   FIREWORKS_MODELS,
   GOOGLE_DEFAULT_MODEL,
   GOOGLE_MODELS,
-  KILOCODE_DEFAULT_MODEL,
-  KILOCODE_MODELS,
   NVIDIA_DEFAULT_MODEL,
   NVIDIA_MODELS,
   OLLAMA_DEFAULT_MODEL,
@@ -41,7 +39,6 @@ import {
   DEEPSEEK_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
-  KILOCODE_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
@@ -121,7 +118,6 @@ const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   cohere: 'Cohere',
   deepseek: 'DeepSeek',
   google: 'Google',
-  'kilo-auto': 'Kilo Auto',
   meta: 'Meta',
   'meta-llama': 'Meta',
   minimax: 'MiniMax',
@@ -134,26 +130,6 @@ const MODEL_ROUTE_PROVIDER_LABELS: Record<string, string> = {
   'x-ai': 'xAI',
   'z-ai': 'Zhipu',
 };
-
-const LEGACY_KILOCODE_MODEL_MIGRATIONS: Record<string, string> = {
-  'google/gemini-2.0-flash': 'google/gemini-3-flash-preview',
-  'anthropic/claude-3.5-sonnet': 'anthropic/claude-sonnet-4.6',
-  'openai/gpt-4o': 'openai/gpt-5.2',
-};
-
-export function normalizeKilocodeModelName(model: string): string {
-  const trimmed = model.trim();
-  if (!trimmed) return KILOCODE_DEFAULT_MODEL;
-
-  const migrated = LEGACY_KILOCODE_MODEL_MIGRATIONS[trimmed];
-  if (migrated) return migrated;
-
-  if (!trimmed.includes('/') || /\s/.test(trimmed)) {
-    return KILOCODE_DEFAULT_MODEL;
-  }
-
-  return trimmed;
-}
 
 // Ollama Cloud retirements: persisted selections of retired ids would 404
 // once Ollama removes them, with no picker path back (the id drops out of the
@@ -394,15 +370,6 @@ const nvidiaModel = createModelNameStorage(requireModelStorageKey('nvidia'), NVI
 export const getNvidiaModelName = nvidiaModel.get;
 export const setNvidiaModelName = nvidiaModel.set;
 
-const kiloCodeModel = createModelNameStorage(
-  requireModelStorageKey('kilocode'),
-  KILOCODE_DEFAULT_MODEL,
-  undefined,
-  normalizeKilocodeModelName,
-);
-export const getKiloCodeModelName = kiloCodeModel.get;
-export const setKiloCodeModelName = kiloCodeModel.set;
-
 const fireworksModel = createModelNameStorage(
   requireModelStorageKey('fireworks'),
   FIREWORKS_DEFAULT_MODEL,
@@ -450,7 +417,6 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   cloudflare: getCloudflareModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,
-  kilocode: getKiloCodeModelName,
   fireworks: getFireworksModelName,
   sakana: getSakanaModelName,
   anthropic: getAnthropicModelName,

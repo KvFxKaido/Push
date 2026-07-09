@@ -1,7 +1,7 @@
 /**
  * CLI native OpenAI-compatible Chat Completions PushStream.
  *
- * Legacy/generic CLI providers (ollama, zen, nvidia, kilocode, plus
+ * Legacy/generic CLI providers (ollama, zen, nvidia, plus
  * OpenRouter when `PUSH_OPENROUTER_TRANSPORT=chat`) speak the same
  * OpenAI-shaped `chat/completions` wire format, so they share one stream
  * parameterized by `ProviderConfig`. Per-provider extensions (OpenRouter's

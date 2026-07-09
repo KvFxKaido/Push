@@ -71,7 +71,6 @@ describe('isProviderEngineCapable', () => {
       OPENROUTER_API_KEY: 'k',
       ZEN_API_KEY: 'k',
       NVIDIA_API_KEY: 'k',
-      KILOCODE_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',
       DEEPSEEK_API_KEY: 'k',
       SAKANA_API_KEY: 'k',
@@ -171,15 +170,6 @@ describe('handleProviderEngineCapabilities', () => {
     } as Env);
     body = (await res.json()) as { sources: Record<string, string | null> };
     expect(body.sources.openai).toBe('gateway-byok');
-
-    // kilocode has no gateway binding at all — BYOK can never apply.
-    res = await handleProviderEngineCapabilities(makeRequest(), {
-      ...base,
-      CF_AI_GATEWAY_BYOK: 'kilocode',
-      CF_AI_GATEWAY_CUSTOM_SLUGS: 'kilocode',
-    } as Env);
-    body = (await res.json()) as { sources: Record<string, string | null> };
-    expect(body.sources.kilocode).toBeNull();
   });
 
   it('reports gatewayActive false and no BYOK sources when the gateway is unconfigured', async () => {

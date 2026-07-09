@@ -222,13 +222,6 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
       false,
     ),
   },
-  kilocode: {
-    'google/gemini-3-flash-preview': M(1048576, true, true, false, TEXT_IMAGE_AUDIO_VIDEO_PDF),
-    'anthropic/claude-sonnet-4.6': M(1000000, true, true, false, TEXT_IMAGE_PDF),
-    'openai/gpt-5.2': M(400000, true, true, true, TEXT_IMAGE),
-    'moonshotai/kimi-k2.5': M(256000, false, true, false, TEXT_IMAGE_VIDEO),
-    'kilo-auto/balanced': M(204800, true, true, false, TEXT, TEXT, false),
-  },
   sakana: {
     fugu: M(1000000, true, true, false, TEXT_IMAGE),
     'fugu-ultra': M(1000000, true, true, false, TEXT_IMAGE),

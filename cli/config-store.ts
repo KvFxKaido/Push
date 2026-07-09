@@ -84,7 +84,6 @@ export interface PushConfig {
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
   nvidia?: ProviderConfig;
-  kilocode?: ProviderConfig;
   fireworks?: ProviderConfig;
   deepseek?: ProviderConfig;
   sakana?: ProviderConfig;
@@ -208,7 +207,6 @@ const PROVIDER_CONFIG_KEYS = [
   'openrouter',
   'zen',
   'nvidia',
-  'kilocode',
   'fireworks',
   'deepseek',
   'sakana',

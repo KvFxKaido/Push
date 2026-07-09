@@ -7,21 +7,21 @@ function buildProps(
   overrides: Partial<ComponentProps<typeof ChatInput>> = {},
 ): ComponentProps<typeof ChatInput> {
   const providerControls: NonNullable<ComponentProps<typeof ChatInput>['providerControls']> = {
-    selectedProvider: 'kilocode',
-    availableProviders: [['kilocode', 'Kilo Code', true] as const],
+    selectedProvider: 'zen',
+    availableProviders: [['zen', 'OpenCode Zen', true] as const],
     isProviderLocked: false,
     lockedProvider: null,
     lockedModel: null,
     onSelectBackend: vi.fn(),
     modelControls: {
-      kilocode: {
+      zen: {
         kind: 'picker',
-        provider: 'kilocode',
-        value: 'google/gemini-3-flash-preview',
-        options: ['google/gemini-3-flash-preview', 'openai/gpt-5.2'],
+        provider: 'zen',
+        value: 'big-pickle',
+        options: ['big-pickle', 'grok-code'],
         onChange: vi.fn(),
         isLocked: false,
-        ariaLabel: 'Select Kilo Code model',
+        ariaLabel: 'Select OpenCode Zen model',
       },
     },
   };
@@ -34,10 +34,10 @@ function buildProps(
 }
 
 describe('ChatInput', () => {
-  it('shows the selected Kilo Code model instead of falling back to demo', () => {
+  it('shows the selected provider model instead of falling back to demo', () => {
     const html = renderToStaticMarkup(<ChatInput {...buildProps()} />);
 
-    expect(html).toContain('gemini-3-flash-preview');
+    expect(html).toContain('big-pickle');
     expect(html).not.toContain('>demo<');
   });
 

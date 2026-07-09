@@ -198,6 +198,30 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = Object.fromEntri
   getCliProviderDefinitions().map((def) => [def.id, buildProviderConfig(def)]),
 );
 
+// Removed providers redirect to a working replacement instead of crashing
+// whatever surface reads them — CLI flags/env (`parseProvider` in cli.ts),
+// TUI startup/resume, daemon session starts, and persisted session state
+// (`loadSessionState` coerces on read). One canonical map here so no surface
+// can miss a retirement (Codex P2, PR #1382). `google` was previously a
+// deprecated alias for `openrouter`; it now resolves natively, so it's not
+// in this table.
+export const DEPRECATED_PROVIDERS: Record<string, string> = {
+  mistral: 'openrouter',
+  zai: 'openrouter',
+  minimax: 'openrouter',
+  azure: 'openrouter',
+  bedrock: 'openrouter',
+  vertex: 'openrouter',
+  // kilocode was removed from the roster (its origin discriminates against
+  // AI Gateway egress, and its router role duplicates openrouter's).
+  kilocode: 'openrouter',
+};
+
+/** Replacement id for a removed provider, or null when the id isn't retired. */
+export function redirectDeprecatedProvider(provider: string): string | null {
+  return DEPRECATED_PROVIDERS[provider] ?? null;
+}
+
 /** Build the right `PushStream` for a provider based on its wire shape.
  *  Centralized so callers (legacy `streamCompletion` here, plus the
  *  daemon provider stream) don't each branch on `streamShape` themselves. */

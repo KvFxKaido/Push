@@ -12,14 +12,11 @@ import {
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
-  KILOCODE_DEFAULT_MODEL,
-  KILOCODE_MODELS,
   FIREWORKS_DEFAULT_MODEL,
   FIREWORKS_MODELS,
   SAKANA_DEFAULT_MODEL,
   SAKANA_MODELS,
   DEEPSEEK_MODELS,
-  normalizeKilocodeModelName,
   normalizeFireworksModelName,
   normalizeSakanaModelName,
   type PreferredProvider,
@@ -33,7 +30,6 @@ import {
   fetchOpenRouterModels,
   fetchZenModels,
   fetchNvidiaModels,
-  fetchKilocodeModels,
   fetchFireworksModels,
   fetchSakanaModels,
   fetchDeepSeekModels,
@@ -48,7 +44,6 @@ import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
 import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
-import { useKilocodeConfig } from '@/hooks/useKilocodeConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
@@ -105,7 +100,6 @@ export interface ModelCatalog {
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
-  kilocode: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
   deepseek: ProviderKeyConfig;
@@ -128,7 +122,6 @@ export interface ModelCatalog {
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
-  kilocodeModels: ProviderModelState;
   fireworksModels: ProviderModelState;
   sakanaModels: ProviderModelState;
   deepseekModels: ProviderModelState;
@@ -141,7 +134,6 @@ export interface ModelCatalog {
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
-  kilocodeModelOptions: string[];
   fireworksModelOptions: string[];
   sakanaModelOptions: string[];
   deepseekModelOptions: string[];
@@ -159,7 +151,6 @@ export interface ModelCatalog {
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
-  refreshKilocodeModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
   refreshSakanaModels: () => Promise<void>;
   refreshDeepSeekModels: () => Promise<void>;
@@ -298,20 +289,6 @@ export function buildModelControl(
         error: catalog.nvidiaModels.error,
         onRefresh: catalog.refreshNvidiaModels,
       };
-    case 'kilocode':
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'Kilo Code'),
-        value: lockedModel ?? catalog.kilocode.model,
-        options: includeSelectedModel(
-          catalog.kilocodeModelOptions,
-          lockedModel ?? catalog.kilocode.model,
-        ),
-        onChange: catalog.kilocode.setModel,
-        loading: catalog.kilocodeModels.loading,
-        error: catalog.kilocodeModels.error,
-        onRefresh: catalog.refreshKilocodeModels,
-      };
     case 'fireworks':
       return {
         provider,
@@ -397,7 +374,6 @@ export function useModelCatalog(): ModelCatalog {
   const openRouterCfg = useOpenRouterConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
-  const kilocodeCfg = useKilocodeConfig();
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
   const deepseekCfg = useDeepSeekConfig();
@@ -411,7 +387,6 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
-  const [kilocodeKeyInput, setKilocodeKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [sakanaKeyInput, setSakanaKeyInput] = useState('');
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
@@ -493,7 +468,6 @@ export function useModelCatalog(): ModelCatalog {
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
     nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
-    kilocode: kilocodeCfg.hasKey || serverUnlocked('kilocode'),
     fireworks: fireworksCfg.hasKey || serverUnlocked('fireworks'),
     deepseek: deepseekCfg.hasKey || serverUnlocked('deepseek'),
     sakana: sakanaCfg.hasKey || serverUnlocked('sakana'),
@@ -514,7 +488,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
-  const [kilocodeModelList, setKilocodeModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
@@ -526,7 +499,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
-  const [kilocodeLoading, setKilocodeLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
   const [sakanaLoading, setSakanaLoading] = useState(false);
   const [deepseekLoading, setDeepseekLoading] = useState(false);
@@ -538,7 +510,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
-  const [kilocodeError, setKilocodeError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [sakanaError, setSakanaError] = useState<string | null>(null);
   const [deepseekError, setDeepseekError] = useState<string | null>(null);
@@ -550,7 +521,6 @@ export function useModelCatalog(): ModelCatalog {
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
-  const [kilocodeUpdatedAt, setKilocodeUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [sakanaUpdatedAt, setSakanaUpdatedAt] = useState<number | null>(null);
   const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
@@ -753,20 +723,6 @@ export function useModelCatalog(): ModelCatalog {
     },
     [nvidiaCfg.hasKey, nvidiaLoading, refreshModels],
   );
-
-  const refreshKilocodeModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: kilocodeCfg.hasKey,
-      isLoading: kilocodeLoading,
-      setLoading: setKilocodeLoading,
-      setError: setKilocodeError,
-      setModels: setKilocodeModelList,
-      setUpdatedAt: setKilocodeUpdatedAt,
-      fetchModels: fetchKilocodeModels,
-      emptyMessage: 'No models returned by Kilo Code.',
-      failureMessage: 'Failed to load Kilo Code models.',
-    });
-  }, [kilocodeCfg.hasKey, kilocodeLoading, refreshModels]);
 
   const refreshFireworksModels = useCallback(async () => {
     await refreshModels({
@@ -972,29 +928,6 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: kilocodeCfg.hasKey,
-          modelCount: kilocodeModelList.length,
-          loading: kilocodeLoading,
-          error: kilocodeError,
-        }),
-        activeProviderLabel === 'kilocode',
-        () => {
-          void refreshKilocodeModels();
-        },
-      ),
-    [
-      activeProviderLabel,
-      kilocodeCfg.hasKey,
-      kilocodeError,
-      kilocodeLoading,
-      kilocodeModelList.length,
-      refreshKilocodeModels,
-    ],
-  );
-  useEffect(
-    () =>
-      scheduleAutoFetch(
-        shouldAutoFetchProviderModels({
           hasKey: fireworksCfg.hasKey,
           modelCount: fireworksModelList.length,
           loading: fireworksLoading,
@@ -1161,16 +1094,6 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [nvidiaCfg.hasKey]);
   useEffect(() => {
-    if (!kilocodeCfg.hasKey) {
-      const id = setTimeout(() => {
-        setKilocodeModelList([]);
-        setKilocodeError(null);
-        setKilocodeUpdatedAt(null);
-      }, 0);
-      return () => clearTimeout(id);
-    }
-  }, [kilocodeCfg.hasKey]);
-  useEffect(() => {
     if (!fireworksCfg.hasKey) {
       const id = setTimeout(() => {
         setFireworksModelList([]);
@@ -1221,31 +1144,10 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [openaiCfg.hasKey]);
 
-  const kilocodeSelectedModel = kilocodeCfg.model;
-  const setKilocodeModel = kilocodeCfg.setModel;
   const fireworksSelectedModel = fireworksCfg.model;
   const setFireworksModel = fireworksCfg.setModel;
   const sakanaSelectedModel = sakanaCfg.model;
   const setSakanaModel = sakanaCfg.setModel;
-
-  useEffect(() => {
-    const normalizedSelectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
-    if (normalizedSelectedModel !== kilocodeSelectedModel) {
-      setKilocodeModel(normalizedSelectedModel);
-      return;
-    }
-
-    if (kilocodeModelList.length === 0 || kilocodeModelList.includes(normalizedSelectedModel)) {
-      return;
-    }
-
-    const fallbackModel = kilocodeModelList.includes(KILOCODE_DEFAULT_MODEL)
-      ? KILOCODE_DEFAULT_MODEL
-      : kilocodeModelList[0];
-    if (fallbackModel && fallbackModel !== kilocodeSelectedModel) {
-      setKilocodeModel(fallbackModel);
-    }
-  }, [kilocodeModelList, kilocodeSelectedModel, setKilocodeModel]);
 
   useEffect(() => {
     const normalizedSelectedModel = normalizeFireworksModelName(fireworksSelectedModel);
@@ -1352,15 +1254,6 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [deepseekModelList, deepseekCfg.model],
   );
-  const kilocodeModelOptions = useMemo(() => {
-    const selectedModel = normalizeKilocodeModelName(kilocodeSelectedModel);
-    if (kilocodeModelList.length > 0) {
-      return kilocodeModelList.includes(selectedModel)
-        ? includeSelectedModel(kilocodeModelList, selectedModel)
-        : [...kilocodeModelList];
-    }
-    return includeSelectedModel(KILOCODE_MODELS, selectedModel);
-  }, [kilocodeModelList, kilocodeSelectedModel]);
   const fireworksModelOptions = useMemo(() => {
     const selectedModel = normalizeFireworksModelName(fireworksSelectedModel);
     // Fireworks /v1/models is account-scoped (a narrow subset), so union the curated catalog with
@@ -1450,15 +1343,6 @@ export function useModelCatalog(): ModelCatalog {
       setModel: nvidiaCfg.setModel,
       keyInput: nvidiaKeyInput,
       setKeyInput: setNvidiaKeyInput,
-    },
-    kilocode: {
-      setKey: kilocodeCfg.setKey,
-      clearKey: kilocodeCfg.clearKey,
-      hasKey: kilocodeCfg.hasKey,
-      model: kilocodeCfg.model,
-      setModel: kilocodeCfg.setModel,
-      keyInput: kilocodeKeyInput,
-      setKeyInput: setKilocodeKeyInput,
     },
     fireworks: {
       setKey: fireworksCfg.setKey,
@@ -1559,12 +1443,6 @@ export function useModelCatalog(): ModelCatalog {
       error: nvidiaError,
       updatedAt: nvidiaUpdatedAt,
     },
-    kilocodeModels: {
-      models: kilocodeModelList,
-      loading: kilocodeLoading,
-      error: kilocodeError,
-      updatedAt: kilocodeUpdatedAt,
-    },
     fireworksModels: {
       models: fireworksModelList,
       loading: fireworksLoading,
@@ -1601,7 +1479,6 @@ export function useModelCatalog(): ModelCatalog {
     cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
-    kilocodeModelOptions,
     fireworksModelOptions,
     sakanaModelOptions,
     deepseekModelOptions,
@@ -1617,7 +1494,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,
-    refreshKilocodeModels,
     refreshFireworksModels,
     refreshSakanaModels,
     refreshDeepSeekModels,

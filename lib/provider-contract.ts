@@ -184,7 +184,6 @@ export const ALL_PROVIDERS = [
   'cloudflare',
   'zen',
   'nvidia',
-  'kilocode',
   'fireworks',
   'sakana',
   'deepseek',

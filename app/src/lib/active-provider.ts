@@ -2,7 +2,6 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
-import { getKilocodeKey } from '@/hooks/useKilocodeConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
@@ -32,7 +31,6 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   cloudflare: () => getCloudflareWorkerConfigured(),
   zen: () => Boolean(getZenKey()),
   nvidia: () => Boolean(getNvidiaKey()),
-  kilocode: () => Boolean(getKilocodeKey()),
   fireworks: () => Boolean(getFireworksKey()),
   deepseek: () => Boolean(getDeepSeekKey()),
   sakana: () => Boolean(getSakanaKey()),
