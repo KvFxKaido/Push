@@ -26,29 +26,42 @@ import type { PushStructuredOutputMode } from './capabilities.ts';
 export const STRUCTURED_OUTPUT_TOOL_NAME = '__push_structured_output__';
 
 /**
- * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7 and every
- * later Opus (4.8 inherits the same request surface). Sending any of them
- * returns a 400 (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and
- * Opus 4.6-and-earlier still accept them.
+ * Anthropic removed `temperature`, `top_p`, and `top_k` on Opus 4.7+, Sonnet 5,
+ * and the Fable/Mythos 5 family. Sending any of them returns a 400
+ * (`invalid_request_error`). Sonnet 4.6, Haiku 4.5, and Opus 4.6-and-earlier
+ * still accept them.
  *
- * The model id reaching this bridge is the native Anthropic form
- * (`claude-opus-4-7`, `claude-opus-4-8`, optionally date- or `@`-suffixed, or
- * the `[1m]` long-context tag). We parse the Opus major/minor and reject 4.7+
- * (and any future Opus 5+). The single-digit-minor guard `(?!\d)` keeps the
- * dated 4.0 id `claude-opus-4-20250514` from being misread as "Opus 4.<date>".
+ * The model id reaching this bridge is usually the native Anthropic form
+ * (`claude-opus-4-8`, optionally date- or `@`-suffixed, or the `[1m]`
+ * long-context tag), but OpenRouter/Bedrock-ish prefixes can also appear in
+ * tests and local routing. We parse the Claude family + major/minor and reject
+ * only the families with the removed sampling surface. The single/double-digit
+ * minor guard `(?!\d)` keeps dated 4.0 ids such as `claude-opus-4-20250514`
+ * from being misread as "Opus 4.<date>".
  *
- * Non-Opus models (and non-Anthropic models that pass through this bridge, e.g.
- * Zen-Go's `minimax-*`) return false, so their sampling params flow unchanged.
+ * Other Claude models and non-Anthropic models that pass through this bridge
+ * (e.g. Zen-Go's `minimax-*`) return false, so their sampling params flow
+ * unchanged.
  */
 export function anthropicModelRejectsSamplingParams(model: string | null | undefined): boolean {
   if (typeof model !== 'string') return false;
-  const match = model.toLowerCase().match(/claude-opus-(\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  const match = model
+    .toLowerCase()
+    .match(/claude[-.](opus|sonnet|haiku|fable|mythos)[-.](\d+)(?:[-.](\d{1,2})(?!\d))?/);
   if (!match) return false;
-  const major = Number(match[1]);
-  const minor = match[2] === undefined ? 0 : Number(match[2]);
-  if (major > 4) return true; // future Opus generations inherit the removed surface
-  if (major < 4) return false; // Opus 3 and earlier accepted sampling params
-  return minor >= 7; // Opus 4.7 / 4.8 / 4.9 …
+  const family = match[1];
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+
+  if (family === 'opus') {
+    if (major > 4) return true;
+    if (major < 4) return false;
+    return minor >= 7;
+  }
+
+  if (family === 'sonnet') return major >= 5;
+  if (family === 'fable' || family === 'mythos') return major >= 5;
+  return false;
 }
 
 /**
@@ -72,6 +85,35 @@ export function anthropicModelEnforcesSamplingExclusivity(
   const match = id.match(/claude-(?:opus|sonnet|haiku)-(\d+)/) ?? id.match(/claude-(\d+)/);
   if (!match) return false;
   return Number(match[1]) >= 4;
+}
+
+/**
+ * Whether a Claude model runs *thinking by default* — Fable/Mythos 5 have
+ * thinking always on (an explicit `{type:"disabled"}` even 400s), and Sonnet 5
+ * runs adaptive thinking whenever `thinking` is omitted. Opus 4.7/4.8 and
+ * Sonnet 4.6-and-earlier run thinking *off* when it is omitted, so they keep
+ * their existing request surface and return false here.
+ *
+ * The default thinking `display` is `"omitted"`, which streams thinking blocks
+ * with empty text — so a silent think emits no user-visible content and no
+ * `reasoning_delta`. On the web lane that trips the 60s no-content stall abort
+ * (`contentTimeoutMs`) before the first answer token. We consult this predicate
+ * to request `thinking: {type:"adaptive", display:"summarized"}` for these
+ * models, which streams the reasoning as summary text — surfacing progress AND
+ * keeping the content-stall timer alive. Same family-parse shape as
+ * `anthropicModelRejectsSamplingParams`; non-Anthropic ids return false.
+ */
+export function anthropicModelThinksByDefault(model: string | null | undefined): boolean {
+  if (typeof model !== 'string') return false;
+  const match = model
+    .toLowerCase()
+    .match(/claude[-.](opus|sonnet|haiku|fable|mythos)[-.](\d+)(?:[-.](\d{1,2})(?!\d))?/);
+  if (!match) return false;
+  const family = match[1];
+  const major = Number(match[2]);
+  if (family === 'fable' || family === 'mythos') return major >= 5;
+  if (family === 'sonnet') return major >= 5;
+  return false;
 }
 
 function dataUrlToAnthropicImagePart(dataUrl: string): Record<string, unknown> | null {
@@ -486,6 +528,36 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
     }
   }
 
+  // Native `output_config.format` is used only when the model's structured-output
+  // mode is `strict` AND the caller didn't force `strict: false`. Any other
+  // structured-output request falls back to the forced-tool bridge below, which
+  // pins `tool_choice` to a single tool. Computed here so the thinking gate can
+  // see it; the structured-output block reuses it.
+  const useNativeOutputConfig =
+    parts.structuredOutput != null &&
+    parts.structuredOutputMode === 'strict' &&
+    parts.structuredOutput.strict !== false;
+  const usesForcedToolStructuredOutput = parts.structuredOutput != null && !useNativeOutputConfig;
+
+  // Fable/Mythos 5 think always-on and Sonnet 5 runs adaptive thinking by
+  // default, both with `display: "omitted"` — so an omitted-display think emits
+  // empty thinking deltas and no user-visible content. Request summarized
+  // thinking for these models so the reasoning streams as text: it surfaces
+  // progress to the user AND keeps the client's content-stall timer alive (a
+  // silent >60s think would otherwise trip the 60s no-content abort before the
+  // first answer token). Opus 4.7/4.8 and Sonnet 4.6 run thinking off when it is
+  // omitted, so they keep their existing request surface.
+  //
+  // Skip thinking when the request takes the forced-tool structured-output
+  // fallback (`strict: false` on an otherwise-native model): Anthropic rejects a
+  // pinned `tool_choice` alongside extended thinking, so adding it would 400 an
+  // otherwise-valid best-effort structured-output request. The native
+  // `output_config.format` path (the default for these models) is
+  // thinking-compatible, so it still gets summarized thinking.
+  if (anthropicModelThinksByDefault(parts.samplingModel) && !usesForcedToolStructuredOutput) {
+    body.thinking = { type: 'adaptive', display: 'summarized' };
+  }
+
   // Tools array: native function-calling schemas (translated to Anthropic's flat
   // custom-tool shape) plus the server-side web-search tool, in one array —
   // Anthropic accepts a mix. Function tools come first; the model emits a
@@ -509,8 +581,6 @@ function assembleAnthropicBody(parts: AnthropicBodyAssembly): Record<string, unk
   // content (not a tool call), so callers `JSON.parse` the accumulated text
   // exactly as they do with OpenAI `response_format`.
   if (parts.structuredOutput) {
-    const useNativeOutputConfig =
-      parts.structuredOutputMode === 'strict' && parts.structuredOutput.strict !== false;
     if (useNativeOutputConfig) {
       body.output_config = {
         format: {

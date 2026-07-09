@@ -7,6 +7,7 @@ import {
   anthropicEventStream,
   anthropicModelEnforcesSamplingExclusivity,
   anthropicModelRejectsSamplingParams,
+  anthropicModelThinksByDefault,
   buildAnthropicMessagesRequest,
   STRUCTURED_OUTPUT_TOOL_NAME,
   toAnthropicMessages,
@@ -27,7 +28,7 @@ function createEventStreamResponse(lines: string[]): Response {
 }
 
 describe('anthropicModelRejectsSamplingParams', () => {
-  it('rejects sampling params on Opus 4.7 and later (incl. suffix/tag variants)', () => {
+  it('rejects sampling params on Opus 4.7+, Sonnet 5, and Fable/Mythos 5 variants', () => {
     for (const model of [
       'claude-opus-4-7',
       'claude-opus-4-8',
@@ -37,12 +38,16 @@ describe('anthropicModelRejectsSamplingParams', () => {
       'claude-opus-4-7@20260101',
       'claude-opus-5-0',
       'CLAUDE-OPUS-4-8',
+      'claude-sonnet-5',
+      'anthropic/claude-sonnet-5',
+      'claude-fable-5',
+      'claude-mythos-5',
     ]) {
       expect(anthropicModelRejectsSamplingParams(model), model).toBe(true);
     }
   });
 
-  it('keeps sampling params on Opus 4.6 and earlier, Sonnet/Haiku, and non-Anthropic models', () => {
+  it('keeps sampling params on Opus 4.6 and earlier, Sonnet 4.x, Haiku, and non-Anthropic models', () => {
     for (const model of [
       'claude-opus-4-6',
       'claude-opus-4-5',
@@ -65,6 +70,8 @@ describe('anthropicModelRejectsSamplingParams', () => {
 describe('anthropicModelSupportsNativeStructuredOutput', () => {
   it('recognizes supported Claude JSON-output model id shapes', () => {
     for (const model of [
+      'claude-fable-5',
+      'claude-sonnet-5',
       'claude-sonnet-4-6',
       'claude-opus-4-8',
       'claude-haiku-4-5-20251001',
@@ -124,8 +131,65 @@ describe('anthropicModelEnforcesSamplingExclusivity', () => {
   });
 });
 
+describe('anthropicModelThinksByDefault', () => {
+  it('flags Fable/Mythos 5 and Sonnet 5 (thinking on by default, omitted display)', () => {
+    for (const model of [
+      'claude-fable-5',
+      'claude-mythos-5',
+      'claude-sonnet-5',
+      'anthropic/claude-sonnet-5',
+      'claude-fable-5[1m]',
+      'CLAUDE-SONNET-5',
+    ]) {
+      expect(anthropicModelThinksByDefault(model), model).toBe(true);
+    }
+  });
+
+  it('leaves think-off-by-omission and non-Anthropic models alone', () => {
+    for (const model of [
+      // Opus 4.7/4.8 run thinking OFF when omitted — forcing adaptive would
+      // change their behavior, so they must stay false.
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+      'claude-sonnet-4-5',
+      'claude-haiku-4-5',
+      'claude-opus-4-20250514',
+      'gpt-5-mini',
+      'minimax-m2',
+      '',
+    ]) {
+      expect(anthropicModelThinksByDefault(model), model).toBe(false);
+    }
+    expect(anthropicModelThinksByDefault(undefined)).toBe(false);
+    expect(anthropicModelThinksByDefault(null)).toBe(false);
+  });
+});
+
 describe('buildAnthropicMessagesRequest', () => {
-  it('strips temperature/top_p for Opus 4.7+, and drops top_p when both set on Claude 4+', () => {
+  it('requests summarized thinking for Fable/Sonnet 5, but not for Opus 4.8', () => {
+    const base = {
+      messages: [{ role: 'user' as const, content: 'Hello' }],
+      stream: true,
+    };
+
+    for (const model of ['claude-fable-5', 'claude-sonnet-5']) {
+      const body = buildAnthropicMessagesRequest({ ...base, model });
+      // Summarized display makes the otherwise-silent (omitted) thinking phase
+      // stream reasoning text, which keeps the client content-stall timer alive.
+      expect(body.thinking, model).toEqual({ type: 'adaptive', display: 'summarized' });
+    }
+
+    // Opus 4.8 runs thinking off when omitted — the bridge must NOT enable it.
+    const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
+    expect(opus48).not.toHaveProperty('thinking');
+
+    // Sonnet 4.6 (existing picker entry) is likewise unaffected.
+    const sonnet46 = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-4-6' });
+    expect(sonnet46).not.toHaveProperty('thinking');
+  });
+
+  it('strips temperature/top_p for newer Claude ids, and drops top_p when both set on Claude 4+', () => {
     const base = {
       messages: [{ role: 'user' as const, content: 'Hello' }],
       stream: true,
@@ -137,6 +201,14 @@ describe('buildAnthropicMessagesRequest', () => {
     const opus48 = buildAnthropicMessagesRequest({ ...base, model: 'claude-opus-4-8' });
     expect(opus48).not.toHaveProperty('temperature');
     expect(opus48).not.toHaveProperty('top_p');
+
+    const sonnet5 = buildAnthropicMessagesRequest({ ...base, model: 'claude-sonnet-5' });
+    expect(sonnet5).not.toHaveProperty('temperature');
+    expect(sonnet5).not.toHaveProperty('top_p');
+
+    const fable5 = buildAnthropicMessagesRequest({ ...base, model: 'claude-fable-5' });
+    expect(fable5).not.toHaveProperty('temperature');
+    expect(fable5).not.toHaveProperty('top_p');
 
     // Sonnet 4.6 accepts sampling but is Claude 4+, so temperature and top_p
     // are mutually exclusive — keep temperature, drop top_p (a 400 otherwise).
@@ -762,6 +834,69 @@ describe('Anthropic structured outputs', () => {
     expect(body).not.toHaveProperty('output_config');
   });
 
+  it('drops summarized thinking on the forced-tool fallback for think-by-default ids', () => {
+    // strict:false forces the tool_choice-pinned bridge even on a native-capable
+    // model. Anthropic rejects a forced tool_choice alongside thinking, so a
+    // think-by-default id (Sonnet 5) must NOT carry the thinking config here.
+    const forced = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema, strict: false },
+      },
+    });
+    expect(forced.tool_choice).toEqual({ type: 'tool', name: STRUCTURED_OUTPUT_TOOL_NAME });
+    expect(forced).not.toHaveProperty('thinking');
+
+    // The native output_config path (default for Sonnet 5) is thinking-compatible,
+    // so it keeps summarized thinking.
+    const native = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'audit' }],
+      stream: true,
+      response_format: {
+        type: 'json_schema',
+        json_schema: { name: 'auditor_verdict', schema },
+      },
+    });
+    expect(native).toHaveProperty('output_config');
+    expect(native).not.toHaveProperty('tool_choice');
+    expect(native.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+  });
+
+  it('keeps summarized thinking alongside regular + web_search tools (no forced tool_choice)', () => {
+    // Boundary the forced-tool gate pins: ordinary function tools and the
+    // web_search server tool populate `tools` but never a forced `tool_choice`,
+    // so a think-by-default id keeps thinking. Only the structured-output
+    // forced-tool fallback (strict:false) sets tool_choice and drops thinking.
+    const body = buildAnthropicMessagesRequest({
+      model: 'claude-sonnet-5',
+      messages: [{ role: 'user', content: 'read it' }],
+      stream: true,
+      anthropic_web_search: true,
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'sandbox_read_file',
+            description: 'Read a file',
+            parameters: {
+              type: 'object',
+              properties: { path: { type: 'string' } },
+              required: ['path'],
+              additionalProperties: false,
+            },
+          },
+        },
+      ],
+    });
+    expect(body.thinking).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(body).toHaveProperty('tools');
+    expect(body).not.toHaveProperty('tool_choice');
+  });
+
   it('omits tool_choice when no responseFormat is set', () => {
     const body = toAnthropicMessages({
       provider: 'anthropic',
@@ -903,6 +1038,17 @@ describe('toAnthropicMessages — drift vs legacy OpenAI-detour path', () => {
       req: {
         provider: 'anthropic',
         model: 'claude-opus-4-8',
+        temperature: 0.4,
+        topP: 0.9,
+        messages: [llm('1', 'user', 'hi')],
+      },
+      enableWebSearch: false,
+    },
+    {
+      name: 'Sonnet 5 strips temperature + top_p',
+      req: {
+        provider: 'anthropic',
+        model: 'claude-sonnet-5',
         temperature: 0.4,
         topP: 0.9,
         messages: [llm('1', 'user', 'hi')],
