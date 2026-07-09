@@ -168,6 +168,17 @@ describe('deriveRepoCommands — AGENTS.md hints', () => {
 });
 
 describe('parseAgentsMdHints', () => {
+  it('parses the hint-only setup kind but never derives it from scripts', () => {
+    const md = ['```bash', '# setup:', 'npm install && (cd app && npm install)', '```'].join('\n');
+    assert.deepEqual(parseAgentsMdHints(md), [
+      { kind: 'setup', command: 'npm install && (cd app && npm install)' },
+    ]);
+    // Derivation must NOT guess an environment-setup command from a script
+    // named `setup` — the kind is deliberately outside REPO_COMMAND_KINDS.
+    const derived = deriveRepoCommands({ packageScripts: { setup: './bootstrap.sh' } });
+    assert.equal(derived.setup, undefined);
+  });
+
   it('parses single-kind fenced block', () => {
     const md = ['# Notes', '', '```bash', '# test:', 'npm run test:unit', '```', ''].join('\n');
     assert.deepEqual(parseAgentsMdHints(md), [{ kind: 'test', command: 'npm run test:unit' }]);

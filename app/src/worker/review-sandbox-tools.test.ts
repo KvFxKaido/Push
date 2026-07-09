@@ -33,6 +33,7 @@ import {
   executeReviewSandboxTool,
   provisionReviewSandbox,
   reviewSandboxToolNames,
+  runReviewSetup,
   runReviewTypecheck,
 } from './review-sandbox-tools';
 
@@ -120,8 +121,8 @@ describe('provisionReviewSandbox', () => {
 
 describe('executeReviewSandboxTool', () => {
   const sb = { sandboxId: 'sb1', ownerToken: 'tok1' };
-  const commands = { typecheck: 'npm run typecheck', tests: 'npm test' };
-  const noTestCommands = { typecheck: 'npm run typecheck', tests: null };
+  const commands = { typecheck: 'npm run typecheck', tests: 'npm test', setup: 'npm install' };
+  const noTestCommands = { typecheck: 'npm run typecheck', tests: null, setup: 'npm install' };
 
   it('routes search/read/ls to the redacting inspection handlers', async () => {
     expect(
@@ -354,6 +355,84 @@ describe('executeReviewSandboxTool', () => {
     expect(r.text).toContain('Result: FAIL');
     expect(r.text).toContain('transport down');
     expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
+  });
+});
+
+describe('environment setup before verifiers', () => {
+  const sb = { sandboxId: 'sb1', ownerToken: 'tok1' };
+  const commands = { typecheck: 'npm run typecheck', tests: 'npm test', setup: 'npm install' };
+
+  it('verifiers await ensureSetup; inspection tools never trigger it', async () => {
+    const ensureSetup = vi.fn(async () => ({ ok: true, text: '' }));
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: 'ok',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+
+    await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_search', args: { query: 'x' } } as never,
+      commands,
+      ensureSetup,
+    );
+    expect(ensureSetup).not.toHaveBeenCalled();
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_check_types', args: {} } as never,
+      commands,
+      ensureSetup,
+    );
+    expect(ensureSetup).toHaveBeenCalledTimes(1);
+    expect(r.verification).toEqual({ kind: 'typecheck', pass: true });
+  });
+
+  it('a failed setup short-circuits the verifier with NO verification metadata', async () => {
+    const ensureSetup = vi.fn(async () => ({
+      ok: false,
+      text: 'Environment setup failed (exit 1): npm ERR! network down',
+    }));
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: {} } as never,
+      commands,
+      ensureSetup,
+    );
+    // The verifier never ran: environment outcome, not a verifier fail.
+    expect(runDetachedMock).not.toHaveBeenCalled();
+    expect(r.verification).toBeUndefined();
+    expect(r.text).toContain('Environment setup failed');
+    expect(r.text).toContain('note the review as unverified');
+  });
+
+  it('runReviewSetup reports ok on exit 0 and reduced detail on failure', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: 'added 120 packages',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+    await expect(runReviewSetup(env, sb, 'npm install')).resolves.toEqual({ ok: true, text: '' });
+
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: '',
+      stderr: 'npm ERR! ERESOLVE',
+      exitCode: 1,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+    const failed = await runReviewSetup(env, sb, 'npm install');
+    expect(failed.ok).toBe(false);
+    expect(failed.text).toContain('exit 1');
+    expect(failed.text).toContain('ERESOLVE');
   });
 });
 
