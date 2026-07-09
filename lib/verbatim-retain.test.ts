@@ -41,6 +41,27 @@ describe('retainReducedOutput', () => {
     expect((await verbatimLog.read(ref!))?.text).toBe(rawText); // byte-exact
   });
 
+  it('scopes to repo+chat, never branch, so the recall ref survives a branch switch', async () => {
+    const verbatimLog = createInMemoryVerbatimLog();
+    const rawText = 'FULL OUTPUT\n'.repeat(500);
+
+    const { ref } = await retainReducedOutput({
+      reduced: reduced(),
+      rawText,
+      command: 'npm test',
+      // Caller passes its current branch, but the marker is embedded in a chat
+      // that can carry across branch switches.
+      scope: { repoFullName: repo, branch: 'main', chatId: 'c1' },
+      verbatimLog,
+    });
+
+    const entry = await verbatimLog.read(ref!);
+    expect(entry?.scope).toEqual({ repoFullName: repo, chatId: 'c1' });
+    expect(
+      verbatimScopeMatches({ repoFullName: repo, branch: 'feature-x', chatId: 'c1' }, entry!.scope),
+    ).toBe(true);
+  });
+
   it('is a no-op when the output was not reduced', async () => {
     const verbatimLog = createInMemoryVerbatimLog();
     const res = await retainReducedOutput({

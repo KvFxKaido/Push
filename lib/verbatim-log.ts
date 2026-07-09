@@ -18,8 +18,8 @@
  * deletes whole entries rather than editing them.
  *
  * Why this lives in `lib/` from day one: the LCM decision doc requires the
- * durable backend to be a web/CLI-symmetric contract with a
- * `repoFullName + branch` scope resolver (new-feature checklist #1), not a
+ * durable backend to be a web/CLI-symmetric contract with repo-scoped recall
+ * plus optional branch/chat refinements (new-feature checklist #1), not a
  * per-surface bolt-on. This file is that contract plus the in-memory backend
  * (default + tests); the CLI ships a file/JSONL backend mirroring
  * `cli/context-memory-file-store.ts`, and a Worker-side durable backend lands
@@ -43,10 +43,10 @@
  */
 
 /**
- * Durable scope for a verbatim entry. The `repoFullName + branch` pair is the
- * cross-run durable key (new-feature checklist #1); `chatId` narrows further on
- * the web surface but is optional so CLI runs (per-run `sessionId`, not durable)
- * still partition correctly by repo/branch alone.
+ * Durable scope for a verbatim entry. `repoFullName` is the required isolation
+ * boundary; `branch` and `chatId` are optional refinements chosen by each
+ * retention path. Chat-carried refs can deliberately omit `branch` so a marker
+ * remains recallable after switch_branch/create_branch.
  */
 export interface VerbatimScope {
   repoFullName: string;
