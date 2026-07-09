@@ -30,23 +30,23 @@ Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's
 |---|---|---|---|
 | **cloudflare** (Workers AI) | openai-compat | first-party — **already wired (v1)** | A |
 | **openrouter** | openai-responses | native path — **already wired (v1)** | A |
-| **openai** | openai-compat | first-party | **A — add now** |
-| **anthropic** | anthropic | first-party (`/v1/messages`) | **A — add now** |
-| **google** (AI Studio) | — | first-party | **A — add now** |
+| **openai** | openai-responses | first-party (`/ai/v1/responses`) | **A — add now** |
+| **anthropic** | anthropic | first-party (`/ai/v1/messages`) | **A — add now** |
+| **google** (AI Studio) | gemini | first-party (google-ai-studio path) | **A — add now** |
 | **deepseek** | anthropic (`/anthropic` endpoint) | first-party, but Push uses the non-standard `/anthropic` variant | B — verify variant |
-| **vertex** | — | first-party, but service-account auth | B — auth wrinkle |
+| **vertex** | gemini | first-party, but service-account auth | B — auth wrinkle |
 | **fireworks** | openai-responses | custom provider (`/responses`) | C — new unlock |
 | **nvidia** | openai-compat | custom provider | C — new unlock |
 | **zen** | openai-compat | custom provider | C — new unlock |
 | **kilocode** | openai-compat | custom provider | C — new unlock |
 | **sakana** | openai-responses | custom provider | C — new unlock |
 | **ollama** (Ollama Cloud) | openai-compat | custom provider (public `ollama.com/v1` endpoint) | C — new unlock |
-| **azure** | — | region-derived URLs, custom auth | D — deferred |
-| **bedrock** | — | AWS SigV4 auth | D — deferred |
+| **azure** | openai-compat | region-derived URLs, custom auth | D — deferred |
+| **bedrock** | openai-compat | AWS SigV4 auth | D — deferred |
 
 ### Buckets
 
-- **A — route now, low risk (5).** Two already wired; **openai / anthropic / google** are first-party in their exact wire shape and add via one declarative `gateway:` line per handler (the seam from v1 already exists in `worker-providers.ts`). Immediate caching / observability / fallback / unified-billing, zero routing change.
+- **A — route now, low risk (5).** Two already wired; **openai / anthropic / google** are each first-party but hit *different* AIG paths matching their wire shapes — `openai` via `/ai/v1/responses`, `anthropic` via `/ai/v1/messages`, `google` via the google-ai-studio (gemini) path — not one shared compat endpoint. Each still adds via one declarative `gateway:` line per handler (the v1 seam exists: `AiGatewayBinding` / `buildAiGatewayUrl` / `getAiGatewayAuthHeader` in `worker-middleware.ts`, `gateway:` opt-ins in `worker-providers.ts`). Immediate caching / observability / fallback / unified-billing, zero routing change.
 - **B — feasible, verify first (2).** `deepseek` is first-party but Push calls its **`/anthropic` endpoint**, not the standard DeepSeek path AIG proxies — confirm AIG passes that variant (or fall back to DeepSeek's OpenAI-compat path). `vertex` is first-party but its service-account auth is the same wrinkle April flagged.
 - **C — now possible via custom providers (6).** `fireworks / nvidia / zen / kilocode / sakana / ollama` are all OpenAI-compat or -responses over public endpoints, so each can be a **custom provider** (unified `/compat` for the compat ones, provider-specific endpoint for the `responses` ones). This is precisely the gap that "needed the universal endpoint" in April. Per-provider config; do opportunistically, not urgently. **Kilo Code and Ollama specifically** move from "unsupported" to "supported via custom provider" — note Push uses **Ollama Cloud** (`ollama.com/v1`, API-key auth), not local Ollama, so the old "gateway can't reach `localhost`" objection does not apply.
 - **D — stays out (2).** `azure` (region-derived URLs) and `bedrock` (AWS SigV4 auth) remain custom-auth deferrals — the only genuinely stuck providers.
