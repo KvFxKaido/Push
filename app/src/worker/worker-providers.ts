@@ -877,11 +877,13 @@ function buildDeepSeekAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleDeepSeekChat(request: Request, env: Env): Promise<Response> {
+  const byok = isGatewayByokProvider(env, 'deepseek');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildDeepSeekAuth,
     keyMissingError:
       'DeepSeek API key not configured. Add it in Settings or set DEEPSEEK_API_KEY on the Worker.',
     needsBody: true,
+    allowMissingKey: byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
@@ -956,7 +958,8 @@ export async function handleDeepSeekChat(request: Request, env: Env): Promise<Re
       upstream = await fetch(deepseekUpstream, {
         method: 'POST',
         headers: {
-          'x-api-key': apiKey,
+          // BYOK omits x-api-key so the gateway injects the stored deepseek key.
+          ...(byok ? {} : { 'x-api-key': apiKey }),
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
@@ -1432,10 +1435,14 @@ async function handleResponsesProxy(
   env: Env,
   opts: ResponsesProxyOptions,
 ): Promise<Response> {
+  // BYOK: when this provider's key is stored in the gateway, route keyless and
+  // let the gateway inject it (omit Authorization below, skip the key gate).
+  const byok = opts.gateway ? isGatewayByokProvider(env, opts.gateway.provider) : false;
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth(opts.authSecret),
     keyMissingError: opts.keyMissingError,
     needsBody: true,
+    allowMissingKey: byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader, bodyText, requestId, spanCtx } = preamble;
@@ -1476,7 +1483,8 @@ async function handleResponsesProxy(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: authHeader,
+        // BYOK omits Authorization so the gateway injects the stored provider key.
+        ...(byok ? {} : { Authorization: authHeader }),
         [REQUEST_ID_HEADER]: requestId,
         traceparent: buildTraceparent(upstreamCtx),
         ...extraHeaders,
@@ -1982,11 +1990,13 @@ function buildGoogleAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleGoogleChat(request: Request, env: Env): Promise<Response> {
+  const byok = isGatewayByokProvider(env, 'google');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildGoogleAuth,
     keyMissingError:
       'Google Gemini API key not configured. Add it in Settings or set GOOGLE_API_KEY on the Worker.',
     needsBody: true,
+    allowMissingKey: byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
@@ -2073,7 +2083,8 @@ export async function handleGoogleChat(request: Request, env: Env): Promise<Resp
       upstream = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
-          'x-goog-api-key': apiKey,
+          // BYOK omits x-goog-api-key so the gateway injects the stored google key.
+          ...(byok ? {} : { 'x-goog-api-key': apiKey }),
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
           ...gatewayHeaders,

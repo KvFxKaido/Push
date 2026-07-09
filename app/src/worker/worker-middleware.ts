@@ -843,10 +843,14 @@ export function createStreamProxyHandler(
   config: StreamProxyConfig,
 ): (request: Request, env: Env) => Promise<Response> {
   return async (request, env) => {
+    // BYOK: this provider's key lives in the gateway; route keyless and let the
+    // gateway inject it (omit Authorization below, skip the key-missing 401).
+    const byok = config.gateway ? isGatewayByokProvider(env, config.gateway.provider) : false;
     const preamble = await runPreamble(request, env, {
       buildAuth: config.buildAuth,
       keyMissingError: config.keyMissingError,
       needsBody: true,
+      allowMissingKey: byok,
     });
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText, requestId, spanCtx } = preamble;
@@ -935,7 +939,8 @@ export function createStreamProxyHandler(
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: authHeader,
+            // BYOK omits Authorization so the gateway injects the stored provider key.
+            ...(byok ? {} : { Authorization: authHeader }),
             [REQUEST_ID_HEADER]: requestId,
             traceparent: buildTraceparent(upstreamCtx),
             ...extraHeaders,

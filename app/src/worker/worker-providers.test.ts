@@ -931,6 +931,80 @@ describe('handleAnthropicChat — AI Gateway BYOK (gateway-stored key)', () => {
   });
 });
 
+describe('AI Gateway BYOK — first-party providers route keyless', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  const gw = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+
+  const CASES = [
+    {
+      name: 'google',
+      handler: handleGoogleChat,
+      req: () => makeChatRequest(),
+      urlIncludes: '/google-ai-studio/',
+      omitted: 'x-goog-api-key',
+    },
+    {
+      name: 'deepseek',
+      handler: handleDeepSeekChat,
+      req: () => makeChatRequest(),
+      urlIncludes: '/deepseek/anthropic/v1/messages',
+      omitted: 'x-api-key',
+    },
+    {
+      name: 'openai',
+      handler: handleOpenAIChat,
+      req: () => makeOpenAIResponsesRequest(),
+      urlIncludes: '/openai/responses',
+      omitted: 'Authorization',
+    },
+    {
+      name: 'openrouter',
+      handler: handleOpenRouterChat,
+      req: () => makeOpenRouterResponsesRequest(),
+      urlIncludes: '/openrouter/responses',
+      omitted: 'Authorization',
+    },
+  ] as const;
+
+  for (const c of CASES) {
+    it(`${c.name}: keyless request routes through the gateway and omits ${c.omitted}`, async () => {
+      // No provider key anywhere — the gateway holds it.
+      const captured = captureFetch();
+      const res = await c.handler(c.req(), makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: c.name }));
+      expect(res.status).not.toBe(401);
+      expect(captured.current?.url).toContain(c.urlIncludes);
+      expect(captured.current?.headers[c.omitted]).toBeUndefined();
+      expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    });
+
+    it(`${c.name}: without BYOK still sends its key / 401s`, async () => {
+      // Sanity: BYOK is opt-in. Not listed => unchanged behavior (sends the key
+      // if present, or 401s if absent). Here no key + not BYOK => 401, no fetch.
+      const captured = captureFetch();
+      const res = await c.handler(c.req(), makeEnv(gw));
+      expect(res.status).toBe(401);
+      expect(captured.current).toBeNull();
+    });
+  }
+});
+
 describe('handleDeepSeekChat — AI Gateway first-party /anthropic variant (Bucket B)', () => {
   function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
     const captured: { current: { url: string; headers: Record<string, string> } | null } = {
