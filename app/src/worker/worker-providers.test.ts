@@ -37,6 +37,7 @@ import {
   handleFireworksModels,
   handleDeepSeekModels,
   parseGeminiGroundingResponse,
+  gatewayByokActive,
   WORKER_PROVIDER_API_ROUTES,
   WORKER_PROVIDER_HANDLERS,
 } from './worker-providers';
@@ -877,6 +878,44 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     );
     expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+  });
+});
+
+describe('gatewayByokActive — BYOK gated on gateway resolution', () => {
+  const gw = { CF_AI_GATEWAY_ACCOUNT_ID: 'acc', CF_AI_GATEWAY_SLUG: 'push-prod' };
+
+  it('is true for a BYOK-listed first-party provider when the gateway resolves', () => {
+    expect(gatewayByokActive({ ...gw, CF_AI_GATEWAY_BYOK: 'anthropic' } as Env, 'anthropic')).toBe(
+      true,
+    );
+    // google's BYOK id differs from its gateway binding slug (google-ai-studio).
+    expect(
+      gatewayByokActive(
+        { ...gw, CF_AI_GATEWAY_BYOK: 'google' } as Env,
+        'google',
+        'google-ai-studio',
+      ),
+    ).toBe(true);
+  });
+
+  it('is false when the gateway is not configured (no account/slug)', () => {
+    expect(gatewayByokActive({ CF_AI_GATEWAY_BYOK: 'anthropic' } as Env, 'anthropic')).toBe(false);
+  });
+
+  it('is false for a custom binding whose slug is NOT enabled — the request would go direct', () => {
+    // BYOK-listed + gateway configured, but custom-sakana falls back to direct
+    // (sakana not in CUSTOM_SLUGS) where a keyless call 401s — so byok is inactive.
+    expect(
+      gatewayByokActive({ ...gw, CF_AI_GATEWAY_BYOK: 'sakana' } as Env, 'sakana', 'custom-sakana'),
+    ).toBe(false);
+    // Slug enabled → routes through the gateway → active.
+    expect(
+      gatewayByokActive(
+        { ...gw, CF_AI_GATEWAY_BYOK: 'sakana', CF_AI_GATEWAY_CUSTOM_SLUGS: 'sakana' } as Env,
+        'sakana',
+        'custom-sakana',
+      ),
+    ).toBe(true);
   });
 });
 

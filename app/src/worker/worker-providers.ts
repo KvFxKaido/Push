@@ -889,7 +889,7 @@ function buildDeepSeekAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleDeepSeekChat(request: Request, env: Env): Promise<Response> {
-  const byok = isGatewayByokProvider(env, 'deepseek');
+  const byok = gatewayByokActive(env, 'deepseek');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildDeepSeekAuth,
     keyMissingError:
@@ -1448,6 +1448,24 @@ function resolveAiGatewayFetchTarget(
 }
 
 /**
+ * BYOK is only safe to act on (omit the provider auth header, skip the
+ * key-missing fallback) when a keyless call would ACTUALLY route through the
+ * gateway — `buildAiGatewayUrl` resolving (account + slug set; and for a custom
+ * binding, its slug enabled) — AND the provider is BYOK-listed. Otherwise the
+ * request falls back to the direct provider, where a keyless call 401s, so the
+ * caller must keep sending the key. Mirrors the `resolveAiGatewayFetchTarget`
+ * gate for handlers that need the decision before the fetch (allowMissingKey).
+ * `gatewaySlug` is the CF gateway binding string, which differs from the
+ * canonical BYOK id for google (`google-ai-studio` vs `google`).
+ */
+export function gatewayByokActive(env: Env, byokId: string, gatewaySlug: string = byokId): boolean {
+  return (
+    buildAiGatewayUrl(env, { provider: gatewaySlug, pathSuffix: '' }) !== null &&
+    isGatewayByokProvider(env, byokId)
+  );
+}
+
+/**
  * Shared `/v1/responses` reverse proxy for the Responses-native providers
  * (OpenRouter, direct OpenAI, Sakana Fugu, Fireworks AI). Runs the standard
  * preamble (origin check + rate-limit + auth), normalizes the Responses body
@@ -1691,7 +1709,7 @@ export async function handleOpenAIModels(request: Request, env: Env): Promise<Re
   // BYOK: the gateway injects the stored openai key, so the live list stays
   // reachable with no key anywhere client- or Worker-side. Otherwise a
   // resolvable key goes direct; no key at all falls back to curated.
-  const byok = isGatewayByokProvider(env, 'openai');
+  const byok = gatewayByokActive(env, 'openai');
   const apiKey = byok ? null : resolveDirectProviderKey(env.OPENAI_API_KEY, request);
   if (!byok && !apiKey) {
     return curatedOpenAIModelsResponse(requestId);
@@ -1829,7 +1847,7 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
   // BYOK: when anthropic's key is stored in the gateway, the caller sends no
   // key and the gateway injects it — so don't 401 on a missing key and omit the
   // x-api-key header below.
-  const byok = isGatewayByokProvider(env, 'anthropic');
+  const byok = gatewayByokActive(env, 'anthropic');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildAnthropicAuth,
     keyMissingError:
@@ -2031,7 +2049,7 @@ function buildGoogleAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleGoogleChat(request: Request, env: Env): Promise<Response> {
-  const byok = isGatewayByokProvider(env, 'google');
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildGoogleAuth,
     keyMissingError:
@@ -2195,7 +2213,7 @@ export async function handleGoogleModels(request: Request, env: Env): Promise<Re
   // BYOK: the gateway injects the stored google key — see handleOpenAIModels
   // for the fallback ordering (byok → gateway keyless; key → direct; neither
   // → curated).
-  const byok = isGatewayByokProvider(env, 'google');
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
   const apiKey = byok ? null : resolveDirectProviderKey(env.GOOGLE_API_KEY, request);
   if (!byok && !apiKey) {
     return curatedGoogleModelsResponse(requestId);
@@ -2576,7 +2594,7 @@ export async function handleGoogleSearch(request: Request, env: Env): Promise<Re
   // BYOK: same treatment as handleGoogleChat — keyless through the gateway,
   // which injects the stored google key. Closes the 58143aa7 known-limitation
   // where grounded search degraded once the Worker secret retired.
-  const byok = isGatewayByokProvider(env, 'google');
+  const byok = gatewayByokActive(env, 'google', 'google-ai-studio');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildGoogleAuth,
     keyMissingError:
