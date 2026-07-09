@@ -1,7 +1,7 @@
 # Cloudflare AI Gateway v2 — Re-eval Against Current Roster
 
 Date: 2026-07-09
-Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred (no creds); Path 2 remains design.
+Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred then removed with Bucket D (#1378); Path 2 remains design (settings two-tier unlock spec'd below).
 
 ## Why re-open this
 
@@ -38,7 +38,7 @@ AIG is **transport + observability + caching + fallback**. It is **not** the rou
 
 ## Current roster × AIG support
 
-Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's current first-party list and the custom-provider proxy:
+The 15 network providers as of the re-eval (`lib/provider-definition.ts`), mapped against AIG's current first-party list and the custom-provider proxy. Three (`vertex` / `azure` / `bedrock`) were subsequently **removed outright in #1378** (2026-07-09) — their rows are kept for the record of the analysis, marked accordingly; the live roster is 12:
 
 | Provider | Wire shape | AIG path | Bucket |
 |---|---|---|---|
@@ -48,22 +48,22 @@ Push's 15 network providers (`lib/provider-definition.ts`), mapped against AIG's
 | **anthropic** | anthropic | first-party provider-native (`/anthropic/v1/messages`) | **A — wired** |
 | **google** (AI Studio) | gemini | first-party provider-native (`/google-ai-studio/v1/models/...`) | **A — wired** |
 | **deepseek** | anthropic (`/anthropic` endpoint) | first-party, but Push uses the non-standard `/anthropic` variant | B — verify variant |
-| **vertex** | gemini | first-party, but service-account auth | B — auth wrinkle |
+| ~~**vertex**~~ | gemini | first-party, but service-account auth | B — deferred, then **removed #1378** |
 | **fireworks** | openai-responses | custom provider-specific (`/responses`) | C — spike |
 | **nvidia** | openai-compat | custom provider | C — new unlock |
 | **zen** | openai-compat | custom provider | C — new unlock |
 | **kilocode** | openai-compat | custom provider | C — new unlock |
 | **sakana** | openai-responses | custom provider-specific (`/responses`) | C — spike |
 | **ollama** (Ollama Cloud) | openai-compat | custom provider (public `ollama.com/v1` endpoint) | C — new unlock |
-| **azure** | openai-compat | region-derived URLs, custom auth | D — deferred |
-| **bedrock** | openai-compat | AWS SigV4 auth | D — deferred |
+| ~~**azure**~~ | openai-compat | region-derived URLs, custom auth | D — **removed #1378** |
+| ~~**bedrock**~~ | openai-compat | AWS SigV4 auth | D — **removed #1378** |
 
 ### Buckets
 
 - **A — first-party, ride the provider-native proxy (5).** OpenRouter, Workers AI, OpenAI, Anthropic, and Google AI Studio are now wired through the provider-native gateway surface when `CF_AI_GATEWAY_*` is configured. This buys **observability / caching / fallback with the current provider key** — **not** the REST API migration. Google's native `gemini` request (`:streamGenerateContent` in `handleGoogleChat`) passes through the provider-native `google-ai-studio` path transparently, so it works even though it matches none of the REST compat endpoints.
-- **B — verified 2026-07-09 (2, split).** `deepseek` **done** — the first-party proxy passes Push's `/anthropic` variant (200 A/B, wired as a first-party binding). `vertex` **blocked on creds** — no service account is configured to test with, and it can't use a custom provider (its region lives in the host, `{region}-aiplatform.googleapis.com`, so a fixed `base_url` can't carry it). The design is clear (first-party `google-vertex-ai`, derive pathSuffix from the direct URL, `Authorization: Bearer <OAuth>` passthrough — CF's Claude Code integration confirms Bearer works), but shipping an untested first-party binding would go live in prod immediately and risk breaking vertex; deferred until a service account exists to verify against.
+- **B — verified 2026-07-09 (2, split).** `deepseek` **done** — the first-party proxy passes Push's `/anthropic` variant (200 A/B, wired as a first-party binding). `vertex` **blocked on creds** — no service account is configured to test with, and it can't use a custom provider (its region lives in the host, `{region}-aiplatform.googleapis.com`, so a fixed `base_url` can't carry it). The design is clear (first-party `google-vertex-ai`, derive pathSuffix from the direct URL, `Authorization: Bearer <OAuth>` passthrough — CF's Claude Code integration confirms Bearer works), but shipping an untested first-party binding would go live in prod immediately and risk breaking vertex; deferred until a service account exists to verify against. **Overtaken by events: `vertex` was removed outright in #1378** — the design stands only as reference if it ever returns.
 - **C — non-first-party custom-provider proxy candidates (6).** `fireworks / nvidia / zen / kilocode / sakana / ollama` are all public HTTPS endpoints. For observability, each can be configured as an AIG custom provider and routed through `custom-{slug}/...`; Responses-native providers should use the provider-specific path, not the deprecated `/compat/chat/completions` surface. This is *not* "one line on v1" because Push needs custom provider slugs/config plus per-provider path bindings, but it is smaller than adopting the REST API.
-- **D — auth/shape deferrals (2).** `azure` and `bedrock` are supported by AIG provider-native docs, but Push should not casually move those credentials into AIG or BYOK without an explicit security/ops decision. Treat them as deferred, not impossible.
+- **D — auth/shape deferrals (2), since removed.** `azure` and `bedrock` are supported by AIG provider-native docs, but Push should not casually move those credentials into AIG or BYOK without an explicit security/ops decision. That was the state at re-eval time; **both were removed outright in #1378**, dissolving the question (see "Bucket D — dissolved by removal" below).
 
 ## Recommendation — two paths, sequenced
 
@@ -90,7 +90,20 @@ So Bucket C via custom proxy covers **five** — `ollama`, `nvidia`, `zen`, `sak
 
 **Path 2 — adopt the REST API (bigger lift, unified billing).** New wiring against `api.cloudflare.com/…/ai/v1` — this is what delivers the clean Cloudflare-auth / unified-billing model. It likely needs model-id mapping (`openai/...`, `anthropic/...`, `google-ai-studio/...`), request-schema choices per provider, and a separate rollback plan from the provider-native proxy.
 
-**Bucket D** stays direct-to-provider until there is an explicit credential-placement decision.
+### Path 2 product design — the settings key wall becomes two-tier
+
+Most of Path 2's real design is not the wiring — it's what happens to the unlock model. Today a provider lights up when its credentials resolve server-side: a Worker env secret or a user-stored key (`worker-provider-capabilities.ts`, same resolution path dispatch uses). Key = unlock, one per provider. Paths 1/1.5 don't touch this — they're BYOK, so the per-key unlock stays correct as long as the gateway is proxy-only. Path 2 changes it from *N keys, N unlocks* to **two tiers**:
+
+- **Tier 1 — one Cloudflare token unlocks the unified-billing subset.** No provider key needed for CF-supported models (openai, anthropic, google, deepseek, …). One key in Settings lights up that whole slice of the catalog.
+- **Tier 2 — per-provider keys remain, with two jobs.** (a) The **only** path for custom providers — `fireworks / ollama / zen / nvidia / sakana` stay BYOK even on the REST API, so their unlocks are unchanged forever. (b) An **override** for CF-supported providers — a direct key skips the CF fee and one hop.
+
+**Precedence rule: direct key wins; the CF token fills gaps.** When both a CF token and a direct provider key exist, dispatch uses the direct key. Rationale: direct is cheaper (no unified-billing fee) and fewer hops, and it keeps the CF token's role legible — "unlocks what you haven't keyed directly," never a shadow re-route of billing for a provider the user deliberately keyed. Adding the CF token is therefore strictly additive: it can light up new models but can never silently change how an existing provider bills. (The inverse rule — CF-token-wins — fails the honest-surfaces test for exactly that reason.)
+
+Eval-safety note: unified billing does **not** reintroduce OpenRouter's routing opacity. The backend is still the named provider — CF fronts the bill, not the routing — so Tier 1 selections remain pinned-upstream and eval-safe.
+
+Pre-Path 2, one small settings change is already warranted: a **gateway status row** ("Routing via `push-gate` · observability active" when `CF_AI_GATEWAY_*` resolves). Bucket A/C traffic currently takes an extra hop that the UI doesn't disclose anywhere.
+
+**Bucket D — dissolved by removal (2026-07-09).** `azure` / `bedrock` (and `vertex` from Bucket B) were deleted outright in #1378 rather than migrated — they were inert/unconfigured experimental providers, and removing them took the credential-placement question with them. If any returns, it re-enters as a fresh provider through this doc's buckets.
 
 Net: "too unique to move" is now false for the **majority** of the roster — but *what* you get depends on the surface. The provider-native proxy buys observability on first-party providers now; custom providers can extend that observability to the non-first-party tail; the REST API is a separate unified-billing migration. The routing brain stays in `lib/` regardless.
 
