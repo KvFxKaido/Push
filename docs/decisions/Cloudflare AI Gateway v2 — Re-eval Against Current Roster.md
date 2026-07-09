@@ -84,9 +84,9 @@ Two design outputs that generalize to the rest of Bucket C (`fireworks / nvidia 
 | fireworks | — | **200** | Responses-over-custom-proxy passthrough works |
 | nvidia | 404 | 404 | gateway **transparent**; 404 is a stale default model id, not the proxy |
 | zen | 200 | 429 | zen rate-limits Cloudflare's shared egress IP (provider-side) |
-| kilocode | 200 | 404 | gateway returned kilo.ai's **marketing 404** → registered `base_url` must be exactly `https://api.kilo.ai` (not `kilo.ai`/`app.kilo.ai`); if correct, the provider routes CF-egress requests to its frontend |
+| kilocode | 200 | 404 | **dropped** — kilo.ai answers Cloudflare's egress with its marketing frontend (HTML 404) on *both* base_url configs tried (domain-only and fixed-prefix `…/api/gateway`) while answering direct requests with JSON. It discriminates against the proxy IPs, so it can't ride the custom proxy. Binding removed; kilocode stays direct-to-provider |
 
-Takeaway for the tail: the custom-provider path is transparent (proven by nvidia's identical direct/gateway result and the two Responses 200s), but each provider can carry its own operational wrinkle — a wrong-host registration (kilocode) or per-IP throttling of Cloudflare's egress (zen) — that only shows up live, not in the URL wiring.
+So Bucket C via custom proxy covers **five** — `ollama`, `nvidia`, `zen`, `sakana`, `fireworks`; `kilocode` is dropped (six attempted, one unusable). Takeaway for the tail: the custom-provider path is transparent (proven by nvidia's identical direct/gateway result and the two Responses 200s), but each provider can carry its own operational wrinkle that only shows up live — per-IP throttling of Cloudflare's egress (`zen`), or an outright egress-discriminating origin that makes the proxy unusable (`kilocode`). Check each provider live before allow-listing; don't assume correct URL wiring means a working route.
 
 **Path 2 — adopt the REST API (bigger lift, unified billing).** New wiring against `api.cloudflare.com/…/ai/v1` — this is what delivers the clean Cloudflare-auth / unified-billing model. It likely needs model-id mapping (`openai/...`, `anthropic/...`, `google-ai-studio/...`), request-schema choices per provider, and a separate rollback plan from the provider-native proxy.
 

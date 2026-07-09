@@ -29,7 +29,6 @@ import {
   handleZenChat,
   handleZenGoChat,
   handleNvidiaChat,
-  handleKiloCodeChat,
   handleSakanaChat,
   handleFireworksChat,
   parseGeminiGroundingResponse,
@@ -989,15 +988,6 @@ describe('Bucket C custom providers — AI Gateway custom-provider routing', () 
       direct: 'https://opencode.ai/zen/v1/chat/completions',
       gateway:
         'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-zen/zen/v1/chat/completions',
-    },
-    {
-      name: 'kilocode',
-      keyEnv: 'KILOCODE_API_KEY',
-      handler: handleKiloCodeChat,
-      req: () => makeChatRequest(),
-      direct: 'https://api.kilo.ai/api/gateway/chat/completions',
-      gateway:
-        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-kilocode/api/gateway/chat/completions',
     },
     {
       name: 'sakana',

@@ -830,9 +830,11 @@ export const handleKiloCodeChat = createStreamProxyHandler({
   keyMissingError:
     'Kilo Code API key not configured. Add it in Settings or set KILOCODE_API_KEY on the Worker.',
   timeoutError: 'Kilo Code request timed out after 120 seconds',
-  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://api.kilo.ai;
-  // dormant until `kilocode` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
-  gateway: { provider: 'custom-kilocode', pathSuffix: '/api/gateway/chat/completions' },
+  // No AI Gateway custom-provider binding (Bucket C spike, AIG v2 Path 1.5): on
+  // every base_url config tried (domain-only `https://api.kilo.ai` and fixed-prefix
+  // `https://api.kilo.ai/api/gateway`), kilo.ai answered Cloudflare's egress with
+  // its marketing frontend (HTML 404) while answering direct requests with JSON —
+  // so kilocode can't ride the custom proxy. Left direct-to-provider.
 });
 
 export const handleKiloCodeModels = createJsonProxyHandler({
