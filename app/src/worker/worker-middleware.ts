@@ -192,6 +192,13 @@ export interface Env {
   // from the global CF_AI_GATEWAY_* toggle so enabling first-party routing can't
   // flip an unregistered custom provider onto a path that 404s.
   CF_AI_GATEWAY_CUSTOM_SLUGS?: string;
+  // Comma-separated allow-list of provider ids whose key is stored in the AI
+  // Gateway (BYOK / "Provider Keys") rather than sent by Push. For a listed
+  // provider, handlers route through the gateway WITHOUT a provider auth header
+  // (the gateway injects the stored key) and skip the key-missing 401. Only
+  // gatewayed providers can use this; a non-gatewayed provider listed here would
+  // still 401 upstream. Dormant when empty; lets Worker provider secrets retire.
+  CF_AI_GATEWAY_BYOK?: string;
   // Workers Analytics Engine for provider observability
   PROVIDER_STATS?: {
     writeDataPoint(data: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
@@ -622,6 +629,12 @@ export async function runPreamble(
     keyMissingError?: string;
     needsBody?: boolean;
     maxBodyBytes?: number;
+    // AI Gateway BYOK: when true, a missing provider key does NOT 401 — the
+    // gateway injects a stored provider key, so the caller legitimately sends
+    // none. Only set this when the request is actually routed BYOK-through-gateway
+    // (see isGatewayByokProvider); otherwise a keyless direct call would 401 at
+    // the upstream instead of here, which is worse.
+    allowMissingKey?: boolean;
   },
 ): Promise<Response | PreambleOk> {
   const requestId = getOrCreateRequestId(request.headers.get(REQUEST_ID_HEADER), 'worker');
@@ -646,7 +659,7 @@ export async function runPreamble(
   }
 
   const authHeader = await opts.buildAuth(env, request);
-  if (!authHeader && opts.keyMissingError) {
+  if (!authHeader && opts.keyMissingError && !opts.allowMissingKey) {
     return Response.json({ error: opts.keyMissingError }, { status: 401 });
   }
 
@@ -724,6 +737,23 @@ export function isCustomGatewaySlugEnabled(env: Env, provider: string): boolean 
     .map((s) => s.trim())
     .filter(Boolean)
     .includes(wanted);
+}
+
+/**
+ * True when `providerId`'s key lives in the AI Gateway (BYOK) rather than being
+ * sent by Push. Requires the gateway to be configured — a BYOK provider with no
+ * gateway would have nothing to inject the key, so we keep sending the caller
+ * key in that case. Callers that see `true` must route through the gateway,
+ * omit the provider auth header (the gateway injects the stored key), and pass
+ * `allowMissingKey: true` to `runPreamble`.
+ */
+export function isGatewayByokProvider(env: Env, providerId: string): boolean {
+  if (!env.CF_AI_GATEWAY_ACCOUNT_ID?.trim() || !env.CF_AI_GATEWAY_SLUG?.trim()) return false;
+  return (env.CF_AI_GATEWAY_BYOK ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .includes(providerId);
 }
 
 /**

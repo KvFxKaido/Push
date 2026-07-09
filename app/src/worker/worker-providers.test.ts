@@ -875,6 +875,62 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
   });
 });
 
+describe('handleAnthropicChat — AI Gateway BYOK (gateway-stored key)', () => {
+  function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
+    const captured: { current: { url: string; headers: Record<string, string> } | null } = {
+      current: null,
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured.current = { url, headers: init.headers as Record<string, string> };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    return captured;
+  }
+
+  const gwEnv = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+    CF_AI_GATEWAY_SLUG: 'push-prod',
+    CF_AI_GATEWAY_TOKEN: 'aig-secret',
+  };
+
+  it('routes keyless through the gateway and omits x-api-key when anthropic is BYOK', async () => {
+    // No ANTHROPIC_API_KEY and no client Authorization — the gateway holds the key.
+    const captured = captureFetch();
+    const res = await handleAnthropicChat(
+      makeChatRequest(),
+      makeEnv({ ...gwEnv, CF_AI_GATEWAY_BYOK: 'anthropic' }),
+    );
+    expect(res.status).not.toBe(401);
+    expect(captured.current?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/anthropic/v1/messages',
+    );
+    // The gateway injects the stored key; Push sends none, but still authenticates
+    // to the gateway itself.
+    expect(captured.current?.headers['x-api-key']).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+  });
+
+  it('still 401s (never fetches) with no key when anthropic is NOT BYOK', async () => {
+    const captured = captureFetch();
+    const res = await handleAnthropicChat(makeChatRequest(), makeEnv(gwEnv));
+    expect(res.status).toBe(401);
+    expect(captured.current).toBeNull();
+  });
+
+  it('BYOK requires the gateway to be configured — listed but no account/slug still 401s', async () => {
+    const captured = captureFetch();
+    const res = await handleAnthropicChat(
+      makeChatRequest(),
+      makeEnv({ CF_AI_GATEWAY_BYOK: 'anthropic' }),
+    );
+    expect(res.status).toBe(401);
+    expect(captured.current).toBeNull();
+  });
+});
+
 describe('handleDeepSeekChat — AI Gateway first-party /anthropic variant (Bucket B)', () => {
   function captureFetch(): { current: { url: string; headers: Record<string, string> } | null } {
     const captured: { current: { url: string; headers: Record<string, string> } | null } = {

@@ -7,6 +7,7 @@ import {
   standardAuth,
   buildAiGatewayUrl,
   getAiGatewayAuthHeader,
+  isGatewayByokProvider,
   runPreamble,
   wlog,
 } from './worker-middleware';
@@ -1776,11 +1777,16 @@ function buildAnthropicAuth(env: Env, request: Request): string | null {
 }
 
 export async function handleAnthropicChat(request: Request, env: Env): Promise<Response> {
+  // BYOK: when anthropic's key is stored in the gateway, the caller sends no
+  // key and the gateway injects it — so don't 401 on a missing key and omit the
+  // x-api-key header below.
+  const byok = isGatewayByokProvider(env, 'anthropic');
   const preamble = await runPreamble(request, env, {
     buildAuth: buildAnthropicAuth,
     keyMissingError:
       'Anthropic API key not configured. Add it in Settings or set ANTHROPIC_API_KEY on the Worker.',
     needsBody: true,
+    allowMissingKey: byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader: apiKey, bodyText, requestId } = preamble;
@@ -1873,7 +1879,8 @@ export async function handleAnthropicChat(request: Request, env: Env): Promise<R
       upstream = await fetch(upstreamUrl, {
         method: 'POST',
         headers: {
-          'x-api-key': apiKey,
+          // BYOK omits x-api-key so the gateway injects the stored anthropic key.
+          ...(byok ? {} : { 'x-api-key': apiKey }),
           'anthropic-version': ANTHROPIC_API_VERSION,
           'Content-Type': 'application/json',
           [REQUEST_ID_HEADER]: requestId,
