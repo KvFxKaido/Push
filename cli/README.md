@@ -331,7 +331,7 @@ The CLI ships eleven providers. Four (`ollama`, `zen`, `nvidia`, `kilocode`) spe
 | `anthropic` | `claude-sonnet-4-6` | Yes |
 | `google` | `gemini-3.5-flash` | Yes |
 
-Removed providers (`mistral`, `zai`, `minimax`) are gracefully redirected to `openrouter` with a warning.
+Removed providers (`mistral`, `zai`, `minimax`, `azure`, `bedrock`, `vertex`) are gracefully redirected to `openrouter` with a warning.
 
 You can switch provider/model mid-session with `/provider` and `/model`. Switching providers updates runtime endpoint/key/model without restarting the CLI.
 

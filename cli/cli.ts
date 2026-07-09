@@ -1496,6 +1496,12 @@ const DEPRECATED_PROVIDERS = {
   mistral: 'openrouter',
   zai: 'openrouter',
   minimax: 'openrouter',
+  // Experimental providers removed with the azure/bedrock/vertex roster drop.
+  // Without these, a CLI config or PUSH_PROVIDER still set to one of them would
+  // throw "Unsupported provider" at startup instead of warning + falling back.
+  azure: 'openrouter',
+  bedrock: 'openrouter',
+  vertex: 'openrouter',
 };
 
 function normalizeProviderInput(value) {
