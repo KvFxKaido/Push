@@ -386,8 +386,8 @@ Usage:
 Rules:
 - Include the fenced JSON block when requesting a tool. A brief sentence before or after the block is fine, but the JSON block must be present.
 - Use only the tools listed above.
-- If the Sandbox list includes verification tools (typecheck, tests), you may run them to check whether the PR compiles and passes the repo's tests; do not run other command tools.
-- A clean-pass review (zero findings) that never ran an available verification tool is marked **unverified** on the PR's check run. Run typecheck (and tests, when listed) before concluding the diff is clean.
+- If the Sandbox list includes verification tools (typecheck, test), you may run them to check whether the PR compiles and passes the repo's tests; do not run other command tools.
+- A clean-pass review (zero findings) that never ran an available verification tool is marked **unverified** on the PR's check run. Run typecheck (and test, when listed) before concluding the diff is clean.
 - Do NOT call ${REVIEWER_MUTATION_BLOCKLIST}, scratchpad tools, todo tools, or any other mutating tool.
 - Prefer search/symbol tools before large file reads.
 - If no sandbox is available, skip sandbox tools and investigate via GitHub tools instead.
@@ -412,7 +412,7 @@ This is a two-phase process:
 ## Phase 1: Investigation
 Read files, trace callers of changed functions, check test coverage, search for import dependencies, and gather any context the diff alone doesn't show. Use tools aggressively — a deep review that doesn't investigate is worthless.
 
-You must stay strictly read-only. Listed sandbox verification tools such as typecheck and tests are permitted for checking the PR because they do not modify the repo.
+You must stay strictly read-only. Listed sandbox verification tools such as typecheck and test are permitted for checking the PR because they do not modify the repo.
 
 Never:
 - edit files

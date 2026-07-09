@@ -29,6 +29,7 @@ import type {
   ReviewResult,
   ReviewVerification,
 } from '@push/lib/provider-contract';
+import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock, type PriorReviewContext } from '@push/lib/role-context';
@@ -1628,9 +1629,13 @@ export class PrReviewJob {
 
 /**
  * Resolve the reviewer's verifier commands from the repo's instruction files
- * at the BASE ref (trusted — never the head). Typecheck falls back to the
- * universal `npx tsc --noEmit`; tests have no safe default, so a repo without
- * a `# test:` hint gets `tests: null` and the tests tool is not advertised.
+ * at the BASE ref (trusted — never the head), in the canonical loader order
+ * (`PROJECT_INSTRUCTION_FILENAMES`: PUSH.md → AGENTS.md → CLAUDE.md →
+ * GEMINI.md) so a PUSH.md hint outranks an AGENTS.md one the way every other
+ * instruction consumer resolves (Codex P2, PR #1385 — the old loop hardcoded
+ * AGENTS.md/CLAUDE.md). Typecheck falls back to the universal
+ * `npx tsc --noEmit`; tests have no safe default, so a repo without a
+ * `# test:` hint gets `tests: null` and the test tool is not advertised.
  * Independent per kind: the first file that declares a kind wins for it.
  */
 async function resolveReviewCommands(
@@ -1640,7 +1645,7 @@ async function resolveReviewCommands(
 ): Promise<ReviewVerifierCommands> {
   let typecheck: string | null = null;
   let tests: string | null = null;
-  for (const filename of ['AGENTS.md', 'CLAUDE.md'] as const) {
+  for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
     if (typecheck && tests) break;
     try {
       const content = await fetchRepoFileContent(repoFullName, filename, baseRef, auth);
@@ -1917,7 +1922,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         log('info', 'pr_review_verification_nudged', { deliveryId: input.deliveryId });
         return (
           'You are reporting zero findings without having run any verification tool. ' +
-          `Run typecheck${reviewCommands.tests ? ' (and tests)' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
+          `Run the typecheck${reviewCommands.tests ? ' and test' : ''} tool${reviewCommands.tests ? 's' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
           'If you have a concrete reason verification cannot run, state it and re-emit; the review will be marked unverified.'
         );
       },

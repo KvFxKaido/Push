@@ -26,7 +26,9 @@ vi.mock('@/lib/sandbox-read-only-inspection-handlers', () => ({
   handleListDir: handleListDirMock,
 }));
 
+import { resolveToolName } from '@push/lib/tool-registry';
 import {
+  REVIEW_SANDBOX_TOOLS,
   cleanupReviewSandbox,
   executeReviewSandboxTool,
   provisionReviewSandbox,
@@ -44,6 +46,18 @@ beforeEach(() => {
   handleSearchMock.mockClear();
   handleReadFileMock.mockClear();
   handleListDirMock.mockClear();
+});
+
+describe('REVIEW_SANDBOX_TOOLS', () => {
+  it('advertises only names the tool registry resolves (drift guard)', () => {
+    // The `- Sandbox:` prompt line advertises these names and the detector
+    // executes only names that resolve through the registry — an advertised
+    // name that doesn't resolve produces calls that silently never run
+    // (`tests` vs public name `test`, Codex P2 on PR #1385).
+    for (const name of REVIEW_SANDBOX_TOOLS) {
+      expect(resolveToolName(name), `advertised name "${name}" must resolve`).toBeTruthy();
+    }
+  });
 });
 
 describe('provisionReviewSandbox', () => {

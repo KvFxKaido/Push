@@ -41,8 +41,12 @@ import type { ToolExecutionResult } from '@/types';
 import type { Env } from './worker-middleware';
 
 /** Sandbox tools wired into the reviewer. Advertised set and
- *  executor switch derive from this ONE list so they can't drift. */
-export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls', 'typecheck', 'tests'] as const;
+ *  executor switch derive from this ONE list so they can't drift. Entries are
+ *  the registry PUBLIC names (`sandbox_run_tests` → `test`, singular) — the
+ *  detector resolves only canonical/public/alias names, so advertising
+ *  anything else produces calls that silently never execute (Codex P2,
+ *  PR #1385). */
+export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls', 'typecheck', 'test'] as const;
 /** Full public names string (every tool, tests included). */
 export const REVIEW_SANDBOX_TOOL_NAMES = REVIEW_SANDBOX_TOOLS.join(', ');
 
@@ -54,7 +58,7 @@ export const REVIEW_SANDBOX_TOOL_NAMES = REVIEW_SANDBOX_TOOLS.join(', ');
  */
 export function reviewSandboxToolNames(testsAvailable: boolean): string {
   return (
-    testsAvailable ? REVIEW_SANDBOX_TOOLS : REVIEW_SANDBOX_TOOLS.filter((t) => t !== 'tests')
+    testsAvailable ? REVIEW_SANDBOX_TOOLS : REVIEW_SANDBOX_TOOLS.filter((t) => t !== 'test')
   ).join(', ');
 }
 
