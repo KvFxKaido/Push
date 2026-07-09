@@ -12,6 +12,7 @@ import {
   createStreamProxyHandler,
   getAllowedOrigins,
   getClientIp,
+  isGatewayByokProvider,
   normalizeOrigin,
   passthroughAuth,
   readBodyText,
@@ -426,6 +427,29 @@ describe('standardAuth', () => {
     expect(
       await standardAuth('OLLAMA_API_KEY')(makeEnv(), makeRequest('https://x.test/')),
     ).toBeNull();
+  });
+});
+
+describe('isGatewayByokProvider', () => {
+  const gw = { CF_AI_GATEWAY_ACCOUNT_ID: 'acc', CF_AI_GATEWAY_SLUG: 'push-prod' } as Env;
+
+  it('matches a listed provider whether first-party or custom-prefixed', () => {
+    const env = { ...gw, CF_AI_GATEWAY_BYOK: 'anthropic,sakana' } as Env;
+    expect(isGatewayByokProvider(env, 'anthropic')).toBe(true);
+    // A custom provider arrives as `custom-sakana` from the handler and bare
+    // `sakana` from the capability check — both must resolve off one list entry.
+    expect(isGatewayByokProvider(env, 'sakana')).toBe(true);
+    expect(isGatewayByokProvider(env, 'custom-sakana')).toBe(true);
+  });
+
+  it('is false for an unlisted provider', () => {
+    const env = { ...gw, CF_AI_GATEWAY_BYOK: 'sakana' } as Env;
+    expect(isGatewayByokProvider(env, 'ollama')).toBe(false);
+    expect(isGatewayByokProvider(env, 'custom-ollama')).toBe(false);
+  });
+
+  it('requires the gateway to be configured', () => {
+    expect(isGatewayByokProvider({ CF_AI_GATEWAY_BYOK: 'sakana' } as Env, 'sakana')).toBe(false);
   });
 });
 

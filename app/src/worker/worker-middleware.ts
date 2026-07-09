@@ -749,11 +749,16 @@ export function isCustomGatewaySlugEnabled(env: Env, provider: string): boolean 
  */
 export function isGatewayByokProvider(env: Env, providerId: string): boolean {
   if (!env.CF_AI_GATEWAY_ACCOUNT_ID?.trim() || !env.CF_AI_GATEWAY_SLUG?.trim()) return false;
+  // A custom provider reaches here two ways: as the gateway binding slug
+  // (`custom-sakana`) from the handler, and as the bare id (`sakana`) from the
+  // engine-capability check. Normalize to the bare id so CF_AI_GATEWAY_BYOK
+  // lists one canonical name per provider and both call sites agree.
+  const id = providerId.startsWith('custom-') ? providerId.slice('custom-'.length) : providerId;
   return (env.CF_AI_GATEWAY_BYOK ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-    .includes(providerId);
+    .includes(id);
 }
 
 /**
