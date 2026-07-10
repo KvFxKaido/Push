@@ -61,6 +61,25 @@ describe('PROVIDER_URLS', () => {
   });
 });
 
+describe('provider registry URL coherence', () => {
+  it("each provider's registry baseUrl host matches its CLI defaultUrl host", () => {
+    // Drift guard for the #1396 copy-paste class: the zai and kimi entries
+    // shipped with each other's baseUrl. Nothing consumes the registry
+    // baseUrl today, so the swap was latent — this pins the invariant so the
+    // first future consumer doesn't route two providers into each other's
+    // upstream (Codex P2, PR #1396).
+    for (const def of PROVIDER_DEFINITIONS) {
+      const baseUrl = (def as { baseUrl?: string }).baseUrl;
+      const defaultUrl = def.cli?.defaultUrl;
+      if (!baseUrl || !defaultUrl) continue;
+      expect(
+        new URL(baseUrl).host,
+        `${def.id}: baseUrl (${baseUrl}) and cli.defaultUrl (${defaultUrl}) must agree on host`,
+      ).toBe(new URL(defaultUrl).host);
+    }
+  });
+});
+
 describe('PROVIDERS', () => {
   it('derives provider summaries from ProviderDefinition settings metadata', () => {
     for (const def of PROVIDER_DEFINITIONS) {
