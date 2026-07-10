@@ -115,7 +115,6 @@ describe('TUI activity chronology (headless characterization)', () => {
       emit(h, 'session_reverted', { turns: 1, removedCount: 2, remainingTurns: 0 });
       await h.waitFor(() => h.requestsOfType('get_session_messages').length > 0);
       const cleared = await h.waitFor(() => h.tuiState?.activeActivityGroup == null);
-      assert.ok(cleared, 'resync must clear the active-phase pointer');
 
       // A tool on the ongoing run must open a FRESH group that actually renders
       // — not append into the spliced-out orphan (which `activityGroups` can't
@@ -124,12 +123,16 @@ describe('TUI activity chronology (headless characterization)', () => {
       const rendered = await h.waitFor(() =>
         activityGroups(h).some((g) => g.items.some((i) => i.text === 'grep')),
       );
-      assert.ok(rendered, 'post-resync tool must render in a live group, not the orphan');
 
-      // Unblock runPrompt's pending completion before teardown so `stop()`
-      // can't hang on a dangling turn.
+      // Settle the run BEFORE asserting: a throwing assertion below jumps
+      // straight to `finally`, and `h.stop()` on a still-pending turn waits out
+      // its 2s teardown race — turning a clean assertion failure into an opaque
+      // timeout. Unblock runPrompt first so teardown is fast either way.
       emit(h, 'run_complete', { outcome: 'success' });
       await h.waitFor(() => h.tuiState?.runState === 'idle');
+
+      assert.ok(cleared, 'resync must clear the active-phase pointer');
+      assert.ok(rendered, 'post-resync tool must render in a live group, not the orphan');
     } finally {
       await h.stop();
     }
