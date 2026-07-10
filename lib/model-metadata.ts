@@ -246,6 +246,14 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     // metadata wins over the name guess, so xai chats compact at the true 500K.
     // Covers the OpenRouter `x-ai/grok-4.5` path too via leaf-strip → grok-4.5.
     'grok-4.5': M(500000, true, true, true, TEXT_IMAGE_PDF),
+    // Grok 4.20 variants ship a 1M window (xAI /v1/models, probed 2026-07-10) —
+    // NOT the 2M the `grok` name-fallback assumes (nor the 2M the OpenRouter
+    // `x-ai/grok-4.20` entry claims), so declare them explicitly to avoid
+    // over-deferring compaction ~2x past the real window. Input is text+image
+    // (xAI reports no PDF); the variants differ only in the reasoning flag.
+    'grok-4.20-0309-reasoning': M(1000000, true, true, true, TEXT_IMAGE),
+    'grok-4.20-0309-non-reasoning': M(1000000, false, true, true, TEXT_IMAGE),
+    'grok-4.20-multi-agent-0309': M(1000000, true, true, true, TEXT_IMAGE),
   },
 };
 

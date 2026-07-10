@@ -124,6 +124,17 @@ describe('getContextBudget (shared)', () => {
     // PR #1392).
     expect(guessWindowFromName('grok-4.5')).toBe(2_000_000);
     expect(getContextBudget('xai', 'grok-4.5')).toEqual(budgetFromWindow(500_000));
+    // Grok 4.20 variants are 1M (xAI /v1/models), also under the `grok` = 2M
+    // name fallback — declared metadata pins the real window.
+    expect(getContextBudget('xai', 'grok-4.20-0309-reasoning')).toEqual(
+      budgetFromWindow(1_000_000),
+    );
+    expect(getContextBudget('xai', 'grok-4.20-0309-non-reasoning')).toEqual(
+      budgetFromWindow(1_000_000),
+    );
+    expect(getContextBudget('xai', 'grok-4.20-multi-agent-0309')).toEqual(
+      budgetFromWindow(1_000_000),
+    );
   });
 
   it('keeps Cloudflare gateway-capped models on their cap-aware name fallback', () => {
