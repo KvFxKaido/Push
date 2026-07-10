@@ -17,13 +17,19 @@ vi.mock('./safe-storage', () => ({
     storage.set(key, value);
     return true;
   }),
+  safeStorageRemove: vi.fn((key: string) => {
+    storage.delete(key);
+    return true;
+  }),
 }));
 
 import {
   __resetEngineCapabilityCacheForTests,
+  getCachedProviderCapabilitySnapshot,
   getProviderCapabilitySnapshot,
   isProviderEngineCapable,
   refreshEngineCapabilities,
+  resetProviderCapabilityCache,
   subscribeProviderCapabilities,
 } from './provider-engine-capability';
 
@@ -54,6 +60,29 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('resetProviderCapabilityCache (identity boundary)', () => {
+  it('drops the in-memory snapshot and localStorage so the next identity starts clean', async () => {
+    // Seed a probe result as if user A had server-held credentials.
+    mockFetchOnce({
+      providers: { anthropic: true },
+      sources: { anthropic: 'gateway-byok' },
+      gatewayActive: true,
+    });
+    refreshEngineCapabilities();
+    await flushInflight();
+    expect(getCachedProviderCapabilitySnapshot().sources.anthropic).toBe('gateway-byok');
+    expect(storage.has(STORAGE_KEY)).toBe(true);
+
+    resetProviderCapabilityCache();
+
+    // Cached (no-refresh) read now falls back to EMPTY_SNAPSHOT; storage cleared.
+    const after = getCachedProviderCapabilitySnapshot();
+    expect(after.sources.anthropic ?? null).toBeNull();
+    expect(after.probed).toBe(false);
+    expect(storage.has(STORAGE_KEY)).toBe(false);
+  });
 });
 
 describe('isProviderEngineCapable (client cache)', () => {

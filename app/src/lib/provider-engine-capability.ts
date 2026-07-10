@@ -26,7 +26,7 @@
  */
 
 import type { AIProviderType } from '@push/lib/provider-contract';
-import { safeStorageGet, safeStorageSet } from './safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 // v2: the v1 key held a bare boolean map; the snapshot now carries provenance
 // too. New key rather than a migration — the v1 value is an hour-stale cache
@@ -201,6 +201,24 @@ export function subscribeProviderCapabilities(listener: () => void): () => void 
 export function invalidateEngineCapabilities(): void {
   lastFetchStartedAt = 0;
   refreshEngineCapabilities();
+}
+
+/**
+ * Drop the cached capability/provenance snapshot (in-memory + localStorage) at
+ * an identity boundary. The snapshot is per-GitHub-identity, so the next
+ * identity on this browser must NOT read the previous user's provenance — a
+ * stale `user-key` / `gateway-byok` source would make routing treat a provider
+ * as available and send keyless (active-provider.ts consults the cached snapshot
+ * synchronously, without a refresh). Mirrors `resetSettingsCache()`; the sign-in
+ * gate calls both when a session ends. After this, cached reads fall back to
+ * `EMPTY_SNAPSHOT` (no server credential) until a refresh repopulates for the new
+ * identity — conservative: routing falls back to local keys, never over-trusts.
+ */
+export function resetProviderCapabilityCache(): void {
+  snapshot = null;
+  lastFetchStartedAt = 0;
+  safeStorageRemove(STORAGE_KEY);
+  notify();
 }
 
 /** Test seam: reset module state between cases. */

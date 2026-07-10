@@ -43,6 +43,12 @@ vi.mock('./providers', async () => {
     getCloudflareWorkerConfigured: () => state.cloudflareConfigured,
     getPreferredProvider: () => state.preferredProvider,
     getLastUsedProvider: () => state.lastUsedProvider,
+    // Model-gated providers (anthropic/openai/google) require a model name in
+    // addition to a credential. Mock them truthy so the ready check turns on the
+    // credential dimension under test, not the ambient default-model behavior.
+    getAnthropicModelName: () => 'claude-sonnet-4-6',
+    getOpenAIModelName: () => 'gpt-5',
+    getGoogleModelName: () => 'gemini-2.5-pro',
   };
 });
 
