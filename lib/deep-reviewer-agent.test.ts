@@ -591,6 +591,66 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     );
   });
 
+  it('final loop round: marker+tool still executes the tool; the forced-output turn completes', async () => {
+    // Without this, a verifier emitted next to the marker on the last loop
+    // round is dropped — a would-be-failing verifier lost right at the
+    // finish line (local Codex P2, PR #1393).
+    const verifiedJson = JSON.stringify({ summary: 'Verified at the wire.', comments: [] });
+    const { stream } = makePushStream([
+      // Entered at MAX-1 via resumeState: the final loop round emits a
+      // verifier call AND the marker...
+      [
+        {
+          type: 'text_delta',
+          text: `{"tool": "typecheck", "args": {}}\n[REVIEW_COMPLETE]\n${verifiedJson}`,
+        },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      // ...and the forced-output turn synthesizes from the tool result.
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${verifiedJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    const typecheckCall: Call = { call: { tool: 'sandbox_check_types', args: {} } };
+    const executed: string[] = [];
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({
+          stream,
+          detectAllToolCalls: (content: string) => ({
+            readOnly: [],
+            mutating: content.includes('"tool": "typecheck"') ? typecheckCall : null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          }),
+          detectAnyToolCall: (content: string) =>
+            content.includes('"tool": "typecheck"') ? typecheckCall : null,
+        }),
+        toolExec: async (call) => {
+          executed.push((call as { call: { tool: string } }).call.tool);
+          return { resultText: '[Tool Result — typecheck] Result: PASS' };
+        },
+        resumeState: {
+          messages: [
+            { id: 'seed', role: 'user', content: 'diff', timestamp: 1 },
+            { id: 'seed-tool', role: 'user', content: '[TOOL_RESULT] ok', timestamp: 2 },
+          ],
+          nextRound: MAX_DEEP_REVIEW_ROUNDS - 1,
+          totalToolCalls: 3,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        },
+      },
+      { onStatus: () => {} },
+    );
+
+    expect(executed).toEqual(['sandbox_check_types']);
+    expect(result.summary).toBe('Verified at the wire.');
+  });
+
   it('completionGate returning null accepts the first completion untouched', async () => {
     const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
     const { stream, capturedRequests } = makePushStream([

@@ -881,20 +881,24 @@ export async function runDeepReviewer<TCall, TCard>(
 
     // Detect tool calls BEFORE honoring a completion marker: a round that
     // carries both executable calls and the marker executes the calls and
-    // defers completion (except on the final loop round, whose wrap-up
-    // pressure already forbids tools). The verification gate tells the model
-    // "run the verifiers, then emit the marker again", and cooperative models
-    // compress that into ONE message — honoring the marker first silently
-    // discarded the very verifier calls the gate had just demanded, accepting
-    // the completion as unverified (observed on PR #1392: fugu's post-nudge
+    // defers completion. The verification gate tells the model "run the
+    // verifiers, then emit the marker again", and cooperative models compress
+    // that into ONE message — honoring the marker first silently discarded
+    // the very verifier calls the gate had just demanded, accepting the
+    // completion as unverified (observed on PR #1392: fugu's post-nudge
     // typecheck/test calls were dropped; it reported "no verification output
-    // was returned in this conversation turn").
+    // was returned in this conversation turn"). This holds on the FINAL loop
+    // round too (local Codex P2, PR #1393): the forced-output turn after the
+    // loop can synthesize the completion from the tool result, whereas a
+    // marker-first final round would drop a verifier whose failure the model
+    // was about to surface. A fumbled forced turn degrades to the fallback
+    // result, which is presented as incomplete — never as a clean pass.
     const detected = detectAllToolCalls(accumulated);
     const hasExecutableCalls = detected.readOnly.length > 0 || detected.mutating !== null;
 
     // Check for the completion marker
     const reviewJson = extractReviewJson(accumulated);
-    if (reviewJson && (!hasExecutableCalls || round === MAX_DEEP_REVIEW_ROUNDS - 1)) {
+    if (reviewJson && !hasExecutableCalls) {
       // No-investigation guard: if round 1 with zero tool calls, reject
       if (round === 0 && totalToolCalls === 0) {
         messages.push({
