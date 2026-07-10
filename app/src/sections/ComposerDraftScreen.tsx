@@ -82,6 +82,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.openRouterModelOptions;
     case 'zai':
       return catalog.zaiModelOptions;
+    case 'kimi':
+      return catalog.kimiModelOptions;
     case 'cloudflare':
       return catalog.cloudflareModelOptions;
     case 'zen':
@@ -116,6 +118,8 @@ function defaultModelForProvider(
       return catalog.openRouter.model || null;
     case 'zai':
       return catalog.zai.model || null;
+    case 'kimi':
+      return catalog.kimi.model || null;
     case 'cloudflare':
       return catalog.cloudflare.model || null;
     case 'zen':

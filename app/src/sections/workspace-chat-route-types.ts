@@ -175,6 +175,7 @@ export interface ChatRouteCatalogProps {
   handleSelectOllamaModelFromChat: (model: string) => void;
   handleSelectOpenRouterModelFromChat: (model: string) => void;
   handleSelectZaiModelFromChat: (model: string) => void;
+  handleSelectKimiModelFromChat: (model: string) => void;
   handleSelectCloudflareModelFromChat: (model: string) => void;
   handleSelectZenModelFromChat: (model: string) => void;
   handleSelectNvidiaModelFromChat: (model: string) => void;

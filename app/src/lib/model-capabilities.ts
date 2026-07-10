@@ -97,6 +97,15 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
+    providers: ['kimi'],
+    match: /.*/,
+    capabilities: {
+      toolCalls: 'supported',
+      jsonMode: 'supported',
+      streaming: 'supported',
+    },
+  },
+  {
     providers: ['fireworks', 'sakana'],
     match: /.*/,
     capabilities: {

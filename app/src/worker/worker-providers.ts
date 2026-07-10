@@ -29,6 +29,7 @@ import {
   OPENAI_MODELS,
   XAI_MODELS,
   ZAI_MODELS,
+  KIMI_MODELS,
 } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
@@ -805,6 +806,53 @@ export async function handleZaiModels(request: Request, env: Env): Promise<Respo
   if (preamble instanceof Response) return preamble;
   return Response.json(
     { object: 'list', data: ZAI_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: preamble.requestId } },
+  );
+}
+
+// --- Kimi (OpenAI-compatible Chat Completions endpoint) ---
+
+const handleKimiChatProxy = createStreamProxyHandler({
+  name: 'Kimi API',
+  logTag: 'api/kimi/chat',
+  upstreamUrl: 'https://api.moonshot.ai/v1/chat/completions',
+  timeoutMs: 180_000,
+  maxOutputTokens: 65_536,
+  buildAuth: standardAuth('MOONSHOT_API_KEY', 'KIMI_API_KEY'),
+  keyMissingError:
+    'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY (or KIMI_API_KEY) on the Worker.',
+  timeoutError: 'Kimi request timed out after 180 seconds',
+  // Custom gateway provider with base_url https://api.moonshot.ai.
+  // dormant until `kimi` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-moonshot', pathSuffix: '/v1/chat/completions' },
+  formatUpstreamError: (status, bodyText) => ({
+    error: `Kimi ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export async function handleKimiChat(request: Request, env: Env): Promise<Response> {
+  const parsed = (await request
+    .clone()
+    .json()
+    .catch(() => null)) as Record<string, unknown> | null;
+  const model = typeof parsed?.model === 'string' ? parsed.model : '';
+  if (/^kimi-k2\.7-code(?:-highspeed)?$/i.test(model) && parsed) {
+    parsed.temperature = 1;
+    parsed.top_p = 0.95;
+    request = new Request(request, { body: JSON.stringify(parsed) });
+  }
+  return handleKimiChatProxy(request, env);
+}
+
+export async function handleKimiModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'KimiCuratedModelsList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json(
+    { object: 'list', data: KIMI_MODELS.map((id) => ({ id, name: id })) },
     { headers: { [REQUEST_ID_HEADER]: preamble.requestId } },
   );
 }
@@ -2910,6 +2958,7 @@ export const WORKER_PROVIDER_HANDLERS = {
   ollama: { chat: handleOllamaChat, models: handleOllamaModels },
   openrouter: { chat: handleOpenRouterChat, models: handleOpenRouterModels },
   zai: { chat: handleZaiChat, models: handleZaiModels },
+  kimi: { chat: handleKimiChat, models: handleKimiModels },
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },

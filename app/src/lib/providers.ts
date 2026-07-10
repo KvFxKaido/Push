@@ -34,6 +34,8 @@ export {
   XAI_MODELS,
   ZAI_DEFAULT_MODEL,
   ZAI_MODELS,
+  KIMI_DEFAULT_MODEL,
+  KIMI_MODELS,
   ZEN_DEFAULT_MODEL,
   ZEN_MODELS,
 } from '@push/lib/provider-models';
@@ -50,6 +52,7 @@ import {
   SAKANA_DEFAULT_MODEL,
   XAI_DEFAULT_MODEL,
   ZAI_DEFAULT_MODEL,
+  KIMI_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '@push/lib/provider-models';
 
@@ -78,6 +81,10 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
   zai: {
     chat: '/zai/api/paas/v4/chat/completions',
     models: '/api/zai/models',
+  },
+  kimi: {
+    chat: '/kimi/v1/chat/completions',
+    models: '/api/kimi/models',
   },
   zen: {
     chat: '/opencode/zen/v1/chat/completions',
@@ -352,6 +359,10 @@ const zaiModel = createModelNameStorage(requireModelStorageKey('zai'), ZAI_DEFAU
 export const getZaiModelName = zaiModel.get;
 export const setZaiModelName = zaiModel.set;
 
+const kimiModel = createModelNameStorage(requireModelStorageKey('kimi'), KIMI_DEFAULT_MODEL);
+export const getKimiModelName = kimiModel.get;
+export const setKimiModelName = kimiModel.set;
+
 const cloudflareModel = createModelNameStorage(
   requireModelStorageKey('cloudflare'),
   CLOUDFLARE_DEFAULT_MODEL,
@@ -433,6 +444,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   openrouter: getOpenRouterModelName,
   zai: getZaiModelName,
+  kimi: getKimiModelName,
   cloudflare: getCloudflareModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,

@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROVIDER_DEFINITIONS } from '@push/lib/provider-definition';
 import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '@push/lib/gemini-thought-signature';
 import { ZAI_MODELS } from '@push/lib/provider-models';
+import { KIMI_MODELS } from '@push/lib/provider-models';
 import {
   handleAnthropicChat,
   handleAnthropicModels,
@@ -29,6 +30,8 @@ import {
   handleOpenRouterModels,
   handleZaiChat,
   handleZaiModels,
+  handleKimiChat,
+  handleKimiModels,
   handleZenChat,
   handleZenModels,
   handleZenGoChat,
@@ -1816,6 +1819,83 @@ describe('handleZaiModels', () => {
     const body = (await response.json()) as { object: string; data: Array<{ id: string }> };
     expect(body.object).toBe('list');
     expect(body.data.map((model) => model.id)).toEqual(ZAI_MODELS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Kimi - chat (streaming) + curated models
+// ---------------------------------------------------------------------------
+
+describe('handleKimiChat', () => {
+  it('posts Chat Completions requests to api.moonshot.ai with KIMI_API_KEY', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+
+    await handleKimiChat(makeChatRequest(), makeEnv({ KIMI_API_KEY: 'sk-kimi' }));
+
+    expect(captured?.url).toBe('https://api.moonshot.ai/v1/chat/completions');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-kimi');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+  });
+
+  it('normalizes K2.7 sampling parameters to the values required by Kimi', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    const request = new Request('https://push.example.test/api/kimi/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'kimi-k2.7-code-highspeed',
+        messages: [{ role: 'user', content: 'hello' }],
+        temperature: 0.1,
+        top_p: 0.5,
+      }),
+    });
+
+    await handleKimiChat(request, makeEnv({ MOONSHOT_API_KEY: 'sk-moonshot' }));
+
+    expect(capturedBody).toMatchObject({ temperature: 1, top_p: 0.95 });
+  });
+
+  it('returns 401 when the Worker has no Kimi key configured', async () => {
+    const response = await handleKimiChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Kimi API key not configured/i);
+  });
+});
+
+describe('handleKimiModels', () => {
+  it('serves the curated Kimi model list without an upstream fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await handleKimiModels(makeModelsRequest(), makeEnv());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const body = (await response.json()) as { object: string; data: Array<{ id: string }> };
+    expect(body.object).toBe('list');
+    expect(body.data.map((model) => model.id)).toEqual(KIMI_MODELS);
   });
 });
 

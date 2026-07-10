@@ -10,6 +10,7 @@ import {
   clearPreferredProvider,
   OPENROUTER_MODELS,
   ZAI_MODELS,
+  KIMI_MODELS,
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
@@ -31,6 +32,7 @@ import {
   fetchOllamaModels,
   fetchOpenRouterModels,
   fetchZaiModels,
+  fetchKimiModels,
   fetchZenModels,
   fetchNvidiaModels,
   fetchFireworksModels,
@@ -43,6 +45,7 @@ import {
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
+import { useKimiConfig } from '@/hooks/useKimiConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
 import { useXAIConfig } from '@/hooks/useXAIConfig';
@@ -104,6 +107,7 @@ export interface ModelCatalog {
   ollama: ProviderKeyConfig;
   openRouter: ProviderKeyConfig;
   zai: ProviderKeyConfig;
+  kimi: ProviderKeyConfig;
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
@@ -128,6 +132,7 @@ export interface ModelCatalog {
   ollamaModels: ProviderModelState;
   openRouterModels: ProviderModelState;
   zaiModels: ProviderModelState;
+  kimiModels: ProviderModelState;
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
@@ -142,6 +147,7 @@ export interface ModelCatalog {
   ollamaModelOptions: string[];
   openRouterModelOptions: string[];
   zaiModelOptions: string[];
+  kimiModelOptions: string[];
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
@@ -161,6 +167,7 @@ export interface ModelCatalog {
   refreshOllamaModels: () => Promise<void>;
   refreshOpenRouterModels: () => Promise<void>;
   refreshZaiModels: () => Promise<void>;
+  refreshKimiModels: () => Promise<void>;
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
@@ -274,6 +281,18 @@ export function buildModelControl(
         loading: catalog.zaiModels.loading,
         error: catalog.zaiModels.error,
         onRefresh: catalog.refreshZaiModels,
+        allowCustom: true,
+      };
+    case 'kimi':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Kimi'),
+        value: lockedModel ?? catalog.kimi.model,
+        options: includeSelectedModel(catalog.kimiModelOptions, lockedModel ?? catalog.kimi.model),
+        onChange: catalog.kimi.setModel,
+        loading: catalog.kimiModels.loading,
+        error: catalog.kimiModels.error,
+        onRefresh: catalog.refreshKimiModels,
         allowCustom: true,
       };
     case 'cloudflare':
@@ -411,6 +430,7 @@ export function useModelCatalog(): ModelCatalog {
   const ollamaCfg = useOllamaConfig();
   const openRouterCfg = useOpenRouterConfig();
   const zaiCfg = useZaiConfig();
+  const kimiCfg = useKimiConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
   const fireworksCfg = useFireworksConfig();
@@ -426,6 +446,7 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
+  const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
@@ -508,6 +529,7 @@ export function useModelCatalog(): ModelCatalog {
     ollama: ollamaCfg.hasKey || serverUnlocked('ollama'),
     openrouter: openRouterCfg.hasKey || serverUnlocked('openrouter'),
     zai: zaiCfg.hasKey || serverUnlocked('zai'),
+    kimi: kimiCfg.hasKey || serverUnlocked('kimi'),
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
     nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
@@ -530,6 +552,7 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaModelList, setOllamaModelList] = useState<string[]>([]);
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
   const [zaiModelList, setZaiModelList] = useState<string[]>([]);
+  const [kimiModelList, setKimiModelList] = useState<string[]>([]);
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
@@ -543,6 +566,7 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
   const [zaiLoading, setZaiLoading] = useState(false);
+  const [kimiLoading, setKimiLoading] = useState(false);
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
@@ -556,6 +580,7 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
   const [zaiError, setZaiError] = useState<string | null>(null);
+  const [kimiError, setKimiError] = useState<string | null>(null);
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
@@ -569,6 +594,7 @@ export function useModelCatalog(): ModelCatalog {
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
   const [zaiUpdatedAt, setZaiUpdatedAt] = useState<number | null>(null);
+  const [kimiUpdatedAt, setKimiUpdatedAt] = useState<number | null>(null);
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
@@ -707,6 +733,20 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load Z.ai models.',
     });
   }, [zaiCfg.hasKey, zaiLoading, refreshModels]);
+
+  const refreshKimiModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: kimiCfg.hasKey,
+      isLoading: kimiLoading,
+      setLoading: setKimiLoading,
+      setError: setKimiError,
+      setModels: setKimiModelList,
+      setUpdatedAt: setKimiUpdatedAt,
+      fetchModels: fetchKimiModels,
+      emptyMessage: 'No models returned by Kimi.',
+      failureMessage: 'Failed to load Kimi models.',
+    });
+  }, [kimiCfg.hasKey, kimiLoading, refreshModels]);
 
   // Manual refresh defaults `force` to true so the picker revalidates the
   // cached binding catalog; the auto-fetch effect below passes `false` to serve
@@ -954,6 +994,30 @@ export function useModelCatalog(): ModelCatalog {
       zaiLoading,
       zaiModelList.length,
       refreshZaiModels,
+      refreshKimiModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: kimiCfg.hasKey,
+          modelCount: kimiModelList.length,
+          loading: kimiLoading,
+          error: kimiError,
+        }),
+        activeProviderLabel === 'kimi',
+        () => {
+          void refreshKimiModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      kimiCfg.hasKey,
+      kimiError,
+      kimiLoading,
+      kimiModelList.length,
+      refreshKimiModels,
     ],
   );
   useEffect(
@@ -1209,6 +1273,16 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [zaiCfg.hasKey]);
   useEffect(() => {
+    if (!kimiCfg.hasKey) {
+      const id = setTimeout(() => {
+        setKimiModelList([]);
+        setKimiError(null);
+        setKimiUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [kimiCfg.hasKey]);
+  useEffect(() => {
     if (!zenCfg.hasKey) {
       const id = setTimeout(() => {
         setZenModelList([]);
@@ -1372,6 +1446,11 @@ export function useModelCatalog(): ModelCatalog {
     () => includeSelectedModel(zaiModelList.length > 0 ? zaiModelList : ZAI_MODELS, zaiCfg.model),
     [zaiModelList, zaiCfg.model],
   );
+  const kimiModelOptions = useMemo(
+    () =>
+      includeSelectedModel(kimiModelList.length > 0 ? kimiModelList : KIMI_MODELS, kimiCfg.model),
+    [kimiModelList, kimiCfg.model],
+  );
   const cloudflareModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1481,6 +1560,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: zaiCfg.setModel,
       keyInput: zaiKeyInput,
       setKeyInput: setZaiKeyInput,
+    },
+    kimi: {
+      setKey: kimiCfg.setKey,
+      clearKey: kimiCfg.clearKey,
+      hasKey: kimiCfg.hasKey,
+      model: kimiCfg.model,
+      setModel: kimiCfg.setModel,
+      keyInput: kimiKeyInput,
+      setKeyInput: setKimiKeyInput,
     },
     cloudflare: {
       configured: cloudflareConfigured,
@@ -1603,6 +1691,12 @@ export function useModelCatalog(): ModelCatalog {
       error: zaiError,
       updatedAt: zaiUpdatedAt,
     },
+    kimiModels: {
+      models: kimiModelList,
+      loading: kimiLoading,
+      error: kimiError,
+      updatedAt: kimiUpdatedAt,
+    },
     cloudflareModels: {
       models: cloudflareModelList,
       loading: cloudflareLoading,
@@ -1661,6 +1755,7 @@ export function useModelCatalog(): ModelCatalog {
     ollamaModelOptions,
     openRouterModelOptions,
     zaiModelOptions,
+    kimiModelOptions,
     cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
@@ -1678,6 +1773,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshOllamaModels,
     refreshOpenRouterModels,
     refreshZaiModels,
+    refreshKimiModels,
     refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,

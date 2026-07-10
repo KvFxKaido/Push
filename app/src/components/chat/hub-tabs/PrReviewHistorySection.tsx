@@ -13,6 +13,7 @@ import {
   CLOUDFLARE_MODELS,
   SHARED_PROVIDER_MODEL_CATALOG,
   ZAI_MODELS,
+  KIMI_MODELS,
 } from '@push/lib/provider-models';
 import { PROVIDERS, type PreferredProvider } from '@/lib/providers';
 import type { ReviewComment } from '@/types';
@@ -27,6 +28,7 @@ import { Switch } from '@/components/ui/switch';
 const AUTOMATED_REVIEW_MODEL_OPTIONS: Partial<Record<PreferredProvider, readonly string[]>> = {
   ...SHARED_PROVIDER_MODEL_CATALOG,
   zai: ZAI_MODELS,
+  kimi: KIMI_MODELS,
   cloudflare: CLOUDFLARE_MODELS,
 };
 

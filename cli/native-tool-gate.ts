@@ -8,6 +8,7 @@ import {
   SAKANA_MODELS,
   XAI_MODELS,
   ZAI_MODELS,
+  KIMI_MODELS,
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
@@ -33,6 +34,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   sakana: new Set(SAKANA_MODELS),
   xai: new Set(XAI_MODELS),
   zai: new Set(ZAI_MODELS),
+  kimi: new Set(KIMI_MODELS),
   zen: new Set(ZEN_MODELS),
 };
 

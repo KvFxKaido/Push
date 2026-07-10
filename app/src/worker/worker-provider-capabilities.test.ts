@@ -50,6 +50,26 @@ describe('isProviderEngineCapable', () => {
     );
   });
 
+  it('maps the Kimi provider to the moonshot custom-provider BYOK slug', () => {
+    const env = {
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-prod',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'moonshot',
+      CF_AI_GATEWAY_BYOK: 'moonshot',
+    } as Env;
+    expect(isProviderEngineCapable('kimi', env)).toBe(true);
+  });
+
+  it('reports Kimi server-capable via either accepted Worker secret (any-of alias)', () => {
+    // Kimi's handler authenticates with MOONSHOT_API_KEY OR KIMI_API_KEY, so the
+    // capability probe must credential it when EITHER is set — otherwise a
+    // MOONSHOT_API_KEY-only deployment authenticates at dispatch while the probe
+    // reports Kimi locked (the two disagree).
+    expect(isProviderEngineCapable('kimi', {} as Env)).toBe(false);
+    expect(isProviderEngineCapable('kimi', { MOONSHOT_API_KEY: 'k' } as Env)).toBe(true);
+    expect(isProviderEngineCapable('kimi', { KIMI_API_KEY: 'k' } as Env)).toBe(true);
+  });
+
   it('reports cloudflare capable from the AI binding, not a secret', () => {
     expect(isProviderEngineCapable('cloudflare', {} as Env)).toBe(false);
     expect(isProviderEngineCapable('cloudflare', { AI: {} as Ai } as Env)).toBe(true);
@@ -70,6 +90,7 @@ describe('isProviderEngineCapable', () => {
       OLLAMA_API_KEY: 'k',
       OPENROUTER_API_KEY: 'k',
       ZAI_API_KEY: 'k',
+      KIMI_API_KEY: 'k',
       ZEN_API_KEY: 'k',
       NVIDIA_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',

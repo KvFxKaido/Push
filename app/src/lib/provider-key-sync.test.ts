@@ -30,6 +30,7 @@ describe('providerForStorageKey', () => {
     expect(providerForStorageKey('ollama_api_key')).toBe('ollama');
     expect(providerForStorageKey('openrouter_api_key')).toBe('openrouter');
     expect(providerForStorageKey('zai_api_key')).toBe('zai');
+    expect(providerForStorageKey('kimi_api_key')).toBe('kimi');
     expect(providerForStorageKey('anthropic_api_key')).toBe('anthropic');
     expect(providerForStorageKey('fireworks_api_key')).toBe('fireworks');
   });
