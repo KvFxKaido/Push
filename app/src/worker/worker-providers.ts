@@ -1713,10 +1713,12 @@ export async function handleXAIChat(request: Request, env: Env): Promise<Respons
     upstreamUrl: XAI_RESPONSES_UPSTREAM_URL,
     route: 'api/xai/chat',
     timeoutError: 'xAI request timed out after 120 seconds',
-    // Bucket C custom provider (AIG v2 Path 1.5), Responses-native: base_url
-    // https://api.x.ai; dormant until `xai` is registered + listed in
-    // CF_AI_GATEWAY_CUSTOM_SLUGS.
-    gateway: { provider: 'custom-xai', pathSuffix: '/v1/responses' },
+    // xAI is a FIRST-PARTY AI Gateway provider (`grok`, proxying api.x.ai) — not
+    // a custom slug. So it routes via `/grok/v1/responses` (Responses API
+    // verified 200 through the gateway) and needs only CF_AI_GATEWAY_BYOK (no
+    // CUSTOM_SLUGS). The gateway's provider name is `grok`, which is the byok
+    // id the Responses factory checks against CF_AI_GATEWAY_BYOK.
+    gateway: { provider: 'grok', pathSuffix: '/v1/responses' },
   });
 }
 
@@ -1911,14 +1913,14 @@ export async function handleXAIModels(request: Request, env: Env): Promise<Respo
   if (preamble instanceof Response) return preamble;
   const { requestId } = preamble;
 
-  const byok = gatewayByokActive(env, 'xai', 'custom-xai');
+  const byok = gatewayByokActive(env, 'grok');
   const apiKey = byok ? null : resolveDirectProviderKey(env.XAI_API_KEY, request);
   if (!byok && !apiKey) {
     return curatedXAIModelsResponse(requestId);
   }
   const { upstreamUrl, gatewayHeaders } = byok
     ? resolveAiGatewayFetchTarget(env, XAI_MODELS_URL, {
-        provider: 'custom-xai',
+        provider: 'grok',
         pathSuffix: '/v1/models',
       })
     : { upstreamUrl: XAI_MODELS_URL, gatewayHeaders: {} as Record<string, string> };
