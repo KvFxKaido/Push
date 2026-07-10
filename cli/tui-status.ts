@@ -465,6 +465,7 @@ interface TuiState {
   runState: RunState;
   payloadInspectorOpen: boolean;
   toolJsonPayloadsExpanded: boolean;
+  activityInspectorOpen?: boolean;
   // Session id used to seed the mood-verb pick when running without an
   // activity-specific verb.
   session?: string;
@@ -501,6 +502,14 @@ export function renderKeybindHints(
       theme.style(keyToken, 'Enter') + theme.style('fg.dim', ' submit answer'),
       theme.style(keyToken, 'Esc') + theme.style('fg.dim', ' skip'),
     ].join('  ');
+  } else if (tuiState.activityInspectorOpen) {
+    leftHints = [
+      theme.style(keyToken, 'j/k,↑↓') + theme.style('fg.dim', ' move'),
+      theme.style(keyToken, 'Enter') + theme.style('fg.dim', ' toggle phase'),
+      theme.style(keyToken, 'Space') + theme.style('fg.dim', ' details'),
+      theme.style(keyToken, 'a') + theme.style('fg.dim', ' toggle all'),
+      theme.style(keyToken, 'Esc / Ctrl+T') + theme.style('fg.dim', ' close'),
+    ].join('  ');
   } else if (tuiState.payloadInspectorOpen) {
     leftHints = [
       theme.style(keyToken, 'j/k,↑↓') + theme.style('fg.dim', ' move'),
@@ -514,7 +523,7 @@ export function renderKeybindHints(
     ].join('  ');
   } else {
     leftHints = [
-      theme.style(keyToken, 'Ctrl+T') + theme.style('fg.dim', ' tools'),
+      theme.style(keyToken, 'Ctrl+T') + theme.style('fg.dim', ' activity'),
       theme.style(keyToken, 'Ctrl+O') + theme.style('fg.dim', ' payloads'),
       theme.style(keyToken, 'Ctrl+G') + theme.style('fg.dim', ' reasoning'),
       theme.style(keyToken, 'Ctrl+C') + theme.style('fg.dim', ' cancel'),
@@ -533,9 +542,11 @@ export function renderKeybindHints(
         ? theme.style('state.error', 'awaiting approval')
         : tuiState.runState === 'awaiting_user_question'
           ? theme.style('accent.primary', 'awaiting answer')
-          : tuiState.payloadInspectorOpen
-            ? theme.style('accent.secondary', 'payload inspect')
-            : theme.style('state.success', 'idle');
+          : tuiState.activityInspectorOpen
+            ? theme.style('accent.secondary', 'activity inspect')
+            : tuiState.payloadInspectorOpen
+              ? theme.style('accent.secondary', 'payload inspect')
+              : theme.style('state.success', 'idle');
 
   // Layout left/right
   const rightWidth = visibleWidth(stateLabel);

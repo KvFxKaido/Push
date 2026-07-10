@@ -427,6 +427,7 @@ export type Role =
   | 'user'
   | 'assistant'
   | 'tool_call'
+  | 'activity_group'
   | 'status'
   | 'error'
   | 'warning'
@@ -642,6 +643,85 @@ const toolCallFramer: EntryFramer = {
   },
 };
 
+function formatActivityDuration(ms: unknown): string {
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0) return '';
+  return ms < 1000 ? `${Math.round(ms)}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+function activityToolVerb(name: string): string {
+  const normalized = name.toLowerCase();
+  if (/(?:edit|write|patch|replace)/.test(normalized)) return 'Edit';
+  if (/(?:read|fetch|get_|show)/.test(normalized)) return 'Read';
+  if (/(?:search|grep|find)/.test(normalized)) return 'Search';
+  if (/(?:exec|run|test|check)/.test(normalized)) return 'Run';
+  if (/(?:list)/.test(normalized)) return 'List';
+  return name;
+}
+
+function renderActivityTool(
+  out: string[],
+  item: TranscriptEntry,
+  width: number,
+  theme: Theme,
+  showDetails: boolean,
+): void {
+  const pending = item.error !== true && item.duration === undefined;
+  const status = pending
+    ? theme.style('accent.secondary', theme.unicode ? '◆' : '*')
+    : item.error
+      ? theme.style('state.error', theme.glyphs.cross_mark || 'x')
+      : theme.style('state.success', theme.unicode ? '◆' : '*');
+  const name = String(item.text ?? 'tool');
+  const target = summarizeToolArgs(item.args, Math.max(10, width - 28));
+  const duration = formatActivityDuration(item.duration);
+  const label = theme.bold(theme.style('fg.primary', activityToolVerb(name)));
+  const targetText = target ? ` ${theme.style('accent.secondary', target)}` : '';
+  const durationText = duration ? theme.style('fg.dim', `  ${duration}`) : '';
+  out.push(`  ${status} ${label}${targetText}${durationText}`);
+
+  const important = item.error === true || isEditDiff(item.editDiff);
+  if (!showDetails && !important) return;
+  if (!pending && !item.error && isEditDiff(item.editDiff)) {
+    renderEditDiffLines(out, item.editDiff, width, theme);
+    return;
+  }
+  if (item.resultPreview && !pending) {
+    const preview = String(item.resultPreview).split('\n')[0].trim();
+    if (preview) out.push(`      ${theme.style('fg.dim', truncate(preview, width - 6))}`);
+  }
+}
+
+const activityGroupFramer: EntryFramer = {
+  render(out, entry, width, theme) {
+    const items = Array.isArray(entry.items) ? (entry.items as TranscriptEntry[]) : [];
+    if (items.length === 0) return;
+    const expanded = entry.expanded !== false;
+    const selected = entry.selected === true;
+    const marker = expanded ? (theme.unicode ? '▾' : 'v') : theme.unicode ? '▸' : '>';
+    const failures = items.filter((item) => item.kind === 'tool' && item.error === true).length;
+    const edits = items.filter((item) => item.kind === 'tool' && isEditDiff(item.editDiff)).length;
+    const details = [
+      `${items.length} step${items.length === 1 ? '' : 's'}`,
+      edits ? `${edits} edit${edits === 1 ? '' : 's'}` : '',
+      failures ? `${failures} failed` : '',
+    ].filter(Boolean);
+    const header = `${marker} ${details.join(' · ')}`;
+    out.push(selected ? theme.inverse(header) : theme.style('fg.dim', header));
+    if (!expanded) return;
+
+    for (const item of items) {
+      if (item.kind === 'thought') {
+        const duration = formatActivityDuration(item.duration);
+        out.push(
+          `  ${theme.style('fg.dim', theme.unicode ? '◆' : '*')} ${theme.style('fg.muted', `Thought${duration ? ` for ${duration}` : ''}`)}`,
+        );
+        continue;
+      }
+      renderActivityTool(out, item, width, theme, entry.detailsExpanded === true);
+    }
+  },
+};
+
 const statusFramer: EntryFramer = {
   render(out, entry, width, theme) {
     const firstPrefix = `${theme.style('fg.dim', theme.glyphs.hexagon)} `;
@@ -729,6 +809,7 @@ export const framers: Record<Role, EntryFramer> = {
   user: userFramer,
   assistant: assistantFramer,
   tool_call: toolCallFramer,
+  activity_group: activityGroupFramer,
   status: statusFramer,
   error: errorFramer,
   warning: warningFramer,
