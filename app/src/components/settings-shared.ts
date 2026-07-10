@@ -46,11 +46,12 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     placeholder: string;
     saveLabel: string;
     hint: string;
+    byokPartialNote?: string;
     labelTransform?: (model: string) => string;
   }
 > = Object.fromEntries(
   BUILT_IN_SETTINGS_PROVIDER_DEFINITIONS.map((def) => {
-    const { keyPlaceholder, keySaveLabel, keyHint } = def.settings;
+    const { keyPlaceholder, keySaveLabel, keyHint, byokPartialNote } = def.settings;
     if (!keyPlaceholder || !keySaveLabel || !keyHint) {
       throw new Error(`Provider "${def.id}" is missing built-in settings key copy`);
     }
@@ -60,6 +61,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
         placeholder: keyPlaceholder,
         saveLabel: keySaveLabel,
         hint: keyHint,
+        ...(byokPartialNote ? { byokPartialNote } : {}),
         labelTransform: (model: string) => formatModelDisplayName(def.id, model),
       },
     ];
@@ -70,6 +72,7 @@ export const BUILT_IN_SETTINGS_PROVIDER_META: Record<
     placeholder: string;
     saveLabel: string;
     hint: string;
+    byokPartialNote?: string;
     labelTransform?: (model: string) => string;
   }
 >;

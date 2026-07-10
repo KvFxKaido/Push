@@ -193,6 +193,8 @@ interface ProviderKeySectionProps {
    * to work.
    */
   credentialSource?: ProviderCredentialSource | null;
+  /** Partial gateway coverage note — see ProviderSettingsDefinition.byokPartialNote. */
+  byokPartialNote?: string;
   model?: {
     value: string;
     set: (v: string) => void;
@@ -231,6 +233,7 @@ export function ProviderKeySection({
   hint,
   savedHint,
   credentialSource,
+  byokPartialNote,
   model,
   refresh,
 }: ProviderKeySectionProps) {
@@ -246,7 +249,42 @@ export function ProviderKeySection({
     credentialSource === 'gateway-byok' ||
     credentialSource === 'worker-secret' ||
     credentialSource === 'binding';
+  // Partial gateway coverage (e.g. zen: MiniMax/Qwen Go models need x-api-key,
+  // which gateway injection cannot set): the local key is NOT redundant, so
+  // keep offering the input and never label a saved key "unused".
+  const byokPartial = credentialSource === 'gateway-byok' && Boolean(byokPartialNote);
   const accountHeld = credentialSource === 'user-key' && !hasKey;
+  const keyForm = (
+    <div className="space-y-2">
+      <input
+        type="password"
+        value={keyInput}
+        onChange={(e) => setKeyInput(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && keyInput.trim()) {
+            saveKey();
+            setKeyInput('');
+          }
+        }}
+      />
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          if (keyInput.trim()) {
+            saveKey();
+            setKeyInput('');
+          }
+        }}
+        disabled={!keyInput.trim()}
+        className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
+      >
+        {saveLabel}
+      </Button>
+    </div>
+  );
   if (hasKey || serverHeld || accountHeld) {
     const statusLabel = serverHeld
       ? (CREDENTIAL_SOURCE_LABELS[credentialSource as ProviderCredentialSource] ?? 'Connected')
@@ -275,8 +313,12 @@ export function ProviderKeySection({
                 }
               }}
               className="text-push-fg-dim hover:text-red-400 transition-colors"
-              aria-label={serverHeld ? `Remove unused local ${label} key` : `Remove ${label} key`}
-              title={serverHeld ? 'Remove unused local key' : 'Remove key'}
+              aria-label={
+                serverHeld && !byokPartial
+                  ? `Remove unused local ${label} key`
+                  : `Remove ${label} key`
+              }
+              title={serverHeld && !byokPartial ? 'Remove unused local key' : 'Remove key'}
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
@@ -285,12 +327,15 @@ export function ProviderKeySection({
         {serverHeld && (
           <p className="text-xs text-push-fg-dim">
             {credentialSource === 'gateway-byok'
-              ? `The ${label} key is stored in the AI Gateway, which injects it per request.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`
+              ? byokPartial
+                ? `The ${label} key is stored in the AI Gateway for most models. ${byokPartialNote}${hasKey ? ' Your saved key covers them.' : ''}`
+                : `The ${label} key is stored in the AI Gateway, which injects it per request.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`
               : credentialSource === 'binding'
                 ? 'Authenticates via the deployed Worker binding. No key needed.'
                 : `The ${label} key is set on the Worker.${hasKey ? ' Your local key is unused.' : ' No local key needed.'}`}
           </p>
         )}
+        {byokPartial && !hasKey && keyForm}
         {accountHeld && (
           <p className="text-xs text-push-fg-dim">
             Your {label} key is saved to your account (added on another device or before this
@@ -331,33 +376,7 @@ export function ProviderKeySection({
 
   return (
     <div className="space-y-2 rounded-2xl border border-push-edge bg-[linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.012))] p-3 shadow-[0_12px_24px_rgba(0,0,0,0.16)]">
-      <input
-        type="password"
-        value={keyInput}
-        onChange={(e) => setKeyInput(e.target.value)}
-        placeholder={placeholder}
-        className="w-full rounded-lg border border-push-edge-subtle bg-push-grad-input px-3 py-2 text-sm text-push-fg placeholder:text-push-fg-dim shadow-[0_8px_18px_rgba(0,0,0,0.35),0_2px_6px_rgba(0,0,0,0.2)] outline-none transition-all focus:border-push-sky/50"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && keyInput.trim()) {
-            saveKey();
-            setKeyInput('');
-          }
-        }}
-      />
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => {
-          if (keyInput.trim()) {
-            saveKey();
-            setKeyInput('');
-          }
-        }}
-        disabled={!keyInput.trim()}
-        className="text-push-fg-secondary hover:text-push-fg w-full justify-start"
-      >
-        {saveLabel}
-      </Button>
+      {keyForm}
       <p className="text-xs text-push-fg-dim">{hint}</p>
     </div>
   );

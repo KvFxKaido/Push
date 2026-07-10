@@ -1220,6 +1220,7 @@ export function SettingsSectionContent({
                         saveLabel={meta.saveLabel}
                         hint={meta.hint}
                         credentialSource={source}
+                        byokPartialNote={meta.byokPartialNote}
                         model={{
                           value: provider.model,
                           set: provider.setModel,
@@ -1234,17 +1235,19 @@ export function SettingsSectionContent({
                           updatedAt: provider.modelsUpdatedAt,
                         }}
                       />
-                      {providerId === 'zen' && provider.hasKey && provider.setGoMode && (
-                        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
-                          <span className="text-xs text-push-fg-muted">Go subscription</span>
-                          <input
-                            type="checkbox"
-                            checked={provider.goMode ?? false}
-                            onChange={(e) => provider.setGoMode!(e.target.checked)}
-                            className="h-3.5 w-3.5 accent-emerald-400"
-                          />
-                        </label>
-                      )}
+                      {providerId === 'zen' &&
+                        (provider.hasKey || source === 'gateway-byok') &&
+                        provider.setGoMode && (
+                          <label className="flex cursor-pointer items-center justify-between rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
+                            <span className="text-xs text-push-fg-muted">Go subscription</span>
+                            <input
+                              type="checkbox"
+                              checked={provider.goMode ?? false}
+                              onChange={(e) => provider.setGoMode!(e.target.checked)}
+                              className="h-3.5 w-3.5 accent-emerald-400"
+                            />
+                          </label>
+                        )}
                     </>
                   )}
                 </div>
