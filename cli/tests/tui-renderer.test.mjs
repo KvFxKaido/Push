@@ -185,7 +185,6 @@ describe('computeLayout', () => {
     assert.ok(layout.transcript);
     assert.ok(layout.composer);
     assert.ok(layout.footer);
-    assert.equal(layout.toolPane, null); // tool pane closed by default
   });
 
   it('transcript has positive height', () => {
@@ -206,19 +205,6 @@ describe('computeLayout', () => {
   it('composer has min 3 rows', () => {
     const layout = computeLayout(24, 80);
     assert.ok(layout.composer.height >= 3);
-  });
-
-  it('tool pane opens with correct width ratio', () => {
-    const layout = computeLayout(40, 100, { toolPaneOpen: true });
-    assert.ok(layout.toolPane);
-    const ratio = layout.toolPane.width / layout.innerWidth;
-    assert.ok(ratio >= 0.3 && ratio <= 0.42, `Tool pane ratio: ${ratio}`);
-  });
-
-  it('transcript width shrinks when tool pane opens', () => {
-    const closed = computeLayout(40, 100, { toolPaneOpen: false });
-    const open = computeLayout(40, 100, { toolPaneOpen: true });
-    assert.ok(open.transcript.width < closed.transcript.width);
   });
 
   it('handles very small terminal gracefully', () => {

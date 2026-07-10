@@ -504,7 +504,6 @@ export interface PaneRegion {
 }
 
 export interface LayoutOptions {
-  toolPaneOpen?: boolean;
   composerLines?: number;
   /**
    * Override the fixed header pane height. Default 1 (single content row).
@@ -517,29 +516,24 @@ export interface Layout {
   innerLeft: number;
   header: PaneRegion;
   transcript: PaneRegion;
-  toolPane: PaneRegion | null;
   composer: PaneRegion;
   footer: PaneRegion;
 }
 
 /**
  * Compute pane regions given terminal size and state.
- * Returns { header, transcript, toolPane, composer, footer } with
+ * Returns { header, transcript, composer, footer } with
  * { top, left, width, height } for each.
  *
- * Internally builds a flex tree (header / gap / row[transcript, divider,
- * toolPane] / gap / composer / footer) and resolves it via {@link solveFlex}.
+ * Internally builds a flex tree (header / gap / row[transcript] / gap /
+ * composer / footer) and resolves it via {@link solveFlex}.
  * Future panes that need nested splits can extend the tree below or call
  * {@link solveFlex} directly with their own flex tree.
  */
 export function computeLayout(
   rows: number,
   cols: number,
-  {
-    toolPaneOpen = false,
-    composerLines = 1,
-    headerHeight: headerHeightOverride,
-  }: LayoutOptions = {},
+  { composerLines = 1, headerHeight: headerHeightOverride }: LayoutOptions = {},
 ): Layout {
   const outerMarginRow = 1;
   const outerMarginCol = 2;
@@ -551,21 +545,11 @@ export function computeLayout(
   const footerHeight = 2; // status bar + keybind hints
   const composerHeight = Math.max(3, Math.min(7, composerLines + 2)); // +2 for border
 
-  const middleRow: FlexNode = toolPaneOpen
-    ? {
-        dir: 'row',
-        size: { kind: 'flex', weight: 1 },
-        children: [
-          { id: 'transcript', size: { kind: 'flex', weight: 1 } },
-          { size: { kind: 'fixed', size: 1 } }, // divider
-          { id: 'toolPane', size: { kind: 'percent', percent: 0.37 } },
-        ],
-      }
-    : {
-        dir: 'row',
-        size: { kind: 'flex', weight: 1 },
-        children: [{ id: 'transcript', size: { kind: 'flex', weight: 1 } }],
-      };
+  const middleRow: FlexNode = {
+    dir: 'row',
+    size: { kind: 'flex', weight: 1 },
+    children: [{ id: 'transcript', size: { kind: 'flex', weight: 1 } }],
+  };
 
   const tree: FlexNode = {
     dir: 'col',
@@ -608,18 +592,11 @@ export function computeLayout(
     top: footerAnchoredTop - composerRaw.height,
   };
 
-  let toolPane: PaneRegion | null = null;
-  if (toolPaneOpen) {
-    const tp = regions.get('toolPane');
-    toolPane = tp ? { ...tp, height: Math.max(1, tp.height) } : null;
-  }
-
   return {
     innerWidth,
     innerLeft,
     header,
     transcript,
-    toolPane,
     composer,
     footer,
   };

@@ -215,6 +215,87 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
   });
 });
 
+describe('renderEntryLines: activity_group', () => {
+  const editDiff = {
+    path: 'src/foo.ts',
+    adds: 1,
+    dels: 1,
+    lines: [
+      { kind: 'del', oldLine: 2, text: 'old line' },
+      { kind: 'add', newLine: 2, text: 'new line' },
+    ],
+  };
+
+  it('renders a chronological compact work log while keeping edits visible', () => {
+    assert.deepEqual(
+      render({
+        role: 'activity_group',
+        expanded: true,
+        items: [
+          { kind: 'thought', duration: 800, text: 'private reasoning' },
+          {
+            kind: 'tool',
+            text: 'read_file',
+            args: { path: 'src/foo.ts' },
+            duration: 42,
+            resultPreview: 'file contents stay folded',
+          },
+          {
+            kind: 'tool',
+            text: 'edit_file',
+            args: { path: 'src/foo.ts' },
+            duration: 12,
+            editDiff,
+          },
+        ],
+      }),
+      [
+        '▾ 3 steps · 1 edit',
+        '  ◆ Thought for 800ms',
+        '  ◆ Read src/foo.ts  42ms',
+        '  ◆ Edit src/foo.ts  12ms',
+        '  └─ +1 -1',
+        '     2 - old line',
+        '     2 + new line',
+      ],
+    );
+  });
+
+  it('folds a whole phase to one aggregate row', () => {
+    assert.deepEqual(
+      render({
+        role: 'activity_group',
+        expanded: false,
+        items: [
+          { kind: 'thought', duration: 1200 },
+          { kind: 'tool', text: 'exec', args: { command: 'npm test' }, duration: 500 },
+        ],
+      }),
+      ['▸ 2 steps'],
+    );
+  });
+
+  it('automatically exposes failed result context', () => {
+    assert.deepEqual(
+      render({
+        role: 'activity_group',
+        expanded: true,
+        items: [
+          {
+            kind: 'tool',
+            text: 'exec',
+            args: { command: 'npm test' },
+            duration: 1400,
+            error: true,
+            resultPreview: '2 tests failed',
+          },
+        ],
+      }),
+      ['▾ 1 step · 1 failed', '  ✗ Run npm test  1.4s', '      2 tests failed'],
+    );
+  });
+});
+
 describe('renderEntryLines: diff fences', () => {
   it('renders a ```diff fence with a gutter, summary, and stripped markers', () => {
     assert.deepEqual(

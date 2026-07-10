@@ -165,7 +165,6 @@ import {
 // ── TUI state ───────────────────────────────────────────────────────
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
-const MAX_TOOL_FEED = 200; // max items in tool feed
 // `TUI_DAEMON_CAPABILITIES` (the snapshot/event-v2 profile this client
 // advertises) is the canonical, drift-tested definition in
 // `lib/daemon-capabilities.ts` — imported above, not redefined here (#745).
@@ -311,8 +310,6 @@ function createTUIState() {
     // Settle-and-freeze cache for the streaming tail (tui-stream-frame.ts):
     // frames the settled prefix once, reframes only the volatile tail per token.
     streamFrameState: null,
-    // Tool feed: array of { type: 'call'|'result', name, args?, duration?, error?, preview?, timestamp }
-    toolFeed: [],
     // Approval prompt (when awaiting_approval)
     approval: null, // { kind, summary, details }
     // Pane wrapper for the approval modal — owns its render + key handling.
@@ -321,7 +318,9 @@ function createTUIState() {
     // User question prompt (when awaiting_user_question)
     userQuestion: null, // { question: string, choices?: string[] }
     // UI toggles
-    toolPaneOpen: false,
+    activityInspectorOpen: false,
+    activityCursorSeq: null,
+    activeActivityGroup: null,
     toolJsonPayloadsExpanded: false,
     payloadInspectorOpen: false,
     payloadCursorId: null,
@@ -390,14 +389,6 @@ function pushTranscriptEntry(tuiState, entry, { autoScroll = true } = {}) {
 
 function addTranscriptEntry(tuiState, role, text) {
   pushTranscriptEntry(tuiState, { role, text, timestamp: Date.now() });
-}
-
-function addToolFeedEntry(tuiState, entry) {
-  tuiState.toolFeed.push({ ...entry, timestamp: Date.now() });
-  if (tuiState.toolFeed.length > MAX_TOOL_FEED) {
-    tuiState.toolFeed.splice(0, tuiState.toolFeed.length - MAX_TOOL_FEED);
-  }
-  tuiState.dirty.add('tools');
 }
 
 // ── Pane renderers ──────────────────────────────────────────────────
@@ -634,51 +625,6 @@ function renderTranscript(buf, layout, theme, tuiState) {
   if (effectiveOffset > 0) {
     const indicator = theme.style('fg.dim', `[+${effectiveOffset} lines]`);
     buf.writeLine(top + height - 1, left + width - visibleWidth(indicator) - 1, indicator);
-  }
-}
-
-function renderToolPane(buf, layout, theme, tuiState) {
-  if (!layout.toolPane) return;
-  const { top, left, width, height } = layout.toolPane;
-  const { glyphs } = theme;
-
-  // Title
-  const count = theme.style('fg.dim', String(tuiState.toolFeed.length));
-  const title = `${makeBadge(theme, 'TOOLS', { fg: 'bg.base', bg: 'accent.secondary' })} ${count}`;
-  buf.writeLine(top, left, padTo(title, width));
-
-  // Tool feed entries (bottom-aligned)
-  const lines = [];
-  for (const entry of tuiState.toolFeed) {
-    if (entry.type === 'call') {
-      const argsPreview = summarizeToolArgs(entry.args, Math.max(8, width - entry.name.length - 8));
-      lines.push(
-        theme.style('accent.secondary', glyphs.arrow || glyphs.prompt) +
-          ' ' +
-          theme.style('fg.primary', entry.name) +
-          (argsPreview ? ' ' + theme.style('fg.dim', argsPreview) : ''),
-      );
-    } else if (entry.type === 'result') {
-      const ok = !entry.error;
-      const status = ok
-        ? theme.style('state.success', glyphs.check || 'OK')
-        : theme.style('state.error', glyphs.cross_mark || 'ERR');
-      const dur = entry.duration
-        ? theme.style('fg.dim', `${entry.duration}ms`)
-        : theme.style('fg.dim', 'done');
-      const preview = entry.preview
-        ? ' ' + theme.style('fg.dim', truncate(entry.preview, width - 20))
-        : '';
-      lines.push(`  ${status} ${theme.style('fg.secondary', entry.name)} ${dur}${preview}`);
-    }
-  }
-
-  const startIdx = Math.max(0, lines.length - (height - 1));
-  const slice = lines.slice(startIdx, startIdx + height - 1);
-
-  for (let r = 0; r < height - 1; r++) {
-    const line = r < slice.length ? slice[r] : '';
-    buf.writeLine(top + 1 + r, left, padTo(line, width));
   }
 }
 
@@ -2683,11 +2629,10 @@ export async function runTUI(options = {}) {
 
     const composerLines = composer.getLines().length;
     const headerHeight = 1;
-    const layoutKey = `${rows}x${cols}:${tuiState.toolPaneOpen ? 1 : 0}:${composerLines}`;
+    const layoutKey = `${rows}x${cols}:${composerLines}`;
     let layout = layoutCache?.key === layoutKey ? layoutCache.layout : null;
     if (!layout) {
       layout = computeLayout(rows, cols, {
-        toolPaneOpen: tuiState.toolPaneOpen,
         composerLines,
         headerHeight,
       });
@@ -2792,7 +2737,6 @@ export async function runTUI(options = {}) {
 
       renderHeaderRegion();
       renderTranscript(screenBuf, layout, theme, tuiState);
-      renderToolPane(screenBuf, layout, theme, tuiState);
       renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
       renderFooterRegion();
     } else {
@@ -2802,9 +2746,6 @@ export async function runTUI(options = {}) {
       }
       if (tuiState.dirty.has('transcript')) {
         renderTranscript(screenBuf, layout, theme, tuiState);
-      }
-      if (tuiState.dirty.has('tools')) {
-        renderToolPane(screenBuf, layout, theme, tuiState);
       }
       if (tuiState.dirty.has('composer')) {
         renderComposer(screenBuf, layout, theme, composer, tuiState, tabState);
@@ -2920,6 +2861,32 @@ export async function runTUI(options = {}) {
     if (!tuiState.streamBuf) return;
     addTranscriptEntry(tuiState, 'assistant', tuiState.streamBuf);
     tuiState.streamBuf = '';
+  }
+
+  function closeActiveActivityGroup() {
+    tuiState.activeActivityGroup = null;
+  }
+
+  function ensureActiveActivityGroup() {
+    if (tuiState.activeActivityGroup) return tuiState.activeActivityGroup;
+    const group = {
+      role: 'activity_group',
+      items: [],
+      expanded: true,
+      detailsExpanded: false,
+      timestamp: Date.now(),
+    };
+    pushTranscriptEntry(tuiState, group);
+    tuiState.activeActivityGroup = group;
+    return group;
+  }
+
+  function appendActivityItem(item) {
+    const group = ensureActiveActivityGroup();
+    group.items.push(item);
+    tuiState.entryRenderCache.delete(group);
+    tuiState.dirty.add('transcript');
+    return { group, item };
   }
 
   // Rebuild the daemon-mode transcript from the daemon's persisted
@@ -3038,6 +3005,7 @@ export async function runTUI(options = {}) {
       case 'assistant_thinking_token':
         if (!tuiState.reasoningStreaming) {
           thinkingPhaseStart = tuiState.reasoningBuf.length; // mark start of this chunk
+          thinkingPhaseStartedAt = Date.now();
         }
         tuiState.reasoningBuf += event.payload.text;
         tuiState.reasoningStreaming = true;
@@ -3054,7 +3022,12 @@ export async function runTUI(options = {}) {
         const chunk = tuiState.reasoningBuf.slice(thinkingPhaseStart).trim();
         if (chunk) {
           tuiState.lastReasoning = tuiState.reasoningBuf;
-          addTranscriptEntry(tuiState, 'reasoning', chunk);
+          appendActivityItem({
+            kind: 'thought',
+            text: chunk,
+            duration: Math.max(0, Date.now() - thinkingPhaseStartedAt),
+            timestamp: Date.now(),
+          });
         }
         if (tuiState.reasoningModalOpen) tuiState.dirty.add('all');
         scheduler.schedule();
@@ -3062,6 +3035,7 @@ export async function runTUI(options = {}) {
       }
 
       case 'assistant_token':
+        closeActiveActivityGroup();
         tuiState.streamBuf += event.payload.text;
         tuiState.scrollOffset = 0; // auto-scroll on new tokens
         if (tuiState.activity?.kind !== 'streaming') {
@@ -3103,13 +3077,8 @@ export async function runTUI(options = {}) {
         const argsQueue = pendingToolArgs.get(event.payload.toolName) || [];
         argsQueue.push(event.payload.args);
         pendingToolArgs.set(event.payload.toolName, argsQueue);
-        addToolFeedEntry(tuiState, {
-          type: 'call',
-          name: event.payload.toolName,
-          args: event.payload.args,
-        });
-        pushTranscriptEntry(tuiState, {
-          role: 'tool_call',
+        appendActivityItem({
+          kind: 'tool',
           text: event.payload.toolName,
           args: event.payload.args,
           error: false,
@@ -3126,13 +3095,6 @@ export async function runTUI(options = {}) {
         const isError = event.payload.isError;
         const text = event.payload.text || event.payload.preview || '';
         tuiState.lastToolResult = { name: event.payload.toolName, text, isError };
-        addToolFeedEntry(tuiState, {
-          type: 'result',
-          name: event.payload.toolName,
-          duration: event.payload.durationMs,
-          error: isError,
-          preview: text.slice(0, 100),
-        });
         // Track file awareness — shift args from the per-tool queue (parallel-safe)
         const resultArgsQueue = pendingToolArgs.get(event.payload.toolName);
         const matchedArgs = resultArgsQueue?.shift() ?? null;
@@ -3143,13 +3105,28 @@ export async function runTUI(options = {}) {
         let updatedTranscriptToolCall = false;
         for (let i = tuiState.transcript.length - 1; i >= 0; i--) {
           const candidate = tuiState.transcript[i];
-          if (candidate.role === 'tool_call' && candidate.text === event.payload.toolName) {
-            candidate.error = isError;
-            candidate.duration = event.payload.durationMs;
-            candidate.resultPreview = text.slice(0, 200);
+          const activityItems =
+            candidate.role === 'activity_group' && Array.isArray(candidate.items)
+              ? candidate.items
+              : [candidate];
+          for (let j = activityItems.length - 1; j >= 0; j--) {
+            const toolItem = activityItems[j];
+            if (
+              toolItem.kind !== 'tool' &&
+              !(candidate.role === 'tool_call' && toolItem === candidate)
+            )
+              continue;
+            // `duration !== undefined` (not truthiness) is the "settled" sentinel:
+            // a tool that legitimately reports durationMs 0 must not read as still
+            // pending, nor stay re-matchable by a later same-named result.
+            if (toolItem.text !== event.payload.toolName || toolItem.duration !== undefined)
+              continue;
+            toolItem.error = isError;
+            toolItem.duration = event.payload.durationMs;
+            toolItem.resultPreview = text.slice(0, 200);
             // Structured edit diff (edit_file / write_file) — rendered as an
             // edit card by the tool_call framer instead of the preview line.
-            if (isEditDiff(event.payload.diff)) candidate.editDiff = event.payload.diff;
+            if (isEditDiff(event.payload.diff)) toolItem.editDiff = event.payload.diff;
             // This entry was framed before its result landed; drop its cached
             // frame so the reconciler reframes it (the identity-keyed cache
             // can't observe an in-place edit). This is the one sanctioned
@@ -3158,6 +3135,7 @@ export async function runTUI(options = {}) {
             updatedTranscriptToolCall = true;
             break;
           }
+          if (updatedTranscriptToolCall) break;
         }
         if (updatedTranscriptToolCall) {
           tuiState.dirty.add('transcript');
@@ -3273,6 +3251,7 @@ export async function runTUI(options = {}) {
         break;
 
       case 'run_complete': {
+        closeActiveActivityGroup();
         setRunState('idle');
         tuiState.activity = null;
         tuiState.dirty.add('header');
@@ -3310,6 +3289,7 @@ export async function runTUI(options = {}) {
       }
 
       case 'user_message': {
+        closeActiveActivityGroup();
         const { preview = '', chars = preview.length } = event.payload || {};
         // Every attached client (this TUI, a phone on Remote) gets this
         // broadcast, including the one that sent it — skip our own echo
@@ -3389,6 +3369,7 @@ export async function runTUI(options = {}) {
   let approvalResolve = null;
   const trustedPatterns = new Set();
   let thinkingPhaseStart = 0;
+  let thinkingPhaseStartedAt = Date.now();
 
   // ── Ask-user handling ─────────────────────────────────────────────
 
@@ -3564,6 +3545,7 @@ export async function runTUI(options = {}) {
 
   /** Run the assistant loop on a user message (or skill-expanded prompt). */
   async function runPrompt(text, options = {}) {
+    closeActiveActivityGroup();
     setRunState('running');
     tuiState.reasoningBuf = '';
     tuiState.reasoningStreaming = false;
@@ -4037,7 +4019,6 @@ export async function runTUI(options = {}) {
     tuiState.transcript = [];
     tuiState.entryRenderCache = new WeakMap();
     tuiState.streamFrameState = null;
-    tuiState.toolFeed = [];
     tuiState.scrollOffset = 0;
     tuiState.fileAwareness = null;
     tuiFileLedger.files = {};
@@ -5934,7 +5915,7 @@ export async function runTUI(options = {}) {
             '  Ctrl+Left/Right  Word navigation',
             '  PageUp/Down   Scroll transcript',
             '  Ctrl+L        Clear viewport (preserves history)',
-            '  Ctrl+T        Toggle tool pane',
+            '  Ctrl+T        Navigate activity phases',
             '  Ctrl+O        Payload inspector mode (per-block expand/collapse)',
             '  Ctrl+G        Toggle reasoning pane',
             '  Ctrl+C        Cancel run / exit',
@@ -6331,8 +6312,70 @@ export async function runTUI(options = {}) {
   }
 
   function toggleTools() {
-    tuiState.toolPaneOpen = !tuiState.toolPaneOpen;
+    const groups = tuiState.transcript.filter((entry) => entry.role === 'activity_group');
+    if (groups.length === 0) {
+      io.stdout.write('\x07');
+      return;
+    }
+    tuiState.activityInspectorOpen = !tuiState.activityInspectorOpen;
+    if (tuiState.activityInspectorOpen) {
+      const selected =
+        groups.find((entry) => entry.seq === tuiState.activityCursorSeq) || groups.at(-1);
+      tuiState.activityCursorSeq = selected?.seq ?? null;
+      for (const group of groups) {
+        group.selected = group.seq === tuiState.activityCursorSeq;
+        tuiState.entryRenderCache.delete(group);
+      }
+    } else {
+      for (const group of groups) {
+        group.selected = false;
+        tuiState.entryRenderCache.delete(group);
+      }
+    }
     tuiState.dirty.add('all');
+    scheduler.flush();
+  }
+
+  function handleActivityInspectorInput(key) {
+    const groups = tuiState.transcript.filter((entry) => entry.role === 'activity_group');
+    if (key.name === 'escape' || (key.ctrl && key.name === 't')) {
+      toggleTools();
+      return;
+    }
+    if (key.ctrl && key.name === 'c') {
+      if (tuiState.runState === 'running') cancelRun();
+      else exitResolve();
+      return;
+    }
+    const current = Math.max(
+      0,
+      groups.findIndex((group) => group.seq === tuiState.activityCursorSeq),
+    );
+    if (key.name === 'up' || (!key.ctrl && !key.meta && key.name === 'k')) {
+      tuiState.activityCursorSeq =
+        groups[(current - 1 + groups.length) % groups.length]?.seq ?? null;
+    } else if (key.name === 'down' || (!key.ctrl && !key.meta && key.name === 'j')) {
+      tuiState.activityCursorSeq = groups[(current + 1) % groups.length]?.seq ?? null;
+    } else if (key.name === 'return' || key.name === 'enter') {
+      const group = groups[current];
+      if (group) group.expanded = group.expanded === false;
+    } else if (key.ch === ' ') {
+      const group = groups[current];
+      if (group) {
+        group.expanded = true;
+        group.detailsExpanded = group.detailsExpanded !== true;
+      }
+    } else if (!key.ctrl && !key.meta && key.name === 'a') {
+      const expand = groups.some((group) => group.expanded === false);
+      for (const group of groups) group.expanded = expand;
+    } else {
+      return;
+    }
+    for (const group of groups) {
+      group.selected = group.seq === tuiState.activityCursorSeq;
+      tuiState.entryRenderCache.delete(group);
+    }
+    tuiState.dirty.add('transcript');
     scheduler.flush();
   }
 
@@ -7113,6 +7156,14 @@ export async function runTUI(options = {}) {
           default:
             return false;
         }
+      },
+    })
+    .register({
+      id: 'activity_inspector',
+      isActive: () => tuiState.activityInspectorOpen,
+      handleKey: (key) => {
+        handleActivityInspectorInput(key);
+        return true;
       },
     })
     .register({
