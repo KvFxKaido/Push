@@ -319,7 +319,18 @@ export const OPENAI_MODELS: string[] = [
 // xAI's current public docs recommend Grok 4.5 for both code and chat, with
 // Responses API examples using the bare `grok-4.5` id. Free-text entry covers
 // account/private variants as they ship.
-export const XAI_MODELS: string[] = [XAI_DEFAULT_MODEL];
+// xAI Grok chat models, from the live `/grok/v1/models` gateway list (probed
+// 2026-07-10, each verified 200 through the gateway). The `grok-imagine-*`
+// image/video generation models are intentionally excluded — they don't answer
+// the chat/Responses endpoint the xai handler uses.
+export const XAI_MODELS: string[] = [
+  XAI_DEFAULT_MODEL,
+  'grok-4.3',
+  'grok-4.20-0309-reasoning',
+  'grok-4.20-0309-non-reasoning',
+  'grok-4.20-multi-agent-0309',
+  'grok-build-0.1',
+];
 
 // Generally available current Claude models, refreshed against Anthropic's
 // models overview on 2026-07-09. Mythos remains free-text only because it is
