@@ -818,10 +818,9 @@ const handleKimiChatProxy = createStreamProxyHandler({
   upstreamUrl: 'https://api.moonshot.ai/v1/chat/completions',
   timeoutMs: 180_000,
   maxOutputTokens: 65_536,
-  buildAuth: (env, request) =>
-    standardAuth('MOONSHOT_API_KEY')(env, request) ?? standardAuth('KIMI_API_KEY')(env, request),
+  buildAuth: standardAuth('MOONSHOT_API_KEY', 'KIMI_API_KEY'),
   keyMissingError:
-    'Kimi API key not configured. Add it in Settings or set KIMI_API_KEY on the Worker.',
+    'Kimi API key not configured. Add it in Settings or set MOONSHOT_API_KEY (or KIMI_API_KEY) on the Worker.',
   timeoutError: 'Kimi request timed out after 180 seconds',
   // Custom gateway provider with base_url https://api.moonshot.ai.
   // dormant until `kimi` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.

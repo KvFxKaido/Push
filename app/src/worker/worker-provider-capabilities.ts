@@ -52,12 +52,18 @@ export { ALL_PROVIDERS };
  * env-key table (e.g. `demo`) are unreachable from the DO anyway
  * (`resolveProviderHandler` returns null), so their credential answer never
  * matters — report false.
+ *
+ * A value may be an ARRAY when a provider's handler accepts more than one
+ * Worker-secret name (any-of) — Kimi's `standardAuth('MOONSHOT_API_KEY',
+ * 'KIMI_API_KEY')`. The capability probe must mirror that: credentialed if ANY
+ * alias is set, or it disagrees with dispatch (the alias key authenticates but
+ * the probe reports the provider locked).
  */
-const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
+const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env | readonly (keyof Env)[]>> = {
   ollama: 'OLLAMA_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   zai: 'ZAI_API_KEY',
-  kimi: 'KIMI_API_KEY',
+  kimi: ['MOONSHOT_API_KEY', 'KIMI_API_KEY'],
   zen: 'ZEN_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
   fireworks: 'FIREWORKS_API_KEY',
@@ -126,7 +132,10 @@ function resolveEnvCredentialSource(
   if (isByokDispatchable(provider, env)) return 'gateway-byok';
   const envKey = PROVIDER_ENV_KEY[provider];
   if (!envKey) return null;
-  return env[envKey] ? 'worker-secret' : null;
+  // Explicit type: Array.isArray widens the guarded branch to `any[]`, which
+  // would make `env[key]` an implicit-any index.
+  const keys: readonly (keyof Env)[] = Array.isArray(envKey) ? envKey : [envKey];
+  return keys.some((key) => env[key]) ? 'worker-secret' : null;
 }
 
 /**

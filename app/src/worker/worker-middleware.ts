@@ -691,11 +691,17 @@ export async function runPreamble(
 // Auth builders
 // ---------------------------------------------------------------------------
 
-export function standardAuth(envKey: keyof Env): AuthBuilder {
+export function standardAuth(...envKeys: (keyof Env)[]): AuthBuilder {
   return (env, request) => {
-    const serverKey = env[envKey] as string | undefined;
-    const clientAuth = request.headers.get('Authorization');
-    return serverKey ? `Bearer ${serverKey}` : clientAuth;
+    // Prefer ANY configured Worker secret (checked in order) over the client
+    // Authorization header — so a provider with more than one accepted secret
+    // name (e.g. Kimi's MOONSHOT_API_KEY / KIMI_API_KEY) doesn't fall through
+    // to a browser key just because the first alias is unset.
+    for (const key of envKeys) {
+      const serverKey = env[key] as string | undefined;
+      if (serverKey) return `Bearer ${serverKey}`;
+    }
+    return request.headers.get('Authorization');
   };
 }
 
