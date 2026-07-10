@@ -128,6 +128,9 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'Qwen/Qwen3-Coder-Next': M(262144, false, true, true, TEXT),
     'MiniMaxAI/MiniMax-M3': M(512000, true, true, true, TEXT_IMAGE),
     'openai/gpt-oss-120b': M(131072, true, true, true, TEXT),
+    // Ling 2.6 1T: 256K context, text-only, tool-calling + reasoning (HF model
+    // card). Keyed without the `:novita` routing suffix — lookup strips it.
+    'inclusionAI/Ling-2.6-1T': M(262144, true, true, true, TEXT),
   },
   zen: {
     'big-pickle': M(200000, true, true, true, TEXT, TEXT, false),

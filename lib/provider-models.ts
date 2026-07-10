@@ -172,6 +172,8 @@ export const HUGGINGFACE_MODELS: string[] = [
   'Qwen/Qwen3-Coder-Next',
   'MiniMaxAI/MiniMax-M3',
   'openai/gpt-oss-120b',
+  // Ant/inclusionAI Ling 2.6 (1T MoE), pinned to the Novita host on the router.
+  'inclusionAI/Ling-2.6-1T:novita',
 ];
 
 // OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
