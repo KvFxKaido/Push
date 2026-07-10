@@ -165,6 +165,12 @@ import {
 // ── TUI state ───────────────────────────────────────────────────────
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
+// A single activity phase splits into a fresh group beyond this many items.
+// The group reframes on every append (entryRenderCache.delete + full re-render
+// of all items in activityGroupFramer), so an uncapped phase is O(n^2) over a
+// long reasoning/tool run. Splitting bounds each group's reframe cost while
+// preserving chronology — the older items stay pinned in their finished group.
+export const MAX_ACTIVITY_ITEMS = 50;
 // `TUI_DAEMON_CAPABILITIES` (the snapshot/event-v2 profile this client
 // advertises) is the canonical, drift-tested definition in
 // `lib/daemon-capabilities.ts` — imported above, not redefined here (#745).
@@ -373,6 +379,15 @@ function createTUIState() {
 const DEFAULT_COMPACT_TURNS = 6;
 
 function pushTranscriptEntry(tuiState, entry, { autoScroll = true } = {}) {
+  // Any non-activity entry (status/warning/error/malformed/delegation, plus
+  // divider/sources/assistant/user) chronologically closes the current activity
+  // phase: the next thought/tool must open a *new* group positioned after this
+  // entry, not fold back into a group that now sits above it. Enforced here at
+  // the single choke point rather than per event handler — every path that
+  // interrupts a phase routes through pushTranscriptEntry. The group entry
+  // itself (created by ensureActiveActivityGroup) is exempt so we don't orphan
+  // the group we're about to make active.
+  if (entry.role !== 'activity_group') tuiState.activeActivityGroup = null;
   // Stamp a stable id before push so the per-entry render cache (keyed by entry
   // identity) and the payload ids derived from it survive front-eviction.
   entry.seq = tuiState.transcriptSeq = (tuiState.transcriptSeq || 0) + 1;
@@ -2882,7 +2897,14 @@ export async function runTUI(options = {}) {
   }
 
   function appendActivityItem(item) {
-    const group = ensureActiveActivityGroup();
+    let group = ensureActiveActivityGroup();
+    // Split an oversized phase into a fresh group so no single group grows
+    // unbounded (see MAX_ACTIVITY_ITEMS). Chronology is preserved: the full
+    // group stays in place and the continuation renders directly below it.
+    if (group.items.length >= MAX_ACTIVITY_ITEMS) {
+      closeActiveActivityGroup();
+      group = ensureActiveActivityGroup();
+    }
     group.items.push(item);
     tuiState.entryRenderCache.delete(group);
     tuiState.dirty.add('transcript');
@@ -2922,6 +2944,11 @@ export async function runTUI(options = {}) {
         // mid-stream doesn't strand a partial assistant line.
         tuiState.streamBuf = '';
         tuiState.transcript.length = 0;
+        // The active group we were appending to just got spliced out of the
+        // transcript; drop the pointer so the next thought/tool on the ongoing
+        // run opens a fresh group instead of pushing into an orphan that will
+        // never render. Reachable mid-run: another client compacts/reverts.
+        tuiState.activeActivityGroup = null;
         for (const msg of res.payload.messages) {
           if (!msg || (msg.role !== 'user' && msg.role !== 'assistant')) continue;
           pushTranscriptEntry(
@@ -4017,6 +4044,11 @@ export async function runTUI(options = {}) {
     tuiState.lastReasoning = '';
     tuiState.reasoningStreaming = false;
     tuiState.transcript = [];
+    // The old transcript (and any group we were appending to) is gone; clear
+    // the pointer so a run in the resumed session doesn't append into the
+    // previous session's orphaned group. Part of the reset contract, not left
+    // to the pushTranscriptEntry guard — an empty resume pushes no entry.
+    tuiState.activeActivityGroup = null;
     tuiState.entryRenderCache = new WeakMap();
     tuiState.streamFrameState = null;
     tuiState.scrollOffset = 0;
