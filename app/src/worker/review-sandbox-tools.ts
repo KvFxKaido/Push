@@ -63,10 +63,39 @@ export function reviewSandboxToolNames(testsAvailable: boolean): string {
 }
 
 /** Verifier commands the DO resolves from trusted base-ref instructions.
- *  `tests: null` = no repo test command → the tests tool is unavailable. */
+ *  `tests: null` = no repo test command → the tests tool is unavailable.
+ *  `setup` runs once before the first verifier (repo `# setup:` hint, else
+ *  the conditional root-install default). */
 export interface ReviewVerifierCommands {
   typecheck: string;
   tests: string | null;
+  setup: string;
+}
+
+/**
+ * Default environment setup when the repo declares no `# setup:` hint —
+ * the coder-side `handleCheckTypes` precedent (install root deps when a
+ * package.json exists and node_modules doesn't), made conditional so it's a
+ * no-op on warm sandboxes and non-Node repos, and package-manager-aware via
+ * lockfile detection (a bare `npm install` on a pnpm/yarn/bun repo fails
+ * needlessly — fugu WARNING, PR #1387). If the detected manager isn't
+ * available in the sandbox image the setup fails and the review proceeds
+ * unverified — honest, and no worse than the wrong installer. Monorepos with
+ * nested installs (like Push itself: root + app/ + mcp/) need the explicit
+ * hint.
+ */
+export const REVIEW_DEFAULT_SETUP_COMMAND =
+  'if [ -f package.json ] && [ ! -d node_modules ]; then ' +
+  'if [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install; ' +
+  'elif [ -f yarn.lock ]; then corepack enable yarn && yarn install; ' +
+  'elif [ -f bun.lockb ] || [ -f bun.lock ]; then bun install; ' +
+  'else npm install; fi; fi';
+
+/** Outcome of the one-time environment setup run. */
+export interface ReviewSetupResult {
+  ok: boolean;
+  /** Reduced stdout/stderr for the failure path (model- and log-facing). */
+  text: string;
 }
 
 /** Structured verifier outcome riding a verification tool's result, so the
@@ -82,9 +111,15 @@ export type ReviewSandboxToolResult = ToolExecutionResult & {
 };
 
 // One deadline per verifier: test suites routinely run longer than tsc, but
-// both must fit inside the review's 15-min no-progress budget with headroom.
+// each must fit inside the review's 15-min no-progress budget. Setup + one
+// verifier run back-to-back inside a single tool round on top of the model's
+// round wall-clock, which can exceed that budget in sum — so the executor
+// reports tool-start progress (hooks.onToolProgress → checkpoint touch) and
+// the budget measures from the LAST progress mark, not the round top
+// (Codex P2, PR #1387).
 const REVIEW_TYPECHECK_DEADLINE_MS = 480_000;
 const REVIEW_TESTS_DEADLINE_MS = 480_000;
+const REVIEW_SETUP_DEADLINE_MS = 300_000;
 const FALLBACK_STREAM_CAP_CHARS = 80_000;
 
 export interface ReviewSandbox {
@@ -443,6 +478,40 @@ async function runReviewVerifier(
   return { text: lines.join('\n'), verification: { kind, pass } };
 }
 
+/**
+ * One-time environment setup before the verifiers — dependency installs etc.
+ * Command comes from the repo's base-ref `# setup:` hint, else
+ * {@link REVIEW_DEFAULT_SETUP_COMMAND}. NEVER throws; a failure is returned
+ * for the caller to surface (verification then simply cannot run — that is
+ * an environment outcome, not a verifier fail).
+ */
+export async function runReviewSetup(
+  env: Env,
+  sandbox: ReviewSandbox,
+  command: string,
+): Promise<ReviewSetupResult> {
+  const trimmedCommand = command.trim() || REVIEW_DEFAULT_SETUP_COMMAND;
+  const result = await runDetachedReviewExec(
+    env,
+    sandbox,
+    `cd /workspace && ${trimmedCommand}`,
+    REVIEW_SETUP_DEADLINE_MS,
+  );
+  const ok = result.exitCode === 0;
+  log(ok ? 'review_sandbox_setup_succeeded' : 'review_sandbox_setup_failed', {
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+  });
+  if (ok) return { ok, text: '' };
+  const reduced = await reduceReviewTypecheckOutput(trimmedCommand, result);
+  const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
+  const detail = [reduced.stderr, reduced.stdout].filter(Boolean).join('\n').slice(0, 2_000);
+  return {
+    ok,
+    text: `Environment setup failed (exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}): ${sanitizeUntrustedSource(detail)}`,
+  };
+}
+
 /** Typecheck verifier — falls back to the universal `npx tsc --noEmit`. */
 export async function runReviewTypecheck(
   env: Env,
@@ -482,7 +551,23 @@ export async function executeReviewSandboxTool(
   sandbox: ReviewSandbox,
   call: SandboxToolCall,
   commands: ReviewVerifierCommands,
+  /**
+   * Memoized one-time environment setup, awaited by the VERIFIER cases only
+   * (inspection tools don't need dependencies). Supplied by the executor so
+   * one setup run covers every verifier call in the review. A failed setup
+   * short-circuits the verifier with a model-readable error and NO
+   * verification metadata — the verifier didn't fail, it couldn't run.
+   */
+  ensureSetup?: () => Promise<ReviewSetupResult>,
 ): Promise<ReviewSandboxToolResult> {
+  const setupGate = async (): Promise<ReviewSandboxToolResult | null> => {
+    if (!ensureSetup) return null;
+    const setup = await ensureSetup();
+    if (setup.ok) return null;
+    return {
+      text: `[Tool Error] ${setup.text}\nVerification cannot run in this review's sandbox — investigate via the diff and read tools, and note the review as unverified.`,
+    };
+  };
   switch (call.tool) {
     case 'sandbox_search': {
       const ctx = buildReviewInspectionContext(env, sandbox);
@@ -499,15 +584,21 @@ export async function executeReviewSandboxTool(
       const { handleListDir } = await import('@/lib/sandbox-read-only-inspection-handlers');
       return handleListDir(ctx, call.args);
     }
-    case 'sandbox_check_types':
+    case 'sandbox_check_types': {
+      const blocked = await setupGate();
+      if (blocked) return blocked;
       return runReviewTypecheck(env, sandbox, commands.typecheck);
-    case 'sandbox_run_tests':
+    }
+    case 'sandbox_run_tests': {
       if (!commands.tests) {
         return {
           text: '[Tool Error] This repository declares no test command (no `# test:` hint in AGENTS.md at the base ref) — tests are unavailable for this review. Use typecheck instead.',
         };
       }
+      const blocked = await setupGate();
+      if (blocked) return blocked;
       return runReviewTests(env, sandbox, commands.tests);
+    }
     default:
       return {
         text: `[Tool Error] ${call.tool} is not available in automated PR review (sandbox tools: ${reviewSandboxToolNames(Boolean(commands.tests))}).`,

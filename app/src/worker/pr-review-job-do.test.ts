@@ -112,6 +112,11 @@ function createMockCtx() {
       const c = checkpoints.get(p[0] as string);
       return c ? [{ ...c }] : [];
     }
+    if (/^UPDATE review_checkpoint SET updated_at/i.test(sql)) {
+      const c = checkpoints.get(p[1] as string);
+      if (c) c.updated_at = p[0] as number;
+      return [];
+    }
     if (/^DELETE FROM review_checkpoint/i.test(sql)) {
       checkpoints.delete(p[0] as string);
       return [];
@@ -1169,6 +1174,30 @@ describe('PrReviewJob verification gate (check-run policy)', () => {
     const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
     expect(lastFinalize?.[2]).toBe('success');
     expect(lastFinalize?.[3].title).toBe('1 finding');
+  });
+
+  it('onToolProgress touches the checkpoint so long tool runs count as progress', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
+    let touchedAt = 0;
+    __setPrReviewExecutorOverride('tp1', async (_i, _e, _s, hooks) => {
+      hooks?.onRoundState?.({
+        messages: [],
+        nextRound: 1,
+        totalToolCalls: 0,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+      });
+      const before = mock.checkpoints.get('tp1')!.updated_at;
+      await new Promise((r) => setTimeout(r, 5));
+      hooks?.onToolProgress?.();
+      touchedAt = mock.checkpoints.get('tp1')!.updated_at;
+      expect(touchedAt).toBeGreaterThan(before);
+      return { result: RESULT, commentsPosted: 0, posted: true };
+    });
+    await do_.fetch(startRequest(startInput({ deliveryId: 'tp1' })));
+    await Promise.allSettled(mock.pending);
+    expect(touchedAt).toBeGreaterThan(0);
+    expect(mock.reviews.get('tp1')!.status).toBe('completed');
   });
 
   it('persists verifier outcomes with the round checkpoint and seeds them into a relaunch', async () => {

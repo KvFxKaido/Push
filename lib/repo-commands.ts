@@ -20,7 +20,22 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type RepoCommandKind = 'test' | 'lint' | 'typecheck' | 'format' | 'build' | 'check';
+/**
+ * `setup` is HINT-ONLY: it parses from a `# setup:` directive but is
+ * deliberately absent from `REPO_COMMAND_KINDS`, so it never derives from
+ * package scripts or config files — running a *guessed* environment-setup
+ * command is not acceptable the way running a guessed `npm test` is. Consumer:
+ * the autonomous reviewer's sandbox, which must install dependencies before
+ * its verifiers (typecheck/test) can produce meaningful results.
+ */
+export type RepoCommandKind =
+  | 'test'
+  | 'lint'
+  | 'typecheck'
+  | 'format'
+  | 'build'
+  | 'check'
+  | 'setup';
 
 export type RepoCommandSource = 'agents-md' | 'package-script' | 'config-file';
 
@@ -39,6 +54,9 @@ export interface RepoCommands {
   format?: RepoCommand;
   build?: RepoCommand;
   check?: RepoCommand;
+  /** Never populated by derivation (hint-only kind) — present so the record
+   *  type stays total over RepoCommandKind. */
+  setup?: RepoCommand;
 }
 
 export interface AgentsMdHint {
@@ -55,6 +73,8 @@ export interface RepoCommandsSnapshot {
   agentsMdHints?: readonly AgentsMdHint[];
 }
 
+// `setup` is intentionally absent: derivation must never guess an
+// environment-setup command (hint-only kind — see RepoCommandKind).
 export const REPO_COMMAND_KINDS: readonly RepoCommandKind[] = [
   'test',
   'lint',
@@ -86,6 +106,9 @@ const SCRIPT_PREFERENCES: Record<RepoCommandKind, readonly string[]> = {
   format: ['format:check', 'format', 'fmt'],
   build: ['build'],
   check: ['check', 'validate', 'verify', 'ci'],
+  // Hint-only (see RepoCommandKind): no script names may match, so a repo's
+  // `npm run setup` is never auto-run without an explicit directive.
+  setup: [],
 };
 
 function matchPackageScript(
@@ -227,7 +250,7 @@ function inferFromConfig(
 
 // Captures the kind and any inline command after the colon. An empty trailing
 // group means the command is on the following line(s).
-const HINT_DIRECTIVE = /^#\s*(test|lint|typecheck|format|build|check)\s*:\s*(.*)$/i;
+const HINT_DIRECTIVE = /^#\s*(test|lint|typecheck|format|build|check|setup)\s*:\s*(.*)$/i;
 
 /**
  * Parse fenced ```bash (or ```sh / ```shell) blocks that contain `# kind:`

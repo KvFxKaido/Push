@@ -64,8 +64,11 @@ import {
   cleanupReviewSandbox,
   executeReviewSandboxTool,
   provisionReviewSandbox,
+  REVIEW_DEFAULT_SETUP_COMMAND,
   reviewSandboxToolNames,
+  runReviewSetup,
   type ReviewSandbox,
+  type ReviewSetupResult,
   type ReviewVerifierCommands,
 } from './review-sandbox-tools';
 import type { ReviewablePullRequest } from './github-webhook';
@@ -300,6 +303,14 @@ export interface PrReviewExecutorHooks {
   /** Fired whenever a verifier records an outcome — the DO keeps the latest
    *  snapshot and persists it with the next round checkpoint. */
   onVerification?: (verification: ReviewVerification) => void;
+  /**
+   * Fired when a sandbox tool starts executing. The DO touches the round
+   * checkpoint's `updated_at` so long tool runs count as PROGRESS for
+   * `failTimedOutReviews`: model round wall-clock + setup (300s) + a verifier
+   * (480s) can legitimately exceed the 15-min no-progress budget measured
+   * from the round top alone (Codex P2, PR #1387).
+   */
+  onToolProgress?: () => void;
 }
 
 /** Injectable model/network leaf — see `__setPrReviewExecutorOverride`. */
@@ -526,6 +537,21 @@ export class PrReviewJob {
       this.clearCheckpoint(deliveryId);
       return null;
     }
+  }
+
+  /**
+   * Mark progress on a live delivery's checkpoint without changing its state:
+   * bumps `updated_at` so the progress-anchored timeout in
+   * `failTimedOutReviews` covers long in-round tool runs (setup + verifier).
+   * No-op when no checkpoint row exists yet (the round-top write creates it
+   * before any tool can run).
+   */
+  private touchCheckpoint(deliveryId: string): void {
+    this.ctx.storage.sql.exec(
+      'UPDATE review_checkpoint SET updated_at = ? WHERE delivery_id = ?',
+      Date.now(),
+      deliveryId,
+    );
   }
 
   private clearCheckpoint(deliveryId: string): void {
@@ -985,6 +1011,18 @@ export class PrReviewJob {
         resumeVerification: resume?.verification ?? undefined,
         onVerification: (verification) => {
           this.verificationState.set(input.deliveryId, verification);
+        },
+        onToolProgress: () => {
+          try {
+            this.touchCheckpoint(input.deliveryId);
+          } catch (err) {
+            // Losing one progress mark only narrows the timeout window back
+            // to the round top — never worth failing the tool call over.
+            log('warn', 'pr_review_checkpoint_touch_failed', {
+              deliveryId: input.deliveryId,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
         },
         onRoundState: (state) => {
           // Synchronous persist (the lib hands us its live array — serialize
@@ -1636,6 +1674,10 @@ export class PrReviewJob {
  * AGENTS.md/CLAUDE.md). Typecheck falls back to the universal
  * `npx tsc --noEmit`; tests have no safe default, so a repo without a
  * `# test:` hint gets `tests: null` and the test tool is not advertised.
+ * Setup (`# setup:` hint, hint-only kind) falls back to the conditional
+ * root-install default — it runs once before the first verifier so the
+ * sandbox has dependencies (the PR #1386 signal: a bare checkout fails any
+ * repo-level typecheck regardless of the diff).
  * Independent per kind: the first file that declares a kind wins for it.
  */
 async function resolveReviewCommands(
@@ -1645,8 +1687,9 @@ async function resolveReviewCommands(
 ): Promise<ReviewVerifierCommands> {
   let typecheck: string | null = null;
   let tests: string | null = null;
+  let setup: string | null = null;
   for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
-    if (typecheck && tests) break;
+    if (typecheck && tests && setup) break;
     try {
       const content = await fetchRepoFileContent(repoFullName, filename, baseRef, auth);
       if (!content) continue;
@@ -1671,6 +1714,16 @@ async function resolveReviewCommands(
           });
         }
       }
+      if (!setup) {
+        const hit = hints.find((hint) => hint.kind === 'setup');
+        if (hit?.command.trim()) {
+          setup = hit.command.trim();
+          log('debug', 'pr_review_setup_command_resolved', {
+            source: filename,
+            command: setup,
+          });
+        }
+      }
     } catch (err) {
       log('warn', 'pr_review_verifier_command_fetch_failed', {
         source: filename,
@@ -1686,7 +1739,16 @@ async function resolveReviewCommands(
   if (!tests) {
     log('debug', 'pr_review_test_command_absent', { repo: repoFullName });
   }
-  return { typecheck: typecheck ?? DEFAULT_REVIEW_TYPECHECK_COMMAND, tests };
+  if (!setup) {
+    log('debug', 'pr_review_setup_command_defaulted', {
+      command: REVIEW_DEFAULT_SETUP_COMMAND,
+    });
+  }
+  return {
+    typecheck: typecheck ?? DEFAULT_REVIEW_TYPECHECK_COMMAND,
+    tests,
+    setup: setup ?? REVIEW_DEFAULT_SETUP_COMMAND,
+  };
 }
 
 /**
@@ -1795,7 +1857,11 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     env.PUSH_REVIEWER_SANDBOX !== '0';
   const reviewCommands: ReviewVerifierCommands = sandboxToolsEnabled
     ? await resolveReviewCommands(input.repoFullName, input.baseRef, auth)
-    : { typecheck: DEFAULT_REVIEW_TYPECHECK_COMMAND, tests: null };
+    : {
+        typecheck: DEFAULT_REVIEW_TYPECHECK_COMMAND,
+        tests: null,
+        setup: REVIEW_DEFAULT_SETUP_COMMAND,
+      };
 
   // Verification record for this attempt — runtime-tracked, never inferred
   // from model claims. Seeded from the checkpoint on relaunch so verifier runs
@@ -1823,6 +1889,28 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       });
     }
     return sandboxProvisionPromise;
+  };
+
+  // One environment-setup run per review, memoized like the provision above —
+  // concurrent verifier calls share it, and only verifier calls trigger it
+  // (inspection tools don't need dependencies). Failure is remembered too: a
+  // setup that can't succeed shouldn't re-run 300s installs per verifier call.
+  let setupPromise: Promise<ReviewSetupResult> | null = null;
+  const ensureSetup = (sb: ReviewSandbox): Promise<ReviewSetupResult> => {
+    if (!setupPromise) {
+      setupPromise = runReviewSetup(env, sb, reviewCommands.setup).then((setup) => {
+        log(
+          setup.ok ? 'info' : 'warn',
+          setup.ok ? 'pr_review_setup_succeeded' : 'pr_review_setup_failed',
+          {
+            deliveryId: input.deliveryId,
+            ...(setup.ok ? {} : { detail: setup.text.slice(0, 300) }),
+          },
+        );
+        return setup;
+      });
+    }
+    return setupPromise;
   };
 
   const result = await runDeepReviewer<AnyToolCall, unknown>(
@@ -1865,6 +1953,10 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         // any provisioning/tool failure.
         if (sandboxToolsEnabled && toolCall.source === 'sandbox') {
           try {
+            // Mark progress before potentially long work (provision, setup,
+            // verifier) so the 15-min no-progress budget measures from here,
+            // not from the round top the model already spent streaming.
+            hooks?.onToolProgress?.();
             const sb = await getReviewSandbox();
             if (!sb) {
               return {
@@ -1872,7 +1964,9 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
                   '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
               };
             }
-            const r = await executeReviewSandboxTool(env, sb, toolCall.call, reviewCommands);
+            const r = await executeReviewSandboxTool(env, sb, toolCall.call, reviewCommands, () =>
+              ensureSetup(sb),
+            );
             if (r.verification) {
               verification[r.verification.kind] = r.verification.pass ? 'pass' : 'fail';
               log('info', 'pr_review_verification_recorded', {

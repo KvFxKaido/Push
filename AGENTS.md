@@ -58,11 +58,13 @@ When you ship something specified in a `docs/decisions/` doc, flip that doc's `S
 
 ## Validation commands
 
-Push derives validation commands (test, lint, typecheck, format, build, check) from `package.json` scripts and recognized config files. To override one kind, add a fenced `bash`/`sh`/`shell` block with a leading `# kind:` directive to the first project-instruction file in loader order (`PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`). Overrides are per-kind and first-hit wins; the umbrella `check` is always additive.
+Push derives validation commands (test, lint, typecheck, format, build, check) from `package.json` scripts and recognized config files. To override one kind, add a fenced `bash`/`sh`/`shell` block with a leading `# kind:` directive to the first project-instruction file in loader order (`PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md`). Overrides are per-kind and first-hit wins; the umbrella `check` is always additive. `setup` is a hint-only kind (never derived from scripts): the environment-preparation command the autonomous reviewer runs once in its sandbox before the typecheck/test verifiers.
 
 For this repo:
 
 ```bash
+# setup:
+npm install && (cd app && npm install) && (cd mcp/github-server && npm install)
 # test:
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
 # typecheck:
