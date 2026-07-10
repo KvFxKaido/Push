@@ -76,8 +76,8 @@
     // so those models still need ZEN_API_KEY or a user key; the Go handler
     // enforces the split. Nvidia is passthrough-only (CUSTOM_SLUGS without
     // BYOK) until its injection passes the probe above.
-    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia,zen,zai,moonshot",
-    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok"
+    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia,zen,zai,moonshot,huggingface",
+    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok,huggingface"
   },
   // API auth is the GitHub-identity session gate (auth rework — see
   // docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md). The
