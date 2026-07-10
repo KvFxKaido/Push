@@ -287,13 +287,15 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       keyPlaceholder: 'Zen API key',
       keySaveLabel: 'Save OpenCode Zen key',
       keyHint: 'OpenCode Zen API key for https://opencode.ai/zen.',
-      // Official contract: the MiniMax/Qwen Go families are published under
-      // @ai-sdk/anthropic and authenticate via `x-api-key` on
-      // /zen/go/v1/messages — which gateway BYOK cannot inject (Authorization
-      // only). Those models keep using the caller's key; do NOT treat a zen
-      // key as redundant just because the gateway holds one.
+      // Go is a SEPARATE OpenCode service (subscription pool) from
+      // pay-as-you-go Zen — don't consolidate them in copy. Its MiniMax/Qwen
+      // families are published under @ai-sdk/anthropic and authenticate via
+      // `x-api-key` on /zen/go/v1/messages — which gateway BYOK cannot inject
+      // (Authorization only). Those models keep using the caller's key; do
+      // NOT treat a saved OpenCode key as redundant just because the gateway
+      // holds one.
       byokPartialNote:
-        'MiniMax and Qwen Go models authenticate with x-api-key, which the gateway cannot inject — they still use your Zen key.',
+        'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. Keep your OpenCode key saved to use them.',
     },
     cli: {
       order: 30,
