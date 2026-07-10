@@ -65,7 +65,9 @@
     //     BOTH auth states, which is how zen was misdiagnosed as
     //     injection-broken. Verified: fireworks, sakana, ollama, zen
     //     (glm-5.1 keyless → authenticated 200 on both /zen/v1 and
-    //     /zen/go/v1 paths); first-party ids verified in the AIG v2 arc.
+    //     /zen/go/v1 paths), zai (glm-5.2 keyless → authenticated 200 via
+    //     custom-zai; byok:"default" in the gateway log, probed 2026-07-10);
+    //     first-party ids verified in the AIG v2 arc.
     // Zen BYOK caveat: injection covers the openai-transport routes only.
     // The anthropic-transport Go path (/zen/go/v1/messages — MiniMax/Qwen)
     // wants x-api-key, which injection doesn't set (verified 401 keyless),
@@ -73,7 +75,7 @@
     // enforces the split. Nvidia is passthrough-only (CUSTOM_SLUGS without
     // BYOK) until its injection passes the probe above.
     "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia,zen,zai",
-    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen"
+    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai"
   },
   // API auth is the GitHub-identity session gate (auth rework — see
   // docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md). The
