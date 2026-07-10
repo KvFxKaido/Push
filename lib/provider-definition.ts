@@ -295,7 +295,7 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       // NOT treat a saved OpenCode key as redundant just because the gateway
       // holds one.
       byokPartialNote:
-        'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. Keep your OpenCode key saved to use them.',
+        'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. The server covers them when deployed with the Secrets Store binding; a key saved here takes precedence.',
     },
     cli: {
       order: 30,

@@ -153,6 +153,15 @@ export interface Env {
   // (NOT_CONFIGURED 503) on every route including create when the binding
   // is missing. No silent auth bypass; no half-auth'd sandboxes.
   SANDBOX_TOKENS?: KVNamespace;
+  // Zen provider key bound from the SAME Secrets Store entry the AI Gateway
+  // injects from (push-gate_zen_default; scopes [ai_gateway, workers]) — one
+  // custody point, rotate once. Exists because gateway BYOK cannot serve the
+  // anthropic-transport Zen Go path (/zen/go/v1/messages wants `x-api-key`;
+  // custom-provider injection sets `Authorization` only), so handleZenGoChat
+  // resolves the key itself for exactly that transport. Optional: without the
+  // binding those models fall back to caller/Worker keys, then a
+  // model-readable 401.
+  ZEN_KEY_STORE?: { get(): Promise<string> };
   // R2 bucket backing Cloudflare-provider filesystem snapshots (the
   // hibernate/restore-snapshot routes). Stores a base64 tar.gz of /workspace
   // (source + .git, minus node_modules/build caches). Optional, fail-closed:

@@ -538,7 +538,64 @@ describe('handleZenGoChat — gateway BYOK', () => {
     const response = await handleZenGoChat(makeZenGoRequest('minimax-m3'), makeEnv(GATEWAY_ENV));
     expect(response.status).toBe(401);
     const body = await response.json();
-    expect(body.error).toContain('cannot use the gateway-stored key');
+    expect(body.error).toContain('cannot use the gateway-injected key');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keyless anthropic-transport resolves the Secrets Store binding and sends both auth headers', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    const get = vi.fn(async () => 'store-zen-key');
+    const response = await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ...GATEWAY_ENV, ZEN_KEY_STORE: { get } }),
+    );
+    expect(response.status).toBe(200);
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/go/v1/messages',
+    );
+    const headers = captured!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer store-zen-key');
+    expect(headers['x-api-key']).toBe('store-zen-key');
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-token');
+  });
+
+  it('a caller/Worker key outranks the Secrets Store binding (binding never read)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      ),
+    );
+    const get = vi.fn(async () => 'store-zen-key');
+    await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ...GATEWAY_ENV, ZEN_API_KEY: 'zen-key', ZEN_KEY_STORE: { get } }),
+    );
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('an unreadable binding degrades to the model-readable 401, not a throw', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const get = vi.fn(async () => {
+      throw new Error('store unavailable');
+    });
+    const response = await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ...GATEWAY_ENV, ZEN_KEY_STORE: { get } }),
+    );
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toContain('cannot use the gateway-injected key');
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

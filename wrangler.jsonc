@@ -205,6 +205,20 @@
       "id": "cea06bc65f86466693b79921d3426c43"
     }
   ],
+  // The zen provider key, bound from the SAME Secrets Store entry the AI
+  // Gateway injects from (one custody point; rotate in Secrets Store and both
+  // consumers follow). Exists because gateway BYOK cannot serve the
+  // anthropic-transport Zen Go path: /zen/go/v1/messages authenticates via
+  // `x-api-key`, and custom-provider injection sets `Authorization` only — so
+  // the Worker resolves the key itself for exactly that transport
+  // (handleZenGoChat). The secret carries scopes [ai_gateway, workers].
+  "secrets_store_secrets": [
+    {
+      "binding": "ZEN_KEY_STORE",
+      "store_id": "13a7421a93df46e6bea9230445e057fd",
+      "secret_name": "push-gate_zen_default"
+    }
+  ],
   // R2 bucket backing Cloudflare-provider filesystem snapshots. Stores a
   // base64 tar.gz of /workspace (source + .git, minus node_modules/build
   // caches) keyed by an opaque snapshot id. Provision before deploy:

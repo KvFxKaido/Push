@@ -312,7 +312,7 @@ describe('ProviderKeySection', () => {
   // set). The gateway key covers most models, but the local key stays
   // load-bearing — the section must keep offering it.
   const PARTIAL_NOTE =
-    'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. Keep your OpenCode key saved to use them.';
+    'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. The server covers them when deployed with the Secrets Store binding; a key saved here takes precedence.';
 
   it('partial BYOK keeps the key input alongside the gateway-connected state', () => {
     const html = renderToStaticMarkup(
@@ -327,7 +327,7 @@ describe('ProviderKeySection', () => {
     expect(html).toContain('Key in gateway');
     expect(html).toContain('for most models');
     expect(html).toContain('separate subscription service');
-    expect(html).toContain('Keep your OpenCode key saved');
+    expect(html).toContain('a key saved here takes precedence');
     // Unlike full BYOK, the input + save stay available.
     expect(html).toContain('sk-or-...');
     expect(html).toContain('Save key');
