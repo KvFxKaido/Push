@@ -80,6 +80,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.ollamaModelOptions;
     case 'openrouter':
       return catalog.openRouterModelOptions;
+    case 'zai':
+      return catalog.zaiModelOptions;
     case 'cloudflare':
       return catalog.cloudflareModelOptions;
     case 'zen':
@@ -112,6 +114,8 @@ function defaultModelForProvider(
       return catalog.ollama.model || null;
     case 'openrouter':
       return catalog.openRouter.model || null;
+    case 'zai':
+      return catalog.zai.model || null;
     case 'cloudflare':
       return catalog.cloudflare.model || null;
     case 'zen':

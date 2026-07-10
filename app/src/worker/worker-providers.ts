@@ -28,6 +28,7 @@ import {
   GOOGLE_MODELS,
   OPENAI_MODELS,
   XAI_MODELS,
+  ZAI_MODELS,
 } from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
@@ -774,6 +775,39 @@ export const handleOpenRouterModels = createJsonProxyHandler({
   // binding), so the suffix is just `/models`. Keeps BYOK model refresh live.
   gateway: { provider: 'openrouter', pathSuffix: '/models' },
 });
+
+// --- Z.ai (OpenAI-compatible Chat Completions endpoint) ---
+
+export const handleZaiChat = createStreamProxyHandler({
+  name: 'Z.ai API',
+  logTag: 'api/zai/chat',
+  upstreamUrl: 'https://api.z.ai/api/paas/v4/chat/completions',
+  timeoutMs: 180_000,
+  maxOutputTokens: 65_536,
+  buildAuth: standardAuth('ZAI_API_KEY'),
+  keyMissingError:
+    'Z.ai API key not configured. Add it in Settings or set ZAI_API_KEY on the Worker.',
+  timeoutError: 'Z.ai request timed out after 180 seconds',
+  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://api.z.ai;
+  // dormant until `zai` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-zai', pathSuffix: '/api/paas/v4/chat/completions' },
+  formatUpstreamError: (status, bodyText) => ({
+    error: `Z.ai ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export async function handleZaiModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'ZaiCuratedModelsList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  return Response.json(
+    { object: 'list', data: ZAI_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: preamble.requestId } },
+  );
+}
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
 
@@ -2873,6 +2907,7 @@ export interface WorkerProviderApiRoute {
 export const WORKER_PROVIDER_HANDLERS = {
   ollama: { chat: handleOllamaChat, models: handleOllamaModels },
   openrouter: { chat: handleOpenRouterChat, models: handleOpenRouterModels },
+  zai: { chat: handleZaiChat, models: handleZaiModels },
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },

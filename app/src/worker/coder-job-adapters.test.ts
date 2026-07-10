@@ -23,6 +23,7 @@ vi.mock('./worker-cf-sandbox', () => ({
 
 const providerHandlerMocks = vi.hoisted(() => ({
   handleOpenRouterChat: vi.fn(),
+  handleZaiChat: vi.fn(),
   handleOllamaChat: vi.fn(),
   handleZenChat: vi.fn(),
   handleZenGoChat: vi.fn(),

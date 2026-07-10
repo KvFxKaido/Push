@@ -27,6 +27,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectBackend'
   | 'handleSelectOllamaModelFromChat'
   | 'handleSelectOpenRouterModelFromChat'
+  | 'handleSelectZaiModelFromChat'
   | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectNvidiaModelFromChat'
@@ -57,6 +58,7 @@ export function useWorkspaceChatComposerController({
   handleSelectBackend,
   handleSelectOllamaModelFromChat,
   handleSelectOpenRouterModelFromChat,
+  handleSelectZaiModelFromChat,
   handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectNvidiaModelFromChat,
@@ -225,6 +227,16 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshOpenRouterModels,
       isLocked: isProviderModelLocked('openrouter'),
       ariaLabel: 'Select OpenRouter model',
+    }),
+    zai: buildPickerControl('zai', {
+      options: catalog.zaiModelOptions,
+      onChange: handleSelectZaiModelFromChat,
+      loading: catalog.zaiModels.loading,
+      error: catalog.zaiModels.error,
+      updatedAt: catalog.zaiModels.updatedAt,
+      refreshModels: catalog.refreshZaiModels,
+      isLocked: isProviderModelLocked('zai'),
+      ariaLabel: 'Select Z.ai model',
     }),
     cloudflare: buildPickerControl('cloudflare', {
       options: catalog.cloudflareModelOptions,

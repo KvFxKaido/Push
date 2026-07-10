@@ -100,6 +100,7 @@ describe('catalog parity', () => {
     assert.deepEqual(DEFAULT_MODELS, {
       ollama: extractExportedStringConstant(providerModelsSource, 'OLLAMA_DEFAULT_MODEL'),
       openrouter: extractExportedStringConstant(providerModelsSource, 'OPENROUTER_DEFAULT_MODEL'),
+      zai: extractExportedStringConstant(providerModelsSource, 'ZAI_DEFAULT_MODEL'),
       zen: extractExportedStringConstant(providerModelsSource, 'ZEN_DEFAULT_MODEL'),
       nvidia: extractExportedStringConstant(providerModelsSource, 'NVIDIA_DEFAULT_MODEL'),
       fireworks: extractExportedStringConstant(providerModelsSource, 'FIREWORKS_DEFAULT_MODEL'),
@@ -119,6 +120,7 @@ describe('DEFAULT_MODELS', () => {
   const EXPECTED = {
     ollama: 'minimax-m3',
     openrouter: 'anthropic/claude-sonnet-4.6:nitro',
+    zai: 'glm-5.2',
     zen: 'big-pickle',
     nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
@@ -148,6 +150,7 @@ describe('DEFAULT_MODELS', () => {
       'openrouter',
       'sakana',
       'xai',
+      'zai',
       'zen',
     ]);
   });

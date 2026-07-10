@@ -32,6 +32,8 @@ export {
   SAKANA_MODELS,
   XAI_DEFAULT_MODEL,
   XAI_MODELS,
+  ZAI_DEFAULT_MODEL,
+  ZAI_MODELS,
   ZEN_DEFAULT_MODEL,
   ZEN_MODELS,
 } from '@push/lib/provider-models';
@@ -47,6 +49,7 @@ import {
   OPENROUTER_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
   XAI_DEFAULT_MODEL,
+  ZAI_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '@push/lib/provider-models';
 
@@ -71,6 +74,10 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
   openrouter: {
     chat: '/openrouter/api/v1/responses',
     models: '/openrouter/api/v1/models',
+  },
+  zai: {
+    chat: '/zai/api/paas/v4/chat/completions',
+    models: '/api/zai/models',
   },
   zen: {
     chat: '/opencode/zen/v1/chat/completions',
@@ -341,6 +348,10 @@ const openRouterModel = createModelNameStorage(
 export const getOpenRouterModelName = openRouterModel.get;
 export const setOpenRouterModelName = openRouterModel.set;
 
+const zaiModel = createModelNameStorage(requireModelStorageKey('zai'), ZAI_DEFAULT_MODEL);
+export const getZaiModelName = zaiModel.get;
+export const setZaiModelName = zaiModel.set;
+
 const cloudflareModel = createModelNameStorage(
   requireModelStorageKey('cloudflare'),
   CLOUDFLARE_DEFAULT_MODEL,
@@ -421,6 +432,7 @@ export const setDeepSeekModelName = deepseekModel.set;
 const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   ollama: getOllamaModelName,
   openrouter: getOpenRouterModelName,
+  zai: getZaiModelName,
   cloudflare: getCloudflareModelName,
   zen: getZenModelName,
   nvidia: getNvidiaModelName,

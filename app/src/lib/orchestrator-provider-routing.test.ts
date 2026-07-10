@@ -20,6 +20,7 @@ function mockProviderState(options?: {
 
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
+  vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
@@ -28,6 +29,7 @@ function mockProviderState(options?: {
     return {
       ...actual,
       getCloudflareModelName: () => cloudflareModel,
+      getZaiModelName: () => 'glm-5.2',
       getCloudflareWorkerConfigured: () => cloudflareConfigured,
       getPreferredProvider: () => preferredProvider,
       getLastUsedProvider: () => lastUsedProvider,
@@ -146,6 +148,7 @@ function mockFailoverState(opts?: {
   openai?: boolean;
   openrouter?: boolean;
   google?: boolean;
+  zai?: boolean;
   zen?: boolean;
   nvidia?: boolean;
   zenTransport?: 'anthropic' | 'openai';
@@ -154,6 +157,7 @@ function mockFailoverState(opts?: {
     openai = true,
     openrouter = true,
     google = false,
+    zai = false,
     zen = false,
     nvidia = true,
     zenTransport = 'openai',
@@ -162,6 +166,7 @@ function mockFailoverState(opts?: {
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({
     getOpenRouterKey: () => (openrouter ? 'k-openrouter' : ''),
   }));
+  vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => (zai ? 'k-zai' : '') }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
@@ -178,6 +183,7 @@ function mockFailoverState(opts?: {
     return {
       ...actual,
       getCloudflareWorkerConfigured: () => false,
+      getZaiModelName: () => 'glm-5.2',
       getPreferredProvider: () => null,
       getLastUsedProvider: () => null,
     };

@@ -207,7 +207,6 @@ export const PROVIDER_CONFIGS: Record<string, ProviderConfig> = Object.fromEntri
 // in this table.
 export const DEPRECATED_PROVIDERS: Record<string, string> = {
   mistral: 'openrouter',
-  zai: 'openrouter',
   minimax: 'openrouter',
   azure: 'openrouter',
   bedrock: 'openrouter',

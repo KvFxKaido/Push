@@ -181,6 +181,7 @@ export interface LlmMessage {
 export const ALL_PROVIDERS = [
   'ollama',
   'openrouter',
+  'zai',
   'cloudflare',
   'zen',
   'nvidia',

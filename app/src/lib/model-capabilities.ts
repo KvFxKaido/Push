@@ -88,6 +88,15 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
+    providers: ['zai'],
+    match: /.*/,
+    capabilities: {
+      toolCalls: 'supported',
+      jsonMode: 'supported',
+      streaming: 'supported',
+    },
+  },
+  {
     providers: ['fireworks', 'sakana'],
     match: /.*/,
     capabilities: {

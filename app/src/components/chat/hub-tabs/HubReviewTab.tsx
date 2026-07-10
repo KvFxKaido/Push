@@ -27,6 +27,7 @@ import { type ActiveProvider } from '@/lib/orchestrator';
 import {
   OLLAMA_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
+  ZAI_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
   NVIDIA_DEFAULT_MODEL,
@@ -144,6 +145,7 @@ const MAX_SAVED_REVIEW_DIFF_CHARS = 120_000;
 const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   ollama: 'push:review:model:ollama',
   openrouter: 'push:review:model:openrouter',
+  zai: 'push:review:model:zai',
   cloudflare: 'push:review:model:cloudflare',
   zen: 'push:review:model:zen',
   nvidia: 'push:review:model:nvidia',
@@ -159,6 +161,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
 const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
+  zai: ZAI_DEFAULT_MODEL,
   cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
@@ -184,6 +187,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
   return (
     value === 'ollama' ||
     value === 'openrouter' ||
+    value === 'zai' ||
     value === 'cloudflare' ||
     value === 'zen' ||
     value === 'nvidia' ||
@@ -212,6 +216,7 @@ function readReviewModels(): Record<PreferredProvider, string> {
   return {
     ollama: pick('ollama'),
     openrouter: pick('openrouter'),
+    zai: pick('zai'),
     cloudflare: pick('cloudflare'),
     zen: pick('zen'),
     nvidia: pick('nvidia'),
