@@ -2045,7 +2045,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         log('info', 'pr_review_verification_nudged', { deliveryId: input.deliveryId });
         return (
           'You are reporting zero findings without having run any verification tool. ' +
-          `Run the typecheck${reviewCommands.tests ? ' and test' : ''} tool${reviewCommands.tests ? 's' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
+          `Run the typecheck${reviewCommands.tests ? ' and test' : ''} tool${reviewCommands.tests ? 's (one tool call per turn)' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
           'If you have a concrete reason verification cannot run, state it and re-emit; the review will be marked unverified.'
         );
       },

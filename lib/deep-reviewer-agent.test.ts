@@ -524,6 +524,133 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     ).toBe(true);
   });
 
+  it('executes tool calls emitted alongside the completion marker and defers the completion', async () => {
+    // The verification-gate nudge says "run the verifiers, then emit the
+    // marker again" — cooperative models compress that into one message.
+    // Honoring the marker first silently dropped those calls (PR #1392).
+    const cleanJson = JSON.stringify({ summary: 'Clean, verified.', comments: [] });
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: 'Investigating...' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        {
+          type: 'text_delta',
+          text: `{"tool": "typecheck", "args": {}}\n[REVIEW_COMPLETE]\n${cleanJson}`,
+        },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${cleanJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    const typecheckCall: Call = { call: { tool: 'sandbox_check_types', args: {} } };
+    const executed: string[] = [];
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({
+          stream,
+          // Content-driven mocks so each round detects its own calls: round 0
+          // a lone read (satisfies the no-investigation guard), round 1 the
+          // verifier riding next to the marker (single trailing call → the
+          // detectAnyToolCall path executes it).
+          detectAllToolCalls: (content: string) => ({
+            readOnly: [],
+            mutating: content.includes('"tool": "typecheck"') ? typecheckCall : null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          }),
+          detectAnyToolCall: (content: string) => {
+            if (content.includes('"tool": "typecheck"')) return typecheckCall;
+            if (content.includes('Investigating'))
+              return { call: { tool: 'sandbox_read_file', args: {} } };
+            return null;
+          },
+        }),
+        toolExec: async (call) => {
+          executed.push((call as { call: { tool: string } }).call.tool);
+          return { resultText: '[Tool Result — typecheck] Result: PASS' };
+        },
+      },
+      { onStatus: () => {} },
+    );
+
+    // The verifier ran, the marker round did NOT complete the review, and the
+    // follow-up completion (with the verifier result in the transcript) did.
+    expect(executed).toContain('sandbox_check_types');
+    expect(result.summary).toBe('Clean, verified.');
+    expect(capturedRequests).toHaveLength(3);
+    const req2 = capturedRequests[2] as { messages: Array<{ role: string; content: string }> };
+    expect(req2.messages.some((m) => m.role === 'user' && m.content.includes('Result: PASS'))).toBe(
+      true,
+    );
+  });
+
+  it('final loop round: marker+tool still executes the tool; the forced-output turn completes', async () => {
+    // Without this, a verifier emitted next to the marker on the last loop
+    // round is dropped — a would-be-failing verifier lost right at the
+    // finish line (local Codex P2, PR #1393).
+    const verifiedJson = JSON.stringify({ summary: 'Verified at the wire.', comments: [] });
+    const { stream } = makePushStream([
+      // Entered at MAX-1 via resumeState: the final loop round emits a
+      // verifier call AND the marker...
+      [
+        {
+          type: 'text_delta',
+          text: `{"tool": "typecheck", "args": {}}\n[REVIEW_COMPLETE]\n${verifiedJson}`,
+        },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      // ...and the forced-output turn synthesizes from the tool result.
+      [
+        { type: 'text_delta', text: `[REVIEW_COMPLETE]\n${verifiedJson}` },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    const typecheckCall: Call = { call: { tool: 'sandbox_check_types', args: {} } };
+    const executed: string[] = [];
+    const result = await runDeepReviewer(
+      makeAddedFileDiff('src/auth.ts', 'const x = 1;'),
+      {
+        ...baseOptions({
+          stream,
+          detectAllToolCalls: (content: string) => ({
+            readOnly: [],
+            mutating: content.includes('"tool": "typecheck"') ? typecheckCall : null,
+            fileMutations: [],
+            extraMutations: [],
+            droppedCandidates: [],
+          }),
+          detectAnyToolCall: (content: string) =>
+            content.includes('"tool": "typecheck"') ? typecheckCall : null,
+        }),
+        toolExec: async (call) => {
+          executed.push((call as { call: { tool: string } }).call.tool);
+          return { resultText: '[Tool Result — typecheck] Result: PASS' };
+        },
+        resumeState: {
+          messages: [
+            { id: 'seed', role: 'user', content: 'diff', timestamp: 1 },
+            { id: 'seed-tool', role: 'user', content: '[TOOL_RESULT] ok', timestamp: 2 },
+          ],
+          nextRound: MAX_DEEP_REVIEW_ROUNDS - 1,
+          totalToolCalls: 3,
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        },
+      },
+      { onStatus: () => {} },
+    );
+
+    expect(executed).toEqual(['sandbox_check_types']);
+    expect(result.summary).toBe('Verified at the wire.');
+  });
+
   it('completionGate returning null accepts the first completion untouched', async () => {
     const reportJson = JSON.stringify({ summary: 'Fine.', comments: [] });
     const { stream, capturedRequests } = makePushStream([
