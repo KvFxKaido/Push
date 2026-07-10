@@ -627,6 +627,7 @@ export function DaemonChatBody({
     handleSelectDeepSeekModelFromChat: composerState.handleSelectDeepSeekModelFromChat,
     handleSelectAnthropicModelFromChat: composerState.handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat: composerState.handleSelectOpenAIModelFromChat,
+    handleSelectXAIModelFromChat: composerState.handleSelectXAIModelFromChat,
     handleSelectGoogleModelFromChat: composerState.handleSelectGoogleModelFromChat,
     isProviderLocked,
     lockedProvider,

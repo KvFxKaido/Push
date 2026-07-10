@@ -23,7 +23,12 @@ import {
   toOpenAIResponseFormat,
 } from '@push/lib/openai-chat-serializer';
 import { getZenGoTransport, ZEN_GO_MODELS } from '../lib/zen-go';
-import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
+import {
+  ANTHROPIC_MODELS,
+  GOOGLE_MODELS,
+  OPENAI_MODELS,
+  XAI_MODELS,
+} from '@push/lib/provider-models';
 import {
   buildGeminiGenerateContentRequest,
   toGeminiGenerateContent,
@@ -1361,19 +1366,19 @@ export const handleNvidiaModels = createJsonProxyHandler({
   gateway: { provider: 'custom-nvidia', pathSuffix: '/v1/models' },
 });
 
-// --- OpenRouter + OpenAI + Sakana + Fireworks (/v1/responses) ---
+// --- OpenRouter + OpenAI + xAI + Sakana + Fireworks (/v1/responses) ---
 //
-// OpenRouter, direct OpenAI, Sakana Fugu, and Fireworks AI are Responses-native adapters
-// sharing one proxy (`handleResponsesProxy`), parameterized only by upstream
-// URL, env secret, and error labels. Do not route any through the generic Chat
-// proxy:
-// that factory validates and normalizes Chat Completions fields (`messages`,
+// These providers are Responses-native adapters sharing one proxy
+// (`handleResponsesProxy`), parameterized only by upstream URL, env secret, and
+// error labels. Do not route any through the generic Chat proxy: that factory
+// validates and normalizes Chat Completions fields (`messages`,
 // `response_format`, `max_completion_tokens`), while this path must preserve
 // Responses fields (`input`, `text.format`, `max_output_tokens`) for the
 // provider-native contract.
 
 const OPENAI_RESPONSES_UPSTREAM_URL = 'https://api.openai.com/v1/responses';
 const OPENROUTER_RESPONSES_UPSTREAM_URL = 'https://openrouter.ai/api/v1/responses';
+const XAI_RESPONSES_UPSTREAM_URL = 'https://api.x.ai/v1/responses';
 const SAKANA_RESPONSES_UPSTREAM_URL = 'https://api.sakana.ai/v1/responses';
 const FIREWORKS_RESPONSES_UPSTREAM_URL = 'https://api.fireworks.ai/inference/v1/responses';
 const RESPONSES_TIMEOUT_MS = 120_000;
@@ -1461,7 +1466,12 @@ function validateAndNormalizeResponsesRequest(
 
 interface ResponsesProxyOptions {
   providerLabel: string;
-  authSecret: 'OPENAI_API_KEY' | 'OPENROUTER_API_KEY' | 'SAKANA_API_KEY' | 'FIREWORKS_API_KEY';
+  authSecret:
+    | 'OPENAI_API_KEY'
+    | 'OPENROUTER_API_KEY'
+    | 'XAI_API_KEY'
+    | 'SAKANA_API_KEY'
+    | 'FIREWORKS_API_KEY';
   keyMissingError: string;
   upstreamUrl: string;
   route: string;
@@ -1660,6 +1670,22 @@ export async function handleOpenAIChat(request: Request, env: Env): Promise<Resp
   });
 }
 
+export async function handleXAIChat(request: Request, env: Env): Promise<Response> {
+  return handleResponsesProxy(request, env, {
+    providerLabel: 'xAI',
+    authSecret: 'XAI_API_KEY',
+    keyMissingError:
+      'xAI API key not configured. Add it in Settings or set XAI_API_KEY on the Worker.',
+    upstreamUrl: XAI_RESPONSES_UPSTREAM_URL,
+    route: 'api/xai/chat',
+    timeoutError: 'xAI request timed out after 120 seconds',
+    // Bucket C custom provider (AIG v2 Path 1.5), Responses-native: base_url
+    // https://api.x.ai; dormant until `xai` is registered + listed in
+    // CF_AI_GATEWAY_CUSTOM_SLUGS.
+    gateway: { provider: 'custom-xai', pathSuffix: '/v1/responses' },
+  });
+}
+
 export async function handleSakanaChat(request: Request, env: Env): Promise<Response> {
   return handleResponsesProxy(request, env, {
     providerLabel: 'Sakana AI',
@@ -1837,6 +1863,99 @@ export async function handleOpenAIModels(request: Request, env: Env): Promise<Re
 function curatedOpenAIModelsResponse(requestId: string): Response {
   return Response.json(
     { object: 'list', data: OPENAI_MODELS.map((id) => ({ id, name: id })) },
+    { headers: { [REQUEST_ID_HEADER]: requestId } },
+  );
+}
+
+const XAI_MODELS_URL = 'https://api.x.ai/v1/models';
+
+export async function handleXAIModels(request: Request, env: Env): Promise<Response> {
+  const preamble = await runPreamble(request, env, {
+    buildAuth: () => 'XAIModelsList',
+    needsBody: false,
+  });
+  if (preamble instanceof Response) return preamble;
+  const { requestId } = preamble;
+
+  const byok = gatewayByokActive(env, 'xai', 'custom-xai');
+  const apiKey = byok ? null : resolveDirectProviderKey(env.XAI_API_KEY, request);
+  if (!byok && !apiKey) {
+    return curatedXAIModelsResponse(requestId);
+  }
+  const { upstreamUrl, gatewayHeaders } = byok
+    ? resolveAiGatewayFetchTarget(env, XAI_MODELS_URL, {
+        provider: 'custom-xai',
+        pathSuffix: '/v1/models',
+      })
+    : { upstreamUrl: XAI_MODELS_URL, gatewayHeaders: {} as Record<string, string> };
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), OPENAI_MODELS_TIMEOUT_MS);
+    let upstream: Response;
+    try {
+      upstream = await fetch(upstreamUrl, {
+        method: 'GET',
+        headers: {
+          ...(byok ? {} : { Authorization: `Bearer ${apiKey}` }),
+          [REQUEST_ID_HEADER]: requestId,
+          ...gatewayHeaders,
+        },
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!upstream.ok) {
+      const body = await upstream.text().catch(() => '');
+      wlog('warn', 'upstream_error_fallback', {
+        requestId,
+        route: 'api/xai/models',
+        status: upstream.status,
+        body: body.slice(0, 300),
+      });
+      return curatedXAIModelsResponse(requestId);
+    }
+
+    const json = (await upstream.json().catch(() => null)) as {
+      data?: Array<{ id?: unknown }>;
+    } | null;
+    const upstreamData = Array.isArray(json?.data) ? json!.data : [];
+    const filtered = upstreamData
+      .map((entry) => (entry && typeof entry === 'object' ? entry.id : null))
+      .filter((id): id is string => typeof id === 'string' && id.trim().startsWith('grok-'))
+      .map((id) => ({ id, name: id }));
+
+    if (filtered.length === 0) {
+      wlog('warn', 'empty_after_filter_fallback', {
+        requestId,
+        route: 'api/xai/models',
+        upstreamCount: upstreamData.length,
+      });
+      return curatedXAIModelsResponse(requestId);
+    }
+
+    return Response.json(
+      { object: 'list', data: filtered },
+      { headers: { [REQUEST_ID_HEADER]: requestId } },
+    );
+  } catch (err) {
+    const isTimeout = err instanceof Error && err.name === 'AbortError';
+    wlog('warn', isTimeout ? 'upstream_timeout_fallback' : 'unhandled_fallback', {
+      requestId,
+      route: 'api/xai/models',
+      message: err instanceof Error ? err.message : String(err),
+      timeout: isTimeout,
+    });
+    return curatedXAIModelsResponse(requestId);
+  }
+}
+
+function curatedXAIModelsResponse(requestId: string): Response {
+  return Response.json(
+    { object: 'list', data: XAI_MODELS.map((id) => ({ id, name: id })) },
     { headers: { [REQUEST_ID_HEADER]: requestId } },
   );
 }
@@ -2762,6 +2881,7 @@ export const WORKER_PROVIDER_HANDLERS = {
   sakana: { chat: handleSakanaChat, models: handleSakanaModels },
   anthropic: { chat: handleAnthropicChat, models: handleAnthropicModels },
   openai: { chat: handleOpenAIChat, models: handleOpenAIModels },
+  xai: { chat: handleXAIChat, models: handleXAIModels },
   google: { chat: handleGoogleChat, models: handleGoogleModels },
 } satisfies Record<RealProviderId, WorkerProviderHandlers>;
 

@@ -16,6 +16,7 @@ import {
   FIREWORKS_MODELS,
   SAKANA_DEFAULT_MODEL,
   SAKANA_MODELS,
+  XAI_MODELS,
   DEEPSEEK_MODELS,
   normalizeFireworksModelName,
   normalizeSakanaModelName,
@@ -35,11 +36,13 @@ import {
   fetchDeepSeekModels,
   fetchGoogleModels,
   fetchOpenAIModels,
+  fetchXAIModels,
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
+import { useXAIConfig } from '@/hooks/useXAIConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
@@ -105,6 +108,7 @@ export interface ModelCatalog {
   deepseek: ProviderKeyConfig;
   anthropic: ProviderKeyConfig;
   openai: ProviderKeyConfig;
+  xai: ProviderKeyConfig;
   google: ProviderKeyConfig;
   tavily: TavilyKeyConfig;
 
@@ -127,6 +131,7 @@ export interface ModelCatalog {
   deepseekModels: ProviderModelState;
   googleModels: ProviderModelState;
   openaiModels: ProviderModelState;
+  xaiModels: ProviderModelState;
 
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
@@ -139,6 +144,7 @@ export interface ModelCatalog {
   deepseekModelOptions: string[];
   anthropicModelOptions: string[];
   openaiModelOptions: string[];
+  xaiModelOptions: string[];
   googleModelOptions: string[];
 
   // Zen Go tier
@@ -156,6 +162,7 @@ export interface ModelCatalog {
   refreshDeepSeekModels: () => Promise<void>;
   refreshGoogleModels: () => Promise<void>;
   refreshOpenAIModels: () => Promise<void>;
+  refreshXAIModels: () => Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -344,6 +351,18 @@ export function buildModelControl(
         onRefresh: catalog.refreshOpenAIModels,
         allowCustom: true,
       };
+    case 'xai':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'xAI'),
+        value: lockedModel ?? catalog.xai.model,
+        options: includeSelectedModel(catalog.xaiModelOptions, lockedModel ?? catalog.xai.model),
+        onChange: catalog.xai.setModel,
+        loading: catalog.xaiModels.loading,
+        error: catalog.xaiModels.error,
+        onRefresh: catalog.refreshXAIModels,
+        allowCustom: true,
+      };
     case 'google':
       return {
         provider,
@@ -379,6 +398,7 @@ export function useModelCatalog(): ModelCatalog {
   const deepseekCfg = useDeepSeekConfig();
   const anthropicCfg = useAnthropicConfig();
   const openaiCfg = useOpenAIConfig();
+  const xaiCfg = useXAIConfig();
   const googleCfg = useGoogleConfig();
   const tavilyCfg = useTavilyConfig();
 
@@ -392,6 +412,7 @@ export function useModelCatalog(): ModelCatalog {
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
   const [anthropicKeyInput, setAnthropicKeyInput] = useState('');
   const [openaiKeyInput, setOpenaiKeyInput] = useState('');
+  const [xaiKeyInput, setXaiKeyInput] = useState('');
   const [googleKeyInput, setGoogleKeyInput] = useState('');
   const [tavilyKeyInput, setTavilyKeyInput] = useState('');
   const [cloudflareConfigured, setCloudflareConfiguredState] = useState<boolean>(() =>
@@ -473,6 +494,7 @@ export function useModelCatalog(): ModelCatalog {
     sakana: sakanaCfg.hasKey || serverUnlocked('sakana'),
     anthropic: anthropicCfg.hasKey || serverUnlocked('anthropic'),
     openai: openaiCfg.hasKey || serverUnlocked('openai'),
+    xai: xaiCfg.hasKey || serverUnlocked('xai'),
     google: googleCfg.hasKey || serverUnlocked('google'),
   } satisfies Record<PreferredProvider, boolean>;
 
@@ -493,6 +515,7 @@ export function useModelCatalog(): ModelCatalog {
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
   const [googleModelList, setGoogleModelList] = useState<string[]>([]);
   const [openaiModelList, setOpenaiModelList] = useState<string[]>([]);
+  const [xaiModelList, setXaiModelList] = useState<string[]>([]);
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
@@ -504,6 +527,7 @@ export function useModelCatalog(): ModelCatalog {
   const [deepseekLoading, setDeepseekLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [openaiLoading, setOpenaiLoading] = useState(false);
+  const [xaiLoading, setXaiLoading] = useState(false);
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
@@ -515,6 +539,7 @@ export function useModelCatalog(): ModelCatalog {
   const [deepseekError, setDeepseekError] = useState<string | null>(null);
   const [googleError, setGoogleError] = useState<string | null>(null);
   const [openaiError, setOpenaiError] = useState<string | null>(null);
+  const [xaiError, setXaiError] = useState<string | null>(null);
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
@@ -526,6 +551,7 @@ export function useModelCatalog(): ModelCatalog {
   const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
   const [googleUpdatedAt, setGoogleUpdatedAt] = useState<number | null>(null);
   const [openaiUpdatedAt, setOpenaiUpdatedAt] = useState<number | null>(null);
+  const [xaiUpdatedAt, setXaiUpdatedAt] = useState<number | null>(null);
 
   // Pending backoff-retry timers, keyed by the provider's stable `setModels`
   // setter. Keyed (not a flat Set) so a fresh fetch for a provider can cancel
@@ -766,7 +792,7 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [sakanaCfg.hasKey, sakanaLoading, refreshModels]);
 
-  // Google/OpenAI fetch live lists from the Worker proxies, which filter to
+  // Google/OpenAI/xAI fetch live lists from the Worker proxies, which filter to
   // chat-capable models and fall back to the curated list on key-missing or
   // upstream failure. No models.dev metadata pass, so no force flag.
   const refreshGoogleModels = useCallback(async () => {
@@ -796,6 +822,20 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load OpenAI models.',
     });
   }, [openaiCfg.hasKey, openaiLoading, refreshModels]);
+
+  const refreshXAIModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: xaiCfg.hasKey,
+      isLoading: xaiLoading,
+      setLoading: setXaiLoading,
+      setError: setXaiError,
+      setModels: setXaiModelList,
+      setUpdatedAt: setXaiUpdatedAt,
+      fetchModels: fetchXAIModels,
+      emptyMessage: 'No models returned by xAI.',
+      failureMessage: 'Failed to load xAI models.',
+    });
+  }, [xaiCfg.hasKey, xaiLoading, refreshModels]);
 
   // Auto-fetch models when key becomes available.
   // The active provider fetches immediately; all others are deferred via
@@ -1039,6 +1079,29 @@ export function useModelCatalog(): ModelCatalog {
       refreshOpenAIModels,
     ],
   );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: xaiCfg.hasKey,
+          modelCount: xaiModelList.length,
+          loading: xaiLoading,
+          error: xaiError,
+        }),
+        activeProviderLabel === 'xai',
+        () => {
+          void refreshXAIModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      xaiCfg.hasKey,
+      xaiError,
+      xaiLoading,
+      xaiModelList.length,
+      refreshXAIModels,
+    ],
+  );
 
   // Clear models when key is removed
   useEffect(() => {
@@ -1143,6 +1206,16 @@ export function useModelCatalog(): ModelCatalog {
       return () => clearTimeout(id);
     }
   }, [openaiCfg.hasKey]);
+  useEffect(() => {
+    if (!xaiCfg.hasKey) {
+      const id = setTimeout(() => {
+        setXaiModelList([]);
+        setXaiError(null);
+        setXaiUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [xaiCfg.hasKey]);
 
   const fireworksSelectedModel = fireworksCfg.model;
   const setFireworksModel = fireworksCfg.setModel;
@@ -1288,6 +1361,10 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [openaiModelList, openaiCfg.model],
   );
+  const xaiModelOptions = useMemo(
+    () => includeSelectedModel(xaiModelList.length > 0 ? xaiModelList : XAI_MODELS, xaiCfg.model),
+    [xaiModelList, xaiCfg.model],
+  );
   // Google: live list via the Worker proxy (`handleGoogleModels` keeps only
   // generateContent-capable models); curated fallback before the first fetch
   // or when the proxy serves the curated set.
@@ -1389,6 +1466,15 @@ export function useModelCatalog(): ModelCatalog {
       keyInput: openaiKeyInput,
       setKeyInput: setOpenaiKeyInput,
     },
+    xai: {
+      setKey: xaiCfg.setKey,
+      clearKey: xaiCfg.clearKey,
+      hasKey: xaiCfg.hasKey,
+      model: xaiCfg.model,
+      setModel: xaiCfg.setModel,
+      keyInput: xaiKeyInput,
+      setKeyInput: setXaiKeyInput,
+    },
     google: {
       setKey: googleCfg.setKey,
       clearKey: googleCfg.clearKey,
@@ -1473,6 +1559,12 @@ export function useModelCatalog(): ModelCatalog {
       error: openaiError,
       updatedAt: openaiUpdatedAt,
     },
+    xaiModels: {
+      models: xaiModelList,
+      loading: xaiLoading,
+      error: xaiError,
+      updatedAt: xaiUpdatedAt,
+    },
 
     ollamaModelOptions,
     openRouterModelOptions,
@@ -1484,6 +1576,7 @@ export function useModelCatalog(): ModelCatalog {
     deepseekModelOptions,
     anthropicModelOptions,
     openaiModelOptions,
+    xaiModelOptions,
     googleModelOptions,
 
     zenGoMode: zenCfg.goMode,
@@ -1499,5 +1592,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshDeepSeekModels,
     refreshGoogleModels,
     refreshOpenAIModels,
+    refreshXAIModels,
   };
 }

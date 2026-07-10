@@ -30,6 +30,8 @@ export {
   OPENROUTER_MODELS,
   SAKANA_DEFAULT_MODEL,
   SAKANA_MODELS,
+  XAI_DEFAULT_MODEL,
+  XAI_MODELS,
   ZEN_DEFAULT_MODEL,
   ZEN_MODELS,
 } from '@push/lib/provider-models';
@@ -44,6 +46,7 @@ import {
   OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
+  XAI_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
 } from '@push/lib/provider-models';
 
@@ -399,6 +402,10 @@ const openaiModel = createModelNameStorage(requireModelStorageKey('openai'), OPE
 export const getOpenAIModelName = openaiModel.get;
 export const setOpenAIModelName = openaiModel.set;
 
+const xaiModel = createModelNameStorage(requireModelStorageKey('xai'), XAI_DEFAULT_MODEL);
+export const getXAIModelName = xaiModel.get;
+export const setXAIModelName = xaiModel.set;
+
 const googleModel = createModelNameStorage(requireModelStorageKey('google'), GOOGLE_DEFAULT_MODEL);
 export const getGoogleModelName = googleModel.get;
 export const setGoogleModelName = googleModel.set;
@@ -421,6 +428,7 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   sakana: getSakanaModelName,
   anthropic: getAnthropicModelName,
   openai: getOpenAIModelName,
+  xai: getXAIModelName,
   google: getGoogleModelName,
   deepseek: getDeepSeekModelName,
 };

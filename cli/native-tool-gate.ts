@@ -6,6 +6,7 @@ import {
   OLLAMA_MODELS,
   OPENROUTER_MODELS,
   SAKANA_MODELS,
+  XAI_MODELS,
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
@@ -29,6 +30,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   ollama: new Set(OLLAMA_MODELS.filter((id) => !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(id))),
   openrouter: new Set(OPENROUTER_MODELS),
   sakana: new Set(SAKANA_MODELS),
+  xai: new Set(XAI_MODELS),
   zen: new Set(ZEN_MODELS),
 };
 

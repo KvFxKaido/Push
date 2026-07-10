@@ -94,6 +94,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.anthropicModelOptions;
     case 'openai':
       return catalog.openaiModelOptions;
+    case 'xai':
+      return catalog.xaiModelOptions;
     case 'google':
       return catalog.googleModelOptions;
     default:
@@ -124,6 +126,8 @@ function defaultModelForProvider(
       return catalog.anthropic.model || null;
     case 'openai':
       return catalog.openai.model || null;
+    case 'xai':
+      return catalog.xai.model || null;
     case 'google':
       return catalog.google.model || null;
     default:

@@ -167,6 +167,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     handleSelectDeepSeekModelFromChat: vi.fn(),
     handleSelectAnthropicModelFromChat: vi.fn(),
     handleSelectOpenAIModelFromChat: vi.fn(),
+    handleSelectXAIModelFromChat: vi.fn(),
     handleSelectGoogleModelFromChat: vi.fn(),
     handleSelectRepoFromDrawer: vi.fn(),
     handleResumeChatFromDrawer: vi.fn(),

@@ -76,6 +76,7 @@ describe('isProviderEngineCapable', () => {
       SAKANA_API_KEY: 'k',
       ANTHROPIC_API_KEY: 'k',
       OPENAI_API_KEY: 'k',
+      XAI_API_KEY: 'k',
       GOOGLE_API_KEY: 'k',
     } as Env;
     for (const provider of ALL_PROVIDERS) {

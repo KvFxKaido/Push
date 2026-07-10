@@ -7,6 +7,7 @@ import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
+import { getXAIKey } from '@/hooks/useXAIConfig';
 import { safeStorageGet, safeStorageSet } from './safe-storage';
 import {
   ANTHROPIC_MODELS,
@@ -18,6 +19,7 @@ import {
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   SAKANA_MODELS,
+  XAI_MODELS,
   ZEN_GO_MODELS,
   ZEN_MODELS,
 } from './providers';
@@ -463,6 +465,7 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
 const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
   'openai',
+  'xai',
   'nvidia',
   'fireworks',
   'sakana',
@@ -574,6 +577,9 @@ function resolveStructuredOutputMode(
   if (provider === 'google') {
     return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId) ? 'strict' : 'none';
   }
+  if (provider === 'xai') {
+    return XAI_NATIVE_TOOL_CALLING_MODELS.has(modelId) ? 'strict' : 'none';
+  }
   return getModelCapabilities(provider, modelId).structuredOutput ? 'strict' : 'none';
 }
 
@@ -630,6 +636,7 @@ const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
  */
 const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
 const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MODELS);
+const XAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(XAI_MODELS);
 const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
 const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
 // `looksLikeOpenAIToolCallingModel` is shared with the CLI gate via
@@ -678,6 +685,7 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'sakana') return SAKANA_NATIVE_TOOL_CALLING_MODELS.has(modelId);
+  if (provider === 'xai') return XAI_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'ollama') {
     return (
@@ -1661,6 +1669,43 @@ export async function fetchOpenAIModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenAI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchXAIModels(): Promise<string[]> {
+  const key = getXAIKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.xai.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`xAI model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('xai', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `xAI model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

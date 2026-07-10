@@ -7,6 +7,7 @@ import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getAnthropicKey } from '@/hooks/useAnthropicConfig';
 import { getOpenAIKey } from '@/hooks/useOpenAIConfig';
+import { getXAIKey } from '@/hooks/useXAIConfig';
 import { getGoogleKey } from '@/hooks/useGoogleConfig';
 import {
   getAnthropicModelName,
@@ -14,6 +15,7 @@ import {
   getGoogleModelName,
   getLastUsedProvider,
   getOpenAIModelName,
+  getXAIModelName,
   getPreferredProvider,
   type PreferredProvider,
 } from './providers';
@@ -44,6 +46,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
     ),
   openai: () =>
     Boolean((getOpenAIKey() || hasServerProviderCredential('openai')) && getOpenAIModelName()),
+  xai: () => Boolean((getXAIKey() || hasServerProviderCredential('xai')) && getXAIModelName()),
   google: () =>
     Boolean((getGoogleKey() || hasServerProviderCredential('google')) && getGoogleModelName()),
 };

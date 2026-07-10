@@ -26,6 +26,7 @@ import { nvidiaStream } from './nvidia-stream';
 import { deepseekStream } from './deepseek-stream';
 import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
+import { xaiStream } from './xai-stream';
 import { geminiStream } from './gemini-stream';
 import { iterateChatStream, type IterateChatStreamTimeouts } from './iterate-chat-stream';
 import { resolvePushCapabilityProfile } from './model-catalog';
@@ -40,6 +41,7 @@ import {
   getSakanaModelName,
   getAnthropicModelName,
   getOpenAIModelName,
+  getXAIModelName,
   getGoogleModelName,
 } from './providers';
 import { getActiveProvider, isProviderAvailable, type ActiveProvider } from './active-provider';
@@ -188,6 +190,7 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   nvidia: nvidiaStream,
   anthropic: anthropicStream,
   openai: openaiStream,
+  xai: xaiStream,
   google: geminiStream,
 } satisfies Record<RealProviderId, PushStream<ChatMessage>>;
 
@@ -293,6 +296,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getAnthropicModelName();
     case 'openai':
       return getOpenAIModelName();
+    case 'xai':
+      return getXAIModelName();
     case 'google':
       return getGoogleModelName();
     case 'demo':

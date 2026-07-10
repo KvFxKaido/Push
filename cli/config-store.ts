@@ -88,6 +88,7 @@ export interface PushConfig {
   deepseek?: ProviderConfig;
   sakana?: ProviderConfig;
   openai?: ProviderConfig;
+  xai?: ProviderConfig;
   anthropic?: ProviderConfig;
   google?: ProviderConfig;
   [key: string]: unknown;
@@ -211,6 +212,7 @@ const PROVIDER_CONFIG_KEYS = [
   'deepseek',
   'sakana',
   'openai',
+  'xai',
   'anthropic',
   'google',
 ] as const;

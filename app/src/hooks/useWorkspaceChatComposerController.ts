@@ -35,6 +35,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectDeepSeekModelFromChat'
   | 'handleSelectAnthropicModelFromChat'
   | 'handleSelectOpenAIModelFromChat'
+  | 'handleSelectXAIModelFromChat'
   | 'handleSelectGoogleModelFromChat'
   | 'isProviderLocked'
   | 'lockedProvider'
@@ -64,6 +65,7 @@ export function useWorkspaceChatComposerController({
   handleSelectDeepSeekModelFromChat,
   handleSelectAnthropicModelFromChat,
   handleSelectOpenAIModelFromChat,
+  handleSelectXAIModelFromChat,
   handleSelectGoogleModelFromChat,
   isProviderLocked,
   lockedProvider,
@@ -300,6 +302,16 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshOpenAIModels,
       isLocked: isProviderModelLocked('openai'),
       ariaLabel: 'Select OpenAI model',
+    }),
+    xai: buildPickerControl('xai', {
+      options: catalog.xaiModelOptions,
+      onChange: handleSelectXAIModelFromChat,
+      loading: catalog.xaiModels.loading,
+      error: catalog.xaiModels.error,
+      updatedAt: catalog.xaiModels.updatedAt,
+      refreshModels: catalog.refreshXAIModels,
+      isLocked: isProviderModelLocked('xai'),
+      ariaLabel: 'Select xAI model',
     }),
     google: buildPickerControl('google', {
       options: catalog.googleModelOptions,

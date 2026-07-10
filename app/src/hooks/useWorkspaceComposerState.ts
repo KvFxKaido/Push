@@ -21,6 +21,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   nvidia: '',
   anthropic: '',
   openai: '',
+  xai: '',
   google: '',
   fireworks: '',
   sakana: '',
@@ -38,6 +39,7 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
     anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
     openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
+    xai: typeof parsed.xai === 'string' ? parsed.xai.trim() : '',
     google: typeof parsed.google === 'string' ? parsed.google.trim() : '',
     fireworks:
       typeof parsed.fireworks === 'string' ? normalizeFireworksModelName(parsed.fireworks) : '',
@@ -113,12 +115,14 @@ export function useWorkspaceComposerState({
       sakana: catalog.sakana.model,
       anthropic: catalog.anthropic.model,
       openai: catalog.openai.model,
+      xai: catalog.xai.model,
       google: catalog.google.model,
       deepseek: catalog.deepseek.model,
     }),
     [
       catalog.anthropic.model,
       catalog.openai.model,
+      catalog.xai.model,
       catalog.google.model,
       catalog.cloudflare.model,
       catalog.fireworks.model,
@@ -202,6 +206,7 @@ export function useWorkspaceComposerState({
           defaultChatModels.anthropic,
         openai:
           draft?.models?.openai?.trim() || rememberedChatModels.openai || defaultChatModels.openai,
+        xai: draft?.models?.xai?.trim() || rememberedChatModels.xai || defaultChatModels.xai,
         google:
           draft?.models?.google?.trim() || rememberedChatModels.google || defaultChatModels.google,
         fireworks: normalizeFireworksModelName(
@@ -428,6 +433,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectXAIModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('xai', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { xai: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectGoogleModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('google', model);
@@ -460,6 +474,7 @@ export function useWorkspaceComposerState({
     handleSelectDeepSeekModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectXAIModelFromChat,
     handleSelectGoogleModelFromChat,
   };
 }
