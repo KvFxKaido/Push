@@ -116,11 +116,49 @@ export type ReviewSandboxToolResult = ToolExecutionResult & {
 // round wall-clock, which can exceed that budget in sum — so the executor
 // reports tool-start progress (hooks.onToolProgress → checkpoint touch) and
 // the budget measures from the LAST progress mark, not the round top
-// (Codex P2, PR #1387).
+// (Codex P2, PR #1387). Setup gets 10 min: a cold monorepo install (Push's
+// own `# setup:` hint runs three npm trees) doesn't fit the old 5; the DO
+// kicks setup eagerly at review start and re-touches progress after the
+// setup gate, so the wider deadline stays inside the no-progress budget.
 const REVIEW_TYPECHECK_DEADLINE_MS = 480_000;
 const REVIEW_TESTS_DEADLINE_MS = 480_000;
-const REVIEW_SETUP_DEADLINE_MS = 300_000;
+const REVIEW_SETUP_DEADLINE_MS = 600_000;
 const FALLBACK_STREAM_CAP_CHARS = 80_000;
+
+// Per-call deadlines on the detached-exec primitives. The CF sandbox control
+// plane can hang at minute scale under load (observed 2026-07-09: startProcess
+// 55s in flight, getProcess status polls 44–70s, all ending only when the
+// caller was killed). The runner's overall deadline is checked BETWEEN awaits,
+// so a single hung primitive call stalls the whole verifier until the review's
+// 15-min budget kills the attempt. Bounding each call turns that stall into a
+// thrown error the runner already classifies (status → lost-contact, logs →
+// swallowed mid-run drain, start → the caller's transport-failed result).
+// Status/logs get retries — a slow poll under npm load may recover; start does
+// not (a retried start could double-spawn the command).
+const REVIEW_PRIMITIVE_START_DEADLINE_MS = 60_000;
+const REVIEW_PRIMITIVE_POLL_DEADLINE_MS = 30_000;
+const REVIEW_PRIMITIVE_POLL_ATTEMPTS = 3;
+
+/** Reject with a labeled error when `run` doesn't settle within `ms`. The
+ *  underlying subrequest keeps running — we stop waiting, not the work. */
+function withDeadline<T>(run: () => Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} did not respond within ${ms}ms`)),
+      ms,
+    );
+    run().then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 export interface ReviewSandbox {
   sandboxId: string;
@@ -333,22 +371,47 @@ async function runDetachedReviewExec(
   deadlineMs: number,
 ): Promise<ReviewDetachedExecResult> {
   const auth = { sandbox_id: sandbox.sandboxId, owner_token: sandbox.ownerToken };
+  // Bounded poll: per-call deadline, retried — the transport owns retries per
+  // the runner's contract (its status/logs failure paths assume "retries
+  // already exhausted"). Non-timeout errors (404 etc.) retry too; the extra
+  // round-trips are cheap and a transient route error shouldn't kill a
+  // 5-minute install at minute 4.
+  const boundedPoll = async (
+    route: 'exec-status' | 'exec-logs',
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> => {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < REVIEW_PRIMITIVE_POLL_ATTEMPTS; attempt++) {
+      try {
+        return await withDeadline(
+          () => callRequiredRoute(env, route, body),
+          REVIEW_PRIMITIVE_POLL_DEADLINE_MS,
+          `sandbox ${route}`,
+        );
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr;
+  };
   const primitives: DetachedExecPrimitives = {
     start: async (cmd, opts) => {
-      const raw = await callRequiredRoute(env, 'exec-start', {
-        ...auth,
-        command: cmd,
-        workdir: opts.workdir,
-      });
+      const raw = await withDeadline(
+        () =>
+          callRequiredRoute(env, 'exec-start', {
+            ...auth,
+            command: cmd,
+            workdir: opts.workdir,
+          }),
+        REVIEW_PRIMITIVE_START_DEADLINE_MS,
+        'sandbox exec-start',
+      );
       const processId = typeof raw.process_id === 'string' ? raw.process_id : '';
       if (!processId) throw new Error('sandbox exec-start did not return process_id');
       return { processId };
     },
     status: async (processId) => {
-      const raw = await callRequiredRoute(env, 'exec-status', {
-        ...auth,
-        process_id: processId,
-      });
+      const raw = await boundedPoll('exec-status', { ...auth, process_id: processId });
       if (typeof raw.running !== 'boolean') {
         throw new Error('sandbox exec-status did not return running');
       }
@@ -361,7 +424,7 @@ async function runDetachedReviewExec(
       };
     },
     logs: async (processId, cursors) => {
-      const raw = await callRequiredRoute(env, 'exec-logs', {
+      const raw = await boundedPoll('exec-logs', {
         ...auth,
         process_id: processId,
         cursor_stdout: cursors.cursorStdout,
@@ -381,7 +444,11 @@ async function runDetachedReviewExec(
       };
     },
     interrupt: async (processId) => {
-      await callRequiredRoute(env, 'exec-kill', { ...auth, process_id: processId });
+      await withDeadline(
+        () => callRequiredRoute(env, 'exec-kill', { ...auth, process_id: processId }),
+        REVIEW_PRIMITIVE_POLL_DEADLINE_MS,
+        'sandbox exec-kill',
+      );
     },
   };
 
@@ -444,8 +511,14 @@ async function reduceReviewTypecheckOutput(
  * Run a base-ref-selected verifier command (typecheck or tests) against the
  * checked-out PR head. NEVER throws: failures are returned as model-facing
  * tool results so the review loop can keep going and reason about pass/fail.
- * The structured `verification` field carries the same pass/fail for the
- * executor's tracking (timeouts/transport failures are `pass: false`).
+ *
+ * Verdict policy: the structured `verification` field is attached ONLY when
+ * the command actually ran to completion with a real exit code. A deadline
+ * kill, lost contact, an abort, or an abnormal death (no exit code) is an
+ * environment outcome — recording it as `pass: false` would paint the
+ * check-run "tests failed" over a sandbox problem. Those runs return
+ * model-facing text explaining the verifier could not complete and leave the
+ * review's verification state at `not_run` (unverified).
  */
 async function runReviewVerifier(
   env: Env,
@@ -460,12 +533,15 @@ async function runReviewVerifier(
   const reduced = await reduceReviewTypecheckOutput(trimmedCommand, result);
   const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
 
-  const pass = result.exitCode === 0;
+  // A synthetic exit code (-1: never started / lost mid-run / died without a
+  // code) is not a command outcome even when terminalReason says 'completed'.
+  const completed = result.terminalReason === 'completed' && result.exitCode >= 0;
+  const pass = completed && result.exitCode === 0;
   const lines: string[] = [
     `[Tool Result — ${kind}]`,
     `Command: ${trimmedCommand}`,
     `Exit code: ${result.exitCode}`,
-    `Result: ${pass ? 'PASS' : 'FAIL'}`,
+    `Result: ${completed ? (pass ? 'PASS' : 'FAIL') : 'DID NOT COMPLETE'}`,
   ];
   if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
   if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
@@ -474,8 +550,21 @@ async function runReviewVerifier(
     lines.push(`\n[Timed out after ${deadlineMs}ms]`);
   }
   if (result.error) lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
+  if (!completed) {
+    lines.push(
+      `\n[Note] The ${kind} verifier could not run to completion in this review's sandbox (timeout, lost contact, or abnormal termination). This is an environment outcome, NOT a ${kind} failure — do not report it as a finding. Note the review as unverified for ${kind}.`,
+    );
+  }
 
-  return { text: lines.join('\n'), verification: { kind, pass } };
+  log('review_verifier_finished', {
+    kind,
+    completed,
+    exitCode: result.exitCode,
+    terminalReason: result.terminalReason ?? null,
+    timedOut: result.timedOut,
+  });
+
+  return { text: lines.join('\n'), ...(completed ? { verification: { kind, pass } } : {}) };
 }
 
 /**
@@ -559,10 +648,19 @@ export async function executeReviewSandboxTool(
    * verification metadata — the verifier didn't fail, it couldn't run.
    */
   ensureSetup?: () => Promise<ReviewSetupResult>,
+  /**
+   * Progress mark for the review's no-progress budget, called after the setup
+   * gate settles so a verifier that waited on a long install still gets its
+   * full deadline measured from the install's END, not the tool-call start
+   * (setup 600s + verifier 480s would otherwise overrun the 15-min budget
+   * with no progress mark in between).
+   */
+  touchProgress?: () => void,
 ): Promise<ReviewSandboxToolResult> {
   const setupGate = async (): Promise<ReviewSandboxToolResult | null> => {
     if (!ensureSetup) return null;
     const setup = await ensureSetup();
+    touchProgress?.();
     if (setup.ok) return null;
     return {
       text: `[Tool Error] ${setup.text}\nVerification cannot run in this review's sandbox — investigate via the diff and read tools, and note the review as unverified.`,
