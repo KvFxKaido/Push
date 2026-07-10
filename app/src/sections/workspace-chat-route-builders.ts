@@ -181,6 +181,7 @@ export function buildWorkspaceHubReviewModelOptions(
   return {
     ollama: catalog.ollamaModelOptions,
     openrouter: catalog.openRouterModelOptions,
+    zai: catalog.zaiModelOptions,
     cloudflare: catalog.cloudflareModelOptions,
     zen: catalog.zenModelOptions,
     nvidia: catalog.nvidiaModelOptions,

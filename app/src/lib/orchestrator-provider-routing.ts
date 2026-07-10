@@ -19,6 +19,7 @@ import {
 import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
+import { zaiStream } from './zai-stream';
 import { zenStream } from './zen-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
@@ -34,6 +35,7 @@ import {
   getCloudflareModelName,
   getOllamaModelName,
   getOpenRouterModelName,
+  getZaiModelName,
   getZenModelName,
   getNvidiaModelName,
   getFireworksModelName,
@@ -181,8 +183,9 @@ export function resolveFailoverCandidates(
  */
 const PROVIDER_PUSH_STREAM_FACTORIES = {
   ollama: ollamaStream,
-  cloudflare: cloudflareStream,
   openrouter: openrouterStream,
+  zai: zaiStream,
+  cloudflare: cloudflareStream,
   zen: zenStream,
   fireworks: fireworksStream,
   sakana: sakanaStream,
@@ -280,6 +283,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getOllamaModelName();
     case 'openrouter':
       return getOpenRouterModelName();
+    case 'zai':
+      return getZaiModelName();
     case 'cloudflare':
       return getCloudflareModelName();
     case 'zen':

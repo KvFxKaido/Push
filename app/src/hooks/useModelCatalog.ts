@@ -9,6 +9,7 @@ import {
   setCloudflareWorkerConfigured,
   clearPreferredProvider,
   OPENROUTER_MODELS,
+  ZAI_MODELS,
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
@@ -29,6 +30,7 @@ import {
   fetchCloudflareModels,
   fetchOllamaModels,
   fetchOpenRouterModels,
+  fetchZaiModels,
   fetchZenModels,
   fetchNvidiaModels,
   fetchFireworksModels,
@@ -40,6 +42,7 @@ import {
 } from '@/lib/model-catalog';
 import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
+import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
 import { useXAIConfig } from '@/hooks/useXAIConfig';
@@ -100,6 +103,7 @@ export interface ModelCatalog {
   // Provider configs (key management + key input state)
   ollama: ProviderKeyConfig;
   openRouter: ProviderKeyConfig;
+  zai: ProviderKeyConfig;
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
@@ -123,6 +127,7 @@ export interface ModelCatalog {
   // Per-provider model state
   ollamaModels: ProviderModelState;
   openRouterModels: ProviderModelState;
+  zaiModels: ProviderModelState;
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
@@ -136,6 +141,7 @@ export interface ModelCatalog {
   // Model option lists (includes selected even if not in fetched list)
   ollamaModelOptions: string[];
   openRouterModelOptions: string[];
+  zaiModelOptions: string[];
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
@@ -154,6 +160,7 @@ export interface ModelCatalog {
   // Refresh callbacks
   refreshOllamaModels: () => Promise<void>;
   refreshOpenRouterModels: () => Promise<void>;
+  refreshZaiModels: () => Promise<void>;
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
@@ -256,6 +263,18 @@ export function buildModelControl(
         loading: catalog.openRouterModels.loading,
         error: catalog.openRouterModels.error,
         onRefresh: catalog.refreshOpenRouterModels,
+      };
+    case 'zai':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Z.ai'),
+        value: lockedModel ?? catalog.zai.model,
+        options: includeSelectedModel(catalog.zaiModelOptions, lockedModel ?? catalog.zai.model),
+        onChange: catalog.zai.setModel,
+        loading: catalog.zaiModels.loading,
+        error: catalog.zaiModels.error,
+        onRefresh: catalog.refreshZaiModels,
+        allowCustom: true,
       };
     case 'cloudflare':
       return {
@@ -391,6 +410,7 @@ export function useModelCatalog(): ModelCatalog {
   // Provider key/model configs
   const ollamaCfg = useOllamaConfig();
   const openRouterCfg = useOpenRouterConfig();
+  const zaiCfg = useZaiConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
   const fireworksCfg = useFireworksConfig();
@@ -405,6 +425,7 @@ export function useModelCatalog(): ModelCatalog {
   // Key input state (controlled text fields for Settings UI)
   const [ollamaKeyInput, setOllamaKeyInput] = useState('');
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
+  const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
@@ -486,6 +507,7 @@ export function useModelCatalog(): ModelCatalog {
   const providerAvailability = {
     ollama: ollamaCfg.hasKey || serverUnlocked('ollama'),
     openrouter: openRouterCfg.hasKey || serverUnlocked('openrouter'),
+    zai: zaiCfg.hasKey || serverUnlocked('zai'),
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
     nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
@@ -507,6 +529,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaModelList, setOllamaModelList] = useState<string[]>([]);
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
+  const [zaiModelList, setZaiModelList] = useState<string[]>([]);
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
@@ -519,6 +542,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaLoading, setOllamaLoading] = useState(false);
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
+  const [zaiLoading, setZaiLoading] = useState(false);
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
@@ -531,6 +555,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaError, setOllamaError] = useState<string | null>(null);
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
+  const [zaiError, setZaiError] = useState<string | null>(null);
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
@@ -543,6 +568,7 @@ export function useModelCatalog(): ModelCatalog {
 
   const [ollamaUpdatedAt, setOllamaUpdatedAt] = useState<number | null>(null);
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
+  const [zaiUpdatedAt, setZaiUpdatedAt] = useState<number | null>(null);
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
@@ -667,6 +693,20 @@ export function useModelCatalog(): ModelCatalog {
     },
     [openRouterCfg.hasKey, openRouterLoading, refreshModels],
   );
+
+  const refreshZaiModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: zaiCfg.hasKey,
+      isLoading: zaiLoading,
+      setLoading: setZaiLoading,
+      setError: setZaiError,
+      setModels: setZaiModelList,
+      setUpdatedAt: setZaiUpdatedAt,
+      fetchModels: fetchZaiModels,
+      emptyMessage: 'No models returned by Z.ai.',
+      failureMessage: 'Failed to load Z.ai models.',
+    });
+  }, [zaiCfg.hasKey, zaiLoading, refreshModels]);
 
   // Manual refresh defaults `force` to true so the picker revalidates the
   // cached binding catalog; the auto-fetch effect below passes `false` to serve
@@ -891,6 +931,29 @@ export function useModelCatalog(): ModelCatalog {
       openRouterLoading,
       openRouterModelList.length,
       refreshOpenRouterModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
+          hasKey: zaiCfg.hasKey,
+          modelCount: zaiModelList.length,
+          loading: zaiLoading,
+          error: zaiError,
+        }),
+        activeProviderLabel === 'zai',
+        () => {
+          void refreshZaiModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      zaiCfg.hasKey,
+      zaiError,
+      zaiLoading,
+      zaiModelList.length,
+      refreshZaiModels,
     ],
   );
   useEffect(
@@ -1136,6 +1199,16 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [openRouterCfg.hasKey]);
   useEffect(() => {
+    if (!zaiCfg.hasKey) {
+      const id = setTimeout(() => {
+        setZaiModelList([]);
+        setZaiError(null);
+        setZaiUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [zaiCfg.hasKey]);
+  useEffect(() => {
     if (!zenCfg.hasKey) {
       const id = setTimeout(() => {
         setZenModelList([]);
@@ -1295,6 +1368,10 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [openRouterCfg.model, openRouterModelList],
   );
+  const zaiModelOptions = useMemo(
+    () => includeSelectedModel(zaiModelList.length > 0 ? zaiModelList : ZAI_MODELS, zaiCfg.model),
+    [zaiModelList, zaiCfg.model],
+  );
   const cloudflareModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1395,6 +1472,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: openRouterCfg.setModel,
       keyInput: openRouterKeyInput,
       setKeyInput: setOpenRouterKeyInput,
+    },
+    zai: {
+      setKey: zaiCfg.setKey,
+      clearKey: zaiCfg.clearKey,
+      hasKey: zaiCfg.hasKey,
+      model: zaiCfg.model,
+      setModel: zaiCfg.setModel,
+      keyInput: zaiKeyInput,
+      setKeyInput: setZaiKeyInput,
     },
     cloudflare: {
       configured: cloudflareConfigured,
@@ -1511,6 +1597,12 @@ export function useModelCatalog(): ModelCatalog {
       error: openRouterError,
       updatedAt: openRouterUpdatedAt,
     },
+    zaiModels: {
+      models: zaiModelList,
+      loading: zaiLoading,
+      error: zaiError,
+      updatedAt: zaiUpdatedAt,
+    },
     cloudflareModels: {
       models: cloudflareModelList,
       loading: cloudflareLoading,
@@ -1568,6 +1660,7 @@ export function useModelCatalog(): ModelCatalog {
 
     ollamaModelOptions,
     openRouterModelOptions,
+    zaiModelOptions,
     cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
@@ -1584,6 +1677,7 @@ export function useModelCatalog(): ModelCatalog {
 
     refreshOllamaModels,
     refreshOpenRouterModels,
+    refreshZaiModels,
     refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,

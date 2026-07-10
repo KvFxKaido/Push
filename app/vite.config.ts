@@ -228,6 +228,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/openrouter/, ''),
       },
+      '/zai': {
+        target: 'https://api.z.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/zai/, ''),
+      },
       '/opencode': {
         target: 'https://opencode.ai',
         changeOrigin: true,

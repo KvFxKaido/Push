@@ -183,6 +183,7 @@ function baseProps(overrides: Partial<ChatRouteProps> = {}): ChatRouteProps {
     handleSelectBackend: vi.fn(),
     handleSelectOllamaModelFromChat: vi.fn(),
     handleSelectOpenRouterModelFromChat: vi.fn(),
+    handleSelectZaiModelFromChat: vi.fn(),
     handleSelectCloudflareModelFromChat: vi.fn(),
     handleSelectZenModelFromChat: vi.fn(),
     handleSelectNvidiaModelFromChat: vi.fn(),

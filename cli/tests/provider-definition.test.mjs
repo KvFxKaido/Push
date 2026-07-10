@@ -35,6 +35,7 @@ const KEBAB_ID = /^[a-z][a-z0-9-]*$/;
 const EXPECTED_INITIAL_FALLBACK_ORDER = [
   'ollama',
   'openrouter',
+  'zai',
   'cloudflare',
   'zen',
   'nvidia',
@@ -50,6 +51,7 @@ const EXPECTED_INITIAL_FALLBACK_ORDER = [
 const EXPECTED_FAILOVER_ORDER = [
   'ollama',
   'openrouter',
+  'zai',
   'cloudflare',
   'zen',
   'nvidia',
@@ -65,6 +67,7 @@ const EXPECTED_FAILOVER_ORDER = [
 const EXPECTED_CLI_PROVIDER_ORDER = [
   'ollama',
   'openrouter',
+  'zai',
   'zen',
   'nvidia',
   'fireworks',
@@ -79,6 +82,7 @@ const EXPECTED_CLI_PROVIDER_ORDER = [
 const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
   'ollama',
   'openrouter',
+  'zai',
   'anthropic',
   'openai',
   'xai',

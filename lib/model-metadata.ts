@@ -101,6 +101,15 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'z-ai/glm-5.1:nitro': M(202752, true, true, true, TEXT, TEXT, false),
     'z-ai/glm-5-turbo': M(262144, true, true, false, TEXT, TEXT, false),
   },
+  zai: {
+    'glm-5.2': M(1000000, true, true, true, TEXT, TEXT, false),
+    'glm-5.1': M(200000, true, true, true, TEXT, TEXT, false),
+    'glm-5-turbo': M(262144, true, true, false, TEXT, TEXT, false),
+    'glm-5': M(200000, true, true, true, TEXT, TEXT, false),
+    'glm-4.7': M(200000, true, true, true, TEXT, TEXT, false),
+    'glm-4.6': M(200000, true, true, true, TEXT, TEXT, false),
+    'glm-4.5': M(128000, true, true, true, TEXT, TEXT, false),
+  },
   zen: {
     'big-pickle': M(200000, true, true, true, TEXT, TEXT, false),
     'claude-haiku-4.5': M(200000, true, true, false, TEXT_IMAGE_PDF),

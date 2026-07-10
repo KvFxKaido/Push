@@ -206,6 +206,7 @@ export function applyConfigToEnv(config: PushConfig): void {
 const PROVIDER_CONFIG_KEYS = [
   'ollama',
   'openrouter',
+  'zai',
   'zen',
   'nvidia',
   'fireworks',

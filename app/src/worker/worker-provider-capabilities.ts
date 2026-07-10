@@ -56,6 +56,7 @@ export { ALL_PROVIDERS };
 const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   ollama: 'OLLAMA_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
+  zai: 'ZAI_API_KEY',
   zen: 'ZEN_API_KEY',
   nvidia: 'NVIDIA_API_KEY',
   fireworks: 'FIREWORKS_API_KEY',
@@ -79,6 +80,7 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
 const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
   ollama: 'custom-ollama',
   openrouter: 'openrouter',
+  zai: 'custom-zai',
   zen: 'custom-zen',
   nvidia: 'custom-nvidia',
   fireworks: 'custom-fireworks',

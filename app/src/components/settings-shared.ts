@@ -17,6 +17,7 @@ export type BuiltInSettingsProviderId = Extract<
   PreferredProvider,
   | 'ollama'
   | 'openrouter'
+  | 'zai'
   | 'zen'
   | 'nvidia'
   | 'fireworks'

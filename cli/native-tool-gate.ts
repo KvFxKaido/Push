@@ -7,6 +7,7 @@ import {
   OPENROUTER_MODELS,
   SAKANA_MODELS,
   XAI_MODELS,
+  ZAI_MODELS,
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
@@ -31,6 +32,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   openrouter: new Set(OPENROUTER_MODELS),
   sakana: new Set(SAKANA_MODELS),
   xai: new Set(XAI_MODELS),
+  zai: new Set(ZAI_MODELS),
   zen: new Set(ZEN_MODELS),
 };
 

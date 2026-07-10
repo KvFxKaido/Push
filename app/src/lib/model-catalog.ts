@@ -1,5 +1,6 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
+import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
@@ -660,6 +661,8 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *   - **OpenCode Zen** — name-based against the curated catalog
  *     (`ZEN_NATIVE_TOOL_CALLING_MODELS`); see the note there for why capability
  *     gating isn't viable for Zen.
+ *   - **Z.ai** - capability-based from declared/live metadata; its Chat
+ *     Completions API documents OpenAI-shaped `tools` / `tool_calls`.
  *   - **Fireworks AI** — name-based against the curated catalog
  *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
  *   - **Google Gemini** — name-based against the curated Gemini catalog; the
@@ -682,6 +685,7 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (!modelId) return false;
   if (provider === 'cloudflare') return cloudflareFunctionCallingGate(modelId);
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
+  if (provider === 'zai') return getModelCapabilities('zai', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'sakana') return SAKANA_NATIVE_TOOL_CALLING_MODELS.has(modelId);
@@ -1363,6 +1367,43 @@ export async function fetchOpenRouterModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenRouter model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchZaiModels(): Promise<string[]> {
+  const key = getZaiKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.zai.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Z.ai model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('zai', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Z.ai model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

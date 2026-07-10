@@ -69,6 +69,7 @@ describe('isProviderEngineCapable', () => {
       AI: {} as Ai,
       OLLAMA_API_KEY: 'k',
       OPENROUTER_API_KEY: 'k',
+      ZAI_API_KEY: 'k',
       ZEN_API_KEY: 'k',
       NVIDIA_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',

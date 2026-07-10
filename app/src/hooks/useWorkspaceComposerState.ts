@@ -16,6 +16,7 @@ const CHAT_MODEL_MEMORY_LEGACY_KEY = 'push:chat:last-used-models';
 const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   ollama: '',
   openrouter: '',
+  zai: '',
   cloudflare: '',
   zen: '',
   nvidia: '',
@@ -34,6 +35,7 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
   return {
     ollama: typeof parsed.ollama === 'string' ? parsed.ollama.trim() : '',
     openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
+    zai: typeof parsed.zai === 'string' ? parsed.zai.trim() : '',
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
     nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
@@ -108,6 +110,7 @@ export function useWorkspaceComposerState({
     () => ({
       ollama: catalog.ollama.model,
       openrouter: catalog.openRouter.model,
+      zai: catalog.zai.model,
       cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
       nvidia: catalog.nvidia.model,
@@ -130,6 +133,7 @@ export function useWorkspaceComposerState({
       catalog.nvidia.model,
       catalog.ollama.model,
       catalog.openRouter.model,
+      catalog.zai.model,
       catalog.zen.model,
       catalog.deepseek.model,
     ],
@@ -193,6 +197,7 @@ export function useWorkspaceComposerState({
           draft?.models?.openrouter?.trim() ||
           rememberedChatModels.openrouter ||
           defaultChatModels.openrouter,
+        zai: draft?.models?.zai?.trim() || rememberedChatModels.zai || defaultChatModels.zai,
         cloudflare:
           draft?.models?.cloudflare?.trim() ||
           rememberedChatModels.cloudflare ||
@@ -359,6 +364,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectZaiModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('zai', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { zai: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectCloudflareModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('cloudflare', model);
@@ -466,6 +480,7 @@ export function useWorkspaceComposerState({
     handleSelectBackend,
     handleSelectOllamaModelFromChat,
     handleSelectOpenRouterModelFromChat,
+    handleSelectZaiModelFromChat,
     handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,

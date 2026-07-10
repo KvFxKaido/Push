@@ -15,6 +15,7 @@
 export type SharedProviderModelId =
   | 'ollama'
   | 'openrouter'
+  | 'zai'
   | 'zen'
   | 'nvidia'
   | 'fireworks'
@@ -30,6 +31,7 @@ export type SharedProviderModelId =
 // callable via free-text entry until Ollama removes it.
 export const OLLAMA_DEFAULT_MODEL = 'minimax-m3';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
+export const ZAI_DEFAULT_MODEL = 'glm-5.2';
 export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
@@ -120,6 +122,25 @@ export const OPENROUTER_MODELS: string[] = [
   'z-ai/glm-5:nitro',
   'z-ai/glm-5.1:nitro',
   'z-ai/glm-5-turbo',
+];
+
+// Z.ai's direct Chat Completions model enum, refreshed from the API reference
+// on 2026-07-10. Free-text entry covers newer / account-specific ids.
+export const ZAI_MODELS: string[] = [
+  ZAI_DEFAULT_MODEL,
+  'glm-5.1',
+  'glm-5-turbo',
+  'glm-5',
+  'glm-4.7',
+  'glm-4.7-flash',
+  'glm-4.7-flashx',
+  'glm-4.6',
+  'glm-4.5',
+  'glm-4.5-air',
+  'glm-4.5-x',
+  'glm-4.5-airx',
+  'glm-4.5-flash',
+  'glm-4-32b-0414-128k',
 ];
 
 // OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
@@ -324,6 +345,7 @@ export const GOOGLE_MODELS: string[] = [
 export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string[]> = {
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
+  zai: ZAI_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   fireworks: FIREWORKS_MODELS,
@@ -338,6 +360,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
 export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, string> = {
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
+  zai: ZAI_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,

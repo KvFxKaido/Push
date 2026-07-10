@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PROVIDER_DEFINITIONS } from '@push/lib/provider-definition';
 import { GEMINI_MISSING_THOUGHT_SIGNATURE_PLACEHOLDER } from '@push/lib/gemini-thought-signature';
+import { ZAI_MODELS } from '@push/lib/provider-models';
 import {
   handleAnthropicChat,
   handleAnthropicModels,
@@ -26,6 +27,8 @@ import {
   handleGoogleSearch,
   handleOpenRouterChat,
   handleOpenRouterModels,
+  handleZaiChat,
+  handleZaiModels,
   handleZenChat,
   handleZenModels,
   handleZenGoChat,
@@ -1761,6 +1764,58 @@ describe('handleOpenRouterModels', () => {
     expect(captured?.url).toBe('https://openrouter.ai/api/v1/models');
     expect(captured?.init.method).toBe('GET');
     expect(captured?.init.body).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Z.ai - chat (streaming) + curated models
+// ---------------------------------------------------------------------------
+
+describe('handleZaiChat', () => {
+  it('posts Chat Completions requests to api.z.ai with ZAI_API_KEY', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+
+    await handleZaiChat(makeChatRequest(), makeEnv({ ZAI_API_KEY: 'sk-zai' }));
+
+    expect(captured?.url).toBe('https://api.z.ai/api/paas/v4/chat/completions');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer sk-zai');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+  });
+
+  it('returns 401 when the Worker has no Z.ai key configured', async () => {
+    const response = await handleZaiChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Z\.ai API key not configured/i);
+  });
+});
+
+describe('handleZaiModels', () => {
+  it('serves the curated Z.ai model list without an upstream fetch', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const response = await handleZaiModels(makeModelsRequest(), makeEnv());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    const body = (await response.json()) as { object: string; data: Array<{ id: string }> };
+    expect(body.object).toBe('list');
+    expect(body.data.map((model) => model.id)).toEqual(ZAI_MODELS);
   });
 });
 
