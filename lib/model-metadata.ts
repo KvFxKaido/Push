@@ -260,6 +260,9 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'grok-4.20-0309-reasoning': M(1000000, true, true, true, TEXT_IMAGE),
     'grok-4.20-0309-non-reasoning': M(1000000, false, true, true, TEXT_IMAGE),
     'grok-4.20-multi-agent-0309': M(1000000, true, true, true, TEXT_IMAGE),
+    // Grok 4.3 is also 1M (xAI /v1/models, probed 2026-07-10), text+image — same
+    // over-budget under the `grok` = 2M name fallback, so declare it too.
+    'grok-4.3': M(1000000, true, true, true, TEXT_IMAGE),
   },
 };
 

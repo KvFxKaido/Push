@@ -135,6 +135,7 @@ describe('getContextBudget (shared)', () => {
     expect(getContextBudget('xai', 'grok-4.20-multi-agent-0309')).toEqual(
       budgetFromWindow(1_000_000),
     );
+    expect(getContextBudget('xai', 'grok-4.3')).toEqual(budgetFromWindow(1_000_000));
   });
 
   it('keeps Cloudflare gateway-capped models on their cap-aware name fallback', () => {
