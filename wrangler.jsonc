@@ -39,7 +39,25 @@
     // Anthropic-transport Go models to OpenAI-shaped SSE for the DO pump.
     "PR_REVIEW_PROVIDER": "zen",
     "PR_REVIEW_MODEL": "glm-5.1",
-    "PR_REVIEW_ZEN_GO": "1"
+    "PR_REVIEW_ZEN_GO": "1",
+    // AI Gateway routing allow-lists. Non-secret (bare provider names, no
+    // account-bound identifiers), so they live here rather than as opaque
+    // secrets — the account-bound CF_AI_GATEWAY_ACCOUNT_ID / CF_AI_GATEWAY_SLUG
+    // stay in the secret store. Tracking them here makes prod match local
+    // (`.dev.vars`) instead of drifting: they were env-only, so prod lagged and
+    // `custom-nvidia` stayed dormant (see worker-providers.ts "dormant until
+    // nvidia is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS").
+    //   - CUSTOM_SLUGS: which `custom-*` providers are registered + enabled on
+    //     the gateway (an unlisted custom slug 404s → falls back to direct).
+    //   - BYOK: providers whose key is stored in the gateway (Push routes
+    //     keyless and the gateway injects it). Only *gatewayed* providers
+    //     belong here — a non-gatewayed id listed here 401s upstream.
+    // Zen is intentionally excluded: its live chat route is the direct Go
+    // endpoint (`/api/zen/go/chat`, not gatewayed), so a gateway BYOK entry
+    // would report "Key in gateway" in Settings but 401 on dispatch. Zen uses
+    // ZEN_API_KEY (secret) or a Settings user-key instead.
+    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia",
+    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,nvidia"
   },
   // API auth is the GitHub-identity session gate (auth rework — see
   // docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md). The
