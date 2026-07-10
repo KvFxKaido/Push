@@ -777,19 +777,22 @@ export function useModelCatalog(): ModelCatalog {
     });
   }, [kimiCfg.hasKey, kimiLoading, refreshModels]);
 
-  const refreshHuggingFaceModels = useCallback(async () => {
-    await refreshModels({
-      hasKey: huggingfaceCfg.hasKey,
-      isLoading: huggingfaceLoading,
-      setLoading: setHuggingFaceLoading,
-      setError: setHuggingFaceError,
-      setModels: setHuggingFaceModelList,
-      setUpdatedAt: setHuggingFaceUpdatedAt,
-      fetchModels: fetchHuggingFaceModels,
-      emptyMessage: 'No models returned by Hugging Face.',
-      failureMessage: 'Failed to load Hugging Face models.',
-    });
-  }, [huggingfaceCfg.hasKey, huggingfaceLoading, refreshModels]);
+  const refreshHuggingFaceModels = useCallback(
+    async (force = true) => {
+      await refreshModels({
+        hasKey: huggingfaceCfg.hasKey,
+        isLoading: huggingfaceLoading,
+        setLoading: setHuggingFaceLoading,
+        setError: setHuggingFaceError,
+        setModels: setHuggingFaceModelList,
+        setUpdatedAt: setHuggingFaceUpdatedAt,
+        fetchModels: () => fetchHuggingFaceModels({ forceMetadataRefresh: force }),
+        emptyMessage: 'No models returned by Hugging Face.',
+        failureMessage: 'Failed to load Hugging Face models.',
+      });
+    },
+    [huggingfaceCfg.hasKey, huggingfaceLoading, refreshModels],
+  );
 
   // Manual refresh defaults `force` to true so the picker revalidates the
   // cached binding catalog; the auto-fetch effect below passes `false` to serve
@@ -1074,7 +1077,7 @@ export function useModelCatalog(): ModelCatalog {
         }),
         activeProviderLabel === 'huggingface',
         () => {
-          void refreshHuggingFaceModels();
+          void refreshHuggingFaceModels(false);
         },
       ),
     [

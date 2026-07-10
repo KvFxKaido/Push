@@ -5,6 +5,7 @@ import {
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
   fetchGoogleModels,
+  fetchHuggingFaceModels,
   fetchNvidiaModels,
   fetchOllamaModels,
   fetchOpenAIModels,
@@ -750,6 +751,53 @@ describe('provider model fetchers', () => {
     );
 
     await expect(fetchModels()).resolves.toEqual([]);
+  });
+
+  it('warms Hugging Face capability metadata without filtering the live catalog', async () => {
+    stubWindow();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes('models.dev/api.json')) {
+          return jsonResponse({
+            huggingface: {
+              models: {
+                'org/covered-model': {
+                  id: 'org/covered-model',
+                  tool_call: true,
+                  structured_output: true,
+                  modalities: { input: ['text'], output: ['text'] },
+                  limit: { context: 262_144 },
+                },
+              },
+            },
+          });
+        }
+        if (url.includes('/huggingface/') || url.includes('/api/huggingface/models')) {
+          return jsonResponse({
+            data: [{ id: 'org/covered-model' }, { id: 'org/uncovered-model' }],
+          });
+        }
+        throw new Error(`Unexpected fetch: ${url}`);
+      }),
+    );
+
+    // The picker list stays the FULL live router catalog — models.dev covers
+    // only the popular subset, so filtering to it would hide live models.
+    await expect(fetchHuggingFaceModels()).resolves.toEqual([
+      'org/covered-model',
+      'org/uncovered-model',
+    ]);
+
+    // The same fetch warmed the capability cache: covered ids resolve live
+    // metadata (native tools on the wire); ids in neither models.dev nor the
+    // declared curated set fail closed to the prompt-engineered protocol.
+    const covered = getModelCapabilities('huggingface', 'org/covered-model');
+    expect(covered.toolCall).toBe(true);
+    expect(covered.structuredOutput).toBe(true);
+    expect(covered.contextLimit).toBe(262_144);
+    expect(getModelCapabilities('huggingface', 'org/uncovered-model').toolCall).toBe(false);
   });
 
   it('re-fetches provider metadata after the in-memory cache TTL expires', async () => {
