@@ -113,7 +113,9 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     // curated set carries verified tools/JSON via declared metadata
     // (lib/model-metadata.ts), and everything else stays 'unknown'. The native
     // tool/response_format WIRE gates resolve through model-catalog's
-    // declared-only path and are already conservative for unknown ids.
+    // getModelCapabilities — models.dev `huggingface` metadata first (warmed by
+    // fetchHuggingFaceModels), declared curated set as fallback — and fail
+    // closed for ids in neither.
     providers: ['huggingface'],
     match: /.*/,
     capabilities: {

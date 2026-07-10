@@ -51,6 +51,7 @@ const MODELS_DEV_OPENROUTER_CACHE_KEY = 'push:models-dev:openrouter-models';
 const MODELS_DEV_NVIDIA_CACHE_KEY = 'push:models-dev:nvidia-models';
 const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
+const MODELS_DEV_HUGGINGFACE_CACHE_KEY = 'push:models-dev:huggingface-models';
 const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 // Cloudflare Workers AI catalog cache. Unlike the other providers, Cloudflare
 // has no models.dev metadata — the binding's own catalog (surfaced by
@@ -433,7 +434,9 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
         ? MODELS_DEV_OLLAMA_CACHE_KEY
         : provider === 'zen'
           ? MODELS_DEV_OPENCODE_CACHE_KEY
-          : null;
+          : provider === 'huggingface'
+            ? MODELS_DEV_HUGGINGFACE_CACHE_KEY
+            : null;
 
   if (!cacheKey) return resolveDeclaredModelCapabilities(provider, modelId);
 
@@ -667,6 +670,9 @@ const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHRO
  *     Completions API documents OpenAI-shaped `tools` / `tool_calls`.
  *   - **Kimi** - capability-based from declared/live metadata; its Chat
  *     Completions API documents OpenAI-shaped `tools` / `tool_calls`.
+ *   - **Hugging Face** - capability-based: models.dev `huggingface` metadata
+ *     (warmed by `fetchHuggingFaceModels`) first, declared curated set as
+ *     fallback; ids in neither fail closed to the prompt-engineered protocol.
  *   - **Fireworks AI** — name-based against the curated catalog
  *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
  *   - **Google Gemini** — name-based against the curated Gemini catalog; the
@@ -1010,6 +1016,16 @@ async function fetchModelsDevOpencodeMetadata(
   forceRefresh = false,
 ): Promise<Record<string, ModelsDevProviderMetadata>> {
   return fetchModelsDevProviderMetadata('opencode', MODELS_DEV_OPENCODE_CACHE_KEY, forceRefresh);
+}
+
+async function fetchModelsDevHuggingFaceMetadata(
+  forceRefresh = false,
+): Promise<Record<string, ModelsDevProviderMetadata>> {
+  return fetchModelsDevProviderMetadata(
+    'huggingface',
+    MODELS_DEV_HUGGINGFACE_CACHE_KEY,
+    forceRefresh,
+  );
 }
 
 export function parseOpenRouterCatalog(payload: unknown): OpenRouterCatalogModel[] {
@@ -1456,7 +1472,9 @@ export async function fetchKimiModels(): Promise<string[]> {
   }
 }
 
-export async function fetchHuggingFaceModels(): Promise<string[]> {
+export async function fetchHuggingFaceModels(
+  opts: { forceMetadataRefresh?: boolean } = {},
+): Promise<string[]> {
   const key = getHuggingFaceKey();
   const headers: HeadersInit = {};
   if (key) headers.Authorization = `Bearer ${key}`;
@@ -1464,12 +1482,19 @@ export async function fetchHuggingFaceModels(): Promise<string[]> {
   const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
 
   try {
-    const res = await fetch(PROVIDER_URLS.huggingface.models, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-      cache: 'no-store',
-    });
+    // The metadata fetch warms the models.dev capability cache as a side
+    // effect (read synchronously by getModelCapabilities); the picker list
+    // itself stays the full live router catalog — models.dev covers only the
+    // popular subset, so filtering to it would hide live models.
+    const [res] = await Promise.all([
+      fetch(PROVIDER_URLS.huggingface.models, {
+        method: 'GET',
+        headers,
+        signal: controller.signal,
+        cache: 'no-store',
+      }),
+      fetchModelsDevHuggingFaceMetadata(opts.forceMetadataRefresh),
+    ]);
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
