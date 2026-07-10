@@ -341,7 +341,7 @@ describe('executeReviewSandboxTool', () => {
     expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
   });
 
-  it('never throws when detached exec transport fails before start confirmation', async () => {
+  it('never throws when detached exec transport fails before start confirmation — and records NO verdict', async () => {
     dispatchMock.mockRejectedValueOnce(new Error('transport down'));
     runDetachedMock.mockImplementationOnce(
       async (primitives: DetachedExecPrimitives, command: string, options: RunDetachedOptions) => {
@@ -352,9 +352,144 @@ describe('executeReviewSandboxTool', () => {
     const r = await runReviewTypecheck(env, sb, 'npm run typecheck');
 
     expect(r.text).toContain('Exit code: -1');
-    expect(r.text).toContain('Result: FAIL');
+    expect(r.text).toContain('Result: DID NOT COMPLETE');
     expect(r.text).toContain('transport down');
-    expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
+    expect(r.text).toContain('unverified');
+    // Environment outcome, not a verifier verdict — recording pass:false here
+    // would paint the check-run "typecheck failed" over a sandbox problem.
+    expect(r.verification).toBeUndefined();
+  });
+
+  it('records NO verdict when the command hits the overall deadline (exit 124)', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: 'partial output',
+      stderr: '',
+      exitCode: 124,
+      truncated: false,
+      terminalReason: 'deadline',
+      error: 'command exceeded 480000ms overall deadline and was interrupted',
+    } satisfies DetachedExecResult);
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: {} } as never,
+      commands,
+    );
+
+    expect(r.text).toContain('Result: DID NOT COMPLETE');
+    expect(r.text).toContain('NOT a tests failure');
+    expect(r.verification).toBeUndefined();
+  });
+
+  it('records NO verdict when the process died without an exit code (completed, exit -1)', async () => {
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: '',
+      stderr: '',
+      exitCode: -1,
+      truncated: false,
+      terminalReason: 'completed',
+      error: 'background process ended without an exit code (killed or errored)',
+    } satisfies DetachedExecResult);
+
+    const r = await runReviewTypecheck(env, sb, 'npm run typecheck');
+
+    expect(r.text).toContain('Result: DID NOT COMPLETE');
+    expect(r.verification).toBeUndefined();
+  });
+});
+
+describe('per-call deadlines on the detached primitives', () => {
+  const sb = { sandboxId: 'sb1', ownerToken: 'tok1' };
+
+  /** Run a verifier just to capture the primitives it builds. */
+  async function capturePrimitives(): Promise<DetachedExecPrimitives> {
+    let captured: DetachedExecPrimitives | undefined;
+    runDetachedMock.mockImplementationOnce(
+      async (primitives: DetachedExecPrimitives): Promise<DetachedExecResult> => {
+        captured = primitives;
+        return {
+          stdout: '',
+          stderr: '',
+          exitCode: 0,
+          truncated: false,
+          terminalReason: 'completed',
+        };
+      },
+    );
+    await runReviewTypecheck(env, sb, 'npm run typecheck');
+    if (!captured) throw new Error('runner never received primitives');
+    return captured;
+  }
+
+  it('a hung status poll rejects after bounded retries instead of stalling forever', async () => {
+    vi.useFakeTimers();
+    try {
+      let statusCalls = 0;
+      dispatchMock.mockImplementation(async (_env: unknown, route: string) => {
+        if (route === 'exec-status') {
+          statusCalls++;
+          return new Promise<never>(() => {}); // control plane hang
+        }
+        return jsonRes({});
+      });
+      const primitives = await capturePrimitives();
+
+      const pending = primitives.status('pid1');
+      const rejection = expect(pending).rejects.toThrow(/exec-status did not respond within/);
+      // 3 attempts × 30s per-call deadline, run back-to-back.
+      await vi.advanceTimersByTimeAsync(90_000);
+      await rejection;
+      expect(statusCalls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a slow first status poll recovers on retry', async () => {
+    vi.useFakeTimers();
+    try {
+      let statusCalls = 0;
+      dispatchMock.mockImplementation(async (_env: unknown, route: string) => {
+        if (route === 'exec-status') {
+          statusCalls++;
+          if (statusCalls === 1) return new Promise<never>(() => {});
+          return jsonRes({ running: false, exit_code: 0 });
+        }
+        return jsonRes({});
+      });
+      const primitives = await capturePrimitives();
+
+      const pending = primitives.status('pid1');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await expect(pending).resolves.toEqual({ running: false, exitCode: 0 });
+      expect(statusCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a hung exec-start rejects after its deadline (no retry — a retried start could double-spawn)', async () => {
+    vi.useFakeTimers();
+    try {
+      let startCalls = 0;
+      dispatchMock.mockImplementation(async (_env: unknown, route: string) => {
+        if (route === 'exec-start') {
+          startCalls++;
+          return new Promise<never>(() => {});
+        }
+        return jsonRes({});
+      });
+      const primitives = await capturePrimitives();
+
+      const pending = primitives.start('npm test', { workdir: '/workspace' });
+      const rejection = expect(pending).rejects.toThrow(/exec-start did not respond within/);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await rejection;
+      expect(startCalls).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -410,6 +545,52 @@ describe('environment setup before verifiers', () => {
     expect(r.verification).toBeUndefined();
     expect(r.text).toContain('Environment setup failed');
     expect(r.text).toContain('note the review as unverified');
+  });
+
+  it('marks progress after the setup gate settles — pass AND fail — and never for inspection tools', async () => {
+    const touch = vi.fn();
+    const okSetup = vi.fn(async () => ({ ok: true, text: '' }));
+    runDetachedMock.mockResolvedValueOnce({
+      stdout: 'ok',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      terminalReason: 'completed',
+    } satisfies DetachedExecResult);
+
+    await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_check_types', args: {} } as never,
+      commands,
+      okSetup,
+      touch,
+    );
+    // The verifier's deadline must be measured from the install's END: without
+    // this mark, setup (600s) + verifier (480s) overruns the review's 15-min
+    // no-progress budget with nothing in between.
+    expect(touch).toHaveBeenCalledTimes(1);
+
+    const failedSetup = vi.fn(async () => ({ ok: false, text: 'Environment setup failed' }));
+    await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_run_tests', args: {} } as never,
+      commands,
+      failedSetup,
+      touch,
+    );
+    expect(touch).toHaveBeenCalledTimes(2);
+
+    await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_search', args: { query: 'x' } } as never,
+      commands,
+      okSetup,
+      touch,
+    );
+    expect(touch).toHaveBeenCalledTimes(2);
   });
 
   it('the default setup command is conditional and package-manager-aware', async () => {

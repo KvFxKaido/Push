@@ -304,11 +304,12 @@ export interface PrReviewExecutorHooks {
    *  snapshot and persists it with the next round checkpoint. */
   onVerification?: (verification: ReviewVerification) => void;
   /**
-   * Fired when a sandbox tool starts executing. The DO touches the round
-   * checkpoint's `updated_at` so long tool runs count as PROGRESS for
-   * `failTimedOutReviews`: model round wall-clock + setup (300s) + a verifier
-   * (480s) can legitimately exceed the 15-min no-progress budget measured
-   * from the round top alone (Codex P2, PR #1387).
+   * Fired when a sandbox tool starts executing — and again after the verifier
+   * setup gate settles. The DO touches the round checkpoint's `updated_at` so
+   * long tool runs count as PROGRESS for `failTimedOutReviews`: model round
+   * wall-clock + setup (600s) + a verifier (480s) legitimately exceeds the
+   * 15-min no-progress budget measured from any single mark (Codex P2,
+   * PR #1387).
    */
   onToolProgress?: () => void;
 }
@@ -1846,9 +1847,11 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
 
   const detectors = createWebDetectorAdapter();
 
-  // Sandbox tools for the reviewer (lazy): provisioned on the FIRST sandbox
-  // tool call so reviews that never inspect or typecheck pay nothing. Gated to
-  // same-repo PRs with a CF sandbox configured; killable via
+  // Sandbox tools for the reviewer: provisioned eagerly at review start (see
+  // the warm-up kick below) so the environment install overlaps model rounds —
+  // the completion gate expects verifiers to run on every clean pass, so the
+  // old pay-nothing-if-unused laziness optimized for a case that no longer
+  // exists. Gated to same-repo PRs with a CF sandbox configured; killable via
   // PUSH_REVIEWER_SANDBOX=0. Fail-safe — any provisioning/exec problem degrades
   // to a diff-only review.
   const sandboxToolsEnabled =
@@ -1871,7 +1874,6 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     : sandboxToolsEnabled
       ? { typecheck: 'not_run', tests: reviewCommands.tests ? 'not_run' : 'unavailable' }
       : { typecheck: 'unavailable', tests: 'unavailable' };
-  let reviewSandbox: ReviewSandbox | null = null;
   let sandboxProvisionPromise: Promise<ReviewSandbox | null> | null = null;
   // Memoize the in-flight provision so concurrent (Promise.all) tool calls in a
   // single round share ONE sandbox instead of racing to create duplicates.
@@ -1883,10 +1885,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         input.headRef,
         input.headSha,
         token,
-      ).then((sb) => {
-        reviewSandbox = sb;
-        return sb;
-      });
+      );
     }
     return sandboxProvisionPromise;
   };
@@ -1912,6 +1911,27 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     }
     return setupPromise;
   };
+
+  // Eager warm-up: provision the sandbox and start the one-time environment
+  // setup as soon as the review starts, so the multi-minute install overlaps
+  // model rounds instead of running serially inside the first verifier tool
+  // call. Observed 2026-07-09: models typically touch the sandbox only when
+  // the completion gate nudges them to verify, so the first verifier call was
+  // paying provision + cold install + verifier back-to-back under the 15-min
+  // budget — and no setup ever completed. Both functions never throw (they
+  // resolve null/failed); the catch is a defensive backstop so an unexpected
+  // rejection can't surface as an unhandled rejection in the DO.
+  // `reviewEnded` (set first thing in the .finally below) gates the setup
+  // kick: this subscriber is registered BEFORE the teardown's detached chase,
+  // so without the gate a provision that lands after a fast-ending review
+  // would launch a 600s setup against a sandbox the very next microtask
+  // destroys (local Codex P2, PR #1391).
+  let reviewEnded = false;
+  if (sandboxToolsEnabled) {
+    void getReviewSandbox()
+      .then((sb) => (sb && !reviewEnded ? ensureSetup(sb) : null))
+      .catch(() => {});
+  }
 
   const result = await runDeepReviewer<AnyToolCall, unknown>(
     diff,
@@ -1964,8 +1984,17 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
                   '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
               };
             }
-            const r = await executeReviewSandboxTool(env, sb, toolCall.call, reviewCommands, () =>
-              ensureSetup(sb),
+            const r = await executeReviewSandboxTool(
+              env,
+              sb,
+              toolCall.call,
+              reviewCommands,
+              () => ensureSetup(sb),
+              // Re-mark progress after the setup gate settles: a verifier that
+              // waited on the install needs its own deadline measured from the
+              // install's end, or setup (600s) + verifier (480s) overruns the
+              // 15-min no-progress budget with no mark in between.
+              hooks?.onToolProgress,
             );
             if (r.verification) {
               verification[r.verification.kind] = r.verification.pass ? 'pass' : 'fail';
@@ -2023,11 +2052,29 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     },
     { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
   ).finally(async () => {
-    // Best-effort teardown on success, error, AND abort. cleanupReviewSandbox
-    // never throws, so it can't mask the review's own outcome.
-    if (reviewSandbox) {
-      await cleanupReviewSandbox(env, reviewSandbox);
+    // Best-effort teardown on success, error, AND abort. Considers the
+    // provision promise, not a snapshot var — with the eager warm-up a
+    // provision can still be in flight when a fast-failing review ends. But
+    // an in-flight provision must NOT hold the already-computed result: its
+    // create/verify route awaits are unbounded, so a wedged sandbox create
+    // would turn a finished diff-only review into a stalled one (Codex P2,
+    // PR #1391). A settled provision keeps the awaited cleanup (the
+    // pre-warm-up critical path); a pending one is chased detached —
+    // cleanup never throws, and the 1h idle reaper is the backstop if the
+    // DO retires before the chase lands.
+    reviewEnded = true;
+    if (!sandboxProvisionPromise) return;
+    const provisionPromise = sandboxProvisionPromise;
+    const PENDING = Symbol('pending');
+    // Race subscription order makes this deterministic: a settled provision
+    // resolves the race with its sandbox; only a still-pending one yields
+    // the sentinel.
+    const settled = await Promise.race([provisionPromise, Promise.resolve(PENDING)]);
+    if (settled === PENDING) {
+      void provisionPromise.then((sb) => (sb ? cleanupReviewSandbox(env, sb) : undefined));
+      return;
     }
+    if (settled) await cleanupReviewSandbox(env, settled);
   });
   if (signal.aborted) throw new Error('aborted');
 

@@ -545,10 +545,13 @@ export interface ReviewComment {
 
 /**
  * Outcome of one sandbox verifier over a review run. `pass`/`fail` mean the
- * verifier ran (exit 0 / non-zero, timeouts and transport failures count as
- * fail); `not_run` means it was available but the reviewer never invoked it;
- * `unavailable` means it could not have run (no sandbox — cross-fork PRs — or
- * no repo test command).
+ * verifier ran to COMPLETION with a real exit code (exit 0 / non-zero);
+ * timeouts, lost contact, and abnormal deaths without an exit code record no
+ * verdict — an environment failure must not read as "tests failed" — so the
+ * status stays `not_run`. `not_run` therefore means no verifier outcome was
+ * banked (never invoked, or invoked but unable to complete); `unavailable`
+ * means it could not have run (no sandbox — cross-fork PRs — or no repo test
+ * command).
  */
 export type ReviewVerifierStatus = 'pass' | 'fail' | 'not_run' | 'unavailable';
 
