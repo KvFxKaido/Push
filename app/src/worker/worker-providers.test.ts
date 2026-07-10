@@ -475,6 +475,109 @@ describe('handleZenGoChat', () => {
   });
 });
 
+describe('handleZenGoChat — gateway BYOK', () => {
+  const GATEWAY_ENV: Partial<Env> = {
+    CF_AI_GATEWAY_ACCOUNT_ID: 'acct123',
+    CF_AI_GATEWAY_SLUG: 'push-gate',
+    CF_AI_GATEWAY_TOKEN: 'aig-token',
+    CF_AI_GATEWAY_CUSTOM_SLUGS: 'zen',
+    CF_AI_GATEWAY_BYOK: 'zen',
+  };
+
+  function makeZenGoRequest(model: string): Request {
+    return new Request('https://push.example.test/api/zen/go/chat', {
+      method: 'POST',
+      headers: {
+        Origin: 'https://push.example.test',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model, messages: [{ role: 'user', content: 'hello' }] }),
+    });
+  }
+
+  it('routes an openai-transport model keyless through the gateway (BYOK injects)', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    // No ZEN_API_KEY anywhere — BYOK admits the keyless request.
+    const response = await handleZenGoChat(makeZenGoRequest('glm-5.1'), makeEnv(GATEWAY_ENV));
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/go/v1/chat/completions',
+    );
+    const headers = captured!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-token');
+  });
+
+  it('BYOK outranks a lingering ZEN_API_KEY on the openai transport', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    await handleZenGoChat(
+      makeZenGoRequest('glm-5.1'),
+      makeEnv({ ...GATEWAY_ENV, ZEN_API_KEY: 'zen-key' }),
+    );
+    const headers = captured!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+  });
+
+  it('rejects a keyless anthropic-transport model with a model-readable 401 (no fetch)', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const response = await handleZenGoChat(makeZenGoRequest('minimax-m3'), makeEnv(GATEWAY_ENV));
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toContain('cannot use the gateway-stored key');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('anthropic-transport with a real key rides the gateway as passthrough (both auth headers)', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    await handleZenGoChat(
+      makeZenGoRequest('minimax-m3'),
+      makeEnv({ ...GATEWAY_ENV, ZEN_API_KEY: 'zen-key' }),
+    );
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/acct123/push-gate/custom-zen/zen/go/v1/messages',
+    );
+    const headers = captured!.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer zen-key');
+    expect(headers['x-api-key']).toBe('zen-key');
+    expect(headers['cf-aig-authorization']).toBe('Bearer aig-token');
+  });
+
+  it('falls back to direct + key-required when the zen slug is not enabled', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    // BYOK lists zen but the custom slug is NOT enabled → gateway URL doesn't
+    // resolve → byok is false → keyless request must 401 at the preamble.
+    const response = await handleZenGoChat(
+      makeZenGoRequest('glm-5.1'),
+      makeEnv({ ...GATEWAY_ENV, CF_AI_GATEWAY_CUSTOM_SLUGS: 'fireworks' }),
+    );
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
 describe('handleZenGoChat — neutral wire (dual-accept)', () => {
   function makeNeutralRequest(payload: Record<string, unknown>): Request {
     return new Request('https://push.example.test/api/zen/go/chat', {

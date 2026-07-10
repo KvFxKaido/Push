@@ -54,22 +54,26 @@
     //   - BYOK: providers whose key the GATEWAY injects — the Worker
     //     dispatches keyless. An entry here asserts injection is VERIFIED,
     //     not merely that a key was saved in the dashboard, because a bad
-    //     entry does NOT fail loudly (probed 2026-07-09 against push-gate):
-    //     zen keyless is served on OpenCode's ANONYMOUS FREE TIER until it
-    //     429s (FreeUsageLimitError) — silent misattribution, never a 401;
-    //     nvidia keyless HANGS at the gateway to the Worker's full timeout.
-    //     Verification standard before adding an id: a keyless chat probe
-    //     through the gateway must return a fast, AUTHENTICATED response
-    //     while the same request direct-to-upstream fails without a key
-    //     (verified: fireworks, sakana, ollama; first-party ids verified in
-    //     the AIG v2 arc).
-    // Zen is excluded from both lists: its live chat route is the direct Go
-    // endpoint (`/api/zen/go/chat`, not gatewayed), and its gateway key
-    // injection is broken per above. Zen uses ZEN_API_KEY (secret) or a
-    // Settings user-key. Nvidia is passthrough-only (CUSTOM_SLUGS without
+    //     entry does NOT fail loudly: nvidia keyless HANGS at the gateway to
+    //     the Worker's full timeout (probed 2026-07-09), and providers with
+    //     anonymous tiers can silently serve misattributed traffic instead
+    //     of 401ing. Verification standard before adding an id: a keyless
+    //     chat probe through the gateway must return a fast, AUTHENTICATED
+    //     response while the same request direct-to-upstream fails without a
+    //     key. Probe with a PAID-tier model — a free-tier model (zen's
+    //     big-pickle) returns FreeUsageLimitError from quota exhaustion on
+    //     BOTH auth states, which is how zen was misdiagnosed as
+    //     injection-broken. Verified: fireworks, sakana, ollama, zen
+    //     (glm-5.1 keyless → authenticated 200 on both /zen/v1 and
+    //     /zen/go/v1 paths); first-party ids verified in the AIG v2 arc.
+    // Zen BYOK caveat: injection covers the openai-transport routes only.
+    // The anthropic-transport Go path (/zen/go/v1/messages — MiniMax/Qwen)
+    // wants x-api-key, which injection doesn't set (verified 401 keyless),
+    // so those models still need ZEN_API_KEY or a user key; the Go handler
+    // enforces the split. Nvidia is passthrough-only (CUSTOM_SLUGS without
     // BYOK) until its injection passes the probe above.
-    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia",
-    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks"
+    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia,zen",
+    "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen"
   },
   // API auth is the GitHub-identity session gate (auth rework — see
   // docs/decisions/Auth Rework — GitHub as the Single Identity Anchor.md). The

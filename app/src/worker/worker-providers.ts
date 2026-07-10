@@ -1060,11 +1060,34 @@ export function getZenGoAuthHeaders(
 }
 
 export async function handleZenGoChat(request: Request, env: Env): Promise<Response> {
+  // Gateway targets per transport (custom-zen binding: base_url
+  // https://opencode.ai, full path in the suffix). BYOK keyless routing
+  // applies to the OPENAI transport only: the gateway's stored-key injection
+  // sets `Authorization`, which `/zen/go/v1/chat/completions` accepts but
+  // `/zen/go/v1/messages` does not (Anthropic convention — it wants
+  // `x-api-key`; probed 2026-07-09: keyless via gateway → 200 on
+  // chat/completions, 401 "Missing API key" on messages). Anthropic-transport
+  // models therefore still require a caller/Worker key, which flows through
+  // the gateway as passthrough when the slug is enabled.
+  const openaiTarget = resolveAiGatewayFetchTarget(
+    env,
+    'https://opencode.ai/zen/go/v1/chat/completions',
+    { provider: 'custom-zen', pathSuffix: '/zen/go/v1/chat/completions' },
+  );
+  const anthropicTarget = resolveAiGatewayFetchTarget(
+    env,
+    'https://opencode.ai/zen/go/v1/messages',
+    { provider: 'custom-zen', pathSuffix: '/zen/go/v1/messages' },
+  );
   const preamble = await runPreamble(request, env, {
     buildAuth: standardAuth('ZEN_API_KEY'),
     keyMissingError:
       'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
     needsBody: true,
+    // Keyless is only viable on the openai-transport path; the transport is
+    // known only after the body parses, so a keyless anthropic-transport
+    // request is rejected below instead of here.
+    allowMissingKey: openaiTarget.byok,
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader, bodyText, requestId } = preamble;
@@ -1107,10 +1130,23 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         ? dual.parsed.model.trim()
         : '';
   const transport = getZenGoTransport(model);
-  const upstreamUrl =
-    transport === 'anthropic'
-      ? 'https://opencode.ai/zen/go/v1/messages'
-      : 'https://opencode.ai/zen/go/v1/chat/completions';
+  const target = transport === 'anthropic' ? anthropicTarget : openaiTarget;
+  // BYOK precedence matches the shared handlers: when the gateway holds the
+  // key and the route is gatewayed, dispatch keyless and let the gateway
+  // inject — a lingering ZEN_API_KEY secret does not outrank the gateway key.
+  const byok = transport !== 'anthropic' && openaiTarget.byok;
+  if (transport === 'anthropic' && !authHeader) {
+    // Keyless request admitted by allowMissingKey, but this model's transport
+    // can't use the gateway-stored key (x-api-key, not Authorization).
+    return Response.json(
+      {
+        error:
+          'OpenCode Zen API key not configured. Anthropic-transport Zen Go models (MiniMax/Qwen families) cannot use the gateway-stored key — add a Zen key in Settings or set ZEN_API_KEY on the Worker.',
+      },
+      { status: 401 },
+    );
+  }
+  const upstreamUrl = target.upstreamUrl;
 
   let upstreamBody: string;
   if (dual.contractKind === 'neutral') {
@@ -1166,7 +1202,15 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     try {
       upstream = await fetch(upstreamUrl, {
         method: 'POST',
-        headers: getZenGoAuthHeaders(authHeader, requestId, transport),
+        // BYOK: omit the provider auth entirely (the gateway injects the
+        // stored key); gatewayHeaders carries cf-aig-authorization whenever
+        // the URL actually routes through the gateway (passthrough included).
+        headers: {
+          ...(byok
+            ? { 'Content-Type': 'application/json', [REQUEST_ID_HEADER]: requestId }
+            : getZenGoAuthHeaders(authHeader, requestId, transport)),
+          ...target.gatewayHeaders,
+        },
         body: upstreamBody,
         signal: controller.signal,
       });
