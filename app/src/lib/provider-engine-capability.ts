@@ -148,10 +148,15 @@ export function refreshEngineCapabilities(): void {
     });
 }
 
-function ensureSnapshot(): ProviderCapabilitySnapshot {
+function ensureSnapshotLoaded(): ProviderCapabilitySnapshot {
   if (snapshot === null) snapshot = loadFromStorage() ?? EMPTY_SNAPSHOT;
-  refreshEngineCapabilities();
   return snapshot;
+}
+
+function ensureSnapshot(): ProviderCapabilitySnapshot {
+  const current = ensureSnapshotLoaded();
+  refreshEngineCapabilities();
+  return current;
 }
 
 /**
@@ -160,6 +165,16 @@ function ensureSnapshot(): ProviderCapabilitySnapshot {
  */
 export function isProviderEngineCapable(provider: AIProviderType): boolean {
   return ensureSnapshot().providers[provider] ?? true;
+}
+
+/**
+ * Read the cached capability/provenance snapshot without kicking a network
+ * refresh. Routing predicates use this to align with Settings' last-known
+ * server credential truth without making a synchronous "is this provider
+ * configured?" check start background I/O.
+ */
+export function getCachedProviderCapabilitySnapshot(): ProviderCapabilitySnapshot {
+  return ensureSnapshotLoaded();
 }
 
 /**
