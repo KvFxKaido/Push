@@ -106,6 +106,21 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
+    // Hugging Face's router fronts an uncurated multi-host catalog where tool
+    // and JSON-mode support vary per model AND per host — a blanket 'supported'
+    // here would mislabel capability badges and the prompt-awareness block for
+    // every free-text id. Only streaming is universal on the router; the
+    // curated set carries verified tools/JSON via declared metadata
+    // (lib/model-metadata.ts), and everything else stays 'unknown'. The native
+    // tool/response_format WIRE gates resolve through model-catalog's
+    // declared-only path and are already conservative for unknown ids.
+    providers: ['huggingface'],
+    match: /.*/,
+    capabilities: {
+      streaming: 'supported',
+    },
+  },
+  {
     providers: ['fireworks', 'sakana'],
     match: /.*/,
     capabilities: {

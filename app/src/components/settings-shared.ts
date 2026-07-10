@@ -19,6 +19,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'openrouter'
   | 'zai'
   | 'kimi'
+  | 'huggingface'
   | 'zen'
   | 'nvidia'
   | 'fireworks'

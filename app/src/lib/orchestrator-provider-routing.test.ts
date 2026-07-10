@@ -22,6 +22,7 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
   vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => '' }));
   vi.doMock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => '' }));
+  vi.doMock('@/hooks/useHuggingFaceConfig', () => ({ getHuggingFaceKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
@@ -32,6 +33,7 @@ function mockProviderState(options?: {
       getCloudflareModelName: () => cloudflareModel,
       getZaiModelName: () => 'glm-5.2',
       getKimiModelName: () => 'glm-5.2',
+      getHuggingFaceModelName: () => 'deepseek-ai/DeepSeek-V4-Pro',
       getCloudflareWorkerConfigured: () => cloudflareConfigured,
       getPreferredProvider: () => preferredProvider,
       getLastUsedProvider: () => lastUsedProvider,
@@ -152,6 +154,7 @@ function mockFailoverState(opts?: {
   google?: boolean;
   zai?: boolean;
   kimi?: boolean;
+  huggingface?: boolean;
   zen?: boolean;
   nvidia?: boolean;
   zenTransport?: 'anthropic' | 'openai';
@@ -162,6 +165,7 @@ function mockFailoverState(opts?: {
     google = false,
     zai = false,
     kimi = false,
+    huggingface = false,
     zen = false,
     nvidia = true,
     zenTransport = 'openai',
@@ -172,6 +176,9 @@ function mockFailoverState(opts?: {
   }));
   vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => (zai ? 'k-zai' : '') }));
   vi.doMock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => (kimi ? 'k-kimi' : '') }));
+  vi.doMock('@/hooks/useHuggingFaceConfig', () => ({
+    getHuggingFaceKey: () => (huggingface ? 'k-huggingface' : ''),
+  }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
@@ -229,6 +236,8 @@ describe('routeReplaysReasoningContent', () => {
     );
     expect(routeReplaysReasoningContent('kimi', 'kimi-k2.7-code-highspeed')).toBe(true);
     expect(routeReplaysReasoningContent('kimi', 'kimi-k2.6')).toBe(true);
+    expect(routeReplaysReasoningContent('huggingface', 'deepseek-ai/DeepSeek-V4-Pro')).toBe(true);
+    expect(routeReplaysReasoningContent('huggingface', 'zai-org/GLM-5.2')).toBe(false);
     expect(routeReplaysReasoningContent('zen', undefined)).toBe(false);
   });
 });

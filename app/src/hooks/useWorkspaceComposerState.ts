@@ -18,6 +18,7 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   openrouter: '',
   zai: '',
   kimi: '',
+  huggingface: '',
   cloudflare: '',
   zen: '',
   nvidia: '',
@@ -38,6 +39,7 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     openrouter: typeof parsed.openrouter === 'string' ? parsed.openrouter.trim() : '',
     zai: typeof parsed.zai === 'string' ? parsed.zai.trim() : '',
     kimi: typeof parsed.kimi === 'string' ? parsed.kimi.trim() : '',
+    huggingface: typeof parsed.huggingface === 'string' ? parsed.huggingface.trim() : '',
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
     nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
@@ -114,6 +116,7 @@ export function useWorkspaceComposerState({
       openrouter: catalog.openRouter.model,
       zai: catalog.zai.model,
       kimi: catalog.kimi.model,
+      huggingface: catalog.huggingface.model,
       cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
       nvidia: catalog.nvidia.model,
@@ -138,6 +141,7 @@ export function useWorkspaceComposerState({
       catalog.openRouter.model,
       catalog.zai.model,
       catalog.kimi.model,
+      catalog.huggingface.model,
       catalog.zen.model,
       catalog.deepseek.model,
     ],
@@ -203,6 +207,10 @@ export function useWorkspaceComposerState({
           defaultChatModels.openrouter,
         zai: draft?.models?.zai?.trim() || rememberedChatModels.zai || defaultChatModels.zai,
         kimi: draft?.models?.kimi?.trim() || rememberedChatModels.kimi || defaultChatModels.kimi,
+        huggingface:
+          draft?.models?.huggingface?.trim() ||
+          rememberedChatModels.huggingface ||
+          defaultChatModels.huggingface,
         cloudflare:
           draft?.models?.cloudflare?.trim() ||
           rememberedChatModels.cloudflare ||
@@ -387,6 +395,15 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
+  const handleSelectHuggingFaceModelFromChat = useCallback(
+    (model: string) => {
+      rememberChatModel('huggingface', model);
+      const chatId = ensureDraftChatForComposerChange();
+      upsertChatDraft(chatId, { models: { huggingface: model } });
+    },
+    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
+  );
+
   const handleSelectCloudflareModelFromChat = useCallback(
     (model: string) => {
       rememberChatModel('cloudflare', model);
@@ -496,6 +513,7 @@ export function useWorkspaceComposerState({
     handleSelectOpenRouterModelFromChat,
     handleSelectZaiModelFromChat,
     handleSelectKimiModelFromChat,
+    handleSelectHuggingFaceModelFromChat,
     handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat,

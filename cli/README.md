@@ -260,7 +260,7 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 
 | Variable | Purpose |
 |---|---|
-| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `kimi`, `zai`, `zen`, `nvidia`, `fireworks`, `deepseek`, `sakana`, `openai`, `xai`, `anthropic`, `google`) |
+| `PUSH_PROVIDER` | Default provider (`ollama`, `openrouter`, `kimi`, `zai`, `huggingface`, `zen`, `nvidia`, `fireworks`, `deepseek`, `sakana`, `openai`, `xai`, `anthropic`, `google`) |
 | `PUSH_OLLAMA_URL` | Ollama Cloud endpoint (default: `https://ollama.com/v1/chat/completions`) |
 | `PUSH_OLLAMA_API_KEY` | Ollama API key |
 | `PUSH_OLLAMA_MODEL` | Ollama model (default: `minimax-m3`) |
@@ -274,6 +274,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_KIMI_URL` | Kimi endpoint (default: `https://api.moonshot.ai/v1/chat/completions`) |
 | `PUSH_KIMI_API_KEY` | Kimi API key |
 | `PUSH_KIMI_MODEL` | Kimi model (default: `kimi-k2.7-code-highspeed`) |
+| `PUSH_HUGGINGFACE_URL` | Hugging Face router endpoint (default: `https://router.huggingface.co/v1/chat/completions`) |
+| `PUSH_HUGGINGFACE_API_KEY` | Hugging Face access token |
+| `PUSH_HUGGINGFACE_MODEL` | Hugging Face model (default: `deepseek-ai/DeepSeek-V4-Pro`) |
 | `PUSH_ZEN_URL` | OpenCode Zen endpoint (default: `https://opencode.ai/zen/v1/chat/completions`) |
 | `PUSH_ZEN_API_KEY` | OpenCode Zen API key |
 | `PUSH_ZEN_MODEL` | OpenCode Zen model (default: `big-pickle`) |
@@ -321,7 +324,7 @@ Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VI
 
 ## Providers
 
-The CLI ships thirteen providers. Five (`ollama`, `kimi`, `zai`, `zen`, `nvidia`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `xai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships fourteen providers. Six (`ollama`, `kimi`, `zai`, `huggingface`, `zen`, `nvidia`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `xai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|
@@ -329,6 +332,7 @@ The CLI ships thirteen providers. Five (`ollama`, `kimi`, `zai`, `zen`, `nvidia`
 | `openrouter` | `anthropic/claude-sonnet-4.6:nitro` | Yes |
 | `kimi` | `kimi-k2.7-code-highspeed` | Yes |
 | `zai` | `glm-5.2` | Yes |
+| `huggingface` | `deepseek-ai/DeepSeek-V4-Pro` | Yes |
 | `zen` | `big-pickle` | Yes |
 | `nvidia` | `nvidia/llama-3.1-nemotron-70b-instruct` | Yes |
 | `fireworks` | `accounts/fireworks/models/deepseek-v4-pro` | Yes |
@@ -550,7 +554,7 @@ TUI Remote flow:
                                     phone (tap a Connected row there to resume the session)
 
 Options:
-  --provider <name>       ollama | openrouter | kimi | zai | zen | nvidia | fireworks | deepseek | sakana | openai | xai | anthropic | google (default: ollama)
+  --provider <name>       ollama | openrouter | kimi | zai | huggingface | zen | nvidia | fireworks | deepseek | sakana | openai | xai | anthropic | google (default: ollama)
   --model <name>          Override model
   --url <endpoint>        Override provider endpoint URL
   --api-key <secret>      Set provider API key

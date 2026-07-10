@@ -857,6 +857,44 @@ export async function handleKimiModels(request: Request, env: Env): Promise<Resp
   );
 }
 
+// --- Hugging Face Inference Providers router (OpenAI-compatible endpoint) ---
+
+export const handleHuggingFaceChat = createStreamProxyHandler({
+  name: 'Hugging Face API',
+  logTag: 'api/huggingface/chat',
+  upstreamUrl: 'https://router.huggingface.co/v1/chat/completions',
+  timeoutMs: 180_000,
+  maxOutputTokens: 65_536,
+  buildAuth: standardAuth('HF_TOKEN', 'HUGGINGFACE_API_KEY'),
+  keyMissingError:
+    'Hugging Face token not configured. Add it in Settings or set HF_TOKEN (or HUGGINGFACE_API_KEY) on the Worker.',
+  timeoutError: 'Hugging Face request timed out after 180 seconds',
+  // Custom gateway provider with base_url https://router.huggingface.co —
+  // AIG's FIRST-PARTY `huggingface` slug fronts the retired legacy Inference
+  // API (api-inference.huggingface.co, dead origin; probed 2026-07-10), so the
+  // router must go through a custom binding like Kimi/zai. Dormant until
+  // `huggingface` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
+  gateway: { provider: 'custom-huggingface', pathSuffix: '/v1/chat/completions' },
+  formatUpstreamError: (status, bodyText) => ({
+    error: `Hugging Face ${status}: ${extractProviderHttpErrorDetail(status, bodyText)}`,
+    code: status === 429 ? 'UPSTREAM_QUOTA_OR_RATE_LIMIT' : undefined,
+  }),
+});
+
+export const handleHuggingFaceModels = createJsonProxyHandler({
+  name: 'Hugging Face API',
+  logTag: 'api/huggingface/models',
+  upstreamUrl: 'https://router.huggingface.co/v1/models',
+  method: 'GET',
+  timeoutMs: 30_000,
+  buildAuth: standardAuth('HF_TOKEN', 'HUGGINGFACE_API_KEY'),
+  keyMissingError:
+    'Hugging Face token not configured. Add it in Settings or set HF_TOKEN (or HUGGINGFACE_API_KEY) on the Worker.',
+  timeoutError: 'Hugging Face model list timed out after 30 seconds',
+  // Same binding as chat (base_url https://router.huggingface.co).
+  gateway: { provider: 'custom-huggingface', pathSuffix: '/v1/models' },
+});
+
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
 
 export const handleZenChat = createStreamProxyHandler({
@@ -2959,6 +2997,7 @@ export const WORKER_PROVIDER_HANDLERS = {
   openrouter: { chat: handleOpenRouterChat, models: handleOpenRouterModels },
   zai: { chat: handleZaiChat, models: handleZaiModels },
   kimi: { chat: handleKimiChat, models: handleKimiModels },
+  huggingface: { chat: handleHuggingFaceChat, models: handleHuggingFaceModels },
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
   nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },

@@ -9,6 +9,7 @@ import {
   XAI_MODELS,
   ZAI_MODELS,
   KIMI_MODELS,
+  HUGGINGFACE_MODELS,
   ZEN_MODELS,
 } from '../lib/provider-models.ts';
 import {
@@ -35,6 +36,7 @@ const CURATED_NATIVE_TOOL_MODELS: Record<string, ReadonlySet<string>> = {
   xai: new Set(XAI_MODELS),
   zai: new Set(ZAI_MODELS),
   kimi: new Set(KIMI_MODELS),
+  huggingface: new Set(HUGGINGFACE_MODELS),
   zen: new Set(ZEN_MODELS),
 };
 

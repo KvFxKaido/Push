@@ -32,6 +32,8 @@ import {
   handleZaiModels,
   handleKimiChat,
   handleKimiModels,
+  handleHuggingFaceChat,
+  handleHuggingFaceModels,
   handleZenChat,
   handleZenModels,
   handleZenGoChat,
@@ -1353,6 +1355,12 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       env: { CF_AI_GATEWAY_BYOK: 'deepseek' },
       url: `${GW_BASE}/deepseek/models`,
     },
+    {
+      name: 'huggingface',
+      handler: handleHuggingFaceModels,
+      env: { CF_AI_GATEWAY_BYOK: 'huggingface', CF_AI_GATEWAY_CUSTOM_SLUGS: 'huggingface' },
+      url: `${GW_BASE}/custom-huggingface/v1/models`,
+    },
   ] as const;
 
   for (const c of CASES) {
@@ -1896,6 +1904,87 @@ describe('handleKimiModels', () => {
     const body = (await response.json()) as { object: string; data: Array<{ id: string }> };
     expect(body.object).toBe('list');
     expect(body.data.map((model) => model.id)).toEqual(KIMI_MODELS);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hugging Face - chat (streaming) + live models proxy
+// ---------------------------------------------------------------------------
+
+describe('handleHuggingFaceChat', () => {
+  it('posts Chat Completions requests to router.huggingface.co with HF_TOKEN', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response('', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+
+    await handleHuggingFaceChat(makeChatRequest(), makeEnv({ HF_TOKEN: 'hf_test' }));
+
+    expect(captured?.url).toBe('https://router.huggingface.co/v1/chat/completions');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer hf_test');
+    expect(JSON.parse(captured?.init.body as string)).toMatchObject({
+      model: 'test-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    });
+  });
+
+  it('accepts the HUGGINGFACE_API_KEY alias when HF_TOKEN is unset', async () => {
+    let captured: { init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        captured = { init };
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+
+    await handleHuggingFaceChat(makeChatRequest(), makeEnv({ HUGGINGFACE_API_KEY: 'hf_alias' }));
+
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer hf_alias');
+  });
+
+  it('returns 401 when the Worker has no Hugging Face token configured', async () => {
+    const response = await handleHuggingFaceChat(makeChatRequest(), makeEnv());
+    expect(response.status).toBe(401);
+    const body = await response.json();
+    expect(body.error).toMatch(/Hugging Face token not configured/i);
+  });
+});
+
+describe('handleHuggingFaceModels', () => {
+  it('proxies the live router model list with the caller token', async () => {
+    let captured: { url: string; init: RequestInit } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, init };
+        return new Response(JSON.stringify({ object: 'list', data: [{ id: 'zai-org/GLM-5.2' }] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }),
+    );
+
+    const response = await handleHuggingFaceModels(
+      makeModelsRequest(),
+      makeEnv({ HF_TOKEN: 'hf_test' }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(captured?.url).toBe('https://router.huggingface.co/v1/models');
+    const headers = captured?.init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe('Bearer hf_test');
+    const body = (await response.json()) as { data: Array<{ id: string }> };
+    expect(body.data[0].id).toBe('zai-org/GLM-5.2');
   });
 });
 

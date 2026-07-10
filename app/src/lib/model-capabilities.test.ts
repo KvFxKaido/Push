@@ -42,6 +42,22 @@ describe('getModelCapabilities', () => {
     );
   });
 
+  it('keeps uncurated Hugging Face models unverified for tools/JSON, streaming supported', () => {
+    // The router catalog is uncurated and multi-host: tool/JSON support varies
+    // per model AND per host, so only the declared curated set may claim
+    // 'supported' — a blanket rule here mislabels capability badges and the
+    // prompt-awareness block for every free-text id (local Codex + fugu, PR
+    // #1399). Streaming is universal on the router.
+    const unknown = getModelCapabilities('huggingface', 'someorg/some-uncurated-model');
+    expect(unknown.toolCalls).toBe('unknown');
+    expect(unknown.jsonMode).toBe('unknown');
+    expect(unknown.streaming).toBe('supported');
+
+    const curated = getModelCapabilities('huggingface', 'deepseek-ai/DeepSeek-V4-Pro');
+    expect(curated.toolCalls).toBe('supported');
+    expect(curated.jsonMode).toBe('supported');
+  });
+
   it('treats demo as unsupported for image input', () => {
     expect(getVisionCapabilityNotice('demo', 'demo').support).toBe('unsupported');
   });

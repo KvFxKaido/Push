@@ -621,6 +621,7 @@ export function DaemonChatBody({
     handleSelectOpenRouterModelFromChat: composerState.handleSelectOpenRouterModelFromChat,
     handleSelectZaiModelFromChat: composerState.handleSelectZaiModelFromChat,
     handleSelectKimiModelFromChat: composerState.handleSelectKimiModelFromChat,
+    handleSelectHuggingFaceModelFromChat: composerState.handleSelectHuggingFaceModelFromChat,
     handleSelectCloudflareModelFromChat: composerState.handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat: composerState.handleSelectZenModelFromChat,
     handleSelectNvidiaModelFromChat: composerState.handleSelectNvidiaModelFromChat,

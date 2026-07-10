@@ -17,6 +17,7 @@ export type SharedProviderModelId =
   | 'openrouter'
   | 'zai'
   | 'kimi'
+  | 'huggingface'
   | 'zen'
   | 'nvidia'
   | 'fireworks'
@@ -34,6 +35,10 @@ export const OLLAMA_DEFAULT_MODEL = 'minimax-m3';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 export const ZAI_DEFAULT_MODEL = 'glm-5.2';
 export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code-highspeed';
+// Hugging Face Inference Providers router (router.huggingface.co, OpenAI-compatible).
+// Model ids are `org/model` hub ids, optionally `:provider`-suffixed to pin a host.
+// Verified live on /v1/models 2026-07-10.
+export const HUGGINGFACE_DEFAULT_MODEL = 'deepseek-ai/DeepSeek-V4-Pro';
 export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
@@ -152,6 +157,21 @@ export const KIMI_MODELS: string[] = [
   'kimi-k2.7-code',
   'kimi-k2.6',
   'kimi-k2.5',
+];
+
+// Curated picker seed for the Hugging Face router — strong open-weight coding
+// and agent models verified live with tool support on /v1/models (2026-07-10).
+// The live models handler proxies the full router catalog; this list is the
+// offline fallback and free-text entry covers everything else (including
+// `:provider`-pinned variants).
+export const HUGGINGFACE_MODELS: string[] = [
+  HUGGINGFACE_DEFAULT_MODEL,
+  'deepseek-ai/DeepSeek-V4-Flash',
+  'zai-org/GLM-5.2',
+  'moonshotai/Kimi-K2.7-Code',
+  'Qwen/Qwen3-Coder-Next',
+  'MiniMaxAI/MiniMax-M3',
+  'openai/gpt-oss-120b',
 ];
 
 // OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
@@ -369,6 +389,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   openrouter: OPENROUTER_MODELS,
   zai: ZAI_MODELS,
   kimi: KIMI_MODELS,
+  huggingface: HUGGINGFACE_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   fireworks: FIREWORKS_MODELS,
@@ -385,6 +406,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   openrouter: OPENROUTER_DEFAULT_MODEL,
   zai: ZAI_DEFAULT_MODEL,
   kimi: KIMI_DEFAULT_MODEL,
+  huggingface: HUGGINGFACE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,

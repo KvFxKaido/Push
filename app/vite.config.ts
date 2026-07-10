@@ -238,6 +238,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/kimi/, ''),
       },
+      '/huggingface': {
+        target: 'https://router.huggingface.co',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/huggingface/, ''),
+      },
       '/opencode': {
         target: 'https://opencode.ai',
         changeOrigin: true,

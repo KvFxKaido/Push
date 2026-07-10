@@ -183,6 +183,7 @@ export const ALL_PROVIDERS = [
   'openrouter',
   'zai',
   'kimi',
+  'huggingface',
   'cloudflare',
   'zen',
   'nvidia',
