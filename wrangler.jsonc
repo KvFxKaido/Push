@@ -123,6 +123,7 @@
     "import.meta.env.VITE_TAVILY_API_KEY": "\"\"",
     "import.meta.env.VITE_USE_STREAMDOWN": "\"\"",
     "import.meta.env.VITE_XAI_API_KEY": "\"\"",
+    "import.meta.env.VITE_ZAI_API_KEY": "\"\"",
     "import.meta.env.VITE_ZEN_API_KEY": "\"\""
   },
   // Native Workers AI binding for the Cloudflare provider path. This is a
