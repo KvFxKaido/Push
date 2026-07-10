@@ -11,12 +11,21 @@ export type ZenGoTransport = 'openai' | 'anthropic';
 //   - the MiniMax family (m2.7/m3) is published under @ai-sdk/anthropic.
 //     These ids also accept oa-compat, so flipping any MiniMax id back to openai
 //     is a safe one-line change.
+// BYOK implication (2026-07-09): this set is exactly the zen surface gateway
+// BYOK can NOT serve keyless — /zen/go/v1/messages authenticates via
+// `x-api-key`, and custom-provider key injection sets `Authorization` only.
+// Do NOT "fix" that by emptying this set: @ai-sdk/anthropic is OpenCode's
+// official contract for these models, and oa-compat acceptance is incidental
+// upstream behavior that has already flip-flopped (qwen3.7-max rejected
+// oa-compat in June, answered it in July). Partial-BYOK settings copy keys
+// off `byokPartialNote` in lib/provider-definition.ts.
 // NOTE: /zen/go/v1/messages is a single fixed URL shared by all of these models,
 // so the model id MUST travel in the request body — `handleZenGoChat` emits it
 // (unlike Vertex, which carries the model in the URL path). Dropping the body
 // `model` here makes the model undispatchable upstream; see the regression
 // where every MiniMax/Qwen id 400'd on a model-less body.
 const ZEN_GO_ANTHROPIC_MODELS = new Set([
+  'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3',
   'qwen3.6-plus',
@@ -24,10 +33,13 @@ const ZEN_GO_ANTHROPIC_MODELS = new Set([
   'qwen3.7-plus',
 ]);
 
-// Mirrors the live OpenCode Go catalog (opencode.ai/go). Refreshed 2026-06-17:
-// added glm-5.2 and kimi-k2.7-code; retired glm-5, kimi-k2.5, and minimax-m2.5
-// (dropped from the upstream list and no longer routable). Earlier 2026-06
-// refresh retired hy3-preview, mimo-v2-omni, mimo-v2-pro, qwen3.5-plus.
+// Mirrors the live OpenCode Go catalog (opencode.ai/docs/go). Refreshed
+// 2026-07-09 against the official endpoints table: re-added minimax-m2.5
+// (retired 2026-06-17 as dropped upstream; the current docs list it again on
+// /v1/messages under @ai-sdk/anthropic — endpoint splits per model verified
+// row-by-row against the docs, no consolidation). 2026-06-17: added glm-5.2
+// and kimi-k2.7-code; retired glm-5 and kimi-k2.5. Earlier 2026-06 refresh
+// retired hy3-preview, mimo-v2-omni, mimo-v2-pro, qwen3.5-plus.
 export const ZEN_GO_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
@@ -37,6 +49,7 @@ export const ZEN_GO_MODELS = [
   'kimi-k2.7-code',
   'mimo-v2.5',
   'mimo-v2.5-pro',
+  'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3',
   'qwen3.6-plus',

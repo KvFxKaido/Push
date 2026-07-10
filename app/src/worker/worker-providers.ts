@@ -1084,10 +1084,11 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
     keyMissingError:
       'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
     needsBody: true,
-    // Keyless is only viable on the openai-transport path; the transport is
-    // known only after the body parses, so a keyless anthropic-transport
-    // request is rejected below instead of here.
-    allowMissingKey: openaiTarget.byok,
+    // Keyless is viable on the openai-transport path (gateway injects) and on
+    // the anthropic-transport path when the ZEN_KEY_STORE binding can resolve
+    // the key; the transport is known only after the body parses, so a truly
+    // unservable keyless request is rejected below instead of here.
+    allowMissingKey: openaiTarget.byok || Boolean(env.ZEN_KEY_STORE),
   });
   if (preamble instanceof Response) return preamble;
   const { authHeader, bodyText, requestId } = preamble;
@@ -1135,13 +1136,40 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
   // key and the route is gatewayed, dispatch keyless and let the gateway
   // inject — a lingering ZEN_API_KEY secret does not outrank the gateway key.
   const byok = transport !== 'anthropic' && openaiTarget.byok;
-  if (transport === 'anthropic' && !authHeader) {
+  // Anthropic transport can't use gateway injection (x-api-key, not
+  // Authorization) — but the SAME Secrets Store entry the gateway injects
+  // from is bound to the Worker (ZEN_KEY_STORE), so resolve it here and send
+  // proper headers ourselves. One custody point; the request still transits
+  // the gateway as passthrough for observability. Caller/Worker keys keep
+  // precedence: the binding only fills a keyless request.
+  let effectiveAuthHeader = authHeader;
+  if (transport === 'anthropic' && !effectiveAuthHeader && env.ZEN_KEY_STORE) {
+    try {
+      const storeKey = (await env.ZEN_KEY_STORE.get())?.trim();
+      if (storeKey) {
+        effectiveAuthHeader = `Bearer ${storeKey}`;
+        wlog('info', 'zen_go_store_key_used', { requestId, route: 'api/zen/go/chat' });
+      } else {
+        wlog('warn', 'zen_go_store_key_empty', { requestId, route: 'api/zen/go/chat' });
+      }
+    } catch (err) {
+      // Fall through to the 401 below — loudly, so an unreadable binding is
+      // distinguishable from "no binding configured".
+      wlog('warn', 'zen_go_store_key_failed', {
+        requestId,
+        route: 'api/zen/go/chat',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  if (transport === 'anthropic' && !effectiveAuthHeader) {
     // Keyless request admitted by allowMissingKey, but this model's transport
-    // can't use the gateway-stored key (x-api-key, not Authorization).
+    // can't use the gateway-stored key (x-api-key, not Authorization) and no
+    // other key source resolved.
     return Response.json(
       {
         error:
-          'OpenCode Zen API key not configured. Anthropic-transport Zen Go models (MiniMax/Qwen families) cannot use the gateway-stored key — add a Zen key in Settings or set ZEN_API_KEY on the Worker.',
+          'OpenCode Zen API key not configured. Anthropic-transport Zen Go models (MiniMax/Qwen families) cannot use the gateway-injected key — add a Zen key in Settings, set ZEN_API_KEY, or bind ZEN_KEY_STORE.',
       },
       { status: 401 },
     );
@@ -1208,7 +1236,7 @@ export async function handleZenGoChat(request: Request, env: Env): Promise<Respo
         headers: {
           ...(byok
             ? { 'Content-Type': 'application/json', [REQUEST_ID_HEADER]: requestId }
-            : getZenGoAuthHeaders(authHeader, requestId, transport)),
+            : getZenGoAuthHeaders(effectiveAuthHeader, requestId, transport)),
           ...target.gatewayHeaders,
         },
         body: upstreamBody,

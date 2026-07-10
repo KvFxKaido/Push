@@ -306,4 +306,49 @@ describe('ProviderKeySection', () => {
     expect(html).toContain('sk-or-...');
     expect(html).toContain('Save key');
   });
+
+  // Partial gateway coverage (zen: the separate Go subscription service has
+  // MiniMax/Qwen models needing x-api-key, which gateway injection cannot
+  // set). The gateway key covers most models, but the local key stays
+  // load-bearing — the section must keep offering it.
+  const PARTIAL_NOTE =
+    'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. The server covers them when deployed with the Secrets Store binding; a key saved here takes precedence.';
+
+  it('partial BYOK keeps the key input alongside the gateway-connected state', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection
+        {...baseProps}
+        hasKey={false}
+        credentialSource="gateway-byok"
+        byokPartialNote={PARTIAL_NOTE}
+      />,
+    );
+
+    expect(html).toContain('Key in gateway');
+    expect(html).toContain('for most models');
+    expect(html).toContain('separate subscription service');
+    expect(html).toContain('a key saved here takes precedence');
+    // Unlike full BYOK, the input + save stay available.
+    expect(html).toContain('sk-or-...');
+    expect(html).toContain('Save key');
+    expect(html).not.toContain('No local key needed');
+  });
+
+  it('partial BYOK never labels a saved local key as unused', () => {
+    const html = renderToStaticMarkup(
+      <ProviderKeySection
+        {...baseProps}
+        hasKey
+        credentialSource="gateway-byok"
+        byokPartialNote={PARTIAL_NOTE}
+      />,
+    );
+
+    expect(html).toContain('Key in gateway');
+    expect(html).toContain('Your saved key covers them.');
+    expect(html).not.toContain('unused');
+    expect(html).toContain('Remove OpenRouter key');
+    // Key already saved — no second input form.
+    expect(html).not.toContain('sk-or-...');
+  });
 });

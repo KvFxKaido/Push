@@ -1220,6 +1220,7 @@ export function SettingsSectionContent({
                         saveLabel={meta.saveLabel}
                         hint={meta.hint}
                         credentialSource={source}
+                        byokPartialNote={meta.byokPartialNote}
                         model={{
                           value: provider.model,
                           set: provider.setModel,
@@ -1234,17 +1235,31 @@ export function SettingsSectionContent({
                           updatedAt: provider.modelsUpdatedAt,
                         }}
                       />
-                      {providerId === 'zen' && provider.hasKey && provider.setGoMode && (
-                        <label className="flex cursor-pointer items-center justify-between rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
-                          <span className="text-xs text-push-fg-muted">Go subscription</span>
-                          <input
-                            type="checkbox"
-                            checked={provider.goMode ?? false}
-                            onChange={(e) => provider.setGoMode!(e.target.checked)}
-                            className="h-3.5 w-3.5 accent-emerald-400"
-                          />
-                        </label>
-                      )}
+                      {/* OpenCode Go is a SEPARATE service from pay-as-you-go
+                          Zen — a subscription with its own model pool and
+                          billing. This toggle selects which service chats
+                          route to, so it must stay visible whenever zen has
+                          ANY credential (local, account, gateway, or Worker),
+                          not only when a local key exists. */}
+                      {providerId === 'zen' &&
+                        (provider.hasKey || source != null) &&
+                        provider.setGoMode && (
+                          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
+                            <span className="min-w-0">
+                              <span className="block text-xs text-push-fg-muted">OpenCode Go</span>
+                              <span className="block text-[11px] text-push-fg-dim">
+                                Separate subscription service — routes chats to the Go pool instead
+                                of pay-as-you-go Zen.
+                              </span>
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={provider.goMode ?? false}
+                              onChange={(e) => provider.setGoMode!(e.target.checked)}
+                              className="h-3.5 w-3.5 shrink-0 accent-emerald-400"
+                            />
+                          </label>
+                        )}
                     </>
                   )}
                 </div>

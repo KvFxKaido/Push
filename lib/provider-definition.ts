@@ -96,6 +96,15 @@ export interface ProviderSettingsDefinition {
   readonly keyPlaceholder?: string;
   readonly keySaveLabel?: string;
   readonly keyHint?: string;
+  /**
+   * Present when gateway BYOK covers this provider only PARTIALLY: some model
+   * families authenticate in a way the AI Gateway cannot inject for a custom
+   * provider (injection sets `Authorization` only). Settings must then keep
+   * offering the key input alongside the "Key in gateway" state instead of
+   * declaring a local key unused — the note explains which models still need
+   * it. Consumer: `ProviderKeySection` via `BUILT_IN_SETTINGS_PROVIDER_META`.
+   */
+  readonly byokPartialNote?: string;
 }
 
 export interface ProviderDefinition {
@@ -278,6 +287,15 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
       keyPlaceholder: 'Zen API key',
       keySaveLabel: 'Save OpenCode Zen key',
       keyHint: 'OpenCode Zen API key for https://opencode.ai/zen.',
+      // Go is a SEPARATE OpenCode service (subscription pool) from
+      // pay-as-you-go Zen — don't consolidate them in copy. Its MiniMax/Qwen
+      // families are published under @ai-sdk/anthropic and authenticate via
+      // `x-api-key` on /zen/go/v1/messages — which gateway BYOK cannot inject
+      // (Authorization only). Those models keep using the caller's key; do
+      // NOT treat a saved OpenCode key as redundant just because the gateway
+      // holds one.
+      byokPartialNote:
+        'Go — OpenCode’s separate subscription service — includes MiniMax and Qwen models that authenticate with x-api-key, which the gateway cannot inject. The server covers them when deployed with the Secrets Store binding; a key saved here takes precedence.',
     },
     cli: {
       order: 30,
