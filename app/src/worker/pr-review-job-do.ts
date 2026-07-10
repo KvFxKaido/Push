@@ -1921,9 +1921,15 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   // budget — and no setup ever completed. Both functions never throw (they
   // resolve null/failed); the catch is a defensive backstop so an unexpected
   // rejection can't surface as an unhandled rejection in the DO.
+  // `reviewEnded` (set first thing in the .finally below) gates the setup
+  // kick: this subscriber is registered BEFORE the teardown's detached chase,
+  // so without the gate a provision that lands after a fast-ending review
+  // would launch a 600s setup against a sandbox the very next microtask
+  // destroys (local Codex P2, PR #1391).
+  let reviewEnded = false;
   if (sandboxToolsEnabled) {
     void getReviewSandbox()
-      .then((sb) => (sb ? ensureSetup(sb) : null))
+      .then((sb) => (sb && !reviewEnded ? ensureSetup(sb) : null))
       .catch(() => {});
   }
 
@@ -2056,6 +2062,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     // pre-warm-up critical path); a pending one is chased detached —
     // cleanup never throws, and the 1h idle reaper is the backstop if the
     // DO retires before the chase lands.
+    reviewEnded = true;
     if (!sandboxProvisionPromise) return;
     const provisionPromise = sandboxProvisionPromise;
     const PENDING = Symbol('pending');
