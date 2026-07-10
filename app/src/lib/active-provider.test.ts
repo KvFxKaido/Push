@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
     ollama: '',
     openrouter: '',
     zai: '',
+    kimi: '',
     zen: '',
     nvidia: '',
     fireworks: '',
@@ -27,6 +28,7 @@ vi.mock('@/hooks/useOpenRouterConfig', () => ({
   getOpenRouterKey: () => state.keys.openrouter,
 }));
 vi.mock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => state.keys.zai }));
+vi.mock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => state.keys.kimi }));
 vi.mock('@/hooks/useZenConfig', () => ({ getZenKey: () => state.keys.zen }));
 vi.mock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => state.keys.nvidia }));
 vi.mock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => state.keys.fireworks }));
@@ -52,6 +54,7 @@ vi.mock('./providers', async () => {
     getOpenAIModelName: () => 'gpt-5',
     getGoogleModelName: () => 'gemini-2.5-pro',
     getZaiModelName: () => 'glm-5.2',
+    getKimiModelName: () => 'glm-5.2',
   };
 });
 

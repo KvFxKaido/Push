@@ -110,6 +110,12 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'glm-4.6': M(200000, true, true, true, TEXT, TEXT, false),
     'glm-4.5': M(128000, true, true, true, TEXT, TEXT, false),
   },
+  kimi: {
+    'kimi-k2.7-code-highspeed': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
+    'kimi-k2.7-code': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
+    'kimi-k2.6': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
+    'kimi-k2.5': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
+  },
   zen: {
     'big-pickle': M(200000, true, true, true, TEXT, TEXT, false),
     'claude-haiku-4.5': M(200000, true, true, false, TEXT_IMAGE_PDF),

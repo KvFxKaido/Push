@@ -16,6 +16,7 @@ export type SharedProviderModelId =
   | 'ollama'
   | 'openrouter'
   | 'zai'
+  | 'kimi'
   | 'zen'
   | 'nvidia'
   | 'fireworks'
@@ -32,6 +33,7 @@ export type SharedProviderModelId =
 export const OLLAMA_DEFAULT_MODEL = 'minimax-m3';
 export const OPENROUTER_DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6:nitro';
 export const ZAI_DEFAULT_MODEL = 'glm-5.2';
+export const KIMI_DEFAULT_MODEL = 'kimi-k2.7-code-highspeed';
 export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
@@ -141,6 +143,15 @@ export const ZAI_MODELS: string[] = [
   'glm-4.5-airx',
   'glm-4.5-flash',
   'glm-4-32b-0414-128k',
+];
+
+// Kimi's current direct API lineup. K2.7 Code Highspeed is the recommended
+// programming-agent endpoint; free-text entry covers account-specific ids.
+export const KIMI_MODELS: string[] = [
+  KIMI_DEFAULT_MODEL,
+  'kimi-k2.7-code',
+  'kimi-k2.6',
+  'kimi-k2.5',
 ];
 
 // OpenRouter's `/v1/responses` endpoint is in beta and not implemented for
@@ -357,6 +368,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   ollama: OLLAMA_MODELS,
   openrouter: OPENROUTER_MODELS,
   zai: ZAI_MODELS,
+  kimi: KIMI_MODELS,
   zen: ZEN_MODELS,
   nvidia: NVIDIA_MODELS,
   fireworks: FIREWORKS_MODELS,
@@ -372,6 +384,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   ollama: OLLAMA_DEFAULT_MODEL,
   openrouter: OPENROUTER_DEFAULT_MODEL,
   zai: ZAI_DEFAULT_MODEL,
+  kimi: KIMI_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
   nvidia: NVIDIA_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,

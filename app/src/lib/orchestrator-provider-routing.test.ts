@@ -21,6 +21,7 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
   vi.doMock('@/hooks/useOpenRouterConfig', () => ({ getOpenRouterKey: () => '' }));
   vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => '' }));
+  vi.doMock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
@@ -30,6 +31,7 @@ function mockProviderState(options?: {
       ...actual,
       getCloudflareModelName: () => cloudflareModel,
       getZaiModelName: () => 'glm-5.2',
+      getKimiModelName: () => 'glm-5.2',
       getCloudflareWorkerConfigured: () => cloudflareConfigured,
       getPreferredProvider: () => preferredProvider,
       getLastUsedProvider: () => lastUsedProvider,
@@ -149,6 +151,7 @@ function mockFailoverState(opts?: {
   openrouter?: boolean;
   google?: boolean;
   zai?: boolean;
+  kimi?: boolean;
   zen?: boolean;
   nvidia?: boolean;
   zenTransport?: 'anthropic' | 'openai';
@@ -158,6 +161,7 @@ function mockFailoverState(opts?: {
     openrouter = true,
     google = false,
     zai = false,
+    kimi = false,
     zen = false,
     nvidia = true,
     zenTransport = 'openai',
@@ -167,6 +171,7 @@ function mockFailoverState(opts?: {
     getOpenRouterKey: () => (openrouter ? 'k-openrouter' : ''),
   }));
   vi.doMock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => (zai ? 'k-zai' : '') }));
+  vi.doMock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => (kimi ? 'k-kimi' : '') }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
   vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
@@ -211,7 +216,7 @@ describe('routesThroughAnthropicBridge', () => {
 });
 
 describe('routeReplaysReasoningContent', () => {
-  it('is true only for DeepSeek models on routes that require replay', async () => {
+  it('replays DeepSeek gateway reasoning and all direct Kimi reasoning', async () => {
     mockFailoverState();
     const { routeReplaysReasoningContent } = await import('./orchestrator-provider-routing');
     expect(routeReplaysReasoningContent('zen', 'deepseek-v4-pro')).toBe(true);
@@ -222,6 +227,8 @@ describe('routeReplaysReasoningContent', () => {
     expect(routeReplaysReasoningContent('openrouter', 'anthropic/claude-sonnet-4.6:nitro')).toBe(
       false,
     );
+    expect(routeReplaysReasoningContent('kimi', 'kimi-k2.7-code-highspeed')).toBe(true);
+    expect(routeReplaysReasoningContent('kimi', 'kimi-k2.6')).toBe(true);
     expect(routeReplaysReasoningContent('zen', undefined)).toBe(false);
   });
 });

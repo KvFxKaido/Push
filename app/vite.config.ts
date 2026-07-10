@@ -233,6 +233,11 @@ export default defineConfig({
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/zai/, ''),
       },
+      '/kimi': {
+        target: 'https://api.moonshot.ai',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/kimi/, ''),
+      },
       '/opencode': {
         target: 'https://opencode.ai',
         changeOrigin: true,

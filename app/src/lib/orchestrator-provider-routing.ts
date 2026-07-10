@@ -20,6 +20,7 @@ import { ollamaStream } from './ollama-stream';
 import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zaiStream } from './zai-stream';
+import { kimiStream } from './kimi-stream';
 import { zenStream } from './zen-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
@@ -36,6 +37,7 @@ import {
   getOllamaModelName,
   getOpenRouterModelName,
   getZaiModelName,
+  getKimiModelName,
   getZenModelName,
   getNvidiaModelName,
   getFireworksModelName,
@@ -119,7 +121,10 @@ export function routeReplaysReasoningContent(
   model: string | undefined,
 ): boolean {
   if (!provider || !model) return false;
-  return (provider === 'zen' || provider === 'openrouter') && /deepseek/i.test(model);
+  return (
+    provider === 'kimi' ||
+    ((provider === 'zen' || provider === 'openrouter') && /deepseek/i.test(model))
+  );
 }
 
 function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {
@@ -185,6 +190,7 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   ollama: ollamaStream,
   openrouter: openrouterStream,
   zai: zaiStream,
+  kimi: kimiStream,
   cloudflare: cloudflareStream,
   zen: zenStream,
   fireworks: fireworksStream,
@@ -285,6 +291,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getOpenRouterModelName();
     case 'zai':
       return getZaiModelName();
+    case 'kimi':
+      return getKimiModelName();
     case 'cloudflare':
       return getCloudflareModelName();
     case 'zen':

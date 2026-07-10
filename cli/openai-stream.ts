@@ -122,7 +122,8 @@ async function* cliProviderStream(
   // conservative pass-throughs until parity is verified).
   const baseBody = toOpenAIChat(req, {
     modelOverride: model,
-    temperatureDefault: 0.1,
+    temperatureDefault:
+      config.id === 'kimi' && /^kimi-k2\.7-code(?:-highspeed)?$/i.test(model) ? 1 : 0.1,
     maxTokensField: config.id === 'openai' ? 'max_completion_tokens' : 'max_tokens',
     tagCacheBreakpoints: config.id === 'openrouter',
     // A Gemini-fronting compat route (e.g. OpenRouter `google/gemini-*`) 400s on
@@ -131,6 +132,10 @@ async function* cliProviderStream(
     // captured. Gated on the model id so non-Gemini routes stay byte-identical.
     geminiThoughtSignatureFallback: isGeminiModelId(model),
   });
+  if (config.id === 'kimi' && /^kimi-k2\.7-code(?:-highspeed)?$/i.test(model)) {
+    baseBody.temperature = 1;
+    baseBody.top_p = 0.95;
+  }
   const nativeTools = Array.isArray(baseBody.tools) ? baseBody.tools : [];
   const openRouterWebSearch = config.id === 'openrouter' && resolveOpenRouterWebSearch(req);
   const openRouterTools = [

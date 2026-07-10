@@ -36,6 +36,7 @@ const EXPECTED_INITIAL_FALLBACK_ORDER = [
   'ollama',
   'openrouter',
   'zai',
+  'kimi',
   'cloudflare',
   'zen',
   'nvidia',
@@ -52,6 +53,7 @@ const EXPECTED_FAILOVER_ORDER = [
   'ollama',
   'openrouter',
   'zai',
+  'kimi',
   'cloudflare',
   'zen',
   'nvidia',
@@ -67,6 +69,7 @@ const EXPECTED_FAILOVER_ORDER = [
 const EXPECTED_CLI_PROVIDER_ORDER = [
   'ollama',
   'openrouter',
+  'kimi',
   'zai',
   'zen',
   'nvidia',
@@ -82,6 +85,7 @@ const EXPECTED_CLI_PROVIDER_ORDER = [
 const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
   'ollama',
   'openrouter',
+  'kimi',
   'zai',
   'anthropic',
   'openai',

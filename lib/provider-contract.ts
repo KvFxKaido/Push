@@ -182,6 +182,7 @@ export const ALL_PROVIDERS = [
   'ollama',
   'openrouter',
   'zai',
+  'kimi',
   'cloudflare',
   'zen',
   'nvidia',

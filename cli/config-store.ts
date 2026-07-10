@@ -207,6 +207,7 @@ const PROVIDER_CONFIG_KEYS = [
   'ollama',
   'openrouter',
   'zai',
+  'kimi',
   'zen',
   'nvidia',
   'fireworks',

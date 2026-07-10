@@ -31,6 +31,8 @@ export interface Env {
   OLLAMA_API_KEY?: string;
   OPENROUTER_API_KEY?: string;
   ZAI_API_KEY?: string;
+  MOONSHOT_API_KEY?: string;
+  KIMI_API_KEY?: string;
   ZEN_API_KEY?: string;
   NVIDIA_API_KEY?: string;
   FIREWORKS_API_KEY?: string;

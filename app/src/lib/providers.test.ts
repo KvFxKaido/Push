@@ -23,6 +23,10 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: st
     chat: '/zai/api/paas/v4/chat/completions',
     models: '/api/zai/models',
   },
+  kimi: {
+    chat: '/kimi/v1/chat/completions',
+    models: '/api/kimi/models',
+  },
   zen: {
     chat: '/opencode/zen/v1/chat/completions',
     models: '/opencode/zen/v1/models',

@@ -1,6 +1,7 @@
 import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
+import { getKimiKey } from '@/hooks/useKimiConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
@@ -19,6 +20,7 @@ import {
   getXAIModelName,
   getPreferredProvider,
   getZaiModelName,
+  getKimiModelName,
   type PreferredProvider,
 } from './providers';
 import type { AIProviderType } from '@/types';
@@ -37,6 +39,7 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
   ollama: () => Boolean(getOllamaKey() || hasServerProviderCredential('ollama')),
   openrouter: () => Boolean(getOpenRouterKey() || hasServerProviderCredential('openrouter')),
   zai: () => Boolean((getZaiKey() || hasServerProviderCredential('zai')) && getZaiModelName()),
+  kimi: () => Boolean((getKimiKey() || hasServerProviderCredential('kimi')) && getKimiModelName()),
   cloudflare: () => getCloudflareWorkerConfigured() || hasServerProviderCredential('cloudflare'),
   zen: () => Boolean(getZenKey() || hasServerProviderCredential('zen')),
   nvidia: () => Boolean(getNvidiaKey() || hasServerProviderCredential('nvidia')),
