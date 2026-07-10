@@ -32,6 +32,7 @@ import {
   NVIDIA_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
+  XAI_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   SAKANA_DEFAULT_MODEL,
@@ -148,6 +149,7 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   nvidia: 'push:review:model:nvidia',
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
+  xai: 'push:review:model:xai',
   google: 'push:review:model:google',
   fireworks: 'push:review:model:fireworks',
   sakana: 'push:review:model:sakana',
@@ -162,6 +164,7 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   nvidia: NVIDIA_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
+  xai: XAI_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,
@@ -186,6 +189,7 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'nvidia' ||
     value === 'anthropic' ||
     value === 'openai' ||
+    value === 'xai' ||
     value === 'google' ||
     value === 'fireworks' ||
     value === 'deepseek' ||
@@ -216,6 +220,7 @@ function readReviewModels(): Record<PreferredProvider, string> {
     deepseek: pick('deepseek'),
     anthropic: pick('anthropic'),
     openai: pick('openai'),
+    xai: pick('xai'),
     google: pick('google'),
   };
 }

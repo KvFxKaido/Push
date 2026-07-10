@@ -187,6 +187,7 @@ export function buildWorkspaceHubReviewModelOptions(
     fireworks: catalog.fireworksModelOptions,
     sakana: catalog.sakanaModelOptions,
     deepseek: catalog.deepseekModelOptions,
+    xai: catalog.xaiModelOptions,
     google: catalog.googleModelOptions,
   };
 }

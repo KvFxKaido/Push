@@ -106,6 +106,7 @@ describe('catalog parity', () => {
       deepseek: extractExportedStringConstant(providerModelsSource, 'DEEPSEEK_DEFAULT_MODEL'),
       sakana: extractExportedStringConstant(providerModelsSource, 'SAKANA_DEFAULT_MODEL'),
       openai: extractExportedStringConstant(providerModelsSource, 'OPENAI_DEFAULT_MODEL'),
+      xai: extractExportedStringConstant(providerModelsSource, 'XAI_DEFAULT_MODEL'),
       anthropic: extractExportedStringConstant(providerModelsSource, 'ANTHROPIC_DEFAULT_MODEL'),
       google: extractExportedStringConstant(providerModelsSource, 'GOOGLE_DEFAULT_MODEL'),
     });
@@ -124,6 +125,7 @@ describe('DEFAULT_MODELS', () => {
     deepseek: 'deepseek-v4-pro',
     sakana: 'fugu',
     openai: 'gpt-5.4',
+    xai: 'grok-4.5',
     anthropic: 'claude-sonnet-4-6',
     google: 'gemini-3.5-flash',
   };
@@ -145,6 +147,7 @@ describe('DEFAULT_MODELS', () => {
       'openai',
       'openrouter',
       'sakana',
+      'xai',
       'zen',
     ]);
   });

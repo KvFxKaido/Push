@@ -118,6 +118,12 @@ describe('getContextBudget (shared)', () => {
   it('uses declared metadata before broad name-pattern fallbacks', () => {
     expect(getContextBudget('openai', 'gpt-5.4-mini')).toEqual(budgetFromWindow(400_000));
     expect(getContextBudget('zen', 'big-pickle')).toEqual(budgetFromWindow(200_000));
+    // Grok 4.5 ships 500K, smaller than its 2M grok-4.x siblings, so declared
+    // metadata must win over guessWindowFromName('grok') = 2M — otherwise an xai
+    // chat defers compaction to ~1.8M and overruns the real window (Codex P2,
+    // PR #1392).
+    expect(guessWindowFromName('grok-4.5')).toBe(2_000_000);
+    expect(getContextBudget('xai', 'grok-4.5')).toEqual(budgetFromWindow(500_000));
   });
 
   it('keeps Cloudflare gateway-capped models on their cap-aware name fallback', () => {

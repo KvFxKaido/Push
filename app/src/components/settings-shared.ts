@@ -24,6 +24,7 @@ export type BuiltInSettingsProviderId = Extract<
   | 'deepseek'
   | 'anthropic'
   | 'openai'
+  | 'xai'
   | 'google'
 >;
 

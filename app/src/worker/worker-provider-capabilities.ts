@@ -63,6 +63,7 @@ const PROVIDER_ENV_KEY: Partial<Record<AIProviderType, keyof Env>> = {
   sakana: 'SAKANA_API_KEY',
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
+  xai: 'XAI_API_KEY',
   google: 'GOOGLE_API_KEY',
 };
 
@@ -85,6 +86,7 @@ const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
   sakana: 'custom-sakana',
   anthropic: 'anthropic',
   openai: 'openai',
+  xai: 'custom-xai',
   google: 'google',
 };
 

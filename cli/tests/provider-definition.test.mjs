@@ -43,6 +43,7 @@ const EXPECTED_INITIAL_FALLBACK_ORDER = [
   'sakana',
   'anthropic',
   'openai',
+  'xai',
   'google',
 ];
 
@@ -57,6 +58,7 @@ const EXPECTED_FAILOVER_ORDER = [
   'sakana',
   'anthropic',
   'openai',
+  'xai',
   'google',
 ];
 
@@ -69,6 +71,7 @@ const EXPECTED_CLI_PROVIDER_ORDER = [
   'deepseek',
   'sakana',
   'openai',
+  'xai',
   'anthropic',
   'google',
 ];
@@ -78,6 +81,7 @@ const EXPECTED_BUILT_IN_SETTINGS_ORDER = [
   'openrouter',
   'anthropic',
   'openai',
+  'xai',
   'google',
   'deepseek',
   'nvidia',

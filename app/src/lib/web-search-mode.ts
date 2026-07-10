@@ -69,7 +69,7 @@ export function setWebSearchMode(mode: WebSearchMode): void {
  * tool — that's how Gemini gets `googleSearch` grounding, Anthropic gets
  * `web_search_20250305`, OpenRouter gets its `openrouter:web_search`
  * server tool, and the Responses-native providers that implement it
- * (OpenAI, Sakana Fugu) get OpenAI's `web_search` server tool — all
+ * (OpenAI, xAI, Sakana Fugu) get OpenAI's `web_search` server tool — all
  * without the user having to know any of them exist. Explicit
  * non-native backends (`'tavily'`, `'duckduckgo'`,
  * `'ollama'`) suppress native — the user has chosen a specific
@@ -95,12 +95,13 @@ export function isNativeWebSearchEnabled(
         provider === 'anthropic' ||
         provider === 'openrouter' ||
         // Responses-native providers that implement OpenAI's server-side
-        // `web_search` built-in tool: direct OpenAI (broad model support) and
-        // Sakana Fugu (every Fugu model ships it). Fireworks is deliberately
+        // `web_search` built-in tool: direct OpenAI (broad model support),
+        // xAI Grok, and Sakana Fugu (every Fugu model ships it). Fireworks is deliberately
         // excluded — its `/v1/responses` supports only function/MCP/SSE tools,
         // not the built-in `web_search`, so defaulting it on would 400 every
         // chat. Fireworks stays on the prompt-engineered path (Tavily/DDG).
         provider === 'openai' ||
+        provider === 'xai' ||
         provider === 'sakana'
       );
     case 'google-grounding':
@@ -131,6 +132,8 @@ export function getAutoNativeSearchLabel(provider: string): string | null {
       return 'Google';
     case 'openai':
       return 'OpenAI';
+    case 'xai':
+      return 'xAI';
     case 'sakana':
       return 'Sakana';
     default:

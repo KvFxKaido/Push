@@ -398,6 +398,7 @@ export function WorkspaceSessionScreen({
     handleSelectDeepSeekModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectXAIModelFromChat,
     handleSelectGoogleModelFromChat,
   } = useWorkspaceComposerState({
     catalog,
@@ -697,6 +698,7 @@ export function WorkspaceSessionScreen({
     handleSelectDeepSeekModelFromChat,
     handleSelectAnthropicModelFromChat,
     handleSelectOpenAIModelFromChat,
+    handleSelectXAIModelFromChat,
     handleSelectGoogleModelFromChat,
   };
 

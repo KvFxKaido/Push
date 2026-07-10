@@ -21,6 +21,7 @@ export type SharedProviderModelId =
   | 'deepseek'
   | 'sakana'
   | 'openai'
+  | 'xai'
   | 'anthropic'
   | 'google';
 
@@ -55,6 +56,7 @@ export const SAKANA_DEFAULT_MODEL = 'fugu';
 // auth / system-prompt wiring lands per-provider in follow-up PRs that consume
 // the matching entry in `lib/provider-definition.ts`.
 export const OPENAI_DEFAULT_MODEL = 'gpt-5.4';
+export const XAI_DEFAULT_MODEL = 'grok-4.5';
 export const ANTHROPIC_DEFAULT_MODEL = 'claude-sonnet-4-6';
 export const GOOGLE_DEFAULT_MODEL = 'gemini-3.5-flash';
 
@@ -293,6 +295,11 @@ export const OPENAI_MODELS: string[] = [
   'gpt-5-mini',
 ];
 
+// xAI's current public docs recommend Grok 4.5 for both code and chat, with
+// Responses API examples using the bare `grok-4.5` id. Free-text entry covers
+// account/private variants as they ship.
+export const XAI_MODELS: string[] = [XAI_DEFAULT_MODEL];
+
 // Generally available current Claude models, refreshed against Anthropic's
 // models overview on 2026-07-09. Mythos remains free-text only because it is
 // limited-availability Project Glasswing access, not a general picker option.
@@ -323,6 +330,7 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   deepseek: DEEPSEEK_MODELS,
   sakana: SAKANA_MODELS,
   openai: OPENAI_MODELS,
+  xai: XAI_MODELS,
   anthropic: ANTHROPIC_MODELS,
   google: GOOGLE_MODELS,
 };
@@ -336,6 +344,7 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   deepseek: DEEPSEEK_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
+  xai: XAI_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   google: GOOGLE_DEFAULT_MODEL,
 };

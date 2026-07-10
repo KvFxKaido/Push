@@ -9,7 +9,7 @@
  * Scope note (Phase 1):
  *   PR #3a wires the direct Worker handlers currently validated for
  *   background jobs: openrouter, ollama, cloudflare, zen, nvidia,
- *   fireworks, openai, and sakana. Providers that still require
+ *   fireworks, openai, xai, and sakana. Providers that still require
  *   extra runtime setup or are intentionally unsupported here return
  *   `null` from `resolveProviderHandler` so the caller can surface an
  *   explicit diagnostic and fail fast instead of silently hanging.
@@ -21,7 +21,7 @@
  *   `text_delta` events for `choices[0].delta.content`. Malformed chunks
  *   are skipped silently (providers interleave heartbeats that aren't
  *   always valid JSON); `[DONE]` sentinels close the stream cleanly.
- *   Two exceptions: `openrouter`, `openai`, `sakana`, and `fireworks` use the
+ *   Two exceptions: `openrouter`, `openai`, `xai`, `sakana`, and `fireworks` use the
  *   Responses-API pump, and the
  *   Anthropic-transport Zen-Go models (MiniMax / Qwen on `/v1/messages`)
  *   now stream raw Anthropic Messages SSE — the Worker stopped translating
@@ -55,6 +55,7 @@ import {
   handleOpenAIChat,
   handleOpenRouterChat,
   handleSakanaChat,
+  handleXAIChat,
   handleZenChat,
   handleZenGoChat,
 } from './worker-providers';
@@ -112,6 +113,8 @@ export function resolveProviderHandler(
       return handleAnthropicChat as unknown as ProviderHandler;
     case 'openai':
       return handleOpenAIChat as unknown as ProviderHandler;
+    case 'xai':
+      return handleXAIChat as unknown as ProviderHandler;
     case 'sakana':
       return handleSakanaChat as unknown as ProviderHandler;
     case 'google':
@@ -190,7 +193,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, ollama, cloudflare, zen, nvidia, fireworks, deepseek, anthropic, openai, sakana, google.`,
+            `Supported: openrouter, ollama, cloudflare, zen, nvidia, fireworks, deepseek, anthropic, openai, xai, sakana, google.`,
         );
       }
 
@@ -199,7 +202,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         throw new Error('Stream aborted before provider dispatch');
       }
 
-      // OpenRouter, OpenAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
+      // OpenRouter, OpenAI, xAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
       // build the typed `input`-item body for any of them; everything else gets
       // the Chat Completions payload below.
       // OpenRouter is Responses-shaped ONLY for models in the /responses beta
@@ -212,6 +215,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         (args.provider === 'openrouter' &&
           openRouterModelUsesResponses(req.model || args.modelId)) ||
         args.provider === 'openai' ||
+        args.provider === 'xai' ||
         args.provider === 'sakana' ||
         args.provider === 'fireworks';
       const body = isResponsesProvider
@@ -294,7 +298,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
       // Messages SSE now that the Worker no longer translates that route to
       // OpenAI SSE; parse them natively. Everything else stays OpenAI-shaped
-      // (`openrouter`/`openai`/`sakana`/`fireworks` via the Responses pump, the rest via
+      // (`openrouter`/`openai`/`xai`/`sakana`/`fireworks` via the Responses pump, the rest via
       // `pumpSseBody`).
       const isZenGoAnthropic =
         zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';

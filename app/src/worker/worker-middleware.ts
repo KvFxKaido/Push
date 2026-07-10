@@ -37,6 +37,7 @@ export interface Env {
   SAKANA_API_KEY?: string;
   ANTHROPIC_API_KEY?: string;
   OPENAI_API_KEY?: string;
+  XAI_API_KEY?: string;
   GOOGLE_API_KEY?: string;
   PUSH_GOOGLE_GROUNDING_MODEL?: string;
   AI?: Ai;

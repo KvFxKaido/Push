@@ -189,6 +189,7 @@ export const ALL_PROVIDERS = [
   'deepseek',
   'anthropic',
   'openai',
+  'xai',
   'google',
   'demo',
 ] as const;

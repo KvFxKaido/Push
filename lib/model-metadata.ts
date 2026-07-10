@@ -229,6 +229,15 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     fugu: M(1000000, true, true, false, TEXT_IMAGE),
     'fugu-ultra': M(1000000, true, true, false, TEXT_IMAGE),
   },
+  xai: {
+    // Grok 4.5 ships a 500K window (confirmed on the xAI console and OpenRouter)
+    // — notably SMALLER than its 2M grok-4.x siblings, so the `grok → 2M` name
+    // fallback in context-budget.ts over-budgets it and defers compaction to
+    // ~1.8M, well past the real window (xAI then rejects/truncates). Declared
+    // metadata wins over the name guess, so xai chats compact at the true 500K.
+    // Covers the OpenRouter `x-ai/grok-4.5` path too via leaf-strip → grok-4.5.
+    'grok-4.5': M(500000, true, true, true, TEXT_IMAGE_PDF),
+  },
 };
 
 function stripRoutingSuffix(modelId: string): string {

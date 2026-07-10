@@ -182,6 +182,7 @@ export interface ChatRouteCatalogProps {
   handleSelectDeepSeekModelFromChat: (model: string) => void;
   handleSelectAnthropicModelFromChat: (model: string) => void;
   handleSelectOpenAIModelFromChat: (model: string) => void;
+  handleSelectXAIModelFromChat: (model: string) => void;
   handleSelectGoogleModelFromChat: (model: string) => void;
 }
 
