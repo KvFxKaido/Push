@@ -1314,12 +1314,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
 
   const CASES = [
     {
-      name: 'ollama',
-      handler: handleOllamaModels,
-      env: { CF_AI_GATEWAY_BYOK: 'ollama', CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama' },
-      url: `${GW_BASE}/custom-ollama/v1/models`,
-    },
-    {
       name: 'openrouter',
       handler: handleOpenRouterModels,
       env: { CF_AI_GATEWAY_BYOK: 'openrouter' },
@@ -1373,19 +1367,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
     });
   }
-
-  it('ollama: BYOK-listed but custom slug NOT enabled still 401s keyless (never fetches direct keyless)', async () => {
-    // buildAiGatewayUrl falls back to direct for an unlisted custom slug — a
-    // keyless direct call would 401 at the upstream, so the key gate must
-    // stay on (the tightened byok-requires-gateway-resolution pattern).
-    const captured = captureFetch();
-    const res = await handleOllamaModels(
-      makeModelsRequest(),
-      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'ollama' }),
-    );
-    expect(res.status).toBe(401);
-    expect(captured.current).toBeNull();
-  });
 
   it('openai: BYOK keyless GETs the gateway /openai/models without Authorization', async () => {
     const captured = captureFetch();
@@ -2241,7 +2222,7 @@ describe('handleOllamaChat', () => {
 });
 
 describe('handleOllamaModels', () => {
-  it('GETs ollama.com/v1/models with the OLLAMA_API_KEY bearer', async () => {
+  it('GETs ollama.com/v1/models directly with the OLLAMA_API_KEY bearer even when chat uses the gateway', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -2250,10 +2231,21 @@ describe('handleOllamaModels', () => {
         return new Response('{"data":[]}', { status: 200 });
       }),
     );
-    await handleOllamaModels(makeModelsRequest(), makeEnv({ OLLAMA_API_KEY: 'sk-ol' }));
+    await handleOllamaModels(
+      makeModelsRequest(),
+      makeEnv({
+        OLLAMA_API_KEY: 'sk-ol',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+        CF_AI_GATEWAY_BYOK: 'ollama',
+        CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
+      }),
+    );
     expect(captured?.url).toBe('https://ollama.com/v1/models');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-ol');
+    expect(headers['cf-aig-authorization']).toBeUndefined();
   });
 });
 
