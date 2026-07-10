@@ -88,7 +88,7 @@ const GATEWAY_BINDING_PROVIDER: Partial<Record<AIProviderType, string>> = {
   sakana: 'custom-sakana',
   anthropic: 'anthropic',
   openai: 'openai',
-  xai: 'custom-xai',
+  xai: 'grok',
   google: 'google',
 };
 
