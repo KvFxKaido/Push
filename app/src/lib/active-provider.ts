@@ -19,7 +19,10 @@ import {
 } from './providers';
 import type { AIProviderType } from '@/types';
 import { getInitialFallbackProviderOrder } from '@push/lib/provider-definition';
-import { getCachedProviderCapabilitySnapshot } from './provider-engine-capability';
+import {
+  getCachedProviderCapabilitySnapshot,
+  type ProviderCredentialSource,
+} from './provider-engine-capability';
 
 // The set of providers that can be active is exactly `AIProviderType` (every
 // provider id, including `demo`). Aliased rather than re-listed so the id
@@ -45,8 +48,23 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
     Boolean((getGoogleKey() || hasServerProviderCredential('google')) && getGoogleModelName()),
 };
 
+// Server credential sources the FOREGROUND path can actually dispatch with.
+// `user-key` (the identity-keyed server-secret store) is deliberately excluded:
+// only the engine/CoderJob adapter injects it — the foreground Worker preamble
+// (`runPreamble`) resolves an env secret, gateway BYOK, or the request header,
+// never the user-secrets store. Counting `user-key` here would foreground-route
+// a provider whose key the foreground path can't reach, so the turn 401s
+// instead of falling back. (Engine capability is gated separately by
+// `isProviderEngineCapable`, which does honor `user-key`.)
+const FOREGROUND_SERVER_SOURCES: readonly ProviderCredentialSource[] = [
+  'gateway-byok',
+  'binding',
+  'worker-secret',
+];
+
 function hasServerProviderCredential(provider: PreferredProvider): boolean {
-  return (getCachedProviderCapabilitySnapshot().sources[provider] ?? null) !== null;
+  const source = getCachedProviderCapabilitySnapshot().sources[provider] ?? null;
+  return source !== null && FOREGROUND_SERVER_SOURCES.includes(source);
 }
 
 /**

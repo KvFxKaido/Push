@@ -55,6 +55,11 @@ const EMPTY_SNAPSHOT: ProviderCapabilitySnapshot = {
 let snapshot: ProviderCapabilitySnapshot | null = null;
 let lastFetchStartedAt = 0;
 let inflight: Promise<void> | null = null;
+// Bumped whenever the cache is dropped at an identity boundary. A probe that was
+// already in flight at reset time captures the pre-reset value and discards its
+// result on completion, so a previous identity's fetch can't repopulate the
+// cache for the next identity.
+let cacheGeneration = 0;
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -103,6 +108,7 @@ function loadFromStorage(): ProviderCapabilitySnapshot | null {
 }
 
 async function fetchCapabilities(): Promise<void> {
+  const generation = cacheGeneration;
   const res = await fetch('/api/providers/engine-capabilities', { method: 'GET' });
   if (!res.ok) {
     throw new Error(`engine-capabilities probe returned ${res.status}`);
@@ -111,6 +117,10 @@ async function fetchCapabilities(): Promise<void> {
   if (!parsed) {
     throw new Error('engine-capabilities probe returned an unexpected shape');
   }
+  // A reset (identity boundary) landed while this probe was in flight — discard
+  // the now-stale result rather than repopulating the cache for the next
+  // identity. Errors still propagate to the caller's catch.
+  if (generation !== cacheGeneration) return;
   snapshot = parsed;
   safeStorageSet(
     STORAGE_KEY,
@@ -215,6 +225,7 @@ export function invalidateEngineCapabilities(): void {
  * identity — conservative: routing falls back to local keys, never over-trusts.
  */
 export function resetProviderCapabilityCache(): void {
+  cacheGeneration += 1;
   snapshot = null;
   lastFetchStartedAt = 0;
   safeStorageRemove(STORAGE_KEY);
@@ -226,5 +237,6 @@ export function __resetEngineCapabilityCacheForTests(): void {
   snapshot = null;
   lastFetchStartedAt = 0;
   inflight = null;
+  cacheGeneration += 1;
   listeners.clear();
 }

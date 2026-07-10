@@ -94,4 +94,24 @@ describe('active provider selection', () => {
     expect(isProviderAvailable('anthropic')).toBe(false);
     expect(getActiveProvider()).toBe('openrouter');
   });
+
+  it('does not treat a user-key source as foreground availability', () => {
+    // `user-key` is the identity-keyed server-secret store, injected only by the
+    // engine adapter — the foreground path can't reach it, so it must not count
+    // as foreground availability (else the turn 401s instead of falling back).
+    state.preferredProvider = 'anthropic';
+    state.keys.openrouter = 'sk-or-local';
+    state.sources = { anthropic: 'user-key' };
+
+    expect(isProviderAvailable('anthropic')).toBe(false);
+    expect(getActiveProvider()).toBe('openrouter');
+  });
+
+  it('treats a foreground-usable worker-secret source as available', () => {
+    state.preferredProvider = 'anthropic';
+    state.sources = { anthropic: 'worker-secret' };
+
+    expect(isProviderAvailable('anthropic')).toBe(true);
+    expect(getActiveProvider()).toBe('anthropic');
+  });
 });

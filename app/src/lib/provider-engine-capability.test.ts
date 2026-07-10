@@ -83,6 +83,32 @@ describe('resetProviderCapabilityCache (identity boundary)', () => {
     expect(after.probed).toBe(false);
     expect(storage.has(STORAGE_KEY)).toBe(false);
   });
+
+  it('discards an in-flight probe that resolves after a reset', async () => {
+    // Probe for user A is in flight (json still pending) when the identity
+    // boundary hits — its result must not repopulate the cache for user B.
+    let resolveJson!: (v: unknown) => void;
+    const jsonReady = new Promise<unknown>((r) => {
+      resolveJson = r;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: () => jsonReady })),
+    );
+
+    refreshEngineCapabilities(); // starts the fetch; json is pending
+    resetProviderCapabilityCache(); // identity boundary before it resolves
+    resolveJson({
+      providers: { anthropic: true },
+      sources: { anthropic: 'gateway-byok' },
+      gatewayActive: true,
+    });
+    await flushInflight();
+
+    // The stale A probe must NOT have written back.
+    expect(getCachedProviderCapabilitySnapshot().sources.anthropic ?? null).toBeNull();
+    expect(storage.has(STORAGE_KEY)).toBe(false);
+  });
 });
 
 describe('isProviderEngineCapable (client cache)', () => {
