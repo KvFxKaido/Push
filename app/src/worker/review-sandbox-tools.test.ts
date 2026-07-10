@@ -412,6 +412,17 @@ describe('environment setup before verifiers', () => {
     expect(r.text).toContain('note the review as unverified');
   });
 
+  it('the default setup command is conditional and package-manager-aware', async () => {
+    const { REVIEW_DEFAULT_SETUP_COMMAND } = await import('./review-sandbox-tools');
+    // No-op guard on warm sandboxes / non-Node repos.
+    expect(REVIEW_DEFAULT_SETUP_COMMAND).toContain('[ -f package.json ] && [ ! -d node_modules ]');
+    // Lockfile-detected installer, npm as the final fallback only.
+    expect(REVIEW_DEFAULT_SETUP_COMMAND).toContain('pnpm-lock.yaml');
+    expect(REVIEW_DEFAULT_SETUP_COMMAND).toContain('yarn.lock');
+    expect(REVIEW_DEFAULT_SETUP_COMMAND).toContain('bun install');
+    expect(REVIEW_DEFAULT_SETUP_COMMAND).toMatch(/else npm install/);
+  });
+
   it('runReviewSetup reports ok on exit 0 and reduced detail on failure', async () => {
     runDetachedMock.mockResolvedValueOnce({
       stdout: 'added 120 packages',

@@ -76,11 +76,20 @@ export interface ReviewVerifierCommands {
  * Default environment setup when the repo declares no `# setup:` hint —
  * the coder-side `handleCheckTypes` precedent (install root deps when a
  * package.json exists and node_modules doesn't), made conditional so it's a
- * no-op on warm sandboxes and non-Node repos. Monorepos with nested installs
- * (like Push itself: root + app/ + mcp/) need the explicit hint.
+ * no-op on warm sandboxes and non-Node repos, and package-manager-aware via
+ * lockfile detection (a bare `npm install` on a pnpm/yarn/bun repo fails
+ * needlessly — fugu WARNING, PR #1387). If the detected manager isn't
+ * available in the sandbox image the setup fails and the review proceeds
+ * unverified — honest, and no worse than the wrong installer. Monorepos with
+ * nested installs (like Push itself: root + app/ + mcp/) need the explicit
+ * hint.
  */
 export const REVIEW_DEFAULT_SETUP_COMMAND =
-  'if [ -f package.json ] && [ ! -d node_modules ]; then npm install; fi';
+  'if [ -f package.json ] && [ ! -d node_modules ]; then ' +
+  'if [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install; ' +
+  'elif [ -f yarn.lock ]; then corepack enable yarn && yarn install; ' +
+  'elif [ -f bun.lockb ] || [ -f bun.lock ]; then bun install; ' +
+  'else npm install; fi; fi';
 
 /** Outcome of the one-time environment setup run. */
 export interface ReviewSetupResult {
@@ -102,9 +111,12 @@ export type ReviewSandboxToolResult = ToolExecutionResult & {
 };
 
 // One deadline per verifier: test suites routinely run longer than tsc, but
-// both must fit inside the review's 15-min no-progress budget with headroom.
-// Setup + one verifier run back-to-back inside a single tool round, so their
-// deadlines must sum comfortably under that budget (300s + 480s ≈ 13 min).
+// each must fit inside the review's 15-min no-progress budget. Setup + one
+// verifier run back-to-back inside a single tool round on top of the model's
+// round wall-clock, which can exceed that budget in sum — so the executor
+// reports tool-start progress (hooks.onToolProgress → checkpoint touch) and
+// the budget measures from the LAST progress mark, not the round top
+// (Codex P2, PR #1387).
 const REVIEW_TYPECHECK_DEADLINE_MS = 480_000;
 const REVIEW_TESTS_DEADLINE_MS = 480_000;
 const REVIEW_SETUP_DEADLINE_MS = 300_000;

@@ -303,6 +303,14 @@ export interface PrReviewExecutorHooks {
   /** Fired whenever a verifier records an outcome — the DO keeps the latest
    *  snapshot and persists it with the next round checkpoint. */
   onVerification?: (verification: ReviewVerification) => void;
+  /**
+   * Fired when a sandbox tool starts executing. The DO touches the round
+   * checkpoint's `updated_at` so long tool runs count as PROGRESS for
+   * `failTimedOutReviews`: model round wall-clock + setup (300s) + a verifier
+   * (480s) can legitimately exceed the 15-min no-progress budget measured
+   * from the round top alone (Codex P2, PR #1387).
+   */
+  onToolProgress?: () => void;
 }
 
 /** Injectable model/network leaf — see `__setPrReviewExecutorOverride`. */
@@ -529,6 +537,21 @@ export class PrReviewJob {
       this.clearCheckpoint(deliveryId);
       return null;
     }
+  }
+
+  /**
+   * Mark progress on a live delivery's checkpoint without changing its state:
+   * bumps `updated_at` so the progress-anchored timeout in
+   * `failTimedOutReviews` covers long in-round tool runs (setup + verifier).
+   * No-op when no checkpoint row exists yet (the round-top write creates it
+   * before any tool can run).
+   */
+  private touchCheckpoint(deliveryId: string): void {
+    this.ctx.storage.sql.exec(
+      'UPDATE review_checkpoint SET updated_at = ? WHERE delivery_id = ?',
+      Date.now(),
+      deliveryId,
+    );
   }
 
   private clearCheckpoint(deliveryId: string): void {
@@ -988,6 +1011,18 @@ export class PrReviewJob {
         resumeVerification: resume?.verification ?? undefined,
         onVerification: (verification) => {
           this.verificationState.set(input.deliveryId, verification);
+        },
+        onToolProgress: () => {
+          try {
+            this.touchCheckpoint(input.deliveryId);
+          } catch (err) {
+            // Losing one progress mark only narrows the timeout window back
+            // to the round top — never worth failing the tool call over.
+            log('warn', 'pr_review_checkpoint_touch_failed', {
+              deliveryId: input.deliveryId,
+              message: err instanceof Error ? err.message : String(err),
+            });
+          }
         },
         onRoundState: (state) => {
           // Synchronous persist (the lib hands us its live array — serialize
@@ -1918,6 +1953,10 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
         // any provisioning/tool failure.
         if (sandboxToolsEnabled && toolCall.source === 'sandbox') {
           try {
+            // Mark progress before potentially long work (provision, setup,
+            // verifier) so the 15-min no-progress budget measures from here,
+            // not from the round top the model already spent streaming.
+            hooks?.onToolProgress?.();
             const sb = await getReviewSandbox();
             if (!sb) {
               return {
