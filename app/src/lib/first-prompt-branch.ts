@@ -42,7 +42,19 @@ import type { ChatMessage } from '@/types';
  *  fail-safe's `withNumericSuffix` loop. Keeps common/repeated first prompts
  *  ("Fix login") in the same repo from silently staying on the default branch. */
 const MAX_BRANCH_NAME_ATTEMPTS = 5;
+// Timer shape for the naming call. The suggestion starts BEFORE the sandbox
+// prewarm and is awaited only after the clone completes (chat-prepare-send),
+// so a generous budget overlaps multi-second clone time — it is nearly free.
+// A bare 2.5s activity window was the regression: only text_delta resets that
+// timer, so a reasoning model (MiniMax/Qwen on zen Go, GLM, Kimi, ...) burned
+// the whole window THINKING about the name and every suggestion silently fell
+// back to the mechanical prompt-derived name — and the AI Gateway hop's
+// ~0.5–1s TTFB ate the budget even for non-reasoners. Grace covers slow first
+// tokens, reasoning counts as progress, and the wall-clock bounds a model
+// that thinks past the point of being useful for a five-word branch name.
 const PROMPT_BRANCH_NAME_TIMEOUT_MS = 2500;
+const PROMPT_BRANCH_NAME_FIRST_TOKEN_GRACE_MS = 8000;
+const PROMPT_BRANCH_NAME_WALL_CLOCK_MS = 12_000;
 
 const PROMPT_BRANCH_NAME_SYSTEM_PROMPT = `You generate git branch names.
 
@@ -116,6 +128,12 @@ export function createModelFirstPromptBranchNameProposer(
       },
       PROMPT_BRANCH_NAME_TIMEOUT_MS,
       `Branch name suggestion timed out after ${PROMPT_BRANCH_NAME_TIMEOUT_MS / 1000}s.`,
+      PROMPT_BRANCH_NAME_WALL_CLOCK_MS,
+      `Branch name suggestion exceeded ${PROMPT_BRANCH_NAME_WALL_CLOCK_MS / 1000}s wall-clock.`,
+      {
+        reasoningResetsActivityTimer: true,
+        firstTokenGraceMs: PROMPT_BRANCH_NAME_FIRST_TOKEN_GRACE_MS,
+      },
     );
 
     return error ? null : text;

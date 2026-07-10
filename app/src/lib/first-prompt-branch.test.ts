@@ -80,6 +80,14 @@ describe('createModelFirstPromptBranchNameProposer', () => {
       }),
       2500,
       expect.stringContaining('2.5s'),
+      12_000,
+      expect.stringContaining('12s'),
+      // Reasoning models must not burn the activity window thinking about the
+      // name (the post-gateway regression: suggestions silently fell back to
+      // the mechanical name), and slow first tokens through the gateway hop
+      // need a grace wider than the inter-token window. The wall-clock above
+      // is the mandatory backstop for the reasoning opt-in.
+      { reasoningResetsActivityTimer: true, firstTokenGraceMs: 8000 },
     );
   });
 });
