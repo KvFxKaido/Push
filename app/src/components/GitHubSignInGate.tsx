@@ -3,6 +3,7 @@ import { useGitHubAppAuth } from '@/hooks/useGitHubAppAuth';
 import { probeSession } from '@/lib/session-auth';
 import { subscribeSessionInvalid } from '@/lib/api-auth-fetch';
 import { loadSettingsFromServer, resetSettingsCache } from '@/lib/settings-store';
+import { resetProviderCapabilityCache } from '@/lib/provider-engine-capability';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -82,7 +83,15 @@ export function GitHubSignInGate({ children }: { children: ReactNode }) {
   // browser isn't hydrated from the previous user's settings.
   useEffect(() => {
     if (probe === 'authed') void loadSettingsFromServer();
-    else if (probe === 'no-session') resetSettingsCache();
+    else if (probe === 'no-session') {
+      resetSettingsCache();
+      // The provider capability/provenance snapshot is per-identity too — drop
+      // it so the next user on this browser isn't routed on the previous user's
+      // cached server-credential sources (which active-provider reads
+      // synchronously). Falls back to local-key-only until the new identity's
+      // refresh lands.
+      resetProviderCapabilityCache();
+    }
   }, [probe]);
 
   if (probe === 'authed') return <>{children}</>;

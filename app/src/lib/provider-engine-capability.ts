@@ -26,7 +26,7 @@
  */
 
 import type { AIProviderType } from '@push/lib/provider-contract';
-import { safeStorageGet, safeStorageSet } from './safe-storage';
+import { safeStorageGet, safeStorageRemove, safeStorageSet } from './safe-storage';
 
 // v2: the v1 key held a bare boolean map; the snapshot now carries provenance
 // too. New key rather than a migration — the v1 value is an hour-stale cache
@@ -55,6 +55,11 @@ const EMPTY_SNAPSHOT: ProviderCapabilitySnapshot = {
 let snapshot: ProviderCapabilitySnapshot | null = null;
 let lastFetchStartedAt = 0;
 let inflight: Promise<void> | null = null;
+// Bumped whenever the cache is dropped at an identity boundary. A probe that was
+// already in flight at reset time captures the pre-reset value and discards its
+// result on completion, so a previous identity's fetch can't repopulate the
+// cache for the next identity.
+let cacheGeneration = 0;
 const listeners = new Set<() => void>();
 
 function notify(): void {
@@ -103,6 +108,7 @@ function loadFromStorage(): ProviderCapabilitySnapshot | null {
 }
 
 async function fetchCapabilities(): Promise<void> {
+  const generation = cacheGeneration;
   const res = await fetch('/api/providers/engine-capabilities', { method: 'GET' });
   if (!res.ok) {
     throw new Error(`engine-capabilities probe returned ${res.status}`);
@@ -111,6 +117,10 @@ async function fetchCapabilities(): Promise<void> {
   if (!parsed) {
     throw new Error('engine-capabilities probe returned an unexpected shape');
   }
+  // A reset (identity boundary) landed while this probe was in flight — discard
+  // the now-stale result rather than repopulating the cache for the next
+  // identity. Errors still propagate to the caller's catch.
+  if (generation !== cacheGeneration) return;
   snapshot = parsed;
   safeStorageSet(
     STORAGE_KEY,
@@ -148,10 +158,15 @@ export function refreshEngineCapabilities(): void {
     });
 }
 
-function ensureSnapshot(): ProviderCapabilitySnapshot {
+function ensureSnapshotLoaded(): ProviderCapabilitySnapshot {
   if (snapshot === null) snapshot = loadFromStorage() ?? EMPTY_SNAPSHOT;
-  refreshEngineCapabilities();
   return snapshot;
+}
+
+function ensureSnapshot(): ProviderCapabilitySnapshot {
+  const current = ensureSnapshotLoaded();
+  refreshEngineCapabilities();
+  return current;
 }
 
 /**
@@ -160,6 +175,16 @@ function ensureSnapshot(): ProviderCapabilitySnapshot {
  */
 export function isProviderEngineCapable(provider: AIProviderType): boolean {
   return ensureSnapshot().providers[provider] ?? true;
+}
+
+/**
+ * Read the cached capability/provenance snapshot without kicking a network
+ * refresh. Routing predicates use this to align with Settings' last-known
+ * server credential truth without making a synchronous "is this provider
+ * configured?" check start background I/O.
+ */
+export function getCachedProviderCapabilitySnapshot(): ProviderCapabilitySnapshot {
+  return ensureSnapshotLoaded();
 }
 
 /**
@@ -188,10 +213,30 @@ export function invalidateEngineCapabilities(): void {
   refreshEngineCapabilities();
 }
 
+/**
+ * Drop the cached capability/provenance snapshot (in-memory + localStorage) at
+ * an identity boundary. The snapshot is per-GitHub-identity, so the next
+ * identity on this browser must NOT read the previous user's provenance — a
+ * stale `user-key` / `gateway-byok` source would make routing treat a provider
+ * as available and send keyless (active-provider.ts consults the cached snapshot
+ * synchronously, without a refresh). Mirrors `resetSettingsCache()`; the sign-in
+ * gate calls both when a session ends. After this, cached reads fall back to
+ * `EMPTY_SNAPSHOT` (no server credential) until a refresh repopulates for the new
+ * identity — conservative: routing falls back to local keys, never over-trusts.
+ */
+export function resetProviderCapabilityCache(): void {
+  cacheGeneration += 1;
+  snapshot = null;
+  lastFetchStartedAt = 0;
+  safeStorageRemove(STORAGE_KEY);
+  notify();
+}
+
 /** Test seam: reset module state between cases. */
 export function __resetEngineCapabilityCacheForTests(): void {
   snapshot = null;
   lastFetchStartedAt = 0;
   inflight = null;
+  cacheGeneration += 1;
   listeners.clear();
 }

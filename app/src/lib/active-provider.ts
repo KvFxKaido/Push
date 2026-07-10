@@ -19,6 +19,10 @@ import {
 } from './providers';
 import type { AIProviderType } from '@/types';
 import { getInitialFallbackProviderOrder } from '@push/lib/provider-definition';
+import {
+  getCachedProviderCapabilitySnapshot,
+  type ProviderCredentialSource,
+} from './provider-engine-capability';
 
 // The set of providers that can be active is exactly `AIProviderType` (every
 // provider id, including `demo`). Aliased rather than re-listed so the id
@@ -26,18 +30,42 @@ import { getInitialFallbackProviderOrder } from '@push/lib/provider-definition';
 export type ActiveProvider = AIProviderType;
 
 const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
-  ollama: () => Boolean(getOllamaKey()),
-  openrouter: () => Boolean(getOpenRouterKey()),
-  cloudflare: () => getCloudflareWorkerConfigured(),
-  zen: () => Boolean(getZenKey()),
-  nvidia: () => Boolean(getNvidiaKey()),
-  fireworks: () => Boolean(getFireworksKey()),
-  deepseek: () => Boolean(getDeepSeekKey()),
-  sakana: () => Boolean(getSakanaKey()),
-  anthropic: () => Boolean(getAnthropicKey() && getAnthropicModelName()),
-  openai: () => Boolean(getOpenAIKey() && getOpenAIModelName()),
-  google: () => Boolean(getGoogleKey() && getGoogleModelName()),
+  ollama: () => Boolean(getOllamaKey() || hasServerProviderCredential('ollama')),
+  openrouter: () => Boolean(getOpenRouterKey() || hasServerProviderCredential('openrouter')),
+  cloudflare: () => getCloudflareWorkerConfigured() || hasServerProviderCredential('cloudflare'),
+  zen: () => Boolean(getZenKey() || hasServerProviderCredential('zen')),
+  nvidia: () => Boolean(getNvidiaKey() || hasServerProviderCredential('nvidia')),
+  fireworks: () => Boolean(getFireworksKey() || hasServerProviderCredential('fireworks')),
+  deepseek: () => Boolean(getDeepSeekKey() || hasServerProviderCredential('deepseek')),
+  sakana: () => Boolean(getSakanaKey() || hasServerProviderCredential('sakana')),
+  anthropic: () =>
+    Boolean(
+      (getAnthropicKey() || hasServerProviderCredential('anthropic')) && getAnthropicModelName(),
+    ),
+  openai: () =>
+    Boolean((getOpenAIKey() || hasServerProviderCredential('openai')) && getOpenAIModelName()),
+  google: () =>
+    Boolean((getGoogleKey() || hasServerProviderCredential('google')) && getGoogleModelName()),
 };
+
+// Server credential sources the FOREGROUND path can actually dispatch with.
+// `user-key` (the identity-keyed server-secret store) is deliberately excluded:
+// only the engine/CoderJob adapter injects it — the foreground Worker preamble
+// (`runPreamble`) resolves an env secret, gateway BYOK, or the request header,
+// never the user-secrets store. Counting `user-key` here would foreground-route
+// a provider whose key the foreground path can't reach, so the turn 401s
+// instead of falling back. (Engine capability is gated separately by
+// `isProviderEngineCapable`, which does honor `user-key`.)
+const FOREGROUND_SERVER_SOURCES: readonly ProviderCredentialSource[] = [
+  'gateway-byok',
+  'binding',
+  'worker-secret',
+];
+
+function hasServerProviderCredential(provider: PreferredProvider): boolean {
+  const source = getCachedProviderCapabilitySnapshot().sources[provider] ?? null;
+  return source !== null && FOREGROUND_SERVER_SOURCES.includes(source);
+}
 
 /**
  * Fallback order when no preference or last-used provider is available.
@@ -58,10 +86,10 @@ export function isProviderAvailable(provider: ActiveProvider): boolean {
 /**
  * Determine which provider is active.
  *
- * 1. If the user set a preference AND that provider has a key → use it.
+ * 1. If the user set a preference AND that provider has credentials → use it.
  * 2. Use the last provider the user picked (if still configured).
- * 3. Otherwise, use whichever provider has a key (first available wins).
- * 4. No keys → demo.
+ * 3. Otherwise, use whichever provider has credentials (first available wins).
+ * 4. No credentials → demo.
  */
 export function getActiveProvider(): ActiveProvider {
   const preferred = getPreferredProvider();

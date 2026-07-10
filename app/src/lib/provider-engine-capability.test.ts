@@ -17,13 +17,19 @@ vi.mock('./safe-storage', () => ({
     storage.set(key, value);
     return true;
   }),
+  safeStorageRemove: vi.fn((key: string) => {
+    storage.delete(key);
+    return true;
+  }),
 }));
 
 import {
   __resetEngineCapabilityCacheForTests,
+  getCachedProviderCapabilitySnapshot,
   getProviderCapabilitySnapshot,
   isProviderEngineCapable,
   refreshEngineCapabilities,
+  resetProviderCapabilityCache,
   subscribeProviderCapabilities,
 } from './provider-engine-capability';
 
@@ -54,6 +60,55 @@ beforeEach(() => {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe('resetProviderCapabilityCache (identity boundary)', () => {
+  it('drops the in-memory snapshot and localStorage so the next identity starts clean', async () => {
+    // Seed a probe result as if user A had server-held credentials.
+    mockFetchOnce({
+      providers: { anthropic: true },
+      sources: { anthropic: 'gateway-byok' },
+      gatewayActive: true,
+    });
+    refreshEngineCapabilities();
+    await flushInflight();
+    expect(getCachedProviderCapabilitySnapshot().sources.anthropic).toBe('gateway-byok');
+    expect(storage.has(STORAGE_KEY)).toBe(true);
+
+    resetProviderCapabilityCache();
+
+    // Cached (no-refresh) read now falls back to EMPTY_SNAPSHOT; storage cleared.
+    const after = getCachedProviderCapabilitySnapshot();
+    expect(after.sources.anthropic ?? null).toBeNull();
+    expect(after.probed).toBe(false);
+    expect(storage.has(STORAGE_KEY)).toBe(false);
+  });
+
+  it('discards an in-flight probe that resolves after a reset', async () => {
+    // Probe for user A is in flight (json still pending) when the identity
+    // boundary hits — its result must not repopulate the cache for user B.
+    let resolveJson!: (v: unknown) => void;
+    const jsonReady = new Promise<unknown>((r) => {
+      resolveJson = r;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({ ok: true, status: 200, json: () => jsonReady })),
+    );
+
+    refreshEngineCapabilities(); // starts the fetch; json is pending
+    resetProviderCapabilityCache(); // identity boundary before it resolves
+    resolveJson({
+      providers: { anthropic: true },
+      sources: { anthropic: 'gateway-byok' },
+      gatewayActive: true,
+    });
+    await flushInflight();
+
+    // The stale A probe must NOT have written back.
+    expect(getCachedProviderCapabilitySnapshot().sources.anthropic ?? null).toBeNull();
+    expect(storage.has(STORAGE_KEY)).toBe(false);
+  });
 });
 
 describe('isProviderEngineCapable (client cache)', () => {
