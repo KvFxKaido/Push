@@ -21,6 +21,7 @@ import { cloudflareStream } from './cloudflare-stream';
 import { openrouterStream } from './openrouter-stream';
 import { zaiStream } from './zai-stream';
 import { kimiStream } from './kimi-stream';
+import { huggingfaceStream } from './huggingface-stream';
 import { zenStream } from './zen-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
@@ -38,6 +39,7 @@ import {
   getOpenRouterModelName,
   getZaiModelName,
   getKimiModelName,
+  getHuggingFaceModelName,
   getZenModelName,
   getNvidiaModelName,
   getFireworksModelName,
@@ -123,7 +125,8 @@ export function routeReplaysReasoningContent(
   if (!provider || !model) return false;
   return (
     provider === 'kimi' ||
-    ((provider === 'zen' || provider === 'openrouter') && /deepseek/i.test(model))
+    ((provider === 'zen' || provider === 'openrouter' || provider === 'huggingface') &&
+      /deepseek/i.test(model))
   );
 }
 
@@ -191,6 +194,7 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   openrouter: openrouterStream,
   zai: zaiStream,
   kimi: kimiStream,
+  huggingface: huggingfaceStream,
   cloudflare: cloudflareStream,
   zen: zenStream,
   fireworks: fireworksStream,
@@ -293,6 +297,8 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getZaiModelName();
     case 'kimi':
       return getKimiModelName();
+    case 'huggingface':
+      return getHuggingFaceModelName();
     case 'cloudflare':
       return getCloudflareModelName();
     case 'zen':

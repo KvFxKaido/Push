@@ -2,6 +2,7 @@ import { getOllamaKey } from '@/hooks/useOllamaConfig';
 import { getOpenRouterKey } from '@/hooks/useOpenRouterConfig';
 import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getKimiKey } from '@/hooks/useKimiConfig';
+import { getHuggingFaceKey } from '@/hooks/useHuggingFaceConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
 import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
@@ -690,6 +691,7 @@ function modelSupportsNativeToolCalling(provider: string, modelId: string | unde
   if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
   if (provider === 'zai') return getModelCapabilities('zai', modelId).toolCall;
   if (provider === 'kimi') return getModelCapabilities('kimi', modelId).toolCall;
+  if (provider === 'huggingface') return getModelCapabilities('huggingface', modelId).toolCall;
   if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
   if (provider === 'sakana') return SAKANA_NATIVE_TOOL_CALLING_MODELS.has(modelId);
@@ -1445,6 +1447,43 @@ export async function fetchKimiModels(): Promise<string[]> {
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `Kimi model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
+        { cause: err },
+      );
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
+export async function fetchHuggingFaceModels(): Promise<string[]> {
+  const key = getHuggingFaceKey();
+  const headers: HeadersInit = {};
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(PROVIDER_URLS.huggingface.models, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+      cache: 'no-store',
+    });
+
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`Hugging Face model list failed (${res.status}): ${detail.slice(0, 200)}`);
+    }
+
+    const payload = (await res.json()) as unknown;
+    return normalizeModelList(payload).sort((left, right) =>
+      compareProviderModelIds('huggingface', left, right),
+    );
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error(
+        `Hugging Face model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

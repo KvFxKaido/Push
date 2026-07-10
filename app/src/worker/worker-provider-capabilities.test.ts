@@ -70,6 +70,25 @@ describe('isProviderEngineCapable', () => {
     expect(isProviderEngineCapable('kimi', { KIMI_API_KEY: 'k' } as Env)).toBe(true);
   });
 
+  it('maps the Hugging Face provider to the huggingface custom-provider BYOK slug', () => {
+    const env = {
+      CF_AI_GATEWAY_ACCOUNT_ID: 'acc',
+      CF_AI_GATEWAY_SLUG: 'push-prod',
+      CF_AI_GATEWAY_CUSTOM_SLUGS: 'huggingface',
+      CF_AI_GATEWAY_BYOK: 'huggingface',
+    } as Env;
+    expect(isProviderEngineCapable('huggingface', env)).toBe(true);
+  });
+
+  it('reports Hugging Face server-capable via either accepted Worker secret (any-of alias)', () => {
+    // The handler authenticates with HF_TOKEN OR HUGGINGFACE_API_KEY; the
+    // capability probe must credential it when EITHER is set (same asymmetry
+    // class as the Kimi alias pair above).
+    expect(isProviderEngineCapable('huggingface', {} as Env)).toBe(false);
+    expect(isProviderEngineCapable('huggingface', { HF_TOKEN: 'k' } as Env)).toBe(true);
+    expect(isProviderEngineCapable('huggingface', { HUGGINGFACE_API_KEY: 'k' } as Env)).toBe(true);
+  });
+
   it('reports cloudflare capable from the AI binding, not a secret', () => {
     expect(isProviderEngineCapable('cloudflare', {} as Env)).toBe(false);
     expect(isProviderEngineCapable('cloudflare', { AI: {} as Ai } as Env)).toBe(true);
@@ -91,6 +110,7 @@ describe('isProviderEngineCapable', () => {
       OPENROUTER_API_KEY: 'k',
       ZAI_API_KEY: 'k',
       KIMI_API_KEY: 'k',
+      HF_TOKEN: 'k',
       ZEN_API_KEY: 'k',
       NVIDIA_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',

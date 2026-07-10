@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
     openrouter: '',
     zai: '',
     kimi: '',
+    huggingface: '',
     zen: '',
     nvidia: '',
     fireworks: '',
@@ -29,6 +30,9 @@ vi.mock('@/hooks/useOpenRouterConfig', () => ({
 }));
 vi.mock('@/hooks/useZaiConfig', () => ({ getZaiKey: () => state.keys.zai }));
 vi.mock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => state.keys.kimi }));
+vi.mock('@/hooks/useHuggingFaceConfig', () => ({
+  getHuggingFaceKey: () => state.keys.huggingface,
+}));
 vi.mock('@/hooks/useZenConfig', () => ({ getZenKey: () => state.keys.zen }));
 vi.mock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => state.keys.nvidia }));
 vi.mock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => state.keys.fireworks }));
@@ -55,6 +59,7 @@ vi.mock('./providers', async () => {
     getGoogleModelName: () => 'gemini-2.5-pro',
     getZaiModelName: () => 'glm-5.2',
     getKimiModelName: () => 'glm-5.2',
+    getHuggingFaceModelName: () => 'deepseek-ai/DeepSeek-V4-Pro',
   };
 });
 

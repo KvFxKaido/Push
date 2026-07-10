@@ -183,6 +183,7 @@ export function buildWorkspaceHubReviewModelOptions(
     openrouter: catalog.openRouterModelOptions,
     zai: catalog.zaiModelOptions,
     kimi: catalog.kimiModelOptions,
+    huggingface: catalog.huggingfaceModelOptions,
     cloudflare: catalog.cloudflareModelOptions,
     zen: catalog.zenModelOptions,
     nvidia: catalog.nvidiaModelOptions,

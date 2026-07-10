@@ -84,6 +84,8 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.zaiModelOptions;
     case 'kimi':
       return catalog.kimiModelOptions;
+    case 'huggingface':
+      return catalog.huggingfaceModelOptions;
     case 'cloudflare':
       return catalog.cloudflareModelOptions;
     case 'zen':
@@ -120,6 +122,8 @@ function defaultModelForProvider(
       return catalog.zai.model || null;
     case 'kimi':
       return catalog.kimi.model || null;
+    case 'huggingface':
+      return catalog.huggingface.model || null;
     case 'cloudflare':
       return catalog.cloudflare.model || null;
     case 'zen':

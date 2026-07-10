@@ -11,6 +11,7 @@ import {
   OPENROUTER_MODELS,
   ZAI_MODELS,
   KIMI_MODELS,
+  HUGGINGFACE_MODELS,
   ZEN_MODELS,
   ZEN_GO_MODELS,
   NVIDIA_MODELS,
@@ -33,6 +34,7 @@ import {
   fetchOpenRouterModels,
   fetchZaiModels,
   fetchKimiModels,
+  fetchHuggingFaceModels,
   fetchZenModels,
   fetchNvidiaModels,
   fetchFireworksModels,
@@ -46,6 +48,7 @@ import { useOllamaConfig } from '@/hooks/useOllamaConfig';
 import { useOpenRouterConfig } from '@/hooks/useOpenRouterConfig';
 import { useZaiConfig } from '@/hooks/useZaiConfig';
 import { useKimiConfig } from '@/hooks/useKimiConfig';
+import { useHuggingFaceConfig } from '@/hooks/useHuggingFaceConfig';
 import { useAnthropicConfig } from '@/hooks/useAnthropicConfig';
 import { useOpenAIConfig } from '@/hooks/useOpenAIConfig';
 import { useXAIConfig } from '@/hooks/useXAIConfig';
@@ -108,6 +111,7 @@ export interface ModelCatalog {
   openRouter: ProviderKeyConfig;
   zai: ProviderKeyConfig;
   kimi: ProviderKeyConfig;
+  huggingface: ProviderKeyConfig;
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
   nvidia: ProviderKeyConfig;
@@ -133,6 +137,7 @@ export interface ModelCatalog {
   openRouterModels: ProviderModelState;
   zaiModels: ProviderModelState;
   kimiModels: ProviderModelState;
+  huggingfaceModels: ProviderModelState;
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
   nvidiaModels: ProviderModelState;
@@ -148,6 +153,7 @@ export interface ModelCatalog {
   openRouterModelOptions: string[];
   zaiModelOptions: string[];
   kimiModelOptions: string[];
+  huggingfaceModelOptions: string[];
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
   nvidiaModelOptions: string[];
@@ -168,6 +174,7 @@ export interface ModelCatalog {
   refreshOpenRouterModels: () => Promise<void>;
   refreshZaiModels: () => Promise<void>;
   refreshKimiModels: () => Promise<void>;
+  refreshHuggingFaceModels: () => Promise<void>;
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
   refreshNvidiaModels: () => Promise<void>;
@@ -293,6 +300,21 @@ export function buildModelControl(
         loading: catalog.kimiModels.loading,
         error: catalog.kimiModels.error,
         onRefresh: catalog.refreshKimiModels,
+        allowCustom: true,
+      };
+    case 'huggingface':
+      return {
+        provider,
+        providerLabel: resolveProviderLabel(catalog, provider, 'Hugging Face'),
+        value: lockedModel ?? catalog.huggingface.model,
+        options: includeSelectedModel(
+          catalog.huggingfaceModelOptions,
+          lockedModel ?? catalog.huggingface.model,
+        ),
+        onChange: catalog.huggingface.setModel,
+        loading: catalog.huggingfaceModels.loading,
+        error: catalog.huggingfaceModels.error,
+        onRefresh: catalog.refreshHuggingFaceModels,
         allowCustom: true,
       };
     case 'cloudflare':
@@ -431,6 +453,7 @@ export function useModelCatalog(): ModelCatalog {
   const openRouterCfg = useOpenRouterConfig();
   const zaiCfg = useZaiConfig();
   const kimiCfg = useKimiConfig();
+  const huggingfaceCfg = useHuggingFaceConfig();
   const zenCfg = useZenConfig();
   const nvidiaCfg = useNvidiaConfig();
   const fireworksCfg = useFireworksConfig();
@@ -447,6 +470,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterKeyInput, setOpenRouterKeyInput] = useState('');
   const [zaiKeyInput, setZaiKeyInput] = useState('');
   const [kimiKeyInput, setKimiKeyInput] = useState('');
+  const [huggingfaceKeyInput, setHuggingFaceKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
   const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
@@ -530,6 +554,7 @@ export function useModelCatalog(): ModelCatalog {
     openrouter: openRouterCfg.hasKey || serverUnlocked('openrouter'),
     zai: zaiCfg.hasKey || serverUnlocked('zai'),
     kimi: kimiCfg.hasKey || serverUnlocked('kimi'),
+    huggingface: huggingfaceCfg.hasKey || serverUnlocked('huggingface'),
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
     nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
@@ -553,6 +578,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterModelList, setOpenRouterModelList] = useState<string[]>([]);
   const [zaiModelList, setZaiModelList] = useState<string[]>([]);
   const [kimiModelList, setKimiModelList] = useState<string[]>([]);
+  const [huggingfaceModelList, setHuggingFaceModelList] = useState<string[]>([]);
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
   const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
@@ -567,6 +593,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterLoading, setOpenRouterLoading] = useState(false);
   const [zaiLoading, setZaiLoading] = useState(false);
   const [kimiLoading, setKimiLoading] = useState(false);
+  const [huggingfaceLoading, setHuggingFaceLoading] = useState(false);
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
   const [nvidiaLoading, setNvidiaLoading] = useState(false);
@@ -581,6 +608,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterError, setOpenRouterError] = useState<string | null>(null);
   const [zaiError, setZaiError] = useState<string | null>(null);
   const [kimiError, setKimiError] = useState<string | null>(null);
+  const [huggingfaceError, setHuggingFaceError] = useState<string | null>(null);
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
   const [nvidiaError, setNvidiaError] = useState<string | null>(null);
@@ -595,6 +623,7 @@ export function useModelCatalog(): ModelCatalog {
   const [openRouterUpdatedAt, setOpenRouterUpdatedAt] = useState<number | null>(null);
   const [zaiUpdatedAt, setZaiUpdatedAt] = useState<number | null>(null);
   const [kimiUpdatedAt, setKimiUpdatedAt] = useState<number | null>(null);
+  const [huggingfaceUpdatedAt, setHuggingFaceUpdatedAt] = useState<number | null>(null);
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
   const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
@@ -747,6 +776,20 @@ export function useModelCatalog(): ModelCatalog {
       failureMessage: 'Failed to load Kimi models.',
     });
   }, [kimiCfg.hasKey, kimiLoading, refreshModels]);
+
+  const refreshHuggingFaceModels = useCallback(async () => {
+    await refreshModels({
+      hasKey: huggingfaceCfg.hasKey,
+      isLoading: huggingfaceLoading,
+      setLoading: setHuggingFaceLoading,
+      setError: setHuggingFaceError,
+      setModels: setHuggingFaceModelList,
+      setUpdatedAt: setHuggingFaceUpdatedAt,
+      fetchModels: fetchHuggingFaceModels,
+      emptyMessage: 'No models returned by Hugging Face.',
+      failureMessage: 'Failed to load Hugging Face models.',
+    });
+  }, [huggingfaceCfg.hasKey, huggingfaceLoading, refreshModels]);
 
   // Manual refresh defaults `force` to true so the picker revalidates the
   // cached binding catalog; the auto-fetch effect below passes `false` to serve
@@ -1024,6 +1067,29 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
+          hasKey: huggingfaceCfg.hasKey,
+          modelCount: huggingfaceModelList.length,
+          loading: huggingfaceLoading,
+          error: huggingfaceError,
+        }),
+        activeProviderLabel === 'huggingface',
+        () => {
+          void refreshHuggingFaceModels();
+        },
+      ),
+    [
+      activeProviderLabel,
+      huggingfaceCfg.hasKey,
+      huggingfaceError,
+      huggingfaceLoading,
+      huggingfaceModelList.length,
+      refreshHuggingFaceModels,
+    ],
+  );
+  useEffect(
+    () =>
+      scheduleAutoFetch(
+        shouldAutoFetchProviderModels({
           hasKey: cloudflareConfigured,
           modelCount: cloudflareModelList.length,
           loading: cloudflareLoading,
@@ -1283,6 +1349,16 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [kimiCfg.hasKey]);
   useEffect(() => {
+    if (!huggingfaceCfg.hasKey) {
+      const id = setTimeout(() => {
+        setHuggingFaceModelList([]);
+        setHuggingFaceError(null);
+        setHuggingFaceUpdatedAt(null);
+      }, 0);
+      return () => clearTimeout(id);
+    }
+  }, [huggingfaceCfg.hasKey]);
+  useEffect(() => {
     if (!zenCfg.hasKey) {
       const id = setTimeout(() => {
         setZenModelList([]);
@@ -1451,6 +1527,14 @@ export function useModelCatalog(): ModelCatalog {
       includeSelectedModel(kimiModelList.length > 0 ? kimiModelList : KIMI_MODELS, kimiCfg.model),
     [kimiModelList, kimiCfg.model],
   );
+  const huggingfaceModelOptions = useMemo(
+    () =>
+      includeSelectedModel(
+        huggingfaceModelList.length > 0 ? huggingfaceModelList : HUGGINGFACE_MODELS,
+        huggingfaceCfg.model,
+      ),
+    [huggingfaceModelList, huggingfaceCfg.model],
+  );
   const cloudflareModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1569,6 +1653,15 @@ export function useModelCatalog(): ModelCatalog {
       setModel: kimiCfg.setModel,
       keyInput: kimiKeyInput,
       setKeyInput: setKimiKeyInput,
+    },
+    huggingface: {
+      setKey: huggingfaceCfg.setKey,
+      clearKey: huggingfaceCfg.clearKey,
+      hasKey: huggingfaceCfg.hasKey,
+      model: huggingfaceCfg.model,
+      setModel: huggingfaceCfg.setModel,
+      keyInput: huggingfaceKeyInput,
+      setKeyInput: setHuggingFaceKeyInput,
     },
     cloudflare: {
       configured: cloudflareConfigured,
@@ -1697,6 +1790,12 @@ export function useModelCatalog(): ModelCatalog {
       error: kimiError,
       updatedAt: kimiUpdatedAt,
     },
+    huggingfaceModels: {
+      models: huggingfaceModelList,
+      loading: huggingfaceLoading,
+      error: huggingfaceError,
+      updatedAt: huggingfaceUpdatedAt,
+    },
     cloudflareModels: {
       models: cloudflareModelList,
       loading: cloudflareLoading,
@@ -1756,6 +1855,7 @@ export function useModelCatalog(): ModelCatalog {
     openRouterModelOptions,
     zaiModelOptions,
     kimiModelOptions,
+    huggingfaceModelOptions,
     cloudflareModelOptions,
     zenModelOptions,
     nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
@@ -1774,6 +1874,7 @@ export function useModelCatalog(): ModelCatalog {
     refreshOpenRouterModels,
     refreshZaiModels,
     refreshKimiModels,
+    refreshHuggingFaceModels,
     refreshCloudflareModels,
     refreshZenModels,
     refreshNvidiaModels,

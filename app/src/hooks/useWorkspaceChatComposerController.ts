@@ -29,6 +29,7 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectOpenRouterModelFromChat'
   | 'handleSelectZaiModelFromChat'
   | 'handleSelectKimiModelFromChat'
+  | 'handleSelectHuggingFaceModelFromChat'
   | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
   | 'handleSelectNvidiaModelFromChat'
@@ -61,6 +62,7 @@ export function useWorkspaceChatComposerController({
   handleSelectOpenRouterModelFromChat,
   handleSelectZaiModelFromChat,
   handleSelectKimiModelFromChat,
+  handleSelectHuggingFaceModelFromChat,
   handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
   handleSelectNvidiaModelFromChat,
@@ -249,6 +251,16 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshKimiModels,
       isLocked: isProviderModelLocked('kimi'),
       ariaLabel: 'Select Kimi model',
+    }),
+    huggingface: buildPickerControl('huggingface', {
+      options: catalog.huggingfaceModelOptions,
+      onChange: handleSelectHuggingFaceModelFromChat,
+      loading: catalog.huggingfaceModels.loading,
+      error: catalog.huggingfaceModels.error,
+      updatedAt: catalog.huggingfaceModels.updatedAt,
+      refreshModels: catalog.refreshHuggingFaceModels,
+      isLocked: isProviderModelLocked('huggingface'),
+      ariaLabel: 'Select Hugging Face model',
     }),
     cloudflare: buildPickerControl('cloudflare', {
       options: catalog.cloudflareModelOptions,

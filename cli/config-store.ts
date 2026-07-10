@@ -208,6 +208,7 @@ const PROVIDER_CONFIG_KEYS = [
   'openrouter',
   'zai',
   'kimi',
+  'huggingface',
   'zen',
   'nvidia',
   'fireworks',

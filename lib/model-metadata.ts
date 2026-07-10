@@ -116,6 +116,19 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'kimi-k2.6': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
     'kimi-k2.5': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
   },
+  // Hugging Face router aggregates hosts with differing context windows per
+  // model; these declare the MINIMUM across live hosts (router routing may
+  // land on the smallest) — from /v1/models per-provider context_length,
+  // 2026-07-10. Tool support verified live on every host serving these ids.
+  huggingface: {
+    'deepseek-ai/DeepSeek-V4-Pro': M(512000, true, true, true, TEXT),
+    'deepseek-ai/DeepSeek-V4-Flash': M(1048576, true, true, true, TEXT),
+    'zai-org/GLM-5.2': M(262144, true, true, true, TEXT),
+    'moonshotai/Kimi-K2.7-Code': M(262144, true, true, true, TEXT_IMAGE),
+    'Qwen/Qwen3-Coder-Next': M(262144, false, true, true, TEXT),
+    'MiniMaxAI/MiniMax-M3': M(512000, true, true, true, TEXT_IMAGE),
+    'openai/gpt-oss-120b': M(131072, true, true, true, TEXT),
+  },
   zen: {
     'big-pickle': M(200000, true, true, true, TEXT, TEXT, false),
     'claude-haiku-4.5': M(200000, true, true, false, TEXT_IMAGE_PDF),

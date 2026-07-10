@@ -25,6 +25,7 @@ const providerHandlerMocks = vi.hoisted(() => ({
   handleOpenRouterChat: vi.fn(),
   handleZaiChat: vi.fn(),
   handleKimiChat: vi.fn(),
+  handleHuggingFaceChat: vi.fn(),
   handleOllamaChat: vi.fn(),
   handleZenChat: vi.fn(),
   handleZenGoChat: vi.fn(),

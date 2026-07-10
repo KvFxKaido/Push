@@ -97,7 +97,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['kimi'],
+    providers: ['kimi', 'huggingface'],
     match: /.*/,
     capabilities: {
       toolCalls: 'supported',

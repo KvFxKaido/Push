@@ -58,6 +58,7 @@ import {
   handleXAIChat,
   handleZaiChat,
   handleKimiChat,
+  handleHuggingFaceChat,
   handleZenChat,
   handleZenGoChat,
 } from './worker-providers';
@@ -103,6 +104,8 @@ export function resolveProviderHandler(
       return handleZaiChat as unknown as ProviderHandler;
     case 'kimi':
       return handleKimiChat as unknown as ProviderHandler;
+    case 'huggingface':
+      return handleHuggingFaceChat as unknown as ProviderHandler;
     case 'ollama':
       return handleOllamaChat as unknown as ProviderHandler;
     case 'cloudflare':
@@ -199,7 +202,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       if (!handler) {
         throw new Error(
           `Background Coder jobs don't yet support provider "${args.provider}". ` +
-            `Supported: openrouter, zai, kimi, ollama, cloudflare, zen, nvidia, fireworks, deepseek, anthropic, openai, xai, sakana, google.`,
+            `Supported: openrouter, zai, kimi, huggingface, ollama, cloudflare, zen, nvidia, fireworks, deepseek, anthropic, openai, xai, sakana, google.`,
         );
       }
 
