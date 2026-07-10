@@ -18,6 +18,7 @@ describe('zen-go', () => {
         'kimi-k2.7-code',
         'mimo-v2.5',
         'mimo-v2.5-pro',
+        'minimax-m2.5',
         'minimax-m2.7',
         'minimax-m3',
         'qwen3.6-plus',
@@ -25,7 +26,7 @@ describe('zen-go', () => {
         'qwen3.7-plus',
       ]),
     );
-    expect(ZEN_GO_MODELS).toHaveLength(13);
+    expect(ZEN_GO_MODELS).toHaveLength(14);
   });
 
   it('exposes an explicit default model', () => {
@@ -37,6 +38,7 @@ describe('zen-go', () => {
     expect(getZenGoTransport('glm-5.1')).toBe('openai');
     expect(getZenGoTransport('kimi-k2.7-code')).toBe('openai');
     expect(getZenGoTransport('kimi-k2.6')).toBe('openai');
+    expect(getZenGoTransport('minimax-m2.5')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m2.7')).toBe('anthropic');
     expect(getZenGoTransport('minimax-m3')).toBe('anthropic');
     // The Qwen family publishes on the Anthropic Messages endpoint. qwen3.7-max

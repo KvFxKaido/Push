@@ -25,6 +25,7 @@ export type ZenGoTransport = 'openai' | 'anthropic';
 // `model` here makes the model undispatchable upstream; see the regression
 // where every MiniMax/Qwen id 400'd on a model-less body.
 const ZEN_GO_ANTHROPIC_MODELS = new Set([
+  'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3',
   'qwen3.6-plus',
@@ -32,10 +33,13 @@ const ZEN_GO_ANTHROPIC_MODELS = new Set([
   'qwen3.7-plus',
 ]);
 
-// Mirrors the live OpenCode Go catalog (opencode.ai/go). Refreshed 2026-06-17:
-// added glm-5.2 and kimi-k2.7-code; retired glm-5, kimi-k2.5, and minimax-m2.5
-// (dropped from the upstream list and no longer routable). Earlier 2026-06
-// refresh retired hy3-preview, mimo-v2-omni, mimo-v2-pro, qwen3.5-plus.
+// Mirrors the live OpenCode Go catalog (opencode.ai/docs/go). Refreshed
+// 2026-07-09 against the official endpoints table: re-added minimax-m2.5
+// (retired 2026-06-17 as dropped upstream; the current docs list it again on
+// /v1/messages under @ai-sdk/anthropic — endpoint splits per model verified
+// row-by-row against the docs, no consolidation). 2026-06-17: added glm-5.2
+// and kimi-k2.7-code; retired glm-5 and kimi-k2.5. Earlier 2026-06 refresh
+// retired hy3-preview, mimo-v2-omni, mimo-v2-pro, qwen3.5-plus.
 export const ZEN_GO_MODELS = [
   'deepseek-v4-flash',
   'deepseek-v4-pro',
@@ -45,6 +49,7 @@ export const ZEN_GO_MODELS = [
   'kimi-k2.7-code',
   'mimo-v2.5',
   'mimo-v2.5-pro',
+  'minimax-m2.5',
   'minimax-m2.7',
   'minimax-m3',
   'qwen3.6-plus',
