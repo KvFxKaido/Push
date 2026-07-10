@@ -2046,17 +2046,28 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     },
     { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
   ).finally(async () => {
-    // Best-effort teardown on success, error, AND abort. Chases the provision
-    // promise, not the `reviewSandbox` snapshot — with the eager warm-up a
-    // provision can still be in flight when a fast-failing review ends, and
-    // the snapshot would be null while a live sandbox lands moments later.
-    // provisionReviewSandbox and cleanupReviewSandbox never throw, so neither
-    // can mask the review's own outcome; the 1h idle reaper is the backstop
-    // if the DO dies before this resolves.
-    if (sandboxProvisionPromise) {
-      const sb = await sandboxProvisionPromise;
-      if (sb) await cleanupReviewSandbox(env, sb);
+    // Best-effort teardown on success, error, AND abort. Considers the
+    // provision promise, not a snapshot var — with the eager warm-up a
+    // provision can still be in flight when a fast-failing review ends. But
+    // an in-flight provision must NOT hold the already-computed result: its
+    // create/verify route awaits are unbounded, so a wedged sandbox create
+    // would turn a finished diff-only review into a stalled one (Codex P2,
+    // PR #1391). A settled provision keeps the awaited cleanup (the
+    // pre-warm-up critical path); a pending one is chased detached —
+    // cleanup never throws, and the 1h idle reaper is the backstop if the
+    // DO retires before the chase lands.
+    if (!sandboxProvisionPromise) return;
+    const provisionPromise = sandboxProvisionPromise;
+    const PENDING = Symbol('pending');
+    // Race subscription order makes this deterministic: a settled provision
+    // resolves the race with its sandbox; only a still-pending one yields
+    // the sentinel.
+    const settled = await Promise.race([provisionPromise, Promise.resolve(PENDING)]);
+    if (settled === PENDING) {
+      void provisionPromise.then((sb) => (sb ? cleanupReviewSandbox(env, sb) : undefined));
+      return;
     }
+    if (settled) await cleanupReviewSandbox(env, settled);
   });
   if (signal.aborted) throw new Error('aborted');
 
