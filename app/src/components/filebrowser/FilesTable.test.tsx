@@ -111,5 +111,11 @@ describe('FilesTable', () => {
       />,
     );
     expect(nested).toContain('..');
+    // The up-row is keyboard-reachable, not click-only (Codex P2 / fugu
+    // WARNING on #1408): focusable with an accessible name, like file rows.
+    expect(nested).toContain('aria-label="Navigate up"');
+    expect(nested).toMatch(
+      /aria-label="Navigate up"[^>]*tabindex="0"|tabindex="0"[^>]*aria-label="Navigate up"/,
+    );
   });
 });

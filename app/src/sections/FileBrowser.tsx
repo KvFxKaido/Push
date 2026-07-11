@@ -467,5 +467,3 @@ export function FileBrowser({
     </div>
   );
 }
-
-// --- File row with long-press support ---

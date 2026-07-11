@@ -92,7 +92,15 @@ export function FilesTable({ files, isRoot, onNavigateUp, onTap, onLongPress }: 
       <TableBody>
         {!isRoot && (
           <TableRow
+            tabIndex={0}
+            aria-label="Navigate up"
             onClick={onNavigateUp}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onNavigateUp();
+              }
+            }}
             className="cursor-pointer border-push-edge-subtle/70 transition-colors hover:bg-push-surface-hover active:bg-push-surface-active"
           >
             <TableCell colSpan={2} className="px-4 py-3">
@@ -181,7 +189,12 @@ function FilesTableRow({ file, onTap, onLongPress }: FilesTableRowProps) {
     }
   };
 
-  const handlePointerLeave = () => {
+  // Covers both ways a press stops being a press: the pointer wandering off
+  // the row (pointerleave) and the browser reclaiming the gesture to scroll
+  // (pointercancel — the touch path; without it the 500ms timer survives a
+  // scroll started on this row and pops the actions sheet mid-scroll). No
+  // pointerup follows a cancel, so no stray tap fires either.
+  const handlePointerAbort = () => {
     if (pressTimer) {
       clearTimeout(pressTimer);
       setPressTimer(null);
@@ -198,7 +211,8 @@ function FilesTableRow({ file, onTap, onLongPress }: FilesTableRowProps) {
       aria-label={file.name}
       onPointerDown={handlePointerDown}
       onPointerUp={handlePointerUp}
-      onPointerLeave={handlePointerLeave}
+      onPointerLeave={handlePointerAbort}
+      onPointerCancel={handlePointerAbort}
       onKeyDown={(event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
