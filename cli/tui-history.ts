@@ -4,19 +4,30 @@
  *
  * Shared by the TUI's two consumers of message history — seeding the
  * visible transcript when a session is resumed/switched, and the
- * exit-time stdout dump — so the filtering rules (skip synthetic
- * bracket-tagged user messages, strip fenced JSON tool calls from
+ * exit-time stdout dump — so the filtering rules (skip paired internal
+ * envelopes injected as user messages, strip fenced tool-call JSON from
  * assistant prose) live once.
  */
+import { isInternalEnvelope } from './session-store.ts';
+import { parseJsonToolCalls } from './tui-framers.js';
 
 export interface TranscriptHistoryRow {
   role: 'user' | 'assistant';
   text: string;
 }
 
-// Fenced JSON tool calls embedded in assistant prose (the text-dispatch
-// protocol) are runtime plumbing, not conversation — strip them.
-const TOOL_CALL_FENCE_RE = /```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g;
+// Candidate fences that may hold a text-dispatch tool call. Whether one is
+// actually stripped is decided by `parseJsonToolCalls` — the same check the
+// live renderer uses — so ordinary JSON examples in assistant prose survive.
+const JSON_FENCE_RE = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
+
+// Strip only fences whose body parses as a tool call (object or array with a
+// `tool` key); everything else is legitimate content and stays.
+function stripToolCallFences(text: string): string {
+  return text.replace(JSON_FENCE_RE, (fence, body: string) =>
+    parseJsonToolCalls(body.trim()) ? '' : fence,
+  );
+}
 
 /**
  * Extract display text from a message's `content`. Strings pass through;
@@ -52,12 +63,15 @@ export function sessionMessagesToTranscriptRows(
     if (msg.role === 'user') {
       const text = messageText(msg.content);
       if (!text) continue;
-      // Skip synthetic system-injected user messages (e.g. [SESSION_RESUMED],
-      // [PROJECT_INSTRUCTIONS] blocks) — they were never typed by the user.
-      if (text.startsWith('[') && text.includes(']')) continue;
+      // Skip runtime-injected user turns — paired internal envelopes like
+      // [TOOL_RESULT]…[/TOOL_RESULT], [CONTEXT DIGEST]…, [PROJECT_INSTRUCTIONS
+      // source="…"]… — they were never typed by the user. Paired-tag matching
+      // (not a blanket leading-bracket check) keeps real prompts like
+      // "[WIP] refactor auth" or "[ ] fix tests" visible.
+      if (isInternalEnvelope(text.trim())) continue;
       rows.push({ role: 'user', text });
     } else if (msg.role === 'assistant') {
-      const cleaned = messageText(msg.content).replace(TOOL_CALL_FENCE_RE, '').trim();
+      const cleaned = stripToolCallFences(messageText(msg.content)).trim();
       if (cleaned) rows.push({ role: 'assistant', text: cleaned });
     }
   }

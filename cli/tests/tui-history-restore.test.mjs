@@ -6,8 +6,9 @@
  *
  * Two layers:
  *   - unit pins on `sessionMessagesToTranscriptRows` (filtering rules shared
- *     with the exit dump: synthetic bracket-tagged user messages skipped,
- *     fenced JSON tool calls stripped from assistant prose),
+ *     with the exit dump: paired internal envelopes skipped via
+ *     `isInternalEnvelope`, tool-call JSON fences stripped from assistant
+ *     prose via the same `parseJsonToolCalls` check the live renderer uses),
  *   - headless end-to-end pins on BOTH resume paths: startup resume
  *     (runTUI({sessionId})) and the in-TUI `/resume <id>` switch
  *     (switchToSessionById), asserting the real transcript contents via the
@@ -37,24 +38,53 @@ describe('sessionMessagesToTranscriptRows', () => {
     ]);
   });
 
-  it('skips synthetic bracket-tagged user messages', () => {
+  it('skips paired internal-envelope user messages', () => {
     const rows = sessionMessagesToTranscriptRows([
-      { role: 'user', content: '[SESSION_RESUMED] continuing from checkpoint' },
+      { role: 'user', content: '[TOOL_RESULT]\n{"ok":true}\n[/TOOL_RESULT]' },
+      { role: 'user', content: '[CONTEXT DIGEST]\nsummary\n[/CONTEXT DIGEST]' },
+      {
+        role: 'user',
+        content: '[PROJECT_INSTRUCTIONS source="PUSH.md"]\nrules\n[/PROJECT_INSTRUCTIONS]',
+      },
       { role: 'user', content: 'real question' },
     ]);
     assert.deepEqual(rows, [{ role: 'user', text: 'real question' }]);
+  });
+
+  it('keeps real user prompts that merely start with a bracket', () => {
+    // Blanket "starts with [" filtering regressed these (PR #1413 review);
+    // paired-tag matching must keep them visible.
+    const rows = sessionMessagesToTranscriptRows([
+      { role: 'user', content: '[WIP] refactor auth' },
+      { role: 'user', content: '[ ] fix flaky tests' },
+      { role: 'user', content: '[TOOL_RESULT] without closer' },
+    ]);
+    assert.deepEqual(rows, [
+      { role: 'user', text: '[WIP] refactor auth' },
+      { role: 'user', text: '[ ] fix flaky tests' },
+      { role: 'user', text: '[TOOL_RESULT] without closer' },
+    ]);
   });
 
   it('strips fenced JSON tool calls from assistant prose', () => {
     const rows = sessionMessagesToTranscriptRows([
       {
         role: 'assistant',
-        content: 'Let me check.\n```json\n{"tool": "read_file", "path": "a.ts"}\n```',
+        content: 'Let me check.\n```json\n{"tool": "read_file", "args": {"path": "a.ts"}}\n```',
       },
       { role: 'assistant', content: '```json\n{"tool": "list_dir"}\n```' },
     ]);
     // The fence-only message reduces to empty and is dropped entirely.
     assert.deepEqual(rows, [{ role: 'assistant', text: 'Let me check.' }]);
+  });
+
+  it('keeps JSON fences that are not tool calls', () => {
+    // Only fences that parse as tool calls (a `tool` key — the same
+    // `parseJsonToolCalls` contract the live renderer applies) are runtime
+    // plumbing; a JSON example in an answer is content (PR #1413 review).
+    const example = 'Use this config:\n```json\n{"retries": 3, "timeoutMs": 5000}\n```';
+    const rows = sessionMessagesToTranscriptRows([{ role: 'assistant', content: example }]);
+    assert.deepEqual(rows, [{ role: 'assistant', text: example }]);
   });
 
   it('extracts text parts from structured content arrays', () => {
