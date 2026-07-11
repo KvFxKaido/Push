@@ -57,6 +57,7 @@ import { FocusStack } from './tui-focus.js';
 import { formatUnknownEventWarning, shouldWarnAboutUnknownEvent } from './tui-daemon-handshake.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
 import { filterSessions, scopeSessionsToWorkspace } from './tui-fuzzy.js';
+import { sessionMessagesToTranscriptRows } from './tui-history.js';
 import { findLastAssistantText, findLastCodeBlock, formatByteSize } from './tui-copy.js';
 import {
   applySingleLineEditKey,
@@ -404,6 +405,16 @@ function pushTranscriptEntry(tuiState, entry, { autoScroll = true } = {}) {
 
 function addTranscriptEntry(tuiState, role, text) {
   pushTranscriptEntry(tuiState, { role, text, timestamp: Date.now() });
+}
+
+// Resume-time history restore: render the persisted conversation into the
+// visible transcript. The model already gets `state.messages` on resume;
+// without this the resumed TUI opens blank. MAX_TRANSCRIPT eviction in
+// pushTranscriptEntry bounds very long histories.
+function seedTranscriptFromMessages(tuiState, messages) {
+  for (const row of sessionMessagesToTranscriptRows(Array.isArray(messages) ? messages : [])) {
+    addTranscriptEntry(tuiState, row.role, row.text);
+  }
 }
 
 // ── Pane renderers ──────────────────────────────────────────────────
@@ -1491,6 +1502,11 @@ export async function runTUI(options = {}) {
     if (stateChanged) {
       await saveSessionState(state);
     }
+
+    // Restore the prior conversation into the visible transcript before the
+    // first render — startup resume (--session / `push resume <id>`) hits
+    // this path; the in-TUI picker path seeds in switchToSessionById.
+    seedTranscriptFromMessages(tuiState, state.messages);
   } else {
     const requestedProvider =
       normalizeProviderInput(options.provider) ||
@@ -4133,6 +4149,7 @@ export async function runTUI(options = {}) {
 
     await refreshBranchLabel();
     resetTUIViewForSessionChange();
+    seedTranscriptFromMessages(tuiState, state.messages);
     await reloadSkillsMap();
 
     const nameSuffix = state.sessionName ? ` (${JSON.stringify(state.sessionName)})` : '';
@@ -7495,21 +7512,16 @@ export async function runTUI(options = {}) {
 
   function dumpSessionTranscript(sessionState) {
     try {
-      const messages = sessionState?.messages ?? [];
-      const userAndAssistant = messages.filter((m) => m.role === 'user' || m.role === 'assistant');
-      if (userAndAssistant.length === 0) return;
+      // Same message→display mapping as resume-time transcript seeding
+      // (tui-history.ts); the truncation caps are dump-only presentation.
+      const rows = sessionMessagesToTranscriptRows(sessionState?.messages ?? []);
+      if (rows.length === 0) return;
       io.stdout.write('\n─── Session transcript ───\n\n');
-      for (const msg of userAndAssistant) {
-        if (msg.role === 'user') {
-          const text = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
-          // Skip synthetic system-injected messages (e.g. [SESSION_RESUMED])
-          if (text.startsWith('[') && text.includes(']')) continue;
-          io.stdout.write(`> ${text.slice(0, 500)}\n\n`);
-        } else if (msg.role === 'assistant') {
-          const raw = typeof msg.content === 'string' ? msg.content : '';
-          // Strip JSON tool call fences, keeping only prose
-          const cleaned = raw.replace(/```(?:json)?\s*\n?\{[\s\S]*?\}\s*\n?```/g, '').trim();
-          if (cleaned) io.stdout.write(`${cleaned.slice(0, 800)}\n\n`);
+      for (const row of rows) {
+        if (row.role === 'user') {
+          io.stdout.write(`> ${row.text.slice(0, 500)}\n\n`);
+        } else {
+          io.stdout.write(`${row.text.slice(0, 800)}\n\n`);
         }
       }
       io.stdout.write('─────────────────────────\n\n');
