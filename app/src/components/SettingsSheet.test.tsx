@@ -12,6 +12,7 @@ import { ProviderKeySection, SettingsSheet } from './SettingsSheet';
 import { SettingsSectionContent } from './SettingsSectionContent';
 import {
   BUILT_IN_SETTINGS_PROVIDER_ORDER,
+  PROVIDER_LABELS,
   type BuiltInSettingsProviderId,
 } from './settings-shared';
 
@@ -183,6 +184,44 @@ describe('SettingsSectionContent', () => {
 
     expect(html).toContain('Build-time token');
     expect(html).toContain('VITE_GITHUB_TOKEN');
+  });
+
+  it('renders the AI provider accordion with only the default item expanded', () => {
+    // Two connected providers: the accordion seeds open on the first one in
+    // order; the second stays collapsed (content unmounted, not just hidden).
+    const [first, second] = BUILT_IN_SETTINGS_PROVIDER_ORDER;
+    const ai = emptyAI();
+    ai.builtInProviders[first] = { ...ai.builtInProviders[first], hasKey: true };
+    ai.builtInProviders[second] = { ...ai.builtInProviders[second], hasKey: true };
+    ai.tavilyProvider = {
+      hasKey: false,
+      keyInput: '',
+      setKeyInput: vi.fn(),
+      setKey: vi.fn(),
+      clearKey: vi.fn(),
+    };
+
+    const html = renderToStaticMarkup(
+      <SettingsSectionContent
+        settingsTab="ai"
+        auth={emptyAuth()}
+        profile={emptyProfile()}
+        ai={ai}
+        workspace={emptyWorkspace()}
+        data={emptyData()}
+        onDismiss={() => {}}
+      />,
+    );
+
+    // Both triggers render their header rows...
+    expect(html).toContain(PROVIDER_LABELS[first]);
+    expect(html).toContain(PROVIDER_LABELS[second]);
+    // ...but only the default-open item mounts its body (the model picker).
+    expect(html).toContain(`Select ${PROVIDER_LABELS[first]} model`);
+    expect(html).not.toContain(`Select ${PROVIDER_LABELS[second]} model`);
+    // Cloudflare folds into the same accordion: header visible, body collapsed.
+    expect(html).toContain('Not configured on Worker');
+    expect(html).not.toContain('Worker-bound model');
   });
 });
 
