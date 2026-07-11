@@ -16,6 +16,9 @@ export interface UseRunEventStreamParams {
   activeChatId: string;
   activePersistedRunEventCount: number;
   runJournalEntryRef: React.MutableRefObject<RunJournalEntry | null>;
+  /** Terminal-receipt seam: the entry `useRunEngine` finalized on the last
+   *  LOOP_* event. Only `turn.quiesced` may append to it (see below). */
+  finalizedRunJournalEntryRef: React.MutableRefObject<RunJournalEntry | null>;
   updateConversations: (
     updater:
       | Record<string, Conversation>
@@ -50,6 +53,7 @@ export function useRunEventStream({
   activeChatId,
   activePersistedRunEventCount,
   runJournalEntryRef,
+  finalizedRunJournalEntryRef,
   updateConversations,
   dirtyConversationIdsRef,
   isMountedRef,
@@ -95,6 +99,23 @@ export function useRunEventStream({
           );
         }
         void saveJournalEntry(runJournalEntryRef.current);
+      } else if (
+        shouldPersist &&
+        event.type === 'turn.quiesced' &&
+        finalizedRunJournalEntryRef.current?.runId === event.runId
+      ) {
+        // The terminal receipt fires AFTER finalizeRunSession's LOOP_* event
+        // has closed and nulled the live journal entry, so the branch above
+        // can never journal it — which broke the contract's "persists with
+        // the run-event journal" claim (fugu + Codex converged, PR #1410).
+        // Only the receipt may append post-finalization, and only to the
+        // entry of the run it certifies; everything else keeps the closed
+        // journal closed.
+        finalizedRunJournalEntryRef.current = appendJournalEvent(
+          finalizedRunJournalEntryRef.current,
+          nextEvent,
+        );
+        void saveJournalEntry(finalizedRunJournalEntryRef.current);
       }
 
       if (!shouldPersist) {
@@ -116,7 +137,13 @@ export function useRunEventStream({
         };
       });
     },
-    [replaceLiveRunEvents, runJournalEntryRef, updateConversations, dirtyConversationIdsRef],
+    [
+      replaceLiveRunEvents,
+      runJournalEntryRef,
+      finalizedRunJournalEntryRef,
+      updateConversations,
+      dirtyConversationIdsRef,
+    ],
   );
 
   // Journal-load effect. When the active chat has no persisted runEvents

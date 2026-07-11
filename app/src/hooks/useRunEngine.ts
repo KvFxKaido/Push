@@ -24,6 +24,11 @@ export interface UseRunEngineParams {
 export interface UseRunEngineResult {
   runEngineStateRef: React.MutableRefObject<RunEngineState>;
   runJournalEntryRef: React.MutableRefObject<RunJournalEntry | null>;
+  /** The most recently finalized journal entry, kept reachable so the
+   *  post-cleanup `turn.quiesced` receipt (emitted AFTER the terminal loop
+   *  event nulls `runJournalEntryRef`) can still be appended to the
+   *  authoritative journal. Cleared when the next run starts. */
+  finalizedRunJournalEntryRef: React.MutableRefObject<RunJournalEntry | null>;
   emitRunEngineEvent: (event: RunEngineEvent) => void;
   persistRunJournal: (entry: RunJournalEntry | null, options?: { prune?: boolean }) => void;
 }
@@ -48,6 +53,7 @@ export function useRunEngine({
 }: UseRunEngineParams): UseRunEngineResult {
   const runEngineStateRef = useRef<RunEngineState>(IDLE_RUN_STATE);
   const runJournalEntryRef = useRef<RunJournalEntry | null>(null);
+  const finalizedRunJournalEntryRef = useRef<RunJournalEntry | null>(null);
 
   const persistRunJournal = useCallback(
     (entry: RunJournalEntry | null, options?: { prune?: boolean }) => {
@@ -82,6 +88,8 @@ export function useRunEngine({
       const engineState = runEngineStateRef.current;
       switch (event.type) {
         case 'RUN_STARTED':
+          // A new run supersedes the previous terminal receipt window.
+          finalizedRunJournalEntryRef.current = null;
           runJournalEntryRef.current = createJournalEntry({
             runId: event.runId,
             chatId: event.chatId,
@@ -115,6 +123,7 @@ export function useRunEngine({
               'completed',
             );
             persistRunJournal(runJournalEntryRef.current, { prune: true });
+            finalizedRunJournalEntryRef.current = runJournalEntryRef.current;
             runJournalEntryRef.current = null;
           }
           break;
@@ -126,6 +135,7 @@ export function useRunEngine({
               'aborted',
             );
             persistRunJournal(runJournalEntryRef.current, { prune: true });
+            finalizedRunJournalEntryRef.current = runJournalEntryRef.current;
             runJournalEntryRef.current = null;
           }
           break;
@@ -138,6 +148,7 @@ export function useRunEngine({
               event.reason,
             );
             persistRunJournal(runJournalEntryRef.current, { prune: true });
+            finalizedRunJournalEntryRef.current = runJournalEntryRef.current;
             runJournalEntryRef.current = null;
           }
           break;
@@ -163,6 +174,7 @@ export function useRunEngine({
   return {
     runEngineStateRef,
     runJournalEntryRef,
+    finalizedRunJournalEntryRef,
     emitRunEngineEvent,
     persistRunJournal,
   };

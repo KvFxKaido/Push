@@ -116,6 +116,7 @@ describe('protocol drift characterization — schema surface', () => {
       'tool.execution_start',
       'tool_call',
       'tool_result',
+      'turn.quiesced',
       'turn.route',
       'user.follow_up_queued',
       'user.follow_up_steered',

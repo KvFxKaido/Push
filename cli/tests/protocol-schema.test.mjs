@@ -953,6 +953,19 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.outcome'));
   });
 
+  it('accepts turn.quiesced only for a terminal run outcome', () => {
+    assert.deepEqual(
+      validateRunEventPayload('turn.quiesced', { runId: 'run-1', outcome: 'completed' }),
+      [],
+    );
+    const issues = validateRunEventPayload('turn.quiesced', {
+      runId: '',
+      outcome: 'continued',
+    });
+    assert.ok(issues.some((issue) => issue.path === 'payload.runId'));
+    assert.ok(issues.some((issue) => issue.path === 'payload.outcome'));
+  });
+
   it('accepts tool.execution_complete target and rejects a non-string target', () => {
     const payload = {
       round: 1,
