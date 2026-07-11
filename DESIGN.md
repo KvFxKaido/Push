@@ -248,6 +248,13 @@ Interactive controls carry a **48px minimum hit area** — the larger of Apple's
 
 ## Motion
 
+### High refresh rate (120Hz)
+
+All surfaces are high-refresh-ready: animations run at whatever the display provides (120Hz on capable hardware), not a fixed 60fps. Browsers handle this automatically; the Android shell needs an explicit opt-in because some OEMs (notably Samsung) pin WebView-backed windows to 60Hz — `MainActivity.requestHighestRefreshRate()` (`app/android/.../MainActivity.java`) prefers the display's highest mode at the active resolution. Two rules keep it that way:
+
+- **Never hardcode a frame budget.** No `setInterval(…, 16)` frame loops, no logic assuming 16.7ms frames — drive JS-timed animation from `requestAnimationFrame` deltas and let CSS transitions/animations own timing wherever possible (the duration/easing tokens below are all CSS-driven and refresh-rate-independent).
+- **Animate compositor properties.** `transform`, `opacity`, and `filter` stay off the main thread and actually hit 120fps; animating layout properties (`width`, `top`, `margin`) forces reflow per frame and will drop frames at any refresh rate.
+
 ### Duration Tokens
 
 | Token             | Value | Note |
