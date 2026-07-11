@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  canAccessProviderModelCatalog,
   MODELS_RETRY_MAX_ATTEMPTS,
   nextModelsRetryDelayMs,
   scheduleAutoFetch,
@@ -13,11 +14,67 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('canAccessProviderModelCatalog', () => {
+  it('allows every catalog when a browser-local key is available', () => {
+    expect(
+      canAccessProviderModelCatalog({
+        provider: 'openrouter',
+        hasLocalKey: true,
+        credentialSource: null,
+      }),
+    ).toBe(true);
+  });
+
+  it.each([
+    'gateway-byok',
+    'worker-secret',
+    'binding',
+  ] as const)('allows private catalogs with a %s credential', (credentialSource) => {
+    expect(
+      canAccessProviderModelCatalog({
+        provider: 'fireworks',
+        hasLocalKey: false,
+        credentialSource,
+      }),
+    ).toBe(true);
+  });
+
+  it('allows keyless catalogs with an account-stored key', () => {
+    expect(
+      canAccessProviderModelCatalog({
+        provider: 'huggingface',
+        hasLocalKey: false,
+        credentialSource: 'user-key',
+      }),
+    ).toBe(true);
+  });
+
+  it('keeps private catalogs inaccessible when only an account-stored key exists', () => {
+    expect(
+      canAccessProviderModelCatalog({
+        provider: 'deepseek',
+        hasLocalKey: false,
+        credentialSource: 'user-key',
+      }),
+    ).toBe(false);
+  });
+
+  it('does not fetch catalogs for unconfigured providers', () => {
+    expect(
+      canAccessProviderModelCatalog({
+        provider: 'ollama',
+        hasLocalKey: false,
+        credentialSource: null,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe('shouldAutoFetchProviderModels', () => {
   it('auto-fetches only when the provider is idle, empty, and error-free', () => {
     expect(
       shouldAutoFetchProviderModels({
-        hasKey: true,
+        canFetch: true,
         modelCount: 0,
         loading: false,
         error: null,
@@ -26,7 +83,7 @@ describe('shouldAutoFetchProviderModels', () => {
 
     expect(
       shouldAutoFetchProviderModels({
-        hasKey: true,
+        canFetch: true,
         modelCount: 0,
         loading: false,
         error: 'Request failed',

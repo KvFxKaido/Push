@@ -62,6 +62,7 @@ import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
 import { useTavilyConfig } from '@/hooks/useTavilyConfig';
 import { useProviderCredentials } from '@/hooks/useProviderCredentials';
 import {
+  canAccessProviderModelCatalog,
   shouldAutoFetchProviderModels,
   scheduleAutoFetch,
   nextModelsRetryDelayMs,
@@ -567,6 +568,28 @@ export function useModelCatalog(): ModelCatalog {
     google: googleCfg.hasKey || serverUnlocked('google'),
   } satisfies Record<PreferredProvider, boolean>;
 
+  const catalogAvailable = (provider: PreferredProvider, hasLocalKey: boolean): boolean =>
+    canAccessProviderModelCatalog({
+      provider,
+      hasLocalKey,
+      credentialSource: credentials.sources[provider],
+    });
+  const providerCatalogAvailability = {
+    ollama: catalogAvailable('ollama', ollamaCfg.hasKey),
+    openrouter: catalogAvailable('openrouter', openRouterCfg.hasKey),
+    zai: catalogAvailable('zai', zaiCfg.hasKey),
+    kimi: catalogAvailable('kimi', kimiCfg.hasKey),
+    huggingface: catalogAvailable('huggingface', huggingfaceCfg.hasKey),
+    zen: catalogAvailable('zen', zenCfg.hasKey),
+    nvidia: catalogAvailable('nvidia', nvidiaCfg.hasKey),
+    fireworks: catalogAvailable('fireworks', fireworksCfg.hasKey),
+    deepseek: catalogAvailable('deepseek', deepseekCfg.hasKey),
+    sakana: catalogAvailable('sakana', sakanaCfg.hasKey),
+    openai: catalogAvailable('openai', openaiCfg.hasKey),
+    xai: catalogAvailable('xai', xaiCfg.hasKey),
+    google: catalogAvailable('google', googleCfg.hasKey),
+  } as const;
+
   const availableProviders = REAL_PROVIDERS.map(
     (provider) =>
       [provider, getProviderDisplayName(provider), providerAvailability[provider]] as const,
@@ -655,7 +678,7 @@ export function useModelCatalog(): ModelCatalog {
   // the rest of the session until a manual refresh/remount.
   const refreshModels = useCallback(
     async (params: {
-      hasKey: boolean;
+      canFetch: boolean;
       isLoading: boolean;
       setLoading: (v: boolean) => void;
       setError: (v: string | null) => void;
@@ -665,7 +688,7 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: string;
       failureMessage: string;
     }) => {
-      if (!params.hasKey || params.isLoading) return;
+      if (!params.canFetch || params.isLoading) return;
       // Cancel any pending retry for this provider before starting a fresh run,
       // so a manual refresh during backoff doesn't run two retry chains at once.
       const pending = retryTimersRef.current.get(params.setModels);
@@ -718,7 +741,7 @@ export function useModelCatalog(): ModelCatalog {
   const refreshOllamaModels = useCallback(
     async (force = true) => {
       await refreshModels({
-        hasKey: ollamaCfg.hasKey,
+        canFetch: providerCatalogAvailability.ollama,
         isLoading: ollamaLoading,
         setLoading: setOllamaLoading,
         setError: setOllamaError,
@@ -729,13 +752,13 @@ export function useModelCatalog(): ModelCatalog {
         failureMessage: 'Failed to load Ollama models.',
       });
     },
-    [ollamaCfg.hasKey, ollamaLoading, refreshModels],
+    [providerCatalogAvailability.ollama, ollamaLoading, refreshModels],
   );
 
   const refreshOpenRouterModels = useCallback(
     async (force = true) => {
       await refreshModels({
-        hasKey: openRouterCfg.hasKey,
+        canFetch: providerCatalogAvailability.openrouter,
         isLoading: openRouterLoading,
         setLoading: setOpenRouterLoading,
         setError: setOpenRouterError,
@@ -746,12 +769,12 @@ export function useModelCatalog(): ModelCatalog {
         failureMessage: 'Failed to load OpenRouter models.',
       });
     },
-    [openRouterCfg.hasKey, openRouterLoading, refreshModels],
+    [providerCatalogAvailability.openrouter, openRouterLoading, refreshModels],
   );
 
   const refreshZaiModels = useCallback(async () => {
     await refreshModels({
-      hasKey: zaiCfg.hasKey,
+      canFetch: providerCatalogAvailability.zai,
       isLoading: zaiLoading,
       setLoading: setZaiLoading,
       setError: setZaiError,
@@ -761,11 +784,11 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by Z.ai.',
       failureMessage: 'Failed to load Z.ai models.',
     });
-  }, [zaiCfg.hasKey, zaiLoading, refreshModels]);
+  }, [providerCatalogAvailability.zai, zaiLoading, refreshModels]);
 
   const refreshKimiModels = useCallback(async () => {
     await refreshModels({
-      hasKey: kimiCfg.hasKey,
+      canFetch: providerCatalogAvailability.kimi,
       isLoading: kimiLoading,
       setLoading: setKimiLoading,
       setError: setKimiError,
@@ -775,12 +798,12 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by Kimi.',
       failureMessage: 'Failed to load Kimi models.',
     });
-  }, [kimiCfg.hasKey, kimiLoading, refreshModels]);
+  }, [providerCatalogAvailability.kimi, kimiLoading, refreshModels]);
 
   const refreshHuggingFaceModels = useCallback(
     async (force = true) => {
       await refreshModels({
-        hasKey: huggingfaceCfg.hasKey,
+        canFetch: providerCatalogAvailability.huggingface,
         isLoading: huggingfaceLoading,
         setLoading: setHuggingFaceLoading,
         setError: setHuggingFaceError,
@@ -791,7 +814,7 @@ export function useModelCatalog(): ModelCatalog {
         failureMessage: 'Failed to load Hugging Face models.',
       });
     },
-    [huggingfaceCfg.hasKey, huggingfaceLoading, refreshModels],
+    [providerCatalogAvailability.huggingface, huggingfaceLoading, refreshModels],
   );
 
   // Manual refresh defaults `force` to true so the picker revalidates the
@@ -834,7 +857,7 @@ export function useModelCatalog(): ModelCatalog {
   const refreshZenStandardModels = useCallback(
     async (force = true) => {
       await refreshModels({
-        hasKey: zenCfg.hasKey,
+        canFetch: providerCatalogAvailability.zen,
         isLoading: zenLoading,
         setLoading: setZenLoading,
         setError: setZenError,
@@ -845,7 +868,7 @@ export function useModelCatalog(): ModelCatalog {
         failureMessage: 'Failed to load OpenCode Zen models.',
       });
     },
-    [zenCfg.hasKey, zenLoading, refreshModels],
+    [providerCatalogAvailability.zen, zenLoading, refreshModels],
   );
 
   const refreshZenModels = useCallback(
@@ -862,7 +885,7 @@ export function useModelCatalog(): ModelCatalog {
   const refreshNvidiaModels = useCallback(
     async (force = true) => {
       await refreshModels({
-        hasKey: nvidiaCfg.hasKey,
+        canFetch: providerCatalogAvailability.nvidia,
         isLoading: nvidiaLoading,
         setLoading: setNvidiaLoading,
         setError: setNvidiaError,
@@ -873,12 +896,12 @@ export function useModelCatalog(): ModelCatalog {
         failureMessage: 'Failed to load Nvidia NIM models.',
       });
     },
-    [nvidiaCfg.hasKey, nvidiaLoading, refreshModels],
+    [providerCatalogAvailability.nvidia, nvidiaLoading, refreshModels],
   );
 
   const refreshFireworksModels = useCallback(async () => {
     await refreshModels({
-      hasKey: fireworksCfg.hasKey,
+      canFetch: providerCatalogAvailability.fireworks,
       isLoading: fireworksLoading,
       setLoading: setFireworksLoading,
       setError: setFireworksError,
@@ -888,11 +911,11 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by Fireworks AI.',
       failureMessage: 'Failed to load Fireworks AI models.',
     });
-  }, [fireworksCfg.hasKey, fireworksLoading, refreshModels]);
+  }, [providerCatalogAvailability.fireworks, fireworksLoading, refreshModels]);
 
   const refreshDeepSeekModels = useCallback(async () => {
     await refreshModels({
-      hasKey: deepseekCfg.hasKey,
+      canFetch: providerCatalogAvailability.deepseek,
       isLoading: deepseekLoading,
       setLoading: setDeepseekLoading,
       setError: setDeepseekError,
@@ -902,11 +925,11 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by DeepSeek.',
       failureMessage: 'Failed to load DeepSeek models.',
     });
-  }, [deepseekCfg.hasKey, deepseekLoading, refreshModels]);
+  }, [providerCatalogAvailability.deepseek, deepseekLoading, refreshModels]);
 
   const refreshSakanaModels = useCallback(async () => {
     await refreshModels({
-      hasKey: sakanaCfg.hasKey,
+      canFetch: providerCatalogAvailability.sakana,
       isLoading: sakanaLoading,
       setLoading: setSakanaLoading,
       setError: setSakanaError,
@@ -916,14 +939,14 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by Sakana AI.',
       failureMessage: 'Failed to load Sakana AI models.',
     });
-  }, [sakanaCfg.hasKey, sakanaLoading, refreshModels]);
+  }, [providerCatalogAvailability.sakana, sakanaLoading, refreshModels]);
 
   // Google/OpenAI/xAI fetch live lists from the Worker proxies, which filter to
   // chat-capable models and fall back to the curated list on key-missing or
   // upstream failure. No models.dev metadata pass, so no force flag.
   const refreshGoogleModels = useCallback(async () => {
     await refreshModels({
-      hasKey: googleCfg.hasKey,
+      canFetch: providerCatalogAvailability.google,
       isLoading: googleLoading,
       setLoading: setGoogleLoading,
       setError: setGoogleError,
@@ -933,11 +956,11 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by Google Gemini.',
       failureMessage: 'Failed to load Google Gemini models.',
     });
-  }, [googleCfg.hasKey, googleLoading, refreshModels]);
+  }, [providerCatalogAvailability.google, googleLoading, refreshModels]);
 
   const refreshOpenAIModels = useCallback(async () => {
     await refreshModels({
-      hasKey: openaiCfg.hasKey,
+      canFetch: providerCatalogAvailability.openai,
       isLoading: openaiLoading,
       setLoading: setOpenaiLoading,
       setError: setOpenaiError,
@@ -947,11 +970,11 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by OpenAI.',
       failureMessage: 'Failed to load OpenAI models.',
     });
-  }, [openaiCfg.hasKey, openaiLoading, refreshModels]);
+  }, [providerCatalogAvailability.openai, openaiLoading, refreshModels]);
 
   const refreshXAIModels = useCallback(async () => {
     await refreshModels({
-      hasKey: xaiCfg.hasKey,
+      canFetch: providerCatalogAvailability.xai,
       isLoading: xaiLoading,
       setLoading: setXaiLoading,
       setError: setXaiError,
@@ -961,9 +984,9 @@ export function useModelCatalog(): ModelCatalog {
       emptyMessage: 'No models returned by xAI.',
       failureMessage: 'Failed to load xAI models.',
     });
-  }, [xaiCfg.hasKey, xaiLoading, refreshModels]);
+  }, [providerCatalogAvailability.xai, xaiLoading, refreshModels]);
 
-  // Auto-fetch models when key becomes available.
+  // Auto-fetch models when their catalog becomes reachable.
   // The active provider fetches immediately; all others are deferred via
   // requestIdleCallback (or a short setTimeout) so startup isn't blocked.
   useEffect(() => {
@@ -977,7 +1000,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: ollamaCfg.hasKey,
+          canFetch: providerCatalogAvailability.ollama,
           modelCount: ollamaModelList.length,
           loading: ollamaLoading,
           error: ollamaError,
@@ -989,7 +1012,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      ollamaCfg.hasKey,
+      providerCatalogAvailability.ollama,
       ollamaError,
       ollamaLoading,
       ollamaModelList.length,
@@ -1000,7 +1023,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: openRouterCfg.hasKey,
+          canFetch: providerCatalogAvailability.openrouter,
           modelCount: openRouterModelList.length,
           loading: openRouterLoading,
           error: openRouterError,
@@ -1012,7 +1035,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      openRouterCfg.hasKey,
+      providerCatalogAvailability.openrouter,
       openRouterError,
       openRouterLoading,
       openRouterModelList.length,
@@ -1023,7 +1046,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: zaiCfg.hasKey,
+          canFetch: providerCatalogAvailability.zai,
           modelCount: zaiModelList.length,
           loading: zaiLoading,
           error: zaiError,
@@ -1035,7 +1058,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      zaiCfg.hasKey,
+      providerCatalogAvailability.zai,
       zaiError,
       zaiLoading,
       zaiModelList.length,
@@ -1047,7 +1070,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: kimiCfg.hasKey,
+          canFetch: providerCatalogAvailability.kimi,
           modelCount: kimiModelList.length,
           loading: kimiLoading,
           error: kimiError,
@@ -1059,7 +1082,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      kimiCfg.hasKey,
+      providerCatalogAvailability.kimi,
       kimiError,
       kimiLoading,
       kimiModelList.length,
@@ -1070,7 +1093,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: huggingfaceCfg.hasKey,
+          canFetch: providerCatalogAvailability.huggingface,
           modelCount: huggingfaceModelList.length,
           loading: huggingfaceLoading,
           error: huggingfaceError,
@@ -1082,7 +1105,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      huggingfaceCfg.hasKey,
+      providerCatalogAvailability.huggingface,
       huggingfaceError,
       huggingfaceLoading,
       huggingfaceModelList.length,
@@ -1093,7 +1116,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: cloudflareConfigured,
+          canFetch: cloudflareConfigured,
           modelCount: cloudflareModelList.length,
           loading: cloudflareLoading,
           error: cloudflareError,
@@ -1117,7 +1140,7 @@ export function useModelCatalog(): ModelCatalog {
       scheduleAutoFetch(
         !zenCfg.goMode &&
           shouldAutoFetchProviderModels({
-            hasKey: zenCfg.hasKey,
+            canFetch: providerCatalogAvailability.zen,
             modelCount: zenModelList.length,
             loading: zenLoading,
             error: zenError,
@@ -1131,7 +1154,7 @@ export function useModelCatalog(): ModelCatalog {
       activeProviderLabel,
       refreshZenStandardModels,
       zenCfg.goMode,
-      zenCfg.hasKey,
+      providerCatalogAvailability.zen,
       zenError,
       zenLoading,
       zenModelList.length,
@@ -1141,7 +1164,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: nvidiaCfg.hasKey,
+          canFetch: providerCatalogAvailability.nvidia,
           modelCount: nvidiaModelList.length,
           loading: nvidiaLoading,
           error: nvidiaError,
@@ -1153,7 +1176,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      nvidiaCfg.hasKey,
+      providerCatalogAvailability.nvidia,
       nvidiaError,
       nvidiaLoading,
       nvidiaModelList.length,
@@ -1164,7 +1187,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: fireworksCfg.hasKey,
+          canFetch: providerCatalogAvailability.fireworks,
           modelCount: fireworksModelList.length,
           loading: fireworksLoading,
           error: fireworksError,
@@ -1176,7 +1199,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      fireworksCfg.hasKey,
+      providerCatalogAvailability.fireworks,
       fireworksError,
       fireworksLoading,
       fireworksModelList.length,
@@ -1187,7 +1210,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: deepseekCfg.hasKey,
+          canFetch: providerCatalogAvailability.deepseek,
           modelCount: deepseekModelList.length,
           loading: deepseekLoading,
           error: deepseekError,
@@ -1199,7 +1222,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      deepseekCfg.hasKey,
+      providerCatalogAvailability.deepseek,
       deepseekError,
       deepseekLoading,
       deepseekModelList.length,
@@ -1210,7 +1233,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: sakanaCfg.hasKey,
+          canFetch: providerCatalogAvailability.sakana,
           modelCount: sakanaModelList.length,
           loading: sakanaLoading,
           error: sakanaError,
@@ -1222,7 +1245,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      sakanaCfg.hasKey,
+      providerCatalogAvailability.sakana,
       sakanaError,
       sakanaLoading,
       sakanaModelList.length,
@@ -1233,7 +1256,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: googleCfg.hasKey,
+          canFetch: providerCatalogAvailability.google,
           modelCount: googleModelList.length,
           loading: googleLoading,
           error: googleError,
@@ -1245,7 +1268,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      googleCfg.hasKey,
+      providerCatalogAvailability.google,
       googleError,
       googleLoading,
       googleModelList.length,
@@ -1256,7 +1279,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: openaiCfg.hasKey,
+          canFetch: providerCatalogAvailability.openai,
           modelCount: openaiModelList.length,
           loading: openaiLoading,
           error: openaiError,
@@ -1268,7 +1291,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      openaiCfg.hasKey,
+      providerCatalogAvailability.openai,
       openaiError,
       openaiLoading,
       openaiModelList.length,
@@ -1279,7 +1302,7 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          hasKey: xaiCfg.hasKey,
+          canFetch: providerCatalogAvailability.xai,
           modelCount: xaiModelList.length,
           loading: xaiLoading,
           error: xaiError,
@@ -1291,7 +1314,7 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [
       activeProviderLabel,
-      xaiCfg.hasKey,
+      providerCatalogAvailability.xai,
       xaiError,
       xaiLoading,
       xaiModelList.length,
@@ -1299,7 +1322,7 @@ export function useModelCatalog(): ModelCatalog {
     ],
   );
 
-  // Clear models when key is removed
+  // Clear models when their catalog is no longer reachable.
   useEffect(() => {
     if (!cloudflareConfigured) {
       const id = setTimeout(() => {
@@ -1312,7 +1335,7 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [cloudflareConfigured]);
   useEffect(() => {
-    if (!ollamaCfg.hasKey) {
+    if (!providerCatalogAvailability.ollama) {
       const id = setTimeout(() => {
         setOllamaModelList([]);
         setOllamaError(null);
@@ -1320,9 +1343,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [ollamaCfg.hasKey]);
+  }, [providerCatalogAvailability.ollama]);
   useEffect(() => {
-    if (!openRouterCfg.hasKey) {
+    if (!providerCatalogAvailability.openrouter) {
       const id = setTimeout(() => {
         setOpenRouterModelList([]);
         setOpenRouterError(null);
@@ -1330,9 +1353,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [openRouterCfg.hasKey]);
+  }, [providerCatalogAvailability.openrouter]);
   useEffect(() => {
-    if (!zaiCfg.hasKey) {
+    if (!providerCatalogAvailability.zai) {
       const id = setTimeout(() => {
         setZaiModelList([]);
         setZaiError(null);
@@ -1340,9 +1363,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [zaiCfg.hasKey]);
+  }, [providerCatalogAvailability.zai]);
   useEffect(() => {
-    if (!kimiCfg.hasKey) {
+    if (!providerCatalogAvailability.kimi) {
       const id = setTimeout(() => {
         setKimiModelList([]);
         setKimiError(null);
@@ -1350,9 +1373,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [kimiCfg.hasKey]);
+  }, [providerCatalogAvailability.kimi]);
   useEffect(() => {
-    if (!huggingfaceCfg.hasKey) {
+    if (!providerCatalogAvailability.huggingface) {
       const id = setTimeout(() => {
         setHuggingFaceModelList([]);
         setHuggingFaceError(null);
@@ -1360,9 +1383,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [huggingfaceCfg.hasKey]);
+  }, [providerCatalogAvailability.huggingface]);
   useEffect(() => {
-    if (!zenCfg.hasKey) {
+    if (!providerCatalogAvailability.zen) {
       const id = setTimeout(() => {
         setZenModelList([]);
         setZenError(null);
@@ -1371,9 +1394,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [zenCfg.hasKey]);
+  }, [providerCatalogAvailability.zen]);
   useEffect(() => {
-    if (!nvidiaCfg.hasKey) {
+    if (!providerCatalogAvailability.nvidia) {
       const id = setTimeout(() => {
         setNvidiaModelList([]);
         setNvidiaError(null);
@@ -1381,9 +1404,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [nvidiaCfg.hasKey]);
+  }, [providerCatalogAvailability.nvidia]);
   useEffect(() => {
-    if (!fireworksCfg.hasKey) {
+    if (!providerCatalogAvailability.fireworks) {
       const id = setTimeout(() => {
         setFireworksModelList([]);
         setFireworksError(null);
@@ -1391,9 +1414,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [fireworksCfg.hasKey]);
+  }, [providerCatalogAvailability.fireworks]);
   useEffect(() => {
-    if (!deepseekCfg.hasKey) {
+    if (!providerCatalogAvailability.deepseek) {
       const id = setTimeout(() => {
         setDeepseekModelList([]);
         setDeepseekError(null);
@@ -1401,9 +1424,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [deepseekCfg.hasKey]);
+  }, [providerCatalogAvailability.deepseek]);
   useEffect(() => {
-    if (!sakanaCfg.hasKey) {
+    if (!providerCatalogAvailability.sakana) {
       const id = setTimeout(() => {
         setSakanaModelList([]);
         setSakanaError(null);
@@ -1411,9 +1434,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [sakanaCfg.hasKey]);
+  }, [providerCatalogAvailability.sakana]);
   useEffect(() => {
-    if (!googleCfg.hasKey) {
+    if (!providerCatalogAvailability.google) {
       const id = setTimeout(() => {
         setGoogleModelList([]);
         setGoogleError(null);
@@ -1421,9 +1444,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [googleCfg.hasKey]);
+  }, [providerCatalogAvailability.google]);
   useEffect(() => {
-    if (!openaiCfg.hasKey) {
+    if (!providerCatalogAvailability.openai) {
       const id = setTimeout(() => {
         setOpenaiModelList([]);
         setOpenaiError(null);
@@ -1431,9 +1454,9 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [openaiCfg.hasKey]);
+  }, [providerCatalogAvailability.openai]);
   useEffect(() => {
-    if (!xaiCfg.hasKey) {
+    if (!providerCatalogAvailability.xai) {
       const id = setTimeout(() => {
         setXaiModelList([]);
         setXaiError(null);
@@ -1441,7 +1464,7 @@ export function useModelCatalog(): ModelCatalog {
       }, 0);
       return () => clearTimeout(id);
     }
-  }, [xaiCfg.hasKey]);
+  }, [providerCatalogAvailability.xai]);
 
   const fireworksSelectedModel = fireworksCfg.model;
   const setFireworksModel = fireworksCfg.setModel;

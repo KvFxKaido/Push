@@ -1,10 +1,49 @@
+import type { ProviderCredentialSource } from '@/lib/provider-engine-capability';
+import type { AIProviderType } from '@push/lib/provider-contract';
+
+// These Worker routes can return a useful catalog without forwarding a
+// provider credential. Some are genuinely public upstream catalogs; others
+// deliberately return Push's curated fallback when no upstream key resolves.
+// Keeping this distinction here prevents account-stored `user-key` provenance
+// from enabling private model-list proxies that cannot read that key store.
+const KEYLESS_MODEL_CATALOG_PROVIDERS: ReadonlySet<AIProviderType> = new Set([
+  'ollama',
+  'zai',
+  'kimi',
+  'huggingface',
+  'zen',
+  'nvidia',
+  'openai',
+  'xai',
+  'google',
+]);
+
+export function canAccessProviderModelCatalog(params: {
+  provider: AIProviderType;
+  hasLocalKey: boolean;
+  credentialSource: ProviderCredentialSource | null | undefined;
+}): boolean {
+  if (params.hasLocalKey) return true;
+  if (!params.credentialSource) return false;
+  if (KEYLESS_MODEL_CATALOG_PROVIDERS.has(params.provider)) return true;
+
+  // Gateway BYOK and Worker secrets are directly consumable by every private
+  // model-list proxy. An account-stored user key is only injected into durable
+  // engine dispatch today, not foreground `/api/<provider>/models` requests.
+  return (
+    params.credentialSource === 'gateway-byok' ||
+    params.credentialSource === 'worker-secret' ||
+    params.credentialSource === 'binding'
+  );
+}
+
 export function shouldAutoFetchProviderModels(params: {
-  hasKey: boolean;
+  canFetch: boolean;
   modelCount: number;
   loading: boolean;
   error: string | null;
 }): boolean {
-  return params.hasKey && params.modelCount === 0 && !params.loading && !params.error;
+  return params.canFetch && params.modelCount === 0 && !params.loading && !params.error;
 }
 
 /** Default backoff schedule for retrying a failed provider model-list fetch. */
