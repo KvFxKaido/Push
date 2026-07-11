@@ -49,6 +49,15 @@ public class MainActivity extends BridgeActivity {
                 bestMode = mode;
             }
         }
+        if (bestMode.getModeId() == activeMode.getModeId()) {
+            // Already at the highest mode for this resolution (adaptive panel
+            // running flat out, or a 60Hz-only display). Don't cast a redundant
+            // mode vote — pinning the current mode would keep the OS from
+            // adaptively lowering refresh while content is static. A vote set
+            // by an earlier pass (when an upgrade was needed) stays in place so
+            // OEM WebView heuristics can't re-pin the window to 60Hz.
+            return;
+        }
         WindowManager.LayoutParams params = getWindow().getAttributes();
         if (params.preferredDisplayModeId == bestMode.getModeId()) {
             return;
