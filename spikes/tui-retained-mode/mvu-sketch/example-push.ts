@@ -43,12 +43,17 @@ type Msg =
 
 const PALETTE_ITEMS = ['Switch branch…', 'Open file…', 'Run tests', 'Commit (Gate at Push)'];
 
-// ── A Cmd: the async side of a turn. Running tests is a tool call that resolves to a Msg ──
+// ── A Cmd: the async side of a turn. A keyed tool call resolves to a Msg. Re-running while
+//    one is in flight REPLACES it (same key → prior aborted, its late result dropped); a
+//    failure maps through onError instead of becoming an unhandled rejection. ──
 const runTestsCmd = (): CmdT<Msg> =>
-  Cmd.of(async (signal) => {
-    // await execInSandbox("npm test", { signal })  — cancellable via update moving on
-    void signal;
-    return { t: 'tool/result', id: 'tests', ok: true };
+  Cmd.task<Msg>({
+    key: 'tool:tests',
+    run: async (signal) => {
+      void signal; // await execInSandbox('npm test', { signal })
+      return { t: 'tool/result', id: 'tests', ok: true };
+    },
+    onError: () => ({ t: 'tool/result', id: 'tests', ok: false }),
   });
 
 // ── update: the ONLY place the model changes. Pure (Model, Msg) -> (Model, Cmd) ──
@@ -70,7 +75,8 @@ const update = (msg: Msg, m: Model): [Model, CmdT<Msg>] => {
     }
     case 'palette/run': {
       const closed: Model = { ...m, palette: { ...m.palette, open: false } };
-      // Selecting "Run tests" kicks off a Cmd; the result returns as a later Msg.
+      // Selecting "Run tests" kicks off a keyed Cmd; its result returns as a later Msg,
+      // and a second run replaces the first rather than racing it.
       return m.palette.sel === 2
         ? [{ ...closed, turn: 'streaming' }, runTestsCmd()]
         : [closed, Cmd.none];
