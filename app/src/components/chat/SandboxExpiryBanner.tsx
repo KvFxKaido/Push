@@ -99,6 +99,7 @@ export function SandboxExpiryBanner({
   if (visibleRemainingMs <= 0) {
     return (
       <div
+        data-push-toast-clearance
         className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-red-500/25`}
       >
         <div className="flex min-w-0 items-center gap-2">
@@ -125,6 +126,7 @@ export function SandboxExpiryBanner({
   if (visibleRemainingMs <= WARNING_THRESHOLD_MS) {
     return (
       <div
+        data-push-toast-clearance
         className={`mx-3 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-amber-500/25`}
       >
         <div className="flex min-w-0 items-center gap-2">

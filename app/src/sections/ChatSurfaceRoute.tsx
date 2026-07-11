@@ -434,7 +434,7 @@ export function ChatSurfaceRoute(props: ChatRouteProps) {
         </Suspense>
       )}
 
-      <Toaster position="bottom-center" />
+      <Toaster />
     </>
   );
 }

@@ -1305,6 +1305,7 @@ function ReconnectBanner({
   }
   return (
     <div
+      data-push-toast-clearance
       role="status"
       aria-live="polite"
       className="flex items-center justify-between gap-3 border-b border-push-edge/40 bg-push-surface-raised/40 px-4 py-2 text-xs"

@@ -31,6 +31,7 @@ export function AutoBackRestoreBanner({
 
   return (
     <div
+      data-push-toast-clearance
       className={`mx-4 mt-5 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-sky-500/25`}
     >
       <div className="min-w-0 flex-1">
