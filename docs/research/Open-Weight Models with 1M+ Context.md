@@ -2,7 +2,7 @@
 
 Model-native and deployment-native reference · Updated July 10, 2026
 
-**Bottom line.** The credible open-weight 1M+ field now includes Llama 4, DeepSeek V4, GLM-5.2, LongCat 2.0, dedicated Qwen2.5-1M checkpoints, and several Qwen models that can be extended to 1M. For Push, two rankings matter: whether a model suits long-horizon coding, and whether weights plus a 1M-token KV cache fit on infrastructure that can realistically be rented.
+**Bottom line.** The credible open-weight 1M+ field now includes Llama 4, DeepSeek V4, GLM-5.2, LongCat 2.0, MiniMax M3, dedicated Qwen2.5-1M checkpoints, and several Qwen models that can be extended to 1M. For Push, two rankings matter: whether a model suits long-horizon coding, and whether weights plus a 1M-token KV cache fit on infrastructure that can realistically be rented.
 
 ## Model reference
 
@@ -17,7 +17,7 @@ Model-native and deployment-native reference · Updated July 10, 2026
 | [Qwen2.5 Instruct 1M](https://huggingface.co/Qwen/Qwen2.5-14B-Instruct-1M) | 1M | Dedicated 1M checkpoint | Available in 7B and 14B variants. Older, but still the most manageable local option in this group. |
 | [Qwen3 30B-A3B 2507](https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507) | 1M | Extended | Officially supported 1M configuration for Instruct and Thinking variants; approximately 240 GB GPU memory at full context per Qwen. |
 | [Qwen3-Coder 30B-A3B](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct) | 256K native / 1M | Extended with YaRN | Repository-oriented coding model. Treat performance in the outer portion of the extended window as something to test, not assume. |
-| MiniMax M-series | 512K (M3) / 1M (M1) | Ruled out | Current MiniMax-M3 tops out at 512K (per its declared metadata in Push's own roster), below the bar; M1 shipped open 1M weights but is superseded. Recorded here so the table reads as complete. |
+| [MiniMax M3](https://huggingface.co/MiniMaxAI/MiniMax-M3) | 1M (512K guaranteed tier) | Designed / trained | ~428B-class MoE with MiniMax Sparse Attention; native multimodal, agentic-coding positioned. Already in Push's HF roster — budgeted at 512K because that is the *standard billing tier* (above 512K bills at 2×), not the model ceiling (`lib/context-budget.ts`). |
 
 **Llama 4 and the deployment filter.** Scout (~109 GB FP8) fits a 4×A100 node more easily than anything else in this table, and Maverick fits the 8×H200 class — both pass the endpoint filter below. They are excluded from the Push shortlist on coding quality, not feasibility: Llama 4's coding reputation is the weakest of this field, and Push's workload is coding. Scout may still be worth a cheap sanity run precisely because it is the least expensive trained-at-1M+ endpoint available.
 
@@ -58,6 +58,7 @@ Prices are Hugging Face list rates as viewed July 10, 2026; billing is calculate
 | Qwen3 30B-A3B-1M | Learning baseline | 4×A100/H100 class | **Start here.** Mature Qwen serving support makes it suitable for learning KV budgeting, YaRN or dual-chunk configuration, vLLM flags, and long-prefill behavior. |
 | DeepSeek V4 Flash | Serious 1M evaluation | 8×80 GB class | **Headline endpoint candidate.** Its compressed attention makes 1M plausible, but verify vLLM, TGI, or SGLang support before treating this as deployable. |
 | GLM-5.2 | Hosted control | Z.ai API | **Keep API-side.** Self-hosting a 744B-class model is marginal and expensive; compare it against dedicated endpoints throughout testing. |
+| MiniMax M3 | Zero-setup hosted candidate | Already in the HF roster | **Test first, deploy never (for now).** Native 1M via sparse attention and reachable through Push's existing HF provider today; evaluate the 1M long-context tier via API (2× billing above 512K) before considering ~430GB-class self-hosting. |
 | Qwen2.5-14B-1M | Cheaper baseline | Smaller multi-GPU node | Use for inexpensive configuration and workflow debugging before paying for larger endpoints. |
 | V4 Pro / LongCat 2.0 | API only | External provider | At roughly 1.6T parameters, FP8 weights alone approach 1.6 TB. These exceed a listed 8×H200 node before runtime or KV allocation. |
 
