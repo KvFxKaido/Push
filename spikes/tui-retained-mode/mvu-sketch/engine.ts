@@ -10,7 +10,7 @@
 //     • the model
 // DERIVED CACHES — reconstructible from the model, throwable, invalidated by key:
 //     • two cell buffers (front/back, for damage diffing)
-//     • layout geometry (rects by NodeId, keyed by a cheap layoutKey — cli/tui.ts:2645)
+//     • layout geometry (rects by NodeId, keyed by a cheap layoutKey — cli/tui.ts:2663)
 //     • transcript / stream shaping (cli/tui-stream-frame.ts is this exact pattern)
 //     • the last frame's hit map (cell → NodeId)
 // LIVE RESOURCES — must be explicitly torn down:
@@ -183,7 +183,7 @@ export type Frame = readonly PaintOp[];
 export interface LayoutEngine {
   /** Flatten `root` to an absolute-positioned, node-free `Frame`. Internally caches geometry
    *  keyed by a cheap layoutKey (viewport + layout-affecting shape) and recomputes Yoga only
-   *  on invalidation — the pattern cli/tui.ts:2645 already uses. A text/color change that
+   *  on invalidation — the pattern cli/tui.ts:2663 already uses. A text/color change that
    *  doesn't affect size reuses cached geometry and only updates the op's attrs/text. */
   layout(root: Node, viewport: Size): Frame;
 }

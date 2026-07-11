@@ -35,7 +35,7 @@ Between frames, three categories persist; the point is which is which, not the c
 - **Authoritative state** — the model. Only `update` writes it.
 - **Derived caches** — reconstructible from the model, throwable, invalidated by key: the two
   cell buffers, layout **geometry** (rects by NodeId, keyed by a cheap layoutKey — the pattern
-  `cli/tui.ts:2645` already uses), transcript/stream shaping (`cli/tui-stream-frame.ts` is
+  `cli/tui.ts:2663` already uses), transcript/stream shaping (`cli/tui-stream-frame.ts` is
   exactly this), the last frame's hit map.
 - **Live resources** — explicitly torn down: subscriptions, in-flight command controllers, the
   input decoder, the frame scheduler.
@@ -90,7 +90,7 @@ not executed. Runtime semantics are unproven — that's what the slice below is 
 ## Next: a Push-shaped vertical slice (Codex's plan, adopted)
 
 Prove the compositor mechanic **inside the living TUI at the `createScreenBuffer` choke point**
-(`cli/tui-renderer.ts:309`) — upgrade line-diff → cell-diff — not a simultaneous
+(`cli/tui-renderer.ts:344`) — upgrade line-diff → cell-diff — not a simultaneous
 renderer+Yoga+MVU+daemon rewrite. Build it as a **replaceable module with a paint-list input**
 so the later Node/Yoga path is a new producer, not a compositor rewrite.
 
