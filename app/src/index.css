@@ -13,8 +13,8 @@
 @layer utilities {
   .animate-in,
   .animate-out,
-  [data-state="open"].animate-in,
-  [data-state="closed"].animate-out {
+  [data-open].animate-in,
+  [data-closed].animate-out {
     animation-fill-mode: both;
   }
 }
@@ -589,11 +589,11 @@
    two-attribute selector (0,2,0) beats animate-in's single-class defaults and
    keeps every panel's timing in one place. No blur — see the `--panel-*` note;
    the directional slide-in/out still comes from the component's classes. */
-[data-slot='sheet-content'][data-state='open'] {
+[data-slot='sheet-content'][data-open] {
   animation-duration: var(--panel-open-dur);
   animation-timing-function: var(--panel-ease);
 }
-[data-slot='sheet-content'][data-state='closed'] {
+[data-slot='sheet-content'][data-closed] {
   animation-duration: var(--panel-close-dur);
   animation-timing-function: var(--panel-ease);
 }
@@ -611,8 +611,8 @@
     transform: none;
     filter: none;
   }
-  [data-slot='sheet-content'][data-state='open'],
-  [data-slot='sheet-content'][data-state='closed'] {
+  [data-slot='sheet-content'][data-open],
+  [data-slot='sheet-content'][data-closed] {
     animation: none;
   }
 }
@@ -627,27 +627,27 @@
    two-attribute selector (0,2,0) beats animate-in's single-class default;
    sheets (`--panel-*`) and tooltips keep their own timing. Reduced motion is
    handled by the global wildcard at the foot of this file. */
-[data-slot='dropdown-menu-content'][data-state='open'],
-[data-slot='dropdown-menu-sub-content'][data-state='open'],
-[data-slot='context-menu-content'][data-state='open'],
-[data-slot='context-menu-sub-content'][data-state='open'],
-[data-slot='menubar-content'][data-state='open'],
-[data-slot='menubar-sub-content'][data-state='open'],
-[data-slot='select-content'][data-state='open'],
-[data-slot='popover-content'][data-state='open'],
-[data-slot='hover-card-content'][data-state='open'] {
+[data-slot='dropdown-menu-content'][data-open],
+[data-slot='dropdown-menu-sub-content'][data-open],
+[data-slot='context-menu-content'][data-open],
+[data-slot='context-menu-sub-content'][data-open],
+[data-slot='menubar-content'][data-open],
+[data-slot='menubar-sub-content'][data-open],
+[data-slot='select-content'][data-open],
+[data-slot='popover-content'][data-open],
+[data-slot='hover-card-content'][data-open] {
   animation-duration: var(--motion-normal);
   animation-timing-function: var(--ease-spring);
 }
-[data-slot='dropdown-menu-content'][data-state='closed'],
-[data-slot='dropdown-menu-sub-content'][data-state='closed'],
-[data-slot='context-menu-content'][data-state='closed'],
-[data-slot='context-menu-sub-content'][data-state='closed'],
-[data-slot='menubar-content'][data-state='closed'],
-[data-slot='menubar-sub-content'][data-state='closed'],
-[data-slot='select-content'][data-state='closed'],
-[data-slot='popover-content'][data-state='closed'],
-[data-slot='hover-card-content'][data-state='closed'] {
+[data-slot='dropdown-menu-content'][data-closed],
+[data-slot='dropdown-menu-sub-content'][data-closed],
+[data-slot='context-menu-content'][data-closed],
+[data-slot='context-menu-sub-content'][data-closed],
+[data-slot='menubar-content'][data-closed],
+[data-slot='menubar-sub-content'][data-closed],
+[data-slot='select-content'][data-closed],
+[data-slot='popover-content'][data-closed],
+[data-slot='hover-card-content'][data-closed] {
   animation-duration: var(--motion-fast);
   animation-timing-function: var(--ease-spring);
 }
@@ -657,13 +657,13 @@
    trigger origin. Retimed to the modal cadence — open `--motion-normal`
    (250ms), close `--motion-fast` (150ms) on the spring ease — so dialogs join
    the same motion family. The overlay fade and scale are the primitives' own. */
-[data-slot='dialog-content'][data-state='open'],
-[data-slot='alert-dialog-content'][data-state='open'] {
+[data-slot='dialog-content'][data-open],
+[data-slot='alert-dialog-content'][data-open] {
   animation-duration: var(--motion-normal);
   animation-timing-function: var(--ease-spring);
 }
-[data-slot='dialog-content'][data-state='closed'],
-[data-slot='alert-dialog-content'][data-state='closed'] {
+[data-slot='dialog-content'][data-closed],
+[data-slot='alert-dialog-content'][data-closed] {
   animation-duration: var(--motion-fast);
   animation-timing-function: var(--ease-spring);
 }

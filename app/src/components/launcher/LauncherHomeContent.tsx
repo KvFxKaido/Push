@@ -150,7 +150,7 @@ export function LauncherHomeContent({
               <DropdownMenuSeparator className="bg-push-edge" />
               <DropdownMenuItem
                 onSelect={() => setDisconnectDialogOpen(true)}
-                className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 text-xs text-red-300 focus:bg-red-950/25 focus:text-red-200"
+                className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 text-xs text-red-300 data-highlighted:bg-red-950/25 data-highlighted:text-red-200"
               >
                 <LogOut className="h-3.5 w-3.5" />
                 Disconnect

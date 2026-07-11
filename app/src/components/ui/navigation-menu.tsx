@@ -153,6 +153,7 @@ function NavigationMenuLink({
   )
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function NavigationMenuIndicator(_props: React.ComponentProps<"div">) {
   // Base UI's navigation menu has no Indicator part (see
   // node_modules/@base-ui/react/navigation-menu/index.parts.d.ts — the nearest
