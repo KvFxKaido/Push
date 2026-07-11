@@ -36,7 +36,7 @@ rather than challenge them.
 
 | CodeWhale feature | Push equivalent | State |
 |---|---|---|
-| **Review receipts** — `review --write-receipt` persists a SHA-256 `diff_fingerprint` + structured findings + `unresolved_risk`; `--check-receipt` is a model-free pre-push gate that fails if the current diff no longer matches (`docs/RECEIPTS.md`, `crates/tui/src/tools/review.rs`) | Gate-at-Push runs the Auditor *at* `prepare_push`/`sandbox_push`; a fingerprint primitive exists (`fingerprintString` / `diffFingerprint`, `lib/auditor-agent.ts:206,240`) but only as an in-memory dedup key for audit status — nothing is persisted or re-checked at push time | ⚠️ Gap, highest-value borrow. See takeaway 1. |
+| **Review receipts** — `review --write-receipt` persists a SHA-256 `diff_fingerprint` + structured findings + `unresolved_risk`; `--check-receipt` is a model-free pre-push gate that fails if the current diff no longer matches (`docs/RECEIPTS.md`, `crates/tui/src/tools/review.rs`) | Gate-at-Push runs the Auditor *at* `prepare_push`/`sandbox_push`; a fingerprint primitive exists (`fingerprintString` / `diffFingerprint`, `lib/auditor-agent.ts:206,240`) but it's a 32-bit FNV-1a used only as an in-memory dedup key for audit status — not collision-resistant, and nothing is persisted or re-checked at push time | ⚠️ Gap, highest-value borrow. See takeaway 1. |
 | **Enforced repo law** — `.codewhale/constitution.json` `protected_invariants` with path globs compile into write gates evaluated before the write runs (`ask` force-prompts in every mode; `block` denies); schema can only *add* restrictions; parse failures degrade to fewer rules (`crates/tui/src/repo_law.rs`) | Project instructions (`PUSH.md` → `AGENTS.md` → …) are prompt-only content through `lib/project-instructions.ts` — guidance, not mechanism | ⚠️ Gap. See takeaway 2. |
 | **`codewhale doctor`** — per-provider key presence with *source attribution* (env vs config vs keyring), live probes with error-classified remediation, skills-discovery listing, `--json` mode that skips network probes for CI (`crates/tui/src/main.rs` `run_doctor`) | No equivalent — `push config init` sets up; nothing diagnoses. Push's surface area (config perms, provider keys, `pushd` reachability, session store, two sandbox backends, multi-dir skill discovery) is exactly where a doctor pays off | ⚠️ Gap. See takeaway 3. |
 | **Fleet receipts with failure-source typing** — worker results are `pass/fail/partial/skip/timeout` with the failure *source* attributed (`transport \| task \| verifier`); the manager runbook teaches classify-before-act ("do not restart pure task failures by default") (`docs/FLEET.md`) | Coder-job DO has checkpoint/resume with paired structured logs (`coder_resume_*`, `app/src/worker/coder-job-do.ts`), but the *result* carries no failure-source field — the right reaction must be re-derived from logs | ⚠️ Gap. See takeaway 4. |
@@ -57,11 +57,15 @@ rather than challenge them.
 ## What's worth borrowing (ranked)
 
 1. **Push-time receipts: persist the audit fingerprint, re-check before the
-   push.** The primitive already exists — `lib/auditor-agent.ts` fingerprints
-   the diff to key audit status. The borrow is making it a durable artifact:
-   `prepare_push` records `{ diffFingerprint, verdict, unresolvedRisk }`; the
-   actual `sandbox_push` re-fingerprints and refuses (model-free, deterministic)
-   if the tree changed since the audit. That closes the audit→push TOCTOU
+   push.** The *concept* already exists — `lib/auditor-agent.ts` fingerprints
+   the diff to key audit status — but its `fingerprintString` is a compact
+   32-bit FNV-1a for in-memory coalescing and must **not** back a durable
+   gate: a same-length hash collision (accidental or crafted) would let a
+   changed diff pass. The borrow is making the receipt a durable artifact
+   with a cryptographic hash, as CodeWhale does (SHA-256): `prepare_push`
+   records `{ diffSha256, verdict, unresolvedRisk }`; the actual
+   `sandbox_push` re-hashes and refuses (model-free, deterministic) if the
+   tree changed since the audit. That closes the audit→push TOCTOU
    window, lets an unchanged diff skip re-auditing, and produces an artifact the
    PR flow can carry. CodeWhale's honesty details are worth copying too: the
    receipt stores a hash of the review text (not the diff body) and an explicit
