@@ -48,6 +48,7 @@ import { maybeCompactBeforeTurn } from './chat-compaction';
 import { routeActiveRunInput } from './chat-active-run-router';
 import { prepareSendContext } from './chat-prepare-send';
 import { acquireRunSession, finalizeRunSession } from './chat-run-session';
+import { createTurnQuiescedEvent } from '@push/lib/turn-quiescence';
 import { useQueuedFollowUps } from './useQueuedFollowUps';
 import { mergeRunEventStreams } from '@/lib/chat-run-events';
 import { expireBranchScopedMemory } from '@/lib/context-memory';
@@ -730,6 +731,7 @@ export function useChat(
         });
         throw err;
       } finally {
+        const finishedRun = runEngineStateRef.current;
         const { nextFollowUp } = finalizeRunSession(
           { chatId, loopCompletedNormally },
           {
@@ -749,6 +751,17 @@ export function useChat(
             clearQueuedFollowUps,
           },
         );
+        if (!nextFollowUp) {
+          const quiesced = createTurnQuiescedEvent(
+            finishedRun.runId,
+            finishedRun.phase === 'failed'
+              ? 'failed'
+              : loopCompletedNormally
+                ? 'completed'
+                : 'aborted',
+          );
+          if (quiesced) appendRunEvent(chatId, quiesced);
+        }
         if (nextFollowUp && isMountedRef.current) {
           queueMicrotask(() => {
             if (!isMountedRef.current) return;

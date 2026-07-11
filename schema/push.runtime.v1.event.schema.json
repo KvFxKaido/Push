@@ -1076,6 +1076,27 @@
         }
       }
     },
+    "TurnQuiesced": {
+      "type": "object",
+      "required": [
+        "runId",
+        "outcome"
+      ],
+      "properties": {
+        "runId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "completed",
+            "aborted",
+            "failed"
+          ]
+        }
+      }
+    },
     "HarnessAdaptation": {
       "type": "object",
       "required": [
@@ -2126,6 +2147,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/AssistantTurnEnd"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "turn.quiesced"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/TurnQuiesced"
           }
         }
       }

@@ -46,6 +46,7 @@ import {
   TASK_GRAPH_AGENTS,
   TURN_INTENTS,
   TURN_END_OUTCOMES,
+  TURN_QUIESCED_OUTCOMES,
   TURN_ROUTE_REASONS,
   TURN_ROUTES,
   TURN_SUPPRESSED_ROUTES,
@@ -409,6 +410,11 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     outcome: enumOf(TURN_END_OUTCOMES),
   }),
 
+  TurnQuiesced: objectNode(['runId', 'outcome'], {
+    runId: nestr(),
+    outcome: enumOf(TURN_QUIESCED_OUTCOMES),
+  }),
+
   HarnessAdaptation: objectNode(['round', 'fromMaxRounds', 'toMaxRounds', 'reasons'], {
     round: uint(),
     fromMaxRounds: uint(),
@@ -552,6 +558,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'turn.route': 'TurnRoute',
   'assistant.turn_start': 'AssistantTurnStart',
   'assistant.turn_end': 'AssistantTurnEnd',
+  'turn.quiesced': 'TurnQuiesced',
   'harness.adaptation': 'HarnessAdaptation',
   'job.started': 'JobStarted',
   'job.completed': 'JobCompleted',

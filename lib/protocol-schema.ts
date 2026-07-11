@@ -1592,6 +1592,7 @@ function validateDelegationInterrupted(payload: unknown, basePath: string): Vali
 // ---------------------------------------------------------------------------
 
 export const TURN_END_OUTCOMES = ['completed', 'continued', 'error', 'aborted', 'steered'] as const;
+export const TURN_QUIESCED_OUTCOMES = ['completed', 'aborted', 'failed'] as const;
 
 function validateAssistantTurnStart(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
@@ -1609,6 +1610,18 @@ function validateAssistantTurnEnd(payload: unknown, basePath: string): Validatio
   const round = expectNonNegativeInteger(payload, 'round', basePath);
   if (round) issues.push(round);
   const outcome = expectAgentValue(payload, 'outcome', basePath, TURN_END_OUTCOMES);
+  if (outcome) issues.push(outcome);
+  return issues;
+}
+
+function validateTurnQuiesced(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const runId = expectNonEmptyString(payload, 'runId', basePath);
+  if (runId) issues.push(runId);
+  const outcome = expectAgentValue(payload, 'outcome', basePath, TURN_QUIESCED_OUTCOMES);
   if (outcome) issues.push(outcome);
   return issues;
 }
@@ -1760,6 +1773,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'turn.route': validateTurnRoute,
   'assistant.turn_start': validateAssistantTurnStart,
   'assistant.turn_end': validateAssistantTurnEnd,
+  'turn.quiesced': validateTurnQuiesced,
   'harness.adaptation': validateHarnessAdaptation,
   'job.started': validateJobStarted,
   'job.completed': validateJobCompleted,

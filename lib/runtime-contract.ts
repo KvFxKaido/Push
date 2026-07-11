@@ -399,6 +399,14 @@ export type RunEventInput =
       outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered';
     }
   | {
+      // Terminal lifecycle receipt for a foreground turn. Unlike
+      // `assistant.turn_end`, this fires only after run cleanup completes and
+      // no queued follow-up will immediately begin another turn.
+      type: 'turn.quiesced';
+      runId: string;
+      outcome: 'completed' | 'aborted' | 'failed';
+    }
+  | {
       // Per-turn system-prompt composition snapshot. Emitted once at the
       // start of each LLM call so a debug surface can answer "what
       // exactly went to the model on turn N?" without re-running. Carries

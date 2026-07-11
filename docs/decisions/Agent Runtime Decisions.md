@@ -77,6 +77,23 @@ wire contract is `push.runtime.v1` with envelope validation in
 The tool-call parser path is converged on the shared dispatcher. New tool/event
 vocabularies need a canonical definition and a drift test in the same PR.
 
+#### Turn quiescence (landed 2026-07-11)
+
+`assistant.turn_end` is a **round** boundary, not proof that a foreground run
+is quiet: cleanup can still release the tab lock, clear a resume checkpoint, or
+schedule another queued follow-up. `turn.quiesced` is the terminal receipt
+emitted only after that cleanup has finished and no follow-up will immediately
+start. It carries `runId` plus `completed` / `aborted` / `failed`, persists with
+the run-event journal, and is strict-validated in the shared wire schema.
+
+Tests that need a real terminal boundary use `waitForTurnQuiescence` from
+`lib/turn-quiescence.ts`, subscribing to the event stream instead of polling
+React state, timers, or Git. This is intentionally distinct from
+`workspace.state_snapshot` / `workspace.state_delta`: quiescence guarantees
+turn-owned work is done, not that a fresh ambient workspace-state read has
+finished. A future `workspace.quiesced` receipt may compose both once a
+cross-surface workspace-refresh barrier exists.
+
 Source notes:
 [`Tool-Call Parser Convergence Gap`](<../archive/decisions/Tool-Call Parser Convergence Gap.md>),
 [`phase-5-tool-runtime-brief`](../archive/decisions/phase-5-tool-runtime-brief.md),
