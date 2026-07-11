@@ -289,8 +289,13 @@ export function useChat(
     dirtyConversationIdsRef,
   });
 
-  const { runEngineStateRef, runJournalEntryRef, emitRunEngineEvent, persistRunJournal } =
-    useRunEngine({ getVerificationStateForChat });
+  const {
+    runEngineStateRef,
+    runJournalEntryRef,
+    finalizedRunJournalEntryRef,
+    emitRunEngineEvent,
+    persistRunJournal,
+  } = useRunEngine({ getVerificationStateForChat });
 
   const {
     pendingSteersByChat,
@@ -375,6 +380,7 @@ export function useChat(
     activeChatId,
     activePersistedRunEventCount,
     runJournalEntryRef,
+    finalizedRunJournalEntryRef,
     updateConversations,
     dirtyConversationIdsRef,
     isMountedRef,
@@ -673,7 +679,16 @@ export function useChat(
         },
         { emitRunEngineEvent, setIsStreaming, updateAgentStatus, updateConversations },
       );
-      if (!acquired) return;
+      if (!acquired) {
+        // A denied run already emitted RUN_STARTED, so observers waiting on
+        // its terminal receipt must still see quiescence — without this the
+        // multi-tab denial path started a run that never quiesces (Codex P2,
+        // PR #1410). The journal entry is still live here (denial does not
+        // finalize), so the receipt also lands in the journal.
+        const denied = createTurnQuiescedEvent(runEngineStateRef.current.runId, 'failed');
+        if (denied) appendRunEvent(chatId, denied);
+        return;
+      }
 
       const runtimeContext = resetRuntimeContextForRun(chatId);
       const loopCtx: SendLoopContext = {

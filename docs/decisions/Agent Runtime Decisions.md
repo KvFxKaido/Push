@@ -85,6 +85,11 @@ schedule another queued follow-up. `turn.quiesced` is the terminal receipt
 emitted only after that cleanup has finished and no follow-up will immediately
 start. It carries `runId` plus `completed` / `aborted` / `failed`, persists with
 the run-event journal, and is strict-validated in the shared wire schema.
+Because the receipt fires after the terminal loop event has already finalized
+the journal entry, the journal keeps a narrow post-finalization seam that
+accepts ONLY `turn.quiesced` for the just-finalized run. A tab-lock denial also
+quiesces (`failed`): the denied run emitted `RUN_STARTED`, so observers waiting
+on its terminal receipt must still see one.
 
 Tests that need a real terminal boundary use `waitForTurnQuiescence` from
 `lib/turn-quiescence.ts`, subscribing to the event stream instead of polling

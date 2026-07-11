@@ -121,6 +121,7 @@ interface HarnessState {
   mounted: boolean;
   updateCalls: number;
   journalEntry: RunJournalEntry | null;
+  finalizedJournalEntry: RunJournalEntry | null;
 }
 
 function useHarness(
@@ -130,6 +131,7 @@ function useHarness(
     conversations?: Record<string, Conversation>;
     mounted?: boolean;
     initialJournalEntry?: RunJournalEntry | null;
+    initialFinalizedJournalEntry?: RunJournalEntry | null;
   } = {},
 ) {
   const state: HarnessState = {
@@ -138,6 +140,7 @@ function useHarness(
     mounted: options.mounted ?? true,
     updateCalls: 0,
     journalEntry: options.initialJournalEntry ?? null,
+    finalizedJournalEntry: options.initialFinalizedJournalEntry ?? null,
   };
 
   const updateConversations = (
@@ -158,10 +161,20 @@ function useHarness(
     },
   } as React.MutableRefObject<RunJournalEntry | null>;
 
+  const finalizedRunJournalEntryRef = {
+    get current() {
+      return state.finalizedJournalEntry;
+    },
+    set current(value: RunJournalEntry | null) {
+      state.finalizedJournalEntry = value;
+    },
+  } as React.MutableRefObject<RunJournalEntry | null>;
+
   const hook = useRunEventStream({
     activeChatId: options.activeChatId ?? 'chat-1',
     activePersistedRunEventCount: options.activePersistedRunEventCount ?? 0,
     runJournalEntryRef,
+    finalizedRunJournalEntryRef,
     updateConversations,
     dirtyConversationIdsRef: { current: state.dirty } as React.MutableRefObject<Set<string>>,
     isMountedRef: { current: state.mounted } as React.MutableRefObject<boolean>,
@@ -283,6 +296,51 @@ describe('useRunEventStream — appendRunEvent routing', () => {
     // Conversation still gets persisted (both branches fire when
     // shouldPersist is true and a journal exists).
     expect(state.updateCalls).toBe(1);
+  });
+
+  it('journals turn.quiesced onto the finalized entry after the live entry is closed', () => {
+    // The terminal receipt fires after LOOP_* finalized-and-nulled the live
+    // entry; the post-finalization seam must append it to the finalized
+    // entry of the SAME run and re-save (fugu + Codex converged, PR #1410).
+    chatRunEvents.shouldPersistRunEvent.mockReturnValue(true);
+    const finalized = makeJournalEntry();
+    const { hook, state } = useHarness({
+      initialJournalEntry: null,
+      initialFinalizedJournalEntry: finalized,
+    });
+
+    hook.appendRunEvent('chat-1', {
+      type: 'turn.quiesced',
+      runId: 'run-1',
+      outcome: 'completed',
+    } as unknown as RunEventInput);
+
+    expect(runJournal.appendJournalEvent).toHaveBeenCalledTimes(1);
+    expect(runJournal.appendJournalEvent.mock.calls[0][0]).toBe(finalized);
+    expect(runJournal.saveJournalEntry).toHaveBeenCalledTimes(1);
+    expect(state.finalizedJournalEntry).not.toBe(finalized);
+  });
+
+  it('does not reopen the finalized entry for a receipt from a different run or other events', () => {
+    chatRunEvents.shouldPersistRunEvent.mockReturnValue(true);
+    const finalized = makeJournalEntry(); // runId: 'run-1'
+    const { hook } = useHarness({
+      initialJournalEntry: null,
+      initialFinalizedJournalEntry: finalized,
+    });
+
+    hook.appendRunEvent('chat-1', {
+      type: 'turn.quiesced',
+      runId: 'run-other',
+      outcome: 'completed',
+    } as unknown as RunEventInput);
+    hook.appendRunEvent('chat-1', {
+      type: 'assistant.turn_start',
+      round: 1,
+    } as unknown as RunEventInput);
+
+    expect(runJournal.appendJournalEvent).not.toHaveBeenCalled();
+    expect(runJournal.saveJournalEntry).not.toHaveBeenCalled();
   });
 
   it('subagent.completed with delegationOutcome threads through recordDelegationOutcome', () => {
