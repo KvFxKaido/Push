@@ -1320,18 +1320,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       url: `${GW_BASE}/openrouter/models`,
     },
     {
-      name: 'zen',
-      handler: handleZenModels,
-      env: { CF_AI_GATEWAY_BYOK: 'zen', CF_AI_GATEWAY_CUSTOM_SLUGS: 'zen' },
-      url: `${GW_BASE}/custom-zen/zen/v1/models`,
-    },
-    {
-      name: 'nvidia',
-      handler: handleNvidiaModels,
-      env: { CF_AI_GATEWAY_BYOK: 'nvidia', CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia' },
-      url: `${GW_BASE}/custom-nvidia/v1/models`,
-    },
-    {
       name: 'sakana',
       handler: handleSakanaModels,
       env: { CF_AI_GATEWAY_BYOK: 'sakana', CF_AI_GATEWAY_CUSTOM_SLUGS: 'sakana' },
@@ -1349,12 +1337,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       env: { CF_AI_GATEWAY_BYOK: 'deepseek' },
       url: `${GW_BASE}/deepseek/models`,
     },
-    {
-      name: 'huggingface',
-      handler: handleHuggingFaceModels,
-      env: { CF_AI_GATEWAY_BYOK: 'huggingface', CF_AI_GATEWAY_CUSTOM_SLUGS: 'huggingface' },
-      url: `${GW_BASE}/custom-huggingface/v1/models`,
-    },
   ] as const;
 
   for (const c of CASES) {
@@ -1365,6 +1347,55 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       expect(captured.current?.url).toBe(c.url);
       expect(captured.current?.headers.Authorization).toBeUndefined();
       expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+    });
+  }
+
+  // Public catalogs (ollama/zen/nvidia/huggingface) carry `publicList: true` and
+  // must fetch DIRECT and keyless even when the gateway is fully configured and
+  // the provider is BYOK-listed with its slug enabled — the CF custom-provider
+  // proxy truncates `/v1/models`, so the list must bypass it. Regression guard
+  // for the "only one model in Settings" bug.
+  const PUBLIC_CASES = [
+    {
+      name: 'ollama',
+      handler: handleOllamaModels,
+      slug: 'ollama',
+      url: 'https://ollama.com/v1/models',
+    },
+    {
+      name: 'zen',
+      handler: handleZenModels,
+      slug: 'zen',
+      url: 'https://opencode.ai/zen/v1/models',
+    },
+    {
+      name: 'nvidia',
+      handler: handleNvidiaModels,
+      slug: 'nvidia',
+      url: 'https://integrate.api.nvidia.com/v1/models',
+    },
+    {
+      name: 'huggingface',
+      handler: handleHuggingFaceModels,
+      slug: 'huggingface',
+      url: 'https://router.huggingface.co/v1/models',
+    },
+  ] as const;
+
+  for (const c of PUBLIC_CASES) {
+    it(`${c.name}: keyless GET goes DIRECT to the public catalog, bypassing the gateway`, async () => {
+      const captured = captureFetch();
+      const res = await c.handler(
+        makeModelsRequest(),
+        makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: c.name, CF_AI_GATEWAY_CUSTOM_SLUGS: c.slug }),
+      );
+      expect(res.status).not.toBe(401);
+      // Direct upstream, not the gateway-rewritten URL.
+      expect(captured.current?.url).toBe(c.url);
+      // No key configured → no Authorization header at all (not `Authorization: ""`).
+      expect(captured.current?.headers.Authorization).toBeUndefined();
+      // Gateway bypassed → no aig auth leaked onto the direct request.
+      expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
     });
   }
 
