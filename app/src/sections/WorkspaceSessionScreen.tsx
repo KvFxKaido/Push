@@ -604,7 +604,7 @@ export function WorkspaceSessionScreen({
             glowStyle={fileBrowserAppearance?.glowStyle ?? 'gradient'}
           />
         </Suspense>
-        <Toaster position="bottom-center" />
+        <Toaster />
       </div>
     );
   }

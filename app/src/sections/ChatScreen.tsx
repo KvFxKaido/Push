@@ -325,6 +325,7 @@ export function ChatScreen({
           !instructions.projectInstructionsCheckFailed &&
           !instructions.agentsMdContent && (
             <div
+              data-push-toast-clearance
               className={`mx-4 mt-5 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} border-push-edge/70`}
             >
               <div className="flex items-center justify-between gap-3">

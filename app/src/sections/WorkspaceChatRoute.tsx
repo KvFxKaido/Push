@@ -866,7 +866,7 @@ export function WorkspaceChatRoute(props: ChatRouteProps) {
         </Suspense>
       )}
 
-      <Toaster position="bottom-center" />
+      <Toaster />
 
       {commitSwitchConfirmBranch && (
         <div className="fixed inset-x-3 bottom-24 z-50 mx-auto max-w-md">

@@ -24,6 +24,7 @@ export function CIStatusBanner({ status, onDiagnose }: CIStatusBannerProps) {
 
   return (
     <div
+      data-push-toast-clearance
       className={`mx-4 mt-5 mb-1 flex items-center justify-between gap-3 px-1 py-2.5 ${HUB_TOP_BANNER_STRIP_CLASS} ${
         isFailure ? 'border-red-500/25' : 'border-blue-500/20'
       }`}
