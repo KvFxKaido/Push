@@ -91,4 +91,24 @@ describe('buildInlineConversationSeed', () => {
     expect(signed.content).toBe('');
     expect(signed.reasoningBlocks).toEqual(reasoningBlocks);
   });
+
+  // Codex P2 (#1420): a native function-call round can persist an assistant
+  // turn with empty content, private reasoning, and the call in sidecars.
+  // That reasoning must not be promoted into a user-visible assistant reply.
+  it('does not promote reasoning for tool-call turns', () => {
+    const [flagged] = buildInlineConversationSeed([
+      msg({ role: 'assistant', content: '', thinking: 'private deliberation', isToolCall: true }),
+    ]);
+    expect(flagged.content).toBe('');
+
+    const [nativeCall] = buildInlineConversationSeed([
+      msg({
+        role: 'assistant',
+        content: '',
+        thinking: 'private deliberation',
+        toolUses: [{ type: 'tool_use', id: 'tu_1', name: 'repo_ls', input: {} }],
+      }),
+    ]);
+    expect(nativeCall.content).toBe('');
+  });
 });

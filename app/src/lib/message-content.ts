@@ -221,7 +221,12 @@ export function stripToolCallPayload(content: string): string {
  * reasoning, reasoning that is only tool-call payload — or signed
  * `reasoningBlocks`, which own the replay contract for that turn (an
  * Anthropic thinking + tool_use round is legitimately content-empty and must
- * be re-sent verbatim, not rewritten).
+ * be re-sent verbatim, not rewritten). Tool-call turns (`isToolCall`, or a
+ * `toolUses` sidecar from a native function-call round) are likewise excluded:
+ * their empty content is the shape of "the call rides elsewhere", and
+ * promoting the round's private deliberation would replay it as a user-visible
+ * assistant reply while losing the call structure ahead of its tool result
+ * (Codex P2 on #1420).
  *
  * History-only by design: unlike the stream-side promotion this never feeds
  * the dispatcher (prior-turn text is not parsed for tool calls), and the
@@ -233,8 +238,11 @@ export function strandedReasoningAnswerText(message: {
   displayContent?: string;
   thinking?: string;
   reasoningBlocks?: readonly unknown[];
+  isToolCall?: boolean;
+  toolUses?: readonly unknown[];
 }): string | null {
   if (message.role !== 'assistant') return null;
+  if (message.isToolCall || (message.toolUses && message.toolUses.length > 0)) return null;
   if ((message.displayContent ?? message.content).trim()) return null;
   if (message.reasoningBlocks && message.reasoningBlocks.length > 0) return null;
   const thinking = message.thinking ?? '';

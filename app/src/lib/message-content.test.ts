@@ -181,6 +181,15 @@ describe('strandedReasoningAnswerText', () => {
     ).toBeNull();
   });
 
+  it('returns null for tool-call turns — flagged or carrying a native toolUses sidecar', () => {
+    expect(strandedReasoningAnswerText(stranded({ isToolCall: true }))).toBeNull();
+    expect(
+      strandedReasoningAnswerText(
+        stranded({ toolUses: [{ type: 'tool_use', id: 'tu_1', name: 'repo_ls', input: {} }] }),
+      ),
+    ).toBeNull();
+  });
+
   it('strips buried tool-call payloads and returns null when nothing else remains', () => {
     expect(
       strandedReasoningAnswerText(
