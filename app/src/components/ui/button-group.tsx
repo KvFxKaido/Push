@@ -1,8 +1,8 @@
 /* eslint-disable react-refresh/only-export-components */
-import { Slot } from "@radix-ui/react-slot"
 import { cva, type VariantProps } from "class-variance-authority"
 
 import { cn } from "@/lib/utils"
+import { RenderSlot } from "./render-slot"
 import { Separator } from "@/components/ui/separator"
 
 const buttonGroupVariants = cva(
@@ -45,7 +45,7 @@ function ButtonGroupText({
 }: React.ComponentProps<"div"> & {
   asChild?: boolean
 }) {
-  const Comp = asChild ? Slot : "div"
+  const Comp = asChild ? RenderSlot : "div"
 
   return (
     <Comp

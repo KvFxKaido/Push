@@ -66,7 +66,7 @@ export function SandboxHeader({ className, title, state }: SandboxHeaderProps) {
         {title && <code className="truncate font-mono text-push-base text-push-fg">{title}</code>}
         <SandboxStatusBadge state={state} />
       </div>
-      <ChevronDown className="size-4 shrink-0 text-push-fg-dim transition-transform group-data-[state=open]:rotate-180" />
+      <ChevronDown className="size-4 shrink-0 text-push-fg-dim transition-transform group-data-open:rotate-180" />
     </CollapsibleTrigger>
   );
 }
@@ -113,7 +113,7 @@ export function SandboxTabsTrigger({ className, ...props }: SandboxTabsTriggerPr
   return (
     <TabsTrigger
       className={cn(
-        'rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-1.5 font-medium text-push-xs text-push-fg-dim shadow-none transition-colors data-[state=active]:border-push-accent data-[state=active]:bg-transparent data-[state=active]:text-push-fg data-[state=active]:shadow-none',
+        'rounded-none border-0 border-b-2 border-transparent bg-transparent px-3 py-1.5 font-medium text-push-xs text-push-fg-dim shadow-none transition-colors data-active:border-push-accent data-active:bg-transparent data-active:text-push-fg data-active:shadow-none',
         className,
       )}
       {...props}
