@@ -19,13 +19,14 @@ vi.mock('sonner', () => ({
 import { TOAST_TOP_OFFSET, Toaster } from './sonner';
 
 describe('Toaster', () => {
-  it('uses the single top-center lane below chat header chrome', () => {
+  it('uses the single top-center lane below chat header chrome on every viewport', () => {
     renderToStaticMarkup(<Toaster />);
 
     expect(sonnerSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         position: 'top-center',
         offset: TOAST_TOP_OFFSET,
+        mobileOffset: TOAST_TOP_OFFSET,
       }),
     );
   });

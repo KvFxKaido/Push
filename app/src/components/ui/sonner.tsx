@@ -29,7 +29,9 @@ function useToastOffset() {
 
   useLayoutEffect(() => {
     let frame: number | undefined
-    const resizeObserver = new ResizeObserver(scheduleUpdate)
+    let refreshObservedElements = false
+    const observedElements = new Set<HTMLElement>()
+    const resizeObserver = new ResizeObserver(() => scheduleUpdate())
 
     function update() {
       const clearanceBottom = Array.from(
@@ -42,28 +44,56 @@ function useToastOffset() {
       setOffset((current) => (current === nextOffset ? current : nextOffset))
     }
 
-    function scheduleUpdate() {
-      if (frame !== undefined) cancelAnimationFrame(frame)
+    function syncObservedElements() {
+      const nextElements = new Set(
+        document.querySelectorAll<HTMLElement>(TOAST_CLEARANCE_SELECTOR),
+      )
+      observedElements.forEach((element) => {
+        if (!nextElements.has(element)) {
+          resizeObserver.unobserve(element)
+          observedElements.delete(element)
+        }
+      })
+      nextElements.forEach((element) => {
+        if (!observedElements.has(element)) {
+          resizeObserver.observe(element)
+          observedElements.add(element)
+        }
+      })
+    }
+
+    function scheduleUpdate(refreshElements = false) {
+      refreshObservedElements ||= refreshElements
+      if (frame !== undefined) return
       frame = requestAnimationFrame(() => {
         frame = undefined
-        resizeObserver.disconnect()
-        document.querySelectorAll<HTMLElement>(TOAST_CLEARANCE_SELECTOR).forEach((element) => {
-          resizeObserver.observe(element)
-        })
+        if (refreshObservedElements) syncObservedElements()
+        refreshObservedElements = false
         update()
       })
     }
 
-    const mutationObserver = new MutationObserver(scheduleUpdate)
+    const mutationObserver = new MutationObserver((mutations) => {
+      const clearanceMembershipChanged = mutations.some(({ addedNodes, removedNodes }) =>
+        [...addedNodes, ...removedNodes].some(
+          (node) =>
+            node instanceof Element &&
+            (node.matches(TOAST_CLEARANCE_SELECTOR) ||
+              node.querySelector(TOAST_CLEARANCE_SELECTOR) !== null),
+        ),
+      )
+      if (clearanceMembershipChanged) scheduleUpdate(true)
+    })
+    const handleWindowResize = () => scheduleUpdate()
     mutationObserver.observe(document.body, { childList: true, subtree: true })
-    window.addEventListener('resize', scheduleUpdate)
-    scheduleUpdate()
+    window.addEventListener('resize', handleWindowResize)
+    scheduleUpdate(true)
 
     return () => {
       if (frame !== undefined) cancelAnimationFrame(frame)
       resizeObserver.disconnect()
       mutationObserver.disconnect()
-      window.removeEventListener('resize', scheduleUpdate)
+      window.removeEventListener('resize', handleWindowResize)
     }
   }, [])
 
@@ -79,6 +109,7 @@ const Toaster = ({ ...props }: PushToasterProps) => {
       theme={theme as ToasterProps["theme"]}
       position="top-center"
       offset={offset}
+      mobileOffset={offset}
       className="toaster group"
       icons={{
         success: <CircleCheckIcon className="size-4" />,
