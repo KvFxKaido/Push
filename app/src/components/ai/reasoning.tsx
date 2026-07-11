@@ -114,7 +114,7 @@ export const ReasoningContent = memo(({ className, children, ...props }: Reasoni
   <CollapsibleContent
     className={cn(
       'mt-1.5 max-h-[300px] overflow-y-auto pl-3 border-l border-push-edge text-push-sm text-push-fg-dim',
-      'outline-none data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-1 data-[state=open]:slide-in-from-top-1 data-[state=closed]:animate-out data-[state=open]:animate-in',
+      'outline-none data-closed:fade-out-0 data-closed:slide-out-to-top-1 data-open:slide-in-from-top-1 data-closed:animate-out data-open:animate-in',
       className,
     )}
     {...props}

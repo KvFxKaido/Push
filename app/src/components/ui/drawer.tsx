@@ -1,20 +1,58 @@
 "use client"
 
 import * as React from "react"
-import { Drawer as DrawerPrimitive } from "vaul"
+import { Drawer as DrawerPrimitive } from "@base-ui/react/drawer"
 
 import { cn } from "@/lib/utils"
+import { asChildProps } from "./render-slot"
+
+// vaul spoke in drawer *placement* ("bottom" = docked at the bottom); Base UI
+// speaks in dismissal *swipe direction* ("down" = swipe down to dismiss).
+// Keep the vaul-era `direction` prop and translate.
+type DrawerDirection = "top" | "bottom" | "left" | "right"
+
+const SWIPE_DIRECTION: Record<
+  DrawerDirection,
+  React.ComponentProps<typeof DrawerPrimitive.Root>["swipeDirection"]
+> = {
+  top: "up",
+  bottom: "down",
+  left: "left",
+  right: "right",
+}
 
 function Drawer({
+  direction = "bottom",
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Root>) {
-  return <DrawerPrimitive.Root data-slot="drawer" {...props} />
+}: Omit<
+  React.ComponentProps<typeof DrawerPrimitive.Root>,
+  "swipeDirection"
+> & {
+  direction?: DrawerDirection
+}) {
+  return (
+    <DrawerPrimitive.Root
+      data-slot="drawer"
+      swipeDirection={SWIPE_DIRECTION[direction]}
+      {...props}
+    />
+  )
 }
 
 function DrawerTrigger({
+  asChild,
+  children,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Trigger>) {
-  return <DrawerPrimitive.Trigger data-slot="drawer-trigger" {...props} />
+}: React.ComponentProps<typeof DrawerPrimitive.Trigger> & {
+  asChild?: boolean
+}) {
+  return (
+    <DrawerPrimitive.Trigger
+      data-slot="drawer-trigger"
+      {...asChildProps(asChild, children)}
+      {...props}
+    />
+  )
 }
 
 function DrawerPortal({
@@ -24,20 +62,30 @@ function DrawerPortal({
 }
 
 function DrawerClose({
+  asChild,
+  children,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Close>) {
-  return <DrawerPrimitive.Close data-slot="drawer-close" {...props} />
+}: React.ComponentProps<typeof DrawerPrimitive.Close> & {
+  asChild?: boolean
+}) {
+  return (
+    <DrawerPrimitive.Close
+      data-slot="drawer-close"
+      {...asChildProps(asChild, children)}
+      {...props}
+    />
+  )
 }
 
 function DrawerOverlay({
   className,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Overlay>) {
+}: React.ComponentProps<typeof DrawerPrimitive.Backdrop>) {
   return (
-    <DrawerPrimitive.Overlay
+    <DrawerPrimitive.Backdrop
       data-slot="drawer-overlay"
       className={cn(
-        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/50",
+        "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 fixed inset-0 z-50 bg-black/50",
         className
       )}
       {...props}
@@ -49,28 +97,38 @@ function DrawerContent({
   className,
   children,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Content>) {
+}: React.ComponentProps<typeof DrawerPrimitive.Popup>) {
   return (
     <DrawerPortal data-slot="drawer-portal">
       <DrawerOverlay />
-      <DrawerPrimitive.Content
-        data-slot="drawer-content"
-        className={cn(
-          // Capacitor Android renders edge-to-edge; using env(safe-area-inset-*)
-          // for top/bottom keeps the drawer between the status and nav bars.
-          // Values are 0 on web/iOS-no-notch, so this is a no-op there.
-          "group/drawer-content bg-background fixed z-50 flex h-auto flex-col",
-          "data-[vaul-drawer-direction=top]:inset-x-0 data-[vaul-drawer-direction=top]:top-[env(safe-area-inset-top)] data-[vaul-drawer-direction=top]:mb-24 data-[vaul-drawer-direction=top]:max-h-[80dvh] data-[vaul-drawer-direction=top]:rounded-b-lg data-[vaul-drawer-direction=top]:border-b",
-          "data-[vaul-drawer-direction=bottom]:inset-x-0 data-[vaul-drawer-direction=bottom]:bottom-[env(safe-area-inset-bottom)] data-[vaul-drawer-direction=bottom]:mt-24 data-[vaul-drawer-direction=bottom]:max-h-[80dvh] data-[vaul-drawer-direction=bottom]:rounded-t-lg data-[vaul-drawer-direction=bottom]:border-t",
-          "data-[vaul-drawer-direction=right]:top-[env(safe-area-inset-top)] data-[vaul-drawer-direction=right]:bottom-[env(safe-area-inset-bottom)] data-[vaul-drawer-direction=right]:right-0 data-[vaul-drawer-direction=right]:w-3/4 data-[vaul-drawer-direction=right]:border-l data-[vaul-drawer-direction=right]:sm:max-w-sm",
-          "data-[vaul-drawer-direction=left]:top-[env(safe-area-inset-top)] data-[vaul-drawer-direction=left]:bottom-[env(safe-area-inset-bottom)] data-[vaul-drawer-direction=left]:left-0 data-[vaul-drawer-direction=left]:w-3/4 data-[vaul-drawer-direction=left]:border-r data-[vaul-drawer-direction=left]:sm:max-w-sm",
-          className
-        )}
-        {...props}
+      <DrawerPrimitive.Viewport
+        data-slot="drawer-viewport"
+        className="fixed inset-0 z-50"
       >
-        <div className="bg-muted mx-auto mt-4 hidden h-2 w-[100px] shrink-0 rounded-full group-data-[vaul-drawer-direction=bottom]/drawer-content:block" />
-        {children}
-      </DrawerPrimitive.Content>
+        <DrawerPrimitive.Popup
+          data-slot="drawer-content"
+          className={cn(
+            // Capacitor Android renders edge-to-edge; using env(safe-area-inset-*)
+            // for top/bottom keeps the drawer between the status and nav bars.
+            // Values are 0 on web/iOS-no-notch, so this is a no-op there.
+            "group/drawer-content bg-background fixed z-50 flex h-auto flex-col",
+            "data-[swipe-direction=up]:inset-x-0 data-[swipe-direction=up]:top-[env(safe-area-inset-top)] data-[swipe-direction=up]:mb-24 data-[swipe-direction=up]:max-h-[80dvh] data-[swipe-direction=up]:rounded-b-lg data-[swipe-direction=up]:border-b",
+            "data-[swipe-direction=down]:inset-x-0 data-[swipe-direction=down]:bottom-[env(safe-area-inset-bottom)] data-[swipe-direction=down]:mt-24 data-[swipe-direction=down]:max-h-[80dvh] data-[swipe-direction=down]:rounded-t-lg data-[swipe-direction=down]:border-t",
+            "data-[swipe-direction=right]:top-[env(safe-area-inset-top)] data-[swipe-direction=right]:bottom-[env(safe-area-inset-bottom)] data-[swipe-direction=right]:right-0 data-[swipe-direction=right]:w-3/4 data-[swipe-direction=right]:border-l data-[swipe-direction=right]:sm:max-w-sm",
+            "data-[swipe-direction=left]:top-[env(safe-area-inset-top)] data-[swipe-direction=left]:bottom-[env(safe-area-inset-bottom)] data-[swipe-direction=left]:left-0 data-[swipe-direction=left]:w-3/4 data-[swipe-direction=left]:border-r data-[swipe-direction=left]:sm:max-w-sm",
+            className
+          )}
+          {...props}
+        >
+          <div className="bg-muted mx-auto mt-4 hidden h-2 w-[100px] shrink-0 rounded-full group-data-[swipe-direction=down]/drawer-content:block" />
+          <DrawerPrimitive.Content
+            data-slot="drawer-content-inner"
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            {children}
+          </DrawerPrimitive.Content>
+        </DrawerPrimitive.Popup>
+      </DrawerPrimitive.Viewport>
     </DrawerPortal>
   )
 }
@@ -80,7 +138,7 @@ function DrawerHeader({ className, ...props }: React.ComponentProps<"div">) {
     <div
       data-slot="drawer-header"
       className={cn(
-        "flex flex-col gap-0.5 p-4 group-data-[vaul-drawer-direction=bottom]/drawer-content:text-center group-data-[vaul-drawer-direction=top]/drawer-content:text-center md:gap-1.5 md:text-left",
+        "flex flex-col gap-0.5 p-4 group-data-[swipe-direction=down]/drawer-content:text-center group-data-[swipe-direction=up]/drawer-content:text-center md:gap-1.5 md:text-left",
         className
       )}
       {...props}

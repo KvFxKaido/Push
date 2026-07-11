@@ -447,7 +447,7 @@ export function RepoLauncherPanel({
                         event.preventDefault();
                         void loadBranchesForRepo(repo.full_name, true);
                       }}
-                      className="mx-1 rounded-full px-3 py-2 text-xs text-push-link focus:bg-white/[0.04]"
+                      className="mx-1 rounded-full px-3 py-2 text-xs text-push-link data-highlighted:bg-white/[0.04]"
                     >
                       Retry
                     </DropdownMenuItem>
@@ -469,7 +469,7 @@ export function RepoLauncherPanel({
                     <DropdownMenuItem
                       key={branch.name}
                       onSelect={() => onSelectRepo(repo, branch.name)}
-                      className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 focus:bg-white/[0.04]"
+                      className="mx-1 flex items-center gap-2 rounded-full px-3 py-2 data-highlighted:bg-white/[0.04]"
                     >
                       <span className="min-w-0 flex-1 truncate text-xs text-push-fg-secondary">
                         {branch.name}
