@@ -62,4 +62,33 @@ describe('buildInlineConversationSeed', () => {
     expect(seed.contentParts).toEqual(contentParts);
     expect(seed.contentBlocks).toBeUndefined();
   });
+
+  // Regression: an assistant turn whose whole answer stayed on the reasoning
+  // channel (content '', thinking carrying the reply the user read) seeded an
+  // empty-content message that the wire builder (`toLLMMessages`) drops — the
+  // turn the user was replying to never reached the model again.
+  it('promotes stranded reasoning to content for content-empty assistant turns', () => {
+    const [seed] = buildInlineConversationSeed([
+      msg({
+        role: 'assistant',
+        content: '',
+        thinking: 'I can check the recent commits for you.',
+      }),
+    ]);
+    expect(seed.content).toBe('I can check the recent commits for you.');
+  });
+
+  it('keeps real content and leaves signed-reasoning turns untouched', () => {
+    const [withContent] = buildInlineConversationSeed([
+      msg({ role: 'assistant', content: 'Real answer.', thinking: 'deliberation' }),
+    ]);
+    expect(withContent.content).toBe('Real answer.');
+
+    const reasoningBlocks = [{ type: 'thinking' as const, text: 'signed', signature: 'sig' }];
+    const [signed] = buildInlineConversationSeed([
+      msg({ role: 'assistant', content: '', thinking: 'signed', reasoningBlocks }),
+    ]);
+    expect(signed.content).toBe('');
+    expect(signed.reasoningBlocks).toEqual(reasoningBlocks);
+  });
 });

@@ -72,7 +72,7 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
-import { stripToolCallPayload } from '@/lib/message-content';
+import { strandedReasoningAnswerText, stripToolCallPayload } from '@/lib/message-content';
 import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
@@ -130,11 +130,26 @@ export interface InlineCoderTurnResult {
 const PRIOR_TURNS_MAX = 6;
 const PRIOR_TURN_MAX_CHARS = 700;
 
-export function buildInlineTurnPreamble(
-  trimmedText: string,
-  apiMessages: ReadonlyArray<ChatMessage>,
-): string {
-  const prior = apiMessages
+/**
+ * The text a prior turn contributes to the preamble. Falls back to the
+ * tool-call-stripped reasoning for an assistant turn whose answer stayed on
+ * the reasoning channel (`content` empty, `thinking` carrying the reply the
+ * user actually read) — without the fallback that turn is filtered out below
+ * and the next turn's model contradicts the transcript the user can see.
+ */
+function priorTurnText(m: ChatMessage): string {
+  return (m.displayContent ?? m.content).trim() || (strandedReasoningAnswerText(m) ?? '');
+}
+
+/**
+ * The shared prior-turn window: the messages `buildInlineTurnPreamble` renders
+ * and the attachment extraction walks. One function so the two consumers can't
+ * drift (they were previously hand-copied filters). `visibleToModel !== false`
+ * mirrors the Orchestrator's filterVisibleStage — display-only messages (fork
+ * dividers, aborted partials) never reach the wire.
+ */
+function priorTurnWindow(apiMessages: ReadonlyArray<ChatMessage>): ChatMessage[] {
+  return apiMessages
     .slice(0, -1)
     .filter(
       (m) =>
@@ -142,15 +157,22 @@ export function buildInlineTurnPreamble(
         !m.isToolCall &&
         !m.isToolResult &&
         m.visibleToModel !== false &&
-        Boolean((m.displayContent ?? m.content).trim()),
+        priorTurnText(m).length > 0,
     )
     .slice(-PRIOR_TURNS_MAX);
+}
+
+export function buildInlineTurnPreamble(
+  trimmedText: string,
+  apiMessages: ReadonlyArray<ChatMessage>,
+): string {
+  const prior = priorTurnWindow(apiMessages);
 
   const lines: string[] = [];
   if (prior.length > 0) {
     lines.push('Prior conversation in this chat (oldest to newest, truncated):');
     for (const msg of prior) {
-      const text = (msg.displayContent ?? msg.content).trim();
+      const text = priorTurnText(msg);
       const clipped =
         text.length > PRIOR_TURN_MAX_CHARS ? `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…` : text;
       lines.push(`[${msg.role}] ${clipped}`);
@@ -916,21 +938,9 @@ export async function startInlineCoderTurn(
     ? buildInlineConversationSeed(apiMessagesForContext)
     : undefined;
 
-  // Derive the exact window buildInlineTurnPreamble uses (same filter + cap)
-  // so attachment extraction never drifts outside the text preamble's horizon.
-  // `visibleToModel !== false` mirrors the Orchestrator's filterVisibleStage —
-  // display-only messages (fork dividers, aborted partials) never reach the wire.
-  const priorWindow = apiMessagesForContext
-    .slice(0, -1)
-    .filter(
-      (m) =>
-        (m.role === 'user' || m.role === 'assistant') &&
-        !m.isToolCall &&
-        !m.isToolResult &&
-        m.visibleToModel !== false &&
-        Boolean((m.displayContent ?? m.content).trim()),
-    )
-    .slice(-PRIOR_TURNS_MAX);
+  // The exact window buildInlineTurnPreamble renders (shared helper) so
+  // attachment extraction never drifts outside the text preamble's horizon.
+  const priorWindow = priorTurnWindow(apiMessagesForContext);
 
   // Collect attachment parts from that window. Prefer pre-converted
   // contentParts (kernel turns store images there, not in attachments);

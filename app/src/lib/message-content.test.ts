@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { looksLikeToolCall, stripToolCallPayload } from './message-content';
+import {
+  looksLikeToolCall,
+  strandedReasoningAnswerText,
+  stripToolCallPayload,
+} from './message-content';
 
 describe('looksLikeToolCall', () => {
   it('detects braced tool objects during streaming', () => {
@@ -143,5 +147,52 @@ describe('stripToolCallPayload', () => {
     expect(stripToolCallPayload(content)).toBe(
       "Let me pull up the open issues so I can give you a real read on what's ripe.",
     );
+  });
+});
+
+describe('strandedReasoningAnswerText', () => {
+  const stranded = (extra: Record<string, unknown> = {}) => ({
+    role: 'assistant' as const,
+    content: '',
+    thinking: 'The user wants recent changes. I can list the latest commits for them.',
+    ...extra,
+  });
+
+  it('salvages the reasoning of a content-empty assistant turn', () => {
+    expect(strandedReasoningAnswerText(stranded())).toBe(
+      'The user wants recent changes. I can list the latest commits for them.',
+    );
+  });
+
+  it('returns null when content is already present', () => {
+    expect(strandedReasoningAnswerText(stranded({ content: 'Real answer.' }))).toBeNull();
+    expect(strandedReasoningAnswerText(stranded({ displayContent: 'Rendered.' }))).toBeNull();
+  });
+
+  it('returns null for user messages and for turns without reasoning', () => {
+    expect(strandedReasoningAnswerText({ role: 'user', content: '', thinking: 'x' })).toBeNull();
+    expect(strandedReasoningAnswerText(stranded({ thinking: undefined }))).toBeNull();
+    expect(strandedReasoningAnswerText(stranded({ thinking: '   ' }))).toBeNull();
+  });
+
+  it('returns null when signed reasoningBlocks own the replay contract', () => {
+    expect(
+      strandedReasoningAnswerText(stranded({ reasoningBlocks: [{ type: 'thinking' }] })),
+    ).toBeNull();
+  });
+
+  it('strips buried tool-call payloads and returns null when nothing else remains', () => {
+    expect(
+      strandedReasoningAnswerText(
+        stranded({
+          thinking: 'I should check the log.\n{"tool":"sandbox_exec","args":{"command":"git log"}}',
+        }),
+      ),
+    ).toBe('I should check the log.');
+    expect(
+      strandedReasoningAnswerText(
+        stranded({ thinking: '{"tool":"sandbox_exec","args":{"command":"git log"}}' }),
+      ),
+    ).toBeNull();
   });
 });

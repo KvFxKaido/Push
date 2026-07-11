@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@/types';
 import { buildAttachmentContentBlocks } from './attachment-content-parts';
+import { strandedReasoningAnswerText } from './message-content';
 import type { CoderLoopMessage } from '@push/lib/coder-agent';
 
 /**
@@ -41,10 +42,18 @@ function toSeedMessage(message: ChatMessage): CoderLoopMessage {
       ? undefined
       : buildAttachmentContentBlocks(message.content, message.attachments);
 
+  // Assistant turn whose whole answer lives on the reasoning channel
+  // (`content` empty, `thinking` carrying the reply the user read in the UI):
+  // seed the salvaged reasoning as its content, or the wire builder's
+  // empty-assistant drop erases the turn and the model contradicts the visible
+  // transcript on the next send. Signed-reasoning turns are excluded inside
+  // the helper — their empty content is part of the replay contract.
+  const strandedAnswer = strandedReasoningAnswerText(message);
+
   return {
     id: message.id,
     role: message.role,
-    content: message.content,
+    content: strandedAnswer ?? message.content,
     timestamp: message.timestamp,
     ...(contentParts && contentParts.length > 0 ? { contentParts } : {}),
     ...(contentBlocks && contentBlocks.length > 0 ? { contentBlocks } : {}),

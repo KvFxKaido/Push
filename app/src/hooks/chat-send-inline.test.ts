@@ -332,6 +332,36 @@ describe('buildInlineTurnPreamble', () => {
       'Task: solo task',
     );
   });
+
+  // Regression: a heavy reasoner can end a turn with the whole reply on the
+  // reasoning channel (content '', thinking carrying the answer the user read
+  // in the Thought-process pane). Keying the history filter on content alone
+  // dropped that turn, so the next turn's model saw the user's messages but
+  // none of its own replies and reported the conversation as brand-new.
+  it('falls back to stranded reasoning for a content-empty assistant turn', () => {
+    const history: ChatMessage[] = [
+      msg('user', 'what changed recently in push'),
+      msg('assistant', '', {
+        thinking: 'The user wants recent changes — I can check the commit list for them.',
+      }),
+      msg('user', "yea let's do it"),
+    ];
+    const preamble = buildInlineTurnPreamble("yea let's do it", history);
+    expect(preamble).toContain('[user] what changed recently in push');
+    expect(preamble).toContain(
+      '[assistant] The user wants recent changes — I can check the commit list for them.',
+    );
+  });
+
+  it('still drops content-empty assistant turns whose reasoning is only tool payload', () => {
+    const history: ChatMessage[] = [
+      msg('assistant', '', {
+        thinking: '{"tool":"sandbox_exec","args":{"command":"git log"}}',
+      }),
+      msg('user', 'the task'),
+    ];
+    expect(buildInlineTurnPreamble('the task', history)).toBe('Task: the task');
+  });
 });
 
 // ---------------------------------------------------------------------------
