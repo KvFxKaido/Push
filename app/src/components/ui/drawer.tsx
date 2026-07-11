@@ -4,6 +4,7 @@ import * as React from "react"
 import { Drawer as DrawerPrimitive } from "@base-ui/react/drawer"
 
 import { cn } from "@/lib/utils"
+import { asChildProps } from "./render-slot"
 
 // vaul spoke in drawer *placement* ("bottom" = docked at the bottom); Base UI
 // speaks in dismissal *swipe direction* ("down" = swipe down to dismiss).
@@ -39,9 +40,19 @@ function Drawer({
 }
 
 function DrawerTrigger({
+  asChild,
+  children,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Trigger>) {
-  return <DrawerPrimitive.Trigger data-slot="drawer-trigger" {...props} />
+}: React.ComponentProps<typeof DrawerPrimitive.Trigger> & {
+  asChild?: boolean
+}) {
+  return (
+    <DrawerPrimitive.Trigger
+      data-slot="drawer-trigger"
+      {...asChildProps(asChild, children)}
+      {...props}
+    />
+  )
 }
 
 function DrawerPortal({
@@ -51,9 +62,19 @@ function DrawerPortal({
 }
 
 function DrawerClose({
+  asChild,
+  children,
   ...props
-}: React.ComponentProps<typeof DrawerPrimitive.Close>) {
-  return <DrawerPrimitive.Close data-slot="drawer-close" {...props} />
+}: React.ComponentProps<typeof DrawerPrimitive.Close> & {
+  asChild?: boolean
+}) {
+  return (
+    <DrawerPrimitive.Close
+      data-slot="drawer-close"
+      {...asChildProps(asChild, children)}
+      {...props}
+    />
+  )
 }
 
 function DrawerOverlay({
