@@ -39,9 +39,13 @@ async function selection(): Promise<void> {
   if (!isNativePlatform()) return;
   try {
     const { Haptics } = await import('@capacitor/haptics');
-    // A single discrete tick — the generator prepares lazily, so a lone
-    // selectionChanged() ticks once on both platforms without a start/end pair.
+    // Capacitor's selectionChanged() only fires inside an open selection
+    // session (Android guards on selectionStarted; iOS on a prepared
+    // generator), so bracket it with start/end to emit exactly one tick
+    // and leave no session open.
+    await Haptics.selectionStart();
     await Haptics.selectionChanged();
+    await Haptics.selectionEnd();
   } catch {
     // Best effort — haptics are non-essential polish.
   }
