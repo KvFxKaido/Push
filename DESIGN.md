@@ -4,7 +4,7 @@
 
 Dark-only, mobile-first interface for a developer productivity tool.
 High information density, minimal visual noise, careful motion timing.
-Built on Tailwind CSS + shadcn/ui (New York style) with Radix primitives.
+Built on Tailwind CSS + shadcn/ui (New York style) on Base UI primitives (migrated from Radix in #1411).
 This document defines the visual system for the graphical app surfaces — tokens, components, motion, and the product voice the copy on those surfaces follows. CLI/TUI presentation is documented separately and may follow shared semantic intent without matching these exact tokens or components.
 
 ## Voice & content
@@ -288,9 +288,9 @@ One open/close vocabulary for every panel — the shadcn Sheets and any custom f
 
 ### Menu / dropdown open
 
-Every menu that pops from a trigger — dropdown, context menu, menubar, select, popover, hover card, and their submenus — scales up from its trigger origin + fades. The scale/slide come from the shadcn primitives' own `animate-in` classes; `index.css` retimes them (by `[data-slot=…-content][data-state]`) onto the shared tokens with a snappy asymmetric cadence: **open `--motion-normal` (250ms), close `--motion-fast` (150ms)**, both on `--ease-spring`. The retune keys off Radix's `data-state`, so a menu opened by mouse, keyboard, or touch all get the same feel. One feel across the whole menu family; sheets and tooltips keep their own timing.
+Every menu that pops from a trigger — dropdown, context menu, menubar, select, popover, hover card, and their submenus — scales up from its trigger origin + fades. The scale/slide come from the shadcn primitives' own `animate-in` classes; `index.css` retimes them (by `[data-slot=…-content][data-open]` / `[data-closed]`) onto the shared tokens with a snappy asymmetric cadence: **open `--motion-normal` (250ms), close `--motion-fast` (150ms)**, both on `--ease-spring`. The retune keys off Base UI's valueless `data-open` / `data-closed` attributes, so a menu opened by mouse, keyboard, or touch all get the same feel. One feel across the whole menu family; sheets and tooltips keep their own timing.
 
-Custom (non-Radix) menus that mount on open — e.g. the workspace branch picker — can't hook the `data-state` retune, so they reuse the **`.menu-pop-in`** class (a one-shot scale-from-origin + fade on the same open cadence; pair with an `origin-*` utility to anchor the scale to the trigger corner).
+Custom (non-Base-UI) menus that mount on open — e.g. the workspace branch picker — can't hook the `data-open` / `data-closed` retune, so they reuse the **`.menu-pop-in`** class (a one-shot scale-from-origin + fade on the same open cadence; pair with an `origin-*` utility to anchor the scale to the trigger corner).
 
 **Modals / dialogs** (`dialog-content`, `alert-dialog-content`) join the same family on the same cadence (open `--motion-normal` / close `--motion-fast`, spring ease), but scale from **center** rather than a trigger origin — the shadcn dialog's own zoom-in keyframe, just retimed.
 
@@ -356,10 +356,10 @@ Named keyframe animations in `app/src/index.css`. Consume the class directly —
 
 ### Tooltips (`Tip`)
 
-The shared "explain this control" affordance — use it instead of a native `title=` on icon buttons and terse controls. `<Tip content="…">{trigger}</Tip>` wraps the retuned Radix tooltip (`components/ui/tooltip.tsx`): a dark raised-chrome surface (`bg-push-surface-raised` + `border-push-edge` + `shadow-push-lg`) that animates with the transitions.dev feel — scale 0.98 → 1 + fade, 150ms in / 75ms out, `ease-out`, pure scale from the Radix origin (no slide). It portals out of `overflow:hidden` panels and collides at edges; `max-w` + `text-balance` let longer copy wrap.
+The shared "explain this control" affordance — use it instead of a native `title=` on icon buttons and terse controls. `<Tip content="…">{trigger}</Tip>` wraps the retuned Base UI tooltip (`components/ui/tooltip.tsx`): a dark raised-chrome surface (`bg-push-surface-raised` + `border-push-edge` + `shadow-push-lg`) that animates with the transitions.dev feel — scale 0.98 → 1 + fade, 150ms in / 75ms out, `ease-out`, pure scale from the popup origin (no slide). It portals out of `overflow:hidden` panels and collides at edges; `max-w` + `text-balance` let longer copy wrap.
 
 - **Reveal (mobile-first):** hover/focus on pointer devices; **long-press** (~400ms) on touch, since hover doesn't exist there. `open` is controlled so both paths drive it; a move/lift before the hold completes aborts. The press-and-hold detection is the shared `useLongPress` hook (`hooks/useLongPress.ts`) — also used by the workspace branch picker, where long-press / hover **reveals a collapsed Delete** (one tap to delete; `consumeClick` keeps the reveal-press from also switching branches).
-- Keep an **`aria-label`** on icon-only triggers — Radix supplies `aria-describedby` (the description), not the accessible *name*.
+- Keep an **`aria-label`** on icon-only triggers — the tooltip primitive supplies `aria-describedby` (the description), not the accessible *name*.
 - Long-press is a progressive enhancement: on touch the subsequent tap still fires the control, so be deliberate on destructive triggers.
 
 ### Buttons
@@ -407,7 +407,7 @@ The shared "explain this control" affordance — use it instead of a native `tit
 
 ## Composition layer
 
-The tables above are the **token** layer. The components in `components/ui/` are the **primitive** layer (shadcn, intentionally untouched). Sitting between them is the **composition** layer — the actual Push visual language. It comes in two pieces.
+The tables above are the **token** layer. The components in `components/ui/` are the **primitive** layer (shadcn-style wrappers on Base UI — the vendored layer Push composes around, not restyled per-use). Sitting between them is the **composition** layer — the actual Push visual language. It comes in two pieces.
 
 ### Hub utility classes — `app/src/components/chat/hub-styles.tsx`
 

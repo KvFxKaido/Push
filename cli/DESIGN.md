@@ -6,7 +6,7 @@
 
 Push CLI uses a terminal-first presentation model built for keyboard-driven coding workflows. It prioritizes transcript readability, status clarity, diff legibility, and stable layout over decorative styling.
 
-This document describes CLI/TUI-specific presentation guidance. It does not define the graphical app token system, Tailwind styles, or Radix/shadcn component usage.
+This document describes CLI/TUI-specific presentation guidance. It does not define the graphical app token system, Tailwind styles, or Base UI/shadcn component usage.
 
 ## Design Principles
 

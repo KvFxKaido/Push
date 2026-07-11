@@ -186,7 +186,7 @@ sandbox/
 - **PascalCase** for components, **camelCase** for functions/variables
 
 ### Styling
-- **Tailwind CSS** + **shadcn/ui** (Radix primitives)
+- **Tailwind CSS** + **shadcn/ui** (Base UI primitives)
 - Use `cn()` helper for class merging (from `lib/utils.ts`)
 - Mobile-first responsive design
 
