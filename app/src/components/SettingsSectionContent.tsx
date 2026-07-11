@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import { BranchWaveIcon, GitHubMarkIcon, LockIcon } from '@/components/icons/push-custom-icons';
 import { getMalformedToolCallMetrics } from '@/lib/tool-call-metrics';
 import { RUN_TOKEN_BUDGET_PRESETS } from '@/lib/run-token-budget-pref';
@@ -8,12 +8,12 @@ import { fileLedger } from '@/lib/file-awareness-ledger';
 import { ProviderIcon } from '@/components/ui/provider-icon';
 import { ModelPicker } from '@/components/ui/model-picker';
 import { Button } from '@/components/ui/button';
+import { SettingsAccordion, SettingsAccordionItem } from '@/components/SettingsAccordion';
 import {
   BUILT_IN_SETTINGS_PROVIDER_META,
   BUILT_IN_SETTINGS_PROVIDER_ORDER,
   PROVIDER_LABELS,
   TAVILY_SETTINGS_META,
-  type BuiltInSettingsProviderId,
 } from '@/components/settings-shared';
 import {
   ProviderKeySection,
@@ -155,33 +155,15 @@ export function SettingsSectionContent({
   // directly rather than threaded through SettingsAIProps: it's a module-level
   // cached snapshot, and no other layer needs to transform it.
   const credentials = useProviderCredentials();
-  const [expandedBuiltInProviders, setExpandedBuiltInProviders] = useState<
-    Record<BuiltInSettingsProviderId, boolean>
-  >(() => {
-    const activeBuiltIn = BUILT_IN_SETTINGS_PROVIDER_ORDER.find(
-      (providerId) => providerId === ai.activeBackend,
-    );
-    const fallbackOpen =
-      activeBuiltIn ??
-      BUILT_IN_SETTINGS_PROVIDER_ORDER.find(
-        (providerId) => ai.builtInProviders[providerId].hasKey,
-      ) ??
-      'zen';
-
-    return Object.fromEntries(
-      BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => [
-        providerId,
-        providerId === fallbackOpen,
-      ]),
-    ) as Record<BuiltInSettingsProviderId, boolean>;
-  });
-
-  const toggleBuiltInProvider = (providerId: BuiltInSettingsProviderId) => {
-    setExpandedBuiltInProviders((prev) => ({
-      ...prev,
-      [providerId]: !prev[providerId],
-    }));
-  };
+  // Provider accordion: single-open, seeded with the provider that matters
+  // most right now — the active backend, else the first one with a key, else
+  // zen. Uncontrolled after mount, so picking a backend elsewhere in the tab
+  // doesn't yank the accordion out from under the user.
+  const defaultOpenProvider =
+    (ai.activeBackend === 'cloudflare' ? 'cloudflare' : null) ??
+    BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => providerId === ai.activeBackend) ??
+    BUILT_IN_SETTINGS_PROVIDER_ORDER.find((providerId) => ai.builtInProviders[providerId].hasKey) ??
+    'zen';
 
   return (
     <div className="flex flex-col gap-6 px-3 pt-2 pb-8">
@@ -1159,187 +1141,167 @@ export function SettingsSectionContent({
               </div>
             )}
 
-            {BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => {
-              const provider = ai.builtInProviders[providerId];
-              const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
-              const label = PROVIDER_LABELS[providerId];
-              const expanded = expandedBuiltInProviders[providerId] ?? false;
-              const modelLabel = meta.labelTransform
-                ? meta.labelTransform(provider.model)
-                : provider.model;
-              const source = credentials.sources[providerId] ?? null;
-              const headerStatus =
-                source === 'gateway-byok'
-                  ? 'Key in gateway'
-                  : source === 'worker-secret'
-                    ? 'Server key'
-                    : provider.hasKey || source === 'user-key'
-                      ? 'Connected'
-                      : 'No key configured';
+            <SettingsAccordion type="single" collapsible defaultValue={defaultOpenProvider}>
+              {BUILT_IN_SETTINGS_PROVIDER_ORDER.map((providerId) => {
+                const provider = ai.builtInProviders[providerId];
+                const meta = BUILT_IN_SETTINGS_PROVIDER_META[providerId];
+                const label = PROVIDER_LABELS[providerId];
+                const modelLabel = meta.labelTransform
+                  ? meta.labelTransform(provider.model)
+                  : provider.model;
+                const source = credentials.sources[providerId] ?? null;
+                const headerStatus =
+                  source === 'gateway-byok'
+                    ? 'Key in gateway'
+                    : source === 'worker-secret'
+                      ? 'Server key'
+                      : provider.hasKey || source === 'user-key'
+                        ? 'Connected'
+                        : 'No key configured';
 
-              return (
-                <div
-                  key={providerId}
-                  className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3"
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggleBuiltInProvider(providerId)}
-                    className="flex w-full items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2.5 text-left transition-colors hover:border-push-edge-hover"
-                    aria-expanded={expanded}
-                  >
-                    <div className="min-w-0 flex items-center gap-2.5">
+                return (
+                  <SettingsAccordionItem
+                    key={providerId}
+                    value={providerId}
+                    startContent={
                       <ProviderIcon provider={providerId as AIProviderType} size={14} />
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium text-push-fg-secondary">{label}</p>
-                        <p className="truncate text-[11px] text-push-fg-dim">
-                          {headerStatus === 'No key configured'
-                            ? headerStatus
-                            : `${headerStatus}${modelLabel ? ` · ${modelLabel}` : ''}`}
-                        </p>
-                      </div>
-                    </div>
-                    <ChevronDown
-                      className={`h-4 w-4 shrink-0 text-push-fg-dim transition-transform ${expanded ? 'rotate-180' : ''}`}
+                    }
+                    title={label}
+                    subtitle={
+                      headerStatus === 'No key configured'
+                        ? headerStatus
+                        : `${headerStatus}${modelLabel ? ` · ${modelLabel}` : ''}`
+                    }
+                  >
+                    <ProviderKeySection
+                      label={label}
+                      hasKey={provider.hasKey}
+                      keyInput={provider.keyInput}
+                      setKeyInput={provider.setKeyInput}
+                      saveKey={() => provider.setKey(provider.keyInput.trim())}
+                      clearKey={provider.clearKey}
+                      activeBackend={ai.activeBackend}
+                      backendId={providerId}
+                      clearPreferredProvider={ai.clearPreferredProvider}
+                      setActiveBackend={ai.setActiveBackend}
+                      placeholder={meta.placeholder}
+                      saveLabel={meta.saveLabel}
+                      hint={meta.hint}
+                      credentialSource={source}
+                      byokPartialNote={meta.byokPartialNote}
+                      model={{
+                        value: provider.model,
+                        set: provider.setModel,
+                        options: provider.modelOptions,
+                        isLocked: provider.isModelLocked,
+                        lockedModel: ai.lockedModel,
+                      }}
+                      refresh={{
+                        trigger: provider.refreshModels,
+                        loading: provider.modelsLoading,
+                        error: provider.modelsError,
+                        updatedAt: provider.modelsUpdatedAt,
+                      }}
                     />
-                  </button>
-                  {expanded && (
-                    <>
-                      <ProviderKeySection
-                        label={label}
-                        hasKey={provider.hasKey}
-                        keyInput={provider.keyInput}
-                        setKeyInput={provider.setKeyInput}
-                        saveKey={() => provider.setKey(provider.keyInput.trim())}
-                        clearKey={provider.clearKey}
-                        activeBackend={ai.activeBackend}
-                        backendId={providerId}
-                        clearPreferredProvider={ai.clearPreferredProvider}
-                        setActiveBackend={ai.setActiveBackend}
-                        placeholder={meta.placeholder}
-                        saveLabel={meta.saveLabel}
-                        hint={meta.hint}
-                        credentialSource={source}
-                        byokPartialNote={meta.byokPartialNote}
-                        model={{
-                          value: provider.model,
-                          set: provider.setModel,
-                          options: provider.modelOptions,
-                          isLocked: provider.isModelLocked,
-                          lockedModel: ai.lockedModel,
-                        }}
-                        refresh={{
-                          trigger: provider.refreshModels,
-                          loading: provider.modelsLoading,
-                          error: provider.modelsError,
-                          updatedAt: provider.modelsUpdatedAt,
-                        }}
-                      />
-                      {/* OpenCode Go is a SEPARATE service from pay-as-you-go
+                    {/* OpenCode Go is a SEPARATE service from pay-as-you-go
                           Zen — a subscription with its own model pool and
                           billing. This toggle selects which service chats
                           route to, so it must stay visible whenever zen has
                           ANY credential (local, account, gateway, or Worker),
                           not only when a local key exists. */}
-                      {providerId === 'zen' &&
-                        (provider.hasKey || source != null) &&
-                        provider.setGoMode && (
-                          <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
-                            <span className="min-w-0">
-                              <span className="block text-xs text-push-fg-muted">OpenCode Go</span>
-                              <span className="block text-[11px] text-push-fg-dim">
-                                Separate subscription service — routes chats to the Go pool instead
-                                of pay-as-you-go Zen.
-                              </span>
+                    {providerId === 'zen' &&
+                      (provider.hasKey || source != null) &&
+                      provider.setGoMode && (
+                        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2">
+                          <span className="min-w-0">
+                            <span className="block text-xs text-push-fg-muted">OpenCode Go</span>
+                            <span className="block text-[11px] text-push-fg-dim">
+                              Separate subscription service — routes chats to the Go pool instead of
+                              pay-as-you-go Zen.
                             </span>
-                            <input
-                              type="checkbox"
-                              checked={provider.goMode ?? false}
-                              onChange={(e) => provider.setGoMode!(e.target.checked)}
-                              className="h-3.5 w-3.5 shrink-0 accent-emerald-400"
-                            />
-                          </label>
-                        )}
-                    </>
-                  )}
-                </div>
-              );
-            })}
+                          </span>
+                          <input
+                            type="checkbox"
+                            checked={provider.goMode ?? false}
+                            onChange={(e) => provider.setGoMode!(e.target.checked)}
+                            className="h-3.5 w-3.5 shrink-0 accent-emerald-400"
+                          />
+                        </label>
+                      )}
+                  </SettingsAccordionItem>
+                );
+              })}
 
-            <div className="space-y-2 rounded-2xl border border-push-edge bg-push-surface/35 p-3">
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-2.5">
-                <div className="min-w-0 flex items-center gap-2.5">
-                  <ProviderIcon provider="cloudflare" size={14} />
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium text-push-fg-secondary">
-                      {PROVIDER_LABELS.cloudflare}
-                    </p>
-                    <p className="truncate text-[11px] text-push-fg-dim">
-                      {ai.cloudflareProvider.configured
-                        ? `Configured on Worker${ai.cloudflareProvider.model ? ` · ${formatModelDisplayName('cloudflare', ai.cloudflareProvider.model)}` : ''}`
-                        : 'Not configured on Worker'}
-                    </p>
+              <SettingsAccordionItem
+                value="cloudflare"
+                startContent={<ProviderIcon provider="cloudflare" size={14} />}
+                title={PROVIDER_LABELS.cloudflare}
+                subtitle={
+                  ai.cloudflareProvider.configured
+                    ? `Configured on Worker${ai.cloudflareProvider.model ? ` · ${formatModelDisplayName('cloudflare', ai.cloudflareProvider.model)}` : ''}`
+                    : 'Not configured on Worker'
+                }
+                endContent={
+                  <>
+                    {ai.cloudflareProvider.statusLoading && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-push-fg-dim" />
+                    )}
+                    <span
+                      className={`h-2 w-2 rounded-full ${
+                        ai.cloudflareProvider.configured ? 'bg-emerald-500' : 'bg-push-fg-dim'
+                      }`}
+                    />
+                  </>
+                }
+              >
+                <div className="rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-3">
+                  <label className="text-xs font-medium text-push-fg-secondary">
+                    Worker-bound model
+                  </label>
+                  <div className="mt-2">
+                    <ModelPicker
+                      provider="cloudflare"
+                      value={ai.cloudflareProvider.model}
+                      options={ai.cloudflareProvider.modelOptions}
+                      onChange={ai.cloudflareProvider.setModel}
+                      disabled={ai.cloudflareProvider.modelsLoading}
+                      onRefresh={() => ai.cloudflareProvider.refreshModels()}
+                      isRefreshing={ai.cloudflareProvider.modelsLoading}
+                      refreshAriaLabel="Refresh Cloudflare models"
+                      ariaLabel="Select Cloudflare Workers AI model"
+                    />
                   </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {ai.cloudflareProvider.statusLoading && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-push-fg-dim" />
-                  )}
-                  <div
-                    className={`h-2 w-2 rounded-full ${
-                      ai.cloudflareProvider.configured ? 'bg-emerald-500' : 'bg-push-fg-dim'
-                    }`}
-                  />
-                </div>
-              </div>
 
-              <div className="rounded-xl border border-push-edge-subtle bg-push-surface/45 px-3 py-3">
-                <label className="text-xs font-medium text-push-fg-secondary">
-                  Worker-bound model
-                </label>
-                <div className="mt-2">
-                  <ModelPicker
-                    provider="cloudflare"
-                    value={ai.cloudflareProvider.model}
-                    options={ai.cloudflareProvider.modelOptions}
-                    onChange={ai.cloudflareProvider.setModel}
-                    disabled={ai.cloudflareProvider.modelsLoading}
-                    onRefresh={() => ai.cloudflareProvider.refreshModels()}
-                    isRefreshing={ai.cloudflareProvider.modelsLoading}
-                    refreshAriaLabel="Refresh Cloudflare models"
-                    ariaLabel="Select Cloudflare Workers AI model"
-                  />
-                </div>
-
-                <p className="mt-2 text-push-xs text-push-fg-dim">
-                  Uses the deployed Worker binding via `env.AI`. No local API key needed.
-                </p>
-                <p className="mt-1 text-push-xs text-push-fg-dim">
-                  Usage is billed to the deployed Worker&apos;s Cloudflare account, not your browser
-                  session.
-                </p>
-                {ai.cloudflareProvider.statusError && (
-                  <p className="mt-2 text-push-xs text-amber-400">
-                    {ai.cloudflareProvider.statusError}
-                  </p>
-                )}
-                {ai.cloudflareProvider.modelsError && (
-                  <p className="mt-2 text-push-xs text-amber-400">
-                    {ai.cloudflareProvider.modelsError}
-                  </p>
-                )}
-                {ai.cloudflareProvider.isModelLocked && ai.lockedModel && (
-                  <p className="mt-2 text-push-xs text-amber-400">
-                    This chat keeps using {ai.lockedModel}.
-                  </p>
-                )}
-                {ai.cloudflareProvider.modelsUpdatedAt && (
                   <p className="mt-2 text-push-xs text-push-fg-dim">
-                    Updated {new Date(ai.cloudflareProvider.modelsUpdatedAt).toLocaleTimeString()}
+                    Uses the deployed Worker binding via `env.AI`. No local API key needed.
                   </p>
-                )}
-              </div>
-            </div>
+                  <p className="mt-1 text-push-xs text-push-fg-dim">
+                    Usage is billed to the deployed Worker&apos;s Cloudflare account, not your
+                    browser session.
+                  </p>
+                  {ai.cloudflareProvider.statusError && (
+                    <p className="mt-2 text-push-xs text-amber-400">
+                      {ai.cloudflareProvider.statusError}
+                    </p>
+                  )}
+                  {ai.cloudflareProvider.modelsError && (
+                    <p className="mt-2 text-push-xs text-amber-400">
+                      {ai.cloudflareProvider.modelsError}
+                    </p>
+                  )}
+                  {ai.cloudflareProvider.isModelLocked && ai.lockedModel && (
+                    <p className="mt-2 text-push-xs text-amber-400">
+                      This chat keeps using {ai.lockedModel}.
+                    </p>
+                  )}
+                  {ai.cloudflareProvider.modelsUpdatedAt && (
+                    <p className="mt-2 text-push-xs text-push-fg-dim">
+                      Updated {new Date(ai.cloudflareProvider.modelsUpdatedAt).toLocaleTimeString()}
+                    </p>
+                  )}
+                </div>
+              </SettingsAccordionItem>
+            </SettingsAccordion>
           </div>
 
           {/* Web Search (Tavily) */}
@@ -1348,234 +1310,276 @@ export function SettingsSectionContent({
               <label className="text-sm font-medium text-push-fg">Web Search</label>
               <span className="text-xs text-push-fg-dim">Optional</span>
             </div>
-            <div className="space-y-2">
-              <ProviderKeySection
-                label="Tavily"
-                hasKey={ai.tavilyProvider.hasKey}
-                keyInput={ai.tavilyProvider.keyInput}
-                setKeyInput={ai.tavilyProvider.setKeyInput}
-                saveKey={() => ai.tavilyProvider.setKey(ai.tavilyProvider.keyInput.trim())}
-                clearKey={ai.tavilyProvider.clearKey}
-                activeBackend={ai.activeBackend}
-                backendId="tavily"
-                clearPreferredProvider={ai.clearPreferredProvider}
-                setActiveBackend={ai.setActiveBackend}
-                placeholder={TAVILY_SETTINGS_META.placeholder}
-                saveLabel={TAVILY_SETTINGS_META.saveLabel}
-                hint={TAVILY_SETTINGS_META.hint}
-              />
-            </div>
+            <SettingsAccordion type="single" collapsible>
+              <SettingsAccordionItem
+                value="tavily"
+                title="Tavily"
+                subtitle={
+                  ai.tavilyProvider.hasKey
+                    ? 'Connected'
+                    : 'No key configured — optional, improves web search'
+                }
+              >
+                <ProviderKeySection
+                  label="Tavily"
+                  hasKey={ai.tavilyProvider.hasKey}
+                  keyInput={ai.tavilyProvider.keyInput}
+                  setKeyInput={ai.tavilyProvider.setKeyInput}
+                  saveKey={() => ai.tavilyProvider.setKey(ai.tavilyProvider.keyInput.trim())}
+                  clearKey={ai.tavilyProvider.clearKey}
+                  activeBackend={ai.activeBackend}
+                  backendId="tavily"
+                  clearPreferredProvider={ai.clearPreferredProvider}
+                  setActiveBackend={ai.setActiveBackend}
+                  placeholder={TAVILY_SETTINGS_META.placeholder}
+                  saveLabel={TAVILY_SETTINGS_META.saveLabel}
+                  hint={TAVILY_SETTINGS_META.hint}
+                />
+              </SettingsAccordionItem>
+            </SettingsAccordion>
           </div>
 
-          {/* Edit Guard Diagnostics */}
+          {/* Diagnostics */}
           <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">Edit Guard Diagnostics</label>
-            {guardMetrics.checksTotal === 0 && guardMetrics.autoExpandAttempts === 0 ? (
-              <p className="text-xs text-push-fg-dim">No edit-guard activity this session.</p>
-            ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                  <span className="text-xs text-push-fg-secondary">Checks</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.checksTotal}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Allowed</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.allowedTotal}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Blocked</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.blockedTotal}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Auto-expand</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.autoExpandSuccesses}/{guardMetrics.autoExpandAttempts}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Symbols read</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.symbolsReadTotal}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Symbol warnings softened</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {guardMetrics.symbolWarningsSoftened}
-                  </span>
-                </div>
-                {(guardMetrics.blockedTotal > 0 || guardMetrics.symbolWarningsSoftened > 0) && (
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">Never read blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {guardMetrics.blockedByNeverRead}
+            <label className="text-sm font-medium text-push-fg">Diagnostics</label>
+            <SettingsAccordion type="multiple">
+              <SettingsAccordionItem
+                value="edit-guard"
+                title="Edit Guard"
+                subtitle={
+                  guardMetrics.checksTotal === 0 && guardMetrics.autoExpandAttempts === 0
+                    ? 'No activity this session'
+                    : `${guardMetrics.checksTotal} checks · ${guardMetrics.blockedTotal} blocked`
+                }
+              >
+                {guardMetrics.checksTotal === 0 && guardMetrics.autoExpandAttempts === 0 ? (
+                  <p className="text-xs text-push-fg-dim">No edit-guard activity this session.</p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                      <span className="text-xs text-push-fg-secondary">Checks</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.checksTotal}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Allowed</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.allowedTotal}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Blocked</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.blockedTotal}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Auto-expand</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.autoExpandSuccesses}/{guardMetrics.autoExpandAttempts}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Symbols read</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.symbolsReadTotal}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">
+                        Symbol warnings softened
+                      </span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {guardMetrics.symbolWarningsSoftened}
                       </span>
                     </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">Stale blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {guardMetrics.blockedByStale}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">Partial-read blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {guardMetrics.blockedByPartialRead}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">Unknown-symbol blocks</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {guardMetrics.blockedByUnknownSymbol}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-push-xs text-push-fg-dim">Symbol auto-expands</span>
-                      <span className="text-push-xs text-push-fg-dim">
-                        {guardMetrics.symbolAutoExpands}
-                      </span>
-                    </div>
+                    {(guardMetrics.blockedTotal > 0 || guardMetrics.symbolWarningsSoftened > 0) && (
+                      <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">Never read blocks</span>
+                          <span className="text-push-xs text-push-fg-dim">
+                            {guardMetrics.blockedByNeverRead}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">Stale blocks</span>
+                          <span className="text-push-xs text-push-fg-dim">
+                            {guardMetrics.blockedByStale}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">Partial-read blocks</span>
+                          <span className="text-push-xs text-push-fg-dim">
+                            {guardMetrics.blockedByPartialRead}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">
+                            Unknown-symbol blocks
+                          </span>
+                          <span className="text-push-xs text-push-fg-dim">
+                            {guardMetrics.blockedByUnknownSymbol}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-push-xs text-push-fg-dim">Symbol auto-expands</span>
+                          <span className="text-push-xs text-push-fg-dim">
+                            {guardMetrics.symbolAutoExpands}
+                          </span>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
-          </div>
+              </SettingsAccordionItem>
 
-          {/* Tool Call Diagnostics */}
-          <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">Tool Call Diagnostics</label>
-            {tcMetrics.count === 0 ? (
-              <p className="text-xs text-push-fg-dim">No malformed tool calls this session.</p>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs text-push-fg-secondary">
-                  {tcMetrics.count} malformed {tcMetrics.count === 1 ? 'call' : 'calls'} detected
-                  this session
-                </p>
-                {Object.entries(tcMetrics.byProvider).map(([provider, pm]) => (
-                  <div
-                    key={provider}
-                    className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1.5"
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium text-push-fg-secondary">
-                        {PROVIDER_LABELS[provider as AIProviderType] ?? provider}
-                      </span>
-                      <span className="text-xs text-push-fg-dim">{pm.count}</span>
-                    </div>
-                    {Object.entries(pm.byModel).map(([model, mm]) => (
-                      <div key={model} className="space-y-0.5 pl-2 border-l border-push-edge">
+              <SettingsAccordionItem
+                value="tool-calls"
+                title="Tool Calls"
+                subtitle={
+                  tcMetrics.count === 0
+                    ? 'No malformed calls this session'
+                    : `${tcMetrics.count} malformed ${tcMetrics.count === 1 ? 'call' : 'calls'}`
+                }
+              >
+                {tcMetrics.count === 0 ? (
+                  <p className="text-xs text-push-fg-dim">No malformed tool calls this session.</p>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-xs text-push-fg-secondary">
+                      {tcMetrics.count} malformed {tcMetrics.count === 1 ? 'call' : 'calls'}{' '}
+                      detected this session
+                    </p>
+                    {Object.entries(tcMetrics.byProvider).map(([provider, pm]) => (
+                      <div
+                        key={provider}
+                        className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1.5"
+                      >
                         <div className="flex items-center justify-between">
-                          <span className="text-push-xs text-push-fg-dim truncate max-w-[160px]">
-                            {model}
+                          <span className="text-xs font-medium text-push-fg-secondary">
+                            {PROVIDER_LABELS[provider as AIProviderType] ?? provider}
                           </span>
-                          <span className="text-push-xs text-push-fg-dim">{mm.count}</span>
+                          <span className="text-xs text-push-fg-dim">{pm.count}</span>
                         </div>
-                        {(Object.entries(mm.reasons) as [string, number][])
-                          .filter(([, n]) => n > 0)
-                          .map(([reason, n]) => (
-                            <div key={reason} className="flex items-center justify-between pl-2">
-                              <span className="text-push-2xs text-push-fg-dim">
-                                {reason === 'truncated'
-                                  ? 'Truncated'
-                                  : reason === 'validation_failed'
-                                    ? 'Invalid schema'
-                                    : reason === 'malformed_json'
-                                      ? 'Malformed JSON'
-                                      : reason === 'natural_language_intent'
-                                        ? 'NL intent'
-                                        : reason}
+                        {Object.entries(pm.byModel).map(([model, mm]) => (
+                          <div key={model} className="space-y-0.5 pl-2 border-l border-push-edge">
+                            <div className="flex items-center justify-between">
+                              <span className="text-push-xs text-push-fg-dim truncate max-w-[160px]">
+                                {model}
                               </span>
-                              <span className="text-push-2xs text-push-fg-dim">{n}</span>
+                              <span className="text-push-xs text-push-fg-dim">{mm.count}</span>
+                            </div>
+                            {(Object.entries(mm.reasons) as [string, number][])
+                              .filter(([, n]) => n > 0)
+                              .map(([reason, n]) => (
+                                <div
+                                  key={reason}
+                                  className="flex items-center justify-between pl-2"
+                                >
+                                  <span className="text-push-2xs text-push-fg-dim">
+                                    {reason === 'truncated'
+                                      ? 'Truncated'
+                                      : reason === 'validation_failed'
+                                        ? 'Invalid schema'
+                                        : reason === 'malformed_json'
+                                          ? 'Malformed JSON'
+                                          : reason === 'natural_language_intent'
+                                            ? 'NL intent'
+                                            : reason}
+                                  </span>
+                                  <span className="text-push-2xs text-push-fg-dim">{n}</span>
+                                </div>
+                              ))}
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </SettingsAccordionItem>
+
+              <SettingsAccordionItem
+                value="context"
+                title="Context"
+                subtitle={
+                  ctxMetrics.totalEvents === 0
+                    ? 'No compression events this session'
+                    : `${ctxMetrics.totalEvents} ${ctxMetrics.totalEvents === 1 ? 'event' : 'events'} · ${ctxMetrics.totalTokensSaved.toLocaleString()} tokens saved`
+                }
+              >
+                {ctxMetrics.totalEvents === 0 ? (
+                  <p className="text-xs text-push-fg-dim">
+                    No context compression events this session.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                      <span className="text-xs text-push-fg-secondary">Events</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {ctxMetrics.totalEvents}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Tokens saved</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {ctxMetrics.totalTokensSaved.toLocaleString()}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Largest reduction</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {ctxMetrics.largestReduction.toLocaleString()}
+                      </span>
+                      <span className="text-xs text-push-fg-secondary">Max context seen</span>
+                      <span className="text-xs text-push-fg-dim text-right">
+                        {ctxMetrics.maxContextSeen.toLocaleString()}
+                      </span>
+                    </div>
+                    {/* Phase breakdown */}
+                    <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                      {[
+                        ['Summarization', ctxMetrics.summarization] as const,
+                        ['Digest + drop', ctxMetrics.digestDrop] as const,
+                        ['Hard trim', ctxMetrics.hardTrim] as const,
+                      ]
+                        .filter(([, p]) => p.count > 0)
+                        .map(([label, p]) => (
+                          <div key={label} className="flex items-center justify-between">
+                            <span className="text-push-xs text-push-fg-dim">{label}</span>
+                            <span className="text-push-xs text-push-fg-dim">
+                              {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
+                              {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                    {/* Summarization causes */}
+                    {Object.values(ctxMetrics.summarizationCauses).some((c) => c > 0) && (
+                      <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                        <span className="text-push-xs text-push-fg-secondary font-medium">
+                          Summarization causes
+                        </span>
+                        {[
+                          ['Tool output', ctxMetrics.summarizationCauses.tool_output] as const,
+                          ['Long message', ctxMetrics.summarizationCauses.long_message] as const,
+                          ['Mixed', ctxMetrics.summarizationCauses.mixed] as const,
+                        ]
+                          .filter(([, c]) => c > 0)
+                          .map(([label, count]) => (
+                            <div key={label} className="flex items-center justify-between">
+                              <span className="text-push-xs text-push-fg-dim">{label}</span>
+                              <span className="text-push-xs text-push-fg-dim">{count}×</span>
                             </div>
                           ))}
                       </div>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Context Diagnostics */}
-          <div className={SECTION_CARD_CLASS}>
-            <label className="text-sm font-medium text-push-fg">Context Diagnostics</label>
-            {ctxMetrics.totalEvents === 0 ? (
-              <p className="text-xs text-push-fg-dim">
-                No context compression events this session.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                  <span className="text-xs text-push-fg-secondary">Events</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {ctxMetrics.totalEvents}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Tokens saved</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {ctxMetrics.totalTokensSaved.toLocaleString()}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Largest reduction</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {ctxMetrics.largestReduction.toLocaleString()}
-                  </span>
-                  <span className="text-xs text-push-fg-secondary">Max context seen</span>
-                  <span className="text-xs text-push-fg-dim text-right">
-                    {ctxMetrics.maxContextSeen.toLocaleString()}
-                  </span>
-                </div>
-                {/* Phase breakdown */}
-                <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                  {[
-                    ['Summarization', ctxMetrics.summarization] as const,
-                    ['Digest + drop', ctxMetrics.digestDrop] as const,
-                    ['Hard trim', ctxMetrics.hardTrim] as const,
-                  ]
-                    .filter(([, p]) => p.count > 0)
-                    .map(([label, p]) => (
-                      <div key={label} className="flex items-center justify-between">
-                        <span className="text-push-xs text-push-fg-dim">{label}</span>
-                        <span className="text-push-xs text-push-fg-dim">
-                          {p.count}× · {(p.totalBefore - p.totalAfter).toLocaleString()} saved
-                          {p.messagesDropped > 0 ? ` · ${p.messagesDropped} msgs dropped` : ''}
-                        </span>
+                    )}
+                    {/* Provider breakdown */}
+                    {Object.keys(ctxMetrics.byProvider).length > 0 && (
+                      <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
+                        {Object.entries(ctxMetrics.byProvider).map(([prov, pm]) => (
+                          <div key={prov} className="flex items-center justify-between">
+                            <span className="text-push-xs text-push-fg-dim">
+                              {PROVIDER_LABELS[prov as AIProviderType] ?? prov}
+                            </span>
+                            <span className="text-push-xs text-push-fg-dim">
+                              {pm.count}× · {(pm.totalBefore - pm.totalAfter).toLocaleString()}{' '}
+                              saved
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                </div>
-                {/* Summarization causes */}
-                {Object.values(ctxMetrics.summarizationCauses).some((c) => c > 0) && (
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                    <span className="text-push-xs text-push-fg-secondary font-medium">
-                      Summarization causes
-                    </span>
-                    {[
-                      ['Tool output', ctxMetrics.summarizationCauses.tool_output] as const,
-                      ['Long message', ctxMetrics.summarizationCauses.long_message] as const,
-                      ['Mixed', ctxMetrics.summarizationCauses.mixed] as const,
-                    ]
-                      .filter(([, c]) => c > 0)
-                      .map(([label, count]) => (
-                        <div key={label} className="flex items-center justify-between">
-                          <span className="text-push-xs text-push-fg-dim">{label}</span>
-                          <span className="text-push-xs text-push-fg-dim">{count}×</span>
-                        </div>
-                      ))}
+                    )}
                   </div>
                 )}
-                {/* Provider breakdown */}
-                {Object.keys(ctxMetrics.byProvider).length > 0 && (
-                  <div className="rounded-lg border border-push-edge bg-push-surface px-3 py-2 space-y-1">
-                    {Object.entries(ctxMetrics.byProvider).map(([prov, pm]) => (
-                      <div key={prov} className="flex items-center justify-between">
-                        <span className="text-push-xs text-push-fg-dim">
-                          {PROVIDER_LABELS[prov as AIProviderType] ?? prov}
-                        </span>
-                        <span className="text-push-xs text-push-fg-dim">
-                          {pm.count}× · {(pm.totalBefore - pm.totalAfter).toLocaleString()} saved
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
+              </SettingsAccordionItem>
+            </SettingsAccordion>
           </div>
 
           {/* Danger Zone */}
