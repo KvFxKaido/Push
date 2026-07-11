@@ -1,0 +1,16 @@
+{
+  "name": "opentui-spike",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway spike: evaluate OpenTUI (retained cell compositor) on Node for Push's TUI. Not part of the build.",
+  "scripts": {
+    "smoke:node": "tsx smoke.ts",
+    "smoke:bun": "bun smoke.ts",
+    "panes:node": "tsx panes.ts",
+    "panes:bun": "bun panes.ts"
+  },
+  "dependencies": {
+    "@opentui/core": "^0.4.3",
+    "tsx": "^4.23.0"
+  }
+}
