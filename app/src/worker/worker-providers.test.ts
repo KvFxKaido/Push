@@ -1314,28 +1314,10 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
 
   const CASES = [
     {
-      name: 'ollama',
-      handler: handleOllamaModels,
-      env: { CF_AI_GATEWAY_BYOK: 'ollama', CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama' },
-      url: `${GW_BASE}/custom-ollama/v1/models`,
-    },
-    {
       name: 'openrouter',
       handler: handleOpenRouterModels,
       env: { CF_AI_GATEWAY_BYOK: 'openrouter' },
       url: `${GW_BASE}/openrouter/models`,
-    },
-    {
-      name: 'zen',
-      handler: handleZenModels,
-      env: { CF_AI_GATEWAY_BYOK: 'zen', CF_AI_GATEWAY_CUSTOM_SLUGS: 'zen' },
-      url: `${GW_BASE}/custom-zen/zen/v1/models`,
-    },
-    {
-      name: 'nvidia',
-      handler: handleNvidiaModels,
-      env: { CF_AI_GATEWAY_BYOK: 'nvidia', CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia' },
-      url: `${GW_BASE}/custom-nvidia/v1/models`,
     },
     {
       name: 'sakana',
@@ -1355,12 +1337,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       env: { CF_AI_GATEWAY_BYOK: 'deepseek' },
       url: `${GW_BASE}/deepseek/models`,
     },
-    {
-      name: 'huggingface',
-      handler: handleHuggingFaceModels,
-      env: { CF_AI_GATEWAY_BYOK: 'huggingface', CF_AI_GATEWAY_CUSTOM_SLUGS: 'huggingface' },
-      url: `${GW_BASE}/custom-huggingface/v1/models`,
-    },
   ] as const;
 
   for (const c of CASES) {
@@ -1374,18 +1350,54 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
     });
   }
 
-  it('ollama: BYOK-listed but custom slug NOT enabled still 401s keyless (never fetches direct keyless)', async () => {
-    // buildAiGatewayUrl falls back to direct for an unlisted custom slug — a
-    // keyless direct call would 401 at the upstream, so the key gate must
-    // stay on (the tightened byok-requires-gateway-resolution pattern).
-    const captured = captureFetch();
-    const res = await handleOllamaModels(
-      makeModelsRequest(),
-      makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: 'ollama' }),
-    );
-    expect(res.status).toBe(401);
-    expect(captured.current).toBeNull();
-  });
+  // Public catalogs (ollama/zen/nvidia/huggingface) carry `publicList: true` and
+  // must fetch DIRECT and keyless even when the gateway is fully configured and
+  // the provider is BYOK-listed with its slug enabled — the CF custom-provider
+  // proxy truncates `/v1/models`, so the list must bypass it. Regression guard
+  // for the "only one model in Settings" bug.
+  const PUBLIC_CASES = [
+    {
+      name: 'ollama',
+      handler: handleOllamaModels,
+      slug: 'ollama',
+      url: 'https://ollama.com/v1/models',
+    },
+    {
+      name: 'zen',
+      handler: handleZenModels,
+      slug: 'zen',
+      url: 'https://opencode.ai/zen/v1/models',
+    },
+    {
+      name: 'nvidia',
+      handler: handleNvidiaModels,
+      slug: 'nvidia',
+      url: 'https://integrate.api.nvidia.com/v1/models',
+    },
+    {
+      name: 'huggingface',
+      handler: handleHuggingFaceModels,
+      slug: 'huggingface',
+      url: 'https://router.huggingface.co/v1/models',
+    },
+  ] as const;
+
+  for (const c of PUBLIC_CASES) {
+    it(`${c.name}: keyless GET goes DIRECT to the public catalog, bypassing the gateway`, async () => {
+      const captured = captureFetch();
+      const res = await c.handler(
+        makeModelsRequest(),
+        makeEnv({ ...gw, CF_AI_GATEWAY_BYOK: c.name, CF_AI_GATEWAY_CUSTOM_SLUGS: c.slug }),
+      );
+      expect(res.status).not.toBe(401);
+      // Direct upstream, not the gateway-rewritten URL.
+      expect(captured.current?.url).toBe(c.url);
+      // No key configured → no Authorization header at all (not `Authorization: ""`).
+      expect(captured.current?.headers.Authorization).toBeUndefined();
+      // Gateway bypassed → no aig auth leaked onto the direct request.
+      expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+    });
+  }
 
   it('openai: BYOK keyless GETs the gateway /openai/models without Authorization', async () => {
     const captured = captureFetch();
@@ -2241,7 +2253,7 @@ describe('handleOllamaChat', () => {
 });
 
 describe('handleOllamaModels', () => {
-  it('GETs ollama.com/v1/models with the OLLAMA_API_KEY bearer', async () => {
+  it('GETs ollama.com/v1/models directly with the OLLAMA_API_KEY bearer even when chat uses the gateway', async () => {
     let captured: { url: string; init: RequestInit } | undefined;
     vi.stubGlobal(
       'fetch',
@@ -2250,10 +2262,21 @@ describe('handleOllamaModels', () => {
         return new Response('{"data":[]}', { status: 200 });
       }),
     );
-    await handleOllamaModels(makeModelsRequest(), makeEnv({ OLLAMA_API_KEY: 'sk-ol' }));
+    await handleOllamaModels(
+      makeModelsRequest(),
+      makeEnv({
+        OLLAMA_API_KEY: 'sk-ol',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'acc123',
+        CF_AI_GATEWAY_SLUG: 'push-prod',
+        CF_AI_GATEWAY_TOKEN: 'aig-secret',
+        CF_AI_GATEWAY_BYOK: 'ollama',
+        CF_AI_GATEWAY_CUSTOM_SLUGS: 'ollama',
+      }),
+    );
     expect(captured?.url).toBe('https://ollama.com/v1/models');
     const headers = captured?.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('Bearer sk-ol');
+    expect(headers['cf-aig-authorization']).toBeUndefined();
   });
 });
 

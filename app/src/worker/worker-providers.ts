@@ -661,10 +661,13 @@ export const handleOllamaModels = createJsonProxyHandler({
   keyMissingError:
     'Ollama Cloud API key not configured. Add it in Settings or set OLLAMA_API_KEY on the Worker.',
   timeoutError: 'Ollama Cloud model list timed out after 30 seconds',
-  // Same binding as chat so BYOK model refresh keeps working once the Worker
-  // secret retires — without this, a BYOK-only provider degrades to the static
-  // model list (the 58143aa7 known-limitation).
-  gateway: { provider: 'custom-ollama', pathSuffix: '/v1/models' },
+  // `ollama.com/v1/models` is a PUBLIC catalog (keyless → full list). Routing it
+  // through `custom-ollama` truncates it — the CF gateway's custom-provider
+  // proxy returns an observed-model subset, not the upstream catalog (the "only
+  // one model in Settings" bug). Fetch it direct and keyless via publicList; the
+  // key (when there is one) lives in the gateway BYOK store, which only the chat
+  // handler below needs. Chat stays gateway-routed.
+  publicList: true,
 });
 export const handleOllamaChat = createStreamProxyHandler({
   name: 'Ollama Cloud API',
@@ -891,8 +894,10 @@ export const handleHuggingFaceModels = createJsonProxyHandler({
   keyMissingError:
     'Hugging Face token not configured. Add it in Settings or set HF_TOKEN (or HUGGINGFACE_API_KEY) on the Worker.',
   timeoutError: 'Hugging Face model list timed out after 30 seconds',
-  // Same binding as chat (base_url https://router.huggingface.co).
-  gateway: { provider: 'custom-huggingface', pathSuffix: '/v1/models' },
+  // Public catalog (keyless → full list). Routed direct rather than through
+  // `custom-huggingface`, whose proxy truncates `/v1/models`. Chat keeps its
+  // gateway binding. See handleOllamaModels for the rationale.
+  publicList: true,
 });
 
 // --- OpenCode Zen (OpenAI-compatible endpoint) ---
@@ -932,8 +937,10 @@ export const handleZenModels = createJsonProxyHandler({
   keyMissingError:
     'OpenCode Zen API key not configured. Add it in Settings or set ZEN_API_KEY on the Worker.',
   timeoutError: 'OpenCode Zen model list timed out after 30 seconds',
-  // Same binding as chat (base_url https://opencode.ai; /zen prefix in the path).
-  gateway: { provider: 'custom-zen', pathSuffix: '/zen/v1/models' },
+  // Public catalog (keyless → full list). Routed direct rather than through
+  // `custom-zen`, whose proxy truncates `/v1/models`. Chat keeps its gateway
+  // binding. See handleOllamaModels for the rationale.
+  publicList: true,
 });
 
 // --- Fireworks AI (OpenAI Responses-native gateway) ---
@@ -1482,8 +1489,10 @@ export const handleNvidiaModels = createJsonProxyHandler({
   keyMissingError:
     'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
   timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
-  // Same binding as chat (base_url https://integrate.api.nvidia.com).
-  gateway: { provider: 'custom-nvidia', pathSuffix: '/v1/models' },
+  // Public catalog (keyless → full list). Routed direct rather than through
+  // `custom-nvidia`, whose proxy truncates `/v1/models`. Chat keeps its gateway
+  // binding. See handleOllamaModels for the rationale.
+  publicList: true,
 });
 
 // --- OpenRouter + OpenAI + xAI + Sakana + Fireworks (/v1/responses) ---

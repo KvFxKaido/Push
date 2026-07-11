@@ -1096,6 +1096,17 @@ export interface JsonProxyConfig {
   formatUpstreamError?: (status: number, bodyText: string) => { error: string; code?: string };
   /** Opt-in Cloudflare AI Gateway routing. No-op when gateway env vars are unset. */
   gateway?: AiGatewayBinding;
+  /**
+   * Marks an upstream that needs no credential (e.g. an unauthenticated
+   * `/v1/models` catalog) so the list can be fetched keyless: `allowMissingKey`
+   * is forced true even with no gateway/BYOK binding, and a null/empty auth
+   * builder result omits the `Authorization` header entirely rather than 401ing
+   * at the preamble. Only for genuinely public endpoints — a keyless call to a
+   * key-gated upstream would 401 downstream instead. Used to route public model
+   * lists direct (the CF gateway's custom-provider proxy truncates `/v1/models`
+   * to an observed-model subset; direct returns the full public catalog).
+   */
+  publicList?: boolean;
 }
 export function createJsonProxyHandler(
   config: JsonProxyConfig,
@@ -1118,7 +1129,10 @@ export function createJsonProxyHandler(
       buildAuth: config.buildAuth,
       keyMissingError: config.keyMissingError,
       needsBody,
-      allowMissingKey: byok,
+      // Keyless is allowed on the BYOK-through-gateway path (the gateway injects
+      // the key) OR for a public list (no credential needed at all). Otherwise a
+      // missing key 401s here before the fetch.
+      allowMissingKey: byok || config.publicList === true,
     });
     if (preamble instanceof Response) return preamble;
     const { authHeader, bodyText, requestId, spanCtx } = preamble;
@@ -1180,7 +1194,10 @@ export function createJsonProxyHandler(
           method,
           headers: {
             // BYOK omits Authorization so the gateway injects the stored key.
-            ...(byok ? {} : { Authorization: authHeader }),
+            // A public list (publicList) with no configured key resolves to an
+            // empty authHeader — omit the header entirely rather than sending
+            // `Authorization: ""`, which some upstreams reject.
+            ...(byok || !authHeader ? {} : { Authorization: authHeader }),
             [REQUEST_ID_HEADER]: requestId,
             traceparent: buildTraceparent(upstreamCtx),
             ...(needsBody ? { 'Content-Type': 'application/json' } : {}),
