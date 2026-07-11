@@ -236,6 +236,16 @@ Buttons press in on `:active` by swapping `shadow-push-raised` → `shadow-push-
 
 **Focus-visible on raised chrome.** A raised surface's lit top edge and soft drop shadow would swallow a same-size ring drawn flush against the element, so neumorphic chrome separates the focus ring from the shadow with an **offset**: `:focus-visible` adds the 3px light-Sky ring (`ring-ring/50`) plus a `ring-offset-2` in the surface's own fill (`ring-offset-push-surface-raised`), so the ring reads as a crisp line in a clean gap *outside* the soft depth halo rather than fighting it. This is keyboard-only (`focus-visible`, not `focus`) so a pointer press never paints the ring; the press itself still recesses via `:active`. Wired once into `HUB_MATERIAL_INTERACTIVE_CLASS` — don't hand-roll a focus ring per button. Recessed wells (inputs) keep their existing `focus:border-push-sky/50` edge-light instead, since a sunken field has no raised halo to clear.
 
+## State layers & touch
+
+### State layers — flat surfaces
+
+Chrome presses via the neumorphic shadow-swap (above). **Flat, dense interactive surfaces** — list rows, action rows, custom (non-Base-UI) menu rows — get their hover/press/focus feedback from **state layers** instead: a `currentColor` veil at fixed opacities (`--state-hover` 8%, `--state-focus` / `--state-pressed` 10%, `--state-dragged` 16% — the Material 3 `md.sys.state` values). Apply the **`.state-layer`** utility to any transparent-at-rest interactive row; it layers the veil via `color-mix` on `:hover` (pointer devices only — no sticky hover on touch), `:active`, and `:focus-visible`, transitioning on `--motion-fast` / `--ease-default`. One consistent feedback language for flat surfaces without a per-component `hover:bg-*` guess. Base UI menu items keep their own `data-highlighted:bg-accent` highlight — don't double up. The state layer is for the flat surfaces that currently improvise their own hover.
+
+### Touch targets
+
+Interactive controls carry a **48px minimum hit area** — the larger of Apple's 44pt and Material 3's 48dp, and the shell is Android. The visual glyph may be smaller (a 20px icon in a 48px target), but the *tappable* region must reach 48px via padding or an expanded hit area, and adjacent targets keep **≥8px separation**. This is the sizing counterpart to the `pointer-events` hit-testing rules in the hover→long-press idiom — a control that's big enough to see isn't automatically big enough to hit.
+
 ## Motion
 
 ### Duration Tokens

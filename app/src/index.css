@@ -19,6 +19,28 @@
   }
 }
 
+/* State layers — flat-surface hover/press/focus feedback (see DESIGN.md).
+   A currentColor veil at the M3 md.sys.state opacities, layered via
+   color-mix so a transparent-at-rest row needs no per-component hover:bg-*.
+   Hover is pointer-only (no sticky hover on touch); :active covers the tap,
+   :focus-visible the keyboard. Base UI menu items keep data-highlighted. */
+@layer utilities {
+  .state-layer {
+    transition: background-color var(--motion-fast) var(--ease-default);
+  }
+  @media (hover: hover) {
+    .state-layer:hover {
+      background-color: color-mix(in srgb, currentColor var(--state-hover), transparent);
+    }
+  }
+  .state-layer:focus-visible {
+    background-color: color-mix(in srgb, currentColor var(--state-focus), transparent);
+  }
+  .state-layer:active {
+    background-color: color-mix(in srgb, currentColor var(--state-pressed), transparent);
+  }
+}
+
 @layer base {
   :root {
     color-scheme: dark;
@@ -67,6 +89,19 @@
     --panel-close-dur: var(--motion-normal); /* 250ms — close */
     --panel-ease: var(--ease-spring);
     --panel-blur: var(--blur-small);
+    /* ─────────────────────────────────────────────── */
+
+    /* ── State layers (M3 md.sys.state) ───────────────
+       Systematic hover / press / focus feedback for FLAT interactive
+       surfaces (list rows, action rows, custom non-Base-UI menu rows) —
+       the flat-surface counterpart to the neumorphic shadow-swap that
+       presses chrome. Consumed by the `.state-layer` utility as a
+       currentColor veil; see DESIGN.md "State layers". Values are the
+       Material 3 md.sys.state opacities. */
+    --state-hover: 8%; /* 0.08 */
+    --state-focus: 10%; /* 0.10 */
+    --state-pressed: 10%; /* 0.10 */
+    --state-dragged: 16%; /* 0.16 (reserved — drag-reorder) */
     /* ─────────────────────────────────────────────── */
 
     /* ── Type stacks ──────────────────────────────── */
