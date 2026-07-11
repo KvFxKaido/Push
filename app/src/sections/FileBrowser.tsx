@@ -9,8 +9,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import {
   Folder,
-  File,
-  ChevronLeft,
   ChevronRight,
   Download,
   MessageSquare,
@@ -19,13 +17,13 @@ import {
   RefreshCw,
   RotateCcw,
   Save,
-  FileEdit,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useFileBrowser } from '@/hooks/useFileBrowser';
 import { ChatBackgroundGlow } from '@/components/chat/ChatBackgroundGlow';
 import type { RepoAppearanceGlowStyleId } from '@/lib/repo-appearance';
 import { FileActionsSheet } from '@/components/filebrowser/FileActionsSheet';
+import { FilesTable } from '@/components/filebrowser/FilesTable';
 import { UploadButton } from '@/components/filebrowser/UploadButton';
 import { CommitPushSheet } from '@/components/filebrowser/CommitPushSheet';
 import { FileEditor } from '@/components/filebrowser/FileEditor';
@@ -41,7 +39,6 @@ import type {
   WorkspaceCapabilities,
   WorkspaceScratchActions,
 } from '@/types';
-import { formatSize } from '@/lib/diff-utils';
 
 interface FileBrowserProps {
   sandboxId: string;
@@ -342,29 +339,13 @@ export function FileBrowser({
             <span className="text-sm">Empty directory</span>
           </div>
         ) : (
-          <ul className="divide-y divide-push-edge-subtle/70">
-            {/* Navigate up row */}
-            {!isRoot && (
-              <li>
-                <button
-                  onClick={navigateUp}
-                  className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-push-surface-active"
-                >
-                  <ChevronLeft className="h-4 w-4 shrink-0 text-push-fg-dim" />
-                  <span className="text-sm text-push-fg-secondary">..</span>
-                </button>
-              </li>
-            )}
-
-            {files.map((file) => (
-              <FileRow
-                key={file.path}
-                file={file}
-                onTap={handleFilePress}
-                onLongPress={handleLongPress}
-              />
-            ))}
-          </ul>
+          <FilesTable
+            files={files}
+            isRoot={isRoot}
+            onNavigateUp={navigateUp}
+            onTap={handleFilePress}
+            onLongPress={handleLongPress}
+          />
         )}
       </div>
 
@@ -488,85 +469,3 @@ export function FileBrowser({
 }
 
 // --- File row with long-press support ---
-
-interface FileRowProps {
-  file: FileEntry;
-  onTap: (file: FileEntry) => void;
-  onLongPress: (file: FileEntry) => void;
-}
-
-function FileRow({ file, onTap, onLongPress }: FileRowProps) {
-  const [pressTimer, setPressTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
-  const [didLongPress, setDidLongPress] = useState(false);
-
-  const handlePointerDown = () => {
-    setDidLongPress(false);
-    const timer = setTimeout(() => {
-      setDidLongPress(true);
-      onLongPress(file);
-    }, 500);
-    setPressTimer(timer);
-  };
-
-  const handlePointerUp = () => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      setPressTimer(null);
-    }
-    if (!didLongPress) {
-      onTap(file);
-    }
-  };
-
-  const handlePointerLeave = () => {
-    if (pressTimer) {
-      clearTimeout(pressTimer);
-      setPressTimer(null);
-    }
-  };
-
-  const isDir = file.type === 'directory';
-  const editability = !isDir ? getFileEditability(file.path, file.size) : null;
-  const isEditable = editability?.editable ?? false;
-
-  return (
-    <li>
-      <button
-        onPointerDown={handlePointerDown}
-        onPointerUp={handlePointerUp}
-        onPointerLeave={handlePointerLeave}
-        className="flex w-full select-none items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-push-surface-hover active:bg-push-surface-active"
-      >
-        {/* Icon */}
-        {isDir ? (
-          <Folder className="h-4 w-4 shrink-0 text-push-link" />
-        ) : isEditable ? (
-          <FileEdit className="h-4 w-4 shrink-0 text-push-status-success" />
-        ) : (
-          <File className="h-4 w-4 shrink-0 text-push-fg-dim" />
-        )}
-
-        {/* Name + meta */}
-        <div className="flex-1 min-w-0">
-          <span
-            className={`block truncate text-sm ${isDir ? 'text-push-fg' : 'text-push-fg-secondary'}`}
-          >
-            {file.name}
-          </span>
-          {!isDir && editability?.warning === 'large_file' && (
-            <span className="text-push-2xs text-push-status-warning">Large file</span>
-          )}
-        </div>
-
-        {/* Size (files only) + chevron (dirs only) */}
-        {isDir ? (
-          <ChevronRight className="h-3.5 w-3.5 shrink-0 text-push-fg-dim" />
-        ) : (
-          <span className="shrink-0 font-mono text-push-xs text-push-fg-dim">
-            {formatSize(file.size)}
-          </span>
-        )}
-      </button>
-    </li>
-  );
-}
