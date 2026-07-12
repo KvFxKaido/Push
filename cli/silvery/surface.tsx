@@ -491,7 +491,15 @@ export function PushSurface({
         }),
     [],
   );
-  const inputActive = focusStack.activeScope() === null && !snapshot.running;
+  // The composer is live only when no scope owns the keys and no run/modal is
+  // holding them. `focusStack` already includes an `interaction` scope, so this
+  // is belt-and-suspenders on the modal case — but hidden-but-interactive is a
+  // repeat defect class (CLAUDE.md self-review), and the focusStack path is a
+  // 4-hop indirection a refactor could sever silently. Keep the modal guard
+  // local, and expose the same value through the hook so test/introspection
+  // state matches what the TextArea actually does.
+  const inputActive =
+    focusStack.activeScope() === null && !snapshot.running && !snapshot.interaction;
   const completer = useMemo(
     () =>
       createTabCompleter({

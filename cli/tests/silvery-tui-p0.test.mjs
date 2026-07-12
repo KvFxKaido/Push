@@ -1361,6 +1361,60 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await lifecycle;
   });
 
+  // Regression for the #1431 review (fugu WARNING, triaged false-positive but
+  // hardened): while an interaction modal is open, the background composer must
+  // NOT be active — otherwise a keystroke could edit/submit the composer under
+  // the modal (hidden-but-interactive, CLAUDE.md self-review class).
+  it('gates the composer off while an interaction modal is open', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const hook = {};
+    const listeners = new Set();
+    const snapshot = {
+      rows: [{ id: '0', role: 'user', text: 'awaiting approval' }],
+      running: true,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: { id: 'ap-1', kind: 'approval', title: 'Run `rm -rf`?' },
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+      respondToInteraction: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(150);
+
+    // Modal is painted, and the composer is reported inactive by the hook —
+    // the single source of truth the TextArea's isActive prop reads.
+    assert.equal(hook.getState().inputActive, false);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
   it('keeps silvery as the only full-screen product renderer', async () => {
     const result = await launchTui(
       { sessionId: 'silvery-default' },
