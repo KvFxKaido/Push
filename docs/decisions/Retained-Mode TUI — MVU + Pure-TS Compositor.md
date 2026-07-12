@@ -88,6 +88,70 @@ its requirement** (render a transcript) and does not bind this one.
 > attempts. Adopting giggles is coherent only if the mouse+overlay requirement is dropped first
 > (amend this doc, then re-score); otherwise the choice is build-now vs defer-and-steal. The
 > handoff steal shipped as the `/editor` terminal handoff (`cli/tui-handoff.ts`, issue #1423).
+>
+> Late addition, source-read 2026-07-12: **terminui** (`ahmadawais/terminui`, v0.3.1) —
+> Ratatui-in-TS, pure-functional immediate mode (re-render + double-buffer diff per frame).
+> Ruled out by contract at source level, no spike needed (~1.9k lines core, 15 commits):
+> **no z-order compositing, no mouse/hit-testing anywhere in the source** (the `Backend`
+> interface has no input surface at all), and the README's "CJK and fullwidth rendered
+> correctly" claim is falsified in `core/buffer.ts` — `charWidth` is a hardcoded CJK range
+> table with **no emoji ranges** (all of 0x1F000–0x1FAFF measures width 1), iteration is
+> per-code-point so ZWJ/VS16 sequences shatter (worse than Rezi's raster fail), and there's
+> no continuation-cell repair on overwrite. The published library also ships **no TTY
+> backend** — only a test backend; the one live example hand-rolls its own ANSI backend
+> in-file. Layout is a two-pass greedy splitter (not cassowary), nothing for the reference
+> shelf. Fifth independent convergence on cell buffer + damage diff, and that's all it adds.
+>
+> Late addition, source-read 2026-07-12: **pi-tui** (`@oh-my-pi/pi-tui`, inside
+> `can1357/oh-my-pi` — a 17k-star coding agent forked from badlogic/pi-mono, Mario Zechner
+> credited; ~14.8k lines TS in the package, v16.4.6). **Ruled out as adopt, promoted to
+> first reference for the scrollback seam.** Not adoptable: hard Bun coupling
+> (`engines.bun>=1.3.14`, ships raw `.ts` as its entry, `Bun.stringWidth` load-bearing in
+> the width hot path with no Node fallback — swapping in their napi width engine is
+> plausible but means maintaining a fork), text slice/wrap/truncate route through a Rust
+> natives package (napi-rs, so Node-*loadable*), and it versions in lockstep with a
+> competitor's 13k-commit / 521-release monorepo. Architecturally it is **line-based, not
+> cell-based**: components render `string[]`, the engine diffs rows; overlays are
+> line-splice composites with focus-level (not paint-level) input occlusion and
+> line-granular hit-testing — it would fail the rubric's transparency / cell z-order /
+> cell-hit cases by design. **Why it still matters more than Lipgloss v2 for one axis:**
+> its core renderer doc (`docs/tui-core-renderer.md`) is a production war journal for
+> exactly the seam this doc's plan inherits from the ScrollbackSurface direction — an
+> **append-only native-scrollback contract** (committed-rows ledger, byte-stable vs
+> durable commit ends, committed-prefix audit, "the renderer cannot observe the terminal's
+> scroll position; ConPTY's probe lies" as the load-bearing axiom, an explicit
+> accepted-tradeoffs section). None of the alt-screen compositor candidates even address
+> this. Steal list: the commit-ledger contract for the transcript↔live-window boundary;
+> `LoopWatchdog` (always-on event-loop lag probe that names the blocking phase — the
+> symmetric-logs doctrine as running code); its width-edge-case vectors (Hangul
+> Compatibility Jamo override, OSC 66 text-sizing scaling, OSC-payload stripping, tab
+> expansion) as test cases for step 0's `CellWidth`; DECCARA rectangular-fill optimization
+> + capability probing; overlay-scoped mouse reporting (enabled only while a fullscreen
+> overlay is up). Fault posture is compatible with this repo's doctrine — ~2 `try` blocks
+> in the 4k-line core, the one bare catch scoped and commented (faults propagate loudly;
+> inference, not exhaustively traced).
+>
+> Late addition, source-read 2026-07-12: **Storm** (`orchetron/storm`, v0.2.0, 43 commits,
+> ~385 stars) — the closest paper-match yet to this doc's substrate (pure-TS cell
+> compositor, typed-array buffer, damage diff, flexbox/grid layout, Node-native,
+> `Intl.Segmenter` graphemes, "terminal as display server"). Ruled out at source on the
+> two contract classes this rubric was built around. (1) **Measurement/raster split:**
+> `stringWidth` is grapheme-segmented, but the buffer stores one `Uint32` codepoint per
+> cell — `writeString` iterates codepoints and skips zero-width (ZWJ dropped: a family
+> emoji lays out as 2 cols but rasters as 4 glyphs / 8 cols), `setCellDirect` truncates a
+> cluster to its first codepoint, and the `Grapheme` interface whose comment claims
+> "per-grapheme cell placement" has **zero consumers**. Rezi's raster failure, reproduced.
+> (2) **Paint/input z-split:** overlays paint zIndex-sorted into the single buffer, but
+> `hitTest` is a flat smallest-area scan over the measure map with no z/overlay awareness —
+> an occluded element under a modal wins the hit. Also: `react-reconciler` is a hard
+> dependency (authoring model rejected with Glyph), it is alt-screen-native (1049), and the
+> README inflates ("97 components" vs 5 component + 3 widget files in-tree). Fault posture
+> is fine (uncaughtException → restore + loud exit 1). **Steal two things for the build:**
+> the typed-array structure-of-arrays cell buffer (separate code/fg/bg/attr planes,
+> damage rect + per-row damage column ranges — a concrete, well-executed shape for step 0)
+> and **DECSTBM scroll-region-assisted diffing** (hardware-scroll unchanged content,
+> repaint only the seam, with an honest comment about when the optimization is invalid).
+> Sixth independent convergence on cell buffer + damage diff.
 
 ## Decision
 
