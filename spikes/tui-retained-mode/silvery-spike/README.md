@@ -77,19 +77,69 @@ convention burden rather than an active contradiction. Whether the built-in
   drains), but the error is swallowed and the exit diagnostic is misleading.
   Contract violation stands as shipped; error boundary is opt-in.
 
+## Adopt-gate run (`stress-adopt.mjs`, 13✅/0❌)
+
+The four scenes that actually decide framework-adopt, all driven on Node 22:
+
+- **Scene 5 (modal restore): PASSED.** Absolute-overlay modal occludes content;
+  close emits **no `ESC[2J`** (382ch, damage-only); underlying content restored to
+  the **exact byte-identical baseline**. The full-clear-vs-damage check Rezi left open.
+- **Scene 8 (occluded update): PASSED.** Counter mutated 0→3 while the modal covers
+  all three counter lines — xterm shows the modal, **no `counter=3` leak-through**;
+  on close, the new value appears on all three lines. Real occlusion + deferred reveal.
+- **Scene 9 (hit routing): PASSED via the real `hitTest`** (the exact function the
+  runtime calls at `event-handlers.ts:82`, reached through a Box ref → root walk).
+  Overlap → TOP layer (z-correct, **not** smallest-area, which is Storm's bug);
+  bottom-only → bottom; top-only → top; **wide-glyph lead AND its continuation cell
+  both resolve to their box** — the doc's CellWidth clause "continuation cells inherit
+  their lead's hit target," verified. *Scope:* this drives the routing DECISION; the
+  onClick handler-invocation that follows (`dispatchMouseEventToTree` →
+  `processMouseEvent` → `hitTest` → `onClick`) is source-verified, not live-TTY-driven
+  (the App `.click()` test API and live input owner weren't reachable from the
+  published barrel — see method note).
+- **Scene 15 (perf floor): PASSED.** A one-line change emits **17 bytes at both 80×10
+  and 80×40** (full paints 902 / 3512). Update cost is O(damage), flat in screen size —
+  textbook damage-diffing.
+
+### Finding that refines an earlier wound
+
+The "paint/input z by-convention" concern (from the first run) is **narrower than
+thought**. The live mouse path is the reconciler tree-walk hitTest, whose own header
+says it *"replaces manual HitRegistry"* — it iterates children accumulating the last
+match, so **paint order = tree order = hit order by construction**; the primary
+`onClick`/`onMouseDown` path *cannot* disagree between paint and input. The manual-
+zIndex `useHitRegion` registry (where convention was required) is the **legacy/opt-in**
+path. So z-agreement is by-construction for the default path, by-convention only for
+the deprecated one.
+
+## Method note
+
+`silvery`'s published barrel exports `render()` → the **run-instance** (`.run()`),
+not the testable `App` (`.click`/`.nodeAt`/`.press`) that `@silvery/ag-react` and
+`@silvery/test`'s `createRenderer` return — and `@silvery/test` isn't a dependency
+of the published package. Input-driven scenes therefore use one of two faithful
+substitutes: the exported `hitTest(root, x, y)` on a ref-captured root (scene 9), or
+fake-TTY stdout capture + `@xterm/headless` (scenes 5/8/15). Both exercise the real
+reconciler + real compositor; only the stdin→handler *last inch* is source-verified
+rather than driven. A published test entry (or installing `@silvery/test`) would close
+that inch.
+
 ## Not run
 
-Scenes 4, 5 (byte-level full-clear check), 8, 10, 11, 12, 15. The React-wired
-hit-testing path (`useHitRegion` → dispatch → continuation-cell hit) is untested
-end-to-end.
+Scenes 4 (mixed reflow — partial via first run), 10 (wheel + drag), 11 (resize
+storm), 12 (cursor + selection). Live `onClick` handler invocation (vs the routing
+decision, which is driven).
 
 ## Verdict
 
-The substrate survives everything thrown at it so far: grapheme cells, continuation
-repair, read-beneath transparency, damage diff (driven, Node 22), and now the
-human raster pass that killed Rezi. Remaining wounds, both scoped: the silent-fault
-default (upstream-fixable — a default error surface / run() rejection) and
-by-convention paint/input z. React authoring stays rejected for Push, so the live
-question is **reference implementation vs. substrate-adopt** — silvery is now the
-strongest candidate the survey has produced on either reading. File the two
-upstream issues before deciding; do not re-litigate build-vs-adopt without them.
+Silvery has now cleared **every scored contract**: the CellWidth family (incl. the
+human ZWJ raster pass that killed Rezi), z-order compositing and hit routing incl.
+continuation-cell targeting, modal restore without full-clear, occlusion with
+deferred reveal, and O(damage) perf. The **only** open wound is the silent-fault
+default — upstream-fixable, and worked-around from Push's side with a root error
+boundary + a `run()` watchdog. React authoring stays rejected as an *authoring*
+choice, which frames the decision as **framework-adopt (React) vs. build-with-silvery-
+as-reference**, not adopt-vs-nothing. On the evidence, framework-adopt is now the
+cheaper path to the same substrate the doc set out to build. Gate the flip on a real
+Push-surface prototype (transcript + input + one modal) to feel React-in-terminal,
+not on more contract scenes — those are green.

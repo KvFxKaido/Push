@@ -241,8 +241,48 @@ its requirement** (render a transcript) and does not bind this one.
 > authoring rejection — which frames any adopt case as *substrate-adopt with an MVU
 > authoring layer*, not framework-adopt. File the upstream issues before re-litigating
 > build-vs-adopt.
+>
+> **Adopt-gate run, same day (`silvery-spike/stress-adopt.mjs`, 13✅/0❌).** The four
+> scenes that decide framework-adopt, all driven on Node 22: **scene 5 modal restore**
+> — absolute-overlay modal occludes content, close emits **no `ESC[2J`** (damage-only),
+> underlying restored byte-identical to baseline; **scene 8 occluded update** — counter
+> mutated 0→3 under the modal, no leak-through, new value revealed on close; **scene 9
+> hit routing** — via the real `hitTest` (`event-handlers.ts:82` path): overlap→top
+> (z-correct, not Storm's smallest-area), and **wide-glyph lead + continuation cell both
+> resolve to their box** — this doc's exact "continuation cells inherit their lead's hit
+> target" clause, verified; **scene 15 perf** — one-line change = 17 bytes at both 80×10
+> and 80×40 (O(damage), flat in screen size). **Two findings reshape the verdict.**
+> (1) The z **by-convention** wound narrows sharply: the live mouse path is the
+> reconciler tree-walk whose header says it *"replaces manual HitRegistry"* — paint
+> order = tree order = hit order **by construction** for the default `onClick` path;
+> only the legacy opt-in `useHitRegion` registry needed convention. (2) That leaves the
+> **silent-fault default as the sole standing wound** — upstream-fixable, and
+> workaroundable from Push's side (root error boundary + `run()` watchdog). Scope caveat:
+> scene 9 drives the routing *decision*; the onClick *invocation* after it is
+> source-verified (`dispatchMouseEventToTree`→`processMouseEvent`→`hitTest`→`onClick`),
+> not live-TTY-driven, because the published barrel exposes the run-instance `render`,
+> not the testable `App.click` API. **Net: the contract scenes are green. The decision is
+> no longer "does it work" but "framework-adopt (React) vs. build-with-silvery-as-
+> reference"** (see the Decision-status flag below); the reconciler rejection is now an
+> authoring-taste call to make against a working substrate, and the honest next gate is a
+> Push-surface prototype (transcript + input + one modal), not more scenes.
 
 ## Decision
+
+> **Status flag (2026-07-12, post-survey): REOPENED, not yet re-decided.** The build
+> decision below was made before the 11-candidate survey. Silvery (`beorn/silvery`) has
+> since cleared every scored contract — CellWidth incl. human ZWJ raster, z-order + hit
+> routing incl. continuation-cell targeting, modal restore, occlusion, O(damage) perf —
+> on the *same* pure-TS-cell-compositor substrate this section specifies. The live
+> question is now **framework-adopt (React authoring on silvery) vs. build-with-silvery-
+> as-reference**, not the original build-vs-nothing. Sole-dev lean is adopt (sibling
+> web app is already React; the reconciler sits over an inspectable damage-diffed cell
+> buffer, so the honest-surfaces objection is weaker than when this was written). **Next
+> gate to flip this section: a real Push-surface prototype** (transcript + input + one
+> modal) to feel React-in-terminal, plus the silent-fault workaround (root error
+> boundary + `run()` watchdog). Until that prototype, this section stands as written but
+> is no longer the presumptive outcome. See the survey note above and
+> `spikes/tui-retained-mode/silvery-spike/`.
 
 Build **"Bubble Tea v2, in TypeScript"**: **MVU** authoring on top, a **pure-TS cell
 compositor with z-order layers** underneath, **Yoga-WASM** for layout (verified to load on
