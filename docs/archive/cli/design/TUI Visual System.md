@@ -1,5 +1,10 @@
 # Push CLI TUI Visual System
 
+> **Superseded (archived 2026-07-12)** by [`docs/cli/design/TUI Visual Language v2.md`](../../../cli/design/TUI%20Visual%20Language%20v2.md).
+> This document described the hand-rolled ANSI TUI deleted in the silvery migration
+> (PRs #1426–#1430); its five-color semantic system is replaced by v2's one-accent budget.
+> Kept as the record of the v1 visual system.
+
 This document describes the visual design system, layout specifications, and interaction patterns of the Push CLI TUI.
 
 It focuses on the **current shipped TUI**. Where a pattern is aspirational/future-facing, it is called out explicitly.

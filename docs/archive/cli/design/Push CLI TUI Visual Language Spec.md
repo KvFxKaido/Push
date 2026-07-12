@@ -1,5 +1,10 @@
 # Push CLI TUI Visual Language Spec (Phase 1)
 
+> **Superseded (archived 2026-07-12)** by [`docs/cli/design/TUI Visual Language v2.md`](../../../cli/design/TUI%20Visual%20Language%20v2.md).
+> This document described the hand-rolled ANSI TUI deleted in the silvery migration
+> (PRs #1426–#1430); its five-color semantic system is replaced by v2's one-accent budget.
+> Kept as the record of the v1 visual system.
+
 Date: 2026-02-21  
 Status: Implemented baseline for the experimental TUI (`push tui`)  
 Owner: Push
