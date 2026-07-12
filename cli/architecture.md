@@ -10,7 +10,7 @@ Push CLI is the local terminal agent for Push. It operates directly on the local
 - **Headless runs** — single-task execution with no interaction
 - **Full-screen TUI** — terminal UI for session-driven coding work
 
-The CLI shares the same role-based agent model and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination, rendering, and session handling local to `cli/`. The current product direction is transcript-first CLI ergonomics plus smaller TUI-lite improvements, not a shift toward a full-screen terminal product as the primary shell.
+The CLI shares the same role-based agent model and increasingly the same runtime semantics as the web app, while keeping terminal-specific coordination, rendering, and session handling local to `cli/`. Bare `./push` opens the full-screen TUI by default; the transcript REPL remains a first-class alternative (`PUSH_TUI_ENABLED=0`).
 
 ## Surfaces
 
@@ -41,17 +41,21 @@ Primary entry points and helpers:
 
 ### Full-screen TUI
 
-The TUI is the experimental full-screen terminal surface for session-based coding work. It keeps transcript readability central while adding pane layout, focused navigation, status visibility, and richer in-session affordances than the plain REPL, but it is not the current product north star.
+The TUI is the default surface for bare `./push` in a TTY. It is built on [silvery](https://github.com/beorn/silvery) — React authoring over silvery's retained, damage-diffed cell compositor — adopted 2026-07-12 after an eleven-candidate survey (decision record: [`docs/decisions/Retained-Mode TUI — MVU + Pure-TS Compositor.md`](../docs/decisions/Retained-Mode%20TUI%20—%20MVU%20+%20Pure-TS%20Compositor.md)). The previous hand-rolled ANSI renderer (`tui.ts` and its screen buffer) is deleted; silvery is view-only — the shared `lib/` runtime contracts are untouched. Requires Node ≥24 (`launchTui()` fails fast with a clear message below it).
 
 Primary entry points and helpers:
 
-- `tui.ts` — main TUI loop and screen orchestration
+- `cli.ts` `launchTui()` — renderer dispatch: Node-version guard, then loads the silvery entry
+- `silvery/entry.tsx` — silvery render entry; wires options into the shell
+- `silvery/push-shell.tsx` — root shell: `SilveryErrorBoundary` + `RecoverableBoundary` + process watchdog (the three-layer silent-fault workaround) and the pinned `TERMINAL_RESTORE_SEQUENCE` emergency reset
+- `silvery/surface.tsx` — the Push surface: transcript, composer, status, modals
+- `silvery/controller.ts` — bridges config/session/daemon verbs into the React surface
 - `tui-daemon-session.ts` — `DaemonSessionController`: the daemon-session state, connect/reconnect lifecycle, and typed session verbs behind a hook seam
-- `tui-renderer.ts` — rendering and layout helpers
-- `tui-input.ts` / `tui-modal-input.ts` — inline and modal input behavior
+- `tui-handoff.ts` — terminal handoff/reclaim: suspend the TUI for `$EDITOR`, pagers, and interactive children behind the `TuiIo` seam
+- `tui-input.ts` / `tui-modal-input.ts` — key parsing and modal input behavior
+- `tui-renderer.ts` — ANSI escape and text-measurement utilities (CJK-aware width, wrapping)
 - `tui-status.ts` — status line and compact state summaries
 - `tui-theme.ts` — terminal theme and color helpers
-- `tui-widgets.ts` — reusable terminal widgets
 - `tui-completer.ts` / `tui-fuzzy.ts` — completion and fuzzy matching
 - `tui-delegation-events.ts` — delegation event presentation inside the TUI
 

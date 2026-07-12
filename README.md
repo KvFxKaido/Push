@@ -134,6 +134,8 @@ Push stands on the shoulders of a few open projects:
 - [**transitions.dev**](https://transitions.dev) — Jakub Antalík's motion recipes and five-axis token system, which Push's design-system motion tokens and primitives (`app/src/index.css`, see [DESIGN.md](DESIGN.md)) are translated from.
 - [**models.dev**](https://models.dev) — the open model/provider catalog whose logos back the provider icons across Push's settings and model pickers.
 - [**Streamdown**](https://streamdown.ai) — Vercel's streaming-markdown renderer, adapted in `PushMarkdownRenderer` to drive Push's chat prose with its own reveal cadence and Shiki-themed code chrome.
+- [**silvery**](https://github.com/beorn/silvery) — Bjørn Stabell's retained-mode terminal compositor and React renderer, the view layer of Push's entire full-screen TUI. The only candidate of an eleven-project survey to clear every contract Push's own build plan had specified — so Push adopted it instead of building.
+- [**giggles**](https://github.com/zion-off/giggles) — zion-off's batteries-included terminal React framework, two of whose designs Push borrowed as patterns (not code): the focus-scope key-ownership model (`cli/tui-focus.ts`) and the terminal handoff/reclaim flow (`cli/tui-handoff.ts`).
 
 ## License
 

@@ -1,5 +1,13 @@
 # Push CLI TUI Architecture
 
+> **Superseded (archived 2026-07-12).** This document describes the hand-rolled ANSI TUI
+> (`cli/tui.ts` + `createScreenBuffer`), which was deleted when the TUI migrated to
+> [silvery](https://github.com/beorn/silvery) (PRs #1426–#1430). The live decision record is
+> [`docs/decisions/Retained-Mode TUI — MVU + Pure-TS Compositor.md`](../../../decisions/Retained-Mode%20TUI%20—%20MVU%20+%20Pure-TS%20Compositor.md);
+> the current module map is in [`cli/architecture.md`](../../../../cli/architecture.md).
+> Kept as the record of the architecture silvery replaced and the framework survey lessons
+> that led to the contracts silvery was scored against.
+
 This document describes the architecture of the Push CLI's full-screen terminal user interface (TUI), design decisions, and lessons learned from studying other TUI frameworks.
 
 ## Overview

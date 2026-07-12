@@ -51,3 +51,20 @@ Before adding another copied or derived module:
 - List each derived Push path and the upstream Codex path/revision.
 - Mark each modified derived source file with a prominent modification notice.
 - Keep OpenAI/Codex names limited to source attribution, not endorsement.
+
+Compiled binary distributions:
+
+The Bun single-binary builds (`push-bin` / `push.exe` / `push-macos`, see
+cli/README.md §Single binary) embed the CLI's runtime npm dependencies in
+compiled form, where "the license ships in node_modules" no longer holds.
+Called out explicitly because it is the TUI's view layer:
+
+silvery
+Copyright (c) 2026 Bjørn Stabell
+Source: https://github.com/beorn/silvery
+License: MIT. See third_party/licenses/silvery-MIT.txt.
+
+Other bundled npm dependencies (React and the rest of the CLI dependency
+tree) carry their own permissive licenses under their package directories;
+a full per-binary license manifest is not yet generated — track alongside
+binary release work before any packaged distribution beyond CI smoke tests.

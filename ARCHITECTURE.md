@@ -115,7 +115,7 @@ The web app and CLI still keep shell-specific coordinators local. The target is 
 
 ## CLI
 
-Local coding agent for the terminal. It shares the same internal runtime contracts as the web app, while keeping terminal-specific coordination and presentation local. Current terminal work is focused on transcript-first CLI ergonomics and TUI-lite improvements; bare `./push` (or `node cli/cli.ts`) opens the full-screen TUI by default — set `PUSH_TUI_ENABLED=0` to opt back to the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
+Local coding agent for the terminal. It shares the same internal runtime contracts as the web app, while keeping terminal-specific coordination and presentation local. The full-screen TUI is built on [silvery](https://github.com/beorn/silvery) (React authoring over its retained, damage-diffed cell compositor; requires Node ≥24 — see [`docs/decisions/Retained-Mode TUI — MVU + Pure-TS Compositor.md`](docs/decisions/Retained-Mode%20TUI%20—%20MVU%20+%20Pure-TS%20Compositor.md)); bare `./push` (or `node cli/cli.ts`) opens it by default — set `PUSH_TUI_ENABLED=0` to opt back to the transcript REPL. The target is a stronger shared runtime contract across web and CLI, not identical UX across surfaces.
 
 ## Android
 
