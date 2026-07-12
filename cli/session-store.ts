@@ -7,6 +7,7 @@ import process from 'node:process';
 import { PROTOCOL_VERSION } from '../lib/protocol-schema.js';
 import type { DelegationOutcome } from '../lib/runtime-contract.ts';
 import { renameWithRetry } from './fs-atomic.ts';
+import { isInternalEnvelope } from './message-envelopes.ts';
 import { PROVIDER_CONFIGS, redirectDeprecatedProvider } from './provider.js';
 
 // PROTOCOL_VERSION moved to lib/protocol-schema.ts (the canonical
@@ -14,6 +15,12 @@ import { PROVIDER_CONFIGS, redirectDeprecatedProvider } from './provider.js';
 // that previously read it from session-store keep working without
 // touching their imports.
 export { PROTOCOL_VERSION };
+
+// isInternalEnvelope moved to message-envelopes.ts (a pure content
+// predicate, not persistence — see that module's header). Re-exported
+// here for the existing importers/tests; new client-side consumers
+// should import message-envelopes directly.
+export { isInternalEnvelope };
 
 // ─── Interfaces ──────────────────────────────────────────────────
 
@@ -798,31 +805,10 @@ export async function scanInterruptedSessions(): Promise<InterruptedSession[]> {
 
 /**
  * Pull the most recent human user message out of a session's message
- * log. `messages` entries with `role: "user"` can hold tool-result
- * envelopes (`[TOOL_RESULT]...[/TOOL_RESULT]`), project-context blocks
- * (`[PROJECT_INSTRUCTIONS source="..."]...[/PROJECT_INSTRUCTIONS]`),
- * digests (`[CONTEXT DIGEST]...[/CONTEXT DIGEST]`), and other paired
- * internal envelopes — none of which make useful previews.
- *
- * Filtering rule: skip a user message only when it opens with a
- * paired envelope tag — `^[NAME ...]...[/NAME]` where NAME is
- * uppercase / underscore / space. Blanket "starts with [" would drop
- * legitimate human prompts like `[WIP] refactor auth` or markdown
- * checklists `[ ] fix flaky tests`; paired-tag matching keeps those
- * visible. Returns empty string when no suitable message exists.
+ * log, skipping runtime-injected paired envelopes (`isInternalEnvelope`
+ * in message-envelopes.ts). Returns empty string when no suitable
+ * message exists.
  */
-export function isInternalEnvelope(trimmed: string): boolean {
-  if (!trimmed.startsWith('[')) return false;
-  const openMatch = trimmed.match(/^\[([^\]]+)\]/);
-  if (!openMatch) return false;
-  // Strip HTML/XML-style attributes (name="value") to recover the bare
-  // tag name. PROJECT_INSTRUCTIONS is the only production envelope
-  // that uses them today, but future envelopes may follow suit.
-  const tagName = openMatch[1].replace(/\s+[A-Za-z_][\w-]*="[^"]*"/g, '').trim();
-  if (!/^[A-Z_][A-Z_ 0-9]*$/.test(tagName)) return false;
-  return trimmed.includes(`[/${tagName}]`);
-}
-
 function extractLastHumanUserMessage(messages: unknown): string {
   if (!Array.isArray(messages)) return '';
   for (let i = messages.length - 1; i >= 0; i--) {

@@ -4164,6 +4164,38 @@ export async function runTUI(options = {}) {
     return true;
   }
 
+  // Protocol-first session listing (import-boundary ratchet, see
+  // cli/tests/tui-import-boundary.test.mjs): prefer the daemon's
+  // `list_sessions` RPC — the same wire contract the mobile drawer
+  // consumes — over the direct `deps.listSessions()` disk read, so the
+  // picker exercises the path a thin protocol client would use. The rows
+  // are the same `SessionListEntry` shape, enriched server-side with live
+  // run state. Disk fallback covers the inline (daemonless) path, old
+  // daemons, and the headless-harness `deps` seam; never spawns a daemon
+  // just to list (`startDaemon: false`). `limit` matches the server cap —
+  // scoping/filtering stays client-side in the picker.
+  async function fetchSessionRows() {
+    const res = await requestDaemonAdmin('list_sessions', { limit: 1000 });
+    if (res.ok && Array.isArray(res.payload?.sessions)) return res.payload.sessions;
+    // Expected fallbacks stay quiet (mirrors the snapshot-hydrate path):
+    // no daemon running, or an older daemon without the verb. Anything
+    // else — including an ok response with a malformed payload — gets a
+    // structured line so a broken RPC doesn't silently degrade to disk.
+    const expected =
+      !res.ok && (res.code === 'DAEMON_OFFLINE' || res.code === 'UNSUPPORTED_REQUEST_TYPE');
+    if (!expected && (res.ok || res.code)) {
+      io.stderr.write(
+        `${JSON.stringify({
+          level: 'warn',
+          event: 'tui_list_sessions_rpc_failed',
+          code: res.code ?? 'MALFORMED_PAYLOAD',
+          message: res.error ?? null,
+        })}\n`,
+      );
+    }
+    return deps.listSessions();
+  }
+
   async function openResumeModal() {
     if (tuiState.runState !== 'idle') {
       addTranscriptEntry(tuiState, 'warning', 'Cannot open resume picker while a run is active.');
@@ -4193,7 +4225,7 @@ export async function runTUI(options = {}) {
     scheduler.flush();
 
     try {
-      const rows = await deps.listSessions();
+      const rows = await fetchSessionRows();
       // Default to the active workspace's sessions — the REPL picker has
       // always cwd-scoped, but this modal listed every workspace and the
       // current project's sessions drowned in unrelated history. Fall back
@@ -4341,7 +4373,7 @@ export async function runTUI(options = {}) {
             ? `${JSON.stringify(row.sessionName)} (${row.sessionId})`
             : row.sessionId;
           addTranscriptEntry(tuiState, 'status', `Deleted session: ${displayName}`);
-          const nextRows = await deps.listSessions();
+          const nextRows = await fetchSessionRows();
           ms.rows = nextRows;
           updateFilteredRows(ms);
           ms.cursor = Math.min(ms.cursor, Math.max(0, ms.filteredRows.length - 1));
@@ -4377,7 +4409,7 @@ export async function runTUI(options = {}) {
           await saveSessionState(targetState);
         }
 
-        const nextRows = await deps.listSessions();
+        const nextRows = await fetchSessionRows();
         ms.rows = nextRows;
         updateFilteredRows(ms);
         const nextIndex = ms.filteredRows.findIndex((r) => r.item.sessionId === targetId);
@@ -7583,7 +7615,7 @@ export async function runTUI(options = {}) {
   // session picker if previous sessions exist so the user can resume.
   if (!options.sessionId) {
     try {
-      const existingSessions = await deps.listSessions();
+      const existingSessions = await fetchSessionRows();
       if (existingSessions.length > 0) {
         await openResumeModal();
       }
