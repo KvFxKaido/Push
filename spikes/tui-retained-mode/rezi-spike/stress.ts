@@ -187,7 +187,10 @@ function scene6(s: State): VNode {
         id: 'dim-layer',
         backdrop: 'dim',
         modal: false,
-        content: ui.center({}, [
+        // NOT ui.center: center faults the app on first paint (silently —
+        // run() resolves, exit 0, empty stderr). Minimal repro isolated in
+        // probe-fault.mjs (`center-only` dies; `layer-plain-*` survive).
+        content: ui.column({ p: 2 }, [
           ui.box({ border: 'double', p: 1 }, [ui.text('dim backdrop behind this box')]),
         ]),
       }),
@@ -379,10 +382,29 @@ await app.ready();
 const timer = setInterval(() => {
   timerFires++;
   const seconds = Math.floor((Date.now() - t0) / 1000);
-  app.update((s) => {
-    updaterInvocations++;
-    return s.tick === seconds ? s : { ...s, tick: seconds };
-  });
+  // Guarded: if a scene faults the engine (seen: scene 6), update() on a
+  // Faulted app throws ZRUI_INVALID_STATE from inside this callback —
+  // uncaught in a timer, that kills the process and MASKS the primary
+  // fault. Swallow it here and let `await done` surface the real error.
+  try {
+    app.update((s) => {
+      updaterInvocations++;
+      return s.tick === seconds ? s : { ...s, tick: seconds };
+    });
+  } catch {
+    clearInterval(timer);
+  }
 }, 500);
-await done;
+try {
+  await done;
+} catch (err) {
+  clearInterval(timer);
+  // Print AFTER the engine tears down the alt screen so it survives on the
+  // primary buffer. This is the engine's own fault report — capture it.
+  const e = err as { code?: string; message?: string; stack?: string };
+  console.error(`\n=== REZI APP FAULTED ===`);
+  console.error(`code: ${e?.code ?? 'unknown'}`);
+  console.error(e?.stack ?? e?.message ?? String(err));
+  process.exit(1);
+}
 clearInterval(timer);

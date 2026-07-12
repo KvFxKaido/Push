@@ -49,7 +49,28 @@ human hand):
   any animation observation. The timer still derives tick from wall-clock —
   robust regardless.
 
-Remaining for a human in a rich terminal: case 1 (watch the wide↔narrow
-toggle), case 2 (edge clip), case 4+11 (resize wiggle), case 9 (mouse clicks,
-including the second cell of a wide glyph and click-blocking under the
-modal), and re-eyeballing the two ⚠️s above.
+## Final human-scored run (2026-07-12, Windows Terminal / WSL2) — column closed
+
+- **Cases 1, 2, 4(+11), 5, 8, 9 ✅** — cell overwrite, edge clip, reflow,
+  modal restore/occlusion, and full mouse hit-testing (including the
+  continuation cell of a wide glyph, and modal click-blocking) all pass.
+- **Case 3 ❌** — the ZWJ family emoji misaligns at raster in a real
+  terminal even though `measureTextCells` returns 2: measure and raster
+  disagree. This is the exact CellWidth failure mode the decision doc's
+  contract exists to prevent.
+- **Case 7 ❌** — human-verified live: `x` (child order) restacks, `z`
+  (zIndex) does not. Matches the source finding.
+- **Case 6 ❌ + two bonus findings** — the scene originally CRASHED the
+  whole spike. Bisection (`probe-fault.mjs`): the trigger was `ui.center`,
+  which **faults the app on first paint**; and a faulted Rezi app **dies
+  silently** — `run()` resolves cleanly, exit 0, empty stderr, no error
+  channel. (The loud ZrUiError users saw was our own timer calling
+  `update()` on the faulted app — now guarded.) The dim backdrop itself,
+  re-tested without `ui.center`: `░` pattern replace over the whole
+  viewport. No transparency.
+
+**Adopt verdict from this rubric:** Rezi's input/mouse layer is genuinely
+excellent and the modal path is solid — but it fails the width contract at
+raster (3), fails z-order-by-prop (7), has no transparency (6), a core
+layout widget faults the engine, and faults have zero error surface. The
+adopt case for Push's default surface does not survive this scoreboard.

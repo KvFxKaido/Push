@@ -57,20 +57,20 @@ Score in the candidate's spike README as ✅ / ⚠️ (partial, note why) / ❌ 
 
 | # | Case | OpenTUI (Bun) | Rezi | Glyph | Pure-TS build |
 |---|---|---|---|---|---|
-| 1 | CJK overwrite | — | — (staged: `stress.ts` scene 1) | — | — |
-| 2 | wide clip | — | — (staged: scene 2) | — | — |
-| 3 | ZWJ/combining | — | ⚠️ string-level ✅; **raster suspicious** — family emoji cluster mangled in the driven run's cell buffer (scene 3; re-eyeball in a rich terminal) | ✅ string-level (`ttyStringWidth`) | — |
-| 4 | mixed reflow | — | — (staged: scene 4) | — | — |
+| 1 | CJK overwrite | — | ✅ human-scored (Windows Terminal, 2026-07-12) | — | — |
+| 2 | wide clip | — | ✅ human-scored | — | — |
+| 3 | ZWJ/combining | — | ❌ **human-confirmed raster failure** — family emoji misaligns in a real terminal despite `measureTextCells`=2; measure and raster disagree | ✅ string-level (`ttyStringWidth`) | — |
+| 4 | mixed reflow | — | ✅ human-scored (incl. resize wiggle) | — | — |
 | 5 | modal restore | ✅ (panes.ts) | ✅ content restore correct w/ current state (full-clear-vs-damage byte check still open) | — | — |
-| 6 | transparency | — | ❌ by design — `"dim"` fills a `░` pattern line (`containers.js`); see-through dim doesn't exist. Score = is pattern-replace acceptable? | — | — |
-| 7 | z-order stack | — | ❌ **source-confirmed** — paint renders layers children "in order (later = on top)" and never reads `zIndex`; `zIndex` only sorts the input-routing registry → doc contract unmet, paint/input stacking can disagree. Scene 7's `x` (child order) vs `z` (zIndex) demonstrates it live | — | — |
+| 6 | transparency | — | ❌ by design — `"dim"` fills a `░` pattern (`containers.js`), and the fill covers the **whole viewport**, not just the layers region; see-through dim doesn't exist. Bonus finding via this scene: `ui.center` **faults the app on first paint**, and a faulted app **exits silently** (`run()` resolves, exit 0, empty stderr) — minimal repro in `rezi-spike/probe-fault.mjs` | — | — |
+| 7 | z-order stack | — | ❌ **source-confirmed + human-verified live** — paint renders layers children "in order (later = on top)" and never reads `zIndex`; `zIndex` only sorts the input-routing registry → doc contract unmet, paint/input stacking can disagree (scene 7: `x` restacks, `z` doesn't) | — | — |
 | 8 | occluded update | — | ✅ bg ticked behind modal, zero leak-through, current values on close | — | — |
-| 9 | hit-testing | ✅ (click-to-focus) | — (staged: scene 9; needs human mouse) | — (`useMouse` present) | — |
+| 9 | hit-testing | ✅ (click-to-focus) | ✅ **human-scored** — clicks route correctly incl. the continuation cell of a wide glyph; modal blocks clicks to lower layers | — (`useMouse` present) | — |
 | 10 | wheel + drag | — | — | — | — |
 | 11 | resize storm | — | — | — | — |
 | 12 | cursor + selection | — | — | — | — |
 | 13 | headless story | ❌ native needs Bun+TTY | ⚠️ native needs real TTY; `createTestRenderer` exists (unproven) | ✅ renders headless (but see #15) | ✅ by design |
-| 14 | teardown | — | ✅ clean alt-screen exit after full stress session (`q`) + probe-tty | ✅ observed (smoke) | — |
+| 14 | teardown | — | ⚠️ clean on `q`/probe-tty, **but a runtime fault exits silently** — no error surface at all (see #6) — an ops-visibility hole by Push's standards | ✅ observed (smoke) | — |
 | 15 | perf floor | — | — | ⚠️ two identical full frames headless — verify diff engages on TTY | — |
 
 Fill cells only from a driven run; update the candidate's spike README with

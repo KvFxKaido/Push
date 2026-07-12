@@ -29,15 +29,20 @@ its requirement** (render a transcript) and does not bind this one.
 2. **Adopt a pure-JS incumbent** (blessed lineage) — real windowing, but an aging/crufty API
    for a surface we want to feel modern. Also Ink (React + Yoga) has no z-order compositor and
    weak mouse — behind Bubble Tea v2 for this requirement.
-3. **Adopt Rezi** (`rezi-ui`, added 2026-07-12) — TS API over a native C cell engine
-   ("Zireael") via **N-API prebuilds that load on Node 22** (verified,
-   `spikes/tui-retained-mode/rezi-spike/`), so the OpenTUI disqualifier does not apply. Passes
-   the string-level CellWidth probes (CJK/ZWJ/combining), boots with full mouse + OSC52 caps in
-   a real terminal, ships layers/modal-stack/hit-testing APIs and a deterministic
-   `createTestRenderer`. **The strongest adopt candidate.** Costs: native C core in the default
-   surface's dependency tree, 0.1.0-beta, small/solo-ish org; engine requires a real TTY
-   (headless = test renderer, unproven). Not chosen *yet* — must clear `STRESS.md` first; if it
-   clears, the remaining question is dependency appetite, not architecture.
+3. **Adopt Rezi** (`rezi-ui`, added 2026-07-12; **stress-run complete — ruled out**) — TS API
+   over a native C cell engine ("Zireael") via N-API prebuilds that load on Node 22, so the
+   OpenTUI disqualifier does not apply. Was the strongest adopt candidate on paper; the driven
+   `STRESS.md` run (source-verified + human-scored, `spikes/tui-retained-mode/rezi-spike/`)
+   settled it: **mouse/hit-testing is genuinely excellent** (wide-glyph continuation cells hit
+   correctly, modals block lower layers) and modal restore/occlusion pass — but it **fails the
+   CellWidth contract at raster** (ZWJ family misaligns in a real terminal while
+   `measureTextCells` says 2), **paint ignores `zIndex`** (child order only; `zIndex` sorts the
+   input registry → paint and input stacking can disagree, contradicting its own prop docs),
+   "dim" is a whole-viewport `░` pattern replace (no transparency), `ui.center` **faults the
+   engine on first paint**, and a faulted app **exits silently** (`run()` resolves, exit 0,
+   empty stderr) — an ops-visibility hole that contradicts this repo's symmetric-logs doctrine
+   on its own. The failures land precisely on this doc's pre-written contracts (CellWidth
+   day-one; explicit z-order layers; no silent paths).
 4. **Adopt vue-tui** (`vuejs-ai/vue-tui`, added 2026-07-12) — Vue 3 renderer in the Ink
    lineage (its own credits: Ink's component model, yoga layout, rendering pipeline). Ruled
    out for this requirement on architecture: wheel-only mouse, no z-order compositor — option
@@ -54,14 +59,17 @@ its requirement** (render a transcript) and does not bind this one.
    adopt candidate.
 6. **Build a pure-TS engine.** Chosen. See below.
 
-> **2026-07-12 survey note:** options 3–5 came from a one-day field survey after this doc was
-> first written. Two findings matter: (a) every serious candidate — OpenTUI, Lipgloss v2,
-> Rezi, Glyph — independently converged on *cell buffer + damage diff*, confirming the
-> architecture bet; (b) Rezi weakens the original "no viable adopt on Node" premise, so the
-> build decision now rests on the dependency-appetite argument (native core, beta, bus
-> factor), not runtime impossibility. `spikes/tui-retained-mode/STRESS.md` is the shared
-> 15-case rubric that settles adopt-vs-build empirically; run Rezi through it before starting
-> the build's step 0.
+> **2026-07-12 survey note (updated same day, stress run complete):** options 3–5 came from a
+> one-day field survey after this doc was first written. (a) Every serious candidate —
+> OpenTUI, Lipgloss v2, Rezi, Glyph — independently converged on *cell buffer + damage diff*,
+> confirming the architecture bet. (b) Rezi briefly weakened the "no viable adopt on Node"
+> premise — then the `STRESS.md` run restored the build decision on *empirical* grounds
+> (raster width failure, zIndex paint/input split, engine fault + silent death; see option 3).
+> The build is no longer justified by "nothing else runs on Node" but by "the one thing that
+> does fails the contracts this doc wrote down in advance." Rezi remains the reference for
+> input routing (its hit-testing is the best surveyed); Glyph and Lipgloss v2 remain the
+> compositor references. The rubric stays: any future candidate — and the build itself —
+> gets scored against the same 15 cases.
 
 ## Decision
 
