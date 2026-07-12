@@ -45,6 +45,14 @@ Everything else is the grayscale ramp: `bold` / normal / `dim`.
 The v1 mono look proved Push is legible with a single saturated cell on screen. That is
 the default posture, not a degraded mode.
 
+**No emoji in the stream.** A decorative emoji is a full-color glyph that can't be dimmed —
+every one is an unbudgeted accent entering through a side door, and the narrating voice
+(law 11) doesn't cheerlead. Decorative color enters *only* through the accent budget.
+Model prose can't be trusted to honor this, so the rule is enforced in code: the markdown
+render pass (`cli/silvery/markdown.tsx`, `stripDecorativeEmoji`) strips pictographs before
+they reach a cell. Push's own chrome glyphs (hexagons, diamonds, density blocks) are
+geometric, not pictographic, and are unaffected.
+
 ### 3. The fault exception
 
 The one sanctioned second color means **something is wrong** — and it is never used for

@@ -29,6 +29,7 @@ import { isReducedMotion } from '../tui-spinner.js';
 import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.js';
 import { detectUnicode } from '../tui-theme.js';
 import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from './controller.js';
+import { MarkdownBody } from './markdown.js';
 import { PushThemeProvider } from './theme.js';
 import {
   breathingHex,
@@ -173,6 +174,12 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
     : item.role === 'status'
       ? VL_COLOR.muted
       : undefined;
+  const bodyText = item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text;
+  // Markdown is for machine-generated prose only. User turns stay literal —
+  // a pasted `**bold**` or emoji must echo back faithfully, not get restyled or
+  // stripped. Fault (law 3) and status bodies also stay plain so the fault color
+  // never mixes with accent link/code spans.
+  const renderMarkdown = !item.isError && item.role !== 'status' && item.role !== 'user';
   return (
     <Box
       flexDirection="column"
@@ -182,9 +189,11 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
         {mark.glyph} {label}
         {item.live ? ' · live' : ''}
       </Text>
-      <Text color={bodyColor}>
-        {item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text}
-      </Text>
+      {renderMarkdown ? (
+        <MarkdownBody text={bodyText} base={bodyColor} />
+      ) : (
+        <Text color={bodyColor}>{bodyText}</Text>
+      )}
       {item.kind === 'review' ? (
         <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} review</Text>
       ) : null}
