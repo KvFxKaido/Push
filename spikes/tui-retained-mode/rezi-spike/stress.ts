@@ -189,14 +189,15 @@ function scene6(s: State): VNode {
  * this is the path paint does use, so it must visibly restack.
  */
 function scene7(s: State): VNode {
+  // Compact geometry so all three boxes fit even at 80×24 with the
+  // instructions on top — a CCCC that clips off-screen reads as "broken".
   const mk = (name: string, pad: number, z: number) =>
     ui.layer({
       id: `stack-${name}`,
       zIndex: z,
       modal: false,
       content: ui.column({ p: pad }, [
-        ui.box({ border: 'heavy', title: `${name} (z=${z})`, width: 40, height: 8 }, [
-          ui.text(`${name} ${name} ${name}`),
+        ui.box({ border: 'heavy', title: `${name} (z=${z})`, width: 34, height: 5 }, [
           ui.text(`${name} ${name} ${name}`),
         ]),
       ]),
@@ -206,16 +207,14 @@ function scene7(s: State): VNode {
     [3, 1, 2],
     [2, 3, 1],
   ][s.zRotation % 3];
-  const stack = [mk('AAAA', 0, zs[0]), mk('BBBB', 2, zs[1]), mk('CCCC', 4, zs[2])];
+  const stack = [mk('AAAA', 0, zs[0]), mk('BBBB', 1, zs[1]), mk('CCCC', 2, zs[2])];
   // Control: rotate the array itself — paint follows child order.
   const rotated = stack.slice(s.xRotation % 3).concat(stack.slice(0, s.xRotation % 3));
   return ui.column({ gap: 0 }, [
     instructions([
-      "'z' rotates zIndex props — EXPECT NO visual restack (engine paints",
-      'child order only; zIndex feeds input routing). That mismatch IS the',
-      "finding. 'x' rotates child order — EXPECT a visible restack; if 'x'",
-      "restacks and 'z' does not, the spike code is fine and the engine is",
-      'the thing being measured.',
+      "IMPORTANT: 'z' doing NOTHING visually is the expected result — that",
+      "IS the engine finding (paint ignores zIndex). 'x' is the control:",
+      'it rotates real child order and MUST visibly restack the boxes.',
     ]),
     ui.text(`zIndex rotation ${s.zRotation % 3} · child-order rotation ${s.xRotation % 3}`),
     ui.layers(rotated),
@@ -225,6 +224,7 @@ function scene7(s: State): VNode {
 /** Case 9: mouse hit-testing — clicks route to the right target. */
 function scene9(s: State): VNode {
   return ui.column({ gap: 1 }, [
+    ui.text('the three labels below are BUTTONS (Tab focuses, Enter presses — sanity path):'),
     ui.row({ gap: 2 }, [
       ui.button({ id: 'btn-a', label: 'target A', onPress: () => setClick('A') }),
       ui.button({
@@ -234,13 +234,13 @@ function scene9(s: State): VNode {
       }),
       ui.button({ id: 'btn-b', label: 'target B', onPress: () => setClick('B') }),
     ]),
-    ui.text(`last click: ${s.lastClick || '(none)'}`),
+    ui.text(`last click: ${s.lastClick || '(none)'}  ← this line is the whole test`),
     instructions([
-      'Click each button, including the SECOND cell of a 中 in the wide',
-      'button label. PASS: every click lands on the visually-correct target',
-      '(continuation cells inherit the lead glyph’s hit target).',
-      "Then press 'm': with the modal open, background buttons must NOT",
-      'react to clicks (modal blocks lower layers). ESC closes.',
+      'MOUSE-click each button and watch "last click" change. The money',
+      'shot: click the RIGHT HALF of a 中 in the middle button — it must',
+      'still register as the wide-glyph button (continuation cells inherit',
+      "the lead's hit target). Then press 'm' and click target A/B: with",
+      'the modal open they must NOT fire. ESC closes the modal.',
     ]),
     s.modalOpen
       ? ui.modal({
