@@ -449,11 +449,13 @@ mobile in priority — the plan is committed, the calendar is not.
   (`/session`, `/provider`, `/model`, `/config`, `/resume`, session verbs, skills, worktree)
   while `PUSH_TUI_SILVERY` still selected the opt-in path.
 - **Step B (final):** Silvery is the sole `launchTui` path; Bun bundles it (external only unused
-  terminal/browser adapters); `PUSH_TUI_SILVERY` is removed. The ANSI product launch path is
-  deleted. Shared pure `cli/tui-*.ts` helpers and headless harness coverage of unported remote/rc
-  flows remain until those commands land on Silvery and the harness is rewritten. Confirm the
-  shared `lib/` runtime contracts are untouched (silvery is view-only) and the shared kernel round
-  loop still drives cleanly.
+  terminal/browser adapters); `PUSH_TUI_SILVERY` is removed. The ANSI product printer (`cli/tui.ts`)
+  and its renderer-only modules/tests are deleted. Shared pure helpers (`tui-history`,
+  `tui-daemon-session`, `tui-status`, completer/focus/modal-input, framers/renderer used by status)
+  remain as libraries the retained controller still consumes. Remote/rc/daemon/checkpoint/theme/
+  spinner control plane lives on Silvery via `cli/daemon-admin.ts` + controller slash commands.
+  Confirm the shared `lib/` runtime contracts are untouched (silvery is view-only) and the shared
+  kernel round loop still drives cleanly.
 
 **Upstream / watch items:** the silent-fault default (worth an upstream issue, worked around
 here); ListView tail-follow ergonomics; and the barrel exporting `render` as the run-instance

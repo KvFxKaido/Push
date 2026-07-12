@@ -1,28 +1,17 @@
 /**
  * TUI import-boundary ratchet.
  *
- * Goal: the TUI client layer (`cli/tui*.ts`) should consume the runtime
- * through the daemon protocol (`daemon-client` request/response + events),
- * not by importing runtime-internal modules directly. Today parity between
- * the TUI and the daemon is guaranteed *by construction* (same process,
- * same imports); the target state is parity *by protocol* — the point at
- * which `push.runtime.v1` provably describes a full session and a thin
- * alternate client (any language) becomes possible. See the Retained-Mode
- * TUI decision doc for the surrounding direction.
+ * Goal: the TUI client layer (`cli/tui*.ts` helpers + `cli/silvery/`) should
+ * consume the runtime through the daemon protocol when attached, not by
+ * importing runtime-internal modules from presentational helpers. The Silvery
+ * controller still owns the inline (daemonless) turn path and is allowlisted
+ * explicitly below.
  *
  * This is a RATCHET, not a gate:
  *   - importing a forbidden module from a file/module pair NOT in the
  *     baseline fails — new code must route through the protocol;
  *   - a baseline entry whose import no longer exists ALSO fails — remove
  *     the entry so the ratchet only ever tightens.
- *
- * Presentational helpers (role-display, design-tokens, edit-diff,
- * protocol-schema types, message-envelopes, …) are NOT forbidden: a thin
- * client legitimately needs display logic. The forbidden set is the
- * runtime brain — modules whose use means the client is doing the
- * daemon's job locally. Extend FORBIDDEN_MODULES as conversions create
- * protocol replacements (e.g. `provider` once `list_providers` fully
- * covers the picker).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +21,7 @@ import path from 'node:path';
 const CLI_DIR = path.join(import.meta.dirname, '..');
 
 /**
- * Runtime-internal cli/ modules the TUI layer must not import, with the
+ * Runtime-internal cli/ modules the TUI helper layer must not import, with the
  * protocol path that replaces each. Keys are extensionless same-directory
  * module ids (`./engine.js` and `./engine.ts` both normalize to `engine`).
  */
@@ -44,22 +33,31 @@ const FORBIDDEN_MODULES = new Map([
 ]);
 
 /**
- * Known pre-existing violations, pinned exactly. Sorted module ids per
- * file. Removing an import here without deleting its entry fails the
- * stale-baseline check — the ratchet only tightens.
- *
- * cli/tui.ts is the expected long tail: it still hosts the inline
- * (daemonless) engine path, direct disk resume, in-process compaction,
- * and local approval-risk hints. Each conversion that lands must shrink
- * this list in the same PR.
+ * Known allowlisted violations, pinned exactly. Sorted module ids per file.
+ * Silvery's controller is the retained product TUI and still owns the inline
+ * (daemonless) engine path — shrink this list when those paths move fully
+ * onto daemon verbs.
  */
-const BASELINE = new Map([['tui.ts', ['context-manager', 'engine', 'session-store', 'tools']]]);
+const BASELINE = new Map([
+  ['silvery/controller.ts', ['context-manager', 'engine', 'session-store']],
+]);
 
-/** cli/tui*.ts — the TUI client layer under the boundary. */
+/** cli/tui*.ts helpers + the Silvery controller under the boundary. */
 function tuiModuleFiles() {
-  return readdirSync(CLI_DIR)
+  const top = readdirSync(CLI_DIR)
     .filter((name) => /^tui.*\.ts$/.test(name))
     .sort();
+  const silvery = path.join(CLI_DIR, 'silvery');
+  let silveryFiles = [];
+  try {
+    silveryFiles = readdirSync(silvery)
+      .filter((name) => name.endsWith('.ts') || name.endsWith('.tsx'))
+      .map((name) => `silvery/${name}`)
+      .sort();
+  } catch {
+    silveryFiles = [];
+  }
+  return [...top, ...silveryFiles];
 }
 
 /** Strip comments so prose mentions of module paths don't count. */
@@ -91,8 +89,17 @@ function importSpecifiers(source) {
   return specs;
 }
 
-/** './engine.js' | './engine.ts' → 'engine'; non-sibling specifiers → null. */
-function siblingModuleId(spec) {
+/**
+ * './engine.js' | '../engine.js' → 'engine'; non-cli-sibling specifiers → null.
+ * Silvery lives one directory deeper, so both `./` and `../` resolve to cli/.
+ */
+function siblingModuleId(spec, fileName) {
+  if (fileName.startsWith('silvery/')) {
+    if (!spec.startsWith('../')) return null;
+    const rest = spec.slice(3);
+    if (rest.startsWith('../') || rest.startsWith('./')) return null;
+    return rest.replace(/\.(ts|js|mjs|tsx)$/, '');
+  }
   if (!spec.startsWith('./')) return null;
   return spec.slice(2).replace(/\.(ts|js|mjs)$/, '');
 }
@@ -101,7 +108,7 @@ function forbiddenImportsOf(fileName) {
   const source = readFileSync(path.join(CLI_DIR, fileName), 'utf8');
   const hits = new Set();
   for (const spec of importSpecifiers(source)) {
-    const id = siblingModuleId(spec);
+    const id = siblingModuleId(spec, fileName);
     if (id && FORBIDDEN_MODULES.has(id)) hits.add(id);
   }
   return [...hits].sort();
@@ -111,9 +118,14 @@ describe('TUI import boundary (ratchet)', () => {
   const files = tuiModuleFiles();
 
   it('scans a plausible TUI module set', () => {
-    // Guard the scanner itself: if the glob or directory layout changes
-    // and this list collapses, every check below would vacuously pass.
-    assert.ok(files.includes('tui.ts'), 'expected cli/tui.ts in the scan set');
+    assert.ok(
+      files.some((name) => name.startsWith('tui-')),
+      'expected cli/tui-* helpers in the scan set',
+    );
+    assert.ok(
+      files.includes('silvery/controller.ts'),
+      'expected cli/silvery/controller.ts in the scan set',
+    );
     assert.ok(files.length >= 10, `expected the tui-* module family, found ${files.length} files`);
   });
 
@@ -121,7 +133,7 @@ describe('TUI import boundary (ratchet)', () => {
     for (const [fileName, moduleIds] of BASELINE) {
       assert.ok(
         files.includes(fileName),
-        `BASELINE names ${fileName}, which is not a cli/tui*.ts module`,
+        `BASELINE names ${fileName}, which is not a scanned TUI module`,
       );
       for (const id of moduleIds) {
         assert.ok(

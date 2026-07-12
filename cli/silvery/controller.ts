@@ -1,5 +1,7 @@
 import path from 'node:path';
 
+import fs from 'node:fs/promises';
+
 import {
   applyConfigToEnv,
   loadConfig,
@@ -8,6 +10,12 @@ import {
   type PushConfig,
 } from '../config-store.js';
 import { compactContext } from '../context-manager.js';
+import { runCheckpointCommand } from '../checkpoint-command.js';
+import {
+  runRemoteCommand,
+  runRemoteControlCommand,
+  type DaemonAdminTransport,
+} from '../daemon-admin.js';
 import { tryConnect } from '../daemon-client.js';
 import { DEFAULT_MAX_ROUNDS, runAssistantTurn, type EngineEvent } from '../engine.js';
 import { appendUserMessageWithFileReferences } from '../file-references.js';
@@ -19,9 +27,12 @@ import {
   resolveApiKey,
   type ProviderConfig,
 } from '../provider.js';
+import { getLogPath, getPidPath, getSocketPath } from '../pushd.js';
+import { getAuditLogPath, getAuditMaxBytes } from '../pushd-audit-log.js';
 import { initCliSession } from '../session-init.js';
 import {
   appendSessionEvent,
+  getSessionRoot,
   listSessions,
   loadSessionState,
   rewriteMessagesLog,
@@ -32,6 +43,8 @@ import { formatSkillDiagnostics, lintSkills, loadSkills } from '../skill-loader.
 import { sessionMessagesToTranscriptRows } from '../tui-history.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
+import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
+import { isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
 import { formatWorktreeStatus } from '../worktree.js';
 import {
   applyDaemonTranscriptEvent,
@@ -520,19 +533,22 @@ export async function createSilveryController(
           '  /provider [name|#]     List or switch provider',
           '  /model [name|#]        List curated models or switch model',
           '  /config                Show config overview (secrets masked)',
-          '  /config key <secret>   Set API key for current provider',
-          '  /config key <p> <s>    Set API key for a named provider',
-          '  /config url <url>      Set endpoint URL for current provider',
-          '  /resume <session-id>   Switch to a saved session',
+          '  /config key|url|…      Set provider keys, sandbox, daemon, tavily',
+          '  /resume [session-id]   List or switch to a saved session',
           '  /skills [reload|lint]  List, reload, or lint workspace skills',
           '  /compact [turns]       Compact context (default preserve 6 turns)',
           '  /revert [turns]        Daemon: remove recent user turns',
           '  /unrevert              Daemon: restore the last reverted tail',
           '  /children [id]         List or inspect delegated child runs',
+          '  /checkpoint …          Snapshot / restore conversation + files',
+          '  /remote …              Manage Remote relay + phone pairing',
+          '  /rc [pair]             Hand this session to your phone',
+          '  /daemon status|restart Show pushd status or reconnect',
+          '  /theme [list|name]     List or set the saved theme preference',
+          '  /spinner [list|name]   List or pin the spinner preference',
+          '  /debug runtime         Runtime path/provider/session diagnostics',
           '  /worktree              Show worktree sandbox status',
           '  /exit | /quit          Use the command palette or Ctrl+C to exit',
-          '',
-          'Not yet ported: interactive pickers, /remote, /rc, /checkpoint, /theme, /spinner.',
         ].join('\n'),
       );
       return true;
@@ -745,8 +761,56 @@ export async function createSilveryController(
         appendStatus(`URL set for ${state.provider}: ${url}`);
         return true;
       }
+      if (subcommand === 'tavily') {
+        const secret = restArgs.join(' ').trim();
+        if (!secret) {
+          appendStatus('Usage: /config tavily <key>', true);
+          return true;
+        }
+        config.tavilyApiKey = secret;
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Tavily key set (${maskSecret(secret)}).`);
+        return true;
+      }
+      if (subcommand === 'sandbox') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'on' && mode !== 'off') {
+          appendStatus('Usage: /config sandbox on|off', true);
+          return true;
+        }
+        config.localSandbox = mode === 'on';
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Local sandbox: ${mode}`);
+        return true;
+      }
+      if (subcommand === 'explain') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'on' && mode !== 'off') {
+          appendStatus('Usage: /config explain on|off', true);
+          return true;
+        }
+        config.explainMode = mode === 'on';
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Explain mode: ${mode}`);
+        return true;
+      }
+      if (subcommand === 'daemon') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'auto' && mode !== 'off') {
+          appendStatus('Usage: /config daemon auto|off', true);
+          return true;
+        }
+        config.tuiDaemonAutoStart = mode === 'auto';
+        process.env.PUSH_TUI_DAEMON_AUTOSTART = mode === 'auto' ? 'true' : 'false';
+        await persistConfig(config);
+        appendStatus(`Daemon autostart: ${mode}`);
+        return true;
+      }
       appendStatus(
-        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url>',
+        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url> | /config tavily <key> | /config sandbox on|off | /config explain on|off | /config daemon auto|off',
         true,
       );
       return true;
@@ -956,12 +1020,247 @@ export async function createSilveryController(
       return true;
     }
 
+    if (command === 'checkpoint') {
+      await runCheckpointCommand(
+        arg,
+        {
+          workspaceRoot: state.cwd,
+          sessionId: state.sessionId,
+          messages: state.messages,
+          provider: state.provider,
+          model: state.model,
+        },
+        {
+          status: (text) => appendStatus(text),
+          warning: (text) => appendStatus(text, true),
+          error: (text) => appendStatus(`checkpoint: ${text}`, true),
+          bold: (text) => text,
+          dim: (text) => text,
+          code: (text) => `\`${text}\``,
+        },
+      );
+      return true;
+    }
+
+    if (command === 'remote') {
+      await runRemoteCommand(
+        arg,
+        daemon as DaemonAdminTransport,
+        (level, text) => {
+          appendStatus(text, level === 'error' || level === 'warning');
+        },
+        {
+          maskSecret,
+          onMintedAttachToken: (token) => {
+            state.attachToken = token;
+          },
+        },
+      );
+      return true;
+    }
+
+    if (command === 'rc') {
+      await runRemoteControlCommand(
+        arg,
+        daemon as DaemonAdminTransport,
+        (level, text) => {
+          appendStatus(text, level === 'error' || level === 'warning');
+        },
+        {
+          sessionName: state.sessionName,
+          onMintedAttachToken: (token) => {
+            state.attachToken = token;
+          },
+        },
+      );
+      return true;
+    }
+
+    if (command === 'daemon') {
+      const sub = (arg.split(/\s+/)[0] || 'status').toLowerCase();
+      if (sub === 'status' || sub === 'show' || !arg) {
+        const autostart =
+          process.env.PUSH_TUI_DAEMON_AUTOSTART === 'false' ||
+          config.tuiDaemonAutoStart === false ||
+          config.tuiDaemonAutoStart === 'false'
+            ? false
+            : true;
+        const lines = [`Autostart: ${autostart ? 'auto' : 'off'}`];
+        if (daemon.connected) {
+          lines.push('Connected: yes');
+          if (daemon.sessionId) lines.push(`Session: ${daemon.sessionId}`);
+        } else if (!autostart) {
+          lines.push('Connected: no (autostart off, running inline)');
+        } else if (daemon.autoStartAttempted) {
+          lines.push('Connected: no (autostart attempted, fell back to inline)');
+        } else {
+          lines.push('Connected: no (inline mode, autostart pending)');
+        }
+        try {
+          const pidRaw = await fs.readFile(getPidPath(), 'utf8');
+          const pid = Number.parseInt(pidRaw.trim(), 10);
+          if (Number.isFinite(pid)) {
+            let running = false;
+            try {
+              process.kill(pid, 0);
+              running = true;
+            } catch (err) {
+              running = (err as NodeJS.ErrnoException)?.code === 'EPERM';
+            }
+            lines.push(
+              running
+                ? `Process: pid ${pid} (running)`
+                : `Process: pid ${pid} in pidfile but not running (stale)`,
+            );
+          } else {
+            lines.push('Process: pid file unreadable');
+          }
+        } catch {
+          lines.push('Process: not running (no pid file)');
+        }
+        lines.push('', 'Paths:', `  socket: ${getSocketPath()}`, `  log:    ${getLogPath()}`);
+        const auditPath = getAuditLogPath();
+        lines.push(`  audit:  ${auditPath}`);
+        try {
+          const stat = await fs.stat(auditPath);
+          const sizeMb = (stat.size / 1024 / 1024).toFixed(2);
+          const maxMb = (getAuditMaxBytes() / 1024 / 1024).toFixed(0);
+          lines.push(`  audit size: ${sizeMb} MB (rotates at ${maxMb} MB)`);
+        } catch {
+          // no audit log yet
+        }
+        appendStatus(lines.join('\n'));
+        return true;
+      }
+      if (sub === 'restart' || sub === 'refresh') {
+        const connected = await daemon.ensureConnected({ announce: true });
+        appendStatus(
+          connected
+            ? 'Daemon connection refreshed (or already connected).'
+            : 'No daemon running and reconnect failed. Check /daemon status.',
+          !connected,
+        );
+        return true;
+      }
+      appendStatus(
+        `Unknown daemon subcommand: ${sub}. Try: /daemon status | /daemon restart`,
+        true,
+      );
+      return true;
+    }
+
+    if (command === 'theme') {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sub = (parts[0] || 'show').toLowerCase();
+      if (sub === 'show' || !arg) {
+        appendStatus(
+          `theme preference: ${config.theme || process.env.PUSH_THEME || 'default'} (Silvery uses retained design tokens; this is the saved preference)`,
+        );
+        return true;
+      }
+      if (sub === 'list') {
+        appendStatus(
+          [
+            'Themes:',
+            ...THEME_NAMES.map((name) => `  ${name.padEnd(10)}  ${VARIANTS[name].description}`),
+          ].join('\n'),
+        );
+        return true;
+      }
+      const name = sub === 'set' ? parts[1] : sub;
+      if (!name || !isThemeName(name)) {
+        appendStatus(
+          `Unknown theme: ${name || '(missing)'}. Available: ${THEME_NAMES.join(', ')}`,
+          true,
+        );
+        return true;
+      }
+      config.theme = name;
+      process.env.PUSH_THEME = name;
+      await persistConfig(config);
+      appendStatus(`theme: ${name} (saved preference)`);
+      return true;
+    }
+
+    if (command === 'spinner') {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sub = (parts[0] || 'show').toLowerCase();
+      if (!arg || sub === 'show') {
+        appendStatus(
+          `spinner preference: ${config.spinner || process.env.PUSH_SPINNER || 'off'}${isReducedMotion() ? ' — reduced-motion active' : ''}`,
+        );
+        return true;
+      }
+      if (sub === 'list') {
+        appendStatus(
+          [
+            'Spinners:',
+            ...SPINNER_NAMES.map((name) => {
+              const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
+              return `  ${preview}  ${name.padEnd(10)}  ${SPINNERS[name].description}`;
+            }),
+          ].join('\n'),
+        );
+        return true;
+      }
+      const name = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase();
+      if (name === 'unpin') {
+        delete config.spinner;
+        delete process.env.PUSH_SPINNER;
+        await persistConfig(config);
+        appendStatus('spinner: off (unpinned)');
+        return true;
+      }
+      if (!isSpinnerName(name)) {
+        appendStatus(
+          `Unknown spinner: ${name || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
+          true,
+        );
+        return true;
+      }
+      if (isReducedMotion() && name !== 'off') {
+        appendStatus(
+          'Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to enable.',
+          true,
+        );
+        return true;
+      }
+      config.spinner = name;
+      process.env.PUSH_SPINNER = name;
+      await persistConfig(config);
+      appendStatus(`spinner: ${name} (saved preference)`);
+      return true;
+    }
+
+    if (command === 'debug') {
+      if (arg.trim() !== 'runtime') {
+        appendStatus('Usage: /debug runtime', true);
+        return true;
+      }
+      appendStatus(
+        [
+          'Runtime Debug:',
+          `  cwd: ${process.cwd()}`,
+          `  workspace: ${state.cwd}`,
+          `  node: ${process.execPath}`,
+          `  argv[1]: ${process.argv[1] || '(unknown)'}`,
+          `  provider: ${state.provider}`,
+          `  model: ${state.model}`,
+          `  session id: ${state.sessionId}`,
+          `  session root: ${getSessionRoot()}`,
+          `  daemon connected: ${daemon.connected ? 'yes' : 'no'}`,
+          `  daemon session: ${daemon.sessionId || '(none)'}`,
+        ].join('\n'),
+      );
+      return true;
+    }
+
     if (command === 'exit' || command === 'quit') {
       appendStatus('Use the command palette Exit or Ctrl+C to leave the TUI.');
       return true;
     }
 
-    appendStatus(`Command /${command} is not ported to the retained TUI yet.`, true);
+    appendStatus(`Unknown command /${command}. Try /help.`, true);
     return true;
   }
 
