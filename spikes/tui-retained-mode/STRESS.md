@@ -62,8 +62,8 @@ Score in the candidate's spike README as ✅ / ⚠️ (partial, note why) / ❌ 
 | 3 | ZWJ/combining | — | ⚠️ string-level ✅; **raster suspicious** — family emoji cluster mangled in the driven run's cell buffer (scene 3; re-eyeball in a rich terminal) | ✅ string-level (`ttyStringWidth`) | — |
 | 4 | mixed reflow | — | — (staged: scene 4) | — | — |
 | 5 | modal restore | ✅ (panes.ts) | ✅ content restore correct w/ current state (full-clear-vs-damage byte check still open) | — | — |
-| 6 | transparency | — | ⚠️ "dim" backdrop = `░` pattern **replacing** content, not a see-through dim | — | — |
-| 7 | z-order stack | — | ❌ **dynamic `zIndex` changes ignored** — labels re-render but paint order stays insertion order (2 rotations verified) | — | — |
+| 6 | transparency | — | ❌ by design — `"dim"` fills a `░` pattern line (`containers.js`); see-through dim doesn't exist. Score = is pattern-replace acceptable? | — | — |
+| 7 | z-order stack | — | ❌ **source-confirmed** — paint renders layers children "in order (later = on top)" and never reads `zIndex`; `zIndex` only sorts the input-routing registry → doc contract unmet, paint/input stacking can disagree. Scene 7's `x` (child order) vs `z` (zIndex) demonstrates it live | — | — |
 | 8 | occluded update | — | ✅ bg ticked behind modal, zero leak-through, current values on close | — | — |
 | 9 | hit-testing | ✅ (click-to-focus) | — (staged: scene 9; needs human mouse) | — (`useMouse` present) | — |
 | 10 | wheel + drag | — | — | — | — |
