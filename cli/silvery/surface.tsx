@@ -435,6 +435,11 @@ export interface PushSurfaceHook {
   submit?: (text: string) => Promise<void>;
 }
 
+export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: () => void): void {
+  if (running) cancel();
+  else exit();
+}
+
 export function PushSurface({
   controller,
   hook,
@@ -514,6 +519,10 @@ export function PushSurface({
 
   useInput(
     (inputKey, key) => {
+      if (key.ctrl && inputKey === 'c') {
+        handleTuiInterrupt(snapshot.running, controller.cancel, exit);
+        return;
+      }
       if (!paletteOpen && !snapshot.interaction && key.ctrl && inputKey === 'k')
         setPaletteOpen(true);
     },

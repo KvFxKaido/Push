@@ -63,6 +63,7 @@ import {
   type DaemonTranscriptSnapshot,
 } from '../daemon-transcript-mirror.ts';
 import { TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
+import { normalizeDaemonExecMode, type DaemonExecMode } from '../../lib/daemon-runtime-settings.js';
 import { isTranscriptMutationEvent } from '../../lib/session-transcript-events.js';
 import type { RunTuiOptions } from './entry.js';
 
@@ -225,6 +226,7 @@ export async function createSilveryController(
   let daemonRunId: string | null = null;
   let resolveDaemonTurn: (() => void) | null = null;
   let daemonStateStale = false;
+  let execModeRefreshSequence = 0;
   let gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
   const listeners = new Set<() => void>();
 
@@ -243,8 +245,11 @@ export async function createSilveryController(
     if (isThemeName(fromConfig)) return fromConfig;
     return detectThemeName();
   };
-  const resolveExecMode = (): string =>
-    String(process.env.PUSH_EXEC_MODE || config.execMode || 'auto').toLowerCase();
+  const localExecMode = (): DaemonExecMode =>
+    normalizeDaemonExecMode(process.env.PUSH_EXEC_MODE) ??
+    normalizeDaemonExecMode(config.execMode) ??
+    'auto';
+  let execMode = localExecMode();
 
   const buildSnapshot = (): SilverySnapshot => ({
     rows: daemonStateStale
@@ -287,7 +292,7 @@ export async function createSilveryController(
     error,
     interaction,
     theme: resolveThemeName(),
-    execMode: resolveExecMode(),
+    execMode,
   });
   let currentSnapshot = buildSnapshot();
   const notify = () => {
@@ -541,6 +546,7 @@ export async function createSilveryController(
       },
       onSocketClose: () => {
         daemonConnected = false;
+        execMode = localExecMode();
         if (resolveDaemonTurn) {
           error = 'Daemon disconnected before the turn completed.';
           resolveDaemonTurn();
@@ -576,6 +582,7 @@ export async function createSilveryController(
         const attached = payload as { provider?: unknown; model?: unknown };
         if (typeof attached.provider === 'string') state.provider = attached.provider;
         if (typeof attached.model === 'string') state.model = attached.model;
+        void refreshDaemonExecMode();
         void resyncDaemonTranscript('attach');
         notify();
       },
@@ -583,8 +590,25 @@ export async function createSilveryController(
     },
     SILVERY_DAEMON_CAPABILITIES,
   );
+
+  async function refreshDaemonExecMode(): Promise<boolean> {
+    if (!daemon.connected || !daemon.client) return false;
+    const sequence = ++execModeRefreshSequence;
+    try {
+      const response = await daemon.client.request('get_daemon_runtime_config', {}, null, 1500);
+      const resolved = normalizeDaemonExecMode(response.payload?.execMode);
+      if (!resolved || sequence !== execModeRefreshSequence) return false;
+      execMode = resolved;
+      notify();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   if (deps.useDaemon !== false) {
     daemonConnected = await daemon.ensureConnected({ announce: false });
+    if (daemonConnected) await refreshDaemonExecMode();
     notify();
   }
 
@@ -1457,6 +1481,8 @@ export async function createSilveryController(
         await ensurePersisted();
         if (await daemon.ensureReady()) {
           daemonTurn = true;
+          await refreshDaemonExecMode();
+          if (abortController.signal.aborted) return;
           daemonStateStale = true;
           await resyncDaemonTranscript('before_send');
           const completion = new Promise<void>((resolve) => {
@@ -1476,6 +1502,8 @@ export async function createSilveryController(
           await completion;
           return;
         }
+        execMode = localExecMode();
+        notify();
         if (daemonStateStale && persisted) {
           const refreshed = await (deps.loadState ?? loadSessionState)(state.sessionId);
           Object.assign(state, refreshed);

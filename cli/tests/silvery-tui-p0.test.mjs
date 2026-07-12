@@ -159,6 +159,31 @@ describe('silvery TUI launch routing', () => {
 });
 
 describe('silvery Phase 0 fault shell', () => {
+  it('cancels an active turn on Ctrl+C but lets idle Ctrl+C exit', {
+    skip: silverySkip,
+  }, async () => {
+    const { handleTuiInterrupt } = await import('../silvery/surface.tsx');
+    let running = true;
+    let cancels = 0;
+    let exits = 0;
+
+    handleTuiInterrupt(
+      running,
+      () => cancels++,
+      () => exits++,
+    );
+    assert.equal(cancels, 1);
+    assert.equal(exits, 0);
+    running = false;
+    handleTuiInterrupt(
+      running,
+      () => cancels++,
+      () => exits++,
+    );
+    assert.equal(cancels, 1);
+    assert.equal(exits, 1);
+  });
+
   it('renders an inline failure while the shell stays alive, then settles on unmount', {
     skip: silverySkip,
   }, async () => {
@@ -585,6 +610,85 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
     assert.ok(controller.getSnapshot().rows.some((r) => /from-daemon/.test(r.text)));
     await controller.dispose();
+  });
+
+  it('uses the daemon exec mode for attached turns and refreshes it before send', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const previousExecMode = process.env.PUSH_EXEC_MODE;
+    process.env.PUSH_EXEC_MODE = 'strict';
+    const state = {
+      sessionId: 'sess_mode_abc123',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let daemonMode = 'yolo';
+    const runtimeReads = [];
+    try {
+      const controller = await createSilveryController(
+        { sessionId: state.sessionId },
+        {
+          loadConfig: async () => ({ execMode: 'strict', safeExecPatterns: [] }),
+          initSession: async () => state,
+          gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+          saveState: async () => undefined,
+          createDaemon: (receivedHooks) => {
+            hooks = receivedHooks;
+            return {
+              connected: true,
+              sessionId: state.sessionId,
+              attachToken: 'token',
+              client: {
+                request: async (type) => {
+                  if (type === 'get_daemon_runtime_config') {
+                    runtimeReads.push(daemonMode);
+                    return { payload: { execMode: daemonMode } };
+                  }
+                  if (type === 'get_session_snapshot') {
+                    return {
+                      payload: {
+                        transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
+                      },
+                    };
+                  }
+                  if (type === 'send_user_message') {
+                    queueMicrotask(() =>
+                      hooks.onEngineEvent({ type: 'run_complete', payload: {} }),
+                    );
+                    return { payload: { runId: 'run-mode' } };
+                  }
+                  return { payload: {} };
+                },
+              },
+              ensureConnected: async () => true,
+              ensureReady: async () => true,
+              ensureSession: async () => undefined,
+              noteSeenSeq: () => undefined,
+              scheduleReconnect: () => undefined,
+              teardown: () => undefined,
+            };
+          },
+        },
+      );
+
+      assert.equal(controller.getSnapshot().execMode, 'yolo');
+      daemonMode = 'auto';
+      await controller.submit('refresh the authority');
+      assert.equal(controller.getSnapshot().execMode, 'auto');
+      assert.deepEqual(runtimeReads, ['yolo', 'auto']);
+      await controller.dispose();
+    } finally {
+      if (previousExecMode === undefined) delete process.env.PUSH_EXEC_MODE;
+      else process.env.PUSH_EXEC_MODE = previousExecMode;
+    }
   });
 
   it('routes daemon session verbs through the controller', async () => {

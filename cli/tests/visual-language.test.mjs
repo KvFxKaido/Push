@@ -4,6 +4,9 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { defaultDarkTheme, resolveThemeColor } from 'silvery';
+
+import { createPushSilveryTokens } from '../silvery/theme.tsx';
 
 import {
   GLYPHS_ASCII,
@@ -113,6 +116,7 @@ describe('visual language v2 frame helpers', () => {
 
   it('switches footer keybinds by focus scope (law 1)', () => {
     assert.match(footerKeybinds('composer'), /ctrl\+k/i);
+    assert.doesNotMatch(footerKeybinds('composer'), /\? help/i);
     assert.match(footerKeybinds('approval'), /approve/i);
     assert.match(footerKeybinds('palette'), /esc/i);
     assert.match(footerKeybinds('running'), /cancel/i);
@@ -159,5 +163,17 @@ describe('visual language v2 theme accent', () => {
   it('accepts hex accents and falls back safely', () => {
     assert.equal(accentHexForTheme('#38bdf8'), '#38bdf8');
     assert.equal(accentHexForTheme('not-a-color'), '#7dd3fc');
+  });
+
+  it('resolves the flat semantic tokens used by the rendered surface', () => {
+    const tokens = createPushSilveryTokens('neon');
+    const theme = { ...defaultDarkTheme, ...tokens };
+
+    for (const token of Object.values(VL_COLOR)) {
+      assert.ok(resolveThemeColor(token, theme), `${token} must resolve`);
+    }
+    assert.equal(resolveThemeColor('$fg-accent', theme), tokens['fg-accent']);
+    assert.equal(resolveThemeColor('$bg-cursor', theme), tokens['fg-accent']);
+    assert.equal(resolveThemeColor('$bg-selected', theme), tokens['fg-accent']);
   });
 });

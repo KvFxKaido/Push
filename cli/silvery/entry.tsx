@@ -58,7 +58,8 @@ export async function runTuiSilvery(
       </PushShell>,
       undefined,
       {
-        exitOnCtrlC: true,
+        // PushSurface owns Ctrl+C so running cancels while idle exits.
+        exitOnCtrlC: false,
         alternateScreen: true,
         mode: 'fullscreen',
         mouse: true,
