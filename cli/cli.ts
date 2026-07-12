@@ -3390,6 +3390,33 @@ function exitNonInteractiveNoTask(): never {
   process.exit(1);
 }
 
+// Renderer dispatch for the full-screen TUI. Both launch sites (the `tui`
+// subcommand and bare `push`) route through here. It only selects a renderer,
+// lazily imports it, emits a symmetric launch log, and forwards the already-
+// resolved options — it does NOT touch session or worktree lifecycle (that stays
+// at the call sites). PUSH_TUI_SILVERY picks the opt-in silvery renderer (Node
+// >=24); default is the ANSI TUI, behavior-identical to the prior direct call.
+async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
+  const useSilvery =
+    process.env.PUSH_TUI_SILVERY === '1' || process.env.PUSH_TUI_SILVERY === 'true';
+  if (useSilvery) {
+    const nodeMajor = Number(process.versions.node.split('.')[0]);
+    if (nodeMajor < 24) {
+      throw new Error(
+        `PUSH_TUI_SILVERY requires Node >=24 (silvery 0.21 uses \`using\` syntax); ` +
+          `you are on ${process.version}. Run \`nvm use 24\`, or unset PUSH_TUI_SILVERY ` +
+          `to use the default TUI.`,
+      );
+    }
+    console.error(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
+    const { runTuiSilvery } = await import('./silvery/entry.js');
+    return runTuiSilvery(options);
+  }
+  console.error(JSON.stringify({ level: 'info', event: 'tui_launch_ansi' }));
+  const { runTUI } = await import('./tui.js');
+  return runTUI(options);
+}
+
 export async function main() {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -3874,8 +3901,7 @@ export async function main() {
     if (!process.stdin.isTTY) {
       throw new Error('TUI requires a TTY terminal. For scripted use, run: push run --task "..."');
     }
-    const { runTUI } = await import('./tui.js');
-    return runTUI({
+    return launchTui({
       sessionId: values.session,
       provider: values.provider,
       model: values.model,
@@ -4167,8 +4193,7 @@ export async function main() {
       if (!process.stdin.isTTY) {
         exitNonInteractiveNoTask();
       }
-      const { runTUI } = await import('./tui.js');
-      return await runTUI({
+      return await launchTui({
         sessionId: state.sessionId,
         maxRounds,
         explicitMaxRounds,
