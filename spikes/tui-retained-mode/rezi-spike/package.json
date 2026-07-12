@@ -1,0 +1,15 @@
+{
+  "name": "rezi-spike",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway spike: evaluate Rezi (TS API + native C 'Zireael' cell engine via N-API) on Node for Push's TUI. Not part of the build.",
+  "scripts": {
+    "smoke:node": "tsx smoke.ts",
+    "smoke:bun": "bun smoke.ts"
+  },
+  "dependencies": {
+    "@rezi-ui/core": "0.1.0-beta.2",
+    "@rezi-ui/native": "0.1.0-beta.2",
+    "tsx": "^4.23.0"
+  }
+}

@@ -29,7 +29,39 @@ its requirement** (render a transcript) and does not bind this one.
 2. **Adopt a pure-JS incumbent** (blessed lineage) — real windowing, but an aging/crufty API
    for a surface we want to feel modern. Also Ink (React + Yoga) has no z-order compositor and
    weak mouse — behind Bubble Tea v2 for this requirement.
-3. **Build a pure-TS engine.** Chosen. See below.
+3. **Adopt Rezi** (`rezi-ui`, added 2026-07-12) — TS API over a native C cell engine
+   ("Zireael") via **N-API prebuilds that load on Node 22** (verified,
+   `spikes/tui-retained-mode/rezi-spike/`), so the OpenTUI disqualifier does not apply. Passes
+   the string-level CellWidth probes (CJK/ZWJ/combining), boots with full mouse + OSC52 caps in
+   a real terminal, ships layers/modal-stack/hit-testing APIs and a deterministic
+   `createTestRenderer`. **The strongest adopt candidate.** Costs: native C core in the default
+   surface's dependency tree, 0.1.0-beta, small/solo-ish org; engine requires a real TTY
+   (headless = test renderer, unproven). Not chosen *yet* — must clear `STRESS.md` first; if it
+   clears, the remaining question is dependency appetite, not architecture.
+4. **Adopt vue-tui** (`vuejs-ai/vue-tui`, added 2026-07-12) — Vue 3 renderer in the Ink
+   lineage (its own credits: Ink's component model, yoga layout, rendering pipeline). Ruled
+   out for this requirement on architecture: wheel-only mouse, no z-order compositor — option
+   2's ceiling with a different authoring layer. Also a second view framework (app is React).
+   Its PTY-based "visual development feedback loop" guide for agents is worth stealing as a
+   practice regardless.
+5. **Adopt Glyph** (`semos-labs/glyph`, added 2026-07-12) — React reconciler over a **pure-TS
+   double-buffered cell framebuffer with character-level damage diffing** — the closest
+   external implementation of this doc's own substrate (verified working headless on Node,
+   `spikes/tui-retained-mode/glyph-spike/`; mouse support exists despite being undocumented).
+   Costs: React 19 hard requirement (its React 18 peer claim crashes at import), reconciler
+   authoring model (rejected below), ~51 stars, damage diff unverified on TTY. Kept as a
+   **reference implementation to read** while building — MIT, same substrate — more than an
+   adopt candidate.
+6. **Build a pure-TS engine.** Chosen. See below.
+
+> **2026-07-12 survey note:** options 3–5 came from a one-day field survey after this doc was
+> first written. Two findings matter: (a) every serious candidate — OpenTUI, Lipgloss v2,
+> Rezi, Glyph — independently converged on *cell buffer + damage diff*, confirming the
+> architecture bet; (b) Rezi weakens the original "no viable adopt on Node" premise, so the
+> build decision now rests on the dependency-appetite argument (native core, beta, bus
+> factor), not runtime impossibility. `spikes/tui-retained-mode/STRESS.md` is the shared
+> 15-case rubric that settles adopt-vs-build empirically; run Rezi through it before starting
+> the build's step 0.
 
 ## Decision
 
@@ -104,6 +136,9 @@ point, as a **replaceable module with a paint-list input** so the later Node/Yog
 - **Open (not pretended-solved):** all runtime semantics (the sketch is declarations +
   descriptions), grapheme-width's cross-terminal long tail, focus-as-derived-state vs a runtime
   focus-ring, and text-as-leaf vs an inline-span model (Push already has inline markdown here).
+  Plus, from the 2026-07-12 survey: **run Rezi through `STRESS.md` before committing to the
+  build's step 0** — it is the one candidate whose success would change this decision, and the
+  rubric exists precisely so that call is empirical rather than re-litigated.
 
 ## Pointers
 

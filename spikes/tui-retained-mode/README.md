@@ -60,6 +60,27 @@ Implications:
 
 Smart Push pick borrows from both sides: **MVU + Yoga + pure-TS cell compositor.**
 
+## The 2026-07-12 field survey (Rezi / vue-tui / Glyph)
+
+Three more candidates surfaced after the OpenTUI finding; two earned runnable spikes
+(vue-tui did not — Ink-lineage renderer, wheel-only mouse, no compositor: it fails the
+requirement from the README alone). Findings on this machine (Node 22.22, WSL2):
+
+| Gate | **Rezi** (`@rezi-ui/core` 0.1.0-beta.2) | **Glyph** (`@semos-labs/glyph` 0.2.10) |
+|---|---|---|
+| Loads on Node | ✅ N-API prebuilt (`linux-x64-gnu.node`) — **the OpenTUI disqualifier does not apply** | ✅ pure TS — but **React 19 only**: the `^18` half of its peer range crashes at import (react-reconciler@0.31 reads React 19 internals) |
+| Native engine boot | ✅ in a real terminal (id ≥ 0 + caps: mouse, bracketed paste, focus events, OSC52, scroll region, cursor shaping). Headless → `ERR_PLATFORM`; dumb PTY (`script`) → boots, gets no DA answers, bails. CI story = their `createTestRenderer` (unproven) | n/a (no native) — renders headless fine, clean teardown |
+| Width contract (string level) | ✅ 中=2, 👍=2, ZWJ family=2, combining=1 (`measureTextCells`, versioned) | ✅ same, via `ttyStringWidth` (string-width v7) |
+| Mouse | ✅ full (caps report + `hitTestLayers`) | ✅ **undocumented but real** — `useMouse` export; render() enables SGR 1000/1003/1006 with button/wheel/mousedown handling |
+| Layers/modals | ✅ `pushLayer`/`popLayer`/`useModalStack`/layer registry | Portal/DialogHost exist; mechanics unverified |
+| Yellow flags | native C core; solo-ish org; beta | painted two identical full frames for one static scene headless — damage diff may not engage off-TTY; 51 stars |
+
+Both must still earn adoption through `STRESS.md` — string-level width ≠ framebuffer
+rasterization correctness (cases 1–4), and neither has been driven through the
+modal-restore / occlusion / resize cases. The survey's meta-finding stands either way:
+every serious candidate (OpenTUI, Lipgloss v2, Rezi, Glyph) independently converged on
+*cell buffer + damage diffing*, which is the decision doc's architecture.
+
 ## What's in here
 
 - `opentui-spike/` — runnable OpenTUI eval (**Bun only**, per the finding).
@@ -67,6 +88,15 @@ Smart Push pick borrows from both sides: **MVU + Yoga + pure-TS cell compositor.
   - `panes.ts` — two panes (flex row) + status bar + **command-palette modal overlay**
     (z-order backdrop + centered box) + **click-to-focus** (automatic mouse hit-testing) +
     keyboard scroll. `bun panes.ts` to drive it; `SPIKE_SELFTEST=1 bun panes.ts` build-checks.
+- `rezi-spike/` — runnable Rezi eval (`npm install` then `npm run smoke:node`).
+  - `smoke.ts` — N-API load gate + CellWidth contract probes (all pass on Node 22).
+  - `probe-tty.mjs` — run inside a real terminal for the full engine boot + caps report
+    (`script -qec` is not enough: the engine needs DA/capability *answers*).
+- `glyph-spike/` — runnable Glyph eval (`npm install` then `npm run smoke:node`).
+  - `smoke.ts` — import gate (React 19 required), width contract, headless
+    render/unmount, and the undocumented-mouse finding.
+- `STRESS.md` — the shared 15-case rubric (cells, layers, input, ops) every candidate
+  and the pure-TS build get scored against. Scoreboard lives there.
 - `reference/lipgloss-v2/` — Charm's cell compositor blueprint (`layer.go`, `canvas.go`,
   `example-canvas-main.go`). This is the design reference for the pure-TS "Option B" —
   read it for the layer/z-order/canvas API to mirror. See `reference/lipgloss-v2/SOURCE.md`.
