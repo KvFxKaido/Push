@@ -1,6 +1,8 @@
 import React, { Component, type ErrorInfo, type ReactNode } from 'react';
 import { Box, SilveryErrorBoundary, Text } from 'silvery';
 
+import { faultCopy } from './visual-language.js';
+
 // Emergency reset for terminal modes the silvery path can own. Keep this
 // literal and exported: the fault-path test pins the exact recovery contract.
 export const TERMINAL_RESTORE_SEQUENCE =
@@ -168,15 +170,18 @@ export class RecoverableBoundary extends Component<
 
   render() {
     if (this.state.error) {
+      // Visual Language v2 fault surface: narrating voice, fault color only,
+      // never animated. Session persists in the daemon — state what was
+      // preserved and the one action available.
+      const copy = faultCopy(this.state.error);
       return (
-        <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1}>
-          <Text color="red" bold>
-            ! This screen failed to render
+        <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={1} paddingY={1}>
+          <Text color="$fg-error" bold>
+            {copy.title}
           </Text>
-          <Text color="$fg-muted">{this.state.error.message}</Text>
-          <Text color="$fg-muted">
-            Push is still running. Retry this screen or continue from another client.
-          </Text>
+          <Text color="$fg-error">{copy.detail}</Text>
+          <Text color="$fg-muted">{copy.preserved}</Text>
+          <Text color="$fg-muted">{copy.action}</Text>
         </Box>
       );
     }

@@ -25,8 +25,26 @@ import { getProviderList } from '../provider.js';
 import { createTabCompleter } from '../tui-completer.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
+import { isReducedMotion } from '../tui-spinner.js';
 import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.js';
+import { detectUnicode } from '../tui-theme.js';
 import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from './controller.js';
+import { PushThemeProvider } from './theme.js';
+import {
+  breathingHex,
+  countUserTurns,
+  densityMeter,
+  diffLineColor,
+  footerKeybinds,
+  MOTION_TICKS,
+  modeLabel,
+  resolveGlyphs,
+  shortenPath,
+  streamMark,
+  VL_COLOR,
+  type FooterScope,
+  type StreamMarkKind,
+} from './visual-language.js';
 
 const COMMANDS = [
   { id: 'clear', label: 'Clear transcript', hint: 'hide the current display' },
@@ -69,44 +87,61 @@ function useTerminalSize() {
   return size;
 }
 
+function useSharedClock(active: boolean): number {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setTick((value) => value + 1), MOTION_TICKS.clockMs);
+    return () => clearInterval(timer);
+  }, [active]);
+  return tick;
+}
+
 function DiffCard({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
   const diff = item.diff!;
   const lines = expanded ? diff.lines : diff.lines.slice(0, 8);
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
-      <Text bold color="$fg-accent">
+      <Text bold>
         {diff.path} · +{diff.adds} -{diff.dels}
       </Text>
       {lines.map((line, index) => {
         const number = line.kind === 'del' ? line.oldLine : (line.newLine ?? line.oldLine);
         const marker = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
-        const color = line.kind === 'add' ? 'green' : line.kind === 'del' ? 'red' : '$fg-muted';
+        const color = diffLineColor(line.kind === 'add' || line.kind === 'del' ? line.kind : 'ctx');
         return (
-          <Text key={`${number ?? 0}-${index}`} color={color}>
+          <Text key={`${number ?? 0}-${index}`} color={color} bold={line.kind === 'add'}>
             {`${String(number ?? '').padStart(4)} ${marker} ${line.text}${line.textTruncated ? '…' : ''}`}
           </Text>
         );
       })}
       {diff.lines.length > lines.length || diff.truncated ? (
-        <Text color="$fg-muted">click to {expanded ? 'collapse' : 'expand'} diff</Text>
+        <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} diff</Text>
       ) : null}
     </Box>
   );
 }
 
+function toolMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
+  if (item.isError) return 'tool_error';
+  if (item.pending) return 'tool_pending';
+  return 'tool_ok';
+}
+
 function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
-  const status = item.pending ? '…' : item.isError ? '✕' : '✓';
+  const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
+  const mark = streamMark(toolMarkKind(item), glyphs);
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
-      <Text bold color={item.isError ? 'red' : item.pending ? '$fg-accent' : 'green'}>
-        {status} {item.toolName ?? item.text}
+      <Text bold={mark.bold} color={mark.color}>
+        {mark.glyph} {item.toolName ?? item.text}
         {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
       </Text>
       {item.diff ? <DiffCard item={item} /> : null}
       {!item.diff && item.resultPreview ? (
-        <Text color="$fg-muted">
+        <Text color={VL_COLOR.muted}>
           {expanded ? item.resultPreview : item.resultPreview.split('\n')[0]}
         </Text>
       ) : null}
@@ -114,34 +149,44 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   );
 }
 
+function messageMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
+  if (item.isError) return 'error';
+  if (item.role === 'user') return 'user';
+  if (item.role === 'reviewer') return 'reviewer';
+  if (item.role === 'auditor') return 'auditor';
+  if (item.role === 'status') return 'status';
+  if (item.role === 'coder' || item.role === 'explorer') {
+    // Activity from delegated phases still rides the diamond spine, not a color.
+    return item.pending || item.live ? 'tool_pending' : 'tool_ok';
+  }
+  return 'assistant';
+}
+
 function Message({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
+  const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   if (item.kind === 'tool') return <ToolCard item={item} />;
   const label = getTranscriptRoleLabel(item.role);
-  const color =
-    item.role === 'user'
-      ? '$fg-accent'
-      : item.role === 'coder'
-        ? 'green'
-        : item.role === 'explorer'
-          ? 'cyan'
-          : item.role === 'status'
-            ? '$fg-muted'
-            : undefined;
+  const mark = streamMark(messageMarkKind(item), glyphs);
+  const bodyColor = item.isError
+    ? VL_COLOR.fault
+    : item.role === 'status'
+      ? VL_COLOR.muted
+      : undefined;
   return (
     <Box
       flexDirection="column"
       onClick={item.kind === 'review' ? () => setExpanded((value) => !value) : undefined}
     >
-      <Text bold color={color}>
-        {label}
+      <Text bold={mark.bold} color={mark.color}>
+        {mark.glyph} {label}
         {item.live ? ' · live' : ''}
       </Text>
-      <Text color={item.role === 'status' ? '$fg-muted' : undefined}>
+      <Text color={bodyColor}>
         {item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text}
       </Text>
       {item.kind === 'review' ? (
-        <Text color="$fg-muted">click to {expanded ? 'collapse' : 'expand'} review</Text>
+        <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} review</Text>
       ) : null}
     </Box>
   );
@@ -158,6 +203,7 @@ function InteractionModal({
 }) {
   const interaction = snapshot.interaction!;
   const [answer, setAnswer] = useState('');
+  const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const respond = useCallback(
     (value: boolean | string) => controller.respondToInteraction(interaction.id, value),
     [controller, interaction.id],
@@ -173,10 +219,10 @@ function InteractionModal({
   return (
     <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
       <ModalDialog
-        title={interaction.title}
+        title={`${glyphs.hexActive} ${interaction.title}`}
         width={modalWidth}
         footer={
-          interaction.kind === 'approval' ? 'y approve · n/esc deny' : 'enter answer · esc skip'
+          interaction.kind === 'approval' ? footerKeybinds('approval') : footerKeybinds('question')
         }
         fade={0.4}
       >
@@ -185,12 +231,12 @@ function InteractionModal({
           {interaction.kind === 'approval' ? (
             <Box gap={2}>
               <Box onClick={() => respond(true)}>
-                <Text bold color="green">
+                <Text bold color={VL_COLOR.accent}>
                   [ Approve ]
                 </Text>
               </Box>
               <Box onClick={() => respond(false)}>
-                <Text bold color="red">
+                <Text bold color={VL_COLOR.fault}>
                   [ Deny ]
                 </Text>
               </Box>
@@ -291,20 +337,94 @@ function Palette({
       <ModalDialog
         title="Command Palette"
         width={modalWidth}
-        footer="↑↓/jk move · ↵ run · esc close"
+        footer={footerKeybinds('palette')}
         onClose={onClose}
         fade={0.35}
       >
         <Box flexDirection="column">
           {COMMANDS.map((command, index) => (
             <Box key={command.id} onClick={() => onRun(command.id)}>
-              <Text color={index === selected ? '$fg-accent' : undefined} bold={index === selected}>
+              <Text
+                color={index === selected ? VL_COLOR.accent : undefined}
+                bold={index === selected}
+              >
                 {`${index === selected ? '❯ ' : '  '}${command.label.padEnd(20)}${command.hint}`}
               </Text>
             </Box>
           ))}
         </Box>
       </ModalDialog>
+    </Box>
+  );
+}
+
+function HeaderBar({
+  snapshot,
+  tick,
+  columns,
+}: {
+  snapshot: SilverySnapshot;
+  tick: number;
+  columns: number;
+}) {
+  const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
+  const reduced = isReducedMotion();
+  const phase = snapshot.running ? 'working' : 'idle';
+  const live = breathingHex(tick, phase, glyphs, reduced);
+  const branch = snapshot.gitStatus?.branch || '—';
+  const dirty =
+    snapshot.gitStatus?.dirty && snapshot.gitStatus.dirty > 0
+      ? ` +${snapshot.gitStatus.dirty}`
+      : '';
+  const tokens = useMemo(
+    () => estimateTokens(snapshot.rows.map((row) => ({ content: row.text }))),
+    [snapshot.rows],
+  );
+  // Soft ceiling for the density meter — 200k is a common long-context floor;
+  // the number is presentation only (not a hard budget).
+  const meter = densityMeter(Math.min(1, tokens / 200_000), 8, glyphs);
+  const path = shortenPath(snapshot.cwd, Math.max(12, Math.min(28, Math.floor(columns / 4))));
+  const turns = countUserTurns(snapshot.rows);
+  const turnLabel = turns > 0 ? `t${turns}` : '';
+
+  return (
+    <Box width={columns}>
+      <Text bold color={live.bright ? VL_COLOR.accent : VL_COLOR.muted}>
+        {live.glyph}
+      </Text>
+      <Text color={VL_COLOR.muted}>
+        {' '}
+        · {branch}
+        {dirty} · {path} · {meter} {formatTokenCount(tokens)}
+        {turnLabel ? ` · ${turnLabel}` : ''}
+      </Text>
+    </Box>
+  );
+}
+
+function FooterBar({
+  snapshot,
+  scope,
+  columns,
+  elapsed,
+}: {
+  snapshot: SilverySnapshot;
+  scope: FooterScope;
+  columns: number;
+  elapsed: string;
+}) {
+  const keys = footerKeybinds(scope);
+  const mode = modeLabel(snapshot.execMode);
+  const right = `${mode} · ${snapshot.provider} · ${snapshot.model}${elapsed}`;
+  // Prefer keys on the left; trim the right if the row is tight.
+  const maxRight = Math.max(12, columns - keys.length - 3);
+  const rightShown =
+    right.length > maxRight ? `${right.slice(0, Math.max(0, maxRight - 1))}…` : right;
+  return (
+    <Box width={columns}>
+      <Text color={VL_COLOR.muted}>{keys}</Text>
+      <Box flexGrow={1} />
+      <Text color={VL_COLOR.muted}>{rightShown}</Text>
     </Box>
   );
 }
@@ -329,13 +449,8 @@ export function PushSurface({
   const paletteOpenRef = useRef(false);
   paletteOpenRef.current = paletteOpen;
   const [input, setInput] = useState('');
-  const [, setClock] = useState(0);
-
-  useEffect(() => {
-    if (!snapshot.running) return;
-    const timer = setInterval(() => setClock((value) => value + 1), 1_000);
-    return () => clearInterval(timer);
-  }, [snapshot.running]);
+  // One shared clock for all motion (law 8). Idle freezes (law 6 / 8).
+  const tick = useSharedClock(snapshot.running);
 
   const submit = useCallback(
     async (text: string) => {
@@ -408,65 +523,54 @@ export function PushSurface({
     hook.submit = submit;
   });
 
+  // Frame chrome = header + composer rule + footer + optional error line ≈ 4–5 rows.
   const transcriptHeight = Math.max(3, rows - 6);
-  const branch = snapshot.gitStatus?.branch || '—';
-  const tokens = useMemo(
-    () => estimateTokens(snapshot.rows.map((row) => ({ content: row.text }))),
-    [snapshot.rows],
-  );
   const elapsed =
     snapshot.startedAt === null ? '' : ` · ${formatElapsed(Date.now() - snapshot.startedAt)}`;
 
+  let scope: FooterScope = 'composer';
+  if (snapshot.interaction?.kind === 'approval') scope = 'approval';
+  else if (snapshot.interaction?.kind === 'question') scope = 'question';
+  else if (paletteOpen) scope = 'palette';
+  else if (snapshot.running) scope = 'running';
+
   return (
-    <Screen flexDirection="column">
-      <Box width={columns}>
-        <Text bold color="$fg-accent">
-          Push{' '}
-        </Text>
-        <Text color="$fg-muted">
-          {branch} · {snapshot.provider}/{snapshot.model}
-        </Text>
-        <Box flexGrow={1} />
-        <Text color="$fg-muted">Ctrl+K commands</Text>
-      </Box>
-      <Transcript
-        snapshot={snapshot}
-        width={columns}
-        height={transcriptHeight}
-        active={!paletteOpen}
-      />
-      {snapshot.error ? <Text color="red">{snapshot.error}</Text> : null}
-      <Box width={columns}>
-        <Text color={snapshot.running ? '$fg-accent' : '$fg-muted'}>
-          {snapshot.running ? `live${elapsed}` : 'ready'} ·{' '}
-          {snapshot.daemonConnected ? 'daemon' : 'inline'} · {formatTokenCount(tokens)} tokens
-        </Text>
-        <Box flexGrow={1} />
-        <Text color="$fg-muted">
-          {snapshot.gitStatus?.dirty ? `+${snapshot.gitStatus.dirty} ` : ''}
-          {snapshot.cwd}
-        </Text>
-      </Box>
-      <TextArea
-        value={input}
-        onChange={(value) => {
-          setInput(value);
-          completer.suggest(value);
-        }}
-        onSubmit={submit}
-        submitKey="enter"
-        minRows={1}
-        maxRows={3}
-        placeholder={snapshot.running ? 'Push is working…' : 'message Push…'}
-        isActive={inputActive}
-        disabled={snapshot.running}
-      />
-      {completer.getHint() ? <Text color="$fg-muted">{completer.getHint()}</Text> : null}
-      {snapshot.interaction ? (
-        <InteractionModal snapshot={snapshot} controller={controller} width={columns} />
-      ) : paletteOpen ? (
-        <Palette width={columns} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
-      ) : null}
-    </Screen>
+    <PushThemeProvider themeName={snapshot.theme}>
+      <Screen flexDirection="column">
+        <HeaderBar snapshot={snapshot} tick={tick} columns={columns} />
+        <Transcript
+          snapshot={snapshot}
+          width={columns}
+          height={transcriptHeight}
+          active={!paletteOpen && !snapshot.interaction}
+        />
+        {snapshot.error ? (
+          <Text color={VL_COLOR.fault} bold>
+            {resolveGlyphs(detectUnicode()).hexActive} {snapshot.error}
+          </Text>
+        ) : null}
+        <TextArea
+          value={input}
+          onChange={(value) => {
+            setInput(value);
+            completer.suggest(value);
+          }}
+          onSubmit={submit}
+          submitKey="enter"
+          minRows={1}
+          maxRows={3}
+          placeholder={snapshot.running ? 'Push is working…' : 'message Push…'}
+          isActive={inputActive}
+          disabled={snapshot.running}
+        />
+        {completer.getHint() ? <Text color={VL_COLOR.muted}>{completer.getHint()}</Text> : null}
+        <FooterBar snapshot={snapshot} scope={scope} columns={columns} elapsed={elapsed} />
+        {snapshot.interaction ? (
+          <InteractionModal snapshot={snapshot} controller={controller} width={columns} />
+        ) : paletteOpen ? (
+          <Palette width={columns} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
+        ) : null}
+      </Screen>
+    </PushThemeProvider>
   );
 }

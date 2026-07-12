@@ -53,7 +53,7 @@ import { createDefaultTuiIo, type TuiIo } from '../tui-io.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
-import { isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
+import { detectThemeName, isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
 import { ESC } from '../tui-renderer.js';
 import { formatWorktreeStatus } from '../worktree.js';
 import {
@@ -79,6 +79,10 @@ export interface SilverySnapshot {
   daemonConnected: boolean;
   error: string | null;
   interaction: SilveryInteraction | null;
+  /** Live theme preference — drives silvery `ThemeProvider` accent hue (v2 law 2). */
+  theme: string;
+  /** CLI exec mode (`auto` / `strict` / `yolo`) for the composer mode label. */
+  execMode: string;
 }
 
 export type SilveryInteraction =
@@ -234,6 +238,14 @@ export async function createSilveryController(
         ...row,
       }));
 
+  const resolveThemeName = (): string => {
+    const fromConfig = config.theme;
+    if (isThemeName(fromConfig)) return fromConfig;
+    return detectThemeName();
+  };
+  const resolveExecMode = (): string =>
+    String(process.env.PUSH_EXEC_MODE || config.execMode || 'auto').toLowerCase();
+
   const buildSnapshot = (): SilverySnapshot => ({
     rows: daemonStateStale
       ? [
@@ -274,6 +286,8 @@ export async function createSilveryController(
     daemonConnected,
     error,
     interaction,
+    theme: resolveThemeName(),
+    execMode: resolveExecMode(),
   });
   let currentSnapshot = buildSnapshot();
   const notify = () => {
@@ -1300,14 +1314,14 @@ export async function createSilveryController(
       const sub = (parts[0] || 'show').toLowerCase();
       if (sub === 'show' || !arg) {
         appendStatus(
-          `theme preference: ${config.theme || process.env.PUSH_THEME || 'default'} (Silvery uses retained design tokens; this is the saved preference)`,
+          `theme: ${resolveThemeName()} — one accent hue; grayscale posture stays (v2).`,
         );
         return true;
       }
       if (sub === 'list') {
         appendStatus(
           [
-            'Themes:',
+            'Themes (pick the accent hue; color budget is always one accent + fault):',
             ...THEME_NAMES.map((name) => `  ${name.padEnd(10)}  ${VARIANTS[name].description}`),
           ].join('\n'),
         );
@@ -1324,7 +1338,7 @@ export async function createSilveryController(
       config.theme = name;
       process.env.PUSH_THEME = name;
       await persistConfig(config);
-      appendStatus(`theme: ${name} (saved preference)`);
+      appendStatus(`theme: ${name} — accent hue applied.`);
       return true;
     }
 

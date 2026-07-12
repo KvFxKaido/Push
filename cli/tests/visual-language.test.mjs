@@ -1,0 +1,163 @@
+/**
+ * Visual Language v2 pure helpers — glyphs, color budget, motion, frame copy.
+ * Source: docs/cli/design/TUI Visual Language v2.md
+ */
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import {
+  GLYPHS_ASCII,
+  GLYPHS_UNICODE,
+  MOTION_TICKS,
+  VL_COLOR,
+  accentHexForTheme,
+  breathingHex,
+  countUserTurns,
+  densityMeter,
+  diffLineColor,
+  faultCopy,
+  footerKeybinds,
+  headerSegments,
+  modeLabel,
+  resolveGlyphs,
+  shortenPath,
+  streamMark,
+} from '../silvery/visual-language.ts';
+
+describe('visual language v2 glyphs', () => {
+  it('ships hollow/filled hexagons with ASCII fallbacks (law 4)', () => {
+    assert.equal(GLYPHS_UNICODE.hexIdle, '⬡');
+    assert.equal(GLYPHS_UNICODE.hexActive, '⬢');
+    assert.equal(GLYPHS_ASCII.hexIdle, 'o');
+    assert.equal(GLYPHS_ASCII.hexActive, '*');
+    assert.equal(resolveGlyphs(true).hexIdle, '⬡');
+    assert.equal(resolveGlyphs(false).hexActive, '*');
+  });
+
+  it('keeps diamonds on the activity spine with ASCII fallbacks (law 5)', () => {
+    assert.equal(GLYPHS_UNICODE.diamondFilled, '◆');
+    assert.equal(GLYPHS_UNICODE.diamondHollow, '◇');
+    assert.equal(GLYPHS_ASCII.diamondFilled, '+');
+    assert.equal(GLYPHS_ASCII.diamondHollow, '-');
+  });
+});
+
+describe('visual language v2 color budget', () => {
+  it('exposes only accent + fault + grayscale tokens (laws 2–3)', () => {
+    assert.deepEqual(Object.keys(VL_COLOR).sort(), ['accent', 'fault', 'muted', 'primary']);
+    assert.equal(VL_COLOR.accent, '$fg-accent');
+    assert.equal(VL_COLOR.fault, '$fg-error');
+  });
+
+  it('styles diffs without success green or del red (law 2)', () => {
+    assert.equal(diffLineColor('add'), VL_COLOR.primary);
+    assert.equal(diffLineColor('del'), VL_COLOR.muted);
+    assert.equal(diffLineColor('ctx'), VL_COLOR.muted);
+  });
+
+  it('puts diamonds on tools and hexes only on independent voices (law 5)', () => {
+    const g = GLYPHS_UNICODE;
+    assert.equal(streamMark('tool_pending', g).glyph, '◆');
+    assert.equal(streamMark('tool_pending', g).color, VL_COLOR.accent);
+    assert.equal(streamMark('tool_ok', g).color, VL_COLOR.muted);
+    assert.equal(streamMark('tool_error', g).color, VL_COLOR.fault);
+    assert.equal(streamMark('reviewer', g).glyph, '⬢');
+    assert.equal(streamMark('auditor', g).glyph, '⬢');
+    // Reviewer/Auditor get bold attribution, not a second accent hue.
+    assert.equal(streamMark('reviewer', g).color, undefined);
+    assert.equal(streamMark('reviewer', g).bold, true);
+  });
+});
+
+describe('visual language v2 motion', () => {
+  it('maps web motion axes into tick counts (law 9)', () => {
+    assert.equal(MOTION_TICKS.modalFade, 3);
+    assert.ok(MOTION_TICKS.breathePeriod >= 4);
+    assert.ok(MOTION_TICKS.clockMs > 0);
+  });
+
+  it('breathes on the shared clock while working; freezes under reduced motion (laws 8, 10)', () => {
+    const g = GLYPHS_UNICODE;
+    const idle = breathingHex(0, 'idle', g, false);
+    assert.equal(idle.glyph, '⬡');
+    assert.equal(idle.bright, false);
+
+    const reduced = breathingHex(3, 'working', g, true);
+    assert.equal(reduced.glyph, '⬢');
+    assert.equal(reduced.bright, true);
+
+    const a = breathingHex(0, 'working', g, false);
+    const b = breathingHex(MOTION_TICKS.breathePeriod / 2, 'working', g, false);
+    // Opposite halves of the cycle must disagree on fill (phase-locked breathe).
+    assert.notEqual(a.glyph === '⬢', b.glyph === '⬢');
+  });
+
+  it('attention is a single filled pulse, not a loop vocabulary (law 8)', () => {
+    const pulse = breathingHex(99, 'attention', GLYPHS_UNICODE, false);
+    assert.equal(pulse.glyph, '⬢');
+    assert.equal(pulse.bright, true);
+  });
+});
+
+describe('visual language v2 frame helpers', () => {
+  it('builds a fact-only header strip (law 1)', () => {
+    const segs = headerSegments({
+      brandMark: '⬢',
+      branch: 'main',
+      path: '~/proj',
+      context: '12k',
+      turn: 't3',
+    });
+    assert.deepEqual(segs, ['⬢', 'main', '~/proj', '12k', 't3']);
+  });
+
+  it('switches footer keybinds by focus scope (law 1)', () => {
+    assert.match(footerKeybinds('composer'), /ctrl\+k/i);
+    assert.match(footerKeybinds('approval'), /approve/i);
+    assert.match(footerKeybinds('palette'), /esc/i);
+    assert.match(footerKeybinds('running'), /cancel/i);
+  });
+
+  it('maps exec modes onto operational labels', () => {
+    assert.equal(modeLabel('yolo'), 'always-approve');
+    assert.equal(modeLabel('strict'), 'strict');
+    assert.equal(modeLabel('auto'), 'auto');
+    assert.equal(modeLabel(undefined), 'auto');
+  });
+
+  it('shortens paths and counts user turns', () => {
+    const home = process.env.HOME || '/home/user';
+    assert.equal(shortenPath(`${home}/projects/Push`, 80).startsWith('~'), true);
+    assert.equal(
+      shortenPath('/very/long/path/that/should/be/truncated/for/display', 12).startsWith('…'),
+      true,
+    );
+    assert.equal(countUserTurns([{ role: 'user' }, { role: 'assistant' }, { role: 'user' }]), 2);
+  });
+
+  it('renders a fixed-width density meter (law 9)', () => {
+    const empty = densityMeter(0, 8, GLYPHS_UNICODE);
+    const full = densityMeter(1, 8, GLYPHS_UNICODE);
+    assert.equal(empty.length, 8);
+    assert.equal(full.length, 8);
+    assert.notEqual(empty, full);
+    assert.equal(densityMeter(0, 4, GLYPHS_ASCII).length, 4);
+  });
+});
+
+describe('visual language v2 fault copy', () => {
+  it('narrates what faulted, what was preserved, and the one action (law 11)', () => {
+    const copy = faultCopy(new Error('layout blew up'));
+    assert.match(copy.title, /failed to render/i);
+    assert.equal(copy.detail, 'layout blew up');
+    assert.match(copy.preserved, /daemon/i);
+    assert.match(copy.action, /Restart|continue/i);
+  });
+});
+
+describe('visual language v2 theme accent', () => {
+  it('accepts hex accents and falls back safely', () => {
+    assert.equal(accentHexForTheme('#38bdf8'), '#38bdf8');
+    assert.equal(accentHexForTheme('not-a-color'), '#7dd3fc');
+  });
+});

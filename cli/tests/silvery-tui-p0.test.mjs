@@ -201,8 +201,11 @@ describe('silvery Phase 0 fault shell', () => {
 
     await sleep(120);
     assert.equal(caught?.message, 'deliberate Phase 0 render fault');
+    // Visual Language v2 fault surface: narrating voice + preserved session.
     assert.match(stdout.bytes, /This screen failed to render/);
-    assert.match(stdout.bytes, /Push is still running/);
+    assert.match(stdout.bytes, /deliberate Phase 0 render fault/);
+    assert.match(stdout.bytes, /session is still in the daemon/i);
+    assert.match(stdout.bytes, /Restart this screen/i);
 
     instance.unmount();
     await Promise.race([
@@ -1326,6 +1329,9 @@ describe('silvery TUI Phase 1 chat surface', () => {
       gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
       daemonConnected: false,
       error: null,
+      interaction: null,
+      theme: 'mono',
+      execMode: 'auto',
     };
     const controller = {
       getSnapshot: () => snapshot,
