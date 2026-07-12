@@ -20,7 +20,8 @@ type State = {
   tick: number;
   overwrite: boolean; // scene 1: wide↔narrow toggle
   modalOpen: boolean; // scenes 5/8
-  zRotation: number; // scene 7
+  zRotation: number; // scene 7: rotate zIndex props (paint ignores — engine finding)
+  xRotation: number; // scene 7: rotate child ORDER (the control — paint follows this)
   lastClick: string; // scene 9
 };
 
@@ -139,26 +140,40 @@ function scene58(s: State): VNode {
   ]);
 }
 
-/** Case 6: transparency — dim backdrop that must not replace content. */
+/** Case 6: transparency — what "dim" actually is (settled from source). */
 function scene6(s: State): VNode {
   const bg = ui.column(
     {},
-    Array.from({ length: 12 }, (_, i) => ui.text(`row ${i} ${'内容'.repeat(12)} tick=${s.tick}`)),
+    Array.from({ length: 10 }, (_, i) => ui.text(`row ${i} ${'内容'.repeat(12)} tick=${s.tick}`)),
   );
-  return ui.layers([
-    bg,
-    ui.layer({
-      id: 'dim-layer',
-      backdrop: 'dim',
-      modal: false,
-      content: ui.center({}, [
-        ui.box({ border: 'double', p: 1 }, [ui.text('dim backdrop behind this box')]),
-      ]),
-    }),
+  return ui.column({ gap: 1 }, [
+    instructions([
+      'ENGINE FACT (renderToDrawlist/widgets/containers.js): "dim" fills the',
+      'backdrop with a ░ pattern — it REPLACES content, no see-through dim',
+      'exists. Score case 6 on whether pattern-replace is acceptable for',
+      "Push's overlays, not on whether it dims (it provably doesn't).",
+    ]),
+    ui.layers([
+      bg,
+      ui.layer({
+        id: 'dim-layer',
+        backdrop: 'dim',
+        modal: false,
+        content: ui.center({}, [
+          ui.box({ border: 'double', p: 1 }, [ui.text('dim backdrop behind this box')]),
+        ]),
+      }),
+    ]),
   ]);
 }
 
-/** Case 7: z-order stack — 'z' rotates which layer is on top. */
+/**
+ * Case 7: z-order stack — self-discriminating. 'z' rotates zIndex PROPS
+ * (paint provably ignores them: containers.js renders layers children
+ * "in order (later = on top)" and never reads zIndex — it only sorts the
+ * input-routing registry). 'x' rotates the actual CHILD ORDER — the control:
+ * this is the path paint does use, so it must visibly restack.
+ */
 function scene7(s: State): VNode {
   const mk = (name: string, pad: number, z: number) =>
     ui.layer({
@@ -177,14 +192,19 @@ function scene7(s: State): VNode {
     [3, 1, 2],
     [2, 3, 1],
   ][s.zRotation % 3];
+  const stack = [mk('AAAA', 0, zs[0]), mk('BBBB', 2, zs[1]), mk('CCCC', 4, zs[2])];
+  // Control: rotate the array itself — paint follows child order.
+  const rotated = stack.slice(s.xRotation % 3).concat(stack.slice(0, s.xRotation % 3));
   return ui.column({ gap: 0 }, [
-    ui.text(`'z' rotates the stack (rotation ${s.zRotation % 3})`),
-    ui.layers([mk('AAAA', 0, zs[0]), mk('BBBB', 2, zs[1]), mk('CCCC', 4, zs[2])]),
     instructions([
-      'The three offset boxes overlap. PASS: paint order follows the z=',
-      'labels after every rotation, and only the overlap region repaints',
-      '(no full-screen flash on z change).',
+      "'z' rotates zIndex props — EXPECT NO visual restack (engine paints",
+      'child order only; zIndex feeds input routing). That mismatch IS the',
+      "finding. 'x' rotates child order — EXPECT a visible restack; if 'x'",
+      "restacks and 'z' does not, the spike code is fine and the engine is",
+      'the thing being measured.',
     ]),
+    ui.text(`zIndex rotation ${s.zRotation % 3} · child-order rotation ${s.xRotation % 3}`),
+    ui.layers(rotated),
   ]);
 }
 
@@ -242,7 +262,9 @@ function rootView(s: State): VNode {
     header: ui.header({ title: `Rezi stress — ${scene.title}` }),
     body: scene.render(s),
     footer: ui.statusBar({}, [
-      ui.text('1-9 scenes · t toggle · m modal · z rotate · q quit — score in STRESS.md'),
+      ui.text(
+        '1-9 scenes · t toggle · m modal · z zIndex · x child-order · q quit — score in STRESS.md',
+      ),
     ]),
   });
 }
@@ -259,6 +281,7 @@ const initialState: State = {
   overwrite: false,
   modalOpen: false,
   zRotation: 0,
+  xRotation: 0,
   lastClick: '',
 };
 
@@ -287,6 +310,7 @@ app.keys({
   t: () => app.update((s) => ({ ...s, overwrite: !s.overwrite })),
   m: () => app.update((s) => ({ ...s, modalOpen: !s.modalOpen })),
   z: () => app.update((s) => ({ ...s, zRotation: s.zRotation + 1 })),
+  x: () => app.update((s) => ({ ...s, xRotation: s.xRotation + 1 })),
   ...Object.fromEntries(
     Object.keys(SCENES).map((n) => [
       n,
