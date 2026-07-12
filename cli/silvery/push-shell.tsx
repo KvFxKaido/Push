@@ -9,6 +9,7 @@ export const TERMINAL_RESTORE_SEQUENCE =
   '\x1b[?2004l' + // bracketed paste off
   '\x1b[?1000l\x1b[?1002l\x1b[?1003l' + // mouse tracking off
   '\x1b[?1006l\x1b[?1015l\x1b[?1016l' + // mouse encodings off
+  '\x1b[<u' + // kitty keyboard protocol: pop mode stack (silvery enables it per render)
   '\x1b[?25h' + // cursor visible
   '\x1b[?1049l'; // leave alternate screen
 
@@ -55,7 +56,18 @@ export interface ProcessWatchdogOptions {
 export interface ProcessWatchdog {
   readonly restorer: TerminalRestorer;
   dispose(): void;
+  /**
+   * Async/uncaught path (process handlers): clean up the terminal, surface the
+   * error, and `process.exit(1)` — there is no call stack to return through.
+   */
   handleFatal(kind: string, error: unknown): void;
+  /**
+   * Synchronous path (a caught `render()`/`waitUntilExit()` rejection): clean up
+   * the terminal + surface the error, but do NOT exit — so the caller can return
+   * and its `finally` (e.g. worktree teardown in `main()`) still runs. Idempotent
+   * with `handleFatal`; whichever fires first wins.
+   */
+  recover(kind: string, error: unknown): void;
 }
 
 function errorDetail(error: unknown): string {
@@ -71,8 +83,11 @@ export function installProcessWatchdog(options: ProcessWatchdogOptions): Process
   let handled = false;
   let disposed = false;
 
-  const handleFatal = (kind: string, error: unknown) => {
-    if (handled) return;
+  // Terminal cleanup + error surfacing, minus the exit. Returns whether this
+  // call did the work (false when a prior fault already handled it) so the
+  // caller can decide whether to also exit. Idempotent via `handled`.
+  const cleanup = (kind: string, error: unknown): boolean => {
+    if (handled) return false;
     handled = true;
     try {
       options.getInstance()?.unmount();
@@ -85,7 +100,16 @@ export function installProcessWatchdog(options: ProcessWatchdogOptions): Process
       // stderr + exit remain more important than a failed best-effort write.
     }
     stderr.write(`\n[push silvery watchdog] ${kind}: ${errorDetail(error)}\n`);
-    exit(1);
+    return true;
+  };
+
+  // Only exit when THIS call did the cleanup — so a late async fault after a
+  // synchronous recover() can't turn a clean `return 1` into a hard exit.
+  const handleFatal = (kind: string, error: unknown) => {
+    if (cleanup(kind, error)) exit(1);
+  };
+  const recover = (kind: string, error: unknown) => {
+    cleanup(kind, error);
   };
 
   const onUncaughtException = (error: unknown) => handleFatal('uncaughtException', error);
@@ -96,6 +120,7 @@ export function installProcessWatchdog(options: ProcessWatchdogOptions): Process
   return {
     restorer,
     handleFatal,
+    recover,
     dispose() {
       if (disposed) return;
       disposed = true;

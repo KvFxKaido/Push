@@ -140,9 +140,16 @@ transpiler supports `using`, and silvery declares `bun>=1.0`, so it's *expected*
 don't assume). This is a first-class P0 acceptance gate, not a footnote.
 
 **Recording the floor (approved: CLI floor = 24; app CI independent on Node 20):**
+> **PR #1426 review resolution (2026-07-12):** push-agent flagged that whole-package
+> `engines>=24` contradicted the README's "default surfaces run on Node 20+" promise. Resolved
+> by **committing to Node 24 as the CLI floor** (not by scoping engines to the silvery path):
+> `engines>=24` stays, and the README no longer promises Node 20 for the default surfaces (24 is
+> the supported/CI-covered floor; older Node may still run the non-silvery paths but isn't
+> supported). Sole-user tool, stay-current preference.
 - **Root `package.json` `engines: { node: '>=24' }`** — root (`push-root`) is the CLI's package
   metadata; this is where the floor is declared.
-- **`cli/README.md`** — document Node ≥24 as a hard requirement for the (opt-in) silvery TUI path.
+- **`cli/README.md`** — documents Node ≥24 as the CLI's supported floor; the silvery TUI path
+  hard-requires it (SyntaxError otherwise).
 - **Bump the CLI CI job** `Format, Typecheck, Test (cli)` (`.github/workflows/ci.yml:196`, root
   `npm ci`) from Node **20 → 24**, and update its comment (lines 199–202) — the "CLI has no external
   npm imports" invariant is now false (silvery + react are its first). **App jobs (working-dir

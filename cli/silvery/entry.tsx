@@ -56,7 +56,10 @@ export async function runTuiSilvery(_options: RunTuiOptions): Promise<number> {
     await instance.waitUntilExit();
     return 0;
   } catch (error) {
-    watchdog.handleFatal('renderer', error);
+    // Synchronous failure path: clean up + surface the error but RETURN (don't
+    // process.exit) so main()'s finally — worktree teardown for `push --worktree`
+    // — still runs. The process-level watchdog keeps exit(1) for async faults.
+    watchdog.recover('renderer', error);
     return 1;
   } finally {
     watchdog.dispose();

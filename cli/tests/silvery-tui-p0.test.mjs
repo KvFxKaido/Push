@@ -246,4 +246,41 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(events.listenerCount('unhandledRejection'), 0);
     assert.equal(events.listenerCount('uncaughtException'), 0);
   });
+
+  it('recover() cleans up without exiting so the caller can return', {
+    skip: silverySkip,
+  }, async () => {
+    const { installProcessWatchdog, TERMINAL_RESTORE_SEQUENCE } = await import(
+      '../silvery/push-shell.tsx'
+    );
+    const events = new EventEmitter();
+    let stdout = '';
+    let stderr = '';
+    let unmounts = 0;
+    const exitCodes = [];
+    const watchdog = installProcessWatchdog({
+      events,
+      getInstance: () => ({ unmount: () => unmounts++ }),
+      stdout: { write: (chunk) => ((stdout += String(chunk)), true) },
+      stderr: { write: (chunk) => ((stderr += String(chunk)), true) },
+      exit: (code) => exitCodes.push(code),
+    });
+
+    // Synchronous recover: clean up + surface, but do NOT exit — so main()'s
+    // finally (worktree teardown) runs instead of being skipped by process.exit.
+    watchdog.recover('renderer', new Error('render rejected'));
+
+    assert.equal(unmounts, 1);
+    assert.equal(stdout, TERMINAL_RESTORE_SEQUENCE);
+    assert.match(stderr, /\[push silvery watchdog\] renderer: Error: render rejected/);
+    assert.deepEqual(exitCodes, [], 'recover must not exit');
+
+    // A later async fault after recover must also not exit (idempotent), so a
+    // clean `return 1` is never turned into a hard exit.
+    events.emit('uncaughtException', new Error('late fault'));
+    assert.deepEqual(exitCodes, [], 'no exit after recover already handled');
+    assert.equal(unmounts, 1);
+
+    watchdog.dispose();
+  });
 });

@@ -23,12 +23,13 @@ PUSH_TUI_ENABLED=0 ./push
 node --import tsx cli/cli.ts
 ```
 
-> **Node ≥24 for the experimental silvery TUI.** The default surfaces (REPL, headless,
-> ANSI TUI) run on Node 20+. The opt-in silvery renderer (`PUSH_TUI_SILVERY=1`) requires
-> **Node ≥24** — silvery 0.21 ships `using` syntax that older Node cannot parse (it is the
-> CLI's declared `engines` floor). On an older Node, `PUSH_TUI_SILVERY=1` fails fast with a
-> clear message; use `nvm use 24` or leave the flag unset. The silvery renderer is **not**
-> in the Bun single-binary yet (dev/source runtime only); the binary ships the ANSI TUI.
+> **Requires Node ≥24.** The Push CLI targets Node 24 — the declared root `engines` floor,
+> and the only version CI covers. The opt-in silvery TUI (`PUSH_TUI_SILVERY=1`) *hard*-requires
+> it: silvery 0.21 ships `using` syntax older Node cannot parse, so it fails fast with a clear
+> message below 24 (`nvm use 24`). The other surfaces (REPL, headless, ANSI TUI) may still run
+> on older Node in practice, but 24 is the supported floor. The silvery renderer is **not** in
+> the Bun single-binary (dev/source runtime only); the binary ships the ANSI TUI and fails
+> closed on `PUSH_TUI_SILVERY=1` with a clear message.
 
 On Windows, use `.\push.cmd` from `cmd.exe`, PowerShell, or Windows Terminal:
 
