@@ -57,20 +57,20 @@ Score in the candidate's spike README as ✅ / ⚠️ (partial, note why) / ❌ 
 
 | # | Case | OpenTUI (Bun) | Rezi | Glyph | Pure-TS build |
 |---|---|---|---|---|---|
-| 1 | CJK overwrite | — | — | — | — |
-| 2 | wide clip | — | — | — | — |
-| 3 | ZWJ/combining | — | ✅ string-level (`measureTextCells`) | ✅ string-level (`ttyStringWidth`) | — |
-| 4 | mixed reflow | — | — | — | — |
-| 5 | modal restore | ✅ (panes.ts) | — | — | — |
-| 6 | transparency | — | — | — | — |
-| 7 | z-order stack | — | — | — | — |
-| 8 | occluded update | — | — | — | — |
-| 9 | hit-testing | ✅ (click-to-focus) | — (API present: `hitTestLayers`) | — (`useMouse` present) | — |
+| 1 | CJK overwrite | — | — (staged: `stress.ts` scene 1) | — | — |
+| 2 | wide clip | — | — (staged: scene 2) | — | — |
+| 3 | ZWJ/combining | — | ⚠️ string-level ✅; **raster suspicious** — family emoji cluster mangled in the driven run's cell buffer (scene 3; re-eyeball in a rich terminal) | ✅ string-level (`ttyStringWidth`) | — |
+| 4 | mixed reflow | — | — (staged: scene 4) | — | — |
+| 5 | modal restore | ✅ (panes.ts) | ✅ content restore correct w/ current state (full-clear-vs-damage byte check still open) | — | — |
+| 6 | transparency | — | ⚠️ "dim" backdrop = `░` pattern **replacing** content, not a see-through dim | — | — |
+| 7 | z-order stack | — | ❌ **dynamic `zIndex` changes ignored** — labels re-render but paint order stays insertion order (2 rotations verified) | — | — |
+| 8 | occluded update | — | ✅ bg ticked behind modal, zero leak-through, current values on close | — | — |
+| 9 | hit-testing | ✅ (click-to-focus) | — (staged: scene 9; needs human mouse) | — (`useMouse` present) | — |
 | 10 | wheel + drag | — | — | — | — |
 | 11 | resize storm | — | — | — | — |
 | 12 | cursor + selection | — | — | — | — |
 | 13 | headless story | ❌ native needs Bun+TTY | ⚠️ native needs real TTY; `createTestRenderer` exists (unproven) | ✅ renders headless (but see #15) | ✅ by design |
-| 14 | teardown | — | ✅ observed (probe-tty) | ✅ observed (smoke) | — |
+| 14 | teardown | — | ✅ clean alt-screen exit after full stress session (`q`) + probe-tty | ✅ observed (smoke) | — |
 | 15 | perf floor | — | — | ⚠️ two identical full frames headless — verify diff engages on TTY | — |
 
 Fill cells only from a driven run; update the candidate's spike README with
