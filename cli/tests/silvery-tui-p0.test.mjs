@@ -127,6 +127,23 @@ describe('silvery TUI launch routing', () => {
     assert.equal(loaded, false);
   });
 
+  // Bun parses silvery's `using` syntax regardless of process.versions.node
+  // (the single-binary path). The Node floor only applies off-Bun.
+  it('allows Bun to launch silvery even when process.versions.node is old', async () => {
+    let loaded = false;
+    const result = await launchTui(options, {
+      nodeMajor: 22,
+      isBun: () => true,
+      log: () => undefined,
+      loadSilvery: async () => {
+        loaded = true;
+        return { runTuiSilvery: async () => 19 };
+      },
+    });
+    assert.equal(loaded, true);
+    assert.equal(result, 19);
+  });
+
   it('bundles silvery into every single-binary compile command', async () => {
     const workflow = await readFile(
       path.resolve(import.meta.dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
