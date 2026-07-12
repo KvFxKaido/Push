@@ -201,8 +201,11 @@ describe('silvery Phase 0 fault shell', () => {
 
     await sleep(120);
     assert.equal(caught?.message, 'deliberate Phase 0 render fault');
+    // Visual Language v2 fault surface: narrating voice + preserved session.
     assert.match(stdout.bytes, /This screen failed to render/);
-    assert.match(stdout.bytes, /Push is still running/);
+    assert.match(stdout.bytes, /deliberate Phase 0 render fault/);
+    assert.match(stdout.bytes, /session is still in the daemon/i);
+    assert.match(stdout.bytes, /Restart this screen/i);
 
     instance.unmount();
     await Promise.race([
@@ -1326,6 +1329,9 @@ describe('silvery TUI Phase 1 chat surface', () => {
       gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
       daemonConnected: false,
       error: null,
+      interaction: null,
+      theme: 'mono',
+      execMode: 'auto',
     };
     const controller = {
       getSnapshot: () => snapshot,
@@ -1350,6 +1356,60 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await sleep(120);
     assert.match(stdout.bytes, /Command Palette/);
     assert.deepEqual(hook.getState(), { paletteOpen: true, inputActive: false, rowCount: 16 });
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  // Regression for the #1431 review (fugu WARNING, triaged false-positive but
+  // hardened): while an interaction modal is open, the background composer must
+  // NOT be active — otherwise a keystroke could edit/submit the composer under
+  // the modal (hidden-but-interactive, CLAUDE.md self-review class).
+  it('gates the composer off while an interaction modal is open', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const hook = {};
+    const listeners = new Set();
+    const snapshot = {
+      rows: [{ id: '0', role: 'user', text: 'awaiting approval' }],
+      running: true,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: { id: 'ap-1', kind: 'approval', title: 'Run `rm -rf`?' },
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+      respondToInteraction: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(150);
+
+    // Modal is painted, and the composer is reported inactive by the hook —
+    // the single source of truth the TextArea's isActive prop reads.
+    assert.equal(hook.getState().inputActive, false);
 
     instance.unmount();
     await lifecycle;
