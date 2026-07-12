@@ -6,9 +6,8 @@ adopt-gate stress (13/0) + a driven Push-surface prototype
 ([`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/)).
 The original *build-the-compositor* thesis below is retained as the **validation rubric**
 silvery was measured against — historical as a build plan, live as the contract silvery must
-keep meeting. Migration plan at the end of this doc. Phases 0–2 are implemented behind
-`PUSH_TUI_SILVERY`; the ANSI renderer remains the default while Phase 3 ports the
-command/session control plane onto Silvery under the same flag.
+keep meeting. Migration plan at the end of this doc. Phases 0–3 are implemented: Silvery is the
+sole product full-screen TUI; the `PUSH_TUI_SILVERY` migration flag is gone.
 
 **Date:** 2026-07-11
 
@@ -445,12 +444,14 @@ mobile in priority — the plan is committed, the calendar is not.
   cache lifecycle are removed. Silvery `ListView` virtual cache owns the retained transcript;
   the transitional ANSI renderer frames directly until P3 deletes it.
 
-**Phase 3 — control-plane parity under the flag, then flip + delete ANSI.**
-- **Step A (flag intact):** Port the command/session control plane from `tui.ts` into the Silvery
-  controller (`/session`, `/provider`, `/model`, `/config`, `/resume`, session verbs, skills,
-  worktree). Both renderers coexist; `PUSH_TUI_SILVERY=1` proves parity without changing default.
-- **Step B (final):** `PUSH_TUI_SILVERY` goes default-on, then away; Bun bundles Silvery (external
-  only unused terminal adapters); the ANSI printer and its launch path are deleted. Confirm the
+**Phase 3 — control-plane parity under the flag, then flip + delete ANSI (2026-07-12).**
+- **Step A (flag intact):** Ported the command/session control plane into the Silvery controller
+  (`/session`, `/provider`, `/model`, `/config`, `/resume`, session verbs, skills, worktree)
+  while `PUSH_TUI_SILVERY` still selected the opt-in path.
+- **Step B (final):** Silvery is the sole `launchTui` path; Bun bundles it (external only unused
+  terminal/browser adapters); `PUSH_TUI_SILVERY` is removed. The ANSI product launch path is
+  deleted. Shared pure `cli/tui-*.ts` helpers and headless harness coverage of unported remote/rc
+  flows remain until those commands land on Silvery and the harness is rewritten. Confirm the
   shared `lib/` runtime contracts are untouched (silvery is view-only) and the shared kernel round
   loop still drives cleanly.
 

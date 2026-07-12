@@ -281,9 +281,12 @@ jobs:
       #   --no-compile-autoload-bunfig  — bunfig.toml, whose `preload` runs
       #     ARBITRARY CODE before the CLI starts (RCE, not just env)
       # Config comes from ~/.push/config.json only.
+      # Silvery is bundled. Optional xterm/ghostty/browser adapters are not Push
+      # runtime paths and their peer packages are intentionally absent, so keep
+      # only those adapters external to Bun's graph.
       - name: Compile single binary
         run: |
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery cli/cli.ts --outfile push-smoke
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi cli/cli.ts --outfile push-smoke
           BIN=./push-smoke
           if [ "$RUNNER_OS" = "Windows" ]; then BIN=./push-smoke.exe; fi
           echo "BIN=$BIN" >> "$GITHUB_ENV"
@@ -316,9 +319,9 @@ jobs:
       - name: Cross-compile (windows-x64, darwin-arm64, linux-arm64)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
 
       # Binaries are ~100MB each; only keep them when someone asked for a
       # run by hand (workflow_dispatch), not on every PR.
