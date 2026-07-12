@@ -224,10 +224,12 @@ describe('silvery Phase 0 fault shell', () => {
     let stdout = '';
     let stderr = '';
     let unmounts = 0;
+    let aborts = 0;
     const exitCodes = [];
     const watchdog = installProcessWatchdog({
       events,
       getInstance: () => ({ unmount: () => unmounts++ }),
+      abortActive: () => aborts++,
       stdout: { write: (chunk) => ((stdout += String(chunk)), true) },
       stderr: { write: (chunk) => ((stderr += String(chunk)), true) },
       exit: (code) => exitCodes.push(code),
@@ -237,6 +239,7 @@ describe('silvery Phase 0 fault shell', () => {
     events.emit('uncaughtException', new Error('second fault'));
 
     assert.equal(unmounts, 1);
+    assert.equal(aborts, 1);
     assert.equal(stdout, TERMINAL_RESTORE_SEQUENCE);
     assert.match(stderr, /\[push silvery watchdog\] unhandledRejection: Error: timer exploded/);
     assert.deepEqual(exitCodes, [1]);
@@ -282,5 +285,177 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(unmounts, 1);
 
     watchdog.dispose();
+  });
+});
+
+describe('silvery TUI Phase 1 chat surface', () => {
+  it('maps real session rows and keeps the measured fallback pinned to the newest row', {
+    skip: silverySkip,
+  }, async () => {
+    const { tailWindow } = await import('../silvery/surface.tsx');
+    const { sessionMessagesToTranscriptRows } = await import('../tui-history.ts');
+    const history = Array.from({ length: 12 }, (_, index) => [
+      { role: 'user', content: `question ${index}` },
+      { role: 'assistant', content: `answer ${index}` },
+    ]).flat();
+    const rows = sessionMessagesToTranscriptRows(history).map((row, index) => ({
+      id: String(index),
+      ...row,
+    }));
+
+    const visible = tailWindow(rows, 48, 8);
+    assert.ok(visible.length < rows.length);
+    assert.equal(visible.at(-1)?.text, 'answer 11');
+    assert.equal(
+      visible.some((row) => row.text === 'question 0'),
+      false,
+    );
+  });
+
+  it('submits through the shared turn kernel and exposes streamed assistant text', {
+    skip: silverySkip,
+  }, async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'p1-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const snapshots = [];
+    let received;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (receivedState, _provider, _key, text, _rounds, options) => {
+          received = { receivedState, text };
+          options.emit({
+            type: 'assistant_token',
+            payload: { text: 'streaming now' },
+            runId: 'run-1',
+            sessionId: state.sessionId,
+          });
+          await sleep(0);
+          receivedState.messages.push({ role: 'assistant', content: 'streaming now' });
+          options.emit({
+            type: 'assistant_done',
+            payload: {},
+            runId: 'run-1',
+            sessionId: state.sessionId,
+          });
+          return {
+            outcome: 'success',
+            finalAssistantText: 'streaming now',
+            rounds: 1,
+            runId: 'run-1',
+          };
+        },
+      },
+    );
+    controller.subscribe(() => snapshots.push(controller.getSnapshot()));
+
+    await controller.submit('hello kernel');
+
+    assert.equal(received?.receivedState, state);
+    assert.equal(received?.text, 'hello kernel');
+    assert.ok(
+      snapshots.some((snapshot) =>
+        snapshot.rows.some((row) => row.live && row.text === 'streaming now'),
+      ),
+    );
+    assert.deepEqual(
+      controller
+        .getSnapshot()
+        .rows.filter((row) => row.role === 'user' || row.role === 'assistant')
+        .map((row) => row.text),
+      ['hello kernel', 'streaming now'],
+    );
+    assert.equal(controller.getSnapshot().running, false);
+    await controller.dispose();
+  });
+
+  it('renders the newest real rows and hands focus to and from the command palette', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const hook = {};
+    const listeners = new Set();
+    const snapshot = {
+      rows: Array.from({ length: 16 }, (_, index) => ({
+        id: String(index),
+        role: index % 2 ? 'assistant' : 'user',
+        text: `real row ${index}`,
+      })),
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(180);
+
+    assert.match(stdout.bytes, /real row 15/);
+    assert.equal(hook.getState().inputActive, true);
+    hook.openPalette();
+    await sleep(120);
+    assert.match(stdout.bytes, /Command Palette/);
+    assert.deepEqual(hook.getState(), { paletteOpen: true, inputActive: false, rowCount: 16 });
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('keeps the ANSI renderer as the untouched default after Phase 1 modules exist', async () => {
+    let silveryLoaded = false;
+    const result = await launchTui(
+      { sessionId: 'ansi-regression' },
+      {
+        silveryFlag: undefined,
+        log: () => undefined,
+        loadSilvery: async () => {
+          silveryLoaded = true;
+          return { runTuiSilvery: async () => 1 };
+        },
+        loadAnsi: async () => ({ runTUI: async () => 0 }),
+      },
+    );
+    assert.equal(result, 0);
+    assert.equal(silveryLoaded, false);
   });
 });

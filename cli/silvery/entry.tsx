@@ -10,8 +10,9 @@
 import React from 'react';
 import { render, type Instance } from 'silvery';
 
-import { HelloPush } from './hello.js';
+import { createSilveryController, type SilveryController } from './controller.js';
 import { installProcessWatchdog, PushShell } from './push-shell.js';
+import { PushSurface, type PushSurfaceHook } from './surface.js';
 
 export interface RunTuiOptions {
   sessionId?: string | null;
@@ -32,24 +33,37 @@ function logRenderFault(layer: 'recoverable' | 'root', error: Error) {
   );
 }
 
-export async function runTuiSilvery(_options: RunTuiOptions): Promise<number> {
+export interface RunTuiSilveryDeps {
+  createController?: typeof createSilveryController;
+  hook?: PushSurfaceHook;
+}
+
+export async function runTuiSilvery(
+  options: RunTuiOptions,
+  deps: RunTuiSilveryDeps = {},
+): Promise<number> {
   let instance: Instance | undefined;
-  const watchdog = installProcessWatchdog({ getInstance: () => instance });
+  let controller: SilveryController | undefined;
+  const watchdog = installProcessWatchdog({
+    getInstance: () => instance,
+    abortActive: () => controller?.cancel(),
+  });
 
   try {
+    controller = await (deps.createController ?? createSilveryController)(options);
     const handle = render(
       <PushShell
         onRecoverableError={(error) => logRenderFault('recoverable', error)}
         onRootError={(error) => logRenderFault('root', error)}
       >
-        <HelloPush />
+        <PushSurface controller={controller} hook={deps.hook} />
       </PushShell>,
       undefined,
       {
         exitOnCtrlC: true,
         alternateScreen: true,
         mode: 'fullscreen',
-        mouse: false,
+        mouse: true,
       },
     );
     instance = await handle;
@@ -62,6 +76,7 @@ export async function runTuiSilvery(_options: RunTuiOptions): Promise<number> {
     watchdog.recover('renderer', error);
     return 1;
   } finally {
+    await controller?.dispose();
     watchdog.dispose();
   }
 }

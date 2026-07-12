@@ -47,6 +47,7 @@ interface Unmountable {
 
 export interface ProcessWatchdogOptions {
   getInstance: () => Unmountable | undefined;
+  abortActive?: () => void;
   events?: ProcessEventTarget;
   stdout?: Writable;
   stderr?: Writable;
@@ -89,6 +90,11 @@ export function installProcessWatchdog(options: ProcessWatchdogOptions): Process
   const cleanup = (kind: string, error: unknown): boolean => {
     if (handled) return false;
     handled = true;
+    try {
+      options.abortActive?.();
+    } catch {
+      // Terminal recovery must not depend on turn cancellation succeeding.
+    }
     try {
       options.getInstance()?.unmount();
     } catch {
