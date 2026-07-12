@@ -1,25 +1,61 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
-import { applyConfigToEnv, loadConfig, type PushConfig } from '../config-store.js';
+import {
+  applyConfigToEnv,
+  loadConfig,
+  maskSecret,
+  saveConfig,
+  type PushConfig,
+} from '../config-store.js';
+import { compactContext } from '../context-manager.js';
+import { runCheckpointCommand } from '../checkpoint-command.js';
+import {
+  requestDaemonAdmin,
+  runRemoteCommand,
+  runRemoteControlCommand,
+  type DaemonAdminTransport,
+} from '../daemon-admin.js';
 import { tryConnect } from '../daemon-client.js';
 import { DEFAULT_MAX_ROUNDS, runAssistantTurn, type EngineEvent } from '../engine.js';
 import { appendUserMessageWithFileReferences } from '../file-references.js';
+import { getCuratedModels } from '../model-catalog.js';
 import {
+  getProviderList,
   PROVIDER_CONFIGS,
   redirectDeprecatedProvider,
   resolveApiKey,
   type ProviderConfig,
 } from '../provider.js';
+import { getLogPath, getPidPath, getSocketPath } from '../pushd.js';
+import { getAuditLogPath, getAuditMaxBytes } from '../pushd-audit-log.js';
 import { initCliSession } from '../session-init.js';
 import {
   appendSessionEvent,
+  getSessionRoot,
+  listSessions,
   loadSessionState,
+  rewriteMessagesLog,
   saveSessionState,
+  type SessionListEntry,
   type SessionState,
 } from '../session-store.js';
+import { formatSkillDiagnostics, lintSkills, loadSkills } from '../skill-loader.js';
 import { sessionMessagesToTranscriptRows } from '../tui-history.js';
+import {
+  createTerminalHandoff,
+  resolveEditorCommand,
+  type HandoffRunChild,
+  type TerminalHandoff,
+} from '../tui-handoff.js';
+import { createDefaultTuiIo, type TuiIo } from '../tui-io.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
+import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
+import { isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
+import { ESC } from '../tui-renderer.js';
+import { formatWorktreeStatus } from '../worktree.js';
 import {
   applyDaemonTranscriptEvent,
   createDaemonTranscriptMirror,
@@ -51,17 +87,31 @@ export type SilveryInteraction =
 
 interface ControllerDeps {
   loadConfig?: () => Promise<PushConfig>;
+  saveConfig?: typeof saveConfig;
   initSession?: typeof initCliSession;
   runTurn?: typeof runAssistantTurn;
   saveState?: typeof saveSessionState;
   appendEvent?: typeof appendSessionEvent;
   loadState?: typeof loadSessionState;
+  listSessions?: typeof listSessions;
   gitStatus?: typeof getCompactGitStatus;
   resolveKey?: (config: ProviderConfig) => string;
+  loadSkills?: typeof loadSkills;
+  lintSkills?: typeof lintSkills;
   now?: () => number;
   useDaemon?: boolean;
   createDaemon?: typeof createDaemonSession;
+  /** IO seam for terminal handoff (tests inject fakes). */
+  io?: TuiIo;
+  /** Child runner for /editor handoff (tests inject a fake editor). */
+  runHandoffChild?: HandoffRunChild;
+  /** Called when the terminal leaves Silvery for an external program. */
+  onHandoffSuspend?: () => void;
+  /** Called when Silvery reclaims the terminal after handoff. */
+  onHandoffResume?: () => void;
 }
+
+const SESSION_ID_RE = /^sess_[a-z0-9]+_[a-f0-9]{6}$/;
 
 export interface SilveryController {
   getSnapshot(): SilverySnapshot;
@@ -70,6 +120,13 @@ export interface SilveryController {
   cancel(): void;
   respondToInteraction(id: string, value: boolean | string): void;
   clearDisplay(): void;
+  /** Wire Silvery Instance pause/resume after the renderer mounts. */
+  setHandoffHooks(hooks: { onSuspend?: () => void; onResume?: () => void }): void;
+  /**
+   * After `/editor` succeeds, the composed draft is parked here for the
+   * surface to load into the TextArea (composer is not controller-owned).
+   */
+  takePendingComposerText(): string | null;
   dispose(): Promise<void>;
 }
 
@@ -114,8 +171,9 @@ export async function createSilveryController(
   options: RunTuiOptions,
   deps: ControllerDeps = {},
 ): Promise<SilveryController> {
-  const config = await (deps.loadConfig ?? loadConfig)();
+  let config = await (deps.loadConfig ?? loadConfig)();
   applyConfigToEnv(config);
+  const persistConfig = deps.saveConfig ?? saveConfig;
   const requested =
     normalizeProvider(options.provider) ||
     normalizeProvider(process.env.PUSH_PROVIDER) ||
@@ -222,6 +280,134 @@ export async function createSilveryController(
     currentSnapshot = buildSnapshot();
     for (const listener of listeners) listener();
   };
+
+  const appendStatus = (text: string, isError = false) => {
+    const row: SilveryTranscriptItem = {
+      id: nextId(isError ? 'error' : 'status'),
+      kind: 'status',
+      role: 'status',
+      text,
+      isError,
+    };
+    if (daemonStateStale) daemonMirror.rows.push(row);
+    else activityRows = [...activityRows, row];
+    notify();
+  };
+
+  let handoffSuspend = deps.onHandoffSuspend ?? (() => undefined);
+  let handoffResume = deps.onHandoffResume ?? (() => undefined);
+  let terminalHandoff: TerminalHandoff | null = null;
+
+  function getTerminalHandoff(): TerminalHandoff {
+    if (!terminalHandoff) {
+      const io = deps.io ?? createDefaultTuiIo();
+      terminalHandoff = createTerminalHandoff({
+        io,
+        // Mirror the ANSI handoff sequences: leave alt screen + mouse for the
+        // child, reclaim and full-repaint on return (Silvery Instance.resume
+        // also forces a full redraw when wired via setHandoffHooks).
+        suspendSequence: () =>
+          ESC.mouseOff +
+          ESC.altScrollOn +
+          ESC.bracketedPasteOff +
+          ESC.cursorShow +
+          ESC.altScreenOff +
+          ESC.reset,
+        resumeSequence: () =>
+          ESC.altScreenOn +
+          ESC.cursorHide +
+          ESC.clearScreen +
+          ESC.bracketedPasteOn +
+          ESC.altScrollOff +
+          ESC.mouseOn,
+        onSuspend: () => handoffSuspend(),
+        onResume: () => handoffResume(),
+        runChild: deps.runHandoffChild,
+      });
+    }
+    return terminalHandoff;
+  }
+
+  /**
+   * Protocol-first session listing (mobile-drawer wire parity): prefer the
+   * daemon `list_sessions` RPC; fall back to the disk lister for inline mode
+   * and older daemons. Never spawns a daemon just to list.
+   */
+  async function fetchSessionRows(): Promise<SessionListEntry[]> {
+    const res = await requestDaemonAdmin(
+      daemon as DaemonAdminTransport,
+      'list_sessions',
+      { limit: 1000 },
+      { timeoutMs: 1500, startDaemon: false },
+    );
+    if (res.ok && Array.isArray(res.payload?.sessions)) {
+      return res.payload.sessions as SessionListEntry[];
+    }
+    const expected =
+      !res.ok && (res.code === 'DAEMON_OFFLINE' || res.code === 'UNSUPPORTED_REQUEST_TYPE');
+    if (!expected && (res.ok || res.code)) {
+      console.error(
+        JSON.stringify({
+          level: 'warn',
+          event: 'tui_list_sessions_rpc_failed',
+          code: res.code ?? 'MALFORMED_PAYLOAD',
+          message: res.error ?? null,
+        }),
+      );
+    }
+    return (deps.listSessions ?? listSessions)();
+  }
+
+  async function handleEditorCommand(): Promise<void> {
+    const { command, args } = resolveEditorCommand();
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `push-editor-${process.pid}-${Date.now().toString(36)}.md`,
+    );
+    // Composer is cleared before slash dispatch (same as ANSI), so the external
+    // editor starts empty — compose-in-$EDITOR, not "edit the /editor token".
+    try {
+      await fs.writeFile(tmpFile, '', { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendStatus(`/editor: could not create temp file: ${msg}`, true);
+      return;
+    }
+    try {
+      const result = await getTerminalHandoff().run({ command, args: [...args, tmpFile] });
+      if (!result.ok) {
+        appendStatus(
+          `/editor: ${result.error ?? `editor exited via ${result.signal}`} (${command})`,
+          true,
+        );
+        return;
+      }
+      if (result.exitCode !== 0) {
+        appendStatus(
+          `/editor: ${command} exited ${result.exitCode}; composer left unchanged.`,
+          true,
+        );
+        return;
+      }
+      const edited = await fs.readFile(tmpFile, 'utf8');
+      // Park for the surface TextArea (composer text is view-owned).
+      pendingComposerText = edited.replace(/\r?\n$/, '');
+      if (!pendingComposerText) {
+        appendStatus('/editor: empty draft discarded.');
+      }
+      notify();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendStatus(`/editor: ${msg}`, true);
+    } finally {
+      fs.unlink(tmpFile).catch(() => {
+        /* temp cleanup is best-effort */
+      });
+    }
+  }
+
+  /** Populated by /editor; surface reads via takePendingComposerText(). */
+  let pendingComposerText: string | null = null;
 
   const onEvent = (event: EngineEvent) => {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -443,15 +629,808 @@ export async function createSilveryController(
     }
   }
 
+  async function patchDaemonSession(patch: {
+    provider?: string;
+    model?: string;
+  }): Promise<boolean> {
+    if (!daemon.connected || !daemon.sessionId || !daemon.client) return false;
+    try {
+      const response = await daemon.client.request(
+        'update_session',
+        {
+          sessionId: daemon.sessionId,
+          attachToken: daemon.attachToken,
+          patch,
+        },
+        daemon.sessionId,
+      );
+      const payload = (response.payload ?? {}) as { provider?: unknown; model?: unknown };
+      if (typeof payload.provider === 'string') state.provider = payload.provider;
+      if (typeof payload.model === 'string') state.model = payload.model;
+      return true;
+    } catch (cause) {
+      appendStatus(
+        `Daemon rejected session update: ${cause instanceof Error ? cause.message : String(cause)}`,
+        true,
+      );
+      return false;
+    }
+  }
+
+  async function handleSlashCommand(text: string): Promise<boolean> {
+    if (!text.startsWith('/')) return false;
+    const [rawCommand, ...rest] = text.slice(1).split(/\s+/);
+    const command = rawCommand?.toLowerCase() ?? '';
+    const arg = rest.join(' ').trim();
+
+    if (command === 'help') {
+      appendStatus(
+        [
+          'Commands:',
+          '  /clear | /new          Hide the current transcript display',
+          '  /session               Show the active session id',
+          '  /session rename <name> Rename the session (--clear to unset)',
+          '  /provider [name|#]     List or switch provider',
+          '  /model [name|#]        List curated models or switch model',
+          '  /config                Show config overview (secrets masked)',
+          '  /config key|url|…      Set provider keys, sandbox, daemon, tavily',
+          '  /resume [session-id]   List or switch to a saved session',
+          '  /skills [reload|lint]  List, reload, or lint workspace skills',
+          '  /compact [turns]       Compact context (default preserve 6 turns)',
+          '  /revert [turns]        Daemon: remove recent user turns',
+          '  /unrevert              Daemon: restore the last reverted tail',
+          '  /children [id]         List or inspect delegated child runs',
+          '  /checkpoint …          Snapshot / restore conversation + files',
+          '  /remote …              Manage Remote relay + phone pairing',
+          '  /rc [pair]             Hand this session to your phone',
+          '  /daemon status|restart Show pushd status or reconnect',
+          '  /theme [list|name]     List or set the saved theme preference',
+          '  /spinner [list|name]   List or pin the spinner preference',
+          '  /editor                Compose the prompt in $EDITOR (PUSH_EDITOR/VISUAL/EDITOR)',
+          '  /debug runtime         Runtime path/provider/session diagnostics',
+          '  /worktree              Show worktree sandbox status',
+          '  /exit | /quit          Use the command palette or Ctrl+C to exit',
+        ].join('\n'),
+      );
+      return true;
+    }
+
+    if (command === 'editor') {
+      await handleEditorCommand();
+      return true;
+    }
+
+    if (command === 'clear' || command === 'new') {
+      if (daemonStateStale) {
+        daemonHiddenBefore = daemonMirror.rows.length;
+        daemonMirror.liveText = '';
+      } else {
+        hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      }
+      activityRows = [];
+      liveText = '';
+      notify();
+      return true;
+    }
+
+    if (command === 'session') {
+      if (!arg) {
+        appendStatus(
+          `session: ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}`,
+        );
+        return true;
+      }
+      if (arg === 'rename' || arg.startsWith('rename ')) {
+        const name = arg === 'rename' ? '' : arg.slice('rename'.length).trim();
+        if (!name) {
+          appendStatus('Usage: /session rename <name> | /session rename --clear', true);
+          return true;
+        }
+        if (name === '--clear') {
+          state.sessionName = '';
+          await (deps.appendEvent ?? appendSessionEvent)(state, 'session_renamed', { name: null });
+          await (deps.saveState ?? saveSessionState)(state);
+          appendStatus('Session name cleared.');
+          return true;
+        }
+        state.sessionName = name;
+        await (deps.appendEvent ?? appendSessionEvent)(state, 'session_renamed', { name });
+        await (deps.saveState ?? saveSessionState)(state);
+        appendStatus(`Session renamed: ${JSON.stringify(name)}`);
+        return true;
+      }
+      appendStatus('Usage: /session | /session rename <name> | /session rename --clear', true);
+      return true;
+    }
+
+    if (command === 'provider') {
+      const providers = getProviderList();
+      if (!arg) {
+        appendStatus(
+          providers
+            .map(
+              (entry, index) =>
+                `${index + 1}. ${entry.id}${entry.id === state.provider ? '  (current)' : ''}${
+                  entry.hasKey ? '' : '  · no key'
+                }`,
+            )
+            .join('\n'),
+        );
+        return true;
+      }
+      let targetId: string | null = null;
+      if (/^\d+$/.test(arg)) {
+        const num = Number.parseInt(arg, 10);
+        targetId = num >= 1 && num <= providers.length ? providers[num - 1]!.id : null;
+      } else {
+        const normalized = redirectDeprecatedProvider(arg.toLowerCase()) ?? arg.toLowerCase();
+        targetId = PROVIDER_CONFIGS[normalized] ? normalized : null;
+      }
+      if (!targetId || !PROVIDER_CONFIGS[targetId]) {
+        appendStatus(`Unknown provider: ${arg}`, true);
+        return true;
+      }
+      const targetConfig = PROVIDER_CONFIGS[targetId]!;
+      try {
+        (deps.resolveKey ?? resolveApiKey)(targetConfig);
+      } catch {
+        appendStatus(`Cannot switch to ${targetId}: no API key.`, true);
+        return true;
+      }
+      const providerSlot = config[targetId] as { model?: string } | undefined;
+      const targetModel = providerSlot?.model || targetConfig.defaultModel;
+      if (daemon.connected && daemon.sessionId) {
+        const ok = await patchDaemonSession({ provider: targetId, model: targetModel });
+        if (!ok) return true;
+      } else {
+        state.provider = targetId;
+        state.model = targetModel;
+        await (deps.saveState ?? saveSessionState)(state);
+      }
+      config.provider = targetId;
+      await persistConfig(config);
+      appendStatus(`Switched to ${state.provider} | model: ${state.model}`);
+      notify();
+      return true;
+    }
+
+    if (command === 'model') {
+      const models = [...getCuratedModels(state.provider)];
+      if (!arg) {
+        appendStatus(
+          models.length
+            ? models
+                .map(
+                  (name, index) =>
+                    `${index + 1}. ${name}${name === state.model ? '  (current)' : ''}`,
+                )
+                .join('\n')
+            : `No curated models for ${state.provider}. Use /model <name>.`,
+        );
+        return true;
+      }
+      let target = arg;
+      if (/^\d+$/.test(arg)) {
+        const num = Number.parseInt(arg, 10);
+        if (num < 1 || num > models.length) {
+          appendStatus(`Model index out of range: ${num}`, true);
+          return true;
+        }
+        target = models[num - 1]!;
+      }
+      if (target === state.model) {
+        appendStatus(`Already using model: ${target}`);
+        return true;
+      }
+      if (daemon.connected && daemon.sessionId) {
+        const ok = await patchDaemonSession({ model: target });
+        if (!ok) return true;
+      } else {
+        state.model = target;
+        await (deps.saveState ?? saveSessionState)(state);
+      }
+      if (!config[state.provider] || typeof config[state.provider] !== 'object') {
+        (config as Record<string, unknown>)[state.provider] = {};
+      }
+      (config[state.provider] as { model?: string }).model = target;
+      await persistConfig(config);
+      appendStatus(`Model switched to: ${state.model}`);
+      notify();
+      return true;
+    }
+
+    if (command === 'config') {
+      if (!arg) {
+        const providerCfg = (config[state.provider] ?? {}) as {
+          apiKey?: string;
+          url?: string;
+        };
+        appendStatus(
+          [
+            `provider: ${state.provider}`,
+            `model: ${state.model}`,
+            `key: ${maskSecret(providerCfg.apiKey) || '(env / unset)'}`,
+            `url: ${providerCfg.url || PROVIDER_CONFIGS[state.provider]?.url || '(default)'}`,
+            `tavily: ${maskSecret(config.tavilyApiKey) || '(unset)'}`,
+            `daemon autostart: ${config.tuiDaemonAutoStart === false || config.tuiDaemonAutoStart === 'false' ? 'off' : 'auto'}`,
+            `sandbox: ${config.localSandbox === true || config.localSandbox === 'true' ? 'on' : 'off'}`,
+          ].join('\n'),
+        );
+        return true;
+      }
+      const [sub, ...restArgs] = arg.split(/\s+/);
+      const subcommand = sub?.toLowerCase() ?? '';
+      if (subcommand === 'key') {
+        if (restArgs.length === 1) {
+          const secret = restArgs[0]!;
+          if (!config[state.provider] || typeof config[state.provider] !== 'object') {
+            (config as Record<string, unknown>)[state.provider] = {};
+          }
+          (config[state.provider] as { apiKey?: string }).apiKey = secret;
+          await persistConfig(config);
+          applyConfigToEnv(config);
+          appendStatus(`API key set for ${state.provider} (${maskSecret(secret)}).`);
+          return true;
+        }
+        if (restArgs.length >= 2) {
+          const targetProvider =
+            redirectDeprecatedProvider(restArgs[0]!.toLowerCase()) ?? restArgs[0]!.toLowerCase();
+          const secret = restArgs.slice(1).join(' ');
+          if (!PROVIDER_CONFIGS[targetProvider]) {
+            appendStatus(`Unknown provider: ${restArgs[0]}`, true);
+            return true;
+          }
+          if (!config[targetProvider] || typeof config[targetProvider] !== 'object') {
+            (config as Record<string, unknown>)[targetProvider] = {};
+          }
+          (config[targetProvider] as { apiKey?: string }).apiKey = secret;
+          await persistConfig(config);
+          applyConfigToEnv(config);
+          appendStatus(`API key set for ${targetProvider} (${maskSecret(secret)}).`);
+          return true;
+        }
+        appendStatus('Usage: /config key <secret> or /config key <provider> <secret>', true);
+        return true;
+      }
+      if (subcommand === 'url') {
+        const url = restArgs.join(' ').trim();
+        if (!url) {
+          appendStatus('Usage: /config url <url>', true);
+          return true;
+        }
+        if (!config[state.provider] || typeof config[state.provider] !== 'object') {
+          (config as Record<string, unknown>)[state.provider] = {};
+        }
+        (config[state.provider] as { url?: string }).url = url;
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`URL set for ${state.provider}: ${url}`);
+        return true;
+      }
+      if (subcommand === 'tavily') {
+        const secret = restArgs.join(' ').trim();
+        if (!secret) {
+          appendStatus('Usage: /config tavily <key>', true);
+          return true;
+        }
+        config.tavilyApiKey = secret;
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Tavily key set (${maskSecret(secret)}).`);
+        return true;
+      }
+      if (subcommand === 'sandbox') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'on' && mode !== 'off') {
+          appendStatus('Usage: /config sandbox on|off', true);
+          return true;
+        }
+        config.localSandbox = mode === 'on';
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Local sandbox: ${mode}`);
+        return true;
+      }
+      if (subcommand === 'explain') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'on' && mode !== 'off') {
+          appendStatus('Usage: /config explain on|off', true);
+          return true;
+        }
+        config.explainMode = mode === 'on';
+        await persistConfig(config);
+        applyConfigToEnv(config);
+        appendStatus(`Explain mode: ${mode}`);
+        return true;
+      }
+      if (subcommand === 'daemon') {
+        const mode = (restArgs[0] || '').toLowerCase();
+        if (mode !== 'auto' && mode !== 'off') {
+          appendStatus('Usage: /config daemon auto|off', true);
+          return true;
+        }
+        config.tuiDaemonAutoStart = mode === 'auto';
+        process.env.PUSH_TUI_DAEMON_AUTOSTART = mode === 'auto' ? 'true' : 'false';
+        await persistConfig(config);
+        appendStatus(`Daemon autostart: ${mode}`);
+        return true;
+      }
+      appendStatus(
+        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url> | /config tavily <key> | /config sandbox on|off | /config explain on|off | /config daemon auto|off',
+        true,
+      );
+      return true;
+    }
+
+    if (command === 'resume') {
+      if (!arg) {
+        const sessions = await fetchSessionRows();
+        appendStatus(
+          sessions.length
+            ? sessions
+                .slice(0, 12)
+                .map(
+                  (entry) =>
+                    `${entry.sessionId}${entry.sessionName ? ` · ${entry.sessionName}` : ''} · ${entry.provider}/${entry.model}`,
+                )
+                .join('\n') + (sessions.length > 12 ? `\n… ${sessions.length - 12} more` : '')
+            : 'No saved sessions.',
+        );
+        return true;
+      }
+      if (!SESSION_ID_RE.test(arg)) {
+        appendStatus('Usage: /resume | /resume <session-id>', true);
+        return true;
+      }
+      try {
+        const next = await (deps.loadState ?? loadSessionState)(arg);
+        Object.assign(state, next);
+        daemonMirror = createDaemonTranscriptMirror();
+        daemonHiddenBefore = 0;
+        daemonStateStale = false;
+        activityRows = [];
+        liveText = '';
+        hiddenBefore = 0;
+        persisted = true;
+        gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
+        appendStatus(
+          `Resumed session ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}.`,
+        );
+        notify();
+      } catch (cause) {
+        appendStatus(
+          `Resume failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      }
+      return true;
+    }
+
+    if (command === 'skills') {
+      if (arg === 'reload') {
+        const skills = await (deps.loadSkills ?? loadSkills)(state.cwd);
+        appendStatus(`Reloaded skills: ${skills.size}`);
+        return true;
+      }
+      if (arg === 'lint') {
+        const diags = await (deps.lintSkills ?? lintSkills)(state.cwd);
+        appendStatus(
+          formatSkillDiagnostics(diags),
+          diags.some((diag) => diag.severity === 'error'),
+        );
+        return true;
+      }
+      if (arg) {
+        appendStatus('Usage: /skills | /skills reload | /skills lint', true);
+        return true;
+      }
+      const skills = await (deps.loadSkills ?? loadSkills)(state.cwd);
+      appendStatus(
+        skills.size
+          ? [...skills.keys()]
+              .sort()
+              .map((name) => `/${name}`)
+              .join('\n')
+          : 'No skills loaded.',
+      );
+      return true;
+    }
+
+    if (command === 'worktree') {
+      appendStatus(await formatWorktreeStatus(state));
+      return true;
+    }
+
+    if (command === 'compact') {
+      if (arg && !/^\d+$/.test(arg)) {
+        appendStatus('Usage: /compact [turns] (positive integer)', true);
+        return true;
+      }
+      const preserveTurns = arg ? Math.max(1, Math.min(64, Number.parseInt(arg, 10))) : 6;
+      if (await daemon.ensureReady()) {
+        try {
+          const response = await daemon.summarize(preserveTurns);
+          const payload = response?.payload as { compacted?: boolean } | undefined;
+          if (payload?.compacted === false) appendStatus('Nothing to compact.');
+          else {
+            await resyncDaemonTranscript('compact');
+            appendStatus('Context compacted on the daemon.');
+          }
+        } catch (cause) {
+          appendStatus(
+            `Summarize failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            true,
+          );
+        }
+        return true;
+      }
+      const result = compactContext(state.messages as Parameters<typeof compactContext>[0], {
+        preserveTurns,
+      });
+      if (!result.compacted) {
+        appendStatus(
+          `Nothing to compact (turns: ${result.totalTurns}, preserve: ${result.preserveTurns}).`,
+        );
+        return true;
+      }
+      state.messages = result.messages;
+      await (deps.appendEvent ?? appendSessionEvent)(state, 'context_compacted', {
+        preserveTurns: result.preserveTurns,
+        totalTurns: result.totalTurns,
+        compactedMessages: result.compactedCount,
+        removedCount: result.removedCount,
+        beforeTokens: result.beforeTokens,
+        afterTokens: result.afterTokens,
+      });
+      await rewriteMessagesLog(state);
+      appendStatus(
+        `Compacted context: ${result.compactedCount} messages → 1 summary (kept ${result.preserveTurns} turns).`,
+      );
+      notify();
+      return true;
+    }
+
+    if (command === 'revert') {
+      if (arg && !/^\d+$/.test(arg)) {
+        appendStatus('Usage: /revert [turns] (positive integer)', true);
+        return true;
+      }
+      const turns = arg ? Math.max(1, Math.min(1024, Number.parseInt(arg, 10))) : 1;
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/revert needs a daemon session.', true);
+        return true;
+      }
+      try {
+        const response = await daemon.revert(turns);
+        const payload = response?.payload as { reverted?: boolean } | undefined;
+        if (payload?.reverted === false) appendStatus('Nothing to revert.');
+        else {
+          await resyncDaemonTranscript('revert');
+          appendStatus(`Reverted ${turns} turn(s) on the daemon.`);
+        }
+      } catch (cause) {
+        appendStatus(
+          `Revert failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      }
+      return true;
+    }
+
+    if (command === 'unrevert') {
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/unrevert needs a daemon session.', true);
+        return true;
+      }
+      try {
+        await daemon.unrevert();
+        await resyncDaemonTranscript('unrevert');
+        appendStatus('Restored the last reverted tail on the daemon.');
+      } catch (cause) {
+        appendStatus(cause instanceof Error ? cause.message : String(cause), true);
+      }
+      return true;
+    }
+
+    if (command === 'children') {
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/children needs a daemon session.', true);
+        return true;
+      }
+      try {
+        if (arg) {
+          const response = await daemon.getChild(arg);
+          appendStatus(JSON.stringify(response?.payload?.child ?? {}, null, 2));
+        } else {
+          const response = await daemon.listChildren();
+          const children = Array.isArray(response?.payload?.children)
+            ? response.payload.children
+            : [];
+          appendStatus(
+            children.length
+              ? children
+                  .map(
+                    (child) =>
+                      `${child.subagentId ?? '?'} · ${child.agent ?? 'subagent'} · ${child.status ?? '?'}`,
+                  )
+                  .join('\n')
+              : 'No delegated children for this session.',
+          );
+        }
+      } catch (cause) {
+        appendStatus(
+          `Children query failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      }
+      return true;
+    }
+
+    if (command === 'checkpoint') {
+      await runCheckpointCommand(
+        arg,
+        {
+          workspaceRoot: state.cwd,
+          sessionId: state.sessionId,
+          messages: state.messages,
+          provider: state.provider,
+          model: state.model,
+        },
+        {
+          status: (text) => appendStatus(text),
+          warning: (text) => appendStatus(text, true),
+          error: (text) => appendStatus(`checkpoint: ${text}`, true),
+          bold: (text) => text,
+          dim: (text) => text,
+          code: (text) => `\`${text}\``,
+        },
+      );
+      return true;
+    }
+
+    if (command === 'remote') {
+      await runRemoteCommand(
+        arg,
+        daemon as DaemonAdminTransport,
+        (level, text) => {
+          appendStatus(text, level === 'error' || level === 'warning');
+        },
+        {
+          maskSecret,
+          onMintedAttachToken: (token) => {
+            state.attachToken = token;
+          },
+        },
+      );
+      return true;
+    }
+
+    if (command === 'rc') {
+      await runRemoteControlCommand(
+        arg,
+        daemon as DaemonAdminTransport,
+        (level, text) => {
+          appendStatus(text, level === 'error' || level === 'warning');
+        },
+        {
+          sessionName: state.sessionName,
+          onMintedAttachToken: (token) => {
+            state.attachToken = token;
+          },
+        },
+      );
+      return true;
+    }
+
+    if (command === 'daemon') {
+      const sub = (arg.split(/\s+/)[0] || 'status').toLowerCase();
+      if (sub === 'status' || sub === 'show' || !arg) {
+        const autostart =
+          process.env.PUSH_TUI_DAEMON_AUTOSTART === 'false' ||
+          config.tuiDaemonAutoStart === false ||
+          config.tuiDaemonAutoStart === 'false'
+            ? false
+            : true;
+        const lines = [`Autostart: ${autostart ? 'auto' : 'off'}`];
+        if (daemon.connected) {
+          lines.push('Connected: yes');
+          if (daemon.sessionId) lines.push(`Session: ${daemon.sessionId}`);
+        } else if (!autostart) {
+          lines.push('Connected: no (autostart off, running inline)');
+        } else if (daemon.autoStartAttempted) {
+          lines.push('Connected: no (autostart attempted, fell back to inline)');
+        } else {
+          lines.push('Connected: no (inline mode, autostart pending)');
+        }
+        try {
+          const pidRaw = await fs.readFile(getPidPath(), 'utf8');
+          const pid = Number.parseInt(pidRaw.trim(), 10);
+          if (Number.isFinite(pid)) {
+            let running = false;
+            try {
+              process.kill(pid, 0);
+              running = true;
+            } catch (err) {
+              running = (err as NodeJS.ErrnoException)?.code === 'EPERM';
+            }
+            lines.push(
+              running
+                ? `Process: pid ${pid} (running)`
+                : `Process: pid ${pid} in pidfile but not running (stale)`,
+            );
+          } else {
+            lines.push('Process: pid file unreadable');
+          }
+        } catch {
+          lines.push('Process: not running (no pid file)');
+        }
+        lines.push('', 'Paths:', `  socket: ${getSocketPath()}`, `  log:    ${getLogPath()}`);
+        const auditPath = getAuditLogPath();
+        lines.push(`  audit:  ${auditPath}`);
+        try {
+          const stat = await fs.stat(auditPath);
+          const sizeMb = (stat.size / 1024 / 1024).toFixed(2);
+          const maxMb = (getAuditMaxBytes() / 1024 / 1024).toFixed(0);
+          lines.push(`  audit size: ${sizeMb} MB (rotates at ${maxMb} MB)`);
+        } catch {
+          // no audit log yet
+        }
+        appendStatus(lines.join('\n'));
+        return true;
+      }
+      if (sub === 'restart' || sub === 'refresh') {
+        const connected = await daemon.ensureConnected({ announce: true });
+        appendStatus(
+          connected
+            ? 'Daemon connection refreshed (or already connected).'
+            : 'No daemon running and reconnect failed. Check /daemon status.',
+          !connected,
+        );
+        return true;
+      }
+      appendStatus(
+        `Unknown daemon subcommand: ${sub}. Try: /daemon status | /daemon restart`,
+        true,
+      );
+      return true;
+    }
+
+    if (command === 'theme') {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sub = (parts[0] || 'show').toLowerCase();
+      if (sub === 'show' || !arg) {
+        appendStatus(
+          `theme preference: ${config.theme || process.env.PUSH_THEME || 'default'} (Silvery uses retained design tokens; this is the saved preference)`,
+        );
+        return true;
+      }
+      if (sub === 'list') {
+        appendStatus(
+          [
+            'Themes:',
+            ...THEME_NAMES.map((name) => `  ${name.padEnd(10)}  ${VARIANTS[name].description}`),
+          ].join('\n'),
+        );
+        return true;
+      }
+      const name = sub === 'set' ? parts[1] : sub;
+      if (!name || !isThemeName(name)) {
+        appendStatus(
+          `Unknown theme: ${name || '(missing)'}. Available: ${THEME_NAMES.join(', ')}`,
+          true,
+        );
+        return true;
+      }
+      config.theme = name;
+      process.env.PUSH_THEME = name;
+      await persistConfig(config);
+      appendStatus(`theme: ${name} (saved preference)`);
+      return true;
+    }
+
+    if (command === 'spinner') {
+      const parts = arg.split(/\s+/).filter(Boolean);
+      const sub = (parts[0] || 'show').toLowerCase();
+      if (!arg || sub === 'show') {
+        appendStatus(
+          `spinner preference: ${config.spinner || process.env.PUSH_SPINNER || 'off'}${isReducedMotion() ? ' — reduced-motion active' : ''}`,
+        );
+        return true;
+      }
+      if (sub === 'list') {
+        appendStatus(
+          [
+            'Spinners:',
+            ...SPINNER_NAMES.map((name) => {
+              const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
+              return `  ${preview}  ${name.padEnd(10)}  ${SPINNERS[name].description}`;
+            }),
+          ].join('\n'),
+        );
+        return true;
+      }
+      const name = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase();
+      if (name === 'unpin') {
+        delete config.spinner;
+        delete process.env.PUSH_SPINNER;
+        await persistConfig(config);
+        appendStatus('spinner: off (unpinned)');
+        return true;
+      }
+      if (!isSpinnerName(name)) {
+        appendStatus(
+          `Unknown spinner: ${name || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
+          true,
+        );
+        return true;
+      }
+      if (isReducedMotion() && name !== 'off') {
+        appendStatus(
+          'Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to enable.',
+          true,
+        );
+        return true;
+      }
+      config.spinner = name;
+      process.env.PUSH_SPINNER = name;
+      await persistConfig(config);
+      appendStatus(`spinner: ${name} (saved preference)`);
+      return true;
+    }
+
+    if (command === 'debug') {
+      if (arg.trim() !== 'runtime') {
+        appendStatus('Usage: /debug runtime', true);
+        return true;
+      }
+      appendStatus(
+        [
+          'Runtime Debug:',
+          `  cwd: ${process.cwd()}`,
+          `  workspace: ${state.cwd}`,
+          `  node: ${process.execPath}`,
+          `  argv[1]: ${process.argv[1] || '(unknown)'}`,
+          `  provider: ${state.provider}`,
+          `  model: ${state.model}`,
+          `  session id: ${state.sessionId}`,
+          `  session root: ${getSessionRoot()}`,
+          `  daemon connected: ${daemon.connected ? 'yes' : 'no'}`,
+          `  daemon session: ${daemon.sessionId || '(none)'}`,
+        ].join('\n'),
+      );
+      return true;
+    }
+
+    if (command === 'exit' || command === 'quit') {
+      appendStatus('Use the command palette Exit or Ctrl+C to leave the TUI.');
+      return true;
+    }
+
+    appendStatus(`Unknown command /${command}. Try /help.`, true);
+    return true;
+  }
+
   return {
     getSnapshot: () => currentSnapshot,
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    setHandoffHooks(hooks) {
+      if (hooks.onSuspend) handoffSuspend = hooks.onSuspend;
+      if (hooks.onResume) handoffResume = hooks.onResume;
+      // Force rebuild so the next /editor uses the live hooks.
+      terminalHandoff = null;
+    },
+    takePendingComposerText() {
+      const text = pendingComposerText;
+      pendingComposerText = null;
+      return text;
+    },
     async submit(rawText) {
       const text = rawText.trim();
       if (!text || running || disposed) return;
+      if (await handleSlashCommand(text)) return;
       error = null;
       activityRows = [];
       liveText = '';

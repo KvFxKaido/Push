@@ -3390,75 +3390,40 @@ function exitNonInteractiveNoTask(): never {
   process.exit(1);
 }
 
-// Renderer dispatch for the full-screen TUI. Both launch sites (the `tui`
-// subcommand and bare `push`) route through here. It only selects a renderer,
-// lazily imports it, emits a symmetric launch log, and forwards the already-
-// resolved options — it does NOT touch session or worktree lifecycle (that stays
-// at the call sites). PUSH_TUI_SILVERY picks the opt-in silvery renderer (Node
-// >=24); default is the ANSI TUI, behavior-identical to the prior direct call.
-// Keep the experimental renderer outside Bun's single-executable bundle. A
-// literal dynamic import is still traced and bundled by Bun even when its
-// package dependency is marked external, which makes the binary resolve
-// silvery eagerly on startup. The non-literal boundary defers resolution until
-// the opt-in path is actually selected; source/tsx and emitted Node builds
-// resolve the same relative module normally.
-function importOptionalRenderer(specifier: string): Promise<unknown> {
-  return import(specifier);
-}
+// Sole full-screen TUI launcher. Both launch sites (the `tui` subcommand and
+// bare `push`) route through the retained Silvery surface. Session/worktree
+// lifecycle stays at the call sites; this seam only guards the runtime, imports
+// the renderer lazily, logs the launch, and forwards resolved options.
+// Silvery is bundled into the Bun single-binary; only unused optional terminal
+// adapters stay external (see CI compile flags).
 
 type RunTuiOptions = import('./silvery/entry.js').RunTuiOptions;
 type TuiRunnerModule = {
-  runTUI?: (options: RunTuiOptions) => Promise<number> | number;
   runTuiSilvery?: (options: RunTuiOptions) => Promise<number> | number;
 };
 
 export interface LaunchTuiDeps {
-  silveryFlag?: string;
   nodeMajor?: number;
   isBun?: () => boolean;
   log?: (line: string) => void;
-  loadAnsi?: () => Promise<TuiRunnerModule>;
   loadSilvery?: () => Promise<TuiRunnerModule>;
 }
 
 export async function launchTui(options: RunTuiOptions, deps: LaunchTuiDeps = {}) {
-  const silveryFlag = deps.silveryFlag ?? process.env.PUSH_TUI_SILVERY;
-  const useSilvery = silveryFlag === '1' || silveryFlag === 'true';
   const log = deps.log ?? console.error;
-  if (useSilvery) {
-    const nodeMajor = deps.nodeMajor ?? Number(process.versions.node.split('.')[0]);
-    if (nodeMajor < 24) {
-      throw new Error(
-        `PUSH_TUI_SILVERY requires Node >=24 (silvery 0.21 uses \`using\` syntax); ` +
-          `you are on ${process.version}. Run \`nvm use 24\`, or unset PUSH_TUI_SILVERY ` +
-          `to use the default TUI.`,
-      );
-    }
-    log(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
-    let renderer: unknown;
-    try {
-      renderer = deps.loadSilvery
-        ? await deps.loadSilvery()
-        : await importOptionalRenderer('./silvery/entry.js');
-    } catch (error) {
-      if ((deps.isBun ?? isBunRuntime)()) {
-        throw new Error(
-          'The experimental silvery TUI requires the source/tsx or emitted Node runtime; ' +
-            'it is not included in the single-binary build. Unset PUSH_TUI_SILVERY to use ' +
-            'the default TUI.',
-          { cause: error },
-        );
-      }
-      throw error;
-    }
-    const { runTuiSilvery } = renderer as TuiRunnerModule;
-    if (!runTuiSilvery) throw new Error('Silvery renderer module does not export runTuiSilvery().');
-    return runTuiSilvery(options);
+  const bun = (deps.isBun ?? isBunRuntime)();
+  const nodeMajor = deps.nodeMajor ?? Number(process.versions.node.split('.')[0]);
+  if (!bun && nodeMajor < 24) {
+    throw new Error(
+      `Push TUI requires Node >=24 (silvery 0.21 uses \`using\` syntax); ` +
+        `you are on ${process.version}. Run \`nvm use 24\`.`,
+    );
   }
-  log(JSON.stringify({ level: 'info', event: 'tui_launch_ansi' }));
-  const { runTUI } = deps.loadAnsi ? await deps.loadAnsi() : await import('./tui.js');
-  if (!runTUI) throw new Error('ANSI renderer module does not export runTUI().');
-  return runTUI(options);
+  log(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
+  const renderer = deps.loadSilvery ? await deps.loadSilvery() : await import('./silvery/entry.js');
+  const { runTuiSilvery } = renderer as TuiRunnerModule;
+  if (!runTuiSilvery) throw new Error('Silvery renderer module does not export runTuiSilvery().');
+  return runTuiSilvery(options);
 }
 
 export async function main() {

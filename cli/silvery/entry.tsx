@@ -1,8 +1,6 @@
 // cli/silvery/entry.tsx — silvery TUI renderer entry point.
 //
-// Selected by launchTui() (cli/cli.ts) when PUSH_TUI_SILVERY is set on Node >=24.
-// It accepts the SAME options contract as runTUI() (cli/tui.ts) so it is a true
-// drop-in alternate renderer.
+// Selected by launchTui() (cli/cli.ts) as the sole full-screen renderer.
 //
 // The launcher's Node>=24 guard runs before this module loads, because importing
 // silvery 0.21 itself is a parse-time error on older Node releases.
@@ -67,6 +65,12 @@ export async function runTuiSilvery(
       },
     );
     instance = await handle;
+    // Terminal handoff for /editor (and future pagers): pause Silvery paint while
+    // the child owns the real TTY, then resume for a full redraw.
+    controller.setHandoffHooks({
+      onSuspend: () => instance?.pause(),
+      onResume: () => instance?.resume(),
+    });
     await instance.waitUntilExit();
     return 0;
   } catch (error) {

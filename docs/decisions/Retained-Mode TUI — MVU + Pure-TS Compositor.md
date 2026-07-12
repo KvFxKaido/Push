@@ -6,8 +6,8 @@ adopt-gate stress (13/0) + a driven Push-surface prototype
 ([`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/)).
 The original *build-the-compositor* thesis below is retained as the **validation rubric**
 silvery was measured against — historical as a build plan, live as the contract silvery must
-keep meeting. Migration plan at the end of this doc. Phases 0–2 are implemented behind
-`PUSH_TUI_SILVERY`; the ANSI renderer remains the default.
+keep meeting. Migration plan at the end of this doc. Phases 0–3 are implemented: Silvery is the
+sole product full-screen TUI; the `PUSH_TUI_SILVERY` migration flag is gone.
 
 **Date:** 2026-07-11
 
@@ -444,10 +444,18 @@ mobile in priority — the plan is committed, the calendar is not.
   cache lifecycle are removed. Silvery `ListView` virtual cache owns the retained transcript;
   the transitional ANSI renderer frames directly until P3 deletes it.
 
-**Phase 3 — flip the default, delete the flag.**
-- `PUSH_TUI_SILVERY` goes default-on, then away; the ANSI printer is deleted. Confirm the shared
-  `lib/` runtime contracts are untouched (silvery is view-only) and the shared kernel round loop
-  still drives cleanly.
+**Phase 3 — control-plane parity under the flag, then flip + delete ANSI (2026-07-12).**
+- **Step A (flag intact):** Ported the command/session control plane into the Silvery controller
+  (`/session`, `/provider`, `/model`, `/config`, `/resume`, session verbs, skills, worktree)
+  while `PUSH_TUI_SILVERY` still selected the opt-in path.
+- **Step B (final):** Silvery is the sole `launchTui` path; Bun bundles it (external only unused
+  terminal/browser adapters); `PUSH_TUI_SILVERY` is removed. The ANSI product printer (`cli/tui.ts`)
+  and its renderer-only modules/tests are deleted. Shared pure helpers (`tui-history`,
+  `tui-daemon-session`, `tui-status`, completer/focus/modal-input, framers/renderer used by status)
+  remain as libraries the retained controller still consumes. Remote/rc/daemon/checkpoint/theme/
+  spinner control plane lives on Silvery via `cli/daemon-admin.ts` + controller slash commands.
+  Confirm the shared `lib/` runtime contracts are untouched (silvery is view-only) and the shared
+  kernel round loop still drives cleanly.
 
 **Upstream / watch items:** the silent-fault default (worth an upstream issue, worked around
 here); ListView tail-follow ergonomics; and the barrel exporting `render` as the run-instance

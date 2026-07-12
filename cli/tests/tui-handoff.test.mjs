@@ -1,18 +1,16 @@
 /**
- * Terminal handoff/reclaim (issue #1423).
+ * Terminal handoff/reclaim (issue #1423 / #1424).
  *
- * Part A unit-tests `createTerminalHandoff` against a fake `TuiIo`: the
+ * Unit-tests `createTerminalHandoff` against a fake `TuiIo`: the
  * suspend→child→resume sequencing contract, reentrancy rejection, and the
  * spawn-failure path (terminal must be reclaimed even when the child never
- * ran). Part B drives the real `/editor` flow headlessly through the
- * tui-driver harness with an injected fake child — including a daemon event
- * emitted mid-suspension that must be visible after resume (acceptance #3/#4).
+ * ran). Silvery wires the same primitive via controller `/editor` + Instance
+ * pause/resume (see silvery-tui-p0 / controller deps.runHandoffChild).
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { createTerminalHandoff, resolveEditorCommand } from '../tui-handoff.ts';
-import { startHeadlessTui } from './tui-driver.mjs';
 
 function createFakeIo({ isTTY = true, stderrIsTTY = false } = {}) {
   const calls = [];
@@ -210,97 +208,5 @@ describe('resolveEditorCommand', () => {
   it('falls back per platform when nothing is set', () => {
     assert.deepEqual(resolveEditorCommand({}, 'win32'), { command: 'notepad', args: [] });
     assert.deepEqual(resolveEditorCommand({}, 'linux'), { command: 'vi', args: [] });
-  });
-});
-
-describe('/editor headless flow (tui-driver + fake child)', () => {
-  it('captures edited content and shows a mid-suspension daemon event after resume', async () => {
-    const { writeFile } = await import('node:fs/promises');
-    const savedEditor = process.env.EDITOR;
-    process.env.EDITOR = 'fake-editor --flag';
-
-    let releaseChild;
-    const childGate = new Promise((resolve) => {
-      releaseChild = resolve;
-    });
-    let childSpec = null;
-    const runHandoffChild = async (spec) => {
-      childSpec = spec;
-      // Simulate the user editing + saving in $EDITOR (trailing newline
-      // included, as editors conventionally append one on save).
-      await writeFile(spec.args.at(-1), 'edited prompt from $EDITOR\n', 'utf8');
-      await childGate;
-      return { exitCode: 0, signal: null };
-    };
-
-    const h = await startHeadlessTui({ deps: { runHandoffChild } });
-    try {
-      await h.type('/editor');
-      h.io.stdin.emit('data', Buffer.from('\r'));
-      await h.waitFor(() => childSpec !== null);
-
-      // Suspended: the terminal left the alt screen...
-      assert.ok(h.stdoutChunks.join('').includes('\x1b[?1049l'));
-      assert.equal(childSpec.command, 'fake-editor');
-      assert.deepEqual(childSpec.args.slice(0, 1), ['--flag']);
-      assert.match(childSpec.args.at(-1), /push-editor-.*\.md$/);
-
-      // ...and a daemon event arriving mid-suspension lands in state (not on
-      // the child's screen) — the frame count must not grow while suspended.
-      const framesWhileSuspended = h.stdoutChunks.length;
-      h.emitDaemonEvent({
-        v: 1,
-        kind: 'event',
-        sessionId: 'stub-session',
-        runId: 'run_from_phone',
-        seq: 1,
-        ts: Date.now(),
-        type: 'user_message',
-        payload: { chars: 20, preview: 'sent while suspended' },
-      });
-      // Let any (incorrect) render attempt drain through the scheduler.
-      await new Promise((resolve) => setTimeout(resolve, 60));
-      assert.equal(h.stdoutChunks.length, framesWhileSuspended);
-
-      releaseChild();
-      // Resume: alt screen re-entered, composer holds the edited content
-      // (trailing newline trimmed), and the suspended-era event is visible.
-      await h.waitFor(() => h.composer?.getText() === 'edited prompt from $EDITOR');
-      assert.equal(h.composer.getText(), 'edited prompt from $EDITOR');
-      const afterResume = h.stdoutChunks.slice(framesWhileSuspended).join('');
-      assert.ok(afterResume.includes('\x1b[?1049h'));
-      assert.ok(
-        (h.tuiState?.transcript ?? []).some(
-          (e) => typeof e.text === 'string' && e.text.includes('sent while suspended'),
-        ),
-      );
-    } finally {
-      // Ctrl+D (stop) only exits on an empty composer; drop the edited text
-      // so teardown actually tears down.
-      h.composer?.clear();
-      await h.stop();
-      if (savedEditor === undefined) delete process.env.EDITOR;
-      else process.env.EDITOR = savedEditor;
-    }
-  });
-
-  it('leaves the composer unchanged and warns when the editor exits nonzero', async () => {
-    const savedEditor = process.env.EDITOR;
-    process.env.EDITOR = 'fake-editor';
-    const runHandoffChild = async () => ({ exitCode: 1, signal: null });
-    const h = await startHeadlessTui({ deps: { runHandoffChild } });
-    try {
-      await h.typeLine('/editor');
-      await h.waitFor(() =>
-        (h.tuiState?.transcript ?? []).some(
-          (e) => typeof e.text === 'string' && e.text.includes('exited 1'),
-        ),
-      );
-      assert.equal(h.composer.getText(), '');
-    } finally {
-      await h.stop();
-      if (savedEditor === undefined) delete process.env.EDITOR;
-      else process.env.EDITOR = savedEditor;
-    }
   });
 });

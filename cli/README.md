@@ -1,6 +1,6 @@
 # Push CLI
 
-Local coding agent for your terminal. Push currently ships three terminal surfaces: an interactive REPL, headless runs, and an experimental full-screen TUI. The current product direction is transcript-first CLI ergonomics and TUI-lite improvements, not a ground-up full-screen TUI rewrite. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
+Local coding agent for your terminal. Push ships three terminal surfaces: an interactive REPL, headless runs, and a retained-mode Silvery full-screen TUI. It uses the same role-based agent architecture as the Push mobile app, but operates directly on your filesystem.
 
 ## Pointers
 
@@ -24,12 +24,10 @@ node --import tsx cli/cli.ts
 ```
 
 > **Requires Node ≥24.** The Push CLI targets Node 24 — the declared root `engines` floor,
-> and the only version CI covers. The opt-in silvery TUI (`PUSH_TUI_SILVERY=1`) *hard*-requires
-> it: silvery 0.21 ships `using` syntax older Node cannot parse, so it fails fast with a clear
-> message below 24 (`nvm use 24`). The other surfaces (REPL, headless, ANSI TUI) may still run
-> on older Node in practice, but 24 is the supported floor. The silvery renderer is **not** in
-> the Bun single-binary (dev/source runtime only); the binary ships the ANSI TUI and fails
-> closed on `PUSH_TUI_SILVERY=1` with a clear message.
+> and the only version CI covers. Silvery 0.21 ships `using` syntax older Node cannot parse, so
+> the full-screen TUI fails fast with a clear message below 24 (`nvm use 24`). Bun single-binary
+> builds bundle the same Silvery surface; only Silvery's unused optional terminal adapters remain
+> external to the binary.
 
 On Windows, use `.\push.cmd` from `cmd.exe`, PowerShell, or Windows Terminal:
 

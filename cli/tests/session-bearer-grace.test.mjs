@@ -252,11 +252,11 @@ describe('adopt-from-response source guards', () => {
       /if \(adoptedToken\) this\.#hooks\.setDurableAttachToken\(adoptedToken\);/,
       'the controller must persist the adopted token through the durable-session hook',
     );
-    const tuiSrc = await read('tui.ts');
+    const silverySrc = await read('silvery/controller.ts');
     assert.match(
-      tuiSrc,
-      /setDurableAttachToken: \(token\) => \{\s*if \(state && typeof state === 'object'\) state\.attachToken = token;/,
-      'the TUI must wire the durable-token hook to in-memory state for the next reconnect',
+      silverySrc,
+      /setDurableAttachToken: \(token\) => \{\s*state\.attachToken = token;/,
+      'the Silvery TUI must wire the durable-token hook to in-memory state for the next reconnect',
     );
   });
 });
