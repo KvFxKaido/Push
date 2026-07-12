@@ -34,6 +34,21 @@ describe('stripDecorativeEmoji (#1433 / law 2)', () => {
   it('never eats Push chrome glyphs (geometric, not pictographic)', () => {
     assert.equal(stripDecorativeEmoji('◆ ⬡ ⬢ ◇ ░▒▓█'), '◆ ⬡ ⬢ ◇ ░▒▓█');
   });
+
+  it('keeps text-presentation symbols (arrows, ▶, ✓) — only emoji get stripped', () => {
+    // Extended_Pictographic but NOT Emoji_Presentation: meaningful prose, kept.
+    assert.equal(
+      stripDecorativeEmoji('maps a ↔ b, returns ↩, then ➡ next'),
+      'maps a ↔ b, returns ↩, then ➡ next',
+    );
+    assert.equal(stripDecorativeEmoji('press ▶ to play ✓ done'), 'press ▶ to play ✓ done');
+  });
+
+  it('strips a pictograph forced to emoji with VS16, keeps its bare form', () => {
+    assert.equal(stripDecorativeEmoji('go ➡️ there'), 'go there');
+    assert.equal(stripDecorativeEmoji('go ➡ there'), 'go ➡ there');
+    assert.equal(stripDecorativeEmoji('hit ▶️ now'), 'hit now');
+  });
 });
 
 describe('parseInline (law 2 span budget)', () => {
@@ -127,6 +142,31 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     const lines = parseMarkdown('```\n**not bold**\n```');
     assert.equal(lines[1].kind, 'code');
     assert.equal(lines[1].raw, '**not bold**');
+  });
+
+  it('keeps a ```-prefixed info-string line inside a fence as verbatim code', () => {
+    // Only a bare ``` closes; ```extra is code content, not a silent drop.
+    const lines = parseMarkdown('```\ncode\n```extra\nstill code\n```');
+    assert.equal(lines.length, 5);
+    assert.equal(lines[2].kind, 'code');
+    assert.equal(lines[2].raw, '```extra');
+    assert.equal(lines[3].kind, 'code');
+    assert.equal(lines[3].raw, 'still code');
+    assert.equal(lines[4].kind, 'fence'); // the real close
+  });
+
+  it('normalizes CRLF: one row per line, no stray carriage return', () => {
+    const lines = parseMarkdown('one\r\ntwo\r\n```\r\ncode\r\n```');
+    assert.equal(lines.length, 5);
+    assert.deepEqual(lines[0].spans, [{ text: 'one' }]);
+    assert.equal(lines[3].kind, 'code');
+    assert.equal(lines[3].raw, 'code'); // no trailing \r
+  });
+
+  it('sizes a horizontal rule to its source length (width-non-increasing)', () => {
+    assert.equal(parseMarkdown('---')[0].raw, '---');
+    assert.equal(parseMarkdown('-----')[0].raw, '-----');
+    assert.equal(parseMarkdown('  ***  ')[0].raw, '***');
   });
 
   it('carries the ordered marker with its indent and number', () => {

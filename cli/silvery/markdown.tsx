@@ -13,11 +13,12 @@
  * `surface.tsx`) honest:
  *
  *  1. **Line-oriented.** One source line renders to exactly one row; newlines
- *     are never added or removed. Fenced code keeps its ``` markers (dimmed)
- *     rather than stripping them, so the line count is identical to `item.text`.
+ *     (LF or CRLF) are never added or removed. Fenced code keeps its ``` markers
+ *     (dimmed) rather than stripping them, so the line count equals `item.text`.
  *  2. **Width-non-increasing.** Stripping markers (`**`, `##`, brackets) only
- *     ever shortens a line, so the raw-text height estimate is an upper bound —
- *     it can over-reserve a row, never clip one.
+ *     ever shortens a line, and a horizontal rule is rendered at its source
+ *     length — so the raw-text height estimate is an upper bound: it can
+ *     over-reserve a row, never clip one.
  *
  * The parse layer is pure and unit-tested; the component only maps its output
  * onto silvery nodes.
@@ -31,13 +32,27 @@ import { VL_COLOR, type VlColor } from './visual-language.js';
 // ── Emoji stripping (law 2 / #1433) ──────────────────────────────────
 //
 // Decorative pictographs in model prose bypass the grayscale-plus-one-accent
-// posture. Strip Extended_Pictographic runs plus their ZWJ joiners, skin-tone
-// modifiers, regional indicators, and emoji variation selector. Push's own
-// chrome glyphs (◆ ⬡ ░ — geometric/block, not pictographic) never appear in
-// `item.text`, so this only touches model-emitted decoration.
+// posture. The strip targets *emoji-presentation* glyphs, not every pictograph:
+// a character is emoji only if it defaults to emoji rendering
+// (`\p{Emoji_Presentation}`) or is explicitly forced to it with VS16 (U+FE0F).
+// Text-default pictographs — arrows (↔ ↩ ➡), ▶, ✓ — are meaningful prose and
+// are kept. Push's own chrome glyphs (◆ ⬡ ░ — geometric, not pictographic) are
+// never pictographic at all, so they are always safe.
+//
+// One emoji unit = a base (default-emoji, or pictograph+VS16) + an optional
+// skin-tone modifier; a grapheme is one unit or a ZWJ-joined run of them, or a
+// regional-indicator flag pair.
 
-const EMOJI =
-  /(?:\p{Regional_Indicator}\p{Regional_Indicator})|\p{Extended_Pictographic}(?:️|︎|\p{Emoji_Modifier})?(?:‍\p{Extended_Pictographic}(?:️|︎|\p{Emoji_Modifier})?)*/gu;
+const EMOJI_UNIT =
+  '(?:\\p{Emoji_Presentation}\\uFE0F?|\\p{Extended_Pictographic}\\uFE0F)\\p{Emoji_Modifier}?';
+const EMOJI = new RegExp(`\\p{Regional_Indicator}{2}|${EMOJI_UNIT}(?:\\u200D${EMOJI_UNIT})*`, 'gu');
+
+// Cheap pre-check: only run the emoji regex (and space-collapse) when a
+// plausible emoji-plane codepoint OR a VS16 selector is present. VS16 matters
+// because a base like ▶ (U+25B6) sits outside the SMP ranges but becomes emoji
+// when followed by U+FE0F.
+const MAYBE_EMOJI =
+  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}]/u;
 
 /**
  * Remove decorative emoji and collapse the internal whitespace the removal
@@ -46,15 +61,12 @@ const EMOJI =
  * line-edge trimming is `parseInline`'s job, not this function's.
  */
 export function stripDecorativeEmoji(text: string): string {
-  if (!text) return text;
-  if (!/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}⬀-⯿←-⇿]/u.test(text)) {
-    // Fast path: no plausible emoji-plane codepoint present.
-    return text;
-  }
-  return text
-    .replace(EMOJI, '')
-    .replace(/ {2,}/g, ' ')
-    .replace(/ +([,.;:!?])/g, '$1');
+  if (!text || !MAYBE_EMOJI.test(text)) return text;
+  const stripped = text.replace(EMOJI, '');
+  // Nothing matched (e.g. a text-presentation arrow) — leave the string exactly
+  // as-is; do not collapse spacing the author intended.
+  if (stripped === text) return text;
+  return stripped.replace(/ {2,}/g, ' ').replace(/ +([,.;:!?])/g, '$1');
 }
 
 // ── Inline spans ──────────────────────────────────────────────────────
@@ -196,12 +208,25 @@ const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 export function parseMarkdown(text: string): MdLine[] {
   const out: MdLine[] = [];
   let inFence = false;
-  for (const raw of text.split('\n')) {
+  // Split on CRLF as well as LF so a stray `\r` never lands in a rendered cell
+  // (it would carriage-return the terminal). Count is unchanged either way.
+  for (const raw of text.split(/\r?\n/)) {
     const fence = FENCE.exec(raw);
     if (fence) {
-      inFence = !inFence;
-      out.push({ kind: 'fence', lang: inFence ? fence[1].trim() : '' });
-      continue;
+      if (!inFence) {
+        inFence = true;
+        out.push({ kind: 'fence', lang: fence[1].trim() });
+        continue;
+      }
+      // Inside a fence, only a bare ``` (nothing but whitespace after the
+      // backticks) closes it. A ```-prefixed line carrying an info string is
+      // verbatim code content — treating it as a close drops the rest of the
+      // block (CommonMark closing-fence rule).
+      if (fence[1].trim() === '') {
+        inFence = false;
+        out.push({ kind: 'fence', lang: '' });
+        continue;
+      }
     }
     if (inFence) {
       out.push({ kind: 'code', raw });
@@ -212,7 +237,9 @@ export function parseMarkdown(text: string): MdLine[] {
       continue;
     }
     if (HR.test(raw)) {
-      out.push({ kind: 'hr' });
+      // Keep the rule's visible length so the render stays width-non-increasing
+      // (an 8-cell rule from `---` could add a wrap row on a narrow terminal).
+      out.push({ kind: 'hr', raw: raw.trim() });
       continue;
     }
     const heading = HEADING.exec(raw);
@@ -249,13 +276,14 @@ export function parseMarkdown(text: string): MdLine[] {
 interface Marks {
   bullet: string;
   quoteRail: string;
-  hr: string;
+  /** Single rule cell, repeated to the source rule's visible length. */
+  hrCell: string;
 }
 
 function marksFor(unicode: boolean): Marks {
   return unicode
-    ? { bullet: '• ', quoteRail: '│ ', hr: '────────' }
-    : { bullet: '- ', quoteRail: '| ', hr: '--------' };
+    ? { bullet: '• ', quoteRail: '│ ', hrCell: '─' }
+    : { bullet: '- ', quoteRail: '| ', hrCell: '-' };
 }
 
 function spanColor(span: InlineSpan, base: VlColor | undefined): VlColor | undefined {
@@ -294,7 +322,11 @@ function LineView({
     case 'blank':
       return <Text> </Text>;
     case 'hr':
-      return <Text color={VL_COLOR.muted}>{marks.hr}</Text>;
+      return (
+        <Text color={VL_COLOR.muted}>
+          {marks.hrCell.repeat(Math.max(1, (line.raw ?? '').length))}
+        </Text>
+      );
     case 'fence':
       return <Text color={VL_COLOR.muted}>```{line.lang}</Text>;
     case 'code':
