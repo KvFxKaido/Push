@@ -5,6 +5,8 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022", "DOM"],
     "types": ["node"],
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -21,6 +23,6 @@
     "allowUnreachableCode": true,
     "noEmit": false
   },
-  "include": ["**/*.ts", "../lib/hashline.ts"],
+  "include": ["**/*.ts", "**/*.tsx", "../lib/hashline.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }

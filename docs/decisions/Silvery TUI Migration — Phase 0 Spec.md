@@ -188,19 +188,50 @@ don't assume). This is a first-class P0 acceptance gate, not a footnote.
   on any Node).
 - **Regression**: with the flag off, an existing TUI smoke is unchanged (ANSI path, Node 20/22/24).
 
+## Toolchain de-risk — RESULTS (smoke run 2026-07-12, `cli/silvery/smoke.tsx`)
+
+- **`node --import tsx`: ✅** renders a silvery frame on Node 24. Gotcha found: tsx does **not**
+  discover `cli/tsconfig.json`'s `jsx: react-jsx` from arbitrary cwds, so it defaults to the classic
+  transform → `React is not defined`. Fix (adopted): CLI `.tsx` files use an explicit
+  `import React from 'react'` (classic-compatible, works under every transform) rather than relying
+  on automatic-runtime tsconfig discovery. Also: `renderStringSync` throws "layout engine not
+  initialized" — use the async `renderString()` (self-inits) for one-shot renders.
+- **Emitted CLI build (`tsc -p cli/tsconfig.json` → run the `.js` on Node 24): ✅** — the whole CLI
+  tree emits clean with the jsx config added (Q2 resolved), and the emitted `smoke.js` runs.
+- **`bun build --compile` single binary: ⚠️ blocked (characterized).** silvery pulls
+  `@termless/core`, which has a **static** `import "ghostty-web"` (image rasterizer for
+  `renderAnsiPng`) plus optional backends (`playwright`, `@napi-rs/canvas`, `@resvg/resvg-js`,
+  `@twemoji/svg`, `ghostty-web`, `gifenc`, `upng-js`) and terminal backends (`@termless/ghostty`,
+  `@termless/xtermjs`). Bun's `--compile` bundles these eagerly; externalizing the full set lets it
+  *compile*, but the static `ghostty-web` import then **fires at runtime** in the binary (it loads a
+  WASM file via `createRequire().resolve()`, which doesn't survive `bunfs`). The text render path
+  never needs any of this — but Bun can't tree-shake a static side-effecting import. **This is a
+  distribution-path decision, not a dev-path blocker** (both dev runtimes are green). See "Bun
+  single-binary" below.
+
+## Bun single-binary — the one open decision
+
+The compiled binary (`cli-binary` job) is how the CLI is distributed. silvery's image-rasterizer
+subsystem won't cleanly bundle into it. Recommended P0 scoping (**needs your call**):
+
+- **Ship the silvery TUI dev-first.** In the compiled binary, mark silvery + `./silvery/entry`
+  **external**; the `launchTui` runtime guard already fails closed — so in the binary,
+  `PUSH_TUI_SILVERY` reports "silvery TUI requires the source/tsx runtime; not in the single-binary
+  build yet" and the **ANSI TUI (binary default) is untouched**. The silvery path runs under
+  `./push` via tsx and the tsc-emitted build, both green.
+- **Binary support is its own later slice** — either patch/configure `@termless/core` to drop the
+  image backends (upstream ask, or a resolve-alias shim), or accept the binary carries the ANSI TUI
+  only. Not P0.
+
+This keeps P0 small and unblocked, and it's honest: silvery TUI is opt-in and experimental; the
+distributed binary keeps the proven ANSI path until bundling is solved.
+
 ## Open questions (resolve before / at build)
 
-1. **The `.tsx` + tsx + React-19 automatic-runtime path** — silvery 0.21.1 on Node 24 is proven
-   as `.mjs`/`createElement` (spike re-validation); the `.tsx`-through-tsx variant is the remaining
-   unknown. First thing to de-risk: a ~20-line `.tsx` smoke behind the flag, before writing `PushShell`.
-2. **Does emitting `.tsx` disturb `build:cli`?** Adding react types + jsx must not break the
-   existing `.ts` emit or the declaration output.
-3. **Bun `--compile` bundling silvery's `using` dist** (highest-risk) — `bun build --compile
-   cli/cli.ts` is the distribution artifact; it must bundle silvery + react and run. Bun 1.3.11's
-   transpiler supports `using` and silvery declares `bun>=1.0`, so it's *expected* to work — but a
-   dynamic `import('./silvery/entry.js')` inside `launchTui` may or may not be traced/embedded by
-   Bun's compiler (dynamic imports can fall outside the bundle). Confirm the silvery entry is
-   reachable in the compiled binary, or mark it external + ship it alongside.
+1. ~~`.tsx` + tsx + React-19 runtime~~ — **resolved** (see de-risk results; explicit `import React`).
+2. ~~Emitting `.tsx` disturbs `build:cli`~~ — **resolved** (tree emits clean).
+3. **Bun single-binary scoping** — confirm the "silvery dev-first, external in the binary + runtime
+   guard" call above (or invest in bundling the backends now).
 4. **Terminal ownership on the bare-`push` path** — confirm nothing pre-launch (resize listeners,
    `tui-io` setup) runs before `launchTui` and leaks state into silvery's session.
 5. **React singleton** — adding root `react` must not create a second instance under the app's
