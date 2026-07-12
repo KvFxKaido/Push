@@ -154,8 +154,6 @@ import {
   findFirstIntersectingBlock,
 } from './tui-transcript-window.js';
 import { shouldFullRedraw } from './tui-render-frame.js';
-import { reconcileEntryBlocks } from './tui-transcript-cache.js';
-import { reconcileStreamFrame } from './tui-stream-frame.js';
 import {
   extractSelectedTranscriptText,
   freezeTranscriptMouseSnapshot,
@@ -168,10 +166,8 @@ import {
 
 const MAX_TRANSCRIPT = 2000; // max lines in transcript buffer
 // A single activity phase splits into a fresh group beyond this many items.
-// The group reframes on every append (entryRenderCache.delete + full re-render
-// of all items in activityGroupFramer), so an uncapped phase is O(n^2) over a
-// long reasoning/tool run. Splitting bounds each group's reframe cost while
-// preserving chronology — the older items stay pinned in their finished group.
+// Splitting keeps a single activity card bounded and preserves chronology —
+// older items stay pinned in their finished group.
 export const MAX_ACTIVITY_ITEMS = 50;
 // `TUI_DAEMON_CAPABILITIES` (the snapshot/event-v2 profile this client
 // advertises) is the canonical, drift-tested definition in
@@ -310,14 +306,8 @@ function createTUIState() {
     // Monotonic id stamped on each entry at push time — stable across
     // MAX_TRANSCRIPT front-eviction, so cached payload ids don't drift.
     transcriptSeq: 0,
-    // Per-entry framed-line cache keyed by entry identity (see
-    // tui-transcript-cache.ts). Appending an entry only frames that entry.
-    entryRenderCache: new WeakMap(),
     // Streaming token accumulator (for in-progress assistant response)
     streamBuf: '',
-    // Settle-and-freeze cache for the streaming tail (tui-stream-frame.ts):
-    // frames the settled prefix once, reframes only the volatile tail per token.
-    streamFrameState: null,
     // Approval prompt (when awaiting_approval)
     approval: null, // { kind, summary, details }
     // Pane wrapper for the approval modal — owns its render + key handling.
@@ -492,72 +482,45 @@ const findFirstTranscriptBlockStartingAtOrAfter = findFirstBlockStartingAtOrAfte
 function renderTranscript(buf, layout, theme, tuiState) {
   const { top, left, width, height } = layout.transcript;
 
-  const expandedPayloadIdsKey = tuiState.toolJsonPayloadsExpanded
-    ? 'all'
-    : Array.from(tuiState.expandedToolJsonPayloadIds).sort().join('|');
-  // Global frame signature: when any of these change, every entry must reflow
-  // (width re-wraps, theme re-styles, payload-expansion changes line counts), so
-  // the signature mismatch forces a full reframe. Entry *identity* handles the
-  // common case — appending an entry frames only that entry; all prior entries
-  // reuse their cached lines.
-  const sig = [
-    width,
-    theme.name,
-    tuiState.toolJsonPayloadsExpanded ? 1 : 0,
-    tuiState.payloadInspectorOpen ? 1 : 0,
-    tuiState.payloadCursorId || '',
-    expandedPayloadIdsKey,
-  ].join('::');
-
-  const { entryBlocks, totalLines } = reconcileEntryBlocks({
-    entries: tuiState.transcript,
-    sig,
-    cache: tuiState.entryRenderCache,
-    frameEntry: (entry, entryIndex) => {
-      const lines = [];
-      const payloadBlocks = [];
-      renderEntryLines(lines, entry, width, theme, {
-        expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-        entryKey: `${entry.timestamp ?? 0}:${entry.seq ?? entryIndex}`,
-        payloadUI: {
-          blocks: payloadBlocks,
-          cursorId: tuiState.payloadCursorId,
-          expandedIds: tuiState.expandedToolJsonPayloadIds,
-          inspectorOpen: tuiState.payloadInspectorOpen,
-        },
-      });
-      return { lines, payloadBlocks };
-    },
-  });
+  // The retained Silvery surface owns transcript caching/virtualization in P2.
+  // The transitional ANSI renderer stays correct by framing its visible model
+  // directly until P3 removes it; it no longer owns a second cache lifecycle.
+  const entryBlocks = [];
+  let totalLines = 0;
+  for (let entryIndex = 0; entryIndex < tuiState.transcript.length; entryIndex++) {
+    const entry = tuiState.transcript[entryIndex];
+    const lines = [];
+    const payloadBlocks = [];
+    renderEntryLines(lines, entry, width, theme, {
+      expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+      entryKey: `${entry.timestamp ?? 0}:${entry.seq ?? entryIndex}`,
+      payloadUI: {
+        blocks: payloadBlocks,
+        cursorId: tuiState.payloadCursorId,
+        expandedIds: tuiState.expandedToolJsonPayloadIds,
+        inspectorOpen: tuiState.payloadInspectorOpen,
+      },
+    });
+    const startLine = totalLines;
+    totalLines += lines.length;
+    entryBlocks.push({
+      lineCount: lines.length,
+      startLine,
+      endLine: totalLines,
+      lines,
+      payloadBlocks,
+    });
+  }
 
   let streamingLines = [];
 
-  // Add streaming buffer if assistant is currently streaming. The settled
-  // prefix (complete lines + closed fences) is framed once and cached; only the
-  // volatile tail reframes per token (see tui-stream-frame.ts). Same bullet
-  // prefix the assistant framer uses — emitted once via firstPrefixConsumed.
+  // Add the transitional ANSI streaming buffer. Silvery's retained live row is
+  // the P2 path; ANSI frames the whole buffer until that renderer is deleted.
   if (tuiState.streamBuf) {
-    const streamSig = `${width}::${theme.name}::${tuiState.toolJsonPayloadsExpanded ? 1 : 0}`;
-    const { lines: framed, state } = reconcileStreamFrame({
-      text: tuiState.streamBuf,
-      sig: streamSig,
-      prev: tuiState.streamFrameState,
-      frameChunk: (src, firstPrefixConsumed) => {
-        const chunkLines = [];
-        renderAssistantEntryLines(chunkLines, src, width, theme, {
-          expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
-          payloadUI: null,
-          firstPrefixConsumed,
-        });
-        return chunkLines;
-      },
+    renderAssistantEntryLines(streamingLines, tuiState.streamBuf, width, theme, {
+      expandToolJsonPayloads: tuiState.toolJsonPayloadsExpanded,
+      payloadUI: null,
     });
-    tuiState.streamFrameState = state;
-    streamingLines = framed;
-  } else if (tuiState.streamFrameState) {
-    // Stream ended (buffer committed/cleared) — drop the cache so the next
-    // stream starts clean rather than reusing a stale settled prefix.
-    tuiState.streamFrameState = null;
   }
 
   // Take the last `height` lines (scroll to bottom), adjusted by scrollOffset.
@@ -3020,7 +2983,6 @@ export async function runTUI(options = {}) {
       group = ensureActiveActivityGroup();
     }
     group.items.push(item);
-    tuiState.entryRenderCache.delete(group);
     tuiState.dirty.add('transcript');
     return { group, item };
   }
@@ -3268,11 +3230,8 @@ export async function runTUI(options = {}) {
             // Structured edit diff (edit_file / write_file) — rendered as an
             // edit card by the tool_call framer instead of the preview line.
             if (isEditDiff(event.payload.diff)) toolItem.editDiff = event.payload.diff;
-            // This entry was framed before its result landed; drop its cached
-            // frame so the reconciler reframes it (the identity-keyed cache
-            // can't observe an in-place edit). This is the one sanctioned
-            // mutation of a committed entry — see tui-transcript-cache.ts.
-            tuiState.entryRenderCache.delete(candidate);
+            // The transitional ANSI renderer frames directly, so the in-place
+            // result mutation is visible on its next draw.
             updatedTranscriptToolCall = true;
             break;
           }
@@ -4163,8 +4122,6 @@ export async function runTUI(options = {}) {
     // previous session's orphaned group. Part of the reset contract, not left
     // to the pushTranscriptEntry guard — an empty resume pushes no entry.
     tuiState.activeActivityGroup = null;
-    tuiState.entryRenderCache = new WeakMap();
-    tuiState.streamFrameState = null;
     tuiState.scrollOffset = 0;
     tuiState.fileAwareness = null;
     tuiFileLedger.files = {};
@@ -6508,12 +6465,10 @@ export async function runTUI(options = {}) {
       tuiState.activityCursorSeq = selected?.seq ?? null;
       for (const group of groups) {
         group.selected = group.seq === tuiState.activityCursorSeq;
-        tuiState.entryRenderCache.delete(group);
       }
     } else {
       for (const group of groups) {
         group.selected = false;
-        tuiState.entryRenderCache.delete(group);
       }
     }
     tuiState.dirty.add('all');
@@ -6557,7 +6512,6 @@ export async function runTUI(options = {}) {
     }
     for (const group of groups) {
       group.selected = group.seq === tuiState.activityCursorSeq;
-      tuiState.entryRenderCache.delete(group);
     }
     tuiState.dirty.add('transcript');
     scheduler.flush();

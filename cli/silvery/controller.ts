@@ -20,17 +20,17 @@ import {
 import { sessionMessagesToTranscriptRows } from '../tui-history.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
-import { EVENT_V2, TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
+import {
+  applyDaemonTranscriptEvent,
+  createDaemonTranscriptMirror,
+  type DaemonTranscriptRow,
+  type DaemonTranscriptSnapshot,
+} from '../daemon-transcript-mirror.ts';
+import { TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
+import { isTranscriptMutationEvent } from '../../lib/session-transcript-events.js';
 import type { RunTuiOptions } from './entry.js';
 
-export type SilveryTranscriptRole = 'user' | 'assistant' | 'coder' | 'explorer' | 'status';
-
-export interface SilveryTranscriptItem {
-  id: string;
-  role: SilveryTranscriptRole;
-  text: string;
-  live?: boolean;
-}
+export type SilveryTranscriptItem = DaemonTranscriptRow;
 
 export interface SilverySnapshot {
   rows: SilveryTranscriptItem[];
@@ -42,7 +42,12 @@ export interface SilverySnapshot {
   gitStatus: CompactGitStatus | null;
   daemonConnected: boolean;
   error: string | null;
+  interaction: SilveryInteraction | null;
 }
+
+export type SilveryInteraction =
+  | { id: string; kind: 'approval'; title: string; detail: string }
+  | { id: string; kind: 'question'; title: string; detail: string };
 
 interface ControllerDeps {
   loadConfig?: () => Promise<PushConfig>;
@@ -63,6 +68,7 @@ export interface SilveryController {
   subscribe(listener: () => void): () => void;
   submit(text: string): Promise<void>;
   cancel(): void;
+  respondToInteraction(id: string, value: boolean | string): void;
   clearDisplay(): void;
   dispose(): Promise<void>;
 }
@@ -90,9 +96,19 @@ function activityText(event: EngineEvent): string {
   return tool;
 }
 
-const SILVERY_DAEMON_CAPABILITIES = TUI_DAEMON_CAPABILITIES.filter(
-  (capability) => capability !== EVENT_V2,
-);
+/** Approval detail is `unknown` on EngineEvent; InteractionModal needs a string. */
+function formatApprovalDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (detail === undefined) return '';
+  try {
+    const serialized = JSON.stringify(detail, null, 2);
+    return typeof serialized === 'string' ? serialized : '';
+  } catch {
+    return String(detail);
+  }
+}
+
+const SILVERY_DAEMON_CAPABILITIES = TUI_DAEMON_CAPABILITIES;
 
 export async function createSilveryController(
   options: RunTuiOptions,
@@ -129,11 +145,15 @@ export async function createSilveryController(
   const now = deps.now ?? Date.now;
   let sequence = 0;
   let liveText = '';
-  let daemonDisplayRows: SilveryTranscriptItem[] = [];
   let activityRows: SilveryTranscriptItem[] = [];
+  let daemonMirror = createDaemonTranscriptMirror();
+  let daemonHiddenBefore = 0;
   let running = false;
   let startedAt: number | null = null;
   let error: string | null = null;
+  let interaction: SilveryInteraction | null = null;
+  let resolveApproval: ((approved: boolean) => void) | null = null;
+  let resolveQuestion: ((answer: string) => void) | null = null;
   let hiddenBefore = 0;
   let abortController: AbortController | null = null;
   let disposed = false;
@@ -150,17 +170,43 @@ export async function createSilveryController(
   const historyRows = (): SilveryTranscriptItem[] =>
     sessionMessagesToTranscriptRows(state.messages)
       .slice(hiddenBefore)
-      .map((row, index) => ({ id: `history-${hiddenBefore + index}`, ...row }));
+      .map((row, index) => ({
+        id: `history-${hiddenBefore + index}`,
+        kind: 'message' as const,
+        ...row,
+      }));
 
   const buildSnapshot = (): SilverySnapshot => ({
-    rows: [
-      ...historyRows(),
-      ...daemonDisplayRows,
-      ...activityRows,
-      ...(liveText
-        ? [{ id: 'assistant-live', role: 'assistant' as const, text: liveText, live: true }]
-        : []),
-    ],
+    rows: daemonStateStale
+      ? [
+          ...daemonMirror.rows.slice(daemonHiddenBefore),
+          ...(daemonMirror.liveText
+            ? [
+                {
+                  id: 'daemon-assistant-live',
+                  kind: 'message' as const,
+                  role: 'assistant' as const,
+                  text: daemonMirror.liveText,
+                  live: true,
+                },
+              ]
+            : []),
+        ]
+      : [
+          ...historyRows(),
+          ...activityRows,
+          ...(liveText
+            ? [
+                {
+                  id: 'assistant-live',
+                  kind: 'message' as const,
+                  role: 'assistant' as const,
+                  text: liveText,
+                  live: true,
+                },
+              ]
+            : []),
+        ],
     running,
     startedAt,
     provider: state.provider,
@@ -169,6 +215,7 @@ export async function createSilveryController(
     gitStatus,
     daemonConnected,
     error,
+    interaction,
   });
   let currentSnapshot = buildSnapshot();
   const notify = () => {
@@ -183,12 +230,6 @@ export async function createSilveryController(
         liveText += String(payload.text ?? '');
         break;
       case 'assistant_done':
-        if (daemonTurn && liveText) {
-          daemonDisplayRows = [
-            ...daemonDisplayRows,
-            { id: nextId('daemon-assistant'), role: 'assistant', text: liveText },
-          ];
-        }
         liveText = '';
         break;
       case 'tool_call':
@@ -197,7 +238,12 @@ export async function createSilveryController(
       case 'tool.execution_complete':
         activityRows = [
           ...activityRows,
-          { id: nextId('activity'), role: activityRole(event), text: activityText(event) },
+          {
+            id: nextId('activity'),
+            kind: 'tool',
+            role: activityRole(event),
+            text: activityText(event),
+          },
         ];
         break;
       case 'warning':
@@ -207,6 +253,7 @@ export async function createSilveryController(
           ...activityRows,
           {
             id: nextId('status'),
+            kind: 'status',
             role: 'status',
             text: String(payload.message ?? payload.detail ?? payload.phase ?? event.type),
           },
@@ -218,6 +265,44 @@ export async function createSilveryController(
         resolveDaemonTurn?.();
         resolveDaemonTurn = null;
         break;
+    }
+    notify();
+  };
+
+  const onDaemonEvent = (event: EngineEvent & { seq?: number }) => {
+    applyDaemonTranscriptEvent(daemonMirror, {
+      seq: typeof event.seq === 'number' ? event.seq : 0,
+      type: event.type,
+      payload: event.payload,
+    });
+    if (event.type === 'run_complete') {
+      running = false;
+      startedAt = null;
+      resolveDaemonTurn?.();
+      resolveDaemonTurn = null;
+      void resyncDaemonTranscript('run_complete');
+    } else if (isTranscriptMutationEvent(event.type)) {
+      // Compact/revert/unrevert rewrite daemon `state.messages` and invalidate
+      // the daemon's cached mirror. Local apply is a no-op for these types;
+      // refetch the snapshot so Silvery drops pre-mutation turns (ANSI TUI
+      // does the same via get_session_messages).
+      void resyncDaemonTranscript(event.type);
+    } else if (event.type === 'approval_required') {
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
+      if (approvalId) {
+        interaction = {
+          id: approvalId,
+          kind: 'approval',
+          title: typeof payload.title === 'string' ? payload.title : 'Approval required',
+          detail:
+            (typeof payload.summary === 'string' && payload.summary) ||
+            (typeof payload.kind === 'string' && payload.kind) ||
+            'The daemon is waiting for a decision.',
+        };
+      }
+    } else if (event.type === 'approval_received') {
+      interaction = null;
     }
     notify();
   };
@@ -239,7 +324,10 @@ export async function createSilveryController(
       tryConnectTransport: (socketPath, timeoutMs) =>
         tryConnect(socketPath, timeoutMs) as unknown as Promise<DaemonClientLike | null>,
       note: (_kind, text) => {
-        activityRows = [...activityRows, { id: nextId('daemon'), role: 'status', text }];
+        activityRows = [
+          ...activityRows,
+          { id: nextId('daemon'), kind: 'status', role: 'status', text },
+        ];
         notify();
       },
       markFooterDirty: () => {
@@ -249,7 +337,7 @@ export async function createSilveryController(
       markAllDirty: notify,
       onEngineEvent: (event) => {
         if (typeof event.seq === 'number') daemon.noteSeenSeq(event.seq);
-        onEvent(event as EngineEvent);
+        onDaemonEvent(event as EngineEvent & { seq?: number });
       },
       onSocketClose: () => {
         daemonConnected = false;
@@ -288,6 +376,7 @@ export async function createSilveryController(
         const attached = payload as { provider?: unknown; model?: unknown };
         if (typeof attached.provider === 'string') state.provider = attached.provider;
         if (typeof attached.model === 'string') state.model = attached.model;
+        void resyncDaemonTranscript('attach');
         notify();
       },
       invalidateReconnectAnimators: notify,
@@ -297,6 +386,61 @@ export async function createSilveryController(
   if (deps.useDaemon !== false) {
     daemonConnected = await daemon.ensureConnected({ announce: false });
     notify();
+  }
+
+  async function resyncDaemonTranscript(reason: string): Promise<boolean> {
+    if (!daemon.connected || !daemon.sessionId || !daemon.attachToken) return false;
+    try {
+      const response = await daemon.client!.request(
+        'get_session_snapshot',
+        {
+          sessionId: daemon.sessionId,
+          attachToken: daemon.attachToken,
+          recentEventLimit: 1,
+        },
+        daemon.sessionId,
+        1500,
+      );
+      const payload = response.payload as
+        | {
+            transcript?: { mirror?: DaemonTranscriptSnapshot };
+            pendingApproval?: {
+              approvalId?: unknown;
+              title?: unknown;
+              summary?: unknown;
+              kind?: unknown;
+            } | null;
+          }
+        | undefined;
+      const snapshot = payload?.transcript?.mirror;
+      if (!snapshot || !Array.isArray(snapshot.rows)) return false;
+      daemonMirror = createDaemonTranscriptMirror(snapshot);
+      daemonHiddenBefore = Math.min(daemonHiddenBefore, daemonMirror.rows.length);
+      daemonStateStale = true;
+      // Clear transient resync failures once a valid mirror is adopted.
+      error = null;
+      const pending = payload?.pendingApproval;
+      if (pending && typeof pending.approvalId === 'string') {
+        interaction = {
+          id: pending.approvalId,
+          kind: 'approval',
+          title: typeof pending.title === 'string' ? pending.title : 'Approval required',
+          detail:
+            (typeof pending.summary === 'string' && pending.summary) ||
+            (typeof pending.kind === 'string' && pending.kind) ||
+            'The daemon is waiting for a decision.',
+        };
+      } else if (interaction?.kind === 'approval' && !resolveApproval) {
+        interaction = null;
+      }
+      notify();
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      error = `Daemon transcript resync failed (${reason}): ${message}`;
+      notify();
+      return false;
+    }
   }
 
   return {
@@ -321,11 +465,7 @@ export async function createSilveryController(
         if (await daemon.ensureReady()) {
           daemonTurn = true;
           daemonStateStale = true;
-          daemonDisplayRows = [
-            ...daemonDisplayRows,
-            { id: nextId('daemon-user'), role: 'user', text },
-          ];
-          notify();
+          await resyncDaemonTranscript('before_send');
           const completion = new Promise<void>((resolve) => {
             resolveDaemonTurn = resolve;
           });
@@ -346,7 +486,8 @@ export async function createSilveryController(
         if (daemonStateStale && persisted) {
           const refreshed = await (deps.loadState ?? loadSessionState)(state.sessionId);
           Object.assign(state, refreshed);
-          daemonDisplayRows = [];
+          daemonMirror = createDaemonTranscriptMirror();
+          daemonHiddenBefore = 0;
           daemonStateStale = false;
         }
         saveLocalState = true;
@@ -377,32 +518,30 @@ export async function createSilveryController(
             alwaysAllow: config.alwaysAllow,
             auditorGate: config.auditorGate,
             explicitMaxRounds: options.explicitMaxRounds ?? false,
-            // P1 has one modal (the command palette). Interactive approval and
-            // ask-user dialogs remain fail-closed until their retained-mode panes land.
-            approvalFn: async (tool) => {
-              activityRows = [
-                ...activityRows,
-                {
-                  id: nextId('approval'),
-                  role: 'status',
-                  text: `${tool} needs approval; denied because P1 only ships the command palette.`,
-                },
-              ];
-              notify();
-              return false;
-            },
-            askUserFn: async (question) => {
-              activityRows = [
-                ...activityRows,
-                {
-                  id: nextId('question'),
-                  role: 'status',
-                  text: `Question deferred: ${question}`,
-                },
-              ];
-              notify();
-              return '(skipped — make a reasonable assumption)';
-            },
+            approvalFn: async (tool, detail) =>
+              new Promise<boolean>((resolve) => {
+                const id = nextId('approval');
+                resolveApproval = resolve;
+                interaction = {
+                  id,
+                  kind: 'approval',
+                  title: `${tool} needs approval`,
+                  detail: formatApprovalDetail(detail),
+                };
+                notify();
+              }),
+            askUserFn: async (question) =>
+              new Promise<string>((resolve) => {
+                const id = nextId('question');
+                resolveQuestion = resolve;
+                interaction = {
+                  id,
+                  kind: 'question',
+                  title: 'Push has a question',
+                  detail: question,
+                };
+                notify();
+              }),
           },
         );
       } catch (cause) {
@@ -417,6 +556,9 @@ export async function createSilveryController(
         startedAt = null;
         liveText = '';
         abortController = null;
+        interaction = null;
+        resolveApproval = null;
+        resolveQuestion = null;
         if (saveLocalState) {
           try {
             await (deps.saveState ?? saveSessionState)(state);
@@ -434,6 +576,11 @@ export async function createSilveryController(
     },
     cancel() {
       abortController?.abort();
+      resolveApproval?.(false);
+      resolveQuestion?.('(skipped — make a reasonable assumption)');
+      resolveApproval = null;
+      resolveQuestion = null;
+      interaction = null;
       if (daemon.connected && daemon.sessionId && daemonRunId) {
         void daemon.client?.request(
           'cancel_run',
@@ -446,10 +593,45 @@ export async function createSilveryController(
         );
       }
       resolveDaemonTurn?.();
+      notify();
+    },
+    respondToInteraction(id, value) {
+      if (!interaction || interaction.id !== id) return;
+      if (interaction.kind === 'approval') {
+        const approved = value === true;
+        if (resolveApproval) resolveApproval(approved);
+        else if (daemon.connected && daemon.sessionId) {
+          void daemon.client?.request(
+            'submit_approval',
+            {
+              sessionId: daemon.sessionId,
+              approvalId: id,
+              decision: approved ? 'approve' : 'deny',
+              attachToken: daemon.attachToken,
+            },
+            daemon.sessionId,
+          );
+        }
+        resolveApproval = null;
+      } else {
+        const answer =
+          typeof value === 'string' && value.trim()
+            ? value.trim()
+            : '(skipped — make a reasonable assumption)';
+        resolveQuestion?.(answer);
+        resolveQuestion = null;
+      }
+      interaction = null;
+      notify();
     },
     clearDisplay() {
-      hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
-      daemonDisplayRows = [];
+      if (daemonStateStale) {
+        daemonHiddenBefore = daemonMirror.rows.length;
+        // buildSnapshot appends liveText as a live row; hide it with the rest.
+        daemonMirror.liveText = '';
+      } else {
+        hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      }
       activityRows = [];
       liveText = '';
       notify();

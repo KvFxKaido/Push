@@ -69,7 +69,54 @@ function useTerminalSize() {
   return size;
 }
 
+function DiffCard({ item }: { item: SilveryTranscriptItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const diff = item.diff!;
+  const lines = expanded ? diff.lines : diff.lines.slice(0, 8);
+  return (
+    <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
+      <Text bold color="$fg-accent">
+        {diff.path} · +{diff.adds} -{diff.dels}
+      </Text>
+      {lines.map((line, index) => {
+        const number = line.kind === 'del' ? line.oldLine : (line.newLine ?? line.oldLine);
+        const marker = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
+        const color = line.kind === 'add' ? 'green' : line.kind === 'del' ? 'red' : '$fg-muted';
+        return (
+          <Text key={`${number ?? 0}-${index}`} color={color}>
+            {`${String(number ?? '').padStart(4)} ${marker} ${line.text}${line.textTruncated ? '…' : ''}`}
+          </Text>
+        );
+      })}
+      {diff.lines.length > lines.length || diff.truncated ? (
+        <Text color="$fg-muted">click to {expanded ? 'collapse' : 'expand'} diff</Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function ToolCard({ item }: { item: SilveryTranscriptItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const status = item.pending ? '…' : item.isError ? '✕' : '✓';
+  return (
+    <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
+      <Text bold color={item.isError ? 'red' : item.pending ? '$fg-accent' : 'green'}>
+        {status} {item.toolName ?? item.text}
+        {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
+      </Text>
+      {item.diff ? <DiffCard item={item} /> : null}
+      {!item.diff && item.resultPreview ? (
+        <Text color="$fg-muted">
+          {expanded ? item.resultPreview : item.resultPreview.split('\n')[0]}
+        </Text>
+      ) : null}
+    </Box>
+  );
+}
+
 function Message({ item }: { item: SilveryTranscriptItem }) {
+  const [expanded, setExpanded] = useState(false);
+  if (item.kind === 'tool') return <ToolCard item={item} />;
   const label = getTranscriptRoleLabel(item.role);
   const color =
     item.role === 'user'
@@ -82,12 +129,86 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
             ? '$fg-muted'
             : undefined;
   return (
-    <Box flexDirection="column">
+    <Box
+      flexDirection="column"
+      onClick={item.kind === 'review' ? () => setExpanded((value) => !value) : undefined}
+    >
       <Text bold color={color}>
         {label}
         {item.live ? ' · live' : ''}
       </Text>
-      <Text color={item.role === 'status' ? '$fg-muted' : undefined}>{item.text}</Text>
+      <Text color={item.role === 'status' ? '$fg-muted' : undefined}>
+        {item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text}
+      </Text>
+      {item.kind === 'review' ? (
+        <Text color="$fg-muted">click to {expanded ? 'collapse' : 'expand'} review</Text>
+      ) : null}
+    </Box>
+  );
+}
+
+function InteractionModal({
+  snapshot,
+  controller,
+  width,
+}: {
+  snapshot: SilverySnapshot;
+  controller: SilveryController;
+  width: number;
+}) {
+  const interaction = snapshot.interaction!;
+  const [answer, setAnswer] = useState('');
+  const respond = useCallback(
+    (value: boolean | string) => controller.respondToInteraction(interaction.id, value),
+    [controller, interaction.id],
+  );
+  useInput((input, key) => {
+    if (key.escape) respond(interaction.kind === 'approval' ? false : '');
+    else if (interaction.kind === 'approval' && !key.ctrl && !key.meta) {
+      if (input.toLowerCase() === 'y') respond(true);
+      if (input.toLowerCase() === 'n') respond(false);
+    }
+  });
+  const modalWidth = Math.max(40, Math.min(68, width - 4));
+  return (
+    <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
+      <ModalDialog
+        title={interaction.title}
+        width={modalWidth}
+        footer={
+          interaction.kind === 'approval' ? 'y approve · n/esc deny' : 'enter answer · esc skip'
+        }
+        fade={0.4}
+      >
+        <Box flexDirection="column" gap={1}>
+          <Text>{interaction.detail}</Text>
+          {interaction.kind === 'approval' ? (
+            <Box gap={2}>
+              <Box onClick={() => respond(true)}>
+                <Text bold color="green">
+                  [ Approve ]
+                </Text>
+              </Box>
+              <Box onClick={() => respond(false)}>
+                <Text bold color="red">
+                  [ Deny ]
+                </Text>
+              </Box>
+            </Box>
+          ) : (
+            <TextArea
+              value={answer}
+              onChange={setAnswer}
+              onSubmit={(value) => respond(value)}
+              submitKey="enter"
+              minRows={1}
+              maxRows={4}
+              placeholder="type your answer…"
+              isActive
+            />
+          )}
+        </Box>
+      </ModalDialog>
     </Box>
   );
 }
@@ -235,13 +356,21 @@ export function PushSurface({
     [controller, exit],
   );
 
+  const interactionOpenRef = useRef(false);
+  interactionOpenRef.current = Boolean(snapshot.interaction);
   const focusStack = useMemo(
     () =>
-      new FocusStack().register({
-        id: 'command-palette',
-        isActive: () => paletteOpenRef.current,
-        handleKey: () => true,
-      }),
+      new FocusStack()
+        .register({
+          id: 'interaction',
+          isActive: () => interactionOpenRef.current,
+          handleKey: () => true,
+        })
+        .register({
+          id: 'command-palette',
+          isActive: () => paletteOpenRef.current,
+          handleKey: () => true,
+        }),
     [],
   );
   const inputActive = focusStack.activeScope() === null && !snapshot.running;
@@ -259,9 +388,10 @@ export function PushSurface({
 
   useInput(
     (inputKey, key) => {
-      if (!paletteOpen && key.ctrl && inputKey === 'k') setPaletteOpen(true);
+      if (!paletteOpen && !snapshot.interaction && key.ctrl && inputKey === 'k')
+        setPaletteOpen(true);
     },
-    { isActive: !paletteOpen },
+    { isActive: !paletteOpen && !snapshot.interaction },
   );
 
   useEffect(() => {
@@ -329,7 +459,9 @@ export function PushSurface({
         disabled={snapshot.running}
       />
       {completer.getHint() ? <Text color="$fg-muted">{completer.getHint()}</Text> : null}
-      {paletteOpen ? (
+      {snapshot.interaction ? (
+        <InteractionModal snapshot={snapshot} controller={controller} width={columns} />
+      ) : paletteOpen ? (
         <Palette width={columns} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
       ) : null}
     </Screen>

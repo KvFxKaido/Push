@@ -702,6 +702,11 @@ import {
 } from '../lib/daemon-runtime-settings.ts';
 import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
 import { nextWorkspaceStateEvent, readWorkspaceStateFromGit } from './workspace-state-emitter.js';
+import {
+  applyDaemonTranscriptEvent,
+  rebuildDaemonTranscriptMirror,
+  snapshotDaemonTranscript,
+} from './daemon-transcript-mirror.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.ts';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.ts';
@@ -1133,6 +1138,18 @@ function checkOutboundEvent(event) {
 
 export function broadcastEvent(sessionId, event) {
   checkOutboundEvent(event);
+  const entry = activeSessions.get(sessionId);
+  if (entry) {
+    if (
+      event.type === 'context_compacted' ||
+      event.type === 'session_reverted' ||
+      event.type === 'session_unreverted'
+    ) {
+      entry.transcriptMirror = null;
+    } else if (entry.transcriptMirror) {
+      applyDaemonTranscriptEvent(entry.transcriptMirror, event);
+    }
+  }
   const clients = sessionClients.get(sessionId);
   if (!clients) return;
 
@@ -1793,6 +1810,11 @@ async function handleSendUserMessage(req, emitEvent) {
 
   const { state } = entry;
 
+  if (!entry.transcriptMirror) {
+    const priorEvents = await loadSessionEvents(sessionId).catch(() => []);
+    entry.transcriptMirror = rebuildDaemonTranscriptMirror(state.messages ?? [], priorEvents);
+  }
+
   // Session-scoped provider/model live in the daemon as the source of
   // truth. Clients mutate them via `update_session` (handler below);
   // we no longer adopt them from each `send_user_message` payload.
@@ -1840,7 +1862,10 @@ async function handleSendUserMessage(req, emitEvent) {
     seq: userMessageSeq,
     ts: Date.now(),
     type: 'user_message',
-    payload: userMessagePayload,
+    // Full text is broadcast to bearer-authenticated mirrors, while the
+    // durable event journal keeps its compact preview (state.messages remains
+    // the persisted source for the full body).
+    payload: { ...userMessagePayload, text },
   });
 
   const providerConfig = PROVIDER_CONFIGS[state.provider];
@@ -2377,11 +2402,16 @@ async function handleGetSessionSnapshot(req) {
   const recentEventLimit = normalizeRecentEventLimit(req.payload?.recentEventLimit);
 
   let recentEvents = [];
+  let allEvents = [];
   try {
-    const allEvents = await loadSessionEvents(sessionId);
+    allEvents = await loadSessionEvents(sessionId);
     recentEvents = allEvents.slice(-recentEventLimit);
   } catch {
+    allEvents = [];
     recentEvents = [];
+  }
+  if (!entry.transcriptMirror) {
+    entry.transcriptMirror = rebuildDaemonTranscriptMirror(state.messages ?? [], allEvents);
   }
 
   const activeRunId =
@@ -2469,6 +2499,7 @@ async function handleGetSessionSnapshot(req) {
     transcript: {
       lastSeq: currentSeq,
       recentEvents,
+      mirror: snapshotDaemonTranscript(entry.transcriptMirror),
     },
   });
 }

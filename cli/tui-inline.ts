@@ -16,15 +16,14 @@
  *    (open…RESET), so a wrap between words is always safe.
  *
  * 2. **Line-local + pure.** `renderInline` is a pure function of a single line,
- *    so it composes through the streaming settle-freeze cache (tui-stream-frame)
- *    with no changes: an unclosed `**` only ever exists on the volatile tail
- *    line and resolves when closed.
+ *    so retained and transitional ANSI renderers can reflow it independently:
+ *    an unclosed `**` only exists on the current line and resolves when closed.
  *
  * Links use **per-line footnotes**: `[text](url)` renders as `text¹` with the
  * url listed on its own line just below. Numbering resets per line — deliberate,
  * because a message-level counter would behave like a *visible*
- * `jsonFenceOrdinal` and diverge across settle-freeze chunks (breaking invariant
- * 2). Per-line also keeps the url adjacent to its anchor, which reads better on
+ * `jsonFenceOrdinal` and diverge across independently rendered rows (breaking
+ * invariant 2). Per-line also keeps the url adjacent to its anchor, which reads better on
  * a narrow / mobile terminal than a list scrolled off at the bottom.
  *
  * v1 scope: bold (`**` / `__`), inline code, links. Deliberately flat — no
