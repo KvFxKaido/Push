@@ -49,6 +49,11 @@ describe('stripDecorativeEmoji (#1433 / law 2)', () => {
     assert.equal(stripDecorativeEmoji('go ➡ there'), 'go ➡ there');
     assert.equal(stripDecorativeEmoji('hit ▶️ now'), 'hit now');
   });
+
+  it('strips keycap sequences (digit/#/* + VS16 + U+20E3)', () => {
+    assert.equal(stripDecorativeEmoji('step 1️⃣ then 2️⃣ go'), 'step then go');
+    assert.equal(stripDecorativeEmoji('press #️⃣ key'), 'press key');
+  });
 });
 
 describe('parseInline (law 2 span budget)', () => {
@@ -109,6 +114,12 @@ describe('parseInline (law 2 span budget)', () => {
 
   it('a pure-emoji line survives as an empty span (row/height preserved)', () => {
     assert.deepEqual(parseInline('🎉'), [{ text: '' }]);
+  });
+
+  it('preserves leading/trailing whitespace when no emoji was removed', () => {
+    // Indented non-fenced content (stack traces, ASCII tables) keeps alignment.
+    assert.deepEqual(parseInline('    indented line'), [{ text: '    indented line' }]);
+    assert.deepEqual(parseInline('col1    col2    '), [{ text: 'col1    col2    ' }]);
   });
 });
 

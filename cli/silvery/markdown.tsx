@@ -45,14 +45,20 @@ import { VL_COLOR, type VlColor } from './visual-language.js';
 
 const EMOJI_UNIT =
   '(?:\\p{Emoji_Presentation}\\uFE0F?|\\p{Extended_Pictographic}\\uFE0F)\\p{Emoji_Modifier}?';
-const EMOJI = new RegExp(`\\p{Regional_Indicator}{2}|${EMOJI_UNIT}(?:\\u200D${EMOJI_UNIT})*`, 'gu');
+// Keycap sequences (1️⃣ #️⃣) are an ASCII base + optional VS16 + U+20E3 — the
+// base isn't pictographic, so they need their own alternative.
+const KEYCAP = '[0-9#*]\\uFE0F?\\u20E3';
+const EMOJI = new RegExp(
+  `\\p{Regional_Indicator}{2}|${KEYCAP}|${EMOJI_UNIT}(?:\\u200D${EMOJI_UNIT})*`,
+  'gu',
+);
 
 // Cheap pre-check: only run the emoji regex (and space-collapse) when a
-// plausible emoji-plane codepoint OR a VS16 selector is present. VS16 matters
-// because a base like ▶ (U+25B6) sits outside the SMP ranges but becomes emoji
-// when followed by U+FE0F.
+// plausible emoji-plane codepoint, a VS16 selector, or the keycap combiner is
+// present. VS16 matters because a base like ▶ (U+25B6) sits outside the SMP
+// ranges but becomes emoji when followed by U+FE0F; U+20E3 catches keycaps.
 const MAYBE_EMOJI =
-  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}]/u;
+  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}\u{2B00}-\u{2BFF}\u{2190}-\u{21FF}\u{FE0F}\u{20E3}]/u;
 
 /**
  * Remove decorative emoji and collapse the internal whitespace the removal
@@ -101,9 +107,15 @@ const RE = {
 export function parseInline(line: string): InlineSpan[] {
   const spans: InlineSpan[] = [];
   let buf = '';
+  // Track whether emoji removal actually touched this line — the edge-space trim
+  // below must only run when a boundary emoji orphaned a space, never on plain
+  // indented content (stack traces, ASCII tables) that carries meaningful
+  // leading/trailing whitespace.
+  let didStrip = false;
   const flush = (): void => {
     if (buf) {
       const cleaned = stripDecorativeEmoji(buf);
+      if (cleaned !== buf) didStrip = true;
       if (cleaned) spans.push({ text: cleaned });
       buf = '';
     }
@@ -154,14 +166,17 @@ export function parseInline(line: string): InlineSpan[] {
     i += 1;
   }
   flush();
-  // Trim the space an edge emoji orphaned at the true line boundary — only on
-  // plain runs (code/link edges are meaningful). Interior plain spans are never
-  // empty (flush only pushes non-empty), so an empty edge span means the trim
-  // consumed it; drop those.
-  const first = spans[0];
-  if (first && !first.code && !first.link) first.text = first.text.replace(/^ +/, '');
-  const last = spans[spans.length - 1];
-  if (last && !last.code && !last.link) last.text = last.text.replace(/ +$/, '');
+  // Trim the space an edge emoji orphaned at the true line boundary — only when
+  // emoji were actually removed (else plain indentation is significant), and
+  // only on plain runs (code/link edges are meaningful). Interior plain spans
+  // are never empty (flush only pushes non-empty), so an empty edge span means
+  // the trim consumed it; drop those.
+  if (didStrip) {
+    const first = spans[0];
+    if (first && !first.code && !first.link) first.text = first.text.replace(/^ +/, '');
+    const last = spans[spans.length - 1];
+    if (last && !last.code && !last.link) last.text = last.text.replace(/ +$/, '');
+  }
   const kept = spans.filter((span) => span.text !== '' || span.code || span.link);
   // A line that was pure emoji (or emptied by trimming) survives as a blank
   // cell so the row — and the height estimate — is preserved.

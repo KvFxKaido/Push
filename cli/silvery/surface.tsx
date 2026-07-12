@@ -175,9 +175,11 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
       ? VL_COLOR.muted
       : undefined;
   const bodyText = item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text;
-  // Fault (law 3) and status bodies stay plain — the fault color must not mix
-  // with accent link/code spans; markdown is for assistant/independent-voice prose.
-  const renderMarkdown = !item.isError && item.role !== 'status';
+  // Markdown is for machine-generated prose only. User turns stay literal —
+  // a pasted `**bold**` or emoji must echo back faithfully, not get restyled or
+  // stripped. Fault (law 3) and status bodies also stay plain so the fault color
+  // never mixes with accent link/code spans.
+  const renderMarkdown = !item.isError && item.role !== 'status' && item.role !== 'user';
   return (
     <Box
       flexDirection="column"
