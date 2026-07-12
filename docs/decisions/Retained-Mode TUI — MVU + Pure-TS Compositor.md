@@ -227,6 +227,20 @@ its requirement** (render a transcript) and does not bind this one.
 > (paint = tree order, hit z = manual param). Verdict unchanged: reference-vs-substrate
 > question stays open pending the human raster pass and whether the fault default is
 > fixable upstream — both wounds are also candidates for precise upstream issues.
+>
+> **Human pass, same day (Windows Terminal/WSL2): scene 3 raster PASSED** — the
+> self-scoring border box (`human-raster.mjs`) aligned all nine cluster classes,
+> including ZWJ family and ZWJ+tone, the exact case Rezi failed human scoring on.
+> Scene 14 refined live (`human-fault.mjs`): not an infinite hang — the exception is
+> swallowed, `run()` never settles, and the process dies through Node's
+> unsettled-top-level-await path (exit 13) blaming the harness's `await` rather than
+> the fault; ❌ stands, precisely characterized and upstream-fixable. **Silvery is now
+> the first candidate to clear every contract it has been scored against**; the open
+> items are the two upstream issues (fault surface, z-agreement by-construction), the
+> untested scenes (4/5/8/10–12/15, React-wired hit path), and the standing React
+> authoring rejection — which frames any adopt case as *substrate-adopt with an MVU
+> authoring layer*, not framework-adopt. File the upstream issues before re-litigating
+> build-vs-adopt.
 
 ## Decision
 

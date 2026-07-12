@@ -61,19 +61,35 @@ by-construction — the Rezi paint/input split exists here structurally, though 
 convention burden rather than an active contradiction. Whether the built-in
 `ModalDialog`/`Popover` wire both sides consistently was not tested.
 
+## Human pass (2026-07-12, Windows Terminal / WSL2)
+
+- **Scene 3 raster: PASSED.** `human-raster.mjs` self-scoring border box — all nine
+  cluster classes aligned (control, CJK, combining, plain emoji, VS16, skin tone,
+  RI flag, **ZWJ family, ZWJ+tone**). This is the exact case Rezi failed human
+  scoring on. The default-config `@xterm/headless` referee still splits clusters —
+  recorded as a referee caveat (and a warning for any engine's output on weak
+  emulators), not a silvery defect. VS Code terminal (xterm.js) remains an optional
+  extra data point.
+- **Scene 14 live: refined, still ❌.** `human-fault.mjs`, press `b`: the exception
+  message never surfaces anywhere, `run()` never settles, and the process dies via
+  Node's *unsettled top-level await* path (exit 13) with a diagnostic pointing at
+  the harness's `await` — not the fault. So: not an infinite hang live (the loop
+  drains), but the error is swallowed and the exit diagnostic is misleading.
+  Contract violation stands as shipped; error boundary is opt-in.
+
 ## Not run
 
-Scenes 4, 5 (byte-level full-clear check), 8, 10, 11, 12, 15, and the human raster
-pass for scene 3. The React-wired hit-testing path (`useHitRegion` → dispatch →
-continuation-cell hit) is untested end-to-end.
+Scenes 4, 5 (byte-level full-clear check), 8, 10, 11, 12, 15. The React-wired
+hit-testing path (`useHitRegion` → dispatch → continuation-cell hit) is untested
+end-to-end.
 
-## Verdict so far
+## Verdict
 
-The substrate claims survive driving: grapheme cells, continuation repair,
-read-beneath transparency, and damage diff all work through the real pipeline on
-Node 22. The two open wounds are the silent-fault default (contract violation as
-shipped; possibly fixable upstream with a default error surface) and by-convention
-z-agreement. With the React authoring model already rejected for Push, the live
-question is unchanged: **reference implementation vs. substrate-adopt** — and that
-depends on the human raster pass plus whether the fault posture is fixable
-upstream. Do not re-litigate build-vs-adopt on this run alone.
+The substrate survives everything thrown at it so far: grapheme cells, continuation
+repair, read-beneath transparency, damage diff (driven, Node 22), and now the
+human raster pass that killed Rezi. Remaining wounds, both scoped: the silent-fault
+default (upstream-fixable — a default error surface / run() rejection) and
+by-convention paint/input z. React authoring stays rejected for Push, so the live
+question is **reference implementation vs. substrate-adopt** — silvery is now the
+strongest candidate the survey has produced on either reading. File the two
+upstream issues before deciding; do not re-litigate build-vs-adopt without them.
