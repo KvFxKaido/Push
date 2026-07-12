@@ -660,6 +660,326 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('resyncs the daemon mirror on transcript-mutation events', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'mutation-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let resyncReasons = [];
+    const client = {
+      request: async (type, payload) => {
+        if (type === 'get_session_snapshot') {
+          resyncReasons.push(payload);
+          return {
+            payload: {
+              transcript: {
+                mirror: {
+                  rows: [
+                    {
+                      id: 'post-revert-user',
+                      kind: 'message',
+                      role: 'user',
+                      text: 'still here',
+                    },
+                  ],
+                  liveText: '',
+                  lastSeq: 9,
+                },
+              },
+            },
+          };
+        }
+        if (type === 'send_user_message') {
+          queueMicrotask(() => {
+            hooks.onEngineEvent({
+              kind: 'event',
+              type: 'user_message',
+              payload: { text: 'will revert', preview: 'will revert', chars: 11 },
+            });
+            hooks.onEngineEvent({
+              kind: 'event',
+              type: 'assistant_token',
+              payload: { text: 'soon gone' },
+            });
+            hooks.onEngineEvent({ kind: 'event', type: 'assistant_done', payload: {} });
+            hooks.onEngineEvent({
+              kind: 'event',
+              type: 'session_reverted',
+              payload: { turns: 1, removedCount: 2, remainingTurns: 0 },
+            });
+            hooks.onEngineEvent({ kind: 'event', type: 'run_complete', payload: {} });
+          });
+          return { payload: { runId: 'daemon-run' } };
+        }
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    await controller.submit('will revert');
+
+    assert.ok(resyncReasons.length >= 2, 'before_send + mutation (+ maybe run_complete)');
+    assert.deepEqual(
+      controller.getSnapshot().rows.map((row) => row.text),
+      ['still here'],
+    );
+    assert.equal(
+      controller
+        .getSnapshot()
+        .rows.some((row) => row.text === 'will revert' || row.text === 'soon gone'),
+      false,
+    );
+    await controller.dispose();
+  });
+
+  it('clears a prior resync error once a later snapshot is adopted', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'resync-error-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let snapshotCalls = 0;
+    const client = {
+      request: async (type) => {
+        if (type === 'get_session_snapshot') {
+          snapshotCalls += 1;
+          if (snapshotCalls === 1) throw new Error('snapshot timeout');
+          return {
+            payload: {
+              transcript: {
+                mirror: {
+                  rows: [{ id: 'ok', kind: 'message', role: 'user', text: 'recovered' }],
+                  liveText: '',
+                  lastSeq: 1,
+                },
+              },
+            },
+          };
+        }
+        if (type === 'send_user_message') {
+          queueMicrotask(() => {
+            hooks.onEngineEvent({ kind: 'event', type: 'run_complete', payload: {} });
+          });
+          return { payload: { runId: 'daemon-run' } };
+        }
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          queueMicrotask(() => hooks.onAttached({ provider: 'ollama', model: 'test-model' }));
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    while (!controller.getSnapshot().error) await sleep(0);
+    assert.match(controller.getSnapshot().error, /transcript resync failed/i);
+
+    await controller.submit('recover');
+    assert.equal(controller.getSnapshot().error, null);
+    assert.deepEqual(
+      controller.getSnapshot().rows.map((row) => row.text),
+      ['recovered'],
+    );
+    await controller.dispose();
+  });
+
+  it('stringifies approval detail safely when detail is undefined', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'approval-detail-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let result;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (_state, _provider, _key, _text, _rounds, options) => {
+          result = await options.approvalFn('exec', undefined);
+          return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+        },
+      },
+    );
+
+    const submission = controller.submit('approve without detail');
+    while (controller.getSnapshot().interaction?.kind !== 'approval') await sleep(0);
+    const approval = controller.getSnapshot().interaction;
+    assert.equal(typeof approval.detail, 'string');
+    assert.equal(approval.detail, '');
+    controller.respondToInteraction(approval.id, false);
+    await submission;
+    assert.equal(result, false);
+    await controller.dispose();
+  });
+
+  it('hides daemon liveText when the display is cleared mid-stream', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'clear-live-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let requestAccepted;
+    const accepted = new Promise((resolve) => (requestAccepted = resolve));
+    const client = {
+      request: async (type) => {
+        if (type === 'get_session_snapshot') {
+          return {
+            payload: {
+              transcript: {
+                mirror: { rows: [], liveText: '', lastSeq: 0 },
+              },
+            },
+          };
+        }
+        if (type === 'send_user_message') {
+          requestAccepted();
+          return { payload: { runId: 'daemon-run' } };
+        }
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    const submission = controller.submit('streaming');
+    await accepted;
+    hooks.onEngineEvent({
+      kind: 'event',
+      type: 'user_message',
+      payload: { text: 'streaming', preview: 'streaming', chars: 9 },
+    });
+    hooks.onEngineEvent({
+      kind: 'event',
+      type: 'assistant_token',
+      payload: { text: 'partial answer' },
+    });
+    assert.ok(
+      controller.getSnapshot().rows.some((row) => row.live && row.text === 'partial answer'),
+    );
+
+    controller.clearDisplay();
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => row.live || row.text === 'partial answer'),
+      false,
+    );
+    assert.deepEqual(controller.getSnapshot().rows, []);
+
+    hooks.onEngineEvent({ kind: 'event', type: 'run_complete', payload: {} });
+    await submission;
+    await controller.dispose();
+  });
+
   it('cleans up and surfaces pre-turn persistence failures', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {

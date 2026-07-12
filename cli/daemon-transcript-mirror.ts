@@ -1,5 +1,6 @@
 import { isEditDiff, type EditDiff } from '../lib/edit-diff.ts';
 import { getSubagentDisplay } from '../lib/role-display.ts';
+import { isTranscriptMutationEvent } from '../lib/session-transcript-events.ts';
 import type { SessionEvent } from './session-store.ts';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
 
@@ -264,7 +265,56 @@ export function rebuildDaemonTranscriptMirror(
   let assistantVisibleCount = 0;
   const mirror = createDaemonTranscriptMirror();
 
-  for (const event of events) {
+  // Event journal is append-only across compact/revert/unrevert while
+  // `state.messages` is rewritten. Replaying pre-mutation events resurrects
+  // dropped turns and mis-pairs current dialogue with stale tool cards.
+  // Start after the latest transcript-mutation marker (shared contract in
+  // lib/session-transcript-events.ts); messages are the post-mutation truth.
+  let replayFrom = 0;
+  let maxSeq = 0;
+  for (let index = 0; index < events.length; index++) {
+    const event = events[index]!;
+    if (typeof event.seq === 'number') maxSeq = Math.max(maxSeq, event.seq);
+    if (isTranscriptMutationEvent(event.type)) replayFrom = index + 1;
+  }
+  const replayEvents = events.slice(replayFrom);
+
+  // Post-mutation events describe only activity *after* the rewrite. Pair them
+  // with the *tail* of rewritten dialogue (not the head, which is summary /
+  // surviving turns that have no matching post-mutation journal entries).
+  if (replayFrom > 0) {
+    const postUserEvents = replayEvents.filter((event) => event.type === 'user_message').length;
+    const postAssistantDones = replayEvents.filter(
+      (event) => event.type === 'assistant_done',
+    ).length;
+    const prefixUserCount = Math.max(0, users.length - postUserEvents);
+    const prefixAssistantCount = Math.max(0, assistantSlots.length - postAssistantDones);
+    let seededUsers = 0;
+    let seededAssistants = 0;
+    for (let index = 0; index < dialogue.length; index++) {
+      const row = dialogue[index]!;
+      if (row.role === 'user') {
+        if (seededUsers >= prefixUserCount) continue;
+        seededUsers += 1;
+      } else if (row.role === 'assistant') {
+        if (seededAssistants >= prefixAssistantCount) continue;
+        seededAssistants += 1;
+      } else {
+        continue;
+      }
+      mirror.rows.push({
+        id: `daemon-history-${row.role}-${index}`,
+        kind: 'message',
+        role: row.role,
+        text: row.text,
+      });
+    }
+    userIndex = prefixUserCount;
+    assistantSlotIndex = prefixAssistantCount;
+    assistantVisibleCount = prefixAssistantCount;
+  }
+
+  for (const event of replayEvents) {
     if (event.type === 'user_message') {
       const row = users[userIndex++];
       applyDaemonTranscriptEvent(mirror, {
@@ -282,9 +332,12 @@ export function rebuildDaemonTranscriptMirror(
     }
     applyDaemonTranscriptEvent(mirror, event);
   }
+  mirror.lastSeq = Math.max(mirror.lastSeq, maxSeq);
 
   // Legacy sessions can have dialogue without a matching event journal. Keep
   // it visible rather than pretending an incomplete journal is authoritative.
+  // After a mutation with no post-mutation events, the seeded prefix above
+  // already covered rewritten messages; any leftover still lands here.
   let skippedUsers = 0;
   let skippedAssistants = 0;
   for (let index = 0; index < dialogue.length; index++) {

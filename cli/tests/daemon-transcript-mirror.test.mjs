@@ -156,4 +156,117 @@ describe('daemon transcript mirror', () => {
     assert.equal(mirror.rows[0].kind, 'review');
     assert.match(mirror.rows[0].text, /a\.ts:12 · Handle the rejected promise/);
   });
+
+  it('does not resurrect pre-mutation turns from the append-only event journal', () => {
+    // After session_reverted, messages hold only the remaining dialogue while
+    // the journal still has the dropped turn's user/tool/assistant events.
+    const mirror = rebuildDaemonTranscriptMirror(
+      [
+        { role: 'user', content: 'keep me' },
+        { role: 'assistant', content: 'kept' },
+      ],
+      [
+        { seq: 1, ts: 1, type: 'user_message', payload: { chars: 7, preview: 'keep me' } },
+        { seq: 2, ts: 2, type: 'assistant_done', payload: {} },
+        { seq: 3, ts: 3, type: 'user_message', payload: { chars: 9, preview: 'drop this' } },
+        {
+          seq: 4,
+          ts: 4,
+          type: 'tool.execution_start',
+          payload: { toolName: 'edit_file', args: { path: 'gone.ts' } },
+        },
+        {
+          seq: 5,
+          ts: 5,
+          type: 'tool.execution_complete',
+          payload: { toolName: 'edit_file', isError: false, preview: 'edited' },
+        },
+        { seq: 6, ts: 6, type: 'assistant_done', payload: {} },
+        {
+          seq: 7,
+          ts: 7,
+          type: 'session_reverted',
+          payload: { turns: 1, removedCount: 2, remainingTurns: 1 },
+        },
+      ],
+    );
+
+    assert.deepEqual(
+      mirror.rows.map((row) => [row.kind, row.role, row.text]),
+      [
+        ['message', 'user', 'keep me'],
+        ['message', 'assistant', 'kept'],
+      ],
+    );
+    assert.equal(
+      mirror.rows.some((row) => row.text === 'drop this' || row.toolName === 'edit_file'),
+      false,
+    );
+    assert.equal(mirror.lastSeq, 7);
+  });
+
+  it('replays only post-compaction events against rewritten messages', () => {
+    const mirror = rebuildDaemonTranscriptMirror(
+      [
+        { role: 'user', content: 'summary of older work' },
+        { role: 'assistant', content: 'ready' },
+        { role: 'user', content: 'new ask' },
+        { role: 'assistant', content: 'new answer' },
+      ],
+      [
+        { seq: 1, ts: 1, type: 'user_message', payload: { chars: 10, preview: 'old ask' } },
+        {
+          seq: 2,
+          ts: 2,
+          type: 'tool.execution_start',
+          payload: { toolName: 'read_file', args: { path: 'old.ts' } },
+        },
+        {
+          seq: 3,
+          ts: 3,
+          type: 'tool.execution_complete',
+          payload: { toolName: 'read_file', isError: false, preview: 'old contents' },
+        },
+        { seq: 4, ts: 4, type: 'assistant_done', payload: {} },
+        {
+          seq: 5,
+          ts: 5,
+          type: 'context_compacted',
+          payload: { beforeTokens: 9000, afterTokens: 1200 },
+        },
+        { seq: 6, ts: 6, type: 'user_message', payload: { chars: 7, preview: 'new ask' } },
+        {
+          seq: 7,
+          ts: 7,
+          type: 'tool.execution_start',
+          payload: { toolName: 'edit_file', args: { path: 'new.ts' } },
+        },
+        {
+          seq: 8,
+          ts: 8,
+          type: 'tool.execution_complete',
+          payload: { toolName: 'edit_file', isError: false, preview: 'updated' },
+        },
+        { seq: 9, ts: 9, type: 'assistant_done', payload: {} },
+      ],
+    );
+
+    // Surviving/summary dialogue is seeded first; post-mutation events pair
+    // with the dialogue tail and re-interleave tool cards correctly.
+    assert.deepEqual(
+      mirror.rows.map((row) => [row.kind, row.role, row.text]),
+      [
+        ['message', 'user', 'summary of older work'],
+        ['message', 'assistant', 'ready'],
+        ['message', 'user', 'new ask'],
+        ['tool', 'coder', 'edit_file'],
+        ['message', 'assistant', 'new answer'],
+      ],
+    );
+    assert.equal(
+      mirror.rows.some((row) => row.toolName === 'read_file' || row.text === 'old ask'),
+      false,
+    );
+    assert.equal(mirror.lastSeq, 9);
+  });
 });

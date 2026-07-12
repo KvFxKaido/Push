@@ -27,6 +27,7 @@ import {
   type DaemonTranscriptSnapshot,
 } from '../daemon-transcript-mirror.ts';
 import { TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
+import { isTranscriptMutationEvent } from '../../lib/session-transcript-events.js';
 import type { RunTuiOptions } from './entry.js';
 
 export type SilveryTranscriptItem = DaemonTranscriptRow;
@@ -93,6 +94,18 @@ function activityText(event: EngineEvent): string {
     return `${tool} ${payload.isError ? 'failed' : 'complete'}`;
   }
   return tool;
+}
+
+/** Approval detail is `unknown` on EngineEvent; InteractionModal needs a string. */
+function formatApprovalDetail(detail: unknown): string {
+  if (typeof detail === 'string') return detail;
+  if (detail === undefined) return '';
+  try {
+    const serialized = JSON.stringify(detail, null, 2);
+    return typeof serialized === 'string' ? serialized : '';
+  } catch {
+    return String(detail);
+  }
 }
 
 const SILVERY_DAEMON_CAPABILITIES = TUI_DAEMON_CAPABILITIES;
@@ -268,6 +281,12 @@ export async function createSilveryController(
       resolveDaemonTurn?.();
       resolveDaemonTurn = null;
       void resyncDaemonTranscript('run_complete');
+    } else if (isTranscriptMutationEvent(event.type)) {
+      // Compact/revert/unrevert rewrite daemon `state.messages` and invalidate
+      // the daemon's cached mirror. Local apply is a no-op for these types;
+      // refetch the snapshot so Silvery drops pre-mutation turns (ANSI TUI
+      // does the same via get_session_messages).
+      void resyncDaemonTranscript(event.type);
     } else if (event.type === 'approval_required') {
       const payload = (event.payload ?? {}) as Record<string, unknown>;
       const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
@@ -398,6 +417,8 @@ export async function createSilveryController(
       daemonMirror = createDaemonTranscriptMirror(snapshot);
       daemonHiddenBefore = Math.min(daemonHiddenBefore, daemonMirror.rows.length);
       daemonStateStale = true;
+      // Clear transient resync failures once a valid mirror is adopted.
+      error = null;
       const pending = payload?.pendingApproval;
       if (pending && typeof pending.approvalId === 'string') {
         interaction = {
@@ -505,7 +526,7 @@ export async function createSilveryController(
                   id,
                   kind: 'approval',
                   title: `${tool} needs approval`,
-                  detail: typeof detail === 'string' ? detail : JSON.stringify(detail, null, 2),
+                  detail: formatApprovalDetail(detail),
                 };
                 notify();
               }),
@@ -604,8 +625,13 @@ export async function createSilveryController(
       notify();
     },
     clearDisplay() {
-      if (daemonStateStale) daemonHiddenBefore = daemonMirror.rows.length;
-      else hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      if (daemonStateStale) {
+        daemonHiddenBefore = daemonMirror.rows.length;
+        // buildSnapshot appends liveText as a live row; hide it with the rest.
+        daemonMirror.liveText = '';
+      } else {
+        hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      }
       activityRows = [];
       liveText = '';
       notify();
