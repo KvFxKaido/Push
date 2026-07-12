@@ -63,13 +63,17 @@ export interface TerminalHandoff {
 /** Production child runner: inherit the real terminal fds and wait for exit. */
 export async function spawnInheritedChild(spec: HandoffChildSpec): Promise<HandoffChildExit> {
   const { spawn } = await import('node:child_process');
+  // Windows: $EDITOR values like "code -w" resolve through the shell's
+  // PATHEXT (.cmd/.bat shims), so spawn through cmd; POSIX spawns the binary
+  // directly. With a shell, Node concatenates args verbatim — quote any arg
+  // carrying whitespace (e.g. a temp path under a username with spaces).
+  const useShell = process.platform === 'win32';
+  const args = useShell ? spec.args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : spec.args;
   return new Promise<HandoffChildExit>((resolve, reject) => {
-    const child = spawn(spec.command, spec.args, {
+    const child = spawn(spec.command, args, {
       stdio: 'inherit',
       env: spec.env ? { ...process.env, ...spec.env } : process.env,
-      // Windows: $EDITOR values like "code -w" resolve through the shell's
-      // PATHEXT (.cmd/.bat shims); POSIX spawns the binary directly.
-      shell: process.platform === 'win32',
+      shell: useShell,
     });
     child.on('error', reject);
     child.on('exit', (exitCode, signal) => resolve({ exitCode, signal }));

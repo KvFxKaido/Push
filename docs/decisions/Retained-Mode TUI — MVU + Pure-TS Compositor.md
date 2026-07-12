@@ -78,6 +78,16 @@ its requirement** (render a transcript) and does not bind this one.
 > backlog issue) and its **scoped keybinding registry** (focus scopes/traps with bindings that
 > travel with the focused subtree — a reference for slice step 5's "adapt Push's input parser
 > + focus stack into `onInput`").
+>
+> **Re-litigated 2026-07-12, verdict holds.** The giggles adopt case was reopened same-day and
+> survives on two grounds: (a) confirmed built **on** Ink (not merely Ink-lineage) — no
+> compositor, no z-order layers, no mouse hit-testing, so it fails this doc's load-bearing
+> requirement statically; (b) the "nobody has cracked pure-TS-on-Node" worry misreads the field
+> — the architecture ships in Go (Lipgloss v2), Python (Textual), C (Notcurses), Zig (OpenTUI),
+> and Glyph proves the substrate in pure TS on Node. The gap is absence-of-attempts, not failed
+> attempts. Adopting giggles is coherent only if the mouse+overlay requirement is dropped first
+> (amend this doc, then re-score); otherwise the choice is build-now vs defer-and-steal. The
+> handoff steal shipped as the `/editor` terminal handoff (`cli/tui-handoff.ts`, issue #1423).
 
 ## Decision
 
