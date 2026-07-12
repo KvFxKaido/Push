@@ -1,8 +1,13 @@
 # Retained-Mode TUI — MVU + Pure-TS Compositor
 
-**Status:** Draft — design-in-motion; needs roadmap promotion. Spike + design sketch complete
-([`spikes/tui-retained-mode/`](../../spikes/tui-retained-mode/)); the implementation slice is
-**not started**. Surface #3 (TUI) — sits behind mobile in priority.
+**Status:** Current — **DECISION: adopt `silvery` (React authoring over its retained,
+damage-diffed cell compositor).** Committed 2026-07-12 after an 11-candidate survey +
+adopt-gate stress (13/0) + a driven Push-surface prototype
+([`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/)).
+The original *build-the-compositor* thesis below is retained as the **validation rubric**
+silvery was measured against — historical as a build plan, live as the contract silvery must
+keep meeting. Migration plan at the end of this doc. Implementation **not started**; surface #3
+(TUI) still sits behind mobile in priority.
 
 **Date:** 2026-07-11
 
@@ -269,20 +274,44 @@ its requirement** (render a transcript) and does not bind this one.
 
 ## Decision
 
-> **Status flag (2026-07-12, post-survey): REOPENED, not yet re-decided.** The build
-> decision below was made before the 11-candidate survey. Silvery (`beorn/silvery`) has
-> since cleared every scored contract — CellWidth incl. human ZWJ raster, z-order + hit
-> routing incl. continuation-cell targeting, modal restore, occlusion, O(damage) perf —
-> on the *same* pure-TS-cell-compositor substrate this section specifies. The live
-> question is now **framework-adopt (React authoring on silvery) vs. build-with-silvery-
-> as-reference**, not the original build-vs-nothing. Sole-dev lean is adopt (sibling
-> web app is already React; the reconciler sits over an inspectable damage-diffed cell
-> buffer, so the honest-surfaces objection is weaker than when this was written). **Next
-> gate to flip this section: a real Push-surface prototype** (transcript + input + one
-> modal) to feel React-in-terminal, plus the silent-fault workaround (root error
-> boundary + `run()` watchdog). Until that prototype, this section stands as written but
-> is no longer the presumptive outcome. See the survey note above and
-> `spikes/tui-retained-mode/silvery-spike/`.
+**Adopt `silvery` (`beorn/silvery`) — React authoring over its retained, damage-diffed cell
+compositor.** Committed 2026-07-12. This reverses two calls in the original draft (kept below
+as the record): *build* the compositor, and *reject* the reconciler. Both were right at the
+design-sketch stage and wrong after the survey. Why:
+
+- **The substrate is the one this doc set out to build.** Silvery is a pure-TS cell compositor
+  with z-order layers, grapheme→cell width handling, damage diffing, and Yoga/flexily layout —
+  the exact architecture the Contracts below specify. Across an 11-candidate survey it is the
+  only one that cleared *every* load-bearing contract (grapheme↔cell incl. a human ZWJ raster
+  pass, paint↔input z-routing incl. continuation-cell hit targeting, scrollback↔window, modal
+  restore without full-clear, O(damage) perf). The contracts didn't change — a correct
+  implementation of them already exists, so building a second one is cost without a thesis.
+- **The reconciler rejection doesn't survive contact.** It was a taste call — "`view = f(model)`
+  is inspectable; no implicit tree diffing." But silvery's reconciler sits *over* an inspectable,
+  damage-diffed cell buffer we can dump and test (the spike does exactly that); the
+  honest-surfaces objection was aimed at DOM-style opacity that doesn't apply here. And the
+  sibling web app is already React — one authoring model across surfaces beats maintaining two.
+- **The adopt gate is walked** — the driven Push-surface prototype
+  (`spikes/tui-retained-mode/silvery-spike/push-surface.mjs`, self-check **6/6**): authoring is
+  livable (ordinary `useState`/`useInput`/`onSubmit`; streaming reflows the live region while the
+  transcript stays static — scene-15 O(damage) felt end-to-end); the sole open wound
+  (silent-fault) is closed from Push's side with a three-layer workaround; and the one adopt-cost
+  (`ListView` tail-follow not turnkey in 0.19.2) is an authoring cost with a measured hand-window
+  fallback, **not** a contract failure. Full record in
+  [`silvery-spike/README.md`](../../spikes/tui-retained-mode/silvery-spike/README.md).
+
+**What we own vs. adopt.** Adopt: silvery's compositor, reconciler, and component primitives
+(`Box`/`Text`/`TextInput`/`ListView`/`ModalDialog`/`SilveryErrorBoundary`). Own: the Push shell
+(transcript/input/modal composition), the role-display idiom (`lib/role-display.ts`), the
+silent-fault workaround, and the runtime wiring into `cli/`. Roles/models stay decoupled per
+ARCHITECTURE.md; silvery is the *view layer*, not the agent runtime.
+
+### The build thesis, retained as validation rubric (historical)
+
+> The paragraph and Contracts that follow were the *build* plan. They are **superseded as a
+> plan** by the adopt decision above, but retained because they are the **spec silvery is
+> validated against** — the migration keeps them as its acceptance rubric. Read "we build X" as
+> "silvery must provide X, verified in the spike."
 
 Build **"Bubble Tea v2, in TypeScript"**: **MVU** authoring on top, a **pure-TS cell
 compositor with z-order layers** underneath, **Yoga-WASM** for layout (verified to load on
@@ -350,6 +379,11 @@ point, as a **replaceable module with a paint-list input** so the later Node/Yog
 
 ## What is done vs open
 
+> **Superseded by the adopt decision (2026-07-12).** This section predates the survey — it
+> reads "build, not adopt" and asks to run Rezi through `STRESS.md` first. Both are resolved:
+> Rezi was run and ruled out, silvery was surveyed and **adopted**. Kept for the record; see
+> the Migration plan below for the live task list.
+
 - **Done:** the fork resolved (build, not adopt), the empirical Node-vs-Bun finding, the design
   sketch with tightened contracts, and this plan.
 - **Open (not pretended-solved):** all runtime semantics (the sketch is declarations +
@@ -358,6 +392,49 @@ point, as a **replaceable module with a paint-list input** so the later Node/Yog
   Plus, from the 2026-07-12 survey: **run Rezi through `STRESS.md` before committing to the
   build's step 0** — it is the one candidate whose success would change this decision, and the
   rubric exists precisely so that call is empirical rather than re-litigated.
+
+## Migration plan (adopt silvery)
+
+Sequenced so each phase ships a working TUI and is independently revertable. This sits behind
+mobile in priority — the plan is committed, the calendar is not.
+
+**Phase 0 — vendor + fault shell (small, isolated).**
+- Add `silvery` + `react@19` to the CLI's dependency set; confirm it loads under
+  `node --import tsx` on the CLI's Node (the spike proves 0.19.2 on Node 22). Note silvery
+  paints lazily — `render()` returns a handle; the paint loop starts on `.run()`/`.waitUntilExit()`.
+- Land the three-layer fault workaround from the spike as a reusable `PushShell` wrapper
+  (`RecoverableBoundary` + root `SilveryErrorBoundary` + the `process` watchdog). This closes
+  the sole standing wound, so it ships **first**, not last.
+- Gate behind an env flag (`PUSH_TUI_SILVERY=1`) so the hand-rolled ANSI TUI stays default
+  until parity is proven. Both paths coexist during migration.
+
+**Phase 1 — transcript + input parity (the core surface).**
+- Rebuild the transcript/input/status surface on silvery from the prototype's structure.
+  **Adapt** Push's existing input parser + focus stack via `onInput`/`useInput`; don't replace them.
+- Resolve the adopt-cost: wire `ListView`'s `cache`/virtual-scrollback mode (items → native
+  scrollback) and verify tail-follow; keep the measured hand-window (`countVisualLines`) as the
+  fallback if cache-mode won't pin the newest turn. File the tail-follow finding upstream.
+- Drive rendering through the role-display idiom — `lib/role-display.ts` phase-first labels feed
+  the `Message` component; no hand-spelled role names.
+- Acceptance = the Contracts above, re-run as the rubric (the spike stress scenes are the test
+  bed) + visual parity with the current transcript-cache output.
+
+**Phase 2 — the retained-mode payoff (why we did this).**
+- Panes / modals / mouse hit-testing as first-class: command palette, diff/review cards, and any
+  real overlay route clicks through silvery's `hitTest` (scene-9-verified).
+- Retire the immediate-mode `tui-transcript-cache.ts` / `tui-stream-frame.ts` path once the
+  silvery surface is default; preserve `ScrollbackSurface`'s native-scrollback idea if `ListView`
+  cache-mode doesn't cover it.
+
+**Phase 3 — flip the default, delete the flag.**
+- `PUSH_TUI_SILVERY` goes default-on, then away; the ANSI printer is deleted. Confirm the shared
+  `lib/` runtime contracts are untouched (silvery is view-only) and the shared kernel round loop
+  still drives cleanly.
+
+**Upstream / watch items:** the silent-fault default (worth an upstream issue, worked around
+here); ListView tail-follow ergonomics; and the barrel exporting `render` as the run-instance
+rather than the testable `App` (installing `@silvery/test` would let input-driven scenes drive
+the real `onClick` last inch — currently source-verified).
 
 ## Pointers
 

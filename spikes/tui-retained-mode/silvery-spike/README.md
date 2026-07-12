@@ -130,6 +130,49 @@ Scenes 4 (mixed reflow — partial via first run), 10 (wheel + drag), 11 (resize
 storm), 12 (cursor + selection). Live `onClick` handler invocation (vs the routing
 decision, which is driven).
 
+## Push-surface prototype (`push-surface.mjs`) — the adopt gate, walked
+
+The gate the decision doc named to flip the section: a real Push surface authored
+in React-on-silvery — header + scrolling transcript + input round loop + one modal
+— with the silent-fault workaround baked in. Built and driven: headless self-check
+**6/6** (`node push-surface.mjs --check`), labeled visual frames (`--snap`), live
+(`node push-surface.mjs`).
+
+- **Authoring feel — livable.** Ordinary React: `useState` for messages/palette/
+  scroll, `TextInput.onSubmit` as the round loop, `useInput` for keybindings,
+  components composing normally. Nothing about React-in-terminal fought the
+  authoring. Simulated streaming (chunks appended to the last message on a timer)
+  reflows the live region while the transcript above stays static — the O(damage)
+  story from scene 15, now felt end-to-end.
+- **The modal genuinely occludes.** The command palette (`ModalDialog` in an
+  absolute overlay) covers the transcript — content peeks at the left/right edges —
+  and scrims via backdrop fade; Esc/select close; input focus hands off
+  (`isActive={!paletteOpen}`) with no keystroke bleed-through.
+- **The silent-fault workaround works, in three honest layers** (the survey's sole
+  open wound, closed from Push's side):
+  1. `RecoverableBoundary` around the transcript body — a render fault paints an
+     inline "⚠ this turn failed to render / the shell stayed alive" card; header +
+     input survive; Retry remounts. Fault **surfaced and logged**, not swallowed.
+  2. root `SilveryErrorBoundary` — rich last-resort surface for an escaped render
+     fault.
+  3. a process watchdog (`uncaughtException`/`unhandledRejection`) that restores
+     the terminal (leaves alt-screen, shows cursor) and exits with a VISIBLE error
+     — covering the async/effect faults error boundaries structurally can't catch
+     (the exact scene-14 class). The self-check asserts the render-fault path
+     end-to-end: card shown, shell alive, fault line written to the log, `run()`
+     never zombied.
+- **One real adopt-cost surfaced — ListView tail-follow.** silvery's `ListView`
+  renders the window + `▲N/▼N` overflow indicators correctly (the scrollback↔window
+  contract), but **auto-follow-to-newest is not turnkey in 0.19.2**: `scrollTo`
+  (nav=false), `scrollToItem`/`cursorKey` (nav=true) all stay anchored at the top
+  even with an accurate `estimateHeight`. A chat transcript must pin the newest
+  turn, so the prototype windows the tail by hand — measuring each message with
+  silvery's own `countVisualLines` (same width model the compositor paints with) —
+  plus PgUp/PgDn scrollback. This is an **authoring cost, not a contract failure**:
+  the untested `cache`/virtual-scrollback mode (items → native scrollback) is
+  likely the intended path for a growing transcript; wiring and verifying it is the
+  first follow-up if we adopt.
+
 ## Verdict
 
 Silvery has now cleared **every scored contract**: the CellWidth family (incl. the
@@ -139,7 +182,14 @@ deferred reveal, and O(damage) perf. The **only** open wound is the silent-fault
 default — upstream-fixable, and worked-around from Push's side with a root error
 boundary + a `run()` watchdog. React authoring stays rejected as an *authoring*
 choice, which frames the decision as **framework-adopt (React) vs. build-with-silvery-
-as-reference**, not adopt-vs-nothing. On the evidence, framework-adopt is now the
-cheaper path to the same substrate the doc set out to build. Gate the flip on a real
-Push-surface prototype (transcript + input + one modal) to feel React-in-terminal,
-not on more contract scenes — those are green.
+as-reference**, not adopt-vs-nothing. On the evidence, framework-adopt is the cheaper
+path to the same substrate the doc set out to build. The gate is walked (see the
+prototype section above): the surface is livable, the workaround holds, and the one
+adopt-cost is ListView tail-follow ergonomics — an authoring cost, not a contract.
+
+**Decided (2026-07-12): ADOPT.** The decision doc's Status is flipped to Current and
+its Decision section rewritten to the committed adopt; the phased migration plan lives
+there (Phase 0 = vendor + fault shell behind `PUSH_TUI_SILVERY`; Phase 1 = transcript/
+input parity + ListView cache-mode; Phase 2 = panes/modals/mouse; Phase 3 = flip
+default, delete the ANSI printer). This spike is now the validation rubric the
+migration is held against.
