@@ -38,12 +38,16 @@ human hand):
   rather than dimming what's beneath. True transparency may need the
   object-form backdrop config (or doesn't exist).
 - **Case 14 ✅** — clean alt-screen exit after the whole session.
-- **Quirk (unclassified)** — the tick advances ~10× faster than its 1000ms
-  `setInterval`, i.e. `app.update(fn)` appears to re-invoke the updater more
-  than once per call (reducer-replay semantics?). Harmless here since scenes
-  derive from tick parity, but a real app must keep updaters pure — and it's
-  worth understanding before trusting `update()` with side-effect-adjacent
-  state.
+- **Retracted finding (kept as a methodology lesson)** — an earlier note here
+  claimed `app.update(fn)` re-invokes updaters ~10× per call. Instrumented
+  measurement (scene 1 shows invocations-per-timer-fire) reads **×1.0**:
+  `update()` runs the updater exactly once. The "fast tick" evidence was
+  observer error — tens of seconds of tool latency between "1-second-apart"
+  screenshots, plus orphaned stress processes double-painting one terminal
+  after an un-received `q`. Two spike-methodology rules fall out: anchor
+  timing observations to `date` calls, and `ps` for orphans before trusting
+  any animation observation. The timer still derives tick from wall-clock —
+  robust regardless.
 
 Remaining for a human in a rich terminal: case 1 (watch the wide↔narrow
 toggle), case 2 (edge clip), case 4+11 (resize wiggle), case 9 (mouse clicks,

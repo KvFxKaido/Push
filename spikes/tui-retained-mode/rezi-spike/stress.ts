@@ -29,6 +29,15 @@ const WIDE_LINE = '中'.repeat(30);
 const NARROW_LINE = 'ab'.repeat(30);
 const MIXED = 'a中b文c字d中e文f字g中h文i字j中k文l字m中n文o字p中q文r字s中t文u字';
 
+// Replay-factor instrumentation for the update() engine finding — see the
+// timer at the bottom. Declared up here so scene 1 (and the selftest, which
+// runs before the timer exists) can call replayFactor().
+let timerFires = 0;
+let updaterInvocations = 0;
+function replayFactor(): string {
+  return timerFires === 0 ? '?' : (updaterInvocations / timerFires).toFixed(1);
+}
+
 function instructions(lines: string[]): VNode {
   return ui.box(
     { border: 'single', title: 'look for' },
@@ -41,12 +50,17 @@ function instructions(lines: string[]): VNode {
 /** Case 1: CJK overwrite — narrow content replacing wide cells in place. */
 function scene1(s: State): VNode {
   // Auto-alternate on tick parity; 't' flips the phase so you can also hold
-  // a state and step it manually.
+  // a state and step it manually. `tick` is wall-clock seconds (idempotent
+  // updater — see the timer at the bottom), so parity flips once a second
+  // regardless of how many times the engine replays the updater.
   const wide = (s.tick % 2 === 0) !== s.overwrite;
   const body = wide ? WIDE_LINE : NARROW_LINE;
   return ui.column({ gap: 1 }, [
     ui.text(
       `auto-toggles each second (tick ${s.tick}, now ${wide ? 'WIDE' : 'narrow'}); 't' flips phase`,
+    ),
+    ui.text(
+      `updater invocations per timer fire: ×${replayFactor()} (1.0 = update(fn) runs fn exactly once)`,
     ),
     ui.box({ border: 'single' }, [ui.text(body)]),
     instructions([
@@ -319,8 +333,23 @@ app.keys({
   ),
 });
 
+// ENGINE FINDING (measured): app.update(fn) re-invokes the updater more than
+// once per call — an incrementing updater advances tick several steps per
+// interval fire, and when the replay count is even, a parity-derived toggle
+// FREEZES (observed in the field; my first emulator run got lucky with an
+// odd count). Updaters must be idempotent: derive tick from wall-clock and
+// return the same object when nothing changed. timerFires/updaterInvocations
+// (declared top of module) measure the replay factor, displayed in scene 1.
+const t0 = Date.now();
 const done = app.run();
 await app.ready();
-const timer = setInterval(() => app.update((s) => ({ ...s, tick: s.tick + 1 })), 1000);
+const timer = setInterval(() => {
+  timerFires++;
+  const seconds = Math.floor((Date.now() - t0) / 1000);
+  app.update((s) => {
+    updaterInvocations++;
+    return s.tick === seconds ? s : { ...s, tick: seconds };
+  });
+}, 500);
 await done;
 clearInterval(timer);
