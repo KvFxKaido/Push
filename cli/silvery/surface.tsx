@@ -342,6 +342,9 @@ export function PushSurface({
       if (!text.trim() || snapshot.running) return;
       setInput('');
       await controller.submit(text);
+      // /editor parks the composed draft on the controller for the TextArea.
+      const draft = controller.takePendingComposerText();
+      if (draft !== null) setInput(draft);
     },
     [controller, snapshot.running],
   );

@@ -1,6 +1,6 @@
-import path from 'node:path';
-
 import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   applyConfigToEnv,
@@ -12,6 +12,7 @@ import {
 import { compactContext } from '../context-manager.js';
 import { runCheckpointCommand } from '../checkpoint-command.js';
 import {
+  requestDaemonAdmin,
   runRemoteCommand,
   runRemoteControlCommand,
   type DaemonAdminTransport,
@@ -37,14 +38,23 @@ import {
   loadSessionState,
   rewriteMessagesLog,
   saveSessionState,
+  type SessionListEntry,
   type SessionState,
 } from '../session-store.js';
 import { formatSkillDiagnostics, lintSkills, loadSkills } from '../skill-loader.js';
 import { sessionMessagesToTranscriptRows } from '../tui-history.js';
+import {
+  createTerminalHandoff,
+  resolveEditorCommand,
+  type HandoffRunChild,
+  type TerminalHandoff,
+} from '../tui-handoff.js';
+import { createDefaultTuiIo, type TuiIo } from '../tui-io.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
 import { isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
+import { ESC } from '../tui-renderer.js';
 import { formatWorktreeStatus } from '../worktree.js';
 import {
   applyDaemonTranscriptEvent,
@@ -91,6 +101,14 @@ interface ControllerDeps {
   now?: () => number;
   useDaemon?: boolean;
   createDaemon?: typeof createDaemonSession;
+  /** IO seam for terminal handoff (tests inject fakes). */
+  io?: TuiIo;
+  /** Child runner for /editor handoff (tests inject a fake editor). */
+  runHandoffChild?: HandoffRunChild;
+  /** Called when the terminal leaves Silvery for an external program. */
+  onHandoffSuspend?: () => void;
+  /** Called when Silvery reclaims the terminal after handoff. */
+  onHandoffResume?: () => void;
 }
 
 const SESSION_ID_RE = /^sess_[a-z0-9]+_[a-f0-9]{6}$/;
@@ -102,6 +120,13 @@ export interface SilveryController {
   cancel(): void;
   respondToInteraction(id: string, value: boolean | string): void;
   clearDisplay(): void;
+  /** Wire Silvery Instance pause/resume after the renderer mounts. */
+  setHandoffHooks(hooks: { onSuspend?: () => void; onResume?: () => void }): void;
+  /**
+   * After `/editor` succeeds, the composed draft is parked here for the
+   * surface to load into the TextArea (composer is not controller-owned).
+   */
+  takePendingComposerText(): string | null;
   dispose(): Promise<void>;
 }
 
@@ -268,6 +293,121 @@ export async function createSilveryController(
     else activityRows = [...activityRows, row];
     notify();
   };
+
+  let handoffSuspend = deps.onHandoffSuspend ?? (() => undefined);
+  let handoffResume = deps.onHandoffResume ?? (() => undefined);
+  let terminalHandoff: TerminalHandoff | null = null;
+
+  function getTerminalHandoff(): TerminalHandoff {
+    if (!terminalHandoff) {
+      const io = deps.io ?? createDefaultTuiIo();
+      terminalHandoff = createTerminalHandoff({
+        io,
+        // Mirror the ANSI handoff sequences: leave alt screen + mouse for the
+        // child, reclaim and full-repaint on return (Silvery Instance.resume
+        // also forces a full redraw when wired via setHandoffHooks).
+        suspendSequence: () =>
+          ESC.mouseOff +
+          ESC.altScrollOn +
+          ESC.bracketedPasteOff +
+          ESC.cursorShow +
+          ESC.altScreenOff +
+          ESC.reset,
+        resumeSequence: () =>
+          ESC.altScreenOn +
+          ESC.cursorHide +
+          ESC.clearScreen +
+          ESC.bracketedPasteOn +
+          ESC.altScrollOff +
+          ESC.mouseOn,
+        onSuspend: () => handoffSuspend(),
+        onResume: () => handoffResume(),
+        runChild: deps.runHandoffChild,
+      });
+    }
+    return terminalHandoff;
+  }
+
+  /**
+   * Protocol-first session listing (mobile-drawer wire parity): prefer the
+   * daemon `list_sessions` RPC; fall back to the disk lister for inline mode
+   * and older daemons. Never spawns a daemon just to list.
+   */
+  async function fetchSessionRows(): Promise<SessionListEntry[]> {
+    const res = await requestDaemonAdmin(
+      daemon as DaemonAdminTransport,
+      'list_sessions',
+      { limit: 1000 },
+      { timeoutMs: 1500, startDaemon: false },
+    );
+    if (res.ok && Array.isArray(res.payload?.sessions)) {
+      return res.payload.sessions as SessionListEntry[];
+    }
+    const expected =
+      !res.ok && (res.code === 'DAEMON_OFFLINE' || res.code === 'UNSUPPORTED_REQUEST_TYPE');
+    if (!expected && (res.ok || res.code)) {
+      console.error(
+        JSON.stringify({
+          level: 'warn',
+          event: 'tui_list_sessions_rpc_failed',
+          code: res.code ?? 'MALFORMED_PAYLOAD',
+          message: res.error ?? null,
+        }),
+      );
+    }
+    return (deps.listSessions ?? listSessions)();
+  }
+
+  async function handleEditorCommand(): Promise<void> {
+    const { command, args } = resolveEditorCommand();
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `push-editor-${process.pid}-${Date.now().toString(36)}.md`,
+    );
+    // Composer is cleared before slash dispatch (same as ANSI), so the external
+    // editor starts empty — compose-in-$EDITOR, not "edit the /editor token".
+    try {
+      await fs.writeFile(tmpFile, '', { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendStatus(`/editor: could not create temp file: ${msg}`, true);
+      return;
+    }
+    try {
+      const result = await getTerminalHandoff().run({ command, args: [...args, tmpFile] });
+      if (!result.ok) {
+        appendStatus(
+          `/editor: ${result.error ?? `editor exited via ${result.signal}`} (${command})`,
+          true,
+        );
+        return;
+      }
+      if (result.exitCode !== 0) {
+        appendStatus(
+          `/editor: ${command} exited ${result.exitCode}; composer left unchanged.`,
+          true,
+        );
+        return;
+      }
+      const edited = await fs.readFile(tmpFile, 'utf8');
+      // Park for the surface TextArea (composer text is view-owned).
+      pendingComposerText = edited.replace(/\r?\n$/, '');
+      if (!pendingComposerText) {
+        appendStatus('/editor: empty draft discarded.');
+      }
+      notify();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      appendStatus(`/editor: ${msg}`, true);
+    } finally {
+      fs.unlink(tmpFile).catch(() => {
+        /* temp cleanup is best-effort */
+      });
+    }
+  }
+
+  /** Populated by /editor; surface reads via takePendingComposerText(). */
+  let pendingComposerText: string | null = null;
 
   const onEvent = (event: EngineEvent) => {
     const payload = (event.payload ?? {}) as Record<string, unknown>;
@@ -546,11 +686,17 @@ export async function createSilveryController(
           '  /daemon status|restart Show pushd status or reconnect',
           '  /theme [list|name]     List or set the saved theme preference',
           '  /spinner [list|name]   List or pin the spinner preference',
+          '  /editor                Compose the prompt in $EDITOR (PUSH_EDITOR/VISUAL/EDITOR)',
           '  /debug runtime         Runtime path/provider/session diagnostics',
           '  /worktree              Show worktree sandbox status',
           '  /exit | /quit          Use the command palette or Ctrl+C to exit',
         ].join('\n'),
       );
+      return true;
+    }
+
+    if (command === 'editor') {
+      await handleEditorCommand();
       return true;
     }
 
@@ -818,7 +964,7 @@ export async function createSilveryController(
 
     if (command === 'resume') {
       if (!arg) {
-        const sessions = await (deps.listSessions ?? listSessions)();
+        const sessions = await fetchSessionRows();
         appendStatus(
           sessions.length
             ? sessions
@@ -1269,6 +1415,17 @@ export async function createSilveryController(
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
+    },
+    setHandoffHooks(hooks) {
+      if (hooks.onSuspend) handoffSuspend = hooks.onSuspend;
+      if (hooks.onResume) handoffResume = hooks.onResume;
+      // Force rebuild so the next /editor uses the live hooks.
+      terminalHandoff = null;
+    },
+    takePendingComposerText() {
+      const text = pendingComposerText;
+      pendingComposerText = null;
+      return text;
     },
     async submit(rawText) {
       const text = rawText.trim();

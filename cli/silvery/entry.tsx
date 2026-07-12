@@ -65,6 +65,12 @@ export async function runTuiSilvery(
       },
     );
     instance = await handle;
+    // Terminal handoff for /editor (and future pagers): pause Silvery paint while
+    // the child owns the real TTY, then resume for a full redraw.
+    controller.setHandoffHooks({
+      onSuspend: () => instance?.pause(),
+      onResume: () => instance?.resume(),
+    });
     await instance.waitUntilExit();
     return 0;
   } catch (error) {

@@ -484,6 +484,229 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('serves /resume rows from list_sessions when the daemon is attached', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_resume_abc123',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let listSessionsCalls = 0;
+    const row = {
+      sessionId: 'sess_daemonrow_abc123',
+      updatedAt: Date.now(),
+      provider: 'zen',
+      model: 'from-daemon',
+      cwd: '/repo',
+      sessionName: 'from-daemon',
+      lastUserMessage: 'served over the socket',
+      mode: 'tui',
+    };
+    const client = {
+      request: async (type, payload) => {
+        if (type === 'list_sessions') {
+          assert.equal(payload.limit, 1000);
+          return { ok: true, payload: { sessions: [row] } };
+        }
+        if (type === 'get_session_snapshot') {
+          return {
+            payload: {
+              transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
+            },
+          };
+        }
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        listSessions: async () => {
+          listSessionsCalls += 1;
+          return [];
+        },
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    await controller.submit('/resume');
+    assert.equal(listSessionsCalls, 0, 'must not fall back to disk when RPC succeeds');
+    assert.ok(
+      controller.getSnapshot().rows.some((r) => /sess_daemonrow_abc123/.test(r.text)),
+      'resume listing should show the daemon-served session id',
+    );
+    assert.ok(controller.getSnapshot().rows.some((r) => /from-daemon/.test(r.text)));
+    await controller.dispose();
+  });
+
+  it('routes daemon session verbs through the controller', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_verbs_abc123',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const verbCalls = [];
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: () => ({
+          connected: true,
+          sessionId: state.sessionId,
+          attachToken: 'token',
+          client: {
+            request: async (type, payload) => {
+              if (type === 'get_session_snapshot') {
+                return {
+                  payload: {
+                    transcript: {
+                      mirror: {
+                        rows: [{ id: 'kept', kind: 'message', role: 'user', text: 'still here' }],
+                        liveText: '',
+                        lastSeq: 1,
+                      },
+                    },
+                  },
+                };
+              }
+              return { payload: {} };
+            },
+          },
+          ensureConnected: async () => true,
+          ensureReady: async () => true,
+          ensureSession: async () => undefined,
+          noteSeenSeq: () => undefined,
+          scheduleReconnect: () => undefined,
+          teardown: () => undefined,
+          revert: async (turns) => {
+            verbCalls.push(['session_revert', turns]);
+            return { ok: true, payload: { reverted: true } };
+          },
+          unrevert: async () => {
+            verbCalls.push(['session_unrevert']);
+            return { ok: true, payload: {} };
+          },
+          summarize: async (preserveTurns) => {
+            verbCalls.push(['session_summarize', preserveTurns]);
+            return { ok: true, payload: { compacted: true } };
+          },
+          listChildren: async () => {
+            verbCalls.push(['list_children']);
+            return {
+              ok: true,
+              payload: {
+                children: [{ subagentId: 'child-1', agent: 'explorer', status: 'completed' }],
+              },
+            };
+          },
+          getChild: async (id) => {
+            verbCalls.push(['get_child_session', id]);
+            return { ok: true, payload: { child: { subagentId: id, agent: 'coder' } } };
+          },
+        }),
+      },
+    );
+
+    await controller.submit('/revert 3');
+    await controller.submit('/unrevert');
+    await controller.submit('/compact 8');
+    await controller.submit('/children');
+    await controller.submit('/children child-1');
+
+    assert.deepEqual(verbCalls, [
+      ['session_revert', 3],
+      ['session_unrevert'],
+      ['session_summarize', 8],
+      ['list_children'],
+      ['get_child_session', 'child-1'],
+    ]);
+    assert.ok(controller.getSnapshot().rows.some((r) => /child-1/.test(r.text)));
+    await controller.dispose();
+  });
+
+  it('runs /editor through terminal handoff and parks the draft', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_editor_abc123',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let handoffSpec;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        appendEvent: async () => undefined,
+        runHandoffChild: async (spec) => {
+          handoffSpec = spec;
+          const fs = await import('node:fs/promises');
+          await fs.writeFile(spec.args.at(-1), 'composed in $EDITOR\n', 'utf8');
+          return { exitCode: 0, signal: null };
+        },
+      },
+    );
+
+    await controller.submit('/editor');
+    assert.ok(handoffSpec, 'handoff must run a child');
+    assert.ok(handoffSpec.args.at(-1), 'editor receives a temp file path');
+    assert.equal(controller.takePendingComposerText(), 'composed in $EDITOR');
+    assert.equal(controller.takePendingComposerText(), null, 'pending draft is single-shot');
+    await controller.dispose();
+  });
+
   it('keeps daemon turns display-only and mirrors full v2 daemon events', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {
