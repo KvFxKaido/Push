@@ -398,10 +398,13 @@ point, as a **replaceable module with a paint-list input** so the later Node/Yog
 Sequenced so each phase ships a working TUI and is independently revertable. This sits behind
 mobile in priority — the plan is committed, the calendar is not.
 
-**Phase 0 — vendor + fault shell (small, isolated).**
-- Add `silvery` + `react@19` to the CLI's dependency set; confirm it loads under
-  `node --import tsx` on the CLI's Node (the spike proves 0.19.2 on Node 22). Note silvery
-  paints lazily — `render()` returns a handle; the paint loop starts on `.run()`/`.waitUntilExit()`.
+**Phase 0 — vendor + fault shell (small, isolated).** Full spec:
+[`Silvery TUI Migration — Phase 0 Spec.md`](Silvery%20TUI%20Migration%20—%20Phase%200%20Spec.md).
+- Add `silvery@^0.21.1` + `react@19` to the CLI's dependency set. **Adopting latest silvery sets
+  the CLI's Node floor to ≥24** — 0.21.1 ships `using` syntax that `SyntaxError`s on Node 22
+  (verified); re-validated green on Node 24.18.0 (prototype 6/6 + adopt-gate 13/0). The app CI
+  (Node 20) is unaffected — silvery is CLI-only view code. Note silvery paints lazily —
+  `render()` returns a handle; the paint loop starts on `.run()`/`.waitUntilExit()`.
 - Land the three-layer fault workaround from the spike as a reusable `PushShell` wrapper
   (`RecoverableBoundary` + root `SilveryErrorBoundary` + the `process` watchdog). This closes
   the sole standing wound, so it ships **first**, not last.

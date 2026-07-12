@@ -1,11 +1,19 @@
 # Silvery spike — driven stress run (2026-07-12)
 
-Candidate: `silvery@0.21.1` (npm, compiled dist, `engines.node>=18` — runs on Node 22
-despite the monorepo's dev floor of 24). React authoring; substrate = grapheme-string
-cells + packed wide/continuation flags + z-aware hit registry. First candidate to
-survive the source read; this run drives the published package through the **real
-render pipeline** on fake TTY streams and verifies emitted ANSI with two referees:
+Candidate: `silvery@0.21.1` (npm, compiled dist). React authoring; substrate =
+grapheme-string cells + packed wide/continuation flags + z-aware hit registry. First
+candidate to survive the source read; this run drives the published package through the
+**real render pipeline** on fake TTY streams and verifies emitted ANSI with two referees:
 silvery's own `VirtualTerminal` and `@xterm/headless` (independent).
+
+> **Runtime requirement — Node ≥24.** The initial survey ran on `silvery@0.19.2`
+> (`engines.node>=18`, ran on Node 22). Latest `0.21.1` declares `engines.node>=24` **and
+> means it**: its dist ships `using` declarations (explicit resource management), which Node
+> 22 cannot parse — `import 'silvery'` is a hard `SyntaxError` on 22, not an advisory engines
+> warning, and tsx won't help (it doesn't transpile `node_modules`). **Re-validated on Node
+> 24.18.0 / silvery 0.21.1 (2026-07-12): prototype `--check` 6/6 and adopt-gate scenes 13/0,
+> identical to the 0.19.2/Node-22 baseline; ListView tail-follow is still not turnkey (the
+> `countVisualLines` hand-window stays).** The spike is pinned to 0.21.1; run it on Node 24.
 
 ## Files
 
