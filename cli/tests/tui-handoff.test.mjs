@@ -14,7 +14,7 @@ import { EventEmitter } from 'node:events';
 import { createTerminalHandoff, resolveEditorCommand } from '../tui-handoff.ts';
 import { startHeadlessTui } from './tui-driver.mjs';
 
-function createFakeIo({ isTTY = true } = {}) {
+function createFakeIo({ isTTY = true, stderrIsTTY = false } = {}) {
   const calls = [];
   const stderrChunks = [];
   const stdin = new EventEmitter();
@@ -31,7 +31,7 @@ function createFakeIo({ isTTY = true } = {}) {
         on: () => {},
         removeListener: () => {},
       },
-      stderr: { write: (chunk) => stderrChunks.push(String(chunk)) },
+      stderr: { isTTY: stderrIsTTY, write: (chunk) => stderrChunks.push(String(chunk)) },
       exit: () => {},
       addSignalHandler: (sig) => calls.push(`signal:add:${sig}`),
       removeSignalHandler: (sig) => calls.push(`signal:remove:${sig}`),
@@ -96,6 +96,16 @@ describe('createTerminalHandoff', () => {
       'tui_handoff_child_exited',
       'tui_handoff_resumed',
     ]);
+  });
+
+  it('suppresses structured logs when stderr is the live terminal', async () => {
+    // fugu review on #1424: in a real session stderr IS the terminal — a JSON
+    // line would flash on the user's screen mid-handoff and print over the
+    // repainted alt screen on resume. Logs are for redirected sinks only.
+    const fake = createFakeIo({ stderrIsTTY: true });
+    const handoff = createHandoff(fake);
+    await handoff.run({ command: 'vi', args: [] });
+    assert.deepEqual(fake.stderrChunks, []);
   });
 
   it('never touches raw mode on a non-TTY stdin', async () => {
@@ -183,6 +193,20 @@ describe('resolveEditorCommand', () => {
     });
   });
 
+  it('keeps a quoted executable path with spaces as one token', () => {
+    assert.deepEqual(
+      resolveEditorCommand({ EDITOR: '"C:\\Program Files\\Editor\\ed.exe" --wait' }, 'win32'),
+      { command: 'C:\\Program Files\\Editor\\ed.exe', args: ['--wait'] },
+    );
+    assert.deepEqual(
+      resolveEditorCommand(
+        { EDITOR: "'/Applications/Visual Studio Code.app/bin/code' -w" },
+        'darwin',
+      ),
+      { command: '/Applications/Visual Studio Code.app/bin/code', args: ['-w'] },
+    );
+  });
+
   it('falls back per platform when nothing is set', () => {
     assert.deepEqual(resolveEditorCommand({}, 'win32'), { command: 'notepad', args: [] });
     assert.deepEqual(resolveEditorCommand({}, 'linux'), { command: 'vi', args: [] });
@@ -192,6 +216,7 @@ describe('resolveEditorCommand', () => {
 describe('/editor headless flow (tui-driver + fake child)', () => {
   it('captures edited content and shows a mid-suspension daemon event after resume', async () => {
     const { writeFile } = await import('node:fs/promises');
+    const savedEditor = process.env.EDITOR;
     process.env.EDITOR = 'fake-editor --flag';
 
     let releaseChild;
@@ -254,10 +279,13 @@ describe('/editor headless flow (tui-driver + fake child)', () => {
       // so teardown actually tears down.
       h.composer?.clear();
       await h.stop();
+      if (savedEditor === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = savedEditor;
     }
   });
 
   it('leaves the composer unchanged and warns when the editor exits nonzero', async () => {
+    const savedEditor = process.env.EDITOR;
     process.env.EDITOR = 'fake-editor';
     const runHandoffChild = async () => ({ exitCode: 1, signal: null });
     const h = await startHeadlessTui({ deps: { runHandoffChild } });
@@ -271,6 +299,8 @@ describe('/editor headless flow (tui-driver + fake child)', () => {
       assert.equal(h.composer.getText(), '');
     } finally {
       await h.stop();
+      if (savedEditor === undefined) delete process.env.EDITOR;
+      else process.env.EDITOR = savedEditor;
     }
   });
 });

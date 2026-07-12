@@ -57,8 +57,14 @@ export interface TuiStdout {
   removeListener: (event: string, listener: (...args: unknown[]) => void) => unknown;
 }
 
-/** stderr is write-only — the closure never wires events on it. */
+/**
+ * stderr is write-only — the closure never wires events on it. `isTTY` is
+ * exposed (structurally, matching the real `process.stderr`) so log emitters
+ * can tell a redirected/piped sink from the user's live terminal: a structured
+ * log line on an interactive stderr prints onto the screen, not into a log.
+ */
 export interface TuiWriteStream {
+  isTTY?: boolean;
   write: (chunk: string) => unknown;
 }
 

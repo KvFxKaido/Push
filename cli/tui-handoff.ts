@@ -65,12 +65,15 @@ export async function spawnInheritedChild(spec: HandoffChildSpec): Promise<Hando
   const { spawn } = await import('node:child_process');
   // Windows: $EDITOR values like "code -w" resolve through the shell's
   // PATHEXT (.cmd/.bat shims), so spawn through cmd; POSIX spawns the binary
-  // directly. With a shell, Node concatenates args verbatim — quote any arg
-  // carrying whitespace (e.g. a temp path under a username with spaces).
+  // directly. With a shell, Node concatenates command + args verbatim — quote
+  // anything carrying whitespace (a "Program Files" editor path, a temp path
+  // under a username with spaces).
   const useShell = process.platform === 'win32';
-  const args = useShell ? spec.args.map((a) => (/\s/.test(a) ? `"${a}"` : a)) : spec.args;
+  const quoteIfNeeded = (s: string) => (/\s/.test(s) ? `"${s}"` : s);
+  const command = useShell ? quoteIfNeeded(spec.command) : spec.command;
+  const args = useShell ? spec.args.map(quoteIfNeeded) : spec.args;
   return new Promise<HandoffChildExit>((resolve, reject) => {
-    const child = spawn(spec.command, args, {
+    const child = spawn(command, args, {
       stdio: 'inherit',
       env: spec.env ? { ...process.env, ...spec.env } : process.env,
       shell: useShell,
@@ -90,6 +93,11 @@ export function createTerminalHandoff(deps: TerminalHandoffDeps): TerminalHandof
   let active = false;
 
   const log = (event: string, ctx: Record<string, unknown>) => {
+    // In a live session stderr IS the terminal: a JSON line here would flash
+    // on the user's normal screen mid-handoff and print over the repainted
+    // alt screen on resume. The structured stream is for redirected sinks
+    // (daemon logs, CI, pipes) — exactly where isTTY is false.
+    if (io.stderr.isTTY) return;
     io.stderr.write(`${JSON.stringify({ level: 'info', event, ...ctx })}\n`);
   };
 
@@ -140,10 +148,26 @@ export function createTerminalHandoff(deps: TerminalHandoffDeps): TerminalHandof
 }
 
 /**
+ * Split an editor value into tokens, honoring single/double quotes so a
+ * quoted executable path with spaces stays one token:
+ *   '"C:\\Program Files\\Editor\\ed.exe" --wait' → ['C:\\Program Files\\Editor\\ed.exe', '--wait']
+ * An UNquoted path with spaces still splits — that ambiguity is unresolvable
+ * from the string alone (git shares the limitation); quoting is the contract.
+ */
+function tokenizeEditorValue(raw: string): string[] {
+  const tokens: string[] = [];
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+  for (const m of raw.matchAll(re)) {
+    tokens.push(m[1] ?? m[2] ?? m[3]);
+  }
+  return tokens.filter((t) => t.length > 0);
+}
+
+/**
  * Resolve the user's editor command. `PUSH_EDITOR` wins (Push-specific
  * override), then the POSIX-conventional `VISUAL` → `EDITOR`, then a platform
- * fallback. The value may carry arguments ("code -w"); split on whitespace —
- * the same convention git and crontab apply to $EDITOR.
+ * fallback. The value may carry arguments ("code -w") and quoted paths with
+ * spaces — tokenized like git tokenizes $EDITOR.
  */
 export function resolveEditorCommand(
   env: Record<string, string | undefined> = process.env,
@@ -151,7 +175,7 @@ export function resolveEditorCommand(
 ): { command: string; args: string[] } {
   const raw = env.PUSH_EDITOR || env.VISUAL || env.EDITOR;
   const fallback = platform === 'win32' ? 'notepad' : 'vi';
-  const parts = (raw ?? fallback).trim().split(/\s+/).filter(Boolean);
+  const parts = tokenizeEditorValue((raw ?? fallback).trim());
   const [command = fallback, ...args] = parts;
   return { command, args };
 }
