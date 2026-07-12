@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import { applyConfigToEnv, loadConfig, type PushConfig } from '../config-store.js';
+import { compactContext } from '../context-manager.js';
 import { tryConnect } from '../daemon-client.js';
 import { DEFAULT_MAX_ROUNDS, runAssistantTurn, type EngineEvent } from '../engine.js';
 import { appendUserMessageWithFileReferences } from '../file-references.js';
@@ -14,6 +15,7 @@ import { initCliSession } from '../session-init.js';
 import {
   appendSessionEvent,
   loadSessionState,
+  rewriteMessagesLog,
   saveSessionState,
   type SessionState,
 } from '../session-store.js';
@@ -221,6 +223,19 @@ export async function createSilveryController(
   const notify = () => {
     currentSnapshot = buildSnapshot();
     for (const listener of listeners) listener();
+  };
+
+  const appendStatus = (text: string, isError = false) => {
+    const row: SilveryTranscriptItem = {
+      id: nextId(isError ? 'error' : 'status'),
+      kind: 'status',
+      role: 'status',
+      text,
+      isError,
+    };
+    if (daemonStateStale) daemonMirror.rows.push(row);
+    else activityRows = [...activityRows, row];
+    notify();
   };
 
   const onEvent = (event: EngineEvent) => {
@@ -443,6 +458,167 @@ export async function createSilveryController(
     }
   }
 
+  async function handleSlashCommand(text: string): Promise<boolean> {
+    if (!text.startsWith('/')) return false;
+    const [rawCommand, ...rest] = text.slice(1).split(/\s+/);
+    const command = rawCommand?.toLowerCase() ?? '';
+    const arg = rest.join(' ').trim();
+
+    if (command === 'help') {
+      appendStatus(
+        [
+          'Commands available in the retained TUI:',
+          '  /clear                 Hide the current transcript display',
+          '  /session               Show the active session id',
+          '  /compact [turns]       Compact context (default preserve 6 turns)',
+          '  /revert [turns]        Daemon: remove recent user turns',
+          '  /unrevert              Daemon: restore the last reverted tail',
+          '  /children [id]         List or inspect delegated child runs',
+          '  /exit | /quit          Use the command palette or Ctrl+C to exit',
+          '',
+          'Provider/model/config/resume/Remote commands are the remaining P3 parity work.',
+        ].join('\n'),
+      );
+      return true;
+    }
+
+    if (command === 'clear') {
+      if (daemonStateStale) daemonHiddenBefore = daemonMirror.rows.length;
+      else hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      activityRows = [];
+      liveText = '';
+      notify();
+      return true;
+    }
+
+    if (command === 'session') {
+      appendStatus(
+        `session: ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}`,
+      );
+      return true;
+    }
+
+    if (command === 'compact') {
+      if (arg && !/^\d+$/.test(arg)) {
+        appendStatus('Usage: /compact [turns] (positive integer)', true);
+        return true;
+      }
+      const preserveTurns = arg ? Math.max(1, Math.min(64, Number.parseInt(arg, 10))) : 6;
+      if (await daemon.ensureReady()) {
+        try {
+          const response = await daemon.summarize(preserveTurns);
+          const payload = response?.payload as { compacted?: boolean } | undefined;
+          if (payload?.compacted === false) appendStatus('Nothing to compact.');
+          else await resyncDaemonTranscript('compact');
+        } catch (cause) {
+          appendStatus(
+            `Summarize failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+            true,
+          );
+        }
+        return true;
+      }
+      const result = compactContext(state.messages as Parameters<typeof compactContext>[0], {
+        preserveTurns,
+      });
+      if (!result.compacted) {
+        appendStatus(
+          `Nothing to compact (turns: ${result.totalTurns}, preserve: ${result.preserveTurns}).`,
+        );
+        return true;
+      }
+      state.messages = result.messages;
+      await (deps.appendEvent ?? appendSessionEvent)(state, 'context_compacted', {
+        preserveTurns: result.preserveTurns,
+        totalTurns: result.totalTurns,
+        compactedMessages: result.compactedCount,
+        removedCount: result.removedCount,
+        beforeTokens: result.beforeTokens,
+        afterTokens: result.afterTokens,
+      });
+      await rewriteMessagesLog(state);
+      appendStatus(
+        `Compacted context: ${result.compactedCount} messages → 1 summary (kept ${result.preserveTurns} turns).`,
+      );
+      return true;
+    }
+
+    if (command === 'revert') {
+      if (arg && !/^\d+$/.test(arg)) {
+        appendStatus('Usage: /revert [turns] (positive integer)', true);
+        return true;
+      }
+      const turns = arg ? Math.max(1, Math.min(1024, Number.parseInt(arg, 10))) : 1;
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/revert needs a daemon session.', true);
+        return true;
+      }
+      try {
+        const response = await daemon.revert(turns);
+        const payload = response?.payload as { reverted?: boolean } | undefined;
+        if (payload?.reverted === false) appendStatus('Nothing to revert.');
+        else await resyncDaemonTranscript('revert');
+      } catch (cause) {
+        appendStatus(
+          `Revert failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      }
+      return true;
+    }
+
+    if (command === 'unrevert') {
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/unrevert needs a daemon session.', true);
+        return true;
+      }
+      try {
+        await daemon.unrevert();
+        await resyncDaemonTranscript('unrevert');
+      } catch (cause) {
+        appendStatus(cause instanceof Error ? cause.message : String(cause), true);
+      }
+      return true;
+    }
+
+    if (command === 'children') {
+      if (!(await daemon.ensureReady())) {
+        appendStatus('/children needs a daemon session.', true);
+        return true;
+      }
+      try {
+        if (arg) {
+          const response = await daemon.getChild(arg);
+          appendStatus(JSON.stringify(response?.payload?.child ?? {}, null, 2));
+        } else {
+          const response = await daemon.listChildren();
+          const children = Array.isArray(response?.payload?.children)
+            ? response.payload.children
+            : [];
+          appendStatus(
+            children.length
+              ? children
+                  .map(
+                    (child) =>
+                      `${child.subagentId ?? '?'} · ${child.agent ?? 'subagent'} · ${child.status ?? '?'}`,
+                  )
+                  .join('\n')
+              : 'No delegated children for this session.',
+          );
+        }
+      } catch (cause) {
+        appendStatus(
+          `Children query failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      }
+      return true;
+    }
+
+    appendStatus(`Command /${command} is not ported to the retained TUI yet.`, true);
+    return true;
+  }
+
   return {
     getSnapshot: () => currentSnapshot,
     subscribe(listener) {
@@ -452,6 +628,7 @@ export async function createSilveryController(
     async submit(rawText) {
       const text = rawText.trim();
       if (!text || running || disposed) return;
+      if (await handleSlashCommand(text)) return;
       error = null;
       activityRows = [];
       liveText = '';
