@@ -183,6 +183,33 @@ its requirement** (render a transcript) and does not bind this one.
 > — recompute previous-frame row heights at the *new* width before relative cursor-up, so
 > old-frame fragments don't leak into scrollback (check `cli/tui-renderer.ts` for this bug
 > class), plus diff-disable for one frame after resize.
+>
+> Late addition, source-read 2026-07-12: **Silvery** (`beorn/silvery`, v0.21.x, 23 stars /
+> 3.3k commits — single-author labor of love grown from a real multi-pane workspace app;
+> MIT, pure TS, zero native deps, Node-family runtime with a `node>=24` floor for native
+> type-stripping — likely soft under tsx, verify). **FIRST CANDIDATE TO SURVIVE THE SOURCE
+> READ — stress run required before this note means anything.** It implements the two
+> contracts all ten predecessors failed: (1) grapheme↔cell — `Cell.char` is an explicit
+> grapheme string (cluster-capable), `wide`/`continuation` flags match this doc's CellWidth
+> verbatim, the write path segments via `Intl.Segmenter` + string-width with an LRU width
+> cache, and continuation repair on overwrite is **bidirectional with comments citing the
+> exact failure mode** (orphaned lead → space; orphaned continuation → cleared); storage is
+> packed flag-ints + a parallel grapheme array — Storm's SoA layout with cluster-capable
+> chars. (2) paint↔input — a dedicated React-free `hit-registry-core` where **highest
+> zIndex wins** (not smallest-area). It also engages the third boundary: a frozen-scrollback
+> ring (ANSI snapshots + plain-text rows, searchable) — settle-and-freeze, though *emulated*
+> scrollback with its own selection layer, not pi-tui's native-scrollback bet. Claims
+> nobody else made: alpha blending across layers, inline/virtual-inline viewport modes, an
+> Ink compat layer (918/931 tests), a DOM adapter (curious for the remote-session surface).
+> **Open risks, in stress-run order:** (a) real-terminal ZWJ raster — Rezi passed the
+> source read here and failed live; (b) paint/input z agreement is **by-convention**
+> (`useHitRegion` takes a manually-supplied zIndex; paint order comes from the tree) — a
+> stress scene must prove the built-in overlays wire both consistently; (c) fault posture
+> unverified (no crash-restore handler found in ag-term); (d) React authoring — rejected
+> for Push, so the question is substrate separability: cores are deliberately React-free
+> per-module, but `ag-term`'s package deps include `ag-react`; (e) app vocabulary leaks
+> into the framework core (`HitTarget: "fold-toggle" | "column-header" | cardIndex`);
+> (f) bus factor. Run `STRESS.md` before any re-litigation of build-vs-adopt.
 
 ## Decision
 
