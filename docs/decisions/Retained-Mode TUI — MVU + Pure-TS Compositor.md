@@ -70,6 +70,14 @@ its requirement** (render a transcript) and does not bind this one.
 > input routing (its hit-testing is the best surveyed); Glyph and Lipgloss v2 remain the
 > compositor references. The rubric stays: any future candidate — and the build itself —
 > gets scored against the same 15 cases.
+>
+> Late addition, same survey: **giggles** (`zion-off/giggles`) — Ink lineage, so ruled out as
+> a renderer without a spike (same ceiling as option 4). Steal two designs from it though:
+> **terminal handoff/reclaim** (suspend the TUI cleanly for `$EDITOR`/`less`/interactive git,
+> reclaim on exit — needs no compositor, actionable on the current renderer; tracked as a TUI
+> backlog issue) and its **scoped keybinding registry** (focus scopes/traps with bindings that
+> travel with the focused subtree — a reference for slice step 5's "adapt Push's input parser
+> + focus stack into `onInput`").
 
 ## Decision
 
