@@ -64,6 +64,9 @@ describe('formatTokenCount', () => {
     assert.equal(formatTokenCount(10_000), '10k');
     assert.equal(formatTokenCount(17_900), '18k');
     assert.equal(formatTokenCount(100_000), '100k');
+    assert.equal(formatTokenCount(1_000_000), '1m');
+    assert.equal(formatTokenCount(1_050_000), '1.1m');
+    assert.equal(formatTokenCount(2_000_000), '2m');
   });
 });
 

@@ -59,6 +59,8 @@ describe('daemon transcript mirror', () => {
     assert.equal(mirror.rows[1].pending, false);
     assert.equal(mirror.rows[1].resultPreview, 'updated a.ts');
     assert.equal(mirror.rows[1].diff.path, 'a.ts');
+    assert.equal(mirror.rows[0].timestampMs, 1);
+    assert.equal(mirror.rows[2].timestampMs, 4);
   });
 
   it('applies the same broadcast reducer live and round-trips a snapshot', () => {

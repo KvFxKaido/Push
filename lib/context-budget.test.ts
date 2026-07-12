@@ -4,6 +4,7 @@ import {
   estimateMessageTokens,
   getContextBudget,
   guessWindowFromName,
+  resolveContextWindow,
   HANDOFF_CEILING_TOKENS,
   handoffTokensFor,
 } from './context-budget.js';
@@ -103,6 +104,12 @@ describe('guessWindowFromName', () => {
 });
 
 describe('getContextBudget (shared)', () => {
+  it('exposes a real context window for UI facts without inventing one for unknown models', () => {
+    expect(resolveContextWindow('openai', 'gpt-5.4-mini')).toBe(400_000);
+    expect(resolveContextWindow('ollama', 'deepseek-v4-pro')).toBe(1_000_000);
+    expect(resolveContextWindow('ollama', 'totally-unknown-model')).toBeNull();
+  });
+
   // Spot-checks that the budget shape produced from a name-only resolution
   // is internally consistent for the deepseek case driving this test file.
 
