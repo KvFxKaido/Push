@@ -210,6 +210,23 @@ its requirement** (render a transcript) and does not bind this one.
 > per-module, but `ag-term`'s package deps include `ag-react`; (e) app vocabulary leaks
 > into the framework core (`HitTarget: "fold-toggle" | "column-header" | cardIndex`);
 > (f) bus factor. Run `STRESS.md` before any re-litigation of build-vs-adopt.
+>
+> **Driven run, same day** (`silvery-spike/`, 9✅/3❌, published npm dist on Node 22 —
+> the monorepo's Node-24 floor is dev-only, `engines>=18` ships): the substrate claims
+> **survive driving** — CJK continuation repair, restack damage, and read-beneath
+> `Backdrop` transparency (OKLab blend, documented ANSI-16→dim degradation; the best
+> transparency surveyed, vs Rezi's `░` replace) all pass through the real pipeline on
+> fake TTY streams, and the whole run doubles as the headless story (scene 13 ✅).
+> ZWJ (scene 3): silvery's emission is correct and self-consistent; the default-config
+> `@xterm/headless` referee splits the cluster — cross-terminal raster divergence, human
+> pass pending (and a warning that applies equally to the build's own future output).
+> Two real wounds: **scene 14 ❌ — a render-phase fault produces a silent zombie**
+> (no stderr, `run()` never settles, no teardown/cursor restore; error boundary is
+> opt-in) — the no-silent-paths contract violated as shipped, same class that helped
+> kill Rezi; and the paint/input z **by-convention** finding confirmed structurally
+> (paint = tree order, hit z = manual param). Verdict unchanged: reference-vs-substrate
+> question stays open pending the human raster pass and whether the fault default is
+> fixable upstream — both wounds are also candidates for precise upstream issues.
 
 ## Decision
 
