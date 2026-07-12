@@ -8,7 +8,7 @@
  * envelopes injected as user messages, strip fenced tool-call JSON from
  * assistant prose) live once.
  */
-import { isInternalEnvelope } from './session-store.ts';
+import { isInternalEnvelope } from './message-envelopes.ts';
 import { parseJsonToolCalls } from './tui-framers.js';
 
 export interface TranscriptHistoryRow {
