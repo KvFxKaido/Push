@@ -3396,6 +3396,16 @@ function exitNonInteractiveNoTask(): never {
 // resolved options — it does NOT touch session or worktree lifecycle (that stays
 // at the call sites). PUSH_TUI_SILVERY picks the opt-in silvery renderer (Node
 // >=24); default is the ANSI TUI, behavior-identical to the prior direct call.
+// Keep the experimental renderer outside Bun's single-executable bundle. A
+// literal dynamic import is still traced and bundled by Bun even when its
+// package dependency is marked external, which makes the binary resolve
+// silvery eagerly on startup. The non-literal boundary defers resolution until
+// the opt-in path is actually selected; source/tsx and emitted Node builds
+// resolve the same relative module normally.
+function importOptionalRenderer(specifier: string): Promise<unknown> {
+  return import(specifier);
+}
+
 async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
   const useSilvery =
     process.env.PUSH_TUI_SILVERY === '1' || process.env.PUSH_TUI_SILVERY === 'true';
@@ -3409,7 +3419,23 @@ async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
       );
     }
     console.error(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
-    const { runTuiSilvery } = await import('./silvery/entry.js');
+    let renderer: unknown;
+    try {
+      renderer = await importOptionalRenderer('./silvery/entry.js');
+    } catch (error) {
+      if (isBunRuntime()) {
+        throw new Error(
+          'The experimental silvery TUI requires the source/tsx or emitted Node runtime; ' +
+            'it is not included in the single-binary build. Unset PUSH_TUI_SILVERY to use ' +
+            'the default TUI.',
+          { cause: error },
+        );
+      }
+      throw error;
+    }
+    const { runTuiSilvery } = renderer as {
+      runTuiSilvery: (options: import('./silvery/entry.js').RunTuiOptions) => Promise<number>;
+    };
     return runTuiSilvery(options);
   }
   console.error(JSON.stringify({ level: 'info', event: 'tui_launch_ansi' }));

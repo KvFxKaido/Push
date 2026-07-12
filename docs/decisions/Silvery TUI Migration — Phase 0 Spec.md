@@ -209,13 +209,15 @@ don't assume). This is a first-class P0 acceptance gate, not a footnote.
   distribution-path decision, not a dev-path blocker** (both dev runtimes are green). See "Bun
   single-binary" below.
 
-## Bun single-binary — the one open decision
+## Bun single-binary — resolved for P0
 
 The compiled binary (`cli-binary` job) is how the CLI is distributed. silvery's image-rasterizer
-subsystem won't cleanly bundle into it. Recommended P0 scoping (**needs your call**):
+subsystem won't cleanly bundle into it. P0 therefore ships with this approved scope:
 
-- **Ship the silvery TUI dev-first.** In the compiled binary, mark silvery + `./silvery/entry`
-  **external**; the `launchTui` runtime guard already fails closed — so in the binary,
+- **Ship the silvery TUI dev-first.** The compiled build marks `silvery` **external**, and
+  `launchTui` loads `./silvery/entry.js` through a non-literal optional-renderer boundary so Bun
+  does not trace that local module into the executable. (Externalizing `silvery` alone still
+  bundled the local entry and eagerly resolved the missing package on `--help`.) In the binary,
   `PUSH_TUI_SILVERY` reports "silvery TUI requires the source/tsx runtime; not in the single-binary
   build yet" and the **ANSI TUI (binary default) is untouched**. The silvery path runs under
   `./push` via tsx and the tsc-emitted build, both green.
@@ -230,8 +232,9 @@ distributed binary keeps the proven ANSI path until bundling is solved.
 
 1. ~~`.tsx` + tsx + React-19 runtime~~ — **resolved** (see de-risk results; explicit `import React`).
 2. ~~Emitting `.tsx` disturbs `build:cli`~~ — **resolved** (tree emits clean).
-3. **Bun single-binary scoping** — confirm the "silvery dev-first, external in the binary + runtime
-   guard" call above (or invest in bundling the backends now).
+3. ~~**Bun single-binary scoping**~~ — **resolved:** silvery is dev-first; the package and optional
+   renderer entry stay outside the executable, `--help` boots, and the opt-in binary path fails
+   closed with a specific source/tsx-runtime message.
 4. **Terminal ownership on the bare-`push` path** — confirm nothing pre-launch (resize listeners,
    `tui-io` setup) runs before `launchTui` and leaks state into silvery's session.
 5. **React singleton** — adding root `react` must not create a second instance under the app's

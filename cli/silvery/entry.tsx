@@ -4,11 +4,14 @@
 // It accepts the SAME options contract as runTUI() (cli/tui.ts) so it is a true
 // drop-in alternate renderer.
 //
-// Phase 0 stub: the renderer is not yet wired. This file exists so the launcher's
-// dispatch + lazy import are complete and reviewable on their own; the real
-// PushShell + render land in the next commit. Deliberately imports no silvery
-// here — the launcher's Node>=24 guard runs before this module loads, and a stub
-// with no `silvery` import can't SyntaxError on older Node.
+// The launcher's Node>=24 guard runs before this module loads, because importing
+// silvery 0.21 itself is a parse-time error on older Node releases.
+
+import React from 'react';
+import { render, type Instance } from 'silvery';
+
+import { HelloPush } from './hello.js';
+import { installProcessWatchdog, PushShell } from './push-shell.js';
 
 export interface RunTuiOptions {
   sessionId?: string | null;
@@ -19,9 +22,43 @@ export interface RunTuiOptions {
   explicitMaxRounds?: boolean;
 }
 
-export async function runTuiSilvery(_options: RunTuiOptions): Promise<number> {
-  throw new Error(
-    'silvery TUI renderer is not yet implemented (Phase 0 in progress). ' +
-      'Unset PUSH_TUI_SILVERY to use the default TUI.',
+function logRenderFault(layer: 'recoverable' | 'root', error: Error) {
+  console.error(
+    JSON.stringify({
+      level: 'error',
+      event: `tui_silvery_${layer}_fault`,
+      message: error.message,
+    }),
   );
+}
+
+export async function runTuiSilvery(_options: RunTuiOptions): Promise<number> {
+  let instance: Instance | undefined;
+  const watchdog = installProcessWatchdog({ getInstance: () => instance });
+
+  try {
+    const handle = render(
+      <PushShell
+        onRecoverableError={(error) => logRenderFault('recoverable', error)}
+        onRootError={(error) => logRenderFault('root', error)}
+      >
+        <HelloPush />
+      </PushShell>,
+      undefined,
+      {
+        exitOnCtrlC: true,
+        alternateScreen: true,
+        mode: 'fullscreen',
+        mouse: false,
+      },
+    );
+    instance = await handle;
+    await instance.waitUntilExit();
+    return 0;
+  } catch (error) {
+    watchdog.handleFatal('renderer', error);
+    return 1;
+  } finally {
+    watchdog.dispose();
+  }
 }
