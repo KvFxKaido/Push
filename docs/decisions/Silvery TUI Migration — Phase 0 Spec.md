@@ -1,6 +1,6 @@
 # Silvery TUI Migration — Phase 0 Spec
 
-**Status:** Current — Phase 0 implemented; Phase 1 transcript/input parity remains out of scope.
+**Status:** Historical — Phase 0 implemented; Phase 1 transcript/input parity shipped.
 Parent decision:
 [`Retained-Mode TUI — MVU + Pure-TS Compositor.md`](Retained-Mode%20TUI%20—%20MVU%20+%20Pure-TS%20Compositor.md)
 (Status: Current — adopt silvery). Validation rubric / prototype:

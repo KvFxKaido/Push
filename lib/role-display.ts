@@ -192,3 +192,13 @@ export function getSubagentLabel(subagent: RunEventSubagent | string | null | un
   if (d.showActorName && d.name) return d.name;
   return d.phase ?? 'Working';
 }
+
+export type TranscriptDisplayRole = 'user' | 'assistant' | AgentRole | 'status';
+
+/** Canonical labels for conversational transcript rows and workflow phases. */
+export function getTranscriptRoleLabel(role: TranscriptDisplayRole | string): string {
+  if (role === 'user') return 'You';
+  if (role === 'assistant') return 'Assistant';
+  if (role === 'status') return 'Status';
+  return getRoleLabel(role);
+}

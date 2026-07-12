@@ -34,7 +34,7 @@
  * (`cli/pushd.ts`). See the decision doc's "What this is not".
  */
 
-import { TUI_DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
+import { TUI_DAEMON_CAPABILITIES, type DaemonCapability } from '../lib/daemon-capabilities.js';
 import { evaluateHelloResponse } from './tui-daemon-handshake.js';
 import { classifyDaemonSpawnError } from './tui-daemon-errors.js';
 import {
@@ -184,6 +184,7 @@ export interface DaemonReconnectSnapshot {
 
 export class DaemonSessionController {
   #hooks: DaemonSessionHooks;
+  #capabilities: readonly DaemonCapability[];
   #client: DaemonClientLike | null = null;
   #sessionId: string | null = null;
   #attachToken: string | null = null;
@@ -200,8 +201,12 @@ export class DaemonSessionController {
    */
   readonly unknownEventWarnedTypes = new Set<string>();
 
-  constructor(hooks: DaemonSessionHooks) {
+  constructor(
+    hooks: DaemonSessionHooks,
+    capabilities: readonly DaemonCapability[] = TUI_DAEMON_CAPABILITIES,
+  ) {
     this.#hooks = hooks;
+    this.#capabilities = capabilities;
   }
 
   // ── Accessors ──
@@ -315,12 +320,7 @@ export class DaemonSessionController {
     // mysteriously falling back to inline (codex / copilot on PR #665).
     let hello: DaemonResponseEnvelope;
     try {
-      hello = await client.request(
-        'hello',
-        { capabilities: [...TUI_DAEMON_CAPABILITIES] },
-        null,
-        500,
-      );
+      hello = await client.request('hello', { capabilities: [...this.#capabilities] }, null, 500);
     } catch (err) {
       const e = err as { code?: string; message?: string };
       const code = e?.code ? `${e.code}: ` : '';
@@ -568,7 +568,7 @@ export class DaemonSessionController {
           // `state.eventSeq` (the local counter) — see `noteSeenSeq`.
           lastSeenSeq: this.#lastSeenSeq,
           attachToken: durable.attachToken || undefined,
-          capabilities: [...TUI_DAEMON_CAPABILITIES],
+          capabilities: [...this.#capabilities],
         },
         null,
         1500,
@@ -612,7 +612,7 @@ export class DaemonSessionController {
         model: start.model,
         repo: { rootPath: start.cwd },
         mode: 'tui',
-        capabilities: [...TUI_DAEMON_CAPABILITIES],
+        capabilities: [...this.#capabilities],
       });
       this.#sessionId = (res.payload?.sessionId as string) ?? null;
       this.#attachToken = (res.payload?.attachToken as string) ?? null;
@@ -688,6 +688,9 @@ export class DaemonSessionController {
   }
 }
 
-export function createDaemonSession(hooks: DaemonSessionHooks): DaemonSessionController {
-  return new DaemonSessionController(hooks);
+export function createDaemonSession(
+  hooks: DaemonSessionHooks,
+  capabilities: readonly DaemonCapability[] = TUI_DAEMON_CAPABILITIES,
+): DaemonSessionController {
+  return new DaemonSessionController(hooks, capabilities);
 }

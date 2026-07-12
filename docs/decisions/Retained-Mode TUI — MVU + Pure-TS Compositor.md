@@ -6,8 +6,8 @@ adopt-gate stress (13/0) + a driven Push-surface prototype
 ([`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/)).
 The original *build-the-compositor* thesis below is retained as the **validation rubric**
 silvery was measured against — historical as a build plan, live as the contract silvery must
-keep meeting. Migration plan at the end of this doc. Implementation **not started**; surface #3
-(TUI) still sits behind mobile in priority.
+keep meeting. Migration plan at the end of this doc. Phases 0 and 1 are implemented behind
+`PUSH_TUI_SILVERY`; the ANSI renderer remains the default.
 
 **Date:** 2026-07-11
 
@@ -411,7 +411,15 @@ mobile in priority — the plan is committed, the calendar is not.
 - Gate behind an env flag (`PUSH_TUI_SILVERY=1`) so the hand-rolled ANSI TUI stays default
   until parity is proven. Both paths coexist during migration.
 
-**Phase 1 — transcript + input parity (the core surface).**
+**Phase 1 — transcript + input parity (the core surface). Implemented 2026-07-12.**
+- `cli/silvery/{controller,surface}.tsx` hydrates the real session transcript, bridges inline or
+  attached-daemon engine events into React snapshots, and drives `runAssistantTurn` for inline
+  turns. The retained view owns presentation only; persistence and the turn kernel remain shared.
+- `ListView` 0.21.1's visual-row-aware `follow="end"` plus virtual cache mode pins the live tail;
+  the measured `countVisualLines` tail window remains as the tested fallback.
+- The surface includes the header/status row, active-turn input, mouse scrollback, and a Ctrl+K
+  command-palette modal with focus handoff. The ANSI route and Bun externalization boundary are
+  unchanged.
 - Rebuild the transcript/input/status surface on silvery from the prototype's structure.
   **Adapt** Push's existing input parser + focus stack via `onInput`/`useInput`; don't replace them.
 - Resolve the adopt-cost: wire `ListView`'s `cache`/virtual-scrollback mode (items → native
