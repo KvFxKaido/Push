@@ -29,6 +29,7 @@ import { isReducedMotion } from '../tui-spinner.js';
 import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.js';
 import { detectUnicode } from '../tui-theme.js';
 import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from './controller.js';
+import { MarkdownBody } from './markdown.js';
 import { PushThemeProvider } from './theme.js';
 import {
   breathingHex,
@@ -173,6 +174,10 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
     : item.role === 'status'
       ? VL_COLOR.muted
       : undefined;
+  const bodyText = item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text;
+  // Fault (law 3) and status bodies stay plain — the fault color must not mix
+  // with accent link/code spans; markdown is for assistant/independent-voice prose.
+  const renderMarkdown = !item.isError && item.role !== 'status';
   return (
     <Box
       flexDirection="column"
@@ -182,9 +187,11 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
         {mark.glyph} {label}
         {item.live ? ' · live' : ''}
       </Text>
-      <Text color={bodyColor}>
-        {item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text}
-      </Text>
+      {renderMarkdown ? (
+        <MarkdownBody text={bodyText} base={bodyColor} />
+      ) : (
+        <Text color={bodyColor}>{bodyText}</Text>
+      )}
       {item.kind === 'review' ? (
         <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} review</Text>
       ) : null}
