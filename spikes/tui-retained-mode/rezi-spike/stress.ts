@@ -39,9 +39,14 @@ function instructions(lines: string[]): VNode {
 
 /** Case 1: CJK overwrite — narrow content replacing wide cells in place. */
 function scene1(s: State): VNode {
-  const body = s.overwrite ? NARROW_LINE : WIDE_LINE;
+  // Auto-alternate on tick parity; 't' flips the phase so you can also hold
+  // a state and step it manually.
+  const wide = (s.tick % 2 === 0) !== s.overwrite;
+  const body = wide ? WIDE_LINE : NARROW_LINE;
   return ui.column({ gap: 1 }, [
-    ui.text(`auto-toggles each second (tick ${s.tick}); 't' toggles manually`),
+    ui.text(
+      `auto-toggles each second (tick ${s.tick}, now ${wide ? 'WIDE' : 'narrow'}); 't' flips phase`,
+    ),
     ui.box({ border: 'single' }, [ui.text(body)]),
     instructions([
       'PASS: clean swap between 中中中… and abab… — no orphaned half-glyphs,',

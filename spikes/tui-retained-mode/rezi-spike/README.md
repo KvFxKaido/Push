@@ -38,6 +38,12 @@ human hand):
   rather than dimming what's beneath. True transparency may need the
   object-form backdrop config (or doesn't exist).
 - **Case 14 ✅** — clean alt-screen exit after the whole session.
+- **Quirk (unclassified)** — the tick advances ~10× faster than its 1000ms
+  `setInterval`, i.e. `app.update(fn)` appears to re-invoke the updater more
+  than once per call (reducer-replay semantics?). Harmless here since scenes
+  derive from tick parity, but a real app must keep updaters pure — and it's
+  worth understanding before trusting `update()` with side-effect-adjacent
+  state.
 
 Remaining for a human in a rich terminal: case 1 (watch the wide↔narrow
 toggle), case 2 (edge clip), case 4+11 (resize wiggle), case 9 (mouse clicks,
