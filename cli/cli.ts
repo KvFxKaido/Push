@@ -3406,11 +3406,27 @@ function importOptionalRenderer(specifier: string): Promise<unknown> {
   return import(specifier);
 }
 
-async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
-  const useSilvery =
-    process.env.PUSH_TUI_SILVERY === '1' || process.env.PUSH_TUI_SILVERY === 'true';
+type RunTuiOptions = import('./silvery/entry.js').RunTuiOptions;
+type TuiRunnerModule = {
+  runTUI?: (options: RunTuiOptions) => Promise<number> | number;
+  runTuiSilvery?: (options: RunTuiOptions) => Promise<number> | number;
+};
+
+export interface LaunchTuiDeps {
+  silveryFlag?: string;
+  nodeMajor?: number;
+  isBun?: () => boolean;
+  log?: (line: string) => void;
+  loadAnsi?: () => Promise<TuiRunnerModule>;
+  loadSilvery?: () => Promise<TuiRunnerModule>;
+}
+
+export async function launchTui(options: RunTuiOptions, deps: LaunchTuiDeps = {}) {
+  const silveryFlag = deps.silveryFlag ?? process.env.PUSH_TUI_SILVERY;
+  const useSilvery = silveryFlag === '1' || silveryFlag === 'true';
+  const log = deps.log ?? console.error;
   if (useSilvery) {
-    const nodeMajor = Number(process.versions.node.split('.')[0]);
+    const nodeMajor = deps.nodeMajor ?? Number(process.versions.node.split('.')[0]);
     if (nodeMajor < 24) {
       throw new Error(
         `PUSH_TUI_SILVERY requires Node >=24 (silvery 0.21 uses \`using\` syntax); ` +
@@ -3418,12 +3434,14 @@ async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
           `to use the default TUI.`,
       );
     }
-    console.error(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
+    log(JSON.stringify({ level: 'info', event: 'tui_launch_silvery' }));
     let renderer: unknown;
     try {
-      renderer = await importOptionalRenderer('./silvery/entry.js');
+      renderer = deps.loadSilvery
+        ? await deps.loadSilvery()
+        : await importOptionalRenderer('./silvery/entry.js');
     } catch (error) {
-      if (isBunRuntime()) {
+      if ((deps.isBun ?? isBunRuntime)()) {
         throw new Error(
           'The experimental silvery TUI requires the source/tsx or emitted Node runtime; ' +
             'it is not included in the single-binary build. Unset PUSH_TUI_SILVERY to use ' +
@@ -3433,13 +3451,13 @@ async function launchTui(options: import('./silvery/entry.js').RunTuiOptions) {
       }
       throw error;
     }
-    const { runTuiSilvery } = renderer as {
-      runTuiSilvery: (options: import('./silvery/entry.js').RunTuiOptions) => Promise<number>;
-    };
+    const { runTuiSilvery } = renderer as TuiRunnerModule;
+    if (!runTuiSilvery) throw new Error('Silvery renderer module does not export runTuiSilvery().');
     return runTuiSilvery(options);
   }
-  console.error(JSON.stringify({ level: 'info', event: 'tui_launch_ansi' }));
-  const { runTUI } = await import('./tui.js');
+  log(JSON.stringify({ level: 'info', event: 'tui_launch_ansi' }));
+  const { runTUI } = deps.loadAnsi ? await deps.loadAnsi() : await import('./tui.js');
+  if (!runTUI) throw new Error('ANSI renderer module does not export runTUI().');
   return runTUI(options);
 }
 

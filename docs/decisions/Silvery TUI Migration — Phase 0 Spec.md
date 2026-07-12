@@ -1,6 +1,7 @@
 # Silvery TUI Migration — Phase 0 Spec
 
-**Status:** Draft — implementation spec awaiting build. Parent decision:
+**Status:** Current — Phase 0 implemented; Phase 1 transcript/input parity remains out of scope.
+Parent decision:
 [`Retained-Mode TUI — MVU + Pure-TS Compositor.md`](Retained-Mode%20TUI%20—%20MVU%20+%20Pure-TS%20Compositor.md)
 (Status: Current — adopt silvery). Validation rubric / prototype:
 [`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/).
@@ -235,10 +236,21 @@ distributed binary keeps the proven ANSI path until bundling is solved.
 3. ~~**Bun single-binary scoping**~~ — **resolved:** silvery is dev-first; the package and optional
    renderer entry stay outside the executable, `--help` boots, and the opt-in binary path fails
    closed with a specific source/tsx-runtime message.
-4. **Terminal ownership on the bare-`push` path** — confirm nothing pre-launch (resize listeners,
-   `tui-io` setup) runs before `launchTui` and leaks state into silvery's session.
-5. **React singleton** — adding root `react` must not create a second instance under the app's
-   aliased-typescript setup (the app pins TS via alias, not react; verify react stays single).
+4. ~~**Terminal ownership on the bare-`push` path**~~ — **resolved:** both call sites complete
+   session/worktree setup and TTY validation before `launchTui`; `cli.ts` does not import or invoke
+   `tui-io`, so the silvery branch reaches `render()` with sole terminal ownership.
+5. ~~**React singleton**~~ — **resolved:** `npm ls react --all` reports one root `react@19.2.7`;
+   silvery and `react-reconciler` both dedupe to that instance.
+
+## Implementation verification
+
+- Focused Phase 0 suite: renderer flag routing + symmetric logs, ANSI-default regression, Node-24
+  import guard, binary externalization drift, recoverable render-fault card + live shell, and the
+  process watchdog's one-shot terminal restore/listener cleanup.
+- The fault tests dynamically import silvery only on Node >=24; older Node runners collect the file
+  without parsing silvery's `using` declarations and report those cases as skipped.
+- `build:cli`, the TSX one-shot render, Bun single-binary `--help`, and the binary's explicit
+  `PUSH_TUI_SILVERY` fail-closed message all pass on the implementation branch.
 
 ## Out of scope → P1
 
