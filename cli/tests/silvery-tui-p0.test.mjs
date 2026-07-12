@@ -342,12 +342,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
         appendEvent: async () => undefined,
         saveState: async () => undefined,
         runTurn: async (receivedState, _provider, _key, text, _rounds, options) => {
-          received = {
-            receivedState,
-            text,
-            approved: await options.approvalFn('write_file'),
-            answer: await options.askUserFn('Which implementation?'),
-          };
+          received = { receivedState, text };
           options.emit({
             type: 'assistant_token',
             payload: { text: 'streaming now' },
@@ -377,8 +372,6 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     assert.equal(received?.receivedState, state);
     assert.equal(received?.text, 'hello kernel');
-    assert.equal(received?.approved, false);
-    assert.match(received?.answer, /make a reasonable assumption/);
     assert.ok(
       snapshots.some((snapshot) =>
         snapshot.rows.some((row) => row.live && row.text === 'streaming now'),
@@ -392,20 +385,61 @@ describe('silvery TUI Phase 1 chat surface', () => {
       ['hello kernel', 'streaming now'],
     );
     assert.equal(controller.getSnapshot().running, false);
-    assert.ok(
-      controller
-        .getSnapshot()
-        .rows.some((row) => row.role === 'status' && /needs approval; denied/.test(row.text)),
-    );
-    assert.ok(
-      controller
-        .getSnapshot()
-        .rows.some((row) => row.role === 'status' && /Question deferred/.test(row.text)),
-    );
     await controller.dispose();
   });
 
-  it('keeps daemon turns display-only and omits event_v2 from the Silvery profile', async () => {
+  it('routes inline approvals and questions through retained interactions', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'interaction-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let result;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (_state, _provider, _key, _text, _rounds, options) => {
+          result = {
+            approved: await options.approvalFn('exec', 'npm test'),
+            answer: await options.askUserFn('Which implementation?'),
+          };
+          return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+        },
+      },
+    );
+
+    const submission = controller.submit('exercise interactions');
+    while (controller.getSnapshot().interaction?.kind !== 'approval') await sleep(0);
+    const approval = controller.getSnapshot().interaction;
+    assert.equal(approval.detail, 'npm test');
+    controller.respondToInteraction(approval.id, true);
+    while (controller.getSnapshot().interaction?.kind !== 'question') await sleep(0);
+    const question = controller.getSnapshot().interaction;
+    controller.respondToInteraction(question.id, 'Use the smaller diff');
+    await submission;
+
+    assert.deepEqual(result, { approved: true, answer: 'Use the smaller diff' });
+    assert.equal(controller.getSnapshot().interaction, null);
+    await controller.dispose();
+  });
+
+  it('keeps daemon turns display-only and mirrors full v2 daemon events', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {
       sessionId: 'daemon-session',
@@ -429,6 +463,11 @@ describe('silvery TUI Phase 1 chat surface', () => {
         if (type === 'send_user_message') {
           sendPayload = payload;
           queueMicrotask(() => {
+            hooks.onEngineEvent({
+              kind: 'event',
+              type: 'user_message',
+              payload: { text: 'daemon question', preview: 'daemon question', chars: 15 },
+            });
             hooks.onEngineEvent({
               kind: 'event',
               type: 'assistant_token',
@@ -472,8 +511,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     assert.deepEqual(state.messages, [{ role: 'system', content: 'system' }]);
     assert.equal(saves, 0, 'daemon-backed turns must not save the local session mirror');
-    assert.equal(advertisedCapabilities.includes('event_v2'), false);
-    assert.equal(sendPayload.capabilities.includes('event_v2'), false);
+    assert.equal(advertisedCapabilities.includes('event_v2'), true);
+    assert.equal(sendPayload.capabilities.includes('event_v2'), true);
     assert.deepEqual(
       controller
         .getSnapshot()
@@ -483,6 +522,84 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
     await controller.dispose();
     assert.equal(saves, 0, 'disposing a stale daemon mirror must not overwrite daemon state');
+  });
+
+  it('submits retained approval decisions back to the daemon', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'daemon-approval-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let decision;
+    const client = {
+      request: async (type, payload) => {
+        if (type === 'send_user_message') {
+          queueMicrotask(() => {
+            hooks.onEngineEvent({
+              kind: 'event',
+              type: 'approval_required',
+              payload: {
+                approvalId: 'approval-1',
+                title: 'Approve command',
+                summary: 'npm test',
+              },
+            });
+          });
+          return { payload: { runId: 'daemon-run' } };
+        }
+        if (type === 'submit_approval') {
+          decision = payload.decision;
+          queueMicrotask(() => {
+            hooks.onEngineEvent({ kind: 'event', type: 'approval_received', payload: {} });
+            hooks.onEngineEvent({ kind: 'event', type: 'run_complete', payload: {} });
+          });
+        }
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    const submission = controller.submit('run a command');
+    while (controller.getSnapshot().interaction?.id !== 'approval-1') await sleep(0);
+    controller.respondToInteraction('approval-1', true);
+    await submission;
+
+    assert.equal(decision, 'approve');
+    assert.equal(controller.getSnapshot().interaction, null);
+    await controller.dispose();
   });
 
   it('settles an in-flight turn when the daemon socket closes', async () => {
@@ -518,8 +635,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
             sessionId: state.sessionId,
             attachToken: 'token',
             client: {
-              request: async () => {
-                requestAccepted();
+              request: async (type) => {
+                if (type === 'send_user_message') requestAccepted();
                 return { payload: { runId: 'daemon-run' } };
               },
             },

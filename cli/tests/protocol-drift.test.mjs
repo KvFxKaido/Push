@@ -731,7 +731,9 @@ describe('protocol drift characterization — session_started / user_message', (
   });
 
   it('accepts a well-formed user_message envelope', () => {
-    assertStrictBroadcastPass(makeEnvelope('user_message', { chars: 27, preview: 'hello…' }));
+    assertStrictBroadcastPass(
+      makeEnvelope('user_message', { chars: 27, preview: 'hello…', text: 'hello in full' }),
+    );
   });
 
   it('rejects user_message with a negative char count', () => {
@@ -740,6 +742,12 @@ describe('protocol drift characterization — session_started / user_message', (
 
   it('rejects user_message with a non-string preview', () => {
     assertStrictBroadcastFail(makeEnvelope('user_message', { chars: 5, preview: null }));
+  });
+
+  it('rejects user_message with a non-string full-text mirror field', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('user_message', { chars: 5, preview: 'hello', text: 42 }),
+    );
   });
 });
 

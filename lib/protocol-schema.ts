@@ -1458,11 +1458,9 @@ function validateSessionStarted(payload: unknown, basePath: string): ValidationI
   return issues;
 }
 
-/** User-message echo emitted after `send_user_message`. The web and
- * the TUI both re-render their own message synchronously and ignore
- * this event today (it lives on the `TUI_KNOWN_NOOP_EVENT_TYPES`
- * allowlist) — pinning the shape now prevents a regression where the
- * payload silently flips to something that breaks future consumers. */
+/** User-message echo emitted after `send_user_message`. `text` is the full
+ * authoritative body for transcript-mirror consumers; `preview` remains for
+ * older clients and compact status surfaces. */
 function validateUserMessage(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
@@ -1480,6 +1478,8 @@ function validateUserMessage(payload: unknown, basePath: string): ValidationIssu
       message: `expected string, got ${JSON.stringify(payload.preview)}`,
     });
   }
+  const text = expectOptionalString(payload, 'text', basePath);
+  if (text) issues.push(text);
   return issues;
 }
 

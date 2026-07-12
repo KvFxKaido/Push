@@ -536,6 +536,7 @@ describe('get_session_snapshot (remote session status packet)', () => {
       summary: 'rm -rf build/',
     });
     assert.equal(response.payload.transcript.lastSeq, 2);
+    assert.ok(Array.isArray(response.payload.transcript.mirror.rows));
     assert.equal(response.payload.transcript.recentEvents.length, 1);
     assert.equal(response.payload.transcript.recentEvents[0].type, 'approval_required');
   });
@@ -2443,6 +2444,7 @@ describe('multi-client fan-out', () => {
         message: 'expected user_message broadcast to the attached observer',
       });
       assert.equal(userMessage.payload.preview, 'what changed recently in push');
+      assert.equal(userMessage.payload.text, 'what changed recently in push');
       assert.equal(userMessage.payload.chars, 'what changed recently in push'.length);
       assert.equal(userMessage.runId, sendResult.payload.runId);
 

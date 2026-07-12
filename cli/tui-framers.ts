@@ -166,9 +166,8 @@ export interface AssistantRenderOptions {
   payloadUI?: PayloadUI | null;
   /**
    * When true, the leading bullet glyph is suppressed and the first line uses
-   * the continuation prefix instead. Used by the streaming settle-and-freeze
-   * path (tui-stream-frame.ts) when framing a chunk that is *not* the start of
-   * the message — the bullet was already emitted by an earlier settled chunk.
+   * the continuation prefix instead. Retained for callers that frame a message
+   * in independent chunks after the bullet was emitted by an earlier chunk.
    */
   firstPrefixConsumed?: boolean;
 }

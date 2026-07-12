@@ -6,15 +6,15 @@ adopt-gate stress (13/0) + a driven Push-surface prototype
 ([`spikes/tui-retained-mode/silvery-spike/`](../../spikes/tui-retained-mode/silvery-spike/)).
 The original *build-the-compositor* thesis below is retained as the **validation rubric**
 silvery was measured against — historical as a build plan, live as the contract silvery must
-keep meeting. Migration plan at the end of this doc. Phases 0 and 1 are implemented behind
+keep meeting. Migration plan at the end of this doc. Phases 0–2 are implemented behind
 `PUSH_TUI_SILVERY`; the ANSI renderer remains the default.
 
 **Date:** 2026-07-11
 
 ## Problem
 
-Push's TUI is hand-rolled ANSI: an immediate-mode **document printer** (scrollback + input +
-status, per-entry cached via `tui-transcript-cache.ts` / `tui-stream-frame.ts`). The next
+Push's original TUI is hand-rolled ANSI: an immediate-mode **document printer** (scrollback +
+input + status). The next
 requirement — **real panes, modals, mouse, and rich layout** — is the textbook trigger for
 *retained mode*. You cannot cleanly bolt "draw a box over the middle, route a click to it,
 restore what's underneath" onto an immediate-mode printer: overlays need z-ordered
@@ -430,12 +430,19 @@ mobile in priority — the plan is committed, the calendar is not.
 - Acceptance = the Contracts above, re-run as the rubric (the spike stress scenes are the test
   bed) + visual parity with the current transcript-cache output.
 
-**Phase 2 — the retained-mode payoff (why we did this).**
-- Panes / modals / mouse hit-testing as first-class: command palette, diff/review cards, and any
-  real overlay route clicks through silvery's `hitTest` (scene-9-verified).
-- Retire the immediate-mode `tui-transcript-cache.ts` / `tui-stream-frame.ts` path once the
-  silvery surface is default; preserve `ScrollbackSurface`'s native-scrollback idea if `ListView`
-  cache-mode doesn't cover it.
+**Phase 2 — the retained-mode payoff (implemented 2026-07-12).**
+- Daemon transcript fidelity is authoritative: pushd reduces the persisted dialogue plus event
+  journal into one serializable transcript mirror, updates it from the same broadcasts clients
+  see, and exposes it through `get_session_snapshot`. Silvery adopts that mirror on attach,
+  before send, and after run completion while applying raw v2 broadcasts live. User text,
+  assistant streaming, tool calls/results, structured edit diffs, status, delegation, and review
+  rows therefore share one reducer instead of P1's local user/assistant echo.
+- Panes / modals / mouse hit-testing are first-class: command palette, approval/question overlays,
+  and expandable diff/review cards use Silvery `onClick`, so paint order and hit routing flow
+  through the compositor's `hitTest` path.
+- The immediate-mode `tui-transcript-cache.ts` / `tui-stream-frame.ts` modules and their parallel
+  cache lifecycle are removed. Silvery `ListView` virtual cache owns the retained transcript;
+  the transitional ANSI renderer frames directly until P3 deletes it.
 
 **Phase 3 — flip the default, delete the flag.**
 - `PUSH_TUI_SILVERY` goes default-on, then away; the ANSI printer is deleted. Confirm the shared
