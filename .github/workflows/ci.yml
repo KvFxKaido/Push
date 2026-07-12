@@ -196,10 +196,11 @@ jobs:
     name: Format, Typecheck, Test (cli)
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Runs from the repo root. Biome, tsx, TypeScript, and @types/node all
-    # live in the root devDependencies; the CLI itself has no external npm
-    # imports (verified by grep: only node built-ins and relative paths to
-    # cli/ and lib/), so `npm ci` at the root is the complete install.
+    # Runs from the repo root. Biome, tsx, TypeScript, and @types/node live in
+    # the root devDependencies; the CLI's runtime deps (silvery, react) are root
+    # dependencies — so `npm ci` at the root is the complete install. Node 24:
+    # silvery 0.21 ships `using` syntax that SyntaxErrors below Node 24 (the CLI
+    # floor, declared in root engines). App/mcp jobs stay on their own Node.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -207,7 +208,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -262,7 +263,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
@@ -282,7 +283,7 @@ jobs:
       # Config comes from ~/.push/config.json only.
       - name: Compile single binary
         run: |
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig cli/cli.ts --outfile push-smoke
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery cli/cli.ts --outfile push-smoke
           BIN=./push-smoke
           if [ "$RUNNER_OS" = "Windows" ]; then BIN=./push-smoke.exe; fi
           echo "BIN=$BIN" >> "$GITHUB_ENV"
@@ -315,9 +316,9 @@ jobs:
       - name: Cross-compile (windows-x64, darwin-arm64, linux-arm64)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
-          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-windows-x64.exe
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-darwin-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external silvery --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-linux-arm64
 
       # Binaries are ~100MB each; only keep them when someone asked for a
       # run by hand (workflow_dispatch), not on every PR.
@@ -361,7 +362,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: package-lock.json
 
