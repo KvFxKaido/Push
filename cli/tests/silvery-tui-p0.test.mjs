@@ -76,38 +76,56 @@ describe('silvery TUI launch routing', () => {
     explicitMaxRounds: true,
   };
 
-  it('routes the shared options to the sole silvery renderer', async () => {
-    const calls = [];
-    const logs = [];
-    const result = await launchTui(options, {
-      nodeMajor: 24,
-      log: (line) => logs.push(JSON.parse(line)),
-      loadSilvery: async () => ({
-        runTuiSilvery: async (received) => {
-          calls.push(['silvery', received]);
-          return 17;
-        },
-      }),
-    });
+  it('routes true/1 to silvery with the shared options and symmetric log', async () => {
+    for (const silveryFlag of ['true', '1']) {
+      const calls = [];
+      const logs = [];
+      const result = await launchTui(options, {
+        silveryFlag,
+        nodeMajor: 24,
+        log: (line) => logs.push(JSON.parse(line)),
+        loadSilvery: async () => ({
+          runTuiSilvery: async (received) => {
+            calls.push(['silvery', received]);
+            return 17;
+          },
+        }),
+        loadAnsi: async () => ({
+          runTUI: async (received) => {
+            calls.push(['ansi', received]);
+            return 18;
+          },
+        }),
+      });
 
-    assert.equal(result, 17);
-    assert.deepEqual(calls, [['silvery', options]]);
-    assert.deepEqual(logs, [{ level: 'info', event: 'tui_launch_silvery' }]);
+      assert.equal(result, 17);
+      assert.deepEqual(calls, [['silvery', options]]);
+      assert.deepEqual(logs, [{ level: 'info', event: 'tui_launch_silvery' }]);
+    }
   });
 
-  it('ignores the removed migration flag and still launches silvery', async () => {
-    const previous = process.env.PUSH_TUI_SILVERY;
-    process.env.PUSH_TUI_SILVERY = '0';
-    try {
+  it('keeps ANSI as the default and does not load silvery', async () => {
+    for (const silveryFlag of ['', '0', 'false', 'TRUE']) {
+      const calls = [];
+      const logs = [];
       const result = await launchTui(options, {
-        nodeMajor: 24,
-        log: () => undefined,
-        loadSilvery: async () => ({ runTuiSilvery: async () => 17 }),
+        silveryFlag,
+        log: (line) => logs.push(JSON.parse(line)),
+        loadSilvery: async () => {
+          calls.push(['silvery']);
+          return { runTuiSilvery: async () => 17 };
+        },
+        loadAnsi: async () => ({
+          runTUI: async (received) => {
+            calls.push(['ansi', received]);
+            return 18;
+          },
+        }),
       });
-      assert.equal(result, 17);
-    } finally {
-      if (previous === undefined) delete process.env.PUSH_TUI_SILVERY;
-      else process.env.PUSH_TUI_SILVERY = previous;
+
+      assert.equal(result, 18);
+      assert.deepEqual(calls, [['ansi', options]]);
+      assert.deepEqual(logs, [{ level: 'info', event: 'tui_launch_ansi' }]);
     }
   });
 
@@ -115,8 +133,8 @@ describe('silvery TUI launch routing', () => {
     let loaded = false;
     await assert.rejects(
       launchTui(options, {
+        silveryFlag: '1',
         nodeMajor: 22,
-        isBun: () => false,
         loadSilvery: async () => {
           loaded = true;
           return { runTuiSilvery: async () => 0 };
@@ -127,7 +145,7 @@ describe('silvery TUI launch routing', () => {
     assert.equal(loaded, false);
   });
 
-  it('bundles silvery into every single-binary compile command', async () => {
+  it('keeps silvery external in every single-binary compile command', async () => {
     const workflow = await readFile(
       path.resolve(import.meta.dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
       'utf8',
@@ -137,7 +155,7 @@ describe('silvery TUI launch routing', () => {
       .filter((line) => line.includes('bun build --compile') && line.includes('cli/cli.ts'));
 
     assert.equal(compileLines.length, 4, 'expected host compile plus three cross-compiles');
-    for (const line of compileLines) assert.doesNotMatch(line, /--external silvery/);
+    for (const line of compileLines) assert.match(line, /--external silvery/);
   });
 });
 
@@ -437,14 +455,21 @@ describe('silvery TUI Phase 1 chat surface', () => {
       mode: 'tui',
     };
     let turns = 0;
+    let savedConfig;
     const controller = await createSilveryController(
       { sessionId: state.sessionId },
       {
-        loadConfig: async () => ({ safeExecPatterns: [] }),
+        loadConfig: async () => ({ safeExecPatterns: [], ollama: { model: 'test-model' } }),
+        saveConfig: async (next) => {
+          savedConfig = next;
+          return '/tmp/push-config.json';
+        },
         useDaemon: false,
         initSession: async () => state,
         gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
         saveState: async () => undefined,
+        appendEvent: async () => undefined,
+        resolveKey: () => 'test-key',
         runTurn: async () => {
           turns++;
           return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
@@ -454,18 +479,26 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     await controller.submit('/help');
     await controller.submit('/session');
-    await controller.submit('/provider ollama');
+    await controller.submit('/session rename Renamed');
+    await controller.submit('/model test-model-2');
+    await controller.submit('/config');
 
     assert.equal(turns, 0);
-    assert.ok(controller.getSnapshot().rows.some((row) => /Commands available/.test(row.text)));
+    assert.ok(controller.getSnapshot().rows.some((row) => /^Commands:/.test(row.text)));
     assert.ok(
       controller.getSnapshot().rows.some((row) => /session: command-session/.test(row.text)),
     );
     assert.ok(
-      controller
-        .getSnapshot()
-        .rows.some((row) => /not ported to the retained TUI yet/.test(row.text)),
+      controller.getSnapshot().rows.some((row) => /Session renamed: "Renamed"/.test(row.text)),
     );
+    assert.equal(state.sessionName, 'Renamed');
+    assert.equal(state.model, 'test-model-2');
+    assert.equal(controller.getSnapshot().model, 'test-model-2');
+    assert.ok(
+      controller.getSnapshot().rows.some((row) => /Model switched to: test-model-2/.test(row.text)),
+    );
+    assert.ok(controller.getSnapshot().rows.some((row) => /provider: ollama/.test(row.text)));
+    assert.equal(savedConfig?.ollama?.model, 'test-model-2');
     await controller.dispose();
   });
 
@@ -1100,15 +1133,21 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await lifecycle;
   });
 
-  it('keeps silvery as the only full-screen renderer', async () => {
+  it('keeps the ANSI renderer as the untouched default after Phase 1 modules exist', async () => {
+    let silveryLoaded = false;
     const result = await launchTui(
-      { sessionId: 'silvery-default' },
+      { sessionId: 'ansi-regression' },
       {
-        nodeMajor: 24,
+        silveryFlag: undefined,
         log: () => undefined,
-        loadSilvery: async () => ({ runTuiSilvery: async () => 0 }),
+        loadSilvery: async () => {
+          silveryLoaded = true;
+          return { runTuiSilvery: async () => 1 };
+        },
+        loadAnsi: async () => ({ runTUI: async () => 0 }),
       },
     );
     assert.equal(result, 0);
+    assert.equal(silveryLoaded, false);
   });
 });
