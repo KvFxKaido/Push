@@ -11,11 +11,16 @@ import {
   type ProviderConfig,
 } from '../provider.js';
 import { initCliSession } from '../session-init.js';
-import { appendSessionEvent, saveSessionState, type SessionState } from '../session-store.js';
+import {
+  appendSessionEvent,
+  loadSessionState,
+  saveSessionState,
+  type SessionState,
+} from '../session-store.js';
 import { sessionMessagesToTranscriptRows } from '../tui-history.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
-import { TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
+import { EVENT_V2, TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
 import type { RunTuiOptions } from './entry.js';
 
 export type SilveryTranscriptRole = 'user' | 'assistant' | 'coder' | 'explorer' | 'status';
@@ -45,10 +50,12 @@ interface ControllerDeps {
   runTurn?: typeof runAssistantTurn;
   saveState?: typeof saveSessionState;
   appendEvent?: typeof appendSessionEvent;
+  loadState?: typeof loadSessionState;
   gitStatus?: typeof getCompactGitStatus;
   resolveKey?: (config: ProviderConfig) => string;
   now?: () => number;
   useDaemon?: boolean;
+  createDaemon?: typeof createDaemonSession;
 }
 
 export interface SilveryController {
@@ -82,6 +89,10 @@ function activityText(event: EngineEvent): string {
   }
   return tool;
 }
+
+const SILVERY_DAEMON_CAPABILITIES = TUI_DAEMON_CAPABILITIES.filter(
+  (capability) => capability !== EVENT_V2,
+);
 
 export async function createSilveryController(
   options: RunTuiOptions,
@@ -118,6 +129,7 @@ export async function createSilveryController(
   const now = deps.now ?? Date.now;
   let sequence = 0;
   let liveText = '';
+  let daemonDisplayRows: SilveryTranscriptItem[] = [];
   let activityRows: SilveryTranscriptItem[] = [];
   let running = false;
   let startedAt: number | null = null;
@@ -130,6 +142,7 @@ export async function createSilveryController(
   let daemonTurn = false;
   let daemonRunId: string | null = null;
   let resolveDaemonTurn: (() => void) | null = null;
+  let daemonStateStale = false;
   let gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
   const listeners = new Set<() => void>();
 
@@ -142,6 +155,7 @@ export async function createSilveryController(
   const buildSnapshot = (): SilverySnapshot => ({
     rows: [
       ...historyRows(),
+      ...daemonDisplayRows,
       ...activityRows,
       ...(liveText
         ? [{ id: 'assistant-live', role: 'assistant' as const, text: liveText, live: true }]
@@ -170,7 +184,10 @@ export async function createSilveryController(
         break;
       case 'assistant_done':
         if (daemonTurn && liveText) {
-          state.messages.push({ role: 'assistant', content: liveText });
+          daemonDisplayRows = [
+            ...daemonDisplayRows,
+            { id: nextId('daemon-assistant'), role: 'assistant', text: liveText },
+          ];
         }
         liveText = '';
         break;
@@ -207,7 +224,6 @@ export async function createSilveryController(
 
   async function ensurePersisted() {
     if (persisted) return;
-    persisted = true;
     await (deps.appendEvent ?? appendSessionEvent)(state, 'session_started', {
       sessionId: state.sessionId,
       state: 'idle',
@@ -215,60 +231,69 @@ export async function createSilveryController(
       provider: state.provider,
     });
     await (deps.saveState ?? saveSessionState)(state);
+    persisted = true;
   }
 
-  const daemon = createDaemonSession({
-    tryConnectTransport: (socketPath, timeoutMs) =>
-      tryConnect(socketPath, timeoutMs) as unknown as Promise<DaemonClientLike | null>,
-    note: (_kind, text) => {
-      activityRows = [...activityRows, { id: nextId('daemon'), role: 'status', text }];
-      notify();
+  const daemon = (deps.createDaemon ?? createDaemonSession)(
+    {
+      tryConnectTransport: (socketPath, timeoutMs) =>
+        tryConnect(socketPath, timeoutMs) as unknown as Promise<DaemonClientLike | null>,
+      note: (_kind, text) => {
+        activityRows = [...activityRows, { id: nextId('daemon'), role: 'status', text }];
+        notify();
+      },
+      markFooterDirty: () => {
+        daemonConnected = daemon.connected;
+        notify();
+      },
+      markAllDirty: notify,
+      onEngineEvent: (event) => {
+        if (typeof event.seq === 'number') daemon.noteSeenSeq(event.seq);
+        onEvent(event as EngineEvent);
+      },
+      onSocketClose: () => {
+        daemonConnected = false;
+        if (resolveDaemonTurn) {
+          error = 'Daemon disconnected before the turn completed.';
+          resolveDaemonTurn();
+          resolveDaemonTurn = null;
+        }
+        notify();
+        daemon.scheduleReconnect({ announce: true });
+      },
+      isAutoStartEnabled: () => false,
+      spawnDaemon: async () => ({
+        status: 'already-running',
+        ready: false,
+        socketPath: '',
+        logPath: '',
+      }),
+      onReusedDaemon: async () => undefined,
+      appendDaemonLogTail: async () => undefined,
+      getDurableSession: () => ({
+        persisted,
+        sessionId: persisted ? state.sessionId : null,
+        attachToken: typeof state.attachToken === 'string' ? state.attachToken : null,
+      }),
+      setDurableAttachToken: (token) => {
+        state.attachToken = token;
+        if (!daemonStateStale) void (deps.saveState ?? saveSessionState)(state);
+      },
+      getStartSessionPayload: () => ({
+        provider: state.provider,
+        model: state.model,
+        cwd: state.cwd,
+      }),
+      onAttached: (payload) => {
+        const attached = payload as { provider?: unknown; model?: unknown };
+        if (typeof attached.provider === 'string') state.provider = attached.provider;
+        if (typeof attached.model === 'string') state.model = attached.model;
+        notify();
+      },
+      invalidateReconnectAnimators: notify,
     },
-    markFooterDirty: () => {
-      daemonConnected = daemon.connected;
-      notify();
-    },
-    markAllDirty: notify,
-    onEngineEvent: (event) => {
-      if (typeof event.seq === 'number') daemon.noteSeenSeq(event.seq);
-      onEvent(event as EngineEvent);
-    },
-    onSocketClose: () => {
-      daemonConnected = false;
-      notify();
-      daemon.scheduleReconnect({ announce: true });
-    },
-    isAutoStartEnabled: () => false,
-    spawnDaemon: async () => ({
-      status: 'already-running',
-      ready: false,
-      socketPath: '',
-      logPath: '',
-    }),
-    onReusedDaemon: async () => undefined,
-    appendDaemonLogTail: async () => undefined,
-    getDurableSession: () => ({
-      persisted,
-      sessionId: persisted ? state.sessionId : null,
-      attachToken: typeof state.attachToken === 'string' ? state.attachToken : null,
-    }),
-    setDurableAttachToken: (token) => {
-      state.attachToken = token;
-      void (deps.saveState ?? saveSessionState)(state);
-    },
-    getStartSessionPayload: () => ({
-      provider: state.provider,
-      model: state.model,
-      cwd: state.cwd,
-    }),
-    onAttached: (payload) => {
-      const attached = payload as { provider?: unknown; model?: unknown };
-      if (typeof attached.provider === 'string') state.provider = attached.provider;
-      if (typeof attached.model === 'string') state.model = attached.model;
-      notify();
-    },
-    invalidateReconnectAnimators: notify,
-  });
+    SILVERY_DAEMON_CAPABILITIES,
+  );
   if (deps.useDaemon !== false) {
     daemonConnected = await daemon.ensureConnected({ announce: false });
     notify();
@@ -289,21 +314,18 @@ export async function createSilveryController(
       running = true;
       startedAt = now();
       notify();
-      await ensurePersisted();
-      await appendUserMessageWithFileReferences(
-        state as unknown as Parameters<typeof appendUserMessageWithFileReferences>[0],
-        text,
-        state.cwd,
-      );
-      await (deps.appendEvent ?? appendSessionEvent)(state, 'user_message', {
-        chars: text.length,
-        preview: text.slice(0, 280),
-      });
-      notify();
       abortController = new AbortController();
+      let saveLocalState = false;
       try {
+        await ensurePersisted();
         if (await daemon.ensureReady()) {
           daemonTurn = true;
+          daemonStateStale = true;
+          daemonDisplayRows = [
+            ...daemonDisplayRows,
+            { id: nextId('daemon-user'), role: 'user', text },
+          ];
+          notify();
           const completion = new Promise<void>((resolve) => {
             resolveDaemonTurn = resolve;
           });
@@ -313,7 +335,7 @@ export async function createSilveryController(
               sessionId: daemon.sessionId,
               text,
               attachToken: daemon.attachToken,
-              capabilities: [...TUI_DAEMON_CAPABILITIES],
+              capabilities: [...SILVERY_DAEMON_CAPABILITIES],
             },
             daemon.sessionId,
           );
@@ -321,6 +343,23 @@ export async function createSilveryController(
           await completion;
           return;
         }
+        if (daemonStateStale && persisted) {
+          const refreshed = await (deps.loadState ?? loadSessionState)(state.sessionId);
+          Object.assign(state, refreshed);
+          daemonDisplayRows = [];
+          daemonStateStale = false;
+        }
+        saveLocalState = true;
+        await appendUserMessageWithFileReferences(
+          state as unknown as Parameters<typeof appendUserMessageWithFileReferences>[0],
+          text,
+          state.cwd,
+        );
+        await (deps.appendEvent ?? appendSessionEvent)(state, 'user_message', {
+          chars: text.length,
+          preview: text.slice(0, 280),
+        });
+        notify();
         const turnProvider = PROVIDER_CONFIGS[state.provider] ?? activeProvider;
         const apiKey = (deps.resolveKey ?? resolveApiKey)(turnProvider);
         await (deps.runTurn ?? runAssistantTurn)(
@@ -378,8 +417,18 @@ export async function createSilveryController(
         startedAt = null;
         liveText = '';
         abortController = null;
-        await (deps.saveState ?? saveSessionState)(state);
-        gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
+        if (saveLocalState) {
+          try {
+            await (deps.saveState ?? saveSessionState)(state);
+          } catch (cause) {
+            error ??= cause instanceof Error ? cause.message : String(cause);
+          }
+        }
+        try {
+          gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
+        } catch (cause) {
+          error ??= cause instanceof Error ? cause.message : String(cause);
+        }
         notify();
       }
     },
@@ -400,6 +449,7 @@ export async function createSilveryController(
     },
     clearDisplay() {
       hiddenBefore = sessionMessagesToTranscriptRows(state.messages).length;
+      daemonDisplayRows = [];
       activityRows = [];
       liveText = '';
       notify();
@@ -408,7 +458,7 @@ export async function createSilveryController(
       disposed = true;
       abortController?.abort();
       daemon.teardown();
-      if (persisted) await (deps.saveState ?? saveSessionState)(state);
+      if (persisted && !daemonStateStale) await (deps.saveState ?? saveSessionState)(state);
       listeners.clear();
     },
   };

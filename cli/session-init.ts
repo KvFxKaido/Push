@@ -13,7 +13,7 @@ export async function initCliSession(
 ): Promise<SessionState> {
   if (sessionId) {
     const resumed = await loadSessionState(sessionId);
-    ensureRepoCommandsSeeded(resumed);
+    void ensureRepoCommandsSeeded(resumed);
     return resumed;
   }
 
@@ -37,7 +37,7 @@ export async function initCliSession(
     },
     sessionName: '',
   } as SessionState;
-  void ensureSystemPromptReady(state);
+  await ensureSystemPromptReady(state);
   void ensureRepoCommandsSeeded(state);
   return state;
 }
