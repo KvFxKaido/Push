@@ -53,6 +53,7 @@ import { createDaemonSession } from './tui-daemon-session.js';
 import { readPushdLogTail } from './tui-daemon-errors.js';
 import { isBunRuntime, resolvePushdEntryCandidate, pushdSpawnPlan } from './daemon-spawn-args.js';
 import { createDefaultTuiIo } from './tui-io.js';
+import { createTerminalHandoff, resolveEditorCommand } from './tui-handoff.js';
 import { FocusStack } from './tui-focus.js';
 import { formatUnknownEventWarning, shouldWarnAboutUnknownEvent } from './tui-daemon-handshake.js';
 import { getContextBudget, estimateContextTokens } from './context-manager.js';
@@ -2635,7 +2636,14 @@ export async function runTUI(options = {}) {
 
   // ── Render function ──────────────────────────────────────────────
 
+  // True while an external child owns the terminal (tui-handoff.ts). Daemon
+  // events keep mutating tuiState during a handoff (that's the catch-up:
+  // state is current the moment we resume), but a frame written to the alt
+  // screen mid-handoff would corrupt the child's output — so render gates.
+  let handoffSuspended = false;
+
   function render() {
+    if (handoffSuspended) return;
     const { rows, cols } = getTermSize();
 
     // Min terminal size guard
@@ -2874,6 +2882,96 @@ export async function runTUI(options = {}) {
   }
 
   scheduler = createRenderScheduler(render);
+
+  // ── Terminal handoff (suspend TUI for $EDITOR / pagers / interactive git) ──
+
+  // The suspend/resume ANSI mirrors the teardown/setup sequences above; the
+  // resume path additionally invalidates the damage baseline and repaints
+  // everything — the child owned the screen, so prevLines is garbage.
+  const terminalHandoff = createTerminalHandoff({
+    io,
+    suspendSequence: () =>
+      ESC.mouseOff +
+      ESC.altScrollOn +
+      ESC.bracketedPasteOff +
+      ESC.cursorShow +
+      ESC.altScreenOff +
+      ESC.reset,
+    resumeSequence: () =>
+      ESC.altScreenOn +
+      ESC.cursorHide +
+      ESC.clearScreen +
+      ESC.bracketedPasteOn +
+      ESC.altScrollOff +
+      (mouseMode === 'app' ? ESC.mouseOn : ESC.mouseOff),
+    onSuspend: () => {
+      handoffSuspended = true;
+    },
+    onResume: () => {
+      handoffSuspended = false;
+      screenBuf.invalidate();
+      layoutCache = null;
+      tuiState.dirty.add('all');
+      scheduler.flush();
+    },
+    // Headless harness injects a fake child; production spawns with
+    // inherited stdio.
+    runChild: deps.runHandoffChild,
+  });
+
+  /**
+   * `/editor`: compose the prompt in $EDITOR. Writes the composer text to a
+   * temp file, hands off the terminal, and on a clean exit replaces the
+   * composer content with the edited file.
+   */
+  async function handleEditorCommand() {
+    const { command, args } = resolveEditorCommand();
+    const os = await import('node:os');
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `push-editor-${process.pid}-${Date.now().toString(36)}.md`,
+    );
+    try {
+      await fs.writeFile(tmpFile, composer.getText(), { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addTranscriptEntry(tuiState, 'warning', `/editor: could not create temp file: ${msg}`);
+      scheduler.schedule();
+      return;
+    }
+    try {
+      const result = await terminalHandoff.run({ command, args: [...args, tmpFile] });
+      if (!result.ok) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `/editor: ${result.error ?? `editor exited via ${result.signal}`} (${command})`,
+        );
+        return;
+      }
+      if (result.exitCode !== 0) {
+        addTranscriptEntry(
+          tuiState,
+          'warning',
+          `/editor: ${command} exited ${result.exitCode}; composer left unchanged.`,
+        );
+        return;
+      }
+      const edited = await fs.readFile(tmpFile, 'utf8');
+      // Editors conventionally append a trailing newline on save; the composer
+      // treats it as a stray empty line, so trim exactly that.
+      composer.setText(edited.replace(/\r?\n$/, ''));
+      tuiState.dirty.add('composer');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      addTranscriptEntry(tuiState, 'warning', `/editor: ${msg}`);
+    } finally {
+      fs.unlink(tmpFile).catch(() => {
+        /* temp cleanup is best-effort */
+      });
+      scheduler.schedule();
+    }
+  }
 
   // ── Engine event handler ─────────────────────────────────────────
 
@@ -5927,6 +6025,10 @@ export async function runTUI(options = {}) {
         handleDebugCommand(arg || null);
         return true;
 
+      case 'editor':
+        await handleEditorCommand();
+        return true;
+
       case 'help':
         addTranscriptEntry(
           tuiState,
@@ -5959,6 +6061,7 @@ export async function runTUI(options = {}) {
             '  /spinner <name>      Pin a spinner (off|braille|orbit|breathe|pulse|helix)',
             '  /spinner unpin       Unpin: revert to static status dot',
             '  /debug runtime       Show runtime path/provider/session diagnostics',
+            '  /editor              Compose the prompt in $EDITOR (PUSH_EDITOR/VISUAL/EDITOR)',
             '  /skills              List available skills',
             '  /skills reload       Reload workspace + Claude skills',
             '  /skills lint         Report dropped/degraded skill files',

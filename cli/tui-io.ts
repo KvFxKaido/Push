@@ -20,8 +20,14 @@
  * injected separately via `options.deps`.
  */
 
-/** Process signals + the uncaught-exception channel the TUI wires for cleanup. */
-export type TuiProcessSignal = 'SIGTERM' | 'SIGHUP' | 'uncaughtException';
+/**
+ * Process signals + the uncaught-exception channel the TUI wires for cleanup.
+ * `SIGINT` is only registered transiently during terminal handoff
+ * (`tui-handoff.ts`): raw mode normally swallows Ctrl+C, but while an external
+ * child owns the cooked-mode terminal, SIGINT reaches the whole process group
+ * and the TUI must ignore it so only the child dies.
+ */
+export type TuiProcessSignal = 'SIGTERM' | 'SIGHUP' | 'SIGINT' | 'uncaughtException';
 
 /**
  * The minimal stdin surface the closure uses. Intentionally structural (not
@@ -51,8 +57,14 @@ export interface TuiStdout {
   removeListener: (event: string, listener: (...args: unknown[]) => void) => unknown;
 }
 
-/** stderr is write-only — the closure never wires events on it. */
+/**
+ * stderr is write-only — the closure never wires events on it. `isTTY` is
+ * exposed (structurally, matching the real `process.stderr`) so log emitters
+ * can tell a redirected/piped sink from the user's live terminal: a structured
+ * log line on an interactive stderr prints onto the screen, not into a log.
+ */
 export interface TuiWriteStream {
+  isTTY?: boolean;
   write: (chunk: string) => unknown;
 }
 
