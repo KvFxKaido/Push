@@ -314,6 +314,13 @@ export interface ScreenBuffer {
   clearRegion: (startRow: number, startCol: number, height: number, width: number) => void;
   flush: () => void;
   clear: () => void;
+  /**
+   * Drop the previous-frame baseline so the next flush re-emits every line.
+   * Required after terminal handoff (`tui-handoff.ts`): an external child
+   * owned the screen, so the damage-diff baseline no longer describes what
+   * the terminal shows.
+   */
+  invalidate: () => void;
 }
 
 type LineEntry = { row: number; col: number; text: string };
@@ -428,7 +435,11 @@ export function createScreenBuffer(
     ops = [];
   }
 
-  return { moveTo, write, writeLine, writeFullLine, clearRegion, flush, clear };
+  function invalidate(): void {
+    prevLines = new Map();
+  }
+
+  return { moveTo, write, writeLine, writeFullLine, clearRegion, flush, clear, invalidate };
 }
 
 // ── Render scheduler (throttled) ────────────────────────────────────

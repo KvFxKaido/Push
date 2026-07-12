@@ -53,7 +53,12 @@ function defaultConfig(provider) {
  * to make `request()` reject (the daemon-client contract: non-ok envelopes
  * REJECT with `err.code`).
  */
-export function createTuiHarness({ provider = 'zen', verbResponses = {}, config } = {}) {
+export function createTuiHarness({
+  provider = 'zen',
+  verbResponses = {},
+  config,
+  deps: extraDeps,
+} = {}) {
   const requests = [];
   const stdoutChunks = [];
   const stderrChunks = [];
@@ -133,6 +138,9 @@ export function createTuiHarness({ provider = 'zen', verbResponses = {}, config 
     loadConfig: async () => config ?? defaultConfig(provider),
     listSessions: async () => [],
     tryConnect: async () => stubClient,
+    // Test-specific injections (e.g. `runHandoffChild` for terminal-handoff
+    // tests) ride through to runTUI's deps seam.
+    ...(extraDeps ?? {}),
   };
 
   return {

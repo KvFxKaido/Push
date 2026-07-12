@@ -20,8 +20,14 @@
  * injected separately via `options.deps`.
  */
 
-/** Process signals + the uncaught-exception channel the TUI wires for cleanup. */
-export type TuiProcessSignal = 'SIGTERM' | 'SIGHUP' | 'uncaughtException';
+/**
+ * Process signals + the uncaught-exception channel the TUI wires for cleanup.
+ * `SIGINT` is only registered transiently during terminal handoff
+ * (`tui-handoff.ts`): raw mode normally swallows Ctrl+C, but while an external
+ * child owns the cooked-mode terminal, SIGINT reaches the whole process group
+ * and the TUI must ignore it so only the child dies.
+ */
+export type TuiProcessSignal = 'SIGTERM' | 'SIGHUP' | 'SIGINT' | 'uncaughtException';
 
 /**
  * The minimal stdin surface the closure uses. Intentionally structural (not
