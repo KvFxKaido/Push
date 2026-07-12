@@ -11,9 +11,23 @@
 //   (builds every scene's VNode tree headless; proves the view code, not the
 //   engine — the engine half is what your eyes are for.)
 
+import { execSync } from 'node:child_process';
 import { ui } from '@rezi-ui/core';
 import type { VNode } from '@rezi-ui/core';
 import { createNodeApp } from '@rezi-ui/node';
+
+// Build stamp in the header — settles "which code is actually running" at a
+// glance (there are multiple Push checkouts in the field, and a long-lived
+// stress process survives any number of git pulls).
+const BUILD = (() => {
+  try {
+    return execSync('git describe --always --dirty', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'no-git';
+  }
+})();
 
 type State = {
   scene: number;
@@ -270,11 +284,30 @@ const SCENES: Record<number, { title: string; render: (s: State) => VNode }> = {
 
 function rootView(s: State): VNode {
   const scene = SCENES[s.scene] ?? SCENES[1];
+  // Blankness is not a diagnostic. Construction-time throws are caught here;
+  // layout/paint-time throws inside the subtree are caught by the engine's
+  // errorBoundary. Either way the failure PAINTS instead of vanishing.
+  let body: VNode;
+  try {
+    body = ui.errorBoundary({
+      children: scene.render(s),
+      fallback: (err) =>
+        ui.box({ border: 'double', title: `scene ${s.scene} CRASHED (engine-caught)` }, [
+          ui.text(String((err as { message?: unknown })?.message ?? err)),
+          ui.text('screenshot this — it is the finding.'),
+        ]),
+    });
+  } catch (err) {
+    body = ui.box({ border: 'double', title: `scene ${s.scene} THREW at build` }, [
+      ui.text(err instanceof Error ? err.message : String(err)),
+      ui.text('screenshot this — it is the finding.'),
+    ]);
+  }
   return ui.page({
     p: 1,
     gap: 1,
-    header: ui.header({ title: `Rezi stress — ${scene.title}` }),
-    body: scene.render(s),
+    header: ui.header({ title: `Rezi stress [${BUILD}] — ${scene.title}` }),
+    body,
     footer: ui.statusBar({}, [
       ui.text(
         '1-9 scenes · t toggle · m modal · z zIndex · x child-order · q quit — score in STRESS.md',
