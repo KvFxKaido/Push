@@ -16,6 +16,7 @@ import {
   accentHexForTheme,
   breathingHex,
   countUserTurns,
+  createModalMotionState,
   densityMeter,
   diffLineColor,
   faultCopy,
@@ -23,6 +24,8 @@ import {
   formatTurnTimestamp,
   headerSegments,
   modeLabel,
+  modalFadeAmount,
+  reduceModalMotion,
   resolveGlyphs,
   shortenPath,
   streamMark,
@@ -100,6 +103,42 @@ describe('visual language v2 motion', () => {
     const pulse = breathingHex(99, 'attention', GLYPHS_UNICODE, false);
     assert.equal(pulse.glyph, '⬢');
     assert.equal(pulse.bright, true);
+  });
+
+  it('ramps modal backdrop fades over the shared three-tick window (law 9)', () => {
+    const target = 0.3;
+    let motion = createModalMotionState(false, 0, target, false);
+    motion = reduceModalMotion(motion, true, 0, target, false);
+    assert.equal(motion.phase, 'entering');
+    assert.equal(modalFadeAmount(motion, 0, target), 0);
+    assert.ok(Math.abs(modalFadeAmount(motion, 1, target) - 0.1) < 1e-12);
+    assert.ok(Math.abs(modalFadeAmount(motion, 2, target) - 0.2) < 1e-12);
+    motion = reduceModalMotion(motion, true, MOTION_TICKS.modalFade, target, false);
+    assert.equal(motion.phase, 'open');
+    assert.equal(modalFadeAmount(motion, MOTION_TICKS.modalFade, target), target);
+
+    motion = reduceModalMotion(motion, false, 3, target, false);
+    assert.equal(motion.phase, 'exiting');
+    assert.ok(Math.abs(modalFadeAmount(motion, 4, target) - 0.2) < 1e-12);
+    motion = reduceModalMotion(motion, false, 6, target, false);
+    assert.equal(motion.phase, 'closed');
+    assert.equal(modalFadeAmount(motion, 6, target), 0);
+  });
+
+  it('preserves fade continuity when a modal reverses and skips ramps under reduced motion', () => {
+    const target = 0.3;
+    let motion = createModalMotionState(false, 0, target, false);
+    motion = reduceModalMotion(motion, true, 0, target, false);
+    motion = reduceModalMotion(motion, false, 1, target, false);
+    const beforeReverse = modalFadeAmount(motion, 2, target);
+    motion = reduceModalMotion(motion, true, 2, target, false);
+    assert.equal(modalFadeAmount(motion, 2, target), beforeReverse);
+
+    motion = reduceModalMotion(motion, true, 9, target, true);
+    assert.equal(motion.phase, 'open');
+    assert.equal(modalFadeAmount(motion, 9, target), target);
+    motion = reduceModalMotion(motion, false, 9, target, true);
+    assert.equal(motion.phase, 'closed');
   });
 });
 

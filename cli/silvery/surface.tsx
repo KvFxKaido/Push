@@ -38,14 +38,18 @@ import {
   densityMeter,
   diffLineColor,
   footerKeybinds,
+  createModalMotionState,
   formatTurnTimestamp,
   MOTION_TICKS,
+  modalFadeAmount,
   modeLabel,
+  reduceModalMotion,
   resolveGlyphs,
   shortenPath,
   streamMark,
   VL_COLOR,
   type FooterScope,
+  type ModalMotionState,
   type StreamMarkKind,
 } from './visual-language.js';
 
@@ -98,6 +102,32 @@ function useSharedClock(active: boolean): number {
     return () => clearInterval(timer);
   }, [active]);
   return tick;
+}
+
+function useModalMotion(
+  open: boolean,
+  tick: number,
+  targetFade: number,
+  reducedMotion: boolean,
+  onAnimatingChange: (animating: boolean) => void,
+): { visible: boolean; interactive: boolean; fade: number; phase: ModalMotionState['phase'] } {
+  const [motion, setMotion] = useState(() =>
+    createModalMotionState(open, tick, targetFade, reducedMotion),
+  );
+
+  useEffect(() => {
+    setMotion((current) => reduceModalMotion(current, open, tick, targetFade, reducedMotion));
+  }, [open, reducedMotion, targetFade, tick]);
+
+  const animating = motion.phase === 'entering' || motion.phase === 'exiting';
+  useEffect(() => onAnimatingChange(animating), [animating, onAnimatingChange]);
+
+  return {
+    visible: reducedMotion ? open : open || motion.phase !== 'closed',
+    interactive: open && motion.phase !== 'exiting',
+    fade: modalFadeAmount(motion, tick, targetFade),
+    phase: motion.phase,
+  };
 }
 
 function DiffCard({ item }: { item: SilveryTranscriptItem }) {
@@ -216,28 +246,34 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
 }
 
 function InteractionModal({
-  snapshot,
+  interaction,
   controller,
   width,
+  fade,
+  active,
 }: {
-  snapshot: SilverySnapshot;
+  interaction: NonNullable<SilverySnapshot['interaction']>;
   controller: SilveryController;
   width: number;
+  fade: number;
+  active: boolean;
 }) {
-  const interaction = snapshot.interaction!;
   const [answer, setAnswer] = useState('');
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const respond = useCallback(
     (value: boolean | string) => controller.respondToInteraction(interaction.id, value),
     [controller, interaction.id],
   );
-  useInput((input, key) => {
-    if (key.escape) respond(interaction.kind === 'approval' ? false : '');
-    else if (interaction.kind === 'approval' && !key.ctrl && !key.meta) {
-      if (input.toLowerCase() === 'y') respond(true);
-      if (input.toLowerCase() === 'n') respond(false);
-    }
-  });
+  useInput(
+    (input, key) => {
+      if (key.escape) respond(interaction.kind === 'approval' ? false : '');
+      else if (interaction.kind === 'approval' && !key.ctrl && !key.meta) {
+        if (input.toLowerCase() === 'y') respond(true);
+        if (input.toLowerCase() === 'n') respond(false);
+      }
+    },
+    { isActive: active },
+  );
   const modalWidth = Math.max(40, Math.min(68, width - 4));
   return (
     <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
@@ -247,18 +283,18 @@ function InteractionModal({
         footer={
           interaction.kind === 'approval' ? footerKeybinds('approval') : footerKeybinds('question')
         }
-        fade={0.4}
+        fade={fade}
       >
         <Box flexDirection="column" gap={1}>
           <Text>{interaction.detail}</Text>
           {interaction.kind === 'approval' ? (
             <Box gap={2}>
-              <Box onClick={() => respond(true)}>
+              <Box onClick={active ? () => respond(true) : undefined}>
                 <Text bold color={VL_COLOR.accent}>
                   [ Approve ]
                 </Text>
               </Box>
-              <Box onClick={() => respond(false)}>
+              <Box onClick={active ? () => respond(false) : undefined}>
                 <Text bold color={VL_COLOR.fault}>
                   [ Deny ]
                 </Text>
@@ -273,7 +309,7 @@ function InteractionModal({
               minRows={1}
               maxRows={4}
               placeholder="type your answer…"
-              isActive
+              isActive={active}
             />
           )}
         </Box>
@@ -327,35 +363,42 @@ function Palette({
   onClose,
   onRun,
   width,
+  fade,
+  active,
 }: {
   onClose: () => void;
   onRun: (id: (typeof COMMANDS)[number]['id']) => void;
   width: number;
+  fade: number;
+  active: boolean;
 }) {
   const [selected, setSelected] = useState(0);
-  useInput((input, key) => {
-    const action = getListNavigationAction(
-      {
-        ch: input,
-        name: key.escape
-          ? 'escape'
-          : key.upArrow
-            ? 'up'
-            : key.downArrow
-              ? 'down'
-              : key.return
-                ? 'return'
-                : input,
-        ctrl: key.ctrl,
-        meta: key.meta,
-      },
-      { allowNumbers: false, allowVim: true },
-    );
-    if (action?.type === 'cancel') onClose();
-    else if (action?.type === 'move')
-      setSelected((value) => (value + action.delta + COMMANDS.length) % COMMANDS.length);
-    else if (action?.type === 'confirm') onRun(COMMANDS[selected]!.id);
-  });
+  useInput(
+    (input, key) => {
+      const action = getListNavigationAction(
+        {
+          ch: input,
+          name: key.escape
+            ? 'escape'
+            : key.upArrow
+              ? 'up'
+              : key.downArrow
+                ? 'down'
+                : key.return
+                  ? 'return'
+                  : input,
+          ctrl: key.ctrl,
+          meta: key.meta,
+        },
+        { allowNumbers: false, allowVim: true },
+      );
+      if (action?.type === 'cancel') onClose();
+      else if (action?.type === 'move')
+        setSelected((value) => (value + action.delta + COMMANDS.length) % COMMANDS.length);
+      else if (action?.type === 'confirm') onRun(COMMANDS[selected]!.id);
+    },
+    { isActive: active },
+  );
   const modalWidth = Math.max(36, Math.min(58, width - 4));
   return (
     <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
@@ -364,11 +407,11 @@ function Palette({
         width={modalWidth}
         footer={footerKeybinds('palette')}
         onClose={onClose}
-        fade={0.35}
+        fade={fade}
       >
         <Box flexDirection="column">
           {COMMANDS.map((command, index) => (
-            <Box key={command.id} onClick={() => onRun(command.id)}>
+            <Box key={command.id} onClick={active ? () => onRun(command.id) : undefined}>
               <Text
                 color={index === selected ? VL_COLOR.accent : undefined}
                 bold={index === selected}
@@ -387,15 +430,22 @@ function HeaderBar({
   snapshot,
   tick,
   columns,
+  attention,
+  freezeMotion,
 }: {
   snapshot: SilverySnapshot;
   tick: number;
   columns: number;
+  attention: boolean;
+  freezeMotion: boolean;
 }) {
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const reduced = isReducedMotion();
-  const phase = snapshot.running ? 'working' : 'idle';
-  const live = breathingHex(tick, phase, glyphs, reduced);
+  const phase = attention ? 'attention' : snapshot.running ? 'working' : 'idle';
+  const live =
+    freezeMotion && !attention
+      ? { glyph: glyphs.hexActive, bright: false }
+      : breathingHex(tick, phase, glyphs, reduced);
   const branch = snapshot.gitStatus?.branch || '—';
   const dirty =
     snapshot.gitStatus?.dirty && snapshot.gitStatus.dirty > 0
@@ -458,7 +508,15 @@ function FooterBar({
 
 export interface PushSurfaceHook {
   getState?: () => { paletteOpen: boolean; inputActive: boolean; rowCount: number };
+  getMotionState?: () => {
+    palettePhase: ModalMotionState['phase'];
+    paletteFade: number;
+    interactionPhase: ModalMotionState['phase'];
+    interactionFade: number;
+    attention: boolean;
+  };
   openPalette?: () => void;
+  closePalette?: () => void;
   submit?: (text: string) => Promise<void>;
 }
 
@@ -478,11 +536,36 @@ export function PushSurface({
   const { columns, rows } = useTerminalSize();
   const { exit } = useApp();
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const paletteOpenRef = useRef(false);
-  paletteOpenRef.current = paletteOpen;
   const [input, setInput] = useState('');
+  const [paletteAnimating, setPaletteAnimating] = useState(false);
+  const [interactionAnimating, setInteractionAnimating] = useState(false);
+  const reducedMotion = isReducedMotion();
   // One shared clock for all motion (law 8). Idle freezes (law 6 / 8).
-  const tick = useSharedClock(snapshot.running);
+  const tick = useSharedClock(snapshot.running || paletteAnimating || interactionAnimating);
+  const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
+  const interactionMotion = useModalMotion(
+    Boolean(snapshot.interaction),
+    tick,
+    0.4,
+    reducedMotion,
+    setInteractionAnimating,
+  );
+  const retainedInteraction = useRef(snapshot.interaction);
+  if (snapshot.interaction) retainedInteraction.current = snapshot.interaction;
+  const paletteOpenRef = useRef(false);
+  paletteOpenRef.current = paletteMotion.visible;
+  const interactionOpenRef = useRef(false);
+  interactionOpenRef.current = interactionMotion.visible;
+  const lastAttentionInteractionId = useRef<string | null>(null);
+  const [attentionTick, setAttentionTick] = useState<number | null>(null);
+  useEffect(() => {
+    const interaction = snapshot.interaction;
+    if (interaction?.kind === 'approval' && interaction.id !== lastAttentionInteractionId.current) {
+      lastAttentionInteractionId.current = interaction.id;
+      setAttentionTick(tick);
+    }
+  }, [snapshot.interaction, tick]);
+  const attention = !reducedMotion && attentionTick !== null && tick - attentionTick < 1;
 
   const submit = useCallback(
     async (text: string) => {
@@ -506,8 +589,6 @@ export function PushSurface({
     [controller, exit],
   );
 
-  const interactionOpenRef = useRef(false);
-  interactionOpenRef.current = Boolean(snapshot.interaction);
   const focusStack = useMemo(
     () =>
       new FocusStack()
@@ -531,7 +612,7 @@ export function PushSurface({
   // local, and expose the same value through the hook so test/introspection
   // state matches what the TextArea actually does.
   const inputActive =
-    focusStack.activeScope() === null && !snapshot.running && !snapshot.interaction;
+    focusStack.activeScope() === null && !snapshot.running && !interactionMotion.visible;
   const completer = useMemo(
     () =>
       createTabCompleter({
@@ -553,40 +634,60 @@ export function PushSurface({
       if (!paletteOpen && !snapshot.interaction && key.ctrl && inputKey === 'k')
         setPaletteOpen(true);
     },
-    { isActive: !paletteOpen && !snapshot.interaction },
+    { isActive: !paletteMotion.visible && !interactionMotion.visible },
   );
 
   useEffect(() => {
     if (!hook) return;
     hook.getState = () => ({
-      paletteOpen,
+      paletteOpen: paletteMotion.visible,
       inputActive,
       rowCount: snapshot.rows.length,
     });
+    hook.getMotionState = () => ({
+      palettePhase: paletteMotion.phase,
+      paletteFade: paletteMotion.fade,
+      interactionPhase: interactionMotion.phase,
+      interactionFade: interactionMotion.fade,
+      attention,
+    });
     hook.openPalette = () => setPaletteOpen(true);
+    hook.closePalette = () => setPaletteOpen(false);
     hook.submit = submit;
   });
 
   // Frame chrome = header + composer rule + footer + optional error line ≈ 4–5 rows.
   const transcriptHeight = Math.max(3, rows - 6);
-  const elapsed =
-    snapshot.startedAt === null ? '' : ` · ${formatElapsed(Date.now() - snapshot.startedAt)}`;
+  const elapsedMs =
+    snapshot.startedAt === null
+      ? 0
+      : Math.floor((Date.now() - snapshot.startedAt) / MOTION_TICKS.elapsedMs) *
+        MOTION_TICKS.elapsedMs;
+  const elapsed = snapshot.startedAt === null ? '' : ` · ${formatElapsed(elapsedMs)}`;
 
   let scope: FooterScope = 'composer';
-  if (snapshot.interaction?.kind === 'approval') scope = 'approval';
-  else if (snapshot.interaction?.kind === 'question') scope = 'question';
-  else if (paletteOpen) scope = 'palette';
+  if (retainedInteraction.current?.kind === 'approval' && interactionMotion.visible)
+    scope = 'approval';
+  else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
+    scope = 'question';
+  else if (paletteMotion.visible) scope = 'palette';
   else if (snapshot.running) scope = 'running';
 
   return (
     <PushThemeProvider themeName={snapshot.theme}>
       <Screen flexDirection="column">
-        <HeaderBar snapshot={snapshot} tick={tick} columns={columns} />
+        <HeaderBar
+          snapshot={snapshot}
+          tick={tick}
+          columns={columns}
+          attention={attention}
+          freezeMotion={paletteMotion.visible || interactionMotion.visible}
+        />
         <Transcript
           snapshot={snapshot}
           width={columns}
           height={transcriptHeight}
-          active={!paletteOpen && !snapshot.interaction}
+          active={!paletteMotion.visible && !interactionMotion.visible}
         />
         {snapshot.error ? (
           <Text color={VL_COLOR.fault} bold>
@@ -609,10 +710,22 @@ export function PushSurface({
         />
         {completer.getHint() ? <Text color={VL_COLOR.muted}>{completer.getHint()}</Text> : null}
         <FooterBar snapshot={snapshot} scope={scope} columns={columns} elapsed={elapsed} />
-        {snapshot.interaction ? (
-          <InteractionModal snapshot={snapshot} controller={controller} width={columns} />
-        ) : paletteOpen ? (
-          <Palette width={columns} onClose={() => setPaletteOpen(false)} onRun={runCommand} />
+        {interactionMotion.visible && retainedInteraction.current ? (
+          <InteractionModal
+            interaction={retainedInteraction.current}
+            controller={controller}
+            width={columns}
+            fade={interactionMotion.fade}
+            active={interactionMotion.interactive}
+          />
+        ) : paletteMotion.visible ? (
+          <Palette
+            width={columns}
+            fade={paletteMotion.fade}
+            active={paletteMotion.interactive}
+            onClose={() => setPaletteOpen(false)}
+            onRun={runCommand}
+          />
         ) : null}
       </Screen>
     </PushThemeProvider>

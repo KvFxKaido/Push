@@ -1464,6 +1464,18 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await sleep(120);
     assert.match(stdout.bytes, /Command Palette/);
     assert.deepEqual(hook.getState(), { paletteOpen: true, inputActive: false, rowCount: 16 });
+    assert.equal(hook.getMotionState().palettePhase, 'entering');
+    await sleep(520);
+    assert.equal(hook.getMotionState().palettePhase, 'open');
+    assert.equal(hook.getMotionState().paletteFade, 0.35);
+
+    hook.closePalette();
+    await sleep(30);
+    assert.equal(hook.getMotionState().palettePhase, 'exiting');
+    assert.equal(hook.getState().inputActive, false);
+    await sleep(520);
+    assert.equal(hook.getMotionState().palettePhase, 'closed');
+    assert.deepEqual(hook.getState(), { paletteOpen: false, inputActive: true, rowCount: 16 });
 
     instance.unmount();
     await lifecycle;
@@ -1513,11 +1525,14 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
     const lifecycle = handle.run();
     const instance = await handle;
-    await sleep(150);
+    await sleep(50);
 
     // Modal is painted, and the composer is reported inactive by the hook —
     // the single source of truth the TextArea's isActive prop reads.
     assert.equal(hook.getState().inputActive, false);
+    assert.equal(hook.getMotionState().attention, true);
+    await sleep(180);
+    assert.equal(hook.getMotionState().attention, false);
 
     instance.unmount();
     await lifecycle;
