@@ -129,7 +129,19 @@ its requirement** (render a transcript) and does not bind this one.
 > + capability probing; overlay-scoped mouse reporting (enabled only while a fullscreen
 > overlay is up). Fault posture is compatible with this repo's doctrine — ~2 `try` blocks
 > in the 4k-line core, the one bare catch scoped and commented (faults propagate loudly;
-> inference, not exhaustively traced).
+> inference, not exhaustively traced). **Upstream check, same day:** the fork verdict does
+> **not** transfer to regular pi (`badlogic/pi-mono` `packages/tui`) — upstream is
+> Node-native (`engines: node>=22.19`, compiled `dist`, deps = `get-east-asian-width` +
+> `marked` only; no Bun APIs, no Rust natives, ~7.4k lines). It is ruled out on the shared
+> architectural ground alone: same line-based `render(width): string[]` model, **no mouse
+> at all** (only escape recognition in `stdin-buffer.ts`), and none of the fork's
+> append-only commit ledger — the scrollback war journal is fork-added. If the line-based
+> lane is ever re-scored, upstream is the chassis to evaluate, not the fork. Two upstream
+> steals: the pure-JS width model (`Intl.Segmenter` graphemes + `get-east-asian-width`) as
+> the Node-native `CellWidth` measurement reference, and `test/virtual-terminal.ts` —
+> differential-render assertions against **`@xterm/headless`** — the pattern that makes
+> the stress rubric's raster cases (ZWJ misalignment class) CI-testable instead of
+> human-scored; adopt for the build's own regression suite.
 >
 > Late addition, source-read 2026-07-12: **Storm** (`orchetron/storm`, v0.2.0, 43 commits,
 > ~385 stars) — the closest paper-match yet to this doc's substrate (pure-TS cell
@@ -152,6 +164,25 @@ its requirement** (render a transcript) and does not bind this one.
 > and **DECSTBM scroll-region-assisted diffing** (hardware-scroll unchanged content,
 > repaint only the seam, with an honest comment about when the optimization is invalid).
 > Sixth independent convergence on cell buffer + damage diff.
+>
+> Late addition, source-read 2026-07-12 (agent-assisted): **T9** (the custom renderer inside
+> `huiliyi37/Tianshu-Tui`, a coding-agent runtime; ~25k lines under `src/tui/`). Ruled out
+> on architecture without controversy — line-based `string[]` rows with wrap-aware row
+> diffing, **no mouse at all** (source comment says so verbatim), no cells — and its README
+> honestly claims none of that, a first for this survey. Same normal-screen append-only
+> scrollback philosophy as pi-tui (alt-screen 1049 reserved for overlays; "content entering
+> scrollback may not be erased or redrawn" as a stated invariant) but without the fork's
+> commit-audit machinery. One real seam: input cursor steps by `Intl.Segmenter` grapheme
+> while width reasons per-codepoint via `string-width` — the models disagree. Fault posture
+> weak: flush-path errors swallowed to stderr, dozens of direct `renderLive()` call sites
+> propagate uncaught, no crash-time terminal restore. **Three steals for the current
+> renderer, pre-compositor:** (1) **fixed-height dynamic viewport** — pad/truncate the
+> streaming region to an exact display-row budget so the input box never jitters vertically
+> mid-stream (`padDynamicRegion`); (2) **CSI 2026 synchronized-output** around every flush —
+> tear-free frames, silently ignored where unsupported; (3) **resize reflow reconciliation**
+> — recompute previous-frame row heights at the *new* width before relative cursor-up, so
+> old-frame fragments don't leak into scrollback (check `cli/tui-renderer.ts` for this bug
+> class), plus diff-disable for one frame after resize.
 
 ## Decision
 
