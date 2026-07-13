@@ -10,15 +10,18 @@ Push collapses the mobile dev stack — GitHub, terminal, CI, code, and AI — i
 
 ### Web app + Worker
 
+The repo is a **pnpm workspace** — one `pnpm install` at the root installs root + `app/` + `mcp/github-server` from a single `pnpm-lock.yaml`. There is no separate per-package install.
+
 ```bash
-cd app && npm install && npm run dev      # Vite on :5173, /api/* proxies to :8787
-npx wrangler dev --port 8787              # in a second terminal, from repo root
+pnpm install                              # once, from the repo root — covers all three packages
+pnpm --filter my-app run dev              # Vite on :5173, /api/* proxies to :8787
+pnpm dlx wrangler dev --port 8787         # in a second terminal, from repo root
 ```
 
 ### CLI
 
 ```bash
-npm install
+pnpm install
 ./push config init        # interactive provider/model/key setup → ~/.push/config.json (chmod 0600)
 ./push                    # full-screen TUI today; PUSH_TUI_ENABLED=0 ./push for transcript REPL
 ./push run --task "..."   # headless single-task mode
@@ -27,7 +30,7 @@ npm install
 ### Android (experimental, debug-only)
 
 ```bash
-cd app && npm run android:sync && cd android && ./gradlew installDebug
+cd app && pnpm run android:sync && cd android && ./gradlew installDebug
 ```
 
 `app/android/` is **committed source** (it carries native customization — the `capacitor-native-git` JGit plugin wiring, core-library desugaring, the proguard fix). Build outputs and the regenerated web bundle are ignored by `app/android/.gitignore`. `cap sync` updates web assets + plugin registration; don't regenerate via `cap add android`.
@@ -38,24 +41,24 @@ cd app && npm run android:sync && cd android && ./gradlew installDebug
 
 ```bash
 # test:
-TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
+TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm run test:cli && pnpm run test:mcp:github
 # typecheck:
-npm run typecheck:all
+pnpm run typecheck:all
 # check:
-npm run typecheck:all
+pnpm run typecheck:all
 ```
 
 Per-surface:
 
 | Surface | Lint | Typecheck | Test | Build |
 |---|---|---|---|---|
-| Root (CLI + MCP wiring) | `npm run lint` (delegates to app ESLint) / `npm run format:check` (Biome format) | `npm run typecheck:all` | `npm run test:cli` | `npm run build:cli` |
-| `app/` | `npm run lint` (ESLint) | `npm run typecheck` | `npm test` (vitest) / `npm run test:watch` | `npm run build` |
-| `mcp/github-server/` | — | `npm run typecheck` | `npm test` | `npm run build` |
+| Root (CLI + MCP wiring) | `pnpm run lint` (delegates to app ESLint) / `pnpm run format:check` (Biome format) | `pnpm run typecheck:all` | `pnpm run test:cli` | `pnpm run build:cli` |
+| `app/` | `pnpm run lint` (ESLint) | `pnpm run typecheck` | `pnpm test` (vitest) / `pnpm run test:watch` | `pnpm run build` |
+| `mcp/github-server/` | — | `pnpm run typecheck` | `pnpm test` | `pnpm run build` |
 
-Run a single CLI test with `node --import tsx --import ./cli/tests/setup-test-home-isolation.mjs --test cli/tests/<name>.test.mjs`. The isolation import is not optional: `npm run test:cli` supplies it globally via `--import`, but a standalone invocation without it writes real session/memory state into `~/.push` (some test files, e.g. `daemon-integration.test.mjs`, also self-import it as a backstop — but don't rely on that for files that don't). Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
+Run a single CLI test with `node --import tsx --import ./cli/tests/setup-test-home-isolation.mjs --test cli/tests/<name>.test.mjs`. The isolation import is not optional: `pnpm run test:cli` supplies it globally via `--import`, but a standalone invocation without it writes real session/memory state into `~/.push` (some test files, e.g. `daemon-integration.test.mjs`, also self-import it as a backstop — but don't rely on that for files that don't). Run a single app test with `cd app && npx vitest run path/to/file.test.ts`.
 
-The TypeScript toolchain **typechecks with TS 7.0 GA (`7.0.2`) everywhere**, but the `app/` is still split by package because of ESLint. **`cli/` and `mcp/github-server` run `typescript@~7.0.2`** — both typecheck *and* emit (`build:cli`, MCP `build`) go through the native `tsc`. (`cli/` has no `package.json`; it compiles with the **root's** `typescript`.) **`app/` typechecks with the same GA `typescript@7.0.2`, installed under an alias** (`typescript-go: npm:typescript@~7.0.2`) and invoked as `node node_modules/typescript-go/lib/tsc.js`, while keeping **TS 6 (`typescript@^6.0.3`) for ESLint**. It can't collapse to a single `typescript@7` yet because TS 7.0 GA ships **no** programmatic API and `typescript-eslint` still hard-caps its `typescript` peer at `<6.1.0` (tracked upstream at [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940); blocked on the stable API in TS 7.1 **and** ESLint async-parser support — months out). The alias exists to dodge a `.bin/tsc` collision: GA `typescript@7` and the TS 6 copy both expose a `tsc` bin, so the app invokes GA's compiler by explicit path (`node …/lib/tsc.js`) instead of via `.bin`. The app's `overrides: { "typescript": "$typescript" }` pins TS 6 transitively but does **not** touch the alias — npm keys overrides by the `typescript-go` dependency name, not the resolved package (verified: `typescript-go` resolves to `7.0.2`). When typescript-eslint supports TS 7, the app collapses the alias into a single `typescript@7` and the split goes away. App emit is `vite build` (esbuild/rollup); `tsc` only typechecks. `npm run typecheck:all` runs everything (cli/mcp via `tsc`, app via the aliased `tsc`). Fallback if the alias's native binary is missing (`--no-optional`, unsupported platform): from the repo root, typecheck the app with the root's GA compiler — `node node_modules/typescript/lib/tsc.js --noEmit -p app/tsconfig.app.json` (and `app/tsconfig.node.json`).
+The TypeScript toolchain **typechecks with TS 7.0 GA (`7.0.2`) everywhere**, but the `app/` is still split by package because of ESLint. **`cli/` and `mcp/github-server` run `typescript@~7.0.2`** — both typecheck *and* emit (`build:cli`, MCP `build`) go through the native `tsc`. (`cli/` has no `package.json`; it compiles with the **root's** `typescript`.) **`app/` typechecks with the same GA `typescript@7.0.2`, installed under an alias** (`typescript-go: npm:typescript@~7.0.2`) and invoked as `node node_modules/typescript-go/lib/tsc.js`, while keeping **TS 6 (`typescript@^6.0.3`) for ESLint**. It can't collapse to a single `typescript@7` yet because TS 7.0 GA ships **no** programmatic API and `typescript-eslint` still hard-caps its `typescript` peer at `<6.1.0` (tracked upstream at [typescript-eslint#10940](https://github.com/typescript-eslint/typescript-eslint/issues/10940); blocked on the stable API in TS 7.1 **and** ESLint async-parser support — months out). The alias exists to dodge a `.bin/tsc` collision: GA `typescript@7` and the TS 6 copy both expose a `tsc` bin, so the app invokes GA's compiler by explicit path (`node …/lib/tsc.js`) instead of via `.bin`. Under pnpm the dual-major split needs **no override at all**: pnpm resolves per importer rather than hoisting into one flat tree, so `app/` sees its own `typescript@^6.0.3` while root and `mcp/` see `typescript@~7.0.2`, and the `typescript-go` alias still resolves to `7.0.2` (verified). npm needed an `overrides: { "typescript": "$typescript" }` in `app/package.json` purely to fight its own hoisting; that hack is gone. **Do not add a global `typescript` override to `pnpm-workspace.yaml`** — workspace overrides are root-global and would drag root/cli/mcp down to TS 6, breaking `build:cli` and the MCP build. When typescript-eslint supports TS 7, the app collapses the alias into a single `typescript@7` and the split goes away. App emit is `vite build` (esbuild/rollup); `tsc` only typechecks. `pnpm run typecheck:all` runs everything (cli/mcp via `tsc`, app via the aliased `tsc`). Fallback if the alias's native binary is missing (`--no-optional`, unsupported platform): from the repo root, typecheck the app with the root's GA compiler — `node node_modules/typescript/lib/tsc.js --noEmit -p app/tsconfig.app.json` (and `app/tsconfig.node.json`).
 
 Biome formats the entire monorepo from the root config (`biome.json`); the linter is intentionally disabled there — ESLint runs only inside `app/`. Biome ignores `app/src/components/ui/**`, `sandbox/**`, and the standard build artifacts.
 

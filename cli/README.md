@@ -13,7 +13,7 @@ Local coding agent for your terminal. Push ships three terminal surfaces: an int
 
 ```bash
 # From repo root
-npm install
+pnpm install
 ./push config init
 PUSH_TUI_ENABLED=0 ./push
 ./push tui
@@ -73,7 +73,7 @@ Bun executes TypeScript natively, so the interpreter path works without the
 tsx loader:
 
 ```bash
-npm run dev:cli:bun            # bun --no-env-file cli/cli.ts — same surface as dev:cli
+pnpm run dev:cli:bun            # bun --no-env-file cli/cli.ts — same surface as dev:cli
 ```
 
 `--no-env-file` keeps this path symmetric with the Node dev script and the
@@ -83,7 +83,7 @@ from cwd into `process.env` ahead of `applyConfigToEnv()` and the env scrub.
 runs in the trusted Push checkout, not an arbitrary user repo — the
 distributed-binary threat model the compile flags address does not apply here.)
 
-Node (`npm run dev:cli`) remains the canonical dev path, and **tests stay on
+Node (`pnpm run dev:cli`) remains the canonical dev path, and **tests stay on
 `node --test`**: Bun's `node:test` shim can't run this suite yet
 (`describe()` support, [oven-sh/bun#5090](https://github.com/oven-sh/bun/issues/5090)
 — 137 of 824 tests fail under `bun test` as of Bun 1.3.11). Because tests run
@@ -114,7 +114,7 @@ Set `PUSH_TUI_ENABLED=0` in your shell to make the REPL the default for every in
 ./push tui
 ```
 
-Bare `./push` and `./push --session` open the full-screen TUI by default. The default lives in `cli/cli.ts` now, so direct `node cli/cli.ts` and `npm run`-style invocations get the same UX as `./push`. Set `PUSH_TUI_ENABLED=0` (or `false`) to opt back to the transcript REPL. Transcript-first REPL flows remain a fully supported alternative for users who prefer them.
+Bare `./push` and `./push --session` open the full-screen TUI by default. The default lives in `cli/cli.ts` now, so direct `node cli/cli.ts` and `pnpm run`-style invocations get the same UX as `./push`. Set `PUSH_TUI_ENABLED=0` (or `false`) to opt back to the transcript REPL. Transcript-first REPL flows remain a fully supported alternative for users who prefer them.
 
 Shared in-session commands:
 
@@ -148,7 +148,7 @@ Skill discovery:
 ```bash
 ./push run --task "Add error handling to src/parser.ts"
 ./push run "Fix the failing test in utils.test.js"
-./push run --task "Refactor auth module" --accept "npm test" --accept "npm run lint" --json
+./push run --task "Refactor auth module" --accept "pnpm test" --accept "pnpm run lint" --json
 ```
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
@@ -168,7 +168,7 @@ When `--accept` is present, Push also frames the task using the shared delegatio
   "assistant": "Done. Added try/catch blocks...",
   "acceptance": {
     "passed": true,
-    "checks": [{ "command": "npm test", "ok": true, "exitCode": 0, "durationMs": 3200 }]
+    "checks": [{ "command": "pnpm test", "ok": true, "exitCode": 0, "durationMs": 3200 }]
   }
 }
 ```
@@ -230,7 +230,7 @@ Two arrays in `~/.push/config.json` shape what tools the agent can run:
 {
   "disabledTools": ["exec", "exec_start"],
   "alwaysAllow": ["exec"],
-  "safeExecPatterns": ["npm test", "git status"]
+  "safeExecPatterns": ["pnpm test", "git status"]
 }
 ```
 

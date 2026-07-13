@@ -758,52 +758,65 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         }
       }
 
-      // Pre-populate /workspace/{,app/}node_modules from the image-baked
-      // cache via hardlink copy. Dockerfile.sandbox stages root and app
-      // deps at /opt/push-cache/{,app}/node_modules during build; `cp -al`
-      // creates new directory entries that share inodes with the cache,
-      // so a fresh sandbox gets instant access to deps without paying the
-      // ~100s cold `npm install` wall-clock — the heavy FS write that was
-      // the primary trigger for the stalls patched by #374/#375.
+      // Pre-populate /workspace/**/node_modules from the image-baked cache via
+      // hardlink copy. Dockerfile.sandbox stages the whole pnpm workspace
+      // (root + app + mcp/github-server) at /opt/push-cache during build;
+      // `cp -al` creates new directory entries that share inodes with the
+      // cache, so a fresh sandbox gets instant access to deps without paying
+      // the ~100s cold-install wall-clock — the heavy FS write that was the
+      // primary trigger for the stalls patched by #374/#375.
       //
       // Write-isolated by construction: a later `rm -rf node_modules` or
-      // `npm install <pkg>` in the sandbox writes to new inodes on the
-      // workspace side; the baked cache's inodes are untouched, so
-      // concurrent sandboxes never stomp each other.
+      // `pnpm add <pkg>` in the sandbox writes to new inodes on the workspace
+      // side; the baked cache's inodes are untouched, so concurrent sandboxes
+      // never stomp each other.
       //
-      // Gated on a byte-exact lockfile match (`cmp -s`) between the baked
-      // cache and the cloned repo. Any mismatch — different project, or
-      // Push itself on a branch whose deps have shifted from the image —
-      // falls through and lets downstream flows run `npm install` against
-      // the correct lockfile. Critical because `handleCheckTypes` in
-      // `sandbox-verification-handlers.ts` uses `node_modules` existence
-      // as its "install already ran" signal; populating with mismatched
-      // deps would silently regress typecheck results.
+      // Gated on a byte-exact `pnpm-lock.yaml` match (`cmp -s`) between the
+      // baked cache and the cloned repo. One lockfile now governs all three
+      // packages (npm needed one per manifest). Any mismatch — different
+      // project, or Push itself on a branch whose deps have shifted from the
+      // image — falls through and lets downstream flows install against the
+      // correct lockfile. Critical because `handleCheckTypes` in
+      // `sandbox-verification-handlers.ts` uses `node_modules` existence as its
+      // "install already ran" signal; populating with mismatched deps would
+      // silently regress typecheck results.
+      //
+      // All-or-nothing by construction: pnpm's per-package node_modules are
+      // symlinks into the ROOT .pnpm virtual store via *relative* paths
+      // (`../../node_modules/.pnpm/...`). Copying app/ or mcp/ without the root
+      // would leave every one of those links dangling, so the per-package
+      // copies are nested inside the root's success branch and the cleanup
+      // arm removes all three together.
       //
       // Wrapped in `timeout 30` because wrangler's local container runtime
       // has been observed to silently wedge `cp -al` across overlay layers
       // (prod CF infra is unaffected). Without the bound, the copy would
       // burn the full 150s/300s `withExecDeadline` budget and 504 the whole
       // create. On timeout (shell exit 124), the `|| { ... }` branch cleans
-      // up any partial node_modules directory so the cold `npm install`
-      // that runs downstream (e.g. typecheck verification) sees a clean
-      // slate and not a half-populated tree. Final `true` keeps the overall
-      // exit status 0 — the cache is an optimization, never a correctness
-      // dependency.
+      // up any partial node_modules directory so the cold install that runs
+      // downstream (e.g. typecheck verification) sees a clean slate and not a
+      // half-populated tree. Final `true` keeps the overall exit status 0 —
+      // the cache is an optimization, never a correctness dependency.
       await time('cache_populate', () =>
         withExecDeadline(
           sandbox.exec(
             "timeout -k 5 30 bash -c '" +
               'src=/opt/push-cache; ' +
-              'if [ -f "$src/package-lock.json" ] && ' +
-              'cmp -s "$src/package-lock.json" /workspace/package-lock.json 2>/dev/null && ' +
+              'if [ -f "$src/pnpm-lock.yaml" ] && ' +
+              'cmp -s "$src/pnpm-lock.yaml" /workspace/pnpm-lock.yaml 2>/dev/null && ' +
               '[ -d "$src/node_modules" ] && [ ! -e /workspace/node_modules ]; then ' +
-              'cp -al "$src/node_modules" /workspace/node_modules; fi; ' +
-              'if [ -f "$src/app/package-lock.json" ] && [ -d /workspace/app ] && ' +
-              'cmp -s "$src/app/package-lock.json" /workspace/app/package-lock.json 2>/dev/null && ' +
-              '[ -d "$src/app/node_modules" ] && [ ! -e /workspace/app/node_modules ]; then ' +
-              'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi' +
-              "' || { rm -rf /workspace/node_modules /workspace/app/node_modules 2>/dev/null; true; }",
+              'cp -al "$src/node_modules" /workspace/node_modules; ' +
+              'if [ -d "$src/app/node_modules" ] && [ -d /workspace/app ] && ' +
+              '[ ! -e /workspace/app/node_modules ]; then ' +
+              'cp -al "$src/app/node_modules" /workspace/app/node_modules; fi; ' +
+              'if [ -d "$src/mcp/github-server/node_modules" ] && ' +
+              '[ -d /workspace/mcp/github-server ] && ' +
+              '[ ! -e /workspace/mcp/github-server/node_modules ]; then ' +
+              'cp -al "$src/mcp/github-server/node_modules" ' +
+              '/workspace/mcp/github-server/node_modules; fi; ' +
+              'fi' +
+              "' || { rm -rf /workspace/node_modules /workspace/app/node_modules " +
+              '/workspace/mcp/github-server/node_modules 2>/dev/null; true; }',
           ),
         ),
       );

@@ -1,29 +1,23 @@
 #!/bin/sh
-# The hook runs from the repo root (husky default cwd). Biome lives at
-# the repo root (install with `npm install`). ESLint lives in app/ because
-# its config depends on app-only plugins (install with `cd app && npm install`).
-# We prefer the root Biome copy when present and fall back to the app copy
-# for legacy setups where only `cd app && npm install` was run.
+# The hook runs from the repo root (husky default cwd). One `pnpm install` at
+# the root installs the whole workspace, so Biome (root) and ESLint (app/ — its
+# config depends on app-only plugins) both come from a single install.
 
-if [ -x ./node_modules/.bin/biome ]; then
-  BIOME=./node_modules/.bin/biome
-elif [ -x ./app/node_modules/.bin/biome ]; then
-  BIOME=./app/node_modules/.bin/biome
-else
+if [ ! -x ./node_modules/.bin/biome ]; then
   echo "[pre-commit] @biomejs/biome is not installed." >&2
-  echo "[pre-commit] Run 'npm install' at the repo root before committing." >&2
+  echo "[pre-commit] Run 'pnpm install' at the repo root before committing." >&2
   exit 1
 fi
 
-"$BIOME" check --staged --no-errors-on-unmatched || exit 1
+./node_modules/.bin/biome check --staged --no-errors-on-unmatched || exit 1
 
-# ESLint still lives in app/ because its config depends on app-only plugins.
-# Guard explicitly so contributors get actionable setup guidance instead of a
-# generic npm script failure when app dependencies have not been installed.
+# ESLint lives in app/ because its config depends on app-only plugins. Guard
+# explicitly so contributors get actionable setup guidance instead of a generic
+# script failure when the workspace has not been installed.
 if [ ! -x ./app/node_modules/.bin/eslint ]; then
   echo "[pre-commit] ESLint is not installed in app/node_modules." >&2
-  echo "[pre-commit] Run 'npm install' at the repo root and 'cd app && npm install' before committing." >&2
+  echo "[pre-commit] Run 'pnpm install' at the repo root before committing." >&2
   exit 1
 fi
 
-cd app && npm run lint
+pnpm --filter my-app run lint

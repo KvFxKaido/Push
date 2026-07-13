@@ -14,10 +14,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:design-tokens": "node scripts/check-design-tokens.mjs",
-    "prepare": "cd .. && husky app/.husky",
-    "cap:sync": "npm run build && cap sync",
+    "cap:sync": "pnpm run build && cap sync",
     "android:setup": "node scripts/ensure-capacitor-android.mjs",
-    "android:sync": "npm run build && npm run android:setup && cap sync android",
+    "android:sync": "pnpm run build && pnpm run android:setup && cap sync android",
     "android:open": "npm run android:sync && cap open android",
     "android:icons": "npx --yes --package @capacitor/assets capacitor-assets generate --android"
   },
@@ -47,6 +46,7 @@
     "@codemirror/view": "^6.43.6",
     "@codesandbox/sandpack-react": "^2.20.0",
     "@hookform/resolvers": "^5.4.0",
+    "@lezer/highlight": "^1.2.3",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/core": "^2.9.0",
     "@opentelemetry/exporter-trace-otlp-http": "^0.220.0",
@@ -93,7 +93,6 @@
     "eslint-plugin-react-refresh": "^0.5.3",
     "fake-indexeddb": "^6.2.5",
     "globals": "^17.7.0",
-    "husky": "^9.1.7",
     "postcss": "^8.5.17",
     "tailwindcss": "^4.3.1",
     "tailwindcss-animate": "^1.0.7",
@@ -104,14 +103,6 @@
     "vite": "^8.1.4",
     "vitest": "^4.1.10",
     "ws": "^8.21.0"
-  },
-  "overrides": {
-    "typescript": "$typescript",
-    "sharp": "^0.33.5",
-    "tar": "^7.5.16",
-    "minimatch@10.2.5": {
-      "brace-expansion": "^5.0.6"
-    }
   },
   "engines": {
     "node": ">=24"

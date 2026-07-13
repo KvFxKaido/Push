@@ -1,0 +1,48 @@
+# pnpm workspace — one lockfile for the three JS projects in the monorepo.
+#
+# The root package (push-root) carries the CLI + shared lib/ deps; `app` is the
+# web/Worker surface; `mcp/github-server` is the GitHub MCP server. Root
+# dependencies install into the root node_modules; each listed package gets its
+# own node_modules with symlinks into the shared store.
+#
+# ⚠️ WHY pnpm 10, NOT 11 (see `packageManager` in package.json): pnpm 11 requires
+# Node >=22.13, but the Cloudflare sandbox base image ships Node 20 — and the
+# sandbox pre-bakes Push's own node_modules (Dockerfile.sandbox) so Push-on-Push
+# sessions skip a cold install. On pnpm 11 that image could not install this repo
+# at all. pnpm 10 needs only Node >=18.12, which clears both the Node 20 sandbox
+# and the Node 24 floor everywhere else. Bump to 11 only once the Cloudflare
+# sandbox base image ships Node >=22.13.
+packages:
+  - 'app'
+  - 'mcp/github-server'
+
+# pnpm blocks dependency build scripts by default. These four genuinely need
+# their postinstall to fetch or compile a native artifact — skipping them yields
+# an installed-but-unusable tree (the same failure Dockerfile.sandbox's cache
+# comment warns about for esbuild). es5-ext's postinstall is a self-swallowing
+# no-op, so it stays off.
+allowBuilds:
+  esbuild: true # downloads the platform binary; vite + vitest are dead without it
+  sharp: true # native image pipeline
+  onnxruntime-node: true # native runtime for @huggingface/transformers (embeddings)
+  protobufjs: true # generates its inquire shim
+  es5-ext: false
+
+# Overrides are workspace-global in pnpm (npm scoped them per-project), so each
+# entry below applies to every package.
+#
+# NOTE ON TYPESCRIPT: the repo deliberately runs two TypeScript majors — TS 7
+# (`~7.0.2`) at the root and in mcp/ for `tsc` typecheck+emit, and TS 6
+# (`^6.0.3`) inside app/ because typescript-eslint hard-caps its peer at
+# `<6.1.0` (typescript-eslint#10940). app/ additionally aliases TS 7 as
+# `typescript-go` (`npm:typescript@~7.0.2`) for its own typecheck.
+#
+# Under npm that needed `overrides: { "typescript": "$typescript" }` in
+# app/package.json to drag the hoisted tree down to TS 6. pnpm does not hoist —
+# it resolves per importer — so app/ sees its own `typescript@^6` and root sees
+# `typescript@^7` with no override at all. Do NOT add a global `typescript`
+# override here: it would pull root/cli/mcp down to TS 6 and break their build.
+overrides:
+  sharp: ^0.33.5
+  tar: ^7.5.16
+  minimatch@10.2.5>brace-expansion: ^5.0.6

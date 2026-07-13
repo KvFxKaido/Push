@@ -27,7 +27,7 @@ Push copy is calm, declarative, and developer-direct. It assumes you ship code a
 | Title Case    | page / sheet titles, primary actions — `Workspace`, `New Sandbox`, `Browse All Repos` |
 | Sentence case | descriptions, microcopy, body text                                                   |
 | UPPERCASE     | section micro-labels in panels — `AGENT CONSOLE`, `RECENT REPOS` (the `HUB_TAG_CLASS` register) |
-| lowercase     | branch names, commands, identifiers — `main`, `npm install`, `--task`                |
+| lowercase     | branch names, commands, identifiers — `main`, `pnpm install`, `--task`                |
 
 ### Mechanics
 

@@ -1,2 +1,5 @@
 #!/bin/sh
-cd app && npx --no-install commitlint --edit "$1"
+# Runs from the repo root. commitlint (and its config) live in app/, so filter
+# to that workspace package rather than cd-ing — `pnpm exec` resolves the binary
+# from app/node_modules/.bin.
+pnpm --filter my-app exec commitlint --edit "$1"

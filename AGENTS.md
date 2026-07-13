@@ -63,14 +63,14 @@ Push derives validation commands (test, lint, typecheck, format, build, check) f
 For this repo:
 
 ```bash
-# setup:
-npm install && (cd app && npm install) && (cd mcp/github-server && npm install)
+# setup: (pnpm workspace — one install covers root + app/ + mcp/github-server)
+pnpm install
 # test:
-TMPDIR=/tmp TEMP=/tmp TMP=/tmp npm run test:cli && npm run test:mcp:github
+TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm run test:cli && pnpm run test:mcp:github
 # typecheck:
-npm run typecheck:all
+pnpm run typecheck:all
 # check:
-npm run typecheck:all
+pnpm run typecheck:all
 ```
 
 ## Scratch workspace

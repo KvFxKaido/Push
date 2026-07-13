@@ -21,9 +21,9 @@
 
 ## Test plan
 
-- [ ] Tested locally (`npm run dev`)
-- [ ] `npm run build` passes
-- [ ] `npm test` passes
+- [ ] Tested locally (`pnpm run dev`)
+- [ ] `pnpm run build` passes
+- [ ] `pnpm test` passes
 
 ## Notes
 

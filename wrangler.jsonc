@@ -2,7 +2,7 @@
   "name": "push",
   "main": "./app/worker.ts",
   "build": {
-    "command": "cd app && npm run build",
+    "command": "pnpm --filter my-app run build",
     "watch_dir": "./app/src"
   },
   // Bumped from 2026-02-01 on 2026-04-20 when adding Cloudflare Sandbox SDK.
