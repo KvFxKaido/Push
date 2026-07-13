@@ -42,6 +42,8 @@ export interface VisualGlyphs {
   diamondFilled: string;
   /** Activity spine — hollow (settled). */
   diamondHollow: string;
+  /** The human's turn — a prompt caret, the one voice that is *not* Push. */
+  human: string;
   /** Continuous meter cells, sparse → solid. */
   density: readonly string[];
 }
@@ -51,6 +53,7 @@ export const GLYPHS_UNICODE: VisualGlyphs = {
   hexActive: '⬢',
   diamondFilled: '◆',
   diamondHollow: '◇',
+  human: '›',
   density: ['░', '▒', '▓', '█'],
 };
 
@@ -59,6 +62,7 @@ export const GLYPHS_ASCII: VisualGlyphs = {
   hexActive: '*',
   diamondFilled: '+',
   diamondHollow: '-',
+  human: '>',
   density: ['.', ':', '#'],
 };
 
@@ -338,7 +342,10 @@ export function streamMark(
 ): StreamMark {
   switch (kind) {
     case 'user':
-      return { glyph: glyphs.hexActive, color: VL_COLOR.accent, bold: true };
+      // The human voice — a prompt caret in the accent. Never a hexagon: the
+      // hex is Push's face (law 5), and the user is the one turn that is not
+      // Push. Never the diamond spine either — that is Push's own activity.
+      return { glyph: glyphs.human, color: VL_COLOR.accent, bold: true };
     case 'assistant':
       return { glyph: glyphs.diamondHollow, color: undefined, bold: false };
     case 'tool_pending':

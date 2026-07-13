@@ -74,6 +74,20 @@ describe('visual language v2 color budget', () => {
     assert.equal(streamMark('reviewer', g).color, undefined);
     assert.equal(streamMark('reviewer', g).bold, true);
   });
+
+  it('marks the human turn with the caret, never a Push glyph (law 5, #1438)', () => {
+    // The hexagon is Push's face; the user is the one voice that is not Push.
+    assert.equal(GLYPHS_UNICODE.human, '›');
+    assert.equal(GLYPHS_ASCII.human, '>');
+    const g = GLYPHS_UNICODE;
+    const user = streamMark('user', g);
+    assert.equal(user.glyph, '›');
+    assert.notEqual(user.glyph, g.hexActive); // not Push's face
+    assert.notEqual(user.glyph, g.diamondFilled); // not Push's activity spine
+    assert.notEqual(user.glyph, g.diamondHollow);
+    assert.equal(user.color, VL_COLOR.accent);
+    assert.equal(streamMark('user', GLYPHS_ASCII).glyph, '>');
+  });
 });
 
 describe('visual language v2 motion', () => {
