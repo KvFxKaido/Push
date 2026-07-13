@@ -83,6 +83,13 @@ indicator, approval chips, independent-voice attribution (a filled hex marks Rev
 output as a voice distinct from the lead — names still come from `lib/role-display.ts`).
 Branding the chrome, not the stream.
 
+**The hexagon is Push's face.** It is worn only by Push — its header mark, its liveness,
+its independent voices. The **human turn wears neither Push glyph**: not the hexagon (that
+would put Push's face on the one voice that isn't Push) and not the diamond spine (that is
+Push's own activity). The user gets its own mark — a prompt caret `›` (ASCII `>`) in the
+accent, the single non-Push shape in the stream. So the stream reads in three registers:
+`›` you, `◆`/`◇` Push working, `⬢` an independent Push voice.
+
 ### 6. Idle is allowed to be empty
 
 Stillness is a state indication. An idle screen shows the frame, the composer, and
