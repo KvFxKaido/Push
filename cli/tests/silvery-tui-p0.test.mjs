@@ -1597,9 +1597,9 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     const target = picker.options[0].id;
     controller.selectPickerOption(target);
-    // selectPickerOption is fire-and-forget (the reactive surface re-renders on
-    // notify); wait on the settled observable, not the mock's synchronous side effect.
-    for (let i = 0; i < 200 && controller.getSnapshot().model !== target; i++) await sleep(0);
+    // selectPickerOption is fire-and-forget; the picker is held open until the
+    // switch fully lands, so picker === null is the definitive settle signal.
+    for (let i = 0; i < 200 && controller.getSnapshot().picker !== null; i++) await sleep(0);
 
     assert.equal(controller.getSnapshot().picker, null, 'selecting closes the picker');
     assert.equal(state.model, target);
@@ -1678,6 +1678,58 @@ describe('silvery TUI Phase 1 chat surface', () => {
       }
       Object.assign(process.env, savedEnv);
     }
+  });
+
+  it('re-selecting the current provider preserves a free-text model (no reset)', async () => {
+    // The picker opens its cursor on the current provider, so a bare Enter runs
+    // the switch path against the active provider. Exercised here via the direct
+    // /provider command (which shares applyProviderSwitch and, unlike the picker,
+    // bypasses the keyless-guard so the no-op branch is reached deterministically).
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'provider-noop-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      // A CLI/free-text model that is NOT the saved-config or provider-default model.
+      model: 'my-custom-free-text-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let savedConfig;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({
+          safeExecPatterns: [],
+          ollama: { model: 'saved-default-model' },
+        }),
+        saveConfig: async (next) => {
+          savedConfig = next;
+          return '/tmp/push-config.json';
+        },
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        appendEvent: async () => undefined,
+        resolveKey: () => 'test-key',
+      },
+    );
+
+    await controller.submit('/provider ollama');
+
+    assert.equal(state.model, 'my-custom-free-text-model', 'model must not be reset');
+    assert.equal(controller.getSnapshot().model, 'my-custom-free-text-model');
+    assert.equal(savedConfig, undefined, 'a no-op provider select must not rewrite config');
+    assert.ok(
+      controller.getSnapshot().rows.some((row) => /Already on provider ollama/.test(row.text)),
+    );
+    await controller.dispose();
   });
 
   it('renders the picker modal and gates the composer while it is open', {

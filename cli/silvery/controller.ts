@@ -740,6 +740,14 @@ export async function createSilveryController(
       appendStatus(`Unknown provider: ${targetId}`, true);
       return;
     }
+    if (targetId === state.provider) {
+      // The picker opens its cursor on the current provider, so a bare Enter
+      // lands here. Recomputing targetModel from saved config/default would
+      // silently reset a CLI/free-text or resumed-daemon model — no-op instead
+      // and keep the active model (mirrors applyModelSwitch's same-value guard).
+      appendStatus(`Already on provider ${targetId}.`);
+      return;
+    }
     try {
       (deps.resolveKey ?? resolveApiKey)(targetConfig);
     } catch {
@@ -847,10 +855,16 @@ export async function createSilveryController(
       appendStatus(`${id} needs an API key. Set one with /config key <secret>.`, true);
       return;
     }
-    picker = null;
-    notify();
-    if (active.kind === 'provider') await applyProviderSwitch(id);
-    else await applyModelSwitch(id);
+    // Hold the picker open (composer stays inert) until the switch lands, so a
+    // daemon-backed session can't submit a turn on the pre-switch provider/model
+    // while patchDaemonSession is still in flight. Clear on success or failure.
+    try {
+      if (active.kind === 'provider') await applyProviderSwitch(id);
+      else await applyModelSwitch(id);
+    } finally {
+      picker = null;
+      notify();
+    }
   }
 
   async function handleSlashCommand(text: string): Promise<boolean> {
