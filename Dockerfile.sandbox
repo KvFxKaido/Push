@@ -86,6 +86,13 @@ WORKDIR /opt/push-cache
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY app/package.json ./app/
 COPY mcp/github-server/package.json ./mcp/github-server/
+# app/ depends on the in-repo Capacitor plugin via `file:../plugins/...`. pnpm
+# resolves a `file:` dep by copying the package into its store, so the plugin's
+# actual source must exist in the build context — a manifest alone is not
+# enough, and without it the install dies with ENOENT on `plugins/`.
+# This is the one layer whose cache key is source, not lockfile: editing the
+# plugin re-runs the install below. It changes rarely, and correctness wins.
+COPY plugins/capacitor-native-git ./plugins/capacitor-native-git
 RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor

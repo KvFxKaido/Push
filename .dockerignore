@@ -1,9 +1,11 @@
-# Build context for Dockerfile.sandbox. The image only needs lockfiles + a
-# few system pieces; everything below is either noise that bloats the
-# context tarball sent to the Docker daemon, or state that would pin
-# layer-cache busts to unrelated local activity.
+# Build context for Dockerfile.sandbox. The image only needs the workspace
+# manifests + lockfile (plus the in-repo Capacitor plugin, which app/ pulls in
+# via a `file:` dep) and a few system pieces; everything below is either noise
+# that bloats the context tarball sent to the Docker daemon, or state that would
+# pin layer-cache busts to unrelated local activity.
 
-# Dependencies — rebuilt inside the image via `npm ci` into /opt/push-cache.
+# Dependencies — rebuilt inside the image via `pnpm install --frozen-lockfile`
+# into /opt/push-cache.
 node_modules
 **/node_modules
 
