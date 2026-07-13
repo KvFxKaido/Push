@@ -907,6 +907,10 @@ describe('PrReviewJob check-run status surface', () => {
       'd1',
       (_input, _env, signal) =>
         new Promise((_resolve, reject) => {
+          // Guard the pre-aborted case: d2's supersede can abort d1 before this
+          // executor is even invoked, and addEventListener on an already-aborted
+          // signal never fires.
+          if (signal.aborted) return reject(new Error('aborted'));
           signal.addEventListener('abort', () => reject(new Error('aborted')));
         }),
     );
