@@ -30,8 +30,26 @@ The render payload **already exists**. It was never lifted into the contract.
 | `lib/auditor-agent.ts:188` | `AuditResult = { verdict; card: AuditVerdictCardData }` — a typed card **already in shared `lib/`**. |
 | `cli/tools.ts:2424` | Comment, verbatim: *"The core returns `{ text, card? }`. Surface text to the model."* The split is already named. |
 | `cli/tui-framers.ts:530` | The TUI already renders one structured card (`EditDiff`) with a line-number gutter and tinted diff blocks. **The TUI can do this. It only ever gets one card.** |
+| `lib/coder-agent.ts:843` | `CoderToolExecResult<TCard>` — the shared kernel is **already generic over a card** and already carries `resultText` (model) alongside `card?` (render). |
+| `lib/coder-agent.ts:869` | The `editDiff` doc comment, verbatim: *"Forwarded verbatim onto the `tool.execution_complete` run event as `diff` so transcript surfaces can render the edit; **never enters the model-visible tool result**."* |
+| `lib/coder-agent.ts:2191, 2271, 2715` | Three sites spread `{ diff: entry.editDiff }` onto `tool.execution_complete`. **No site ever spreads `card`.** |
 
 So: 29 card types on web, **3** card producers reachable from shared `lib/`, and a TUI that sniffs text for everything else.
+
+### The decisive detail
+
+**The contract this doc proposes already exists — for exactly one field.**
+
+`editDiff` is a typed, structured, render-only payload that rides the `tool.execution_complete` run event and is explicitly forbidden from reaching the model. That is precisely the `{ text, card? }` split, already built, already load-bearing, already documented in `lib/coder-agent.ts:869`.
+
+Meanwhile `card?: TCard` is *collected* by the kernel and then **dropped** — no site forwards it onto a run event. And `TCard` is a bare type parameter (`CoderAgentOptions<TCall, TCard>`: *"the kernel never inspects either type internally — it only forwards calls to `toolExec` and collects the returned cards"*), so there is no shared card vocabulary for a non-web shell to consume even if one arrived.
+
+That narrows the work considerably. This is not "introduce a render payload." It is:
+
+1. **Generalize** the proven `editDiff → diff` forwarding to `card`.
+2. **Concretize** `TCard` into a shared `ToolCard` union in `lib/` so a second shell can type it.
+
+The hard part — proving that a render-only payload can ride the run-event stream without leaking to the model — has already shipped.
 
 `ChatCard` living in `app/src/types/` is a direct violation of a rule Push already wrote down (`CLAUDE.md`, Shared runtime in root `lib/`):
 
@@ -91,9 +109,21 @@ Not every card needs a bespoke TUI treatment on day one. A **generic typed fallb
 
 Both shells keep the web's tombstone behavior: an unrecognized `card.type` renders a visible, inert placeholder. This is what lets the vocabulary evolve without breaking persisted chats — and it is why a *typed* union with a tombstone beats an untyped blob.
 
-### 6. Gate the daemon on a capability, and pin it with a drift test
+### 6. Cards are emitted by the **kernel**, on the run event — not by the daemon
 
-The daemon emits cards only when the client advertises `tool_cards_v1`, exactly as `cli/pushd.ts:2262` gates workspace-state events on `workspace_state_v1`. The vocabulary gets strict-mode validators in `lib/protocol-schema.ts` and a pin in `cli/tests/protocol-drift.test.mjs`, per the cross-surface checklist in `CLAUDE.md`:
+The daemon is **not** the producer. It is one transport among several.
+
+There is a non-daemon path: the inline/local TUI calls `runAssistantTurn(..., { emit: onEvent })` directly (`cli/silvery/controller.ts:1713`), bypassing pushd entirely. If cards were emitted only as a capability-gated daemon message, **attached daemon clients would get cards while inline TUI runs silently dropped them** — reintroducing the exact two-contract split this doc exists to kill, just along a different seam.
+
+So: `card` rides `tool.execution_complete` from the shared kernel, exactly as `diff` already does (`lib/coder-agent.ts:2191, 2271, 2715`). Every run-event consumer — inline TUI, daemon clients, web — receives it from one producer.
+
+The daemon then **strips or forwards** per client capability (`tool_cards_v1`), the same way `cli/pushd.ts:2262` gates workspace-state events on `workspace_state_v1`. Capability gating is a property of the *transport*, not of the *payload*.
+
+(Caught in review of this doc — the original draft put emission in the daemon and would have shipped the bug it was written to prevent.)
+
+### 7. Pin the vocabulary with a drift test
+
+The vocabulary gets strict-mode validators in `lib/protocol-schema.ts` and a pin in `cli/tests/protocol-drift.test.mjs`, per the cross-surface checklist in `CLAUDE.md`:
 
 > *"Any new tool, event, or envelope type needs a single canonical definition **and a drift-detector test in the same PR**."*
 
@@ -101,10 +131,10 @@ Without the drift test, web and TUI re-diverge in a month and we are back here.
 
 ## Slices (each independently shippable)
 
-- **Slice 0 — Vocabulary.** Move `ChatCard` → `lib/tool-cards.ts`; web re-exports. Zero behavior change. Adds strict validators + the drift-test pin. Provable by: web renders identically, `typecheck:all` green.
-- **Slice 1 — Contract.** Formalize `{ text, card? }` on the shared tool result. Add the load-bearing test: **no card field ever reaches an `LlmMessage`.**
-- **Slice 2 — Daemon transport.** Emit cards over the pushd wire behind `tool_cards_v1`. TUI advertises the cap and receives typed cards; renders them with the generic typed fallback. The JSON-dump path stops being reachable for card-bearing tools.
-- **Slice 3 — Producers.** Walk the tool catalog and attach cards, highest-traffic first (`sandbox_exec`, file writes/edits, test/typecheck, commit/push, delegation). Each tool that gains a card immediately improves both surfaces.
+- **Slice 0 — Vocabulary.** Move `ChatCard` → `lib/tool-cards.ts`; web re-exports; `TCard` in `CoderAgentOptions` narrows from a bare type parameter to the shared `ToolCard`. Zero behavior change. Adds strict validators + the drift-test pin. Provable by: web renders identically, `typecheck:all` green.
+- **Slice 1 — Kernel emission.** Spread `card` onto `tool.execution_complete` at the three sites that already spread `diff` (`lib/coder-agent.ts:2191, 2271, 2715`). This is the whole mechanism, and it is a handful of lines because `editDiff` already proved the path. Add the load-bearing test: **no card field ever reaches an `LlmMessage`.**
+- **Slice 2 — Consumers.** TUI reads `card` off the run event (inline **and** daemon-attached — one producer, so both work for free) and renders via a generic typed fallback: title + key/value rows derived from the card's declared shape. The daemon strips cards for clients that don't advertise `tool_cards_v1`. The JSON-dump path stops being reachable for card-bearing tools.
+- **Slice 3 — Producers.** Walk the tool catalog and attach cards, highest-traffic first (`sandbox_exec`, file writes/edits, test/typecheck, commit/push, delegation). Each tool that gains a card immediately improves every surface.
 - **Slice 4 — Delete the sniffing.** Remove `looksLikeUnifiedDiff` and the arg-guessing fallback once no path depends on them. This slice is the acceptance criterion for the whole track.
 
 ## Hard problems + decisions
