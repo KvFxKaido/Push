@@ -11,7 +11,6 @@
  */
 
 import { strict as assert } from 'node:assert';
-import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -27,6 +26,7 @@ import {
   validateTasks,
 } from '../../scripts/eval/eval-lib.ts';
 import { EVAL_TASKS } from '../../scripts/eval/tasks.ts';
+import { runCommandInResolvedShellSync } from '../shell.ts';
 
 // ---------------------------------------------------------------------------
 // Manifest
@@ -98,7 +98,7 @@ function materialize(task, { solved = false } = {}) {
   return dir;
 }
 
-function runAccept(cmd, cwd) {
+async function runAccept(cmd, cwd) {
   // Scrub the test-runner context before spawning acceptance commands:
   //  - NODE_OPTIONS carries the tsx loader that runs this file, which
   //    changes how a spawned `node --test` resolves modules;
@@ -109,14 +109,26 @@ function runAccept(cmd, cwd) {
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   delete env.NODE_TEST_CONTEXT;
-  return spawnSync(cmd, { cwd, shell: true, stdio: 'pipe', env });
+  // Resolve the shell the way production does. A bare `shell: true` is `cmd.exe`
+  // on Windows, which does not treat `'` as a quote character — so the
+  // POSIX-quoted `node -e '...'` payloads in the manifest reach node as the
+  // literal token `'const` and die on "Unterminated string constant". The
+  // manifest documents that these commands are shell-executed via
+  // `runCommandInResolvedShell`; run them that way here too.
+  return runCommandInResolvedShellSync(cmd, { cwd, env });
 }
 
-test('every task has at least one acceptance check that fails on the unsolved fixture', () => {
+test('every task has at least one acceptance check that fails on the unsolved fixture', async () => {
   for (const task of EVAL_TASKS) {
     const dir = materialize(task);
     try {
-      const anyFails = task.accept.some((cmd) => runAccept(cmd, dir).status !== 0);
+      let anyFails = false;
+      for (const cmd of task.accept) {
+        if ((await runAccept(cmd, dir)).status !== 0) {
+          anyFails = true;
+          break;
+        }
+      }
       assert.ok(
         anyFails,
         `task "${task.id}": all acceptance checks already pass on the unsolved fixture`,
@@ -127,12 +139,12 @@ test('every task has at least one acceptance check that fails on the unsolved fi
   }
 });
 
-test('every acceptance check passes on the solved fixture (tasks are satisfiable)', () => {
+test('every acceptance check passes on the solved fixture (tasks are satisfiable)', async () => {
   for (const task of EVAL_TASKS) {
     const dir = materialize(task, { solved: true });
     try {
       for (const cmd of task.accept) {
-        const res = runAccept(cmd, dir);
+        const res = await runAccept(cmd, dir);
         assert.equal(
           res.status,
           0,

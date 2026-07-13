@@ -54,6 +54,7 @@ import {
   type TrialResult,
 } from './eval-lib';
 import { EVAL_TASKS } from './tasks';
+import { runCommandInResolvedShellSync } from '../../cli/shell.js';
 
 // ---------------------------------------------------------------------------
 // Args
@@ -237,15 +238,15 @@ async function readSessionEvents(sessionId: string): Promise<unknown[]> {
  * acceptance, run the manifest commands directly in the trial workspace —
  * same shell semantics as runAcceptanceChecks, scrubbed env.
  */
-function runHarnessAcceptance(task: EvalTask, workspace: string): boolean {
+async function runHarnessAcceptance(task: EvalTask, workspace: string): Promise<boolean> {
   const env = { ...process.env };
   delete env.NODE_OPTIONS;
   delete env.NODE_TEST_CONTEXT;
   for (const cmd of task.accept) {
-    const res = spawnSync(cmd, {
+    // Resolve the shell rather than passing `shell: true`, which is `cmd.exe` on
+    // Windows and shreds the manifest's POSIX-quoted `node -e '...'` payloads.
+    const res = await runCommandInResolvedShellSync(cmd, {
       cwd: workspace,
-      shell: true,
-      stdio: 'pipe',
       timeout: 120_000,
       env,
     });
@@ -293,7 +294,7 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   // reported no acceptance block (the delegated path doesn't emit one),
   // verify the work here — never score a completion nobody checked.
   if (!timedOut && fields.outcome === 'success' && fields.acceptancePassed === null) {
-    fields.acceptancePassed = runHarnessAcceptance(task, workspace);
+    fields.acceptancePassed = await runHarnessAcceptance(task, workspace);
   }
 
   const events = fields.sessionId ? await readSessionEvents(fields.sessionId) : [];
