@@ -8,6 +8,14 @@
 # Base image (`-python` variant) already provides: Ubuntu 22.04, Node.js 20,
 # Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip, procps,
 # ca-certificates, matplotlib, numpy, pandas, ipython.
+#
+# NOTE ON NODE: this image stays on the base image's Node 20 even though the
+# repo-wide floor is Node 24 (root package.json `engines`, .nvmrc, CI). The
+# sandbox executes the *user's* repo commands, not Push's own toolchain, and
+# Cloudflare's base image runs its control plane on the Node it ships — pinning
+# NodeSource 24 over it would swap `/usr/bin/node` underneath their server for
+# no benefit we need. sandbox/app.py (Modal) mirrors this pin; the two backends
+# must agree, so both move only when the Cloudflare base image does.
 
 FROM docker.io/cloudflare/sandbox:0.12.3-python
 ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0

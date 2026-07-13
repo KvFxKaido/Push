@@ -21,7 +21,7 @@
       "!.playwright-cli/**",
       "!.push/**",
       "!.wrangler/**",
-      "!app/android/app/src/main/assets/public/**",
+      "!app/android/app/src/main/assets/**",
       "!app/src/components/ui/**",
       "!sandbox/**",
       "!schema/**"
