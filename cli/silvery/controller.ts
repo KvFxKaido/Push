@@ -80,6 +80,8 @@ export interface SilverySnapshot {
   daemonConnected: boolean;
   error: string | null;
   interaction: SilveryInteraction | null;
+  /** Idle-time model/provider chooser; null when no picker is open. */
+  picker: SilveryPicker | null;
   /** Live theme preference — drives silvery `ThemeProvider` accent hue (v2 law 2). */
   theme: string;
   /** CLI exec mode (`auto` / `strict` / `yolo`) for the composer mode label. */
@@ -89,6 +91,28 @@ export interface SilverySnapshot {
 export type SilveryInteraction =
   | { id: string; kind: 'approval'; title: string; detail: string }
   | { id: string; kind: 'question'; title: string; detail: string };
+
+export interface SilveryPickerOption {
+  /** Provider id or model name — the value passed back to selectPickerOption. */
+  id: string;
+  label: string;
+  /** Right-aligned annotation, e.g. `no key`. */
+  hint?: string;
+  /** The currently-active provider/model — cursor starts here. */
+  current: boolean;
+  /** Providers without a key can't be selected (shown dimmed). */
+  disabled?: boolean;
+}
+
+export interface SilveryPicker {
+  kind: 'provider' | 'model';
+  title: string;
+  options: SilveryPickerOption[];
+  /** Cursor index to open on (the current option). */
+  initialIndex: number;
+  /** Fresh per open so the view remounts and re-centers the cursor. */
+  token: number;
+}
 
 interface ControllerDeps {
   loadConfig?: () => Promise<PushConfig>;
@@ -124,6 +148,12 @@ export interface SilveryController {
   submit(text: string): Promise<void>;
   cancel(): void;
   respondToInteraction(id: string, value: boolean | string): void;
+  /** Open the model/provider chooser (no-op while a turn is running). */
+  openPicker(kind: 'provider' | 'model'): void;
+  /** Dismiss the open picker without switching. */
+  closePicker(): void;
+  /** Apply the highlighted provider/model; disabled options keep the picker open. */
+  selectPickerOption(id: string): void;
   clearDisplay(): void;
   /** Wire Silvery Instance pause/resume after the renderer mounts. */
   setHandoffHooks(hooks: { onSuspend?: () => void; onResume?: () => void }): void;
@@ -215,6 +245,8 @@ export async function createSilveryController(
   let startedAt: number | null = null;
   let error: string | null = null;
   let interaction: SilveryInteraction | null = null;
+  let picker: SilveryPicker | null = null;
+  let pickerToken = 0;
   let resolveApproval: ((approved: boolean) => void) | null = null;
   let resolveQuestion: ((answer: string) => void) | null = null;
   let hiddenBefore = 0;
@@ -291,6 +323,7 @@ export async function createSilveryController(
     daemonConnected,
     error,
     interaction,
+    picker,
     theme: resolveThemeName(),
     execMode,
   });
@@ -695,6 +728,145 @@ export async function createSilveryController(
     }
   }
 
+  /**
+   * Shared provider switch used by `/provider <name|#>` and the picker. Fails
+   * closed with a status line on a missing key; routes through the daemon when
+   * attached, else mutates local state — same path the slash command has always
+   * taken, extracted so the picker never re-implements it.
+   */
+  async function applyProviderSwitch(targetId: string): Promise<void> {
+    const targetConfig = PROVIDER_CONFIGS[targetId];
+    if (!targetConfig) {
+      appendStatus(`Unknown provider: ${targetId}`, true);
+      return;
+    }
+    if (targetId === state.provider) {
+      // The picker opens its cursor on the current provider, so a bare Enter
+      // lands here. Recomputing targetModel from saved config/default would
+      // silently reset a CLI/free-text or resumed-daemon model — no-op instead
+      // and keep the active model (mirrors applyModelSwitch's same-value guard).
+      appendStatus(`Already on provider ${targetId}.`);
+      return;
+    }
+    try {
+      (deps.resolveKey ?? resolveApiKey)(targetConfig);
+    } catch {
+      appendStatus(`Cannot switch to ${targetId}: no API key.`, true);
+      return;
+    }
+    const providerSlot = config[targetId] as { model?: string } | undefined;
+    const targetModel = providerSlot?.model || targetConfig.defaultModel;
+    if (daemon.connected && daemon.sessionId) {
+      const ok = await patchDaemonSession({ provider: targetId, model: targetModel });
+      if (!ok) return;
+    } else {
+      state.provider = targetId;
+      state.model = targetModel;
+      await (deps.saveState ?? saveSessionState)(state);
+    }
+    config.provider = targetId;
+    await persistConfig(config);
+    appendStatus(`Switched to ${state.provider} | model: ${state.model}`);
+    notify();
+  }
+
+  /** Shared model switch used by `/model <name|#>` and the picker. */
+  async function applyModelSwitch(target: string): Promise<void> {
+    if (target === state.model) {
+      appendStatus(`Already using model: ${target}`);
+      return;
+    }
+    if (daemon.connected && daemon.sessionId) {
+      const ok = await patchDaemonSession({ model: target });
+      if (!ok) return;
+    } else {
+      state.model = target;
+      await (deps.saveState ?? saveSessionState)(state);
+    }
+    if (!config[state.provider] || typeof config[state.provider] !== 'object') {
+      (config as Record<string, unknown>)[state.provider] = {};
+    }
+    (config[state.provider] as { model?: string }).model = target;
+    await persistConfig(config);
+    appendStatus(`Model switched to: ${state.model}`);
+    notify();
+  }
+
+  function buildProviderPicker(): SilveryPicker {
+    const options: SilveryPickerOption[] = getProviderList().map((entry) => ({
+      id: entry.id,
+      label: entry.id,
+      hint: entry.hasKey ? undefined : 'no key',
+      current: entry.id === state.provider,
+      disabled: !entry.hasKey,
+    }));
+    const currentIndex = options.findIndex((option) => option.current);
+    return {
+      kind: 'provider',
+      title: 'Switch provider',
+      options,
+      initialIndex: currentIndex >= 0 ? currentIndex : 0,
+      token: (pickerToken += 1),
+    };
+  }
+
+  function buildModelPicker(): SilveryPicker {
+    const options: SilveryPickerOption[] = getCuratedModels(state.provider).map((name) => ({
+      id: name,
+      label: name,
+      current: name === state.model,
+    }));
+    const currentIndex = options.findIndex((option) => option.current);
+    return {
+      kind: 'model',
+      title: `Switch model · ${state.provider}`,
+      options,
+      initialIndex: currentIndex >= 0 ? currentIndex : 0,
+      token: (pickerToken += 1),
+    };
+  }
+
+  function openPicker(kind: 'provider' | 'model'): void {
+    if (running) {
+      appendStatus('Finish or cancel the turn before switching provider/model.', true);
+      return;
+    }
+    if (kind === 'model' && getCuratedModels(state.provider).length === 0) {
+      appendStatus(`No curated models for ${state.provider}. Use /model <name>.`);
+      return;
+    }
+    picker = kind === 'provider' ? buildProviderPicker() : buildModelPicker();
+    notify();
+  }
+
+  function closePicker(): void {
+    if (!picker) return;
+    picker = null;
+    notify();
+  }
+
+  async function selectPicker(id: string): Promise<void> {
+    const active = picker;
+    if (!active) return;
+    const option = active.options.find((candidate) => candidate.id === id);
+    if (!option) return;
+    if (option.disabled) {
+      // Keep the picker open so the user can pick a usable provider instead.
+      appendStatus(`${id} needs an API key. Set one with /config key <secret>.`, true);
+      return;
+    }
+    // Hold the picker open (composer stays inert) until the switch lands, so a
+    // daemon-backed session can't submit a turn on the pre-switch provider/model
+    // while patchDaemonSession is still in flight. Clear on success or failure.
+    try {
+      if (active.kind === 'provider') await applyProviderSwitch(id);
+      else await applyModelSwitch(id);
+    } finally {
+      picker = null;
+      notify();
+    }
+  }
+
   async function handleSlashCommand(text: string): Promise<boolean> {
     if (!text.startsWith('/')) return false;
     const [rawCommand, ...rest] = text.slice(1).split(/\s+/);
@@ -708,8 +880,8 @@ export async function createSilveryController(
           '  /clear | /new          Hide the current transcript display',
           '  /session               Show the active session id',
           '  /session rename <name> Rename the session (--clear to unset)',
-          '  /provider [name|#]     List or switch provider',
-          '  /model [name|#]        List curated models or switch model',
+          '  /provider [name|#]     Open the provider picker or switch directly',
+          '  /model [name|#]        Open the model picker or switch directly',
           '  /config                Show config overview (secrets masked)',
           '  /config key|url|…      Set provider keys, sandbox, daemon, tavily',
           '  /resume [session-id]   List or switch to a saved session',
@@ -782,20 +954,12 @@ export async function createSilveryController(
     }
 
     if (command === 'provider') {
-      const providers = getProviderList();
+      // Bare `/provider` opens the navigable picker; an arg switches directly.
       if (!arg) {
-        appendStatus(
-          providers
-            .map(
-              (entry, index) =>
-                `${index + 1}. ${entry.id}${entry.id === state.provider ? '  (current)' : ''}${
-                  entry.hasKey ? '' : '  · no key'
-                }`,
-            )
-            .join('\n'),
-        );
+        openPicker('provider');
         return true;
       }
+      const providers = getProviderList();
       let targetId: string | null = null;
       if (/^\d+$/.test(arg)) {
         const num = Number.parseInt(arg, 10);
@@ -808,45 +972,17 @@ export async function createSilveryController(
         appendStatus(`Unknown provider: ${arg}`, true);
         return true;
       }
-      const targetConfig = PROVIDER_CONFIGS[targetId]!;
-      try {
-        (deps.resolveKey ?? resolveApiKey)(targetConfig);
-      } catch {
-        appendStatus(`Cannot switch to ${targetId}: no API key.`, true);
-        return true;
-      }
-      const providerSlot = config[targetId] as { model?: string } | undefined;
-      const targetModel = providerSlot?.model || targetConfig.defaultModel;
-      if (daemon.connected && daemon.sessionId) {
-        const ok = await patchDaemonSession({ provider: targetId, model: targetModel });
-        if (!ok) return true;
-      } else {
-        state.provider = targetId;
-        state.model = targetModel;
-        await (deps.saveState ?? saveSessionState)(state);
-      }
-      config.provider = targetId;
-      await persistConfig(config);
-      appendStatus(`Switched to ${state.provider} | model: ${state.model}`);
-      notify();
+      await applyProviderSwitch(targetId);
       return true;
     }
 
     if (command === 'model') {
-      const models = [...getCuratedModels(state.provider)];
+      // Bare `/model` opens the navigable picker; an arg switches directly.
       if (!arg) {
-        appendStatus(
-          models.length
-            ? models
-                .map(
-                  (name, index) =>
-                    `${index + 1}. ${name}${name === state.model ? '  (current)' : ''}`,
-                )
-                .join('\n')
-            : `No curated models for ${state.provider}. Use /model <name>.`,
-        );
+        openPicker('model');
         return true;
       }
+      const models = [...getCuratedModels(state.provider)];
       let target = arg;
       if (/^\d+$/.test(arg)) {
         const num = Number.parseInt(arg, 10);
@@ -856,24 +992,7 @@ export async function createSilveryController(
         }
         target = models[num - 1]!;
       }
-      if (target === state.model) {
-        appendStatus(`Already using model: ${target}`);
-        return true;
-      }
-      if (daemon.connected && daemon.sessionId) {
-        const ok = await patchDaemonSession({ model: target });
-        if (!ok) return true;
-      } else {
-        state.model = target;
-        await (deps.saveState ?? saveSessionState)(state);
-      }
-      if (!config[state.provider] || typeof config[state.provider] !== 'object') {
-        (config as Record<string, unknown>)[state.provider] = {};
-      }
-      (config[state.provider] as { model?: string }).model = target;
-      await persistConfig(config);
-      appendStatus(`Model switched to: ${state.model}`);
-      notify();
+      await applyModelSwitch(target);
       return true;
     }
 
@@ -1644,6 +1763,18 @@ export async function createSilveryController(
       }
       interaction = null;
       notify();
+    },
+    openPicker,
+    closePicker,
+    selectPickerOption(id) {
+      // selectPicker is fire-and-forget from the view; surface any late failure
+      // (config/session persistence) as a status line rather than swallowing it.
+      void selectPicker(id).catch((cause) => {
+        appendStatus(
+          `Switch failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+          true,
+        );
+      });
     },
     clearDisplay() {
       if (daemonStateStale) {

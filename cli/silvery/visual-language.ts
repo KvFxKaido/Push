@@ -224,13 +224,22 @@ export function densityMeter(
 
 // ── Frame helpers (law 1) ───────────────────────────────────────────
 
-export type FooterScope = 'composer' | 'running' | 'palette' | 'approval' | 'question' | 'fault';
+export type FooterScope =
+  | 'composer'
+  | 'running'
+  | 'palette'
+  | 'picker'
+  | 'approval'
+  | 'question'
+  | 'fault';
 
 /** Context-aware keybind strip for the footer (left side). */
 export function footerKeybinds(scope: FooterScope): string {
   switch (scope) {
     case 'palette':
       return '↑↓ move · ↵ run · esc close';
+    case 'picker':
+      return '↑↓ move · ↵ select · esc close';
     case 'approval':
       return 'y approve · n/esc deny';
     case 'question':

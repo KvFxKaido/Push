@@ -179,6 +179,7 @@ describe('visual language v2 frame helpers', () => {
     assert.doesNotMatch(footerKeybinds('composer'), /\? help/i);
     assert.match(footerKeybinds('approval'), /approve/i);
     assert.match(footerKeybinds('palette'), /esc/i);
+    assert.match(footerKeybinds('picker'), /select/i);
     assert.match(footerKeybinds('running'), /cancel/i);
   });
 
