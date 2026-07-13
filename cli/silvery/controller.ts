@@ -1652,6 +1652,11 @@ export async function createSilveryController(
       notify();
       abortController = new AbortController();
       let saveLocalState = false;
+      // Tracks whether the turn's user message was actually accepted (daemon send
+      // resolved, or the inline history append succeeded). The optimistic row is a
+      // fallback the daemon echo/resync or the inline append replaces on success;
+      // if the submission was never accepted, `finally` must drop it (below).
+      let messageAccepted = false;
       try {
         await ensurePersisted();
         if (await daemon.ensureReady()) {
@@ -1676,6 +1681,7 @@ export async function createSilveryController(
             daemon.sessionId,
           );
           daemonRunId = typeof response.payload?.runId === 'string' ? response.payload.runId : null;
+          messageAccepted = true;
           await completion;
           return;
         }
@@ -1700,6 +1706,7 @@ export async function createSilveryController(
         });
         optimisticUserRow = null;
         optimisticDaemonInsertIndex = null;
+        messageAccepted = true;
         notify();
         const turnProvider = PROVIDER_CONFIGS[state.provider] ?? activeProvider;
         const apiKey = (deps.resolveKey ?? resolveApiKey)(turnProvider);
@@ -1759,6 +1766,14 @@ export async function createSilveryController(
         interaction = null;
         resolveApproval = null;
         resolveQuestion = null;
+        // A submission that was never accepted (send rejected, inline append threw,
+        // or aborted before send) must not leave its optimistic row haunting the
+        // idle transcript. Accepted turns already cleared it via the daemon
+        // echo/resync or the inline history append, so this only fires on failure.
+        if (!messageAccepted) {
+          optimisticUserRow = null;
+          optimisticDaemonInsertIndex = null;
+        }
         if (saveLocalState) {
           try {
             await (deps.saveState ?? saveSessionState)(state);

@@ -1030,6 +1030,68 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('drops the optimistic user row when the daemon rejects the send', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'daemon-send-reject-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: () => ({
+          connected: true,
+          sessionId: state.sessionId,
+          attachToken: 'token',
+          client: {
+            request: async (type) => {
+              if (type === 'get_session_snapshot') {
+                return {
+                  payload: { transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } } },
+                };
+              }
+              if (type === 'send_user_message') {
+                throw new Error('daemon rejected the send');
+              }
+              return { payload: {} };
+            },
+          },
+          ensureConnected: async () => true,
+          ensureReady: async () => true,
+          noteSeenSeq: () => undefined,
+          scheduleReconnect: () => undefined,
+          teardown: () => undefined,
+        }),
+      },
+    );
+
+    await controller.submit('ghost message');
+
+    assert.equal(controller.getSnapshot().running, false);
+    assert.match(controller.getSnapshot().error, /daemon rejected the send/i);
+    // The submission was never accepted — its optimistic row must not linger.
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => row.text === 'ghost message'),
+      false,
+      'a rejected submission must not leave an optimistic ghost row',
+    );
+    await controller.dispose();
+  });
+
   it('ignores an older attach snapshot after a daemon turn has started', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {
@@ -1627,6 +1689,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.equal(controller.getSnapshot().running, false);
     assert.equal(controller.getSnapshot().startedAt, null);
     assert.match(controller.getSnapshot().error, /session disk unavailable/);
+    // The inline append never landed, so the optimistic row must not linger.
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => row.text === 'cannot persist'),
+      false,
+      'a failed inline submission must not leave an optimistic ghost row',
+    );
     await controller.dispose();
   });
 
