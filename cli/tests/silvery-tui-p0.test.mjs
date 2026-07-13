@@ -1436,6 +1436,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
       daemonConnected: false,
       error: null,
       interaction: null,
+      picker: null,
       theme: 'mono',
       execMode: 'auto',
     };
@@ -1463,7 +1464,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
     hook.openPalette();
     await sleep(120);
     assert.match(stdout.bytes, /Command Palette/);
-    assert.deepEqual(hook.getState(), { paletteOpen: true, inputActive: false, rowCount: 16 });
+    assert.deepEqual(hook.getState(), {
+      paletteOpen: true,
+      pickerOpen: false,
+      inputActive: false,
+      rowCount: 16,
+    });
     assert.equal(hook.getMotionState().palettePhase, 'entering');
     await sleep(520);
     assert.equal(hook.getMotionState().palettePhase, 'open');
@@ -1475,7 +1481,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.equal(hook.getState().inputActive, false);
     await sleep(520);
     assert.equal(hook.getMotionState().palettePhase, 'closed');
-    assert.deepEqual(hook.getState(), { paletteOpen: false, inputActive: true, rowCount: 16 });
+    assert.deepEqual(hook.getState(), {
+      paletteOpen: false,
+      pickerOpen: false,
+      inputActive: true,
+      rowCount: 16,
+    });
 
     instance.unmount();
     await lifecycle;
@@ -1506,6 +1517,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
       daemonConnected: false,
       error: null,
       interaction: { id: 'ap-1', kind: 'approval', title: 'Run `rm -rf`?' },
+      picker: null,
       theme: 'mono',
       execMode: 'auto',
     };
@@ -1533,6 +1545,204 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.equal(hook.getMotionState().attention, true);
     await sleep(180);
     assert.equal(hook.getMotionState().attention, false);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('opens the model picker on bare /model and switches on select', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'model-picker-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let savedConfig;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [], ollama: { model: 'test-model' } }),
+        saveConfig: async (next) => {
+          savedConfig = next;
+          return '/tmp/push-config.json';
+        },
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        appendEvent: async () => undefined,
+        resolveKey: () => 'test-key',
+      },
+    );
+
+    // Bare /model must open a navigable picker, not print a numbered list.
+    await controller.submit('/model');
+    const picker = controller.getSnapshot().picker;
+    assert.ok(picker, 'bare /model opens a picker');
+    assert.equal(picker.kind, 'model');
+    assert.ok(picker.options.length > 0, 'model picker has curated options');
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => /^\d+\.\s/.test(row.text)),
+      false,
+      'no numbered-list status output when the picker opens',
+    );
+
+    const target = picker.options[0].id;
+    controller.selectPickerOption(target);
+    // selectPickerOption is fire-and-forget (the reactive surface re-renders on
+    // notify); wait on the settled observable, not the mock's synchronous side effect.
+    for (let i = 0; i < 200 && controller.getSnapshot().model !== target; i++) await sleep(0);
+
+    assert.equal(controller.getSnapshot().picker, null, 'selecting closes the picker');
+    assert.equal(state.model, target);
+    assert.equal(controller.getSnapshot().model, target);
+    assert.equal(savedConfig?.ollama?.model, target);
+    assert.ok(
+      controller
+        .getSnapshot()
+        .rows.some((row) => row.text.includes(`Model switched to: ${target}`)),
+    );
+    await controller.dispose();
+  });
+
+  it('opens the provider picker, marks current, and holds on a keyless option', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const savedEnv = { ...process.env };
+    // Clear provider keys so key-requiring providers are deterministically
+    // disabled regardless of the developer's shell / CI secrets.
+    for (const key of Object.keys(process.env)) {
+      if (/API_KEY$/.test(key)) delete process.env[key];
+    }
+    try {
+      const state = {
+        sessionId: 'provider-picker-session',
+        messages: [{ role: 'system', content: 'system' }],
+        eventSeq: 0,
+        updatedAt: Date.now(),
+        cwd: '/repo',
+        provider: 'ollama',
+        model: 'test-model',
+        rounds: 0,
+        sessionName: '',
+        workingMemory: {},
+        mode: 'tui',
+      };
+      const controller = await createSilveryController(
+        { sessionId: state.sessionId },
+        {
+          loadConfig: async () => ({ safeExecPatterns: [] }),
+          saveConfig: async () => '/tmp/push-config.json',
+          useDaemon: false,
+          initSession: async () => state,
+          gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+          saveState: async () => undefined,
+          appendEvent: async () => undefined,
+        },
+      );
+
+      await controller.submit('/provider');
+      const picker = controller.getSnapshot().picker;
+      assert.ok(picker, 'bare /provider opens a picker');
+      assert.equal(picker.kind, 'provider');
+      const current = picker.options.find((option) => option.id === 'ollama');
+      assert.ok(current, 'the active provider is listed');
+      assert.equal(current.current, true, 'the active provider is marked current');
+      assert.equal(picker.initialIndex, picker.options.indexOf(current), 'cursor opens on current');
+
+      const disabled = picker.options.find((option) => option.disabled);
+      assert.ok(disabled, 'a key-requiring provider without a key is disabled');
+      assert.equal(disabled.hint, 'no key');
+
+      // Selecting a disabled (keyless) option keeps the picker open and explains why.
+      controller.selectPickerOption(disabled.id);
+      await sleep(10);
+      assert.ok(controller.getSnapshot().picker, 'a disabled option keeps the picker open');
+      assert.ok(controller.getSnapshot().rows.some((row) => /needs an API key/.test(row.text)));
+
+      // Escape-equivalent: closePicker dismisses without switching.
+      controller.closePicker();
+      assert.equal(controller.getSnapshot().picker, null, 'closePicker dismisses the picker');
+      assert.equal(state.provider, 'ollama', 'no switch happened');
+      await controller.dispose();
+    } finally {
+      for (const key of Object.keys(process.env)) {
+        if (!(key in savedEnv)) delete process.env[key];
+      }
+      Object.assign(process.env, savedEnv);
+    }
+  });
+
+  it('renders the picker modal and gates the composer while it is open', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const hook = {};
+    const listeners = new Set();
+    const selected = [];
+    const snapshot = {
+      rows: [{ id: '0', role: 'user', text: 'pick a model' }],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: {
+        kind: 'model',
+        title: 'Switch model · ollama',
+        options: [
+          { id: 'model-alpha', label: 'model-alpha', current: true },
+          { id: 'model-beta', label: 'model-beta', current: false },
+        ],
+        initialIndex: 0,
+        token: 1,
+      },
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+      openPicker: () => undefined,
+      closePicker: () => undefined,
+      selectPickerOption: (id) => selected.push(id),
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(180);
+
+    assert.match(stdout.bytes, /Switch model/);
+    assert.match(stdout.bytes, /model-alpha/);
+    assert.match(stdout.bytes, /model-beta/);
+    // The current model wears the ·current badge.
+    assert.match(stdout.bytes, /current/);
+    // Composer is inert while the picker holds focus (hidden-but-interactive class).
+    assert.equal(hook.getState().pickerOpen, true);
+    assert.equal(hook.getState().inputActive, false);
 
     instance.unmount();
     await lifecycle;

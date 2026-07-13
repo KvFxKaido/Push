@@ -54,10 +54,26 @@ import {
 } from './visual-language.js';
 
 const COMMANDS = [
+  { id: 'model', label: 'Switch model', hint: 'pick a curated model' },
+  { id: 'provider', label: 'Switch provider', hint: 'pick a provider' },
   { id: 'clear', label: 'Clear transcript', hint: 'hide the current display' },
   { id: 'cancel', label: 'Cancel turn', hint: 'abort the active round loop' },
   { id: 'quit', label: 'Quit', hint: 'return to the terminal' },
 ] as const;
+
+const PICKER_MAX_VISIBLE = 12;
+
+/** Window a long option list around the cursor, keeping the selection visible. */
+export function pickerWindow(
+  count: number,
+  cursor: number,
+  max: number = PICKER_MAX_VISIBLE,
+): { start: number; end: number } {
+  if (count <= max) return { start: 0, end: count };
+  const half = Math.floor(max / 2);
+  const start = Math.max(0, Math.min(cursor - half, count - max));
+  return { start, end: start + max };
+}
 
 export function tailWindow(
   items: readonly SilveryTranscriptItem[],
@@ -426,6 +442,95 @@ function Palette({
   );
 }
 
+function PickerModal({
+  picker,
+  controller,
+  width,
+  fade,
+  active,
+}: {
+  picker: NonNullable<SilverySnapshot['picker']>;
+  controller: SilveryController;
+  width: number;
+  fade: number;
+  active: boolean;
+}) {
+  const count = picker.options.length;
+  const [selected, setSelected] = useState(picker.initialIndex);
+  // The option set can shrink between renders (rare, but keep the cursor valid).
+  const cursor = Math.min(Math.max(0, selected), Math.max(0, count - 1));
+  useInput(
+    (input, key) => {
+      const action = getListNavigationAction(
+        {
+          ch: input,
+          name: key.escape
+            ? 'escape'
+            : key.upArrow
+              ? 'up'
+              : key.downArrow
+                ? 'down'
+                : key.return
+                  ? 'return'
+                  : input,
+          ctrl: key.ctrl,
+          meta: key.meta,
+        },
+        { allowNumbers: false, allowVim: true },
+      );
+      if (action?.type === 'cancel') controller.closePicker();
+      else if (action?.type === 'move')
+        setSelected((value) => (Math.min(value, count - 1) + action.delta + count) % count);
+      else if (action?.type === 'confirm') {
+        const option = picker.options[cursor];
+        if (option) controller.selectPickerOption(option.id);
+      }
+    },
+    { isActive: active },
+  );
+  const modalWidth = Math.max(40, Math.min(64, width - 4));
+  const labelWidth = Math.max(
+    ...picker.options.map((option) => option.label.length),
+    picker.kind === 'model' ? 12 : 8,
+  );
+  const { start, end } = pickerWindow(count, cursor);
+  const visible = picker.options.slice(start, end);
+  return (
+    <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
+      <ModalDialog
+        title={picker.title}
+        width={modalWidth}
+        footer={footerKeybinds('picker')}
+        onClose={() => controller.closePicker()}
+        fade={fade}
+      >
+        <Box flexDirection="column">
+          {start > 0 ? <Text color={VL_COLOR.muted}>{`  ↑ ${start} more`}</Text> : null}
+          {visible.map((option, index) => {
+            const optionIndex = start + index;
+            const isCursor = optionIndex === cursor;
+            const label = option.label.padEnd(labelWidth);
+            const badge = option.current ? ' ·current' : '';
+            const hint = option.hint ? `  ${option.hint}` : '';
+            const color = option.disabled ? VL_COLOR.muted : isCursor ? VL_COLOR.accent : undefined;
+            return (
+              <Box
+                key={option.id}
+                onClick={active ? () => controller.selectPickerOption(option.id) : undefined}
+              >
+                <Text color={color} bold={isCursor && !option.disabled}>
+                  {`${isCursor ? '❯ ' : '  '}${label}${badge}${hint}`}
+                </Text>
+              </Box>
+            );
+          })}
+          {end < count ? <Text color={VL_COLOR.muted}>{`  ↓ ${count - end} more`}</Text> : null}
+        </Box>
+      </ModalDialog>
+    </Box>
+  );
+}
+
 function HeaderBar({
   snapshot,
   tick,
@@ -507,12 +612,19 @@ function FooterBar({
 }
 
 export interface PushSurfaceHook {
-  getState?: () => { paletteOpen: boolean; inputActive: boolean; rowCount: number };
+  getState?: () => {
+    paletteOpen: boolean;
+    pickerOpen: boolean;
+    inputActive: boolean;
+    rowCount: number;
+  };
   getMotionState?: () => {
     palettePhase: ModalMotionState['phase'];
     paletteFade: number;
     interactionPhase: ModalMotionState['phase'];
     interactionFade: number;
+    pickerPhase: ModalMotionState['phase'];
+    pickerFade: number;
     attention: boolean;
   };
   openPalette?: () => void;
@@ -539,9 +651,12 @@ export function PushSurface({
   const [input, setInput] = useState('');
   const [paletteAnimating, setPaletteAnimating] = useState(false);
   const [interactionAnimating, setInteractionAnimating] = useState(false);
+  const [pickerAnimating, setPickerAnimating] = useState(false);
   const reducedMotion = isReducedMotion();
   // One shared clock for all motion (law 8). Idle freezes (law 6 / 8).
-  const tick = useSharedClock(snapshot.running || paletteAnimating || interactionAnimating);
+  const tick = useSharedClock(
+    snapshot.running || paletteAnimating || interactionAnimating || pickerAnimating,
+  );
   const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
   const interactionMotion = useModalMotion(
     Boolean(snapshot.interaction),
@@ -550,12 +665,23 @@ export function PushSurface({
     reducedMotion,
     setInteractionAnimating,
   );
+  const pickerMotion = useModalMotion(
+    Boolean(snapshot.picker),
+    tick,
+    0.35,
+    reducedMotion,
+    setPickerAnimating,
+  );
   const retainedInteraction = useRef(snapshot.interaction);
   if (snapshot.interaction) retainedInteraction.current = snapshot.interaction;
+  const retainedPicker = useRef(snapshot.picker);
+  if (snapshot.picker) retainedPicker.current = snapshot.picker;
   const paletteOpenRef = useRef(false);
   paletteOpenRef.current = paletteMotion.visible;
   const interactionOpenRef = useRef(false);
   interactionOpenRef.current = interactionMotion.visible;
+  const pickerOpenRef = useRef(false);
+  pickerOpenRef.current = pickerMotion.visible;
   const lastAttentionInteractionId = useRef<string | null>(null);
   const [attentionTick, setAttentionTick] = useState<number | null>(null);
   useEffect(() => {
@@ -582,7 +708,9 @@ export function PushSurface({
   const runCommand = useCallback(
     (id: (typeof COMMANDS)[number]['id']) => {
       setPaletteOpen(false);
-      if (id === 'clear') controller.clearDisplay();
+      if (id === 'model') controller.openPicker('model');
+      else if (id === 'provider') controller.openPicker('provider');
+      else if (id === 'clear') controller.clearDisplay();
       else if (id === 'cancel') controller.cancel();
       else exit();
     },
@@ -595,6 +723,11 @@ export function PushSurface({
         .register({
           id: 'interaction',
           isActive: () => interactionOpenRef.current,
+          handleKey: () => true,
+        })
+        .register({
+          id: 'picker',
+          isActive: () => pickerOpenRef.current,
           handleKey: () => true,
         })
         .register({
@@ -612,7 +745,10 @@ export function PushSurface({
   // local, and expose the same value through the hook so test/introspection
   // state matches what the TextArea actually does.
   const inputActive =
-    focusStack.activeScope() === null && !snapshot.running && !interactionMotion.visible;
+    focusStack.activeScope() === null &&
+    !snapshot.running &&
+    !interactionMotion.visible &&
+    !pickerMotion.visible;
   const completer = useMemo(
     () =>
       createTabCompleter({
@@ -631,16 +767,17 @@ export function PushSurface({
         handleTuiInterrupt(snapshot.running, controller.cancel, exit);
         return;
       }
-      if (!paletteOpen && !snapshot.interaction && key.ctrl && inputKey === 'k')
+      if (!paletteOpen && !snapshot.interaction && !snapshot.picker && key.ctrl && inputKey === 'k')
         setPaletteOpen(true);
     },
-    { isActive: !paletteMotion.visible && !interactionMotion.visible },
+    { isActive: !paletteMotion.visible && !interactionMotion.visible && !pickerMotion.visible },
   );
 
   useEffect(() => {
     if (!hook) return;
     hook.getState = () => ({
       paletteOpen: paletteMotion.visible,
+      pickerOpen: pickerMotion.visible,
       inputActive,
       rowCount: snapshot.rows.length,
     });
@@ -649,6 +786,8 @@ export function PushSurface({
       paletteFade: paletteMotion.fade,
       interactionPhase: interactionMotion.phase,
       interactionFade: interactionMotion.fade,
+      pickerPhase: pickerMotion.phase,
+      pickerFade: pickerMotion.fade,
       attention,
     });
     hook.openPalette = () => setPaletteOpen(true);
@@ -670,6 +809,7 @@ export function PushSurface({
     scope = 'approval';
   else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
     scope = 'question';
+  else if (pickerMotion.visible) scope = 'picker';
   else if (paletteMotion.visible) scope = 'palette';
   else if (snapshot.running) scope = 'running';
 
@@ -681,13 +821,13 @@ export function PushSurface({
           tick={tick}
           columns={columns}
           attention={attention}
-          freezeMotion={paletteMotion.visible || interactionMotion.visible}
+          freezeMotion={paletteMotion.visible || interactionMotion.visible || pickerMotion.visible}
         />
         <Transcript
           snapshot={snapshot}
           width={columns}
           height={transcriptHeight}
-          active={!paletteMotion.visible && !interactionMotion.visible}
+          active={!paletteMotion.visible && !interactionMotion.visible && !pickerMotion.visible}
         />
         {snapshot.error ? (
           <Text color={VL_COLOR.fault} bold>
@@ -717,6 +857,15 @@ export function PushSurface({
             width={columns}
             fade={interactionMotion.fade}
             active={interactionMotion.interactive}
+          />
+        ) : pickerMotion.visible && retainedPicker.current ? (
+          <PickerModal
+            key={retainedPicker.current.token}
+            picker={retainedPicker.current}
+            controller={controller}
+            width={columns}
+            fade={pickerMotion.fade}
+            active={pickerMotion.interactive}
           />
         ) : paletteMotion.visible ? (
           <Palette
