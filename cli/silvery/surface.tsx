@@ -23,7 +23,7 @@ import { getTranscriptRoleLabel } from '../../lib/role-display.js';
 import { resolveContextWindow } from '../../lib/context-budget.js';
 import { getCuratedModels } from '../model-catalog.js';
 import { getProviderList } from '../provider.js';
-import { createTabCompleter } from '../tui-completer.js';
+import { createTabCompleter, type CompletionState } from '../tui-completer.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
 import { isReducedMotion } from '../tui-spinner.js';
@@ -345,9 +345,23 @@ function Transcript({
   height: number;
   active: boolean;
 }) {
-  // Silvery 0.21.1 provides visual-row-aware follow="end". `tailWindow`
-  // remains exported as the measured fallback if a future cache backend
-  // regresses pinning; its behavior is pinned by the Phase 1 test.
+  // follow="end" measures the visible window and pins the streaming tail there.
+  // Three props shipped in P1 broke that pinning — together they were the "message
+  // jumps to the top and disappears on activity" bug. Do NOT re-add any of them:
+  //
+  //  - custom `estimateHeight` (returned ~2 rows for a 1-row tool card) AND the
+  //    `cache` config: either one inflates the phantom scroll extent so follow="end"
+  //    scrolls PAST the real content — only the last row survives, pinned to the TOP
+  //    of a blank viewport. `virtualization="measured"` itself is FINE and stays: it
+  //    measures the VISIBLE window (so the tail is exact and long transcripts don't
+  //    render every row); silvery's default off-screen estimate is accurate enough.
+  //  - `overflowIndicator`: reserved the bottom viewport row for its "▼N" hint,
+  //    which follow="end" did not subtract, so the newest row sat one line BELOW
+  //    the fold. `scrollbarVisibility="always"` already signals off-screen content.
+  //
+  // (`tailReserveRows`/`maintainVisibleContentPosition` were tried and cleared — not
+  // the cause.) `tailWindow` stays exported as the measured fallback, pinned by the
+  // Phase 1 test; the render test's `real row 13/14/15` window guards this config.
   const shown = snapshot.rows;
   return (
     <ListView
@@ -358,14 +372,7 @@ function Transcript({
       nav
       active={active}
       follow="end"
-      tailReserveRows="auto"
-      cache={{ mode: 'virtual', isCacheable: (_item, index) => index < shown.length - 1 }}
       virtualization="measured"
-      estimateHeight={(index) => {
-        const item = shown[index];
-        return item ? 1 + countVisualLines(item.text || ' ', Math.max(1, width - 2)) : 2;
-      }}
-      overflowIndicator
       scrollbarVisibility="always"
       getKey={(item) => item.id}
       renderItem={(item) => (
@@ -611,6 +618,44 @@ function FooterBar({
   );
 }
 
+function truncateCompletionLabel(label: string, max: number): string {
+  if (label.length <= max) return label;
+  return `${label.slice(0, Math.max(1, max - 1))}…`;
+}
+
+/**
+ * Old-TUI completion behavior, translated into the v2 one-accent language:
+ * preview candidates stay muted; Tab's active candidate gets both the human
+ * caret and the accent so selection never depends on color alone.
+ */
+function CompletionRail({ state, columns }: { state: CompletionState; columns: number }) {
+  const maxVisible = Math.max(1, Math.floor((columns - 15) / 16));
+  const cursor = state.index >= 0 ? state.index : 0;
+  const { start, end } = pickerWindow(state.items.length, cursor, maxVisible);
+  const visible = state.items.slice(start, end);
+  const prefix = state.index >= 0 ? `tab ${state.index + 1}/${state.items.length}` : 'tab complete';
+  const glyphs = resolveGlyphs(detectUnicode());
+
+  return (
+    <Box width={columns}>
+      <Text color={VL_COLOR.muted}>{prefix} · </Text>
+      {visible.map((item, offset) => {
+        const index = start + offset;
+        const selected = index === state.index;
+        return (
+          <React.Fragment key={`${index}-${item}`}>
+            {offset > 0 ? <Text color={VL_COLOR.muted}> </Text> : null}
+            <Text color={selected ? VL_COLOR.accent : VL_COLOR.muted} bold={selected}>
+              {selected ? `${glyphs.human} ` : ''}
+              {truncateCompletionLabel(item, 14)}
+            </Text>
+          </React.Fragment>
+        );
+      })}
+    </Box>
+  );
+}
+
 export interface PushSurfaceHook {
   getState?: () => {
     paletteOpen: boolean;
@@ -630,11 +675,29 @@ export interface PushSurfaceHook {
   openPalette?: () => void;
   closePalette?: () => void;
   submit?: (text: string) => Promise<void>;
+  setComposerInput?: (text: string) => void;
+  changeComposerInput?: (text: string) => void;
+  complete?: (reverse?: boolean) => void;
+  getComposerState?: () => { input: string; completion: CompletionState | null };
 }
 
 export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: () => void): void {
   if (running) cancel();
   else exit();
+}
+
+export type ComposerShortcut = 'complete' | 'palette' | 'clear' | 'provider' | null;
+
+export function resolveComposerShortcut(
+  inputKey: string,
+  key: { ctrl?: boolean; tab?: boolean },
+): ComposerShortcut {
+  if (key.tab) return 'complete';
+  if (!key.ctrl) return null;
+  if (inputKey === 'k') return 'palette';
+  if (inputKey === 'l') return 'clear';
+  if (inputKey === 'p') return 'provider';
+  return null;
 }
 
 export function PushSurface({
@@ -649,6 +712,7 @@ export function PushSurface({
   const { exit } = useApp();
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [input, setInput] = useState('');
+  const [, setCompletionRevision] = useState(0);
   const [paletteAnimating, setPaletteAnimating] = useState(false);
   const [interactionAnimating, setInteractionAnimating] = useState(false);
   const [pickerAnimating, setPickerAnimating] = useState(false);
@@ -684,6 +748,38 @@ export function PushSurface({
   pickerOpenRef.current = pickerMotion.visible;
   const lastAttentionInteractionId = useRef<string | null>(null);
   const [attentionTick, setAttentionTick] = useState<number | null>(null);
+  const completer = useMemo(
+    () =>
+      createTabCompleter({
+        ctx: { providerConfig: { id: snapshot.provider } },
+        skills: new Map(),
+        getCuratedModels: (providerId) => [...getCuratedModels(providerId)],
+        getProviderList,
+        workspaceRoot: snapshot.cwd,
+      }),
+    [snapshot.cwd, snapshot.provider],
+  );
+
+  const setComposerInput = useCallback(
+    (value: string) => {
+      setInput(value);
+      completer.reset();
+      completer.suggest(value);
+      setCompletionRevision((revision) => revision + 1);
+    },
+    [completer],
+  );
+
+  const complete = useCallback(
+    (reverse = false) => {
+      const result = completer.tab(input, reverse);
+      if (!result) return;
+      setInput(result.text);
+      setCompletionRevision((revision) => revision + 1);
+    },
+    [completer, input],
+  );
+
   useEffect(() => {
     const interaction = snapshot.interaction;
     if (interaction?.kind === 'approval' && interaction.id !== lastAttentionInteractionId.current) {
@@ -697,12 +793,25 @@ export function PushSurface({
     async (text: string) => {
       if (!text.trim() || snapshot.running) return;
       setInput('');
+      completer.reset();
+      setCompletionRevision((revision) => revision + 1);
       await controller.submit(text);
       // /editor parks the composed draft on the controller for the TextArea.
       const draft = controller.takePendingComposerText();
-      if (draft !== null) setInput(draft);
+      if (draft !== null) setComposerInput(draft);
     },
-    [controller, snapshot.running],
+    [completer, controller, setComposerInput, snapshot.running],
+  );
+
+  const changeComposerInput = useCallback(
+    (value: string) => {
+      if (input.length === 0 && value === '?') {
+        void submit('/help');
+        return;
+      }
+      setComposerInput(value);
+    },
+    [input.length, setComposerInput, submit],
   );
 
   const runCommand = useCallback(
@@ -749,26 +858,27 @@ export function PushSurface({
     !snapshot.running &&
     !interactionMotion.visible &&
     !pickerMotion.visible;
-  const completer = useMemo(
-    () =>
-      createTabCompleter({
-        ctx: { providerConfig: { id: snapshot.provider } },
-        skills: new Map(),
-        getCuratedModels: (providerId) => [...getCuratedModels(providerId)],
-        getProviderList,
-        workspaceRoot: snapshot.cwd,
-      }),
-    [snapshot.cwd, snapshot.provider],
-  );
-
   useInput(
     (inputKey, key) => {
       if (key.ctrl && inputKey === 'c') {
         handleTuiInterrupt(snapshot.running, controller.cancel, exit);
         return;
       }
-      if (!paletteOpen && !snapshot.interaction && !snapshot.picker && key.ctrl && inputKey === 'k')
+      if (!inputActive) return;
+      const shortcut = resolveComposerShortcut(inputKey, key);
+      if (shortcut === 'complete') {
+        complete(key.shift);
+        return;
+      }
+      if (shortcut === 'palette') {
         setPaletteOpen(true);
+        return;
+      }
+      if (shortcut === 'clear') {
+        controller.clearDisplay();
+        return;
+      }
+      if (shortcut === 'provider') controller.openPicker('provider');
     },
     { isActive: !paletteMotion.visible && !interactionMotion.visible && !pickerMotion.visible },
   );
@@ -793,10 +903,19 @@ export function PushSurface({
     hook.openPalette = () => setPaletteOpen(true);
     hook.closePalette = () => setPaletteOpen(false);
     hook.submit = submit;
+    hook.setComposerInput = setComposerInput;
+    hook.changeComposerInput = changeComposerInput;
+    // The entry bridge bypasses Silvery's swallowed Tab event, so keep the
+    // same focus gate here that the normal `useInput` path enforces.
+    hook.complete = (reverse) => {
+      if (inputActive) complete(reverse);
+    };
+    hook.getComposerState = () => ({ input, completion: completer.getState() });
   });
 
   // Frame chrome = header + composer rule + footer + optional error line ≈ 4–5 rows.
-  const transcriptHeight = Math.max(3, rows - 6);
+  const completionState = inputActive ? completer.getState() : null;
+  const transcriptHeight = Math.max(3, rows - 6 - (completionState ? 1 : 0));
   const elapsedMs =
     snapshot.startedAt === null
       ? 0
@@ -836,10 +955,7 @@ export function PushSurface({
         ) : null}
         <TextArea
           value={input}
-          onChange={(value) => {
-            setInput(value);
-            completer.suggest(value);
-          }}
+          onChange={changeComposerInput}
           onSubmit={submit}
           submitKey="enter"
           minRows={1}
@@ -848,7 +964,7 @@ export function PushSurface({
           isActive={inputActive}
           disabled={snapshot.running}
         />
-        {completer.getHint() ? <Text color={VL_COLOR.muted}>{completer.getHint()}</Text> : null}
+        {completionState ? <CompletionRail state={completionState} columns={columns} /> : null}
         <FooterBar snapshot={snapshot} scope={scope} columns={columns} elapsed={elapsed} />
         {interactionMotion.visible && retainedInteraction.current ? (
           <InteractionModal

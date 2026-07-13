@@ -30,7 +30,7 @@ if [ -f "$COMPILED" ]; then
   else
     NEWER_SRC="$(find "$ROOT_DIR/cli" "$ROOT_DIR/lib" \
          -type d \( -name dist -o -name node_modules -o -name tests \) -prune -o \
-         -type f -name '*.ts' -newer "$COMPILED" -print -quit 2>/dev/null)"
+         -type f \( -name '*.ts' -o -name '*.tsx' \) -newer "$COMPILED" -print -quit 2>/dev/null)"
     if [ -n "$NEWER_SRC" ]; then
       REL="${NEWER_SRC#$ROOT_DIR/}"
       echo "push: warning — $REL is newer than cli/dist/cli/cli.js." >&2
@@ -40,6 +40,14 @@ if [ -f "$COMPILED" ]; then
       USE_COMPILED=1
     fi
   fi
+fi
+
+# WSL shells commonly inherit TEMP/TMP from Windows. tsx uses the platform
+# temp directory for its IPC socket, which cannot live on a /mnt/c filesystem.
+# Prefer the native temp directory for source execution unless the caller
+# explicitly supplied TMPDIR.
+if [ -z "$USE_COMPILED" ] && [ -z "${TMPDIR:-}" ] && [ -d /tmp ]; then
+  export TMPDIR=/tmp
 fi
 
 if [ -n "$USE_COMPILED" ]; then
