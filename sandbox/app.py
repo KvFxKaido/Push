@@ -31,6 +31,10 @@ sandbox_image = (
     .apt_install("git", "curl", "ripgrep", "jq", "zip", "unzip")
     .pip_install("ruff", "pytest")
     .run_commands(
+        # Node 20 — deliberately NOT the repo-wide Node 24 floor. This image
+        # mirrors Dockerfile.sandbox, whose Node comes from the Cloudflare
+        # sandbox base image (Node 20). The two sandbox backends must agree, so
+        # this pin moves only when the Cloudflare base image does.
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
         "apt-get install -y nodejs",
         # Default git identity — overridden per-session when GitHub token is available
