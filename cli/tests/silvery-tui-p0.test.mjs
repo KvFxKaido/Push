@@ -144,6 +144,19 @@ describe('silvery TUI launch routing', () => {
     assert.equal(result, 19);
   });
 
+  it('bridges Tab around Silvery focus traversal without claiming other keys', {
+    skip: silverySkip,
+  }, async () => {
+    const { bridgeSilveryCompletionKey } = await import('../silvery/entry.tsx');
+    const directions = [];
+    const hook = { complete: (reverse) => directions.push(reverse) };
+
+    assert.equal(bridgeSilveryCompletionKey('\t', hook), true);
+    assert.equal(bridgeSilveryCompletionKey('\x1b[Z', hook), true);
+    assert.equal(bridgeSilveryCompletionKey('x', hook), false);
+    assert.deepEqual(directions, [false, true]);
+  });
+
   it('bundles silvery into every single-binary compile command', async () => {
     const workflow = await readFile(
       path.resolve(import.meta.dirname, '..', '..', '.github', 'workflows', 'ci.yml'),
@@ -182,6 +195,17 @@ describe('silvery Phase 0 fault shell', () => {
     );
     assert.equal(cancels, 1);
     assert.equal(exits, 1);
+  });
+
+  it('maps the restored composer hotkeys without borrowing modal focus', {
+    skip: silverySkip,
+  }, async () => {
+    const { resolveComposerShortcut } = await import('../silvery/surface.tsx');
+    assert.equal(resolveComposerShortcut('\t', { tab: true }), 'complete');
+    assert.equal(resolveComposerShortcut('k', { ctrl: true }), 'palette');
+    assert.equal(resolveComposerShortcut('l', { ctrl: true }), 'clear');
+    assert.equal(resolveComposerShortcut('p', { ctrl: true }), 'provider');
+    assert.equal(resolveComposerShortcut('p', {}), null);
   });
 
   it('renders an inline failure while the shell stays alive, then settles on unmount', {
@@ -513,6 +537,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     assert.equal(turns, 0);
     assert.ok(controller.getSnapshot().rows.some((row) => /^Commands:/.test(row.text)));
+    assert.ok(controller.getSnapshot().rows.some((row) => /Keys:\n/.test(row.text)));
+    assert.ok(controller.getSnapshot().rows.some((row) => /Tab \/ Shift\+Tab/.test(row.text)));
     assert.ok(
       controller.getSnapshot().rows.some((row) => /session: command-session/.test(row.text)),
     );
@@ -915,6 +941,262 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
     await controller.dispose();
     assert.equal(saves, 0, 'disposing a stale daemon mirror must not overwrite daemon state');
+  });
+
+  it('keeps the submitted human turn visible when the daemon echo is missing', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'daemon-missing-echo-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let acceptSend;
+    let snapshotRequests = 0;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client: {
+              request: async (type) => {
+                if (type === 'get_session_snapshot') {
+                  snapshotRequests++;
+                  return snapshotRequests === 1
+                    ? {
+                        payload: {
+                          transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
+                        },
+                      }
+                    : { payload: {} };
+                }
+                if (type === 'send_user_message') {
+                  return new Promise((resolve) => {
+                    acceptSend = () => resolve({ payload: { runId: 'daemon-run' } });
+                  });
+                }
+                return { payload: {} };
+              },
+            },
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    const submission = controller.submit('do not vanish');
+    while (!acceptSend) await sleep(0);
+    assert.equal(
+      controller
+        .getSnapshot()
+        .rows.some((row) => row.role === 'user' && row.text === 'do not vanish'),
+      true,
+    );
+
+    hooks.onEngineEvent({ type: 'assistant_token', payload: { text: 'still here' } });
+    hooks.onEngineEvent({ type: 'assistant_done', payload: {} });
+    hooks.onEngineEvent({ type: 'run_complete', payload: {} });
+    acceptSend();
+    await submission;
+
+    assert.deepEqual(
+      controller
+        .getSnapshot()
+        .rows.filter((row) => row.role === 'user' || row.role === 'assistant')
+        .map((row) => row.text),
+      ['do not vanish', 'still here'],
+    );
+    await controller.dispose();
+  });
+
+  it('drops the optimistic user row when the daemon rejects the send', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'daemon-send-reject-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: () => ({
+          connected: true,
+          sessionId: state.sessionId,
+          attachToken: 'token',
+          client: {
+            request: async (type) => {
+              if (type === 'get_session_snapshot') {
+                return {
+                  payload: { transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } } },
+                };
+              }
+              if (type === 'send_user_message') {
+                throw new Error('daemon rejected the send');
+              }
+              return { payload: {} };
+            },
+          },
+          ensureConnected: async () => true,
+          ensureReady: async () => true,
+          noteSeenSeq: () => undefined,
+          scheduleReconnect: () => undefined,
+          teardown: () => undefined,
+        }),
+      },
+    );
+
+    await controller.submit('ghost message');
+
+    assert.equal(controller.getSnapshot().running, false);
+    assert.match(controller.getSnapshot().error, /daemon rejected the send/i);
+    // The submission was never accepted — its optimistic row must not linger.
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => row.text === 'ghost message'),
+      false,
+      'a rejected submission must not leave an optimistic ghost row',
+    );
+    await controller.dispose();
+  });
+
+  it('ignores an older attach snapshot after a daemon turn has started', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'daemon-stale-attach-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    let resolveAttachSnapshot;
+    let acceptSend;
+    let snapshotRequests = 0;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client: {
+              request: async (type) => {
+                if (type === 'get_session_snapshot') {
+                  snapshotRequests++;
+                  if (snapshotRequests === 1) {
+                    return new Promise((resolve) => {
+                      resolveAttachSnapshot = resolve;
+                    });
+                  }
+                  if (snapshotRequests === 2) {
+                    return {
+                      payload: {
+                        transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
+                      },
+                    };
+                  }
+                  return { payload: {} };
+                }
+                if (type === 'send_user_message') {
+                  acceptSend = true;
+                  return { payload: { runId: 'daemon-run' } };
+                }
+                return { payload: {} };
+              },
+            },
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+
+    hooks.onAttached({ provider: 'ollama', model: 'test-model' });
+    while (!resolveAttachSnapshot) await sleep(0);
+
+    const submission = controller.submit('stay on screen');
+    while (!acceptSend) await sleep(0);
+    hooks.onEngineEvent({
+      kind: 'event',
+      seq: 1,
+      type: 'user_message',
+      payload: { text: 'stay on screen', preview: 'stay on screen', chars: 14 },
+    });
+    hooks.onEngineEvent({
+      kind: 'event',
+      seq: 2,
+      type: 'assistant_token',
+      payload: { text: 'thinking' },
+    });
+
+    resolveAttachSnapshot({
+      payload: {
+        transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
+      },
+    });
+    await sleep(0);
+
+    assert.deepEqual(
+      controller
+        .getSnapshot()
+        .rows.filter((row) => row.role === 'user' || row.role === 'assistant')
+        .map((row) => row.text),
+      ['stay on screen', 'thinking'],
+    );
+
+    hooks.onEngineEvent({ kind: 'event', seq: 3, type: 'assistant_done', payload: {} });
+    hooks.onEngineEvent({ kind: 'event', seq: 4, type: 'run_complete', payload: {} });
+    await submission;
+    await controller.dispose();
   });
 
   it('submits retained approval decisions back to the daemon', async () => {
@@ -1407,6 +1689,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.equal(controller.getSnapshot().running, false);
     assert.equal(controller.getSnapshot().startedAt, null);
     assert.match(controller.getSnapshot().error, /session disk unavailable/);
+    // The inline append never landed, so the optimistic row must not linger.
+    assert.equal(
+      controller.getSnapshot().rows.some((row) => row.text === 'cannot persist'),
+      false,
+      'a failed inline submission must not leave an optimistic ghost row',
+    );
     await controller.dispose();
   });
 
@@ -1420,6 +1708,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const stdin = new FakeStdin();
     const hook = {};
     const listeners = new Set();
+    const submissions = [];
     const snapshot = {
       rows: Array.from({ length: 16 }, (_, index) => ({
         id: String(index),
@@ -1443,9 +1732,11 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const controller = {
       getSnapshot: () => snapshot,
       subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
-      submit: async () => undefined,
+      submit: async (text) => submissions.push(text),
       cancel: () => undefined,
       clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
       dispose: async () => undefined,
     };
     const handle = Silvery.render(
@@ -1457,7 +1748,15 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const instance = await handle;
     await sleep(180);
 
-    assert.match(stdout.bytes, /real row 15/);
+    // Tail-follow regression guard (the "message jumps to the top and disappears
+    // on activity" bug). Assert a WINDOW of the newest rows renders, not just the
+    // last one: the overshoot mode showed only row 15 alone at the top, and the
+    // overflowIndicator mode hid row 15 one line below the fold — both drop rows
+    // 13-15 from the settled frame. (Only positive matches: stdout.bytes is
+    // cumulative, so a doesNotMatch on an old row would catch pre-scroll frames.)
+    assert.match(stdout.bytes, /real row 15/); // newest row visible (not below the fold)
+    assert.match(stdout.bytes, /real row 14/); // and the ones before it (not alone at top)
+    assert.match(stdout.bytes, /real row 13/);
     assert.match(stdout.bytes, /\/ 1m/);
     assert.match(stdout.bytes, /turn 8/);
     assert.equal(hook.getState().inputActive, true);
@@ -1476,10 +1775,14 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.equal(hook.getMotionState().paletteFade, 0.35);
 
     hook.closePalette();
-    await sleep(30);
-    assert.equal(hook.getMotionState().palettePhase, 'exiting');
+    // The exit transition fires on the post-close effect; when it lands depends on
+    // render cost under the shared clock, so poll for it rather than snapshotting a
+    // hardcoded delay. What matters: closing leaves 'open' and holds the composer
+    // inert until the modal is fully gone.
+    for (let i = 0; i < 80 && hook.getMotionState().palettePhase === 'open'; i++) await sleep(10);
+    assert.notEqual(hook.getMotionState().palettePhase, 'open');
     assert.equal(hook.getState().inputActive, false);
-    await sleep(520);
+    for (let i = 0; i < 80 && hook.getMotionState().palettePhase !== 'closed'; i++) await sleep(10);
     assert.equal(hook.getMotionState().palettePhase, 'closed');
     assert.deepEqual(hook.getState(), {
       paletteOpen: false,
@@ -1487,6 +1790,32 @@ describe('silvery TUI Phase 1 chat surface', () => {
       inputActive: true,
       rowCount: 16,
     });
+
+    hook.setComposerInput('/mo');
+    await sleep(30);
+    assert.deepEqual(hook.getComposerState(), {
+      input: '/mo',
+      completion: { items: ['/model'], index: -1 },
+    });
+
+    hook.complete();
+    await sleep(30);
+    assert.deepEqual(hook.getComposerState(), {
+      input: '/model ',
+      completion: { items: ['/model'], index: 0 },
+    });
+
+    hook.setComposerInput('/c');
+    const candidates = hook.getComposerState().completion.items;
+    assert.ok(candidates.length > 1);
+    hook.complete(true);
+    assert.equal(hook.getComposerState().completion.index, candidates.length - 1);
+
+    hook.setComposerInput('');
+    await sleep(30);
+    hook.changeComposerInput('?');
+    await sleep(30);
+    assert.deepEqual(submissions, ['/help']);
 
     instance.unmount();
     await lifecycle;
@@ -1542,6 +1871,13 @@ describe('silvery TUI Phase 1 chat surface', () => {
     // Modal is painted, and the composer is reported inactive by the hook —
     // the single source of truth the TextArea's isActive prop reads.
     assert.equal(hook.getState().inputActive, false);
+    hook.setComposerInput('/mo');
+    await sleep(30);
+    hook.complete();
+    assert.deepEqual(hook.getComposerState(), {
+      input: '/mo',
+      completion: { items: ['/model'], index: -1 },
+    });
     assert.equal(hook.getMotionState().attention, true);
     await sleep(180);
     assert.equal(hook.getMotionState().attention, false);

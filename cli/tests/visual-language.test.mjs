@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import { defaultDarkTheme, resolveThemeColor } from 'silvery';
 
 import { createPushSilveryTokens } from '../silvery/theme.tsx';
+import { VARIANTS } from '../tui-theme.ts';
 
 import {
   GLYPHS_ASCII,
@@ -176,7 +177,8 @@ describe('visual language v2 frame helpers', () => {
 
   it('switches footer keybinds by focus scope (law 1)', () => {
     assert.match(footerKeybinds('composer'), /ctrl\+k/i);
-    assert.doesNotMatch(footerKeybinds('composer'), /\? help/i);
+    assert.match(footerKeybinds('composer'), /tab complete/i);
+    assert.match(footerKeybinds('composer'), /\? help/i);
     assert.match(footerKeybinds('approval'), /approve/i);
     assert.match(footerKeybinds('palette'), /esc/i);
     assert.match(footerKeybinds('picker'), /select/i);
@@ -236,5 +238,25 @@ describe('visual language v2 theme accent', () => {
     assert.equal(resolveThemeColor('$fg-accent', theme), tokens['fg-accent']);
     assert.equal(resolveThemeColor('$bg-cursor', theme), tokens['fg-accent']);
     assert.equal(resolveThemeColor('$bg-selected', theme), tokens['fg-accent']);
+  });
+
+  it("keeps Push's near-black neutral foundation across accent themes", () => {
+    const neutral = VARIANTS.mono.tokens;
+    const neon = createPushSilveryTokens('neon');
+    const forest = createPushSilveryTokens('forest');
+
+    for (const tokens of [neon, forest]) {
+      assert.equal(tokens.bg, neutral['bg.base']);
+      assert.equal(tokens.fg, neutral['fg.primary']);
+      assert.equal(tokens['bg-default'], neutral['bg.base']);
+      assert.equal(tokens['bg-surface-default'], neutral['bg.base']);
+      assert.equal(tokens['bg-surface-subtle'], neutral['bg.panel']);
+      assert.equal(tokens['fg-default'], neutral['fg.primary']);
+      assert.equal(tokens['fg-muted'], neutral['fg.muted']);
+      assert.equal(tokens['border-default'], neutral['border.default']);
+      assert.notEqual(tokens['bg-default'], defaultDarkTheme['bg-default']);
+    }
+
+    assert.notEqual(neon['fg-accent'], forest['fg-accent']);
   });
 });

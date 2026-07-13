@@ -239,6 +239,8 @@ export async function createSilveryController(
   let sequence = 0;
   let liveText = '';
   let activityRows: SilveryTranscriptItem[] = [];
+  let optimisticUserRow: SilveryTranscriptItem | null = null;
+  let optimisticDaemonInsertIndex: number | null = null;
   let daemonMirror = createDaemonTranscriptMirror();
   let daemonHiddenBefore = 0;
   let running = false;
@@ -258,6 +260,7 @@ export async function createSilveryController(
   let daemonRunId: string | null = null;
   let resolveDaemonTurn: (() => void) | null = null;
   let daemonStateStale = false;
+  let transcriptResyncSequence = 0;
   let execModeRefreshSequence = 0;
   let gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
   const listeners = new Set<() => void>();
@@ -283,24 +286,33 @@ export async function createSilveryController(
     'auto';
   let execMode = localExecMode();
 
+  const daemonTranscriptRows = (): SilveryTranscriptItem[] => {
+    const rows = daemonMirror.rows.slice(daemonHiddenBefore);
+    if (optimisticUserRow) {
+      const insertAt =
+        optimisticDaemonInsertIndex === null
+          ? rows.length
+          : Math.max(0, Math.min(rows.length, optimisticDaemonInsertIndex - daemonHiddenBefore));
+      rows.splice(insertAt, 0, optimisticUserRow);
+    }
+    if (daemonMirror.liveText) {
+      rows.push({
+        id: 'daemon-assistant-live',
+        kind: 'message',
+        role: 'assistant',
+        text: daemonMirror.liveText,
+        live: true,
+      });
+    }
+    return rows;
+  };
+
   const buildSnapshot = (): SilverySnapshot => ({
     rows: daemonStateStale
-      ? [
-          ...daemonMirror.rows.slice(daemonHiddenBefore),
-          ...(daemonMirror.liveText
-            ? [
-                {
-                  id: 'daemon-assistant-live',
-                  kind: 'message' as const,
-                  role: 'assistant' as const,
-                  text: daemonMirror.liveText,
-                  live: true,
-                },
-              ]
-            : []),
-        ]
+      ? daemonTranscriptRows()
       : [
           ...historyRows(),
+          ...(optimisticUserRow ? [optimisticUserRow] : []),
           ...activityRows,
           ...(liveText
             ? [
@@ -513,6 +525,12 @@ export async function createSilveryController(
       type: event.type,
       payload: event.payload,
     });
+    // The daemon echo is authoritative. Drop the local submit-time row in the
+    // same repaint so a healthy echo replaces it without a duplicate flash.
+    if (event.type === 'user_message') {
+      optimisticUserRow = null;
+      optimisticDaemonInsertIndex = null;
+    }
     if (event.type === 'run_complete') {
       running = false;
       startedAt = null;
@@ -647,6 +665,7 @@ export async function createSilveryController(
 
   async function resyncDaemonTranscript(reason: string): Promise<boolean> {
     if (!daemon.connected || !daemon.sessionId || !daemon.attachToken) return false;
+    const resyncSequence = ++transcriptResyncSequence;
     try {
       const response = await daemon.client!.request(
         'get_session_snapshot',
@@ -671,7 +690,23 @@ export async function createSilveryController(
         | undefined;
       const snapshot = payload?.transcript?.mirror;
       if (!snapshot || !Array.isArray(snapshot.rows)) return false;
+      // Attach, mutation, and run-complete resyncs are intentionally
+      // fire-and-forget. Never let an older response overwrite a newer
+      // request, or let a snapshot taken before live events replace the
+      // already-advanced mirror while a turn is running.
+      if (resyncSequence !== transcriptResyncSequence) return false;
+      if (
+        !isTranscriptMutationEvent(reason) &&
+        typeof snapshot.lastSeq === 'number' &&
+        snapshot.lastSeq < daemonMirror.lastSeq
+      ) {
+        return false;
+      }
       daemonMirror = createDaemonTranscriptMirror(snapshot);
+      if (reason !== 'before_send') {
+        optimisticUserRow = null;
+        optimisticDaemonInsertIndex = null;
+      }
       daemonHiddenBefore = Math.min(daemonHiddenBefore, daemonMirror.rows.length);
       daemonStateStale = true;
       // Clear transient resync failures once a valid mirror is adopted.
@@ -693,6 +728,7 @@ export async function createSilveryController(
       notify();
       return true;
     } catch (cause) {
+      if (resyncSequence !== transcriptResyncSequence) return false;
       const message = cause instanceof Error ? cause.message : String(cause);
       error = `Daemon transcript resync failed (${reason}): ${message}`;
       notify();
@@ -900,6 +936,17 @@ export async function createSilveryController(
           '  /debug runtime         Runtime path/provider/session diagnostics',
           '  /worktree              Show worktree sandbox status',
           '  /exit | /quit          Use the command palette or Ctrl+C to exit',
+          '',
+          'Keys:',
+          '  Tab / Shift+Tab        Complete and cycle slash commands or @paths',
+          '  Ctrl+K                 Open the command palette',
+          '  Ctrl+P                 Open the provider picker',
+          '  Ctrl+L                 Clear the transcript display',
+          '  Ctrl+C                 Cancel the active turn or exit while idle',
+          '  Shift/Alt+Enter        Insert a newline',
+          '  Ctrl+A/E · Alt+B/F     Line start/end · word backward/forward',
+          '  Ctrl+U/W · Ctrl+Y      Delete to line start/word · paste deletion',
+          '  ?                      Show this help from an empty composer',
         ].join('\n'),
       );
       return true;
@@ -1591,11 +1638,25 @@ export async function createSilveryController(
       error = null;
       activityRows = [];
       liveText = '';
+      const submittedAt = now();
+      optimisticDaemonInsertIndex = null;
+      optimisticUserRow = {
+        id: nextId('optimistic-user'),
+        kind: 'message',
+        role: 'user',
+        text,
+        timestampMs: submittedAt,
+      };
       running = true;
-      startedAt = now();
+      startedAt = submittedAt;
       notify();
       abortController = new AbortController();
       let saveLocalState = false;
+      // Tracks whether the turn's user message was actually accepted (daemon send
+      // resolved, or the inline history append succeeded). The optimistic row is a
+      // fallback the daemon echo/resync or the inline append replaces on success;
+      // if the submission was never accepted, `finally` must drop it (below).
+      let messageAccepted = false;
       try {
         await ensurePersisted();
         if (await daemon.ensureReady()) {
@@ -1604,6 +1665,8 @@ export async function createSilveryController(
           if (abortController.signal.aborted) return;
           daemonStateStale = true;
           await resyncDaemonTranscript('before_send');
+          optimisticDaemonInsertIndex = daemonMirror.rows.length;
+          notify();
           const completion = new Promise<void>((resolve) => {
             resolveDaemonTurn = resolve;
           });
@@ -1618,6 +1681,7 @@ export async function createSilveryController(
             daemon.sessionId,
           );
           daemonRunId = typeof response.payload?.runId === 'string' ? response.payload.runId : null;
+          messageAccepted = true;
           await completion;
           return;
         }
@@ -1640,6 +1704,9 @@ export async function createSilveryController(
           chars: text.length,
           preview: text.slice(0, 280),
         });
+        optimisticUserRow = null;
+        optimisticDaemonInsertIndex = null;
+        messageAccepted = true;
         notify();
         const turnProvider = PROVIDER_CONFIGS[state.provider] ?? activeProvider;
         const apiKey = (deps.resolveKey ?? resolveApiKey)(turnProvider);
@@ -1699,6 +1766,14 @@ export async function createSilveryController(
         interaction = null;
         resolveApproval = null;
         resolveQuestion = null;
+        // A submission that was never accepted (send rejected, inline append threw,
+        // or aborted before send) must not leave its optimistic row haunting the
+        // idle transcript. Accepted turns already cleared it via the daemon
+        // echo/resync or the inline history append, so this only fires on failure.
+        if (!messageAccepted) {
+          optimisticUserRow = null;
+          optimisticDaemonInsertIndex = null;
+        }
         if (saveLocalState) {
           try {
             await (deps.saveState ?? saveSessionState)(state);

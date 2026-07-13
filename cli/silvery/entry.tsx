@@ -6,7 +6,7 @@
 // silvery 0.21 itself is a parse-time error on older Node releases.
 
 import React from 'react';
-import { render, type Instance } from 'silvery';
+import { parseKey, render, type Instance } from 'silvery';
 
 import { createSilveryController, type SilveryController } from './controller.js';
 import { installProcessWatchdog, PushShell } from './push-shell.js';
@@ -36,12 +36,26 @@ export interface RunTuiSilveryDeps {
   hook?: PushSurfaceHook;
 }
 
+/**
+ * Silvery currently consumes Tab for focus traversal before `useInput` runs.
+ * Push has one composer focus target, so bridge only Tab/Shift+Tab back into
+ * the surface's completion callback at the raw TTY boundary.
+ */
+export function bridgeSilveryCompletionKey(chunk: string | Buffer, hook: PushSurfaceHook): boolean {
+  const [, key] = parseKey(chunk);
+  if (!key.tab) return false;
+  hook.complete?.(key.shift);
+  return true;
+}
+
 export async function runTuiSilvery(
   options: RunTuiOptions,
   deps: RunTuiSilveryDeps = {},
 ): Promise<number> {
   let instance: Instance | undefined;
   let controller: SilveryController | undefined;
+  const surfaceHook = deps.hook ?? {};
+  let tabInputListener: ((chunk: string | Buffer) => void) | undefined;
   const watchdog = installProcessWatchdog({
     getInstance: () => instance,
     abortActive: () => controller?.cancel(),
@@ -54,7 +68,7 @@ export async function runTuiSilvery(
         onRecoverableError={(error) => logRenderFault('recoverable', error)}
         onRootError={(error) => logRenderFault('root', error)}
       >
-        <PushSurface controller={controller} hook={deps.hook} />
+        <PushSurface controller={controller} hook={surfaceHook} />
       </PushShell>,
       undefined,
       {
@@ -66,6 +80,10 @@ export async function runTuiSilvery(
       },
     );
     instance = await handle;
+    tabInputListener = (chunk) => {
+      bridgeSilveryCompletionKey(chunk, surfaceHook);
+    };
+    process.stdin.prependListener('data', tabInputListener);
     // Terminal handoff for /editor (and future pagers): pause Silvery paint while
     // the child owns the real TTY, then resume for a full redraw.
     controller.setHandoffHooks({
@@ -81,6 +99,7 @@ export async function runTuiSilvery(
     watchdog.recover('renderer', error);
     return 1;
   } finally {
+    if (tabInputListener) process.stdin.removeListener('data', tabInputListener);
     await controller?.dispose();
     watchdog.dispose();
   }
