@@ -1,6 +1,13 @@
 {
   "name": "push",
   "main": "./app/worker.ts",
+  // ⚠️ LOCAL ONLY. Workers Builds (the Git-connected CI that deploys this
+  // Worker) deliberately does NOT honor wrangler "Custom Builds" — it runs the
+  // Build command configured in the Cloudflare dashboard (Worker > Settings >
+  // Build) instead. So this block governs `wrangler dev` / a local `wrangler
+  // deploy` and nothing else; changing it will not fix a red Workers Builds
+  // check. Keep the two in sync by hand: the dashboard command is
+  // `pnpm run build` (the root script this mirrors).
   "build": {
     "command": "pnpm --filter my-app run build",
     "watch_dir": "./app/src"
