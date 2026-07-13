@@ -95,15 +95,23 @@ describe('mintDeviceAttachToken + verifyDeviceAttachToken', () => {
 
 describe('TTL eviction (sliding)', () => {
   it('evicts a record whose lastUsedAt is older than ttlMs and returns null', async () => {
-    // Set a tiny TTL so the test can sleep past it without padding.
-    process.env.PUSHD_ATTACH_TOKEN_TTL_MS = '20';
+    // Mint and take the first verify under a TTL the setup cannot outrun.
+    // getAttachTokenTtlMs() reads the env on every call, so the expiry step below
+    // can shrink it afterwards. A single tiny TTL across the whole test is a race:
+    // mint does crypto + file IO, and under full-suite load that alone can outlast
+    // a 20ms TTL, expiring the token before the first verify — which then fails on
+    // the setup assertion rather than exercising eviction at all.
+    process.env.PUSHD_ATTACH_TOKEN_TTL_MS = '60000';
     const { token, tokenId } = await mintDeviceAttachToken({
       parentTokenId: 'pdt_parent_1',
       boundOrigin: 'loopback',
     });
-    // First verify succeeds and refreshes lastUsedAt.
+    // First verify succeeds and refreshes lastUsedAt (sliding TTL).
     assert.ok(await verifyDeviceAttachToken(token));
-    // Wait past TTL, then verify again — should be evicted.
+    // Now shrink the TTL and wait past it. The elapsed sleep only has to exceed
+    // the new TTL, so no amount of scheduler delay can make this flake — extra
+    // delay only pushes lastUsedAt further past expiry.
+    process.env.PUSHD_ATTACH_TOKEN_TTL_MS = '1';
     await new Promise((r) => setTimeout(r, 50));
     const expired = await verifyDeviceAttachToken(token);
     assert.equal(expired, null, 'expired token should not verify');
