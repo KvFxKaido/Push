@@ -20,6 +20,7 @@ import {
   diffLineColor,
   faultCopy,
   footerKeybinds,
+  formatTurnTimestamp,
   headerSegments,
   modeLabel,
   resolveGlyphs,
@@ -109,9 +110,15 @@ describe('visual language v2 frame helpers', () => {
       branch: 'main',
       path: '~/proj',
       context: '12k',
-      turn: 't3',
+      turn: 'turn 3',
     });
-    assert.deepEqual(segs, ['⬢', 'main', '~/proj', '12k', 't3']);
+    assert.deepEqual(segs, ['⬢', 'main', '~/proj', '12k', 'turn 3']);
+  });
+
+  it('formats turn timestamps compactly and tolerates missing legacy timestamps', () => {
+    const at = new Date(2026, 6, 12, 15, 7).getTime();
+    assert.equal(formatTurnTimestamp(at, 'en-US'), '3:07 PM');
+    assert.equal(formatTurnTimestamp(undefined, 'en-US'), '');
   });
 
   it('switches footer keybinds by focus scope (law 1)', () => {

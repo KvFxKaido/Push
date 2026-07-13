@@ -40,6 +40,10 @@ export function estimateTokens(text: string | Message[] | unknown): number {
 export function formatTokenCount(tokens: number): string {
   if (tokens < 1000) return String(tokens);
   if (tokens < 10000) return `${(tokens / 1000).toFixed(1)}k`;
+  if (tokens >= 1_000_000) {
+    const millions = tokens / 1_000_000;
+    return `${Number.isInteger(millions) ? millions : millions.toFixed(1)}m`;
+  }
   return `${Math.round(tokens / 1000)}k`;
 }
 

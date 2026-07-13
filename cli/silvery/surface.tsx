@@ -20,6 +20,7 @@ import {
 } from 'silvery';
 
 import { getTranscriptRoleLabel } from '../../lib/role-display.js';
+import { resolveContextWindow } from '../../lib/context-budget.js';
 import { getCuratedModels } from '../model-catalog.js';
 import { getProviderList } from '../provider.js';
 import { createTabCompleter } from '../tui-completer.js';
@@ -37,6 +38,7 @@ import {
   densityMeter,
   diffLineColor,
   footerKeybinds,
+  formatTurnTimestamp,
   MOTION_TICKS,
   modeLabel,
   resolveGlyphs,
@@ -163,7 +165,7 @@ function messageMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
   return 'assistant';
 }
 
-function Message({ item }: { item: SilveryTranscriptItem }) {
+function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   if (item.kind === 'tool') return <ToolCard item={item} />;
@@ -175,6 +177,7 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
       ? VL_COLOR.muted
       : undefined;
   const bodyText = item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text;
+  const timestamp = formatTurnTimestamp(item.timestampMs);
   // Markdown is for machine-generated prose only. User turns stay literal —
   // a pasted `**bold**` or emoji must echo back faithfully, not get restyled or
   // stripped. Fault (law 3) and status bodies also stay plain so the fault color
@@ -183,12 +186,23 @@ function Message({ item }: { item: SilveryTranscriptItem }) {
   return (
     <Box
       flexDirection="column"
+      width="100%"
+      paddingX={1}
+      backgroundColor={tinted ? '$bg-surface-subtle' : undefined}
       onClick={item.kind === 'review' ? () => setExpanded((value) => !value) : undefined}
     >
-      <Text bold={mark.bold} color={mark.color}>
-        {mark.glyph} {label}
-        {item.live ? ' · live' : ''}
-      </Text>
+      <Box width="100%">
+        <Text bold={mark.bold} color={mark.color}>
+          {mark.glyph} {label}
+          {item.live ? ' · live' : ''}
+        </Text>
+        {timestamp ? (
+          <>
+            <Box flexGrow={1} />
+            <Text color={VL_COLOR.muted}>{timestamp}</Text>
+          </>
+        ) : null}
+      </Box>
       {renderMarkdown ? (
         <MarkdownBody text={bodyText} base={bodyColor} />
       ) : (
@@ -302,7 +316,9 @@ function Transcript({
       overflowIndicator
       scrollbarVisibility="always"
       getKey={(item) => item.id}
-      renderItem={(item) => <Message item={item} />}
+      renderItem={(item) => (
+        <Message item={item} tinted={item.kind === 'message' && item.role === 'user'} />
+      )}
     />
   );
 }
@@ -389,12 +405,14 @@ function HeaderBar({
     () => estimateTokens(snapshot.rows.map((row) => ({ content: row.text }))),
     [snapshot.rows],
   );
-  // Soft ceiling for the density meter — 200k is a common long-context floor;
-  // the number is presentation only (not a hard budget).
-  const meter = densityMeter(Math.min(1, tokens / 200_000), 8, glyphs);
+  const contextWindow = resolveContextWindow(snapshot.provider, snapshot.model);
+  const meter = densityMeter(contextWindow ? tokens / contextWindow : 0, 8, glyphs);
+  const contextLabel = contextWindow
+    ? `${formatTokenCount(tokens)} / ${formatTokenCount(contextWindow)}`
+    : `${formatTokenCount(tokens)} / ?`;
   const path = shortenPath(snapshot.cwd, Math.max(12, Math.min(28, Math.floor(columns / 4))));
   const turns = countUserTurns(snapshot.rows);
-  const turnLabel = turns > 0 ? `t${turns}` : '';
+  const turnLabel = turns > 0 ? `turn ${turns}` : '';
 
   return (
     <Box width={columns}>
@@ -404,7 +422,7 @@ function HeaderBar({
       <Text color={VL_COLOR.muted}>
         {' '}
         · {branch}
-        {dirty} · {path} · {meter} {formatTokenCount(tokens)}
+        {dirty} · {path} · {meter} {contextLabel}
         {turnLabel ? ` · ${turnLabel}` : ''}
       </Text>
     </Box>

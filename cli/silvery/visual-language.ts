@@ -222,6 +222,14 @@ export function countUserTurns(rows: readonly { role?: string }[]): number {
   return n;
 }
 
+/** Compact local time for a transcript turn header. */
+export function formatTurnTimestamp(timestampMs: number | undefined, locale?: string): string {
+  if (typeof timestampMs !== 'number' || !Number.isFinite(timestampMs)) return '';
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(timestampMs),
+  );
+}
+
 // ── Stream styling (laws 2, 5, 6) ────────────────────────────────────
 
 export type StreamMarkKind =

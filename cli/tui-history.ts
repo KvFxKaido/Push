@@ -14,6 +14,7 @@ import { parseJsonToolCalls } from './tui-framers.js';
 export interface TranscriptHistoryRow {
   role: 'user' | 'assistant';
   text: string;
+  timestampMs?: number;
 }
 
 // Candidate fences that may hold a text-dispatch tool call. Whether one is
@@ -59,7 +60,8 @@ export function sessionMessagesToTranscriptRows(
   const rows: TranscriptHistoryRow[] = [];
   for (const raw of messages) {
     if (!raw || typeof raw !== 'object') continue;
-    const msg = raw as { role?: unknown; content?: unknown };
+    const msg = raw as { role?: unknown; content?: unknown; timestamp?: unknown };
+    const timestampMs = typeof msg.timestamp === 'number' ? msg.timestamp : undefined;
     if (msg.role === 'user') {
       const text = messageText(msg.content);
       if (!text) continue;
@@ -69,10 +71,16 @@ export function sessionMessagesToTranscriptRows(
       // (not a blanket leading-bracket check) keeps real prompts like
       // "[WIP] refactor auth" or "[ ] fix tests" visible.
       if (isInternalEnvelope(text.trim())) continue;
-      rows.push({ role: 'user', text });
+      rows.push({ role: 'user', text, ...(timestampMs === undefined ? {} : { timestampMs }) });
     } else if (msg.role === 'assistant') {
       const cleaned = stripToolCallFences(messageText(msg.content)).trim();
-      if (cleaned) rows.push({ role: 'assistant', text: cleaned });
+      if (cleaned) {
+        rows.push({
+          role: 'assistant',
+          text: cleaned,
+          ...(timestampMs === undefined ? {} : { timestampMs }),
+        });
+      }
     }
   }
   return rows;

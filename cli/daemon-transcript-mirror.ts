@@ -26,6 +26,7 @@ export interface DaemonTranscriptRow {
   durationMs?: number;
   resultPreview?: string;
   diff?: EditDiff;
+  timestampMs?: number;
 }
 
 export interface DaemonTranscriptSnapshot {
@@ -126,6 +127,7 @@ export function applyDaemonTranscriptEvent(
           role: 'user',
           text:
             typeof payload.text === 'string' || payload.chars === text.length ? text : `${text}…`,
+          ...(typeof event.ts === 'number' ? { timestampMs: event.ts } : {}),
         });
       }
       break;
@@ -140,6 +142,7 @@ export function applyDaemonTranscriptEvent(
           kind: 'message',
           role: 'assistant',
           text: mirror.liveText,
+          ...(typeof event.ts === 'number' ? { timestampMs: event.ts } : {}),
         });
       }
       mirror.liveText = '';
@@ -307,6 +310,7 @@ export function rebuildDaemonTranscriptMirror(
         kind: 'message',
         role: row.role,
         text: row.text,
+        ...(row.timestampMs === undefined ? {} : { timestampMs: row.timestampMs }),
       });
     }
     userIndex = prefixUserCount;
@@ -349,6 +353,7 @@ export function rebuildDaemonTranscriptMirror(
       kind: 'message',
       role: row.role,
       text: row.text,
+      ...(row.timestampMs === undefined ? {} : { timestampMs: row.timestampMs }),
     });
   }
   return mirror;

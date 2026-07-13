@@ -322,8 +322,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const { tailWindow } = await import('../silvery/surface.tsx');
     const { sessionMessagesToTranscriptRows } = await import('../tui-history.ts');
     const history = Array.from({ length: 12 }, (_, index) => [
-      { role: 'user', content: `question ${index}` },
-      { role: 'assistant', content: `answer ${index}` },
+      { role: 'user', content: `question ${index}`, timestamp: index * 2 + 1 },
+      { role: 'assistant', content: `answer ${index}`, timestamp: index * 2 + 2 },
     ]).flat();
     const rows = sessionMessagesToTranscriptRows(history).map((row, index) => ({
       id: String(index),
@@ -333,6 +333,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const visible = tailWindow(rows, 48, 8);
     assert.ok(visible.length < rows.length);
     assert.equal(visible.at(-1)?.text, 'answer 11');
+    assert.equal(visible.at(-1)?.timestampMs, 24);
     assert.equal(
       visible.some((row) => row.text === 'question 0'),
       false,
@@ -1424,11 +1425,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
         id: String(index),
         role: index % 2 ? 'assistant' : 'user',
         text: `real row ${index}`,
+        timestampMs: new Date(2026, 6, 12, 15, index).getTime(),
       })),
       running: false,
       startedAt: null,
       provider: 'ollama',
-      model: 'test-model',
+      model: 'deepseek-v4-pro',
       cwd: '/repo',
       gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
       daemonConnected: false,
@@ -1455,6 +1457,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await sleep(180);
 
     assert.match(stdout.bytes, /real row 15/);
+    assert.match(stdout.bytes, /\/ 1m/);
+    assert.match(stdout.bytes, /turn 8/);
     assert.equal(hook.getState().inputActive, true);
     hook.openPalette();
     await sleep(120);

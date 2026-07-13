@@ -189,11 +189,22 @@ export function guessWindowFromName(model: string): number {
  * can mutate without poisoning the shared default.
  */
 export function getContextBudget(_provider?: string, model?: string): ContextBudget {
-  const normalizedModel = (model || '').trim();
-  if (!normalizedModel) return { ...DEFAULT_CONTEXT_BUDGET };
+  const windowTokens = resolveContextWindow(_provider, model);
+  if (windowTokens === null) return { ...DEFAULT_CONTEXT_BUDGET };
+  return budgetFromWindow(windowTokens);
+}
 
-  const declaredWindow = lookupDeclaredModelMetadata(_provider, normalizedModel)?.contextLimit ?? 0;
-  if (declaredWindow > 0) return budgetFromWindow(declaredWindow);
+/**
+ * Resolve the model's real context window when Push has declared metadata or a
+ * conservative family fallback. Returns null when the model is unknown so UI
+ * surfaces do not present the runtime's generic safety budget as model fact.
+ */
+export function resolveContextWindow(provider?: string, model?: string | null): number | null {
+  const normalizedModel = (model || '').trim();
+  if (!normalizedModel) return null;
+
+  const declaredWindow = lookupDeclaredModelMetadata(provider, normalizedModel)?.contextLimit ?? 0;
+  if (declaredWindow > 0) return declaredWindow;
 
   let windowTokens = guessWindowFromName(normalizedModel);
   if (windowTokens === 0) {
@@ -203,8 +214,7 @@ export function getContextBudget(_provider?: string, model?: string): ContextBud
     }
   }
 
-  if (windowTokens <= 0) return { ...DEFAULT_CONTEXT_BUDGET };
-  return budgetFromWindow(windowTokens);
+  return windowTokens > 0 ? windowTokens : null;
 }
 
 // ---------------------------------------------------------------------------
