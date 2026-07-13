@@ -1,4 +1,5 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, spawnSync } from 'node:child_process';
+import type { SpawnSyncOptions, SpawnSyncReturns } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
@@ -247,6 +248,38 @@ export async function resolveCommandShell(): Promise<CommandShellPlan> {
   })();
 
   return cachedShellPromise;
+}
+
+/**
+ * Blocking sibling of `runCommandInResolvedShell`, for callers that need the exit
+ * status rather than a resolved/rejected promise (acceptance checks, which score a
+ * command by its status rather than treating a non-zero exit as an error).
+ *
+ * Resolving the shell matters most on Windows: `spawnSync(cmd, { shell: true })`
+ * runs under `cmd.exe`, where `'` is not a quote character, so a POSIX-quoted
+ * command (`node -e '...'`) is torn apart before the child ever sees it. Going
+ * through the resolver picks a POSIX shell when one is available and, on win32,
+ * feeds the command over stdin — sidestepping Windows argv quoting entirely.
+ */
+export async function runCommandInResolvedShellSync(
+  command: string,
+  options: SpawnSyncOptions = {},
+): Promise<SpawnSyncReturns<string>> {
+  const shell = await resolveCommandShell();
+  const spawnOptions: SpawnSyncOptions = { ...options, stdio: 'pipe', encoding: 'utf8' };
+
+  if (shell.commandMode === 'argv') {
+    return spawnSync(
+      shell.bin,
+      [...shell.argsPrefix, command],
+      spawnOptions,
+    ) as SpawnSyncReturns<string>;
+  }
+
+  return spawnSync(shell.bin, [...shell.argsPrefix], {
+    ...spawnOptions,
+    input: command,
+  }) as SpawnSyncReturns<string>;
 }
 
 export async function runCommandInResolvedShell(

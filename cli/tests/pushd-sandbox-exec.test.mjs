@@ -74,10 +74,19 @@ describe('sandbox_exec', () => {
   });
 
   it('runs in the daemon process cwd by default', async () => {
-    const res = await handleRequest(makeRequest('sandbox_exec', { command: 'pwd' }), NOOP_EMIT);
+    // Ask node for the cwd rather than running `pwd`. What's under test is that the
+    // child inherits the daemon's cwd — but `pwd` reports it in whatever convention
+    // the resolved shell uses, which is not the same string across shells: MSYS bash
+    // prints `C:/dev/Push` where node's process.cwd() is `C:\dev\Push`, and cmd.exe
+    // has no `pwd` at all. Printing it from node normalizes the format away and
+    // leaves exactly the cwd inheritance being asserted. Double quotes so the command
+    // parses identically under POSIX sh and cmd.exe.
+    const res = await handleRequest(
+      makeRequest('sandbox_exec', { command: 'node -e "process.stdout.write(process.cwd())"' }),
+      NOOP_EMIT,
+    );
     assert.equal(res.ok, true);
     assert.equal(res.payload.exitCode, 0);
-    // Trim trailing newline; pwd may add one.
     assert.equal(res.payload.stdout.trim(), process.cwd());
   });
 });

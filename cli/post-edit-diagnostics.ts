@@ -301,7 +301,13 @@ export async function runPostEditDiagnostics(
     return skip;
   }
 
-  const relPath = path.relative(workspaceRoot, filePath) || path.basename(filePath);
+  // Forward slashes regardless of host: this path is rendered into the note the model
+  // reads, and every other path in the tool protocol is workspace-relative POSIX. On
+  // Windows a raw path.relative() yields `src\a.ts`, which is the odd one out in the
+  // model's context and invites it to echo backslash paths back at us.
+  const relPath = (path.relative(workspaceRoot, filePath) || path.basename(filePath))
+    .split(path.sep)
+    .join('/');
   const errors = result.diagnostics.filter((d) => d.severity === 'error').length;
   const warnings = result.diagnostics.length - errors;
   console.error(
