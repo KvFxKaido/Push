@@ -35,8 +35,8 @@ publishable mirror; future cleanup can dedupe by having the app import
 
 ```bash
 # from app/
-npm install          # refreshes the file:../plugins/capacitor-native-git dependency when needed
-npm run android:sync # builds the SPA and syncs web assets + plugin registration
+pnpm install          # refreshes the file:../plugins/capacitor-native-git dependency when needed
+pnpm run android:sync # builds the SPA and syncs web assets + plugin registration
 ```
 
 The app already declares this package as `file:../plugins/capacitor-native-git`.
@@ -47,7 +47,7 @@ Capacitor plugin metadata stay ignored by `app/android/.gitignore`.
 ## Build & verify (on a device / emulator)
 
 ```bash
-cd app && npm run android:sync && cd android && ./gradlew installDebug
+cd app && pnpm run android:sync && cd android && ./gradlew installDebug
 ```
 
 Confirm at build time:

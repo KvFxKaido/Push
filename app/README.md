@@ -4,13 +4,14 @@ Frontend source for Push. See the [root README](../README.md) for architecture a
 
 ## Scripts
 
+Dependencies come from the **root** pnpm workspace — run `pnpm install` once at the repo root, not here. These scripts then run from `app/` (or from the root via `pnpm --filter my-app run <script>`):
+
 ```bash
-npm install       # Install dependencies
-npm run dev       # Start dev server (port 5173)
-npm run build     # Production build → dist/
-npm run preview   # Preview production build locally
-npm run lint      # Run ESLint
-npm run android:sync   # Build the SPA and sync it into Android
+pnpm run dev       # Start dev server (port 5173)
+pnpm run build     # Production build → dist/
+pnpm run preview   # Preview production build locally
+pnpm run lint      # Run ESLint
+pnpm run android:sync   # Build the SPA and sync it into Android
 ```
 
 ## Environment Variables
@@ -63,7 +64,7 @@ Truthy values: `1`, `true`, `yes`, `on` (case-insensitive). Anything else — in
 
 | Surface | Where to set | Trigger |
 |---|---|---|
-| Local dev | `.env.local` (gitignored) | `npm run dev` picks it up automatically |
+| Local dev | `.env.local` (gitignored) | `pnpm run dev` picks it up automatically |
 | Cloudflare Workers Builds | Dashboard → Workers & Pages → `push` → Settings → **Build → Variables and Secrets** (separate from runtime vars further down the page) | Push any commit, or **Retry deployment** on the latest build |
 
 To verify a deployed build picked them up, open DevTools → Sources, find the hashed `App-*.js`, and search for the flag name — you won't find it, because Vite has already replaced it with the literal string value.
@@ -92,7 +93,7 @@ The Android app is a Capacitor wrapper around the built web app. It is currently
 `app/android/` is **committed source** (the Capacitor project, with the native-git plugin + build config). Build outputs and the regenerated web bundle are ignored via `app/android/.gitignore`; don't regenerate it with `cap add android`. Build and sync the web bundle into Android with:
 
 ```bash
-npm run android:sync
+pnpm run android:sync
 ```
 
 Install a debug build on a connected emulator or device:

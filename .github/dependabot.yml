@@ -1,15 +1,20 @@
 # Dependabot version updates for the Push monorepo.
 # Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# Scope: npm (3 manifests), GitHub Actions, pip (Modal sandbox), and Docker.
-# Minor/patch bumps are grouped into a single PR per manifest to limit churn —
-# every PR here also spins up the codex/gemini review workflows and a Workers
-# Builds deploy, so noise has a real cost. Major bumps come as individual PRs
-# so they get reviewed on their own.
+# Scope: npm/pnpm (one workspace), GitHub Actions, pip (Modal sandbox), Docker.
+# Minor/patch bumps are grouped into a single PR to limit churn — every PR here
+# also spins up the codex/gemini review workflows and a Workers Builds deploy,
+# so noise has a real cost. Major bumps come as individual PRs so they get
+# reviewed on their own.
 version: 2
 
 updates:
-  # ── npm: root (CLI + MCP wiring) ─────────────────────────────────
+  # ── pnpm workspace: root + app + mcp/github-server ───────────────
+  # One entry, not three. The workspace has a single pnpm-lock.yaml, so
+  # per-manifest entries would each rewrite the same lockfile and collide —
+  # every PR after the first would need a rebase (exactly what happened to the
+  # old app/ and root/ manifests under npm). Dependabot walks the workspace
+  # packages from the root manifest. The `npm` ecosystem covers pnpm.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -18,33 +23,7 @@ updates:
     labels:
       - "dependencies"
     groups:
-      root-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
-  # ── npm: web app ─────────────────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/app"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-    groups:
-      app-minor-patch:
-        patterns: ["*"]
-        update-types: ["minor", "patch"]
-
-  # ── npm: GitHub MCP server ───────────────────────────────────────
-  - package-ecosystem: "npm"
-    directory: "/mcp/github-server"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-    groups:
-      mcp-minor-patch:
+      workspace-minor-patch:
         patterns: ["*"]
         update-types: ["minor", "patch"]
 

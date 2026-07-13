@@ -19,7 +19,11 @@
 
 FROM docker.io/cloudflare/sandbox:0.12.3-python
 ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
-ARG PUSH_SANDBOX_PNPM_VERSION=11.9.0
+# pnpm 10.x, NOT 11.x: pnpm 11 requires Node >=22.13 and this base image ships
+# Node 20, so a prefetched pnpm 11 cannot actually run here — for Push's own
+# pre-bake below or for a user's pnpm repo. Raise this only when the base image
+# ships Node >=22.13. Keep it on the same major as the repo's `packageManager`.
+ARG PUSH_SANDBOX_PNPM_VERSION=10.34.5
 ARG PUSH_SANDBOX_YARN_VERSION=4.17.0
 
 # ripgrep is required by Push tool execution. The other packages are small
@@ -44,35 +48,52 @@ RUN python3 -m pip install --no-cache-dir ruff pytest
 RUN git config --global user.email 'sandbox@diff.app' \
  && git config --global user.name 'Push User'
 
-# Pre-bake node_modules into the image so fresh sandboxes skip the cold
-# `npm install` that triggered the container stalls #374/#375 work around.
-# Copying lockfiles only (not the full tree) keeps these layers cacheable
-# on lockfile hash — a dep change invalidates them, unrelated source
-# churn does not. Layers are consumed at sandbox creation via `cp -al`
-# from /opt/push-cache/* in routeCreate (worker-cf-sandbox.ts), gated on
-# a byte-exact lockfile match so only repos whose deps equal the baked
-# ones get the cache.
-#
-# `HUSKY=0 CI=1` suppresses the husky git-hook install the repo's
-# `prepare` script runs (we have no .git here); keeping install scripts
-# otherwise enabled lets packages like esbuild download their native
-# binaries via postinstall — skipping those produces an unusable cache.
-WORKDIR /opt/push-cache
-COPY package.json package-lock.json ./
-RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
-
-WORKDIR /opt/push-cache/app
-COPY app/package.json app/package-lock.json ./
-RUN HUSKY=0 CI=1 npm ci --no-audit --no-fund
-
 # Enable Corepack shims and prefetch common package managers so pnpm/yarn repos
 # do not spend their first sandbox command downloading the manager itself. The
 # base image ships Node/npm but not always Corepack, so install the shim
 # explicitly. A repo's packageManager pin still wins when one is present.
+#
+# This must precede the pre-bake below: Push itself is now a pnpm workspace, so
+# the bake needs a working `pnpm` shim.
 RUN npm install -g corepack@"${PUSH_SANDBOX_COREPACK_VERSION}" \
  && corepack enable \
  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare pnpm@"${PUSH_SANDBOX_PNPM_VERSION}" --activate \
  && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack prepare yarn@"${PUSH_SANDBOX_YARN_VERSION}" --activate
+
+# Pre-bake node_modules into the image so fresh sandboxes skip the cold install
+# that triggered the container stalls #374/#375 work around. Copying manifests +
+# lockfile only (not the full tree) keeps these layers cacheable on lockfile
+# hash — a dep change invalidates them, unrelated source churn does not. Layers
+# are consumed at sandbox creation via `cp -al` from /opt/push-cache/* in
+# routeCreate (worker-cf-sandbox.ts), gated on a byte-exact pnpm-lock.yaml match
+# so only repos whose deps equal the baked ones get the cache.
+#
+# Push is a single pnpm workspace, so this is ONE install covering root + app +
+# mcp/github-server (npm needed two). The workspace layout is reproduced exactly
+# (app/, mcp/github-server/) because pnpm's per-package node_modules are
+# symlinks into the root .pnpm virtual store via *relative* paths — `cp -al`
+# into an identically-shaped /workspace keeps them resolving.
+#
+# The pnpm version comes from the repo's own `packageManager` field via corepack,
+# so there is no second place to keep in sync. NB: it must stay pnpm 10.x while
+# this base image ships Node 20 — pnpm 11 requires Node >=22.13.
+#
+# `HUSKY=0 CI=1` suppresses the husky git-hook install the repo's `prepare`
+# script runs (we have no .git here); build scripts otherwise stay enabled so
+# packages like esbuild fetch their native binaries — skipping those produces an
+# installed-but-unusable cache.
+WORKDIR /opt/push-cache
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY app/package.json ./app/
+COPY mcp/github-server/package.json ./mcp/github-server/
+# app/ depends on the in-repo Capacitor plugin via `file:../plugins/...`. pnpm
+# resolves a `file:` dep by copying the package into its store, so the plugin's
+# actual source must exist in the build context — a manifest alone is not
+# enough, and without it the install dies with ENOENT on `plugins/`.
+# This is the one layer whose cache key is source, not lockfile: editing the
+# plugin re-runs the install below. It changes rarely, and correctness wins.
+COPY plugins/capacitor-native-git ./plugins/capacitor-native-git
+RUN HUSKY=0 CI=1 COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --frozen-lockfile
 
 COPY sandbox/bin/push-sandbox-doctor /usr/local/bin/push-sandbox-doctor
 RUN chmod 0755 /usr/local/bin/push-sandbox-doctor

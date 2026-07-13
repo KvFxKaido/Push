@@ -119,7 +119,7 @@ Local coding agent for the terminal. It shares the same internal runtime contrac
 
 ## Android
 
-The Android app is an experimental Capacitor shell around the web app. It uses the same built Vite assets and Worker-backed API surface as the browser app, with native WebView behavior handled by Capacitor. `app/android/` is committed source because it carries native customization (for example the native Git plugin wiring, desugaring, and proguard fixes). `npm run android:sync` builds the SPA, ensures the Android project exists, and syncs regenerated web assets and plugin registration.
+The Android app is an experimental Capacitor shell around the web app. It uses the same built Vite assets and Worker-backed API surface as the browser app, with native WebView behavior handled by Capacitor. `app/android/` is committed source because it carries native customization (for example the native Git plugin wiring, desugaring, and proguard fixes). `pnpm run android:sync` builds the SPA, ensures the Android project exists, and syncs regenerated web assets and plugin registration.
 
 Current Android scope is debug builds, emulator/device smoke testing, OAuth/WebView validation, and CI build verification. Release signing, Play distribution, native feature expansion, and instrumented device tests are intentionally out of scope until the mobile surface graduates from experimental.
 

@@ -13,7 +13,8 @@ on:
       - 'docs/cli/schemas/**'
       - 'biome.json'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/**'
       # Injected orientation file — guarded by lib/agents-budget.test.ts, which
       # only runs (via the app test job) when a changed path triggers this workflow.
@@ -30,7 +31,8 @@ on:
       - 'docs/cli/schemas/**'
       - 'biome.json'
       - 'package.json'
-      - 'package-lock.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
       - '.github/workflows/**'
       - 'AGENTS.md'
   workflow_dispatch:
@@ -62,35 +64,37 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: app/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Lint
-        run: npm run lint
+        run: pnpm run lint
 
       - name: Design tokens
         # Blocking ratchet: fails if hardcoded colors exceed the committed
         # baseline in app/scripts/design-token-baseline.json (driven to 0 by
         # the migration). New raw hex must use a DESIGN.md token; if a raw
         # color is genuinely unavoidable, justify it and run
-        # `npm run check:design-tokens -- --update`.
-        run: npm run check:design-tokens
+        # `pnpm run check:design-tokens -- --update`.
+        run: pnpm run check:design-tokens
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Test
-        run: npm test
+        run: pnpm test
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
   android-build:
     # Verifies the production Vite bundle survives a Capacitor Android build
@@ -118,14 +122,16 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           # Capacitor 8 requires Node.js 22+ for `cap add/sync android`; 24 is
           # the repo-wide floor (root package.json `engines`), so use it here too.
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: app/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Cache Gradle
         uses: actions/cache@v6
@@ -133,15 +139,15 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-${{ runner.os }}-${{ hashFiles('app/package-lock.json', 'app/capacitor.config.ts') }}
+          key: gradle-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', 'app/capacitor.config.ts') }}
           restore-keys: |
             gradle-${{ runner.os }}-
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build SPA
-        run: npm run build
+        run: pnpm run build
 
       - name: Sync web assets to Android
         run: npx cap sync android
@@ -177,21 +183,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: mcp/github-server/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Build
-        run: npm run build
+        run: pnpm run build
 
   cli:
     name: Format, Typecheck, Test (cli)
@@ -199,22 +207,24 @@ jobs:
     timeout-minutes: 10
     # Runs from the repo root. Biome, tsx, TypeScript, and @types/node live in
     # the root devDependencies; the CLI's runtime deps (silvery, react) are root
-    # dependencies — so `npm ci` at the root is the complete install. Node 24:
+    # dependencies — so `pnpm install --frozen-lockfile` at the root is the complete install. Node 24:
     # silvery 0.21 ships `using` syntax that SyntaxErrors below Node 24 (the CLI
     # floor, declared in root engines). App/mcp jobs stay on their own Node.
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Biome's format check covers the entire monorepo (app/, cli/, lib/,
       # mcp/, scripts/, docs/cli/schemas/) because biome.json is at the
@@ -224,13 +234,13 @@ jobs:
       # about — no format-relevant change slips past by only touching a
       # path the filter ignores.
       - name: Format check
-        run: npm run format:check
+        run: pnpm run format:check
 
       - name: Typecheck
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Test
-        run: npm run test:cli
+        run: pnpm run test:cli
 
   cli-binary:
     name: Single-binary compile + smoke (cli, ${{ matrix.os }})
@@ -261,15 +271,17 @@ jobs:
           # against. Bump deliberately, with a local compile + smoke first.
           bun-version: '1.3.11'
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       # Bun appends .exe on Windows regardless of --outfile; resolve the
       # real name once and export it for the smoke steps.
@@ -363,15 +375,17 @@ jobs:
           # ships binaries); this one tracks upstream. (Codex P2 on PR #1341.)
           bun-version: latest
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Run CLI suite under Bun and summarize
         env:

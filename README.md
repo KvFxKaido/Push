@@ -70,16 +70,17 @@ The web and Android surfaces broker through the Cloudflare Worker to a sandbox a
 
 ### Web app
 
+The repo is a pnpm workspace — one install at the root covers the CLI, the web app, and the MCP server.
+
 ```bash
-cd app
-npm install
-npm run dev
+pnpm install                    # from the repo root
+pnpm --filter my-app run dev    # Vite on :5173
 ```
 
 In a second terminal from the repo root:
 
 ```bash
-npx wrangler dev --port 8787
+pnpm dlx wrangler dev --port 8787
 ```
 
 See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and sandbox deployment.
@@ -91,10 +92,9 @@ If you run the hosted web app on a personal Cloudflare account, see [Private Clo
 The Android app is currently a Capacitor shell for the production web bundle. It is useful for native WebView testing, OAuth checks, and sideloaded debug builds, but it is not yet treated as a release channel.
 
 ```bash
-cd app
-npm install
-npm run android:sync
-cd android
+pnpm install                            # from the repo root
+pnpm --filter my-app run android:sync
+cd app/android
 ./gradlew installDebug
 ```
 
@@ -103,7 +103,7 @@ On Windows, run the Gradle wrapper as `.\gradlew installDebug` from `app\android
 ### CLI
 
 ```bash
-npm install
+pnpm install
 ./push config init
 ./push # full-screen TUI today; use PUSH_TUI_ENABLED=0 ./push for the transcript REPL
 ./push run --task "Implement X and run tests"
