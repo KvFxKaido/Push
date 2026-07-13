@@ -85,6 +85,81 @@ export const MOTION_TICKS = {
 
 export type LivenessPhase = 'idle' | 'working' | 'attention';
 
+export type ModalMotionPhase = 'closed' | 'entering' | 'open' | 'exiting';
+
+export interface ModalMotionState {
+  phase: ModalMotionPhase;
+  startedAtTick: number;
+  startFade: number;
+}
+
+export function modalFadeAmount(state: ModalMotionState, tick: number, targetFade: number): number {
+  const target = Math.max(0, Math.min(1, targetFade));
+  if (state.phase === 'closed') return 0;
+  if (state.phase === 'open') return target;
+  const progress = Math.max(0, Math.min(1, (tick - state.startedAtTick) / MOTION_TICKS.modalFade));
+  if (state.phase === 'entering') {
+    return state.startFade + (target - state.startFade) * progress;
+  }
+  return state.startFade * (1 - progress);
+}
+
+export function createModalMotionState(
+  open: boolean,
+  tick: number,
+  targetFade: number,
+  reducedMotion = isReducedMotion(),
+): ModalMotionState {
+  return {
+    phase: open ? (reducedMotion ? 'open' : 'entering') : 'closed',
+    startedAtTick: tick,
+    startFade: open && reducedMotion ? Math.max(0, Math.min(1, targetFade)) : 0,
+  };
+}
+
+export function reduceModalMotion(
+  state: ModalMotionState,
+  open: boolean,
+  tick: number,
+  targetFade: number,
+  reducedMotion = isReducedMotion(),
+): ModalMotionState {
+  const target = Math.max(0, Math.min(1, targetFade));
+  if (reducedMotion) {
+    const phase = open ? 'open' : 'closed';
+    const startFade = open ? target : 0;
+    if (state.phase === phase && state.startFade === startFade) return state;
+    return {
+      phase,
+      startedAtTick: tick,
+      startFade,
+    };
+  }
+
+  if (open && (state.phase === 'closed' || state.phase === 'exiting')) {
+    return {
+      phase: 'entering',
+      startedAtTick: tick,
+      startFade: modalFadeAmount(state, tick, target),
+    };
+  }
+  if (!open && (state.phase === 'open' || state.phase === 'entering')) {
+    return {
+      phase: 'exiting',
+      startedAtTick: tick,
+      startFade: modalFadeAmount(state, tick, target),
+    };
+  }
+
+  if (state.phase === 'entering' && tick - state.startedAtTick >= MOTION_TICKS.modalFade) {
+    return { phase: 'open', startedAtTick: tick, startFade: target };
+  }
+  if (state.phase === 'exiting' && tick - state.startedAtTick >= MOTION_TICKS.modalFade) {
+    return { phase: 'closed', startedAtTick: tick, startFade: 0 };
+  }
+  return state;
+}
+
 /**
  * Breathing hex for the header liveness mark (law 8: one live animation).
  * Reduced motion freezes on the filled glyph (static equivalent, law 10).
