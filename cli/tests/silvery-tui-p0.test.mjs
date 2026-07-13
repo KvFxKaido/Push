@@ -1770,7 +1770,14 @@ describe('silvery TUI Phase 1 chat surface', () => {
       rowCount: 16,
     });
     assert.equal(hook.getMotionState().palettePhase, 'entering');
-    await sleep(520);
+    // Same reason the exit transition below polls: the enter transition is tick-driven,
+    // not wall-clock driven. It settles on the first tick where `tick - startedAtTick >=
+    // MOTION_TICKS.modalFade` (3 ticks x 150ms), and openPalette() lands *between* ticks,
+    // so a punctual clock still needs up to 3*150 + 150 = 600ms. A hardcoded sleep left
+    // only ~40ms for setInterval drift while ink re-rendered the transcript, which is how
+    // this assertion flaked under full-suite load.
+    for (let i = 0; i < 80 && hook.getMotionState().palettePhase === 'entering'; i++)
+      await sleep(10);
     assert.equal(hook.getMotionState().palettePhase, 'open');
     assert.equal(hook.getMotionState().paletteFade, 0.35);
 
@@ -1791,15 +1798,25 @@ describe('silvery TUI Phase 1 chat surface', () => {
       rowCount: 16,
     });
 
+    // `hook.getComposerState()` mixes two freshnesses: `completion` reads the live
+    // completer, but `input` is captured in the render closure that last assigned the
+    // hook. So a composer mutation lands in `completion` immediately and in `input` only
+    // once the re-render commits. Poll for the input rather than sleeping a fixed 30ms —
+    // under full-suite load the render slips past it and the read catches the old input
+    // beside the new completion.
+    const waitForInput = async (text) => {
+      for (let i = 0; i < 80 && hook.getComposerState().input !== text; i++) await sleep(10);
+    };
+
     hook.setComposerInput('/mo');
-    await sleep(30);
+    await waitForInput('/mo');
     assert.deepEqual(hook.getComposerState(), {
       input: '/mo',
       completion: { items: ['/model'], index: -1 },
     });
 
     hook.complete();
-    await sleep(30);
+    await waitForInput('/model ');
     assert.deepEqual(hook.getComposerState(), {
       input: '/model ',
       completion: { items: ['/model'], index: 0 },
