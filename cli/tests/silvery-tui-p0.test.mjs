@@ -2314,4 +2314,123 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
     assert.equal(result, 0);
   });
+
+  // The regression this exists for: `osc52Copy` was written, unit-tested, and
+  // had ZERO production callers — the clipboard primitive looked done from the
+  // inside because its own tests passed. Asserting the escape actually reaches
+  // stdout is the only check that can tell "copy works" from "copy is a
+  // function nobody calls."
+  it('copyLastResponse writes the OSC 52 escape to the real stdout', {
+    skip: silverySkip,
+  }, async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const writes = [];
+    const state = {
+      sessionId: 'copy-session',
+      messages: [
+        { role: 'system', content: 'system' },
+        { role: 'user', content: 'what is the answer' },
+        { role: 'assistant', content: 'the answer is 42' },
+      ],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        io: {
+          stdin: process.stdin,
+          stdout: { write: (chunk) => writes.push(String(chunk)) },
+          stderr: { write: () => true },
+          exit: () => undefined,
+          addSignalHandler: () => undefined,
+          removeSignalHandler: () => undefined,
+        },
+      },
+    );
+
+    controller.copyLastResponse();
+
+    const osc = writes.find((w) => w.startsWith('\x1b]52;c;'));
+    assert.ok(osc, `expected an OSC 52 write, got ${JSON.stringify(writes)}`);
+    const b64 = osc.slice('\x1b]52;c;'.length, -1);
+    assert.equal(Buffer.from(b64, 'base64').toString('utf8'), 'the answer is 42');
+
+    // And the outcome is reported — OSC 52 has no delivery receipt, so a silent
+    // copy is indistinguishable from a broken one.
+    const status = controller.getSnapshot().rows.filter((r) => r.kind === 'status');
+    assert.ok(
+      status.some((r) => /Copied response to clipboard/.test(r.text)),
+      `expected a copy status row, got ${JSON.stringify(status.map((r) => r.text))}`,
+    );
+
+    await controller.dispose();
+  });
+
+  it('copyLastResponse says so when there is nothing to copy', {
+    skip: silverySkip,
+  }, async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const writes = [];
+    const controller = await createSilveryController(
+      { sessionId: 'copy-empty' },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => ({
+          sessionId: 'copy-empty',
+          messages: [{ role: 'system', content: 'system' }],
+          eventSeq: 0,
+          updatedAt: Date.now(),
+          cwd: '/repo',
+          provider: 'ollama',
+          model: 'test-model',
+          rounds: 0,
+          sessionName: '',
+          workingMemory: {},
+          mode: 'tui',
+        }),
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        io: {
+          stdin: process.stdin,
+          stdout: { write: (chunk) => writes.push(String(chunk)) },
+          stderr: { write: () => true },
+          exit: () => undefined,
+          addSignalHandler: () => undefined,
+          removeSignalHandler: () => undefined,
+        },
+      },
+    );
+
+    controller.copyLastResponse();
+
+    assert.equal(
+      writes.some((w) => w.startsWith('\x1b]52;c;')),
+      false,
+      'must not send an empty clipboard payload',
+    );
+    assert.ok(
+      controller.getSnapshot().rows.some((r) => /Nothing to copy/.test(r.text)),
+      'the user must be told, not left wondering whether it worked',
+    );
+
+    await controller.dispose();
+  });
 });
