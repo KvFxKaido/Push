@@ -145,6 +145,15 @@ describe('MessageBubble', () => {
     expect(html).not.toContain('repo_read');
   });
 
+  it('does not infer tool-call state from unflagged assistant JSON', () => {
+    const message = assistantMessage({
+      content: '```json\n{"tool":"example","args":{"path":"README.md"}}\n```',
+    });
+    const html = renderToStaticMarkup(<MessageBubble message={message} />);
+    expect(html).toContain('example');
+    expect(html).toContain('README.md');
+  });
+
   it('strips non-http(s) markdown link schemes, keeping the link text as plain', () => {
     const message = assistantMessage({
       content: '[js](javascript:alert(1)) [data](data:text/html,<b>x</b>) [safe](https://ok.com)',

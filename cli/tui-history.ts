@@ -5,29 +5,14 @@
  * Shared by the TUI's two consumers of message history — seeding the
  * visible transcript when a session is resumed/switched, and the
  * exit-time stdout dump — so the filtering rules (skip paired internal
- * envelopes injected as user messages, strip fenced tool-call JSON from
- * assistant prose) live once.
+ * envelopes injected as user messages) live once.
  */
 import { isInternalEnvelope } from './message-envelopes.ts';
-import { parseJsonToolCalls } from './tui-framers.js';
 
 export interface TranscriptHistoryRow {
   role: 'user' | 'assistant';
   text: string;
   timestampMs?: number;
-}
-
-// Candidate fences that may hold a text-dispatch tool call. Whether one is
-// actually stripped is decided by `parseJsonToolCalls` — the same check the
-// live renderer uses — so ordinary JSON examples in assistant prose survive.
-const JSON_FENCE_RE = /```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/g;
-
-// Strip only fences whose body parses as a tool call (object or array with a
-// `tool` key); everything else is legitimate content and stays.
-function stripToolCallFences(text: string): string {
-  return text.replace(JSON_FENCE_RE, (fence, body: string) =>
-    parseJsonToolCalls(body.trim()) ? '' : fence,
-  );
 }
 
 /**
@@ -73,11 +58,11 @@ export function sessionMessagesToTranscriptRows(
       if (isInternalEnvelope(text.trim())) continue;
       rows.push({ role: 'user', text, ...(timestampMs === undefined ? {} : { timestampMs }) });
     } else if (msg.role === 'assistant') {
-      const cleaned = stripToolCallFences(messageText(msg.content)).trim();
-      if (cleaned) {
+      const text = messageText(msg.content).trim();
+      if (text) {
         rows.push({
           role: 'assistant',
-          text: cleaned,
+          text,
           ...(timestampMs === undefined ? {} : { timestampMs }),
         });
       }

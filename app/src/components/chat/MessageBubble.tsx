@@ -33,12 +33,7 @@ import { isStreamdownEnabled } from '@/lib/feature-flags';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai/reasoning';
 import { reasoningPaneOpen, reasoningTogglePatch } from './reasoning-view-state';
 import { lazyWithRecovery } from '@/lib/lazy-import';
-import {
-  looksLikeToolCall,
-  ONLY_BRACKETS_RE,
-  stripToolCallPayload,
-  stripToolResultEnvelopes,
-} from '@/lib/message-content';
+import { stripToolResultEnvelopes } from '@/lib/message-content';
 
 // Streamdown adapter is loaded only when the flag is on, so the markdown
 // library (and its lazy Shiki/Mermaid chunks) never enters the default bundle.
@@ -51,23 +46,6 @@ interface MessageBubbleProps {
   onEdit?: (messageId: string) => void;
   onRegenerate?: () => void;
   canRegenerate?: boolean;
-}
-
-function isToolCallObject(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  return typeof record.tool === 'string';
-}
-
-function isToolCallJson(code: string): boolean {
-  try {
-    const trimmed = code.trim();
-    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) return false;
-    const parsed = JSON.parse(trimmed);
-    return isToolCallObject(parsed);
-  } catch {
-    return false;
-  }
 }
 
 function formatContent(content: string): React.ReactNode[] {
@@ -86,19 +64,16 @@ function formatContent(content: string): React.ReactNode[] {
     if (line.startsWith('```')) {
       if (inCodeBlock) {
         const fullCode = codeLines.join('\n');
-        // Hide raw JSON tool call blocks from chat
-        if (!isToolCallJson(fullCode)) {
-          parts.push(
-            <pre
-              key={`code-${codeKey++}`}
-              className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
-            >
-              <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
-                {fullCode}
-              </code>
-            </pre>,
-          );
-        }
+        parts.push(
+          <pre
+            key={`code-${codeKey++}`}
+            className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
+          >
+            <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
+              {fullCode}
+            </code>
+          </pre>,
+        );
         codeLines = [];
         inCodeBlock = false;
       } else {
@@ -203,18 +178,16 @@ function formatContent(content: string): React.ReactNode[] {
   // Handle unclosed code blocks (streaming)
   if (inCodeBlock && codeLines.length > 0) {
     const fullCode = codeLines.join('\n');
-    if (!isToolCallJson(fullCode)) {
-      parts.push(
-        <pre
-          key={`code-${codeKey}`}
-          className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
-        >
-          <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
-            {fullCode}
-          </code>
-        </pre>,
-      );
-    }
+    parts.push(
+      <pre
+        key={`code-${codeKey}`}
+        className="my-2 overflow-x-auto rounded-lg border border-push-edge bg-push-surface px-3 py-2.5"
+      >
+        <code className="font-mono text-push-base text-push-fg-soft leading-relaxed">
+          {fullCode}
+        </code>
+      </pre>,
+    );
   }
 
   return parts;
@@ -609,33 +582,10 @@ export const MessageBubble = memo(function MessageBubble({
     let text = message.content;
     // Always strip leaked tool-result envelopes (safe — only targets our exact format)
     text = stripToolResultEnvelopes(text);
-    // Aggressive tool-call JSON stripping for flagged tool calls AND streaming
-    // messages (prevents visual flash of raw JSON while model is still outputting).
-    // For streaming, gate on a cheap marker check to avoid regex/brace-scan cost
-    // on every token update when the response is just plain text.
-    // Always apply tool-call stripping to assistant messages if they look like tool calls.
-    // This acts as a fail-safe even if the background parser missed a malformed call
-    // or the streaming state has finished.
-    if (message.isToolCall || message.isMalformed || looksLikeToolCall(text)) {
-      text = stripToolCallPayload(text);
-    }
-    // Tool-call messages: any leftover text after stripping is the model narrating
-    // its intent (e.g. "Let me check..." or a delegation task brief). Force-clear
-    // so only the tool result / cards are visible — not internal machinery.
-    if (message.isToolCall) {
-      text = '';
-    }
-    // Malformed messages are failed tool calls — any leftover text is garbage
-    // (e.g. orphaned shell command fragments). Force-clear so the bubble hides.
-    if (message.isMalformed) {
-      text = '';
-    }
-    // Strip bracket-only artifacts, but only when we believe the content
-    // originated from a tool call / tool JSON, to avoid erasing legitimate
-    // minimal JSON-like replies such as "[]" or "{}".
-    if ((message.isToolCall || looksLikeToolCall(text)) && ONLY_BRACKETS_RE.test(text)) {
-      text = '';
-    }
+    // Structured tool-call state owns presentation. Provider-boundary parsing
+    // marks these messages before they reach the renderer; the renderer must not
+    // inspect assistant prose and guess whether it is really a tool payload.
+    if (message.isToolCall || message.isMalformed) text = '';
     return text;
   }, [isUser, message.content, message.displayContent, message.isToolCall, message.isMalformed]);
   const hasContent = Boolean(displayContentText.trim());

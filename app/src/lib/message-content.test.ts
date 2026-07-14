@@ -1,48 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  looksLikeToolCall,
-  strandedReasoningAnswerText,
-  stripToolCallPayload,
-} from './message-content';
-
-describe('looksLikeToolCall', () => {
-  it('detects braced tool objects during streaming', () => {
-    expect(
-      looksLikeToolCall(
-        'Explanation first.\n{"tool":"sandbox_read_file","args":{"path":"src/main.ts"}}',
-      ),
-    ).toBe(true);
-  });
-
-  it('detects truncated braced tool objects before args finish streaming', () => {
-    expect(looksLikeToolCall('{"tool":"sandbox_exec"')).toBe(true);
-  });
-
-  it('does not flag schema-like prose with unquoted tool shorthand', () => {
-    expect(looksLikeToolCall('tool: read_file, args: path=README.md')).toBe(false);
-    expect(looksLikeToolCall('Config:\ntool: read_file, args: path=README.md')).toBe(false);
-  });
-
-  it('detects native tool-call echo fragments', () => {
-    expect(looksLikeToolCall('repo_ls", "repo": "KvFxKaido/Push"}}')).toBe(true);
-    expect(
-      looksLikeToolCall('repo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}'),
-    ).toBe(true);
-  });
-
-  it('detects orphaned JSON tails', () => {
-    expect(looksLikeToolCall('workspace/app && npm audit fix","workdir":"/workspace"}}')).toBe(
-      true,
-    );
-  });
-
-  it('detects DeepSeek DSML tool-call envelopes', () => {
-    expect(
-      looksLikeToolCall('Checking.\n\n<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name="issue">'),
-    ).toBe(true);
-  });
-});
+import { strandedReasoningAnswerText, stripToolCallPayload } from './message-content';
 
 describe('stripToolCallPayload', () => {
   it('strips braced tool JSON while preserving preceding prose', () => {

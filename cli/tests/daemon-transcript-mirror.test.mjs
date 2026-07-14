@@ -153,7 +153,7 @@ describe('daemon transcript mirror', () => {
     );
   });
 
-  it('keeps tool-call-only assistant rounds from consuming later visible prose', () => {
+  it('uses structured tool events to suppress tool-call rounds without consuming later prose', () => {
     const mirror = rebuildDaemonTranscriptMirror(
       [
         { role: 'user', content: 'inspect it' },
@@ -184,6 +184,38 @@ describe('daemon transcript mirror', () => {
     assert.deepEqual(
       mirror.rows.map((row) => row.text),
       ['inspect it', 'read_file', 'Here is the result.'],
+    );
+  });
+
+  it('suppresses malformed tool-call rounds from resumed transcripts', () => {
+    const malformed = '```json\n{"tool":"unknown_tool","args":{}}\n```';
+    const mirror = rebuildDaemonTranscriptMirror(
+      [
+        { role: 'user', content: 'try it' },
+        { role: 'assistant', content: malformed },
+        { role: 'assistant', content: 'I could not run that tool.' },
+      ],
+      [
+        { seq: 1, ts: 1, type: 'user_message', payload: { text: 'try it' } },
+        { seq: 2, ts: 2, type: 'assistant_done', payload: {} },
+        {
+          seq: 3,
+          ts: 3,
+          type: 'tool.call_malformed',
+          payload: { message: 'Unknown tool: unknown_tool' },
+        },
+        { seq: 4, ts: 4, type: 'assistant_done', payload: {} },
+      ],
+    );
+
+    assert.equal(
+      mirror.rows.some((row) => row.text === malformed),
+      false,
+      'raw malformed tool payload must stay out of the resumed transcript',
+    );
+    assert.deepEqual(
+      mirror.rows.map((row) => row.text),
+      ['try it', 'Unknown tool: unknown_tool', 'I could not run that tool.'],
     );
   });
 
