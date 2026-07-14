@@ -142,7 +142,11 @@ And it is stranded on exactly the same side of the boundary as the cards:
 | **Web** | typed `tool_prose` messages; `visibleToModel: false` drops them from the context transformer, checkpoint capture, and the inline seed filter |
 | **CLI/TUI** | **nothing.** `tool_prose` does not appear anywhere in `cli/` |
 
-The splitting logic is stranded too: `stripToolCallPayload` and `splitVisibleContent` live in `app/src/lib/message-content.ts` — web-only, absent from `lib/` and `cli/`. And `app/src/lib/message-content.ts:115` carries `looksLikeToolCall(text)`, **a third text-sniffing heuristic of the same species as `looksLikeUnifiedDiff`.**
+The splitting logic is stranded too, and split across two files — both web-only, neither reachable from `lib/` or `cli/`:
+
+- `stripToolCallPayload` — `app/src/lib/message-content.ts:127`
+- `splitVisibleContent` — `app/src/hooks/chat-send-inline.ts:218`. Note this one lives in a **React hook**, which is more surface-bound than `app/src/lib/` and cannot be lifted by a re-export; it has to be extracted.
+- `looksLikeToolCall` — `app/src/lib/message-content.ts:115`. **A third text-sniffing heuristic, same species as `looksLikeUnifiedDiff`.**
 
 So narration folds into this track rather than getting its own: move the prose-splitting into `lib/`, carry the narration payload on the run-event stream from the kernel (same rails as `card`, same `visibleToModel: false` invariant the kernel already enforces for `editDiff`), and render it on both shells.
 
@@ -176,7 +180,7 @@ Without the drift test, web and TUI re-diverge in a month and we are back here.
 - **Slice 1 — Kernel emission.** Spread `card` onto `tool.execution_complete` at the three sites that already spread `diff` (`lib/coder-agent.ts:2191, 2271, 2715`). This is the whole mechanism, and it is a handful of lines because `editDiff` already proved the path. Add the load-bearing test: **no card field ever reaches an `LlmMessage`.**
 - **Slice 2 — Consumers.** TUI reads `card` off the run event (inline **and** daemon-attached — one producer, so both work for free) and renders via a generic typed fallback: title + key/value rows derived from the card's declared shape. The daemon strips cards for clients that don't advertise `tool_cards_v1`. The JSON-dump path stops being reachable for card-bearing tools.
 - **Slice 3 — Producers.** Walk the tool catalog and attach cards, highest-traffic first (`sandbox_exec`, file writes/edits, test/typecheck, commit/push, delegation). Each tool that gains a card immediately improves every surface.
-- **Slice 4 — Narration parity.** Promote `stripToolCallPayload` / `splitVisibleContent` from `app/src/lib/message-content.ts` into `lib/`; carry the narration payload on the run-event stream from the kernel; render `tool_prose` in the TUI. Web behavior unchanged — it stops owning the vocabulary, that's all. (Independent of Slices 1–3; sequenced last only because the card path proves the rails first.)
+- **Slice 4 — Narration parity.** Promote the prose-splitting into `lib/`: `stripToolCallPayload` (`app/src/lib/message-content.ts:127`) is a straight move, but `splitVisibleContent` (`app/src/hooks/chat-send-inline.ts:218`) must be **extracted from a React hook** first — it cannot be re-exported in place. Then carry the narration payload on the run-event stream from the kernel and render `tool_prose` in the TUI. Web behavior unchanged; it stops *owning* the vocabulary, that's all. (Independent of Slices 1–3; sequenced last only because the card path proves the rails first.)
 - **Slice 5 — Delete the sniffing.** Remove `looksLikeUnifiedDiff`, `looksLikeToolCall`, and the arg-guessing fallback once no path depends on them. **This slice is the acceptance criterion for the whole track:** when nothing in either shell has to guess what it is rendering, the contract is real.
 
 ## Hard problems + decisions
