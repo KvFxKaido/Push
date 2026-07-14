@@ -178,7 +178,12 @@ export function agentDevReporter(options: AgentDevReporterOptions = {}): Plugin 
     handleHotUpdate(ctx) {
       if (!active) return;
       log('info', 'hmr_update', {
-        file: path.relative(ctx.server.config.root, ctx.file),
+        // Forward slashes regardless of host. This event is read by AGENTS (that is
+        // the whole point of this reporter), and every other path they see is
+        // workspace-relative POSIX. A raw path.relative() emits `src\components\Foo.tsx`
+        // on Windows — the odd one out in the agent's context, and unmatchable against
+        // the paths it already holds. Same normalization as app/vite.config.ts.
+        file: path.relative(ctx.server.config.root, ctx.file).replace(/\\/g, '/'),
         modules: ctx.modules.length,
       });
     },
