@@ -38,10 +38,17 @@ export interface VisualGlyphs {
   hexIdle: string;
   /** Active / attention / filled chrome mark. */
   hexActive: string;
-  /** Activity spine — filled (pending/live). */
-  diamondFilled: string;
-  /** Activity spine — hollow (settled). */
-  diamondHollow: string;
+  /**
+   * Activity spine — Push is WORKING (a tool call, in any state).
+   *
+   * Named for what the glyph actually separates, not for a state it doesn't carry:
+   * pending / ok / error are distinguished by COLOR, and `tool_ok` — a settled call —
+   * wears this same mark. The previous names (`dotActive` / `dotIdle`) claimed a
+   * live-vs-settled distinction the code never made.
+   */
+  markWork: string;
+  /** Activity spine — Push is TALKING (prose, status). The quiet register. */
+  markQuiet: string;
   /** The human's turn — a prompt caret, the one voice that is *not* Push. */
   human: string;
   /** Continuous meter cells, sparse → solid. */
@@ -51,17 +58,17 @@ export interface VisualGlyphs {
 export const GLYPHS_UNICODE: VisualGlyphs = {
   hexIdle: '⬡',
   hexActive: '⬢',
-  diamondFilled: '◆',
-  diamondHollow: '◇',
+  markWork: '▪',
+  markQuiet: '▫',
   human: '›',
   density: ['░', '▒', '▓', '█'],
 };
 
 export const GLYPHS_ASCII: VisualGlyphs = {
   hexIdle: 'o',
-  hexActive: '*',
-  diamondFilled: '+',
-  diamondHollow: '-',
+  hexActive: '@',
+  markWork: '+',
+  markQuiet: '-',
   human: '>',
   density: ['.', ':', '#'],
 };
@@ -69,6 +76,80 @@ export const GLYPHS_ASCII: VisualGlyphs = {
 export function resolveGlyphs(unicode: boolean = detectUnicode()): VisualGlyphs {
   return unicode ? GLYPHS_UNICODE : GLYPHS_ASCII;
 }
+
+// ── The Push mark (law 6) ────────────────────────────────────────────
+//
+// The web `PushMarkIcon` path, verbatim: `M8 1 14.5 5v6L8 15 1.5 11V5L8 1Z` on a
+// 16×16 viewBox. A hexagon with FLAT VERTICAL SIDES (x = 1.5 and x = 14.5, held
+// from y = 5 to y = 11) — which is precisely what a hand-drawn version loses: pure
+// diagonals give you a rhombus, and a rhombus is not Push's face.
+const PUSH_MARK_VERTICES: ReadonlyArray<readonly [number, number]> = [
+  [8, 1],
+  [14.5, 5],
+  [14.5, 11],
+  [8, 15],
+  [1.5, 11],
+  [1.5, 5],
+];
+
+/** Terminal cells are ~2:1 tall, so the grid is wider than it is high to keep the
+ *  hexagon's proportions honest on screen rather than in the array. */
+const BRAND_ART_COLS = 25;
+const BRAND_ART_ROWS = 13;
+/** Half-width of the fully-lit stroke, in viewBox units. */
+const BRAND_STROKE = 0.35;
+/** How far the mark fades out past the stroke, in viewBox units. */
+const BRAND_FALLOFF = 0.95;
+
+/** Shortest distance from a point to the mark's OUTLINE (not its interior). */
+function distanceToMarkOutline(px: number, py: number): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < PUSH_MARK_VERTICES.length; i += 1) {
+    const [ax, ay] = PUSH_MARK_VERTICES[i];
+    const [bx, by] = PUSH_MARK_VERTICES[(i + 1) % PUSH_MARK_VERTICES.length];
+    const vx = bx - ax;
+    const vy = by - ay;
+    const t = Math.max(0, Math.min(1, ((px - ax) * vx + (py - ay) * vy) / (vx * vx + vy * vy)));
+    best = Math.min(best, Math.hypot(px - (ax + t * vx), py - (ay + t * vy)));
+  }
+  return best;
+}
+
+/**
+ * The Push mark, rasterized onto terminal cells from the real icon geometry.
+ *
+ * Generated rather than hand-drawn, because hand-drawing it is how it became a
+ * rhombus. The ramp reuses the language's existing density cells (law 4's meter
+ * glyphs) instead of importing a new charset — the mark introduces no glyph the
+ * language did not already own.
+ *
+ * It belongs only in an EMPTY transcript (law 6): identity, not decoration. It is
+ * static, dim, and gone the moment there is a row to show.
+ */
+export function pushBrandArt(unicode: boolean = detectUnicode()): readonly string[] {
+  const ramp = [' ', ...resolveGlyphs(unicode).density];
+  const rows: string[] = [];
+  for (let r = 0; r < BRAND_ART_ROWS; r += 1) {
+    let line = '';
+    for (let c = 0; c < BRAND_ART_COLS; c += 1) {
+      const x = ((c + 0.5) / BRAND_ART_COLS) * 16;
+      const y = ((r + 0.5) / BRAND_ART_ROWS) * 16;
+      const d = distanceToMarkOutline(x, y);
+      const lit = Math.max(0, 1 - Math.max(0, d - BRAND_STROKE) / BRAND_FALLOFF);
+      line += ramp[Math.round(lit * (ramp.length - 1))];
+    }
+    // Equal-width rows, trailing spaces INTACT. The surface centers the block with
+    // `alignItems: center`, which centers each line by its OWN width — so a trimmed
+    // row would re-center independently and shear the hexagon. Padding makes the
+    // centering a no-op per line and a true block-center for the mark.
+    rows.push(line.padEnd(BRAND_ART_COLS, ' '));
+  }
+  return rows;
+}
+
+/** Width of every {@link pushBrandArt} row — the surface needs it to decide whether
+ *  the mark fits before it renders one. */
+export const PUSH_BRAND_ART_COLS = BRAND_ART_COLS;
 
 // ── Motion (laws 8–10) ──────────────────────────────────────────────
 //
@@ -332,7 +413,7 @@ export type StreamMarkKind =
   | 'error';
 
 export interface StreamMark {
-  /** Leading glyph (diamond spine or hex attribution). */
+  /** Leading glyph (square spine or hex attribution). */
   glyph: string;
   /** Silvery color token — accent, fault, muted, or default. */
   color: VlColor | undefined;
@@ -341,9 +422,13 @@ export interface StreamMark {
 }
 
 /**
- * Stream leading mark + color. Diamonds own the activity spine; hexagons only
- * mark independent voices (Reviewer/Auditor) and chrome elsewhere (law 5).
+ * Stream leading mark + color. Squares own the activity spine; hexagons mark
+ * independent voices (Reviewer/Auditor) and chrome elsewhere (law 5).
  * No green/cyan role rainbow — grayscale + one accent + fault (laws 2–3).
+ *
+ * The spine glyph separates exactly one thing: Push WORKING (`markWork`) from Push
+ * TALKING (`markQuiet`). Pending / ok / error ride COLOR, not shape — `tool_ok` is a
+ * settled call and still wears `markWork`.
  */
 export function streamMark(
   kind: StreamMarkKind,
@@ -353,16 +438,16 @@ export function streamMark(
     case 'user':
       // The human voice — a prompt caret in the accent. Never a hexagon: the
       // hex is Push's face (law 5), and the user is the one turn that is not
-      // Push. Never the diamond spine either — that is Push's own activity.
+      // Push. Never the square spine either — that is Push's own activity.
       return { glyph: glyphs.human, color: VL_COLOR.accent, bold: true };
     case 'assistant':
-      return { glyph: glyphs.diamondHollow, color: undefined, bold: false };
+      return { glyph: glyphs.markQuiet, color: undefined, bold: false };
     case 'tool_pending':
-      return { glyph: glyphs.diamondFilled, color: VL_COLOR.accent, bold: true };
+      return { glyph: glyphs.markWork, color: VL_COLOR.accent, bold: true };
     case 'tool_ok':
-      return { glyph: glyphs.diamondFilled, color: VL_COLOR.muted, bold: false };
+      return { glyph: glyphs.markWork, color: VL_COLOR.muted, bold: false };
     case 'tool_error':
-      return { glyph: glyphs.diamondFilled, color: VL_COLOR.fault, bold: true };
+      return { glyph: glyphs.markWork, color: VL_COLOR.fault, bold: true };
     case 'reviewer':
     case 'auditor':
       // Independent voice — filled hex in chrome attribution (law 5).
@@ -371,7 +456,7 @@ export function streamMark(
       return { glyph: glyphs.hexActive, color: VL_COLOR.fault, bold: true };
     case 'status':
     default:
-      return { glyph: glyphs.diamondHollow, color: VL_COLOR.muted, bold: false };
+      return { glyph: glyphs.markQuiet, color: VL_COLOR.muted, bold: false };
   }
 }
 

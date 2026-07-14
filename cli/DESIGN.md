@@ -76,11 +76,14 @@ Presentation adapts to terminal capability rather than assuming one environment.
 
 Transcript and status lines lead with a single-glyph marker so role and state read before the text does. The marker is the symbol half of the color-plus-symbol pairing above, so it must carry meaning on its own.
 
-- **Message bullet** (`•`) — user and assistant turns, and errors/warnings (recolored, not reshaped)
-- **Agent meta marker** (`⬡`) — the lead's non-message lines: the activity row, `thinking`, `sources`, and passive status text. Dim by default; it groups "what the agent is doing" apart from the conversation.
+- **Human caret** (`›`) — user turns; the one stream voice that does not wear a Push glyph.
+- **Activity square** (`▪` / `▫`) — Push working (`▪`, any tool state) vs Push talking (`▫`, prose and status). Four flat sides, deliberately nothing like the hexagon, so the signature stays unmistakable at high frequency. Pending/ok/error ride color, not shape.
+- **Push hexagon** (`⬡` / `⬢`) — header liveness, approval chrome, and independent Push voices such as Reviewer/Auditor. Kept rare: it is the signature, and its font coverage is the weakest in the set.
 - **Run-state dot** (`●`) — the header status indicator; becomes a spinner frame while running and takes success / warning / error color by run state.
 
-Markers degrade: a non-Unicode terminal falls back to an ASCII equivalent (`*`), and meaning never rests on glyph shape alone — color, wording, or position carries it too.
+Markers degrade: a non-Unicode terminal uses `>` for the human, `-` / `+` for activity,
+and `o` / `@` for the Push hexagon. Meaning never rests on glyph shape alone — color,
+wording, or position carries it too.
 
 ## Diff and Review Presentation
 

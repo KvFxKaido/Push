@@ -13,6 +13,7 @@ import {
   GLYPHS_ASCII,
   GLYPHS_UNICODE,
   MOTION_TICKS,
+  PUSH_BRAND_ART_COLS,
   VL_COLOR,
   accentHexForTheme,
   breathingHex,
@@ -26,6 +27,7 @@ import {
   headerSegments,
   modeLabel,
   modalFadeAmount,
+  pushBrandArt,
   reduceModalMotion,
   resolveGlyphs,
   shortenPath,
@@ -37,16 +39,107 @@ describe('visual language v2 glyphs', () => {
     assert.equal(GLYPHS_UNICODE.hexIdle, '⬡');
     assert.equal(GLYPHS_UNICODE.hexActive, '⬢');
     assert.equal(GLYPHS_ASCII.hexIdle, 'o');
-    assert.equal(GLYPHS_ASCII.hexActive, '*');
+    assert.equal(GLYPHS_ASCII.hexActive, '@');
     assert.equal(resolveGlyphs(true).hexIdle, '⬡');
-    assert.equal(resolveGlyphs(false).hexActive, '*');
+    assert.equal(resolveGlyphs(false).hexActive, '@');
   });
 
-  it('keeps diamonds on the activity spine with ASCII fallbacks (law 5)', () => {
-    assert.equal(GLYPHS_UNICODE.diamondFilled, '◆');
-    assert.equal(GLYPHS_UNICODE.diamondHollow, '◇');
-    assert.equal(GLYPHS_ASCII.diamondFilled, '+');
-    assert.equal(GLYPHS_ASCII.diamondHollow, '-');
+  it('puts a SQUARE on the activity spine, never a diamond or the hexagon (law 5)', () => {
+    // The workhorse must not rhyme with the signature: `◆` and `⬢` are both angular
+    // filled polygons and read as the same family in a scrolling transcript.
+    assert.equal(GLYPHS_UNICODE.markWork, '▪');
+    assert.equal(GLYPHS_UNICODE.markQuiet, '▫');
+    assert.equal(GLYPHS_ASCII.markWork, '+');
+    assert.equal(GLYPHS_ASCII.markQuiet, '-');
+    for (const glyphs of [GLYPHS_UNICODE, GLYPHS_ASCII]) {
+      for (const spine of [glyphs.markWork, glyphs.markQuiet]) {
+        assert.ok(!['◆', '◇'].includes(spine), 'the spine is not a diamond');
+        assert.notEqual(spine, glyphs.hexIdle, 'the spine is not the signature');
+        assert.notEqual(spine, glyphs.hexActive, 'the spine is not the signature');
+        assert.notEqual(spine, glyphs.human, 'the spine is not the human caret');
+      }
+    }
+  });
+
+  it('never reuses a density cell as a spine mark (ASCII tier collision)', () => {
+    // `dotIdle: '.'` collided with `density[0]: '.'` — two meanings on one glyph in the
+    // same frame, which is exactly what law 4 says not to do.
+    for (const glyphs of [GLYPHS_UNICODE, GLYPHS_ASCII]) {
+      assert.ok(!glyphs.density.includes(glyphs.markWork));
+      assert.ok(!glyphs.density.includes(glyphs.markQuiet));
+    }
+  });
+
+  it('carries state on the spine by COLOR, not by glyph (law 4)', () => {
+    // A settled tool call wears the SAME mark as a live one — only the color differs.
+    // This is why the glyphs are named markWork/markQuiet and not active/idle.
+    const g = GLYPHS_UNICODE;
+    const pending = streamMark('tool_pending', g);
+    const ok = streamMark('tool_ok', g);
+    const error = streamMark('tool_error', g);
+    assert.equal(pending.glyph, g.markWork);
+    assert.equal(ok.glyph, g.markWork);
+    assert.equal(error.glyph, g.markWork);
+    assert.notEqual(pending.color, ok.color);
+    assert.notEqual(ok.color, error.color);
+    // Prose is the quiet register.
+    assert.equal(streamMark('assistant', g).glyph, g.markQuiet);
+    // The human is neither.
+    assert.equal(streamMark('user', g).glyph, g.human);
+  });
+
+  it('renders the Push mark as a HEXAGON — flat vertical sides, not a rhombus (law 6)', () => {
+    // The property that matters, and the one a line-width assertion cannot see: the real
+    // PushMarkIcon path (M8 1 14.5 5v6L8 15 1.5 11V5L8 1Z) holds x = 1.5 and x = 14.5
+    // from y = 5 to y = 11. Pure diagonals give you a diamond — which is what the
+    // hand-drawn version shipped, under a test that asserted [1,5,9,13,13,9,5,1] and
+    // called it "the Push hex mark".
+    for (const unicode of [true, false]) {
+      const art = pushBrandArt(unicode);
+      const middle = art.slice(3, art.length - 3);
+      assert.ok(middle.length >= 4, 'need a middle band to test the sides');
+
+      // A column that is lit on EVERY middle row is a vertical side. A rhombus has none.
+      const litEveryRow = [];
+      for (let c = 0; c < art[0].length; c += 1) {
+        if (middle.every((row) => row[c] !== undefined && row[c] !== ' ')) litEveryRow.push(c);
+      }
+      assert.ok(
+        litEveryRow.length >= 4,
+        `expected flat vertical sides, got ${litEveryRow.length} sustained columns (a rhombus has 0)`,
+      );
+      // Sides on BOTH edges, mirrored about the centre.
+      const mid = (art[0].length - 1) / 2;
+      assert.ok(
+        litEveryRow.some((c) => c < mid),
+        'a left vertical side',
+      );
+      assert.ok(
+        litEveryRow.some((c) => c > mid),
+        'a right vertical side',
+      );
+    }
+  });
+
+  it('draws the mark from glyphs the language already owns, at a uniform width (law 6)', () => {
+    const unicode = pushBrandArt(true);
+    const ascii = pushBrandArt(false);
+    // Equal-width rows: the surface centers the block with alignItems=center, which
+    // centers each line by its OWN width — a ragged row would shear the hexagon.
+    assert.equal(new Set(unicode.map((l) => l.length)).size, 1);
+    assert.equal(new Set(ascii.map((l) => l.length)).size, 1);
+    assert.equal(unicode[0].length, PUSH_BRAND_ART_COLS);
+
+    // No new glyphs enter the language: the mark is drawn from the density ramp.
+    const allowed = (g) => new Set([' ', ...g.density]);
+    for (const [art, g] of [
+      [unicode, GLYPHS_UNICODE],
+      [ascii, GLYPHS_ASCII],
+    ]) {
+      for (const ch of art.join('')) {
+        assert.ok(allowed(g).has(ch), `mark uses "${ch}", which is not a density cell`);
+      }
+    }
   });
 });
 
@@ -63,9 +156,9 @@ describe('visual language v2 color budget', () => {
     assert.equal(diffLineColor('ctx'), VL_COLOR.muted);
   });
 
-  it('puts diamonds on tools and hexes only on independent voices (law 5)', () => {
+  it('puts squares on tools and hexes only on independent voices (law 5)', () => {
     const g = GLYPHS_UNICODE;
-    assert.equal(streamMark('tool_pending', g).glyph, '◆');
+    assert.equal(streamMark('tool_pending', g).glyph, g.markWork);
     assert.equal(streamMark('tool_pending', g).color, VL_COLOR.accent);
     assert.equal(streamMark('tool_ok', g).color, VL_COLOR.muted);
     assert.equal(streamMark('tool_error', g).color, VL_COLOR.fault);
@@ -84,8 +177,8 @@ describe('visual language v2 color budget', () => {
     const user = streamMark('user', g);
     assert.equal(user.glyph, '›');
     assert.notEqual(user.glyph, g.hexActive); // not Push's face
-    assert.notEqual(user.glyph, g.diamondFilled); // not Push's activity spine
-    assert.notEqual(user.glyph, g.diamondHollow);
+    assert.notEqual(user.glyph, g.dotActive); // not Push's activity spine
+    assert.notEqual(user.glyph, g.dotIdle);
     assert.equal(user.color, VL_COLOR.accent);
     assert.equal(streamMark('user', GLYPHS_ASCII).glyph, '>');
   });

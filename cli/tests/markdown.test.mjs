@@ -32,7 +32,7 @@ describe('stripDecorativeEmoji (#1433 / law 2)', () => {
   });
 
   it('never eats Push chrome glyphs (geometric, not pictographic)', () => {
-    assert.equal(stripDecorativeEmoji('◆ ⬡ ⬢ ◇ ░▒▓█'), '◆ ⬡ ⬢ ◇ ░▒▓█');
+    assert.equal(stripDecorativeEmoji('• · ⬡ ⬢ ░▒▓█'), '• · ⬡ ⬢ ░▒▓█');
   });
 
   it('keeps text-presentation symbols (arrows, ▶, ✓) — only emoji get stripped', () => {

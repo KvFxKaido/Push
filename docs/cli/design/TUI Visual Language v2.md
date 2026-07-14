@@ -50,7 +50,7 @@ every one is an unbudgeted accent entering through a side door, and the narratin
 (law 11) doesn't cheerlead. Decorative color enters *only* through the accent budget.
 Model prose can't be trusted to honor this, so the rule is enforced in code: the markdown
 render pass (`cli/silvery/markdown.tsx`, `stripDecorativeEmoji`) strips pictographs before
-they reach a cell. Push's own chrome glyphs (hexagons, diamonds, density blocks) are
+they reach a cell. Push's own chrome glyphs (hexagons, squares, density blocks) are
 geometric, not pictographic, and are unaffected.
 
 ### 3. The fault exception
@@ -68,33 +68,67 @@ to the brand shape:
 | Glyph | Meaning | Unicode | ASCII fallback |
 |---|---|---|---|
 | `⬡` | idle / pending / routine | U+2B21 | `o` |
-| `⬢` | active / attention / filled state | U+2B22 | `*` |
+| `⬢` | active / attention / filled state | U+2B22 | `@` |
 
 State is carried by fill and brightness, **never by glyph variety** — Unicode has no
 half-filled hexagon, and font coverage is patchy (the motivating screenshot rendered the
 mark as `�`). Every hexagon renders through the theme's unicode seam and must degrade to
 its ASCII fallback. If the fallback isn't wired, the hexagon doesn't ship.
 
-### 5. Diamond workhorse, hexagon signature
+### 5. Hexagon signature, square workhorse
 
-The activity spine keeps `◆` / `◇` — dense, universally rendered, the highest-frequency
-glyph in the app. Hexagons live in the **chrome only**: the header mark, the status/liveness
-indicator, approval chips, independent-voice attribution (a filled hex marks Reviewer/Auditor
-output as a voice distinct from the lead — names still come from `lib/role-display.ts`).
-Branding the chrome, not the stream.
+**The hexagon is Push's face.** It is worn only by Push: the header mark, the
+status/liveness indicator, approval chips, and independent-voice attribution (a filled hex
+marks Reviewer/Auditor as a voice distinct from the lead — names still come from
+`lib/role-display.ts`). It stays **rare**, and that is not an aesthetic preference: the
+spine is the highest-frequency glyph in the app, and law 4 already records that hexagon
+font coverage is patchy (the motivating screenshot rendered the mark as `�`). Putting the
+worst-supported glyph in the busiest slot would be the one decision that breaks the
+language in the field.
 
-**The hexagon is Push's face.** It is worn only by Push — its header mark, its liveness,
-its independent voices. The **human turn wears neither Push glyph**: not the hexagon (that
-would put Push's face on the one voice that isn't Push) and not the diamond spine (that is
-Push's own activity). The user gets its own mark — a prompt caret `›` (ASCII `>`) in the
-accent, the single non-Push shape in the stream. So the stream reads in three registers:
-`›` you, `◆`/`◇` Push working, `⬢` an independent Push voice.
+The activity spine is a **square**: `▪` Push working, `▫` Push talking. ASCII `+` / `-`.
 
-### 6. Idle is allowed to be empty
+*Reversal (2026-07-14).* This law previously read "diamond workhorse" and kept `◆` / `◇` on
+the spine. Two reasons that was wrong, and neither is "diamonds are ugly":
+
+1. **The workhorse rhymed with the signature.** `◆` and `⬢` are both angular filled
+   polygons; in a scrolling transcript they read as the same visual family. A signature
+   cannot signify if the highest-frequency mark looks like it. The square's four flat
+   sides are the maximum available contrast with six angled ones.
+2. **An interim proposal (`•` / `·`) traded fill for size**, which is precisely what law 4
+   forbids: `·` is a *smaller* dot, not a hollower one, and it is close to invisible in
+   many terminal fonts. The square restores the fill axis the rest of the language uses.
+
+The spine glyph separates exactly **one** thing: Push *working* from Push *talking*.
+Pending / ok / error ride **color**, not shape — a settled tool call still wears `▪`. (The
+code names them `markWork` / `markQuiet` for this reason; the earlier `dotActive` /
+`dotIdle` claimed a live-vs-settled distinction the code never made.)
+
+The **human turn wears neither Push glyph** — not the hexagon (that would put Push's face
+on the one voice that isn't Push) and not the square spine (that is Push's own activity).
+The user gets a prompt caret `›` (ASCII `>`) in the accent, the single non-Push shape in
+the stream. So the stream reads in three registers:
+`›` you, `▪`/`▫` Push working, `⬢` an independent Push voice.
+
+### 6. Idle is allowed to be empty — but it may still have a face
 
 Stillness is a state indication. An idle screen shows the frame, the composer, and
-whatever transcript exists — and nothing else. No placeholder art, no ambient animation,
-no busy-looking fill. A TUI that always looks busy is performing.
+whatever transcript exists. No ambient animation, no news, no tips, no busy-looking fill.
+A TUI that always looks busy is performing.
+
+An **empty transcript** may center one **static, dim** Push mark — the hexagon, rasterized
+from the real `PushMarkIcon` geometry onto the language's existing density cells. It
+introduces no new glyph, it never moves, and it is gone the instant there is a row to show.
+
+*Reversal (2026-07-14).* This law previously said "**no placeholder art**", full stop, and
+that was too broad. Its real target is **performance** — a UI that manufactures activity to
+look alive. A motionless mark on a screen with nothing on it is not performing; it is the
+one moment the product has to say what it is. Identity is not busyness.
+
+The line the law still holds: the mark is the *only* thing that may occupy an empty
+transcript. Not a changelog, not a "try our new model" blurb, not a rotating tip. Those are
+marketing wearing the chrome's clothes, and they are what "no placeholder art" was really
+protecting against.
 
 ### 7. Smooth by construction
 
@@ -163,7 +197,7 @@ The language must remain fully usable at every tier:
 - **Tier 1** — truecolor + Unicode: full language (alpha fades, hexagons, density ramps).
 - **Tier 2** — 256-color + Unicode: alpha degrades per silvery's documented ANSI ramping;
   everything else intact.
-- **Tier 3** — 16-color + ASCII: hexagons → `o`/`*`, diamonds → `-`/`+`, density ramps →
+- **Tier 3** — 16-color + ASCII: hexagons → `o`/`@`, squares → `-`/`+`, density ramps →
   `.:#`, fades → discrete dim/normal steps. The one-accent budget makes this tier nearly
   free: a language that only needs one color and a grayscale ramp survives 16 colors.
 
