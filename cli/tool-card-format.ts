@@ -192,13 +192,26 @@ function textSectionLines(label: string, value: string): NonNullable<ToolCardDis
   const all = prefix.trimEnd().split('\n');
   const shown = all.slice(0, BODY_LINE_LIMIT);
   const hidden = all.length - shown.length;
+
+  // Two independent caps, and they can BOTH bite. `all` is derived from the
+  // char-truncated prefix, so `all.length` and `hidden` only ever describe the
+  // first BODY_CHAR_LIMIT chars — never the whole value. Reporting either as if
+  // it were the total is a lie a reader cannot detect: a 50k-line CI log would
+  // render as `Logs (2511 lines)` / `… +2271 more` and someone diagnosing a
+  // failure would believe they had seen all of it.
+  //
+  // So: mark the count `+` when the source was cut, and emit BOTH signals rather
+  // than letting one shadow the other. (`CLAUDE.md`: no silent caps — a bounded
+  // render must say what it dropped, or it reads as complete.)
   const lines: NonNullable<ToolCardDisplay['bodyLines']> = [
-    { text: `${label} (${all.length} lines)`, tone: 'context' },
+    { text: `${label} (${all.length}${sourceTruncated ? '+' : ''} lines)`, tone: 'context' },
     ...shown.map((text) => ({ text: `  ${clipLine(text)}`, tone: 'context' as const })),
   ];
-  if (hidden > 0 || sourceTruncated) {
-    const more = hidden > 0 ? `  … +${hidden} more` : '  … [render payload truncated]';
-    lines.push({ text: more, tone: 'context' });
+  const dropped: string[] = [];
+  if (hidden > 0) dropped.push(`+${hidden} more`);
+  if (sourceTruncated) dropped.push('payload truncated');
+  if (dropped.length > 0) {
+    lines.push({ text: `  … ${dropped.join(', ')}`, tone: 'context' });
   }
   return lines;
 }

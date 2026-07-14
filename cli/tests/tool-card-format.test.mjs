@@ -243,13 +243,45 @@ describe('generic CLI tool-card fallback', () => {
       type: 'workflow-logs',
       data: { logs: Array.from({ length: 50_000 }, (_, i) => `line ${i}`).join('\n') },
     });
-    // header + BODY_LINE_LIMIT lines + the "more" line.
+    // header + BODY_LINE_LIMIT lines + the "dropped" line.
     assert.equal(display.bodyLines.length, 242);
-    assert.match(display.bodyLines[0].text, /^Logs \(\d+ lines\)$/);
-    assert.match(display.bodyLines.at(-1).text, /… \+\d+ more|truncated/);
     for (const line of display.bodyLines) {
       assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
     }
+  });
+
+  it('never reports a prefix-scoped line count as if it were the total', () => {
+    // Codex P2 on #1470. BOTH caps bite here: the value exceeds BODY_CHAR_LIMIT
+    // *and* the surviving prefix still exceeds BODY_LINE_LIMIT. `hidden` counts
+    // only lines inside the prefix, so emitting "+N more" alone would state a
+    // number that is not the number of dropped lines, and the reader could not
+    // tell. Both signals must survive, and the count must be marked as a floor.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: Array.from({ length: 50_000 }, (_, i) => `line ${i}`).join('\n') },
+    });
+    assert.match(display.bodyLines[0].text, /^Logs \(\d+\+ lines\)$/, 'count must be marked "+"');
+    const last = display.bodyLines.at(-1).text;
+    assert.match(last, /\+\d+ more/, 'must still say how many lines were held back');
+    assert.match(last, /payload truncated/, 'must ALSO say the source itself was cut');
+  });
+
+  it('marks a char-truncated body even when no lines are held back', () => {
+    // One long line over BODY_CHAR_LIMIT, plus a second: hidden === 0, but the
+    // source was still cut. The truncation marker must not vanish.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: `${'x'.repeat(30_000)}\nsecond line` },
+    });
+    assert.equal(display.bodyLines.at(-1).text, '  … payload truncated');
+  });
+
+  it('does not mark a body that fits within both caps', () => {
+    const display = formatToolCard({ type: 'workflow-logs', data: { logs: 'one\ntwo' } });
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.text),
+      ['Logs (2 lines)', '  one', '  two'],
+    );
   });
 
   it('renders a card carrying both a list and a text body', () => {
