@@ -1,5 +1,8 @@
 import { classifyIntent } from './intent-classifier.js';
-import { sanitizeProjectInstructions } from './project-instructions.js';
+import {
+  sanitizeProjectInstructions,
+  truncateOnStructureBoundary,
+} from './project-instructions.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
 
 // Keep role-level policy hints compact so Reviewer/Auditor get the essentials
@@ -10,6 +13,10 @@ const MAX_ROLE_PROJECT_HINTS_CHARS = SIZE_BUDGETS.roleProjectHints;
 // like project instructions), so it gets the full sanitizer budget before
 // truncation rather than the compact policy-hints budget.
 const MAX_REVIEW_GUIDANCE_CHARS = SIZE_BUDGETS.reviewGuidance;
+
+// Cap the named-rules list so a pathological REVIEW.md can't turn its own
+// truncation notice into the thing that crowds out the diff.
+const MAX_LISTED_DROPPED_REVIEW_SECTIONS = 8;
 
 export type ReviewerPromptSource = 'branch-diff' | 'pr-diff' | 'last-commit' | 'working-tree';
 export type AuditorPromptSource =
@@ -79,17 +86,45 @@ function formatProjectPolicyHints(projectInstructions?: string | null): string |
   return sanitized;
 }
 
+/**
+ * REVIEW.md → reviewer prompt, truncated HONESTLY when it must be truncated.
+ *
+ * The old version sliced mid-section at the cap and appended a bare "[REVIEW.md
+ * truncated for this review]". That marker is technically not a lie and
+ * practically useless: it does not say how much was lost or WHICH rules went
+ * with it, so a reviewer running on two thirds of its own rulebook is
+ * indistinguishable from one running on all of it — and nobody upstream can tell
+ * either. REVIEW.md had been overflowing its 8k budget at 11,967 chars, so the
+ * reviewers had silently been missing the delivery rules, provider routing,
+ * decision-doc discipline, the per-turn tool budget, and validation expectations.
+ * "The reviewer ignored our conventions" was really "we never sent them."
+ *
+ * So: cut on a section boundary (whole rules survive, half-rules don't), and
+ * name what was dropped. Same treatment `formatProjectInstructions` gives the
+ * instruction file — this is the same failure with a different filename.
+ *
+ * The budget now holds REVIEW.md whole and a test keeps it that way, so this
+ * path should be dead in practice. It exists so that the day it isn't, it says so.
+ */
 function formatReviewGuidance(reviewGuidance?: string | null): string | null {
   const raw = reviewGuidance?.trim();
   if (!raw) return null;
 
   // Reuse the project-instructions sanitizer: REVIEW.md is repo-owner-authored
   // user content, so it gets the same delimiter-escaping defense.
-  let sanitized = sanitizeProjectInstructions(raw);
-  if (sanitized.length > MAX_REVIEW_GUIDANCE_CHARS) {
-    sanitized = `${sanitized.slice(0, MAX_REVIEW_GUIDANCE_CHARS)}\n\n[REVIEW.md truncated for this review]`;
-  }
-  return sanitized;
+  const sanitized = sanitizeProjectInstructions(raw);
+  if (sanitized.length <= MAX_REVIEW_GUIDANCE_CHARS) return sanitized;
+
+  const cut = truncateOnStructureBoundary(sanitized, MAX_REVIEW_GUIDANCE_CHARS);
+  const listed = cut.droppedSections.slice(0, MAX_LISTED_DROPPED_REVIEW_SECTIONS);
+  const overflow = cut.droppedSections.length - listed.length;
+  const sectionNote = listed.length
+    ? `\nRules omitted: ${listed.join(' | ')}${overflow > 0 ? ` | …and ${overflow} more` : ''}`
+    : '';
+  return (
+    `${cut.content}\n\n[REVIEW.md truncated — ${cut.omittedChars} chars omitted.` +
+    ` This guidance is INCOMPLETE; do not assume the rules you can see are all of them.${sectionNote}]`
+  );
 }
 
 const MAX_PRIOR_REVIEW_CHARS = SIZE_BUDGETS.priorReviewFindings;

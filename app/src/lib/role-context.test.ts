@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { buildDelegationBrief } from '@push/lib/delegation-brief';
 import { sanitizeProjectInstructions } from '@push/lib/project-instructions';
+import { SIZE_BUDGETS } from '@push/lib/size-budgets';
 import {
   buildAuditorContextBlock,
   buildCoderDelegationBrief,
@@ -36,6 +37,49 @@ describe('buildReviewerContextBlock', () => {
 
     expect(block).toContain('## Repository Review Guidance (REVIEW.md)');
     expect(block).toContain('Flag any direct git merge as critical.');
+  });
+
+  it('names the rules it drops when REVIEW.md overflows its budget', () => {
+    // The bug this guards. The old marker was a bare "[REVIEW.md truncated for
+    // this review]" after a mid-section slice — technically not a lie, and
+    // useless: a reviewer running on two thirds of its rulebook looked exactly
+    // like one running on all of it. REVIEW.md had been overflowing at 11,967
+    // chars against an 8,000 cap, so the delivery rules, provider routing and
+    // decision-doc discipline were simply never sent. Nothing went red.
+    const filler = 'x'.repeat(SIZE_BUDGETS.reviewGuidance);
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'branch-diff',
+      reviewGuidance: [
+        '## Recurring defect classes',
+        filler,
+        '## Delivery rules',
+        'Never run local git merge.',
+        '## Provider routing',
+        'The chat locks the provider on first send.',
+      ].join('\n\n'),
+    });
+
+    // It must say it is incomplete — loudly enough that the model cannot read the
+    // surviving rules as the whole rulebook.
+    expect(block).toContain('This guidance is INCOMPLETE');
+    expect(block).toMatch(/REVIEW\.md truncated — \d+ chars omitted/);
+    // And it must NAME what went missing. This is the part the old marker lacked.
+    expect(block).toContain('Rules omitted:');
+    expect(block).toContain('## Delivery rules');
+    expect(block).toContain('## Provider routing');
+    // The section that survived must survive WHOLE — cut on a boundary, not mid-rule.
+    expect(block).toContain('## Recurring defect classes');
+  });
+
+  it('does not add a truncation notice when REVIEW.md fits', () => {
+    const block = buildReviewerContextBlock({
+      repoFullName: 'owner/repo',
+      source: 'branch-diff',
+      reviewGuidance: '## Delivery rules\n\nNever run local git merge.',
+    });
+    expect(block).not.toContain('truncated');
+    expect(block).toContain('Never run local git merge.');
   });
 
   it('omits the REVIEW.md section when no guidance is present', () => {

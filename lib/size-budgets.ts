@@ -78,8 +78,24 @@ export const SIZE_BUDGETS = Object.freeze({
   /** CLI workspace-context free-text memory block (`.push/memory.md`) folded
    *  into the prompt (`cli/workspace-context.ts`). */
   workspaceMemory: 4_000,
-  /** REVIEW.md reviewer guidance — primary repo-specific review input. */
-  reviewGuidance: 8_000,
+  /**
+   * REVIEW.md reviewer guidance — primary repo-specific review input.
+   *
+   * Sized to hold REVIEW.md **whole**, with headroom, and `size-budgets.test.ts`
+   * fails when it stops doing so. That test is the point of this number: at
+   * 8,000 the file (11,967 chars) had silently overflowed, and the reviewers had
+   * been running for an unknown stretch without the delivery rules, provider
+   * routing, decision-doc discipline, the per-turn tool budget, or the
+   * validation expectations — the tail of their own rulebook. Nothing failed,
+   * because a truncated rulebook reads exactly like a complete one.
+   *
+   * So: do not treat this as a ceiling to trim REVIEW.md toward. If the file
+   * grows past it, the test goes red and you raise this — deliberately — or cut
+   * the file. What must never happen again is the cap eating the guidance in
+   * silence. (Found when adding two defect classes to REVIEW.md evicted three
+   * other sections; Codex caught it on #1477.)
+   */
+  reviewGuidance: 16_000,
   /** Prior-review findings block fed to a re-review (cross-review memory) —
    *  supporting context for diffing against the previous pass, so it gets
    *  less room than the primary REVIEW.md guidance. */
