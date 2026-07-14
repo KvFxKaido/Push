@@ -1,10 +1,25 @@
 // AGENTS.md / CLAUDE.md / GEMINI.md content is user-controlled (repo owner writes it).
-// We apply the same defense-in-depth as scratchpad and user bio:
-//   1. Size cap — prevents context bloat / 413 errors
-//   2. Delimiter escaping — zero-width space breaks block boundaries
+// This module applies TWO controls, and they are not the same kind of thing — the
+// distinction matters, because listing them as one list of "defense-in-depth" is what
+// made the size cap feel untouchable and kept it 4x tighter than any other agent's:
+//
+//   1. Delimiter escaping — THE INJECTION-DEFENSE BOUNDARY. A zero-width space breaks
+//      any block delimiter the content tries to forge, so repo text cannot escape its
+//      labeled envelope and impersonate the harness. This is a security control.
+//      Never relax it, never make it conditional, never let a caller opt out.
+//
+//   2. Size cap — A RESOURCE LIMIT. It bounds context bloat / 413s. It is NOT a
+//      security control and never defended against anything: a malicious AGENTS.md
+//      fits its payload in the first 200 characters, comfortably inside any cap we
+//      would ever set. Treat it as a budget, and set it by budget arithmetic.
+//
+// Because (2) is not a security boundary, truncation should be *honest* rather than
+// merely small: cut on a structure boundary and name what was dropped, so the model
+// knows the rulebook is incomplete instead of silently reading half of it as if it
+// were the whole. See `truncateOnStructureBoundary` below.
 import { SIZE_BUDGETS } from './size-budgets.js';
 
-const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsDefault;
+const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructions;
 
 /**
  * Canonical project-instructions block boundaries — the single source of truth
@@ -18,11 +33,58 @@ export const PROJECT_INSTRUCTIONS_OPEN_PREFIX = '[PROJECT_INSTRUCTIONS';
 export const PROJECT_INSTRUCTIONS_CLOSE = '[/PROJECT_INSTRUCTIONS]';
 
 /**
- * Sanitize project instructions before injection into prompts. Truncates to a
- * bounded size and escapes delimiter sequences so the content cannot break out
- * of its labeled block. `maxSize` lets each consumer keep its own budget (the
- * orchestrators use the 8000 default; the delegated-role agents pass tighter or
- * looser caps) while sharing the one escaping implementation.
+ * Markdown ATX headings (`# ` … `###### `) at line start. Setext headings are not
+ * matched: they'd require lookahead and are rare in instruction files.
+ */
+const HEADING_RE = /^(#{1,6}) +(.+)$/gm;
+
+/**
+ * Cut `raw` to at most `cap` chars, preferring the last heading boundary that fits.
+ *
+ * A blind `slice(0, cap)` lands mid-sentence, and a model reading a rulebook that
+ * stops mid-clause has no way to know the rest existed. Cutting on a heading keeps
+ * every surviving section whole, and lets the marker NAME the sections it dropped —
+ * so an incomplete rulebook announces itself instead of passing as a complete one.
+ *
+ * Falls back to a hard slice when no heading boundary is available (an unstructured
+ * file, or a first section already larger than the cap): losing the tail is still
+ * better than dropping the file, and the marker still says so.
+ */
+export function truncateOnStructureBoundary(
+  raw: string,
+  cap: number,
+): { content: string; omittedChars: number; droppedSections: string[] } {
+  if (raw.length <= cap) return { content: raw, omittedChars: 0, droppedSections: [] };
+
+  const headings: Array<{ index: number; title: string }> = [];
+  HEADING_RE.lastIndex = 0;
+  for (let m = HEADING_RE.exec(raw); m !== null; m = HEADING_RE.exec(raw)) {
+    headings.push({ index: m.index, title: m[0].trim() });
+  }
+
+  // The last heading that starts at-or-before the cap is the first one we must drop;
+  // cut immediately before it so the section above survives intact. Index 0 is not a
+  // valid cut (it would produce an empty block), hence `> 0`.
+  const lastFitting = headings.filter((h) => h.index > 0 && h.index <= cap).pop();
+  const cutAt = lastFitting ? lastFitting.index : cap;
+
+  const droppedSections = headings.filter((h) => h.index >= cutAt).map((h) => h.title);
+  return {
+    content: raw.slice(0, cutAt).trimEnd(),
+    omittedChars: raw.length - cutAt,
+    droppedSections,
+  };
+}
+
+/** Cap the dropped-section roll-call so a huge file's marker stays readable. */
+const MAX_LISTED_DROPPED_SECTIONS = 15;
+
+/**
+ * Sanitize project instructions before injection into prompts: cap the size, then
+ * escape delimiter sequences so the content cannot break out of its labeled block.
+ * `maxSize` lets each consumer pass its own budget while sharing the one escaping
+ * implementation (see the two-controls note at the top of this file — the escaping is
+ * the security boundary; the cap is a budget).
  */
 export function sanitizeProjectInstructions(
   raw: string,
@@ -40,9 +102,18 @@ export function sanitizeProjectInstructions(
   let content = raw;
 
   if (content.length > cap) {
+    const cut = truncateOnStructureBoundary(raw, cap);
+    // Name what was lost. A truncated rulebook that doesn't say which rules are
+    // missing reads exactly like a complete one — which is how "the model ignored
+    // our conventions" turns out to mean "we never sent them".
+    const listed = cut.droppedSections.slice(0, MAX_LISTED_DROPPED_SECTIONS);
+    const overflow = cut.droppedSections.length - listed.length;
+    const sectionNote = listed.length
+      ? `\nSections omitted: ${listed.join(' | ')}${overflow > 0 ? ` | …and ${overflow} more` : ''}`
+      : '';
     content =
-      content.slice(0, cap) +
-      `\n\n[Project instructions truncated — ${raw.length - cap} chars omitted]`;
+      `${cut.content}\n\n[Project instructions truncated — ${cut.omittedChars} chars omitted.` +
+      ` This file is INCOMPLETE; do not assume the conventions you can see are all of them.${sectionNote}]`;
   }
 
   // Break any block boundary the content tries to forge — both the canonical

@@ -9,6 +9,7 @@ import {
   loadMemory,
 } from '../workspace-context.ts';
 import { formatProjectInstructionsBlock } from '../../lib/project-instructions.ts';
+import { SIZE_BUDGETS } from '../../lib/size-budgets.ts';
 import { executeToolCall as _rawExecuteToolCall } from '../tools.ts';
 
 // Default `role: 'coder'` so the kernel role check admits these
@@ -206,19 +207,22 @@ describe('loadProjectInstructions', () => {
   it('returns raw content; the size cap lives at the injection chokepoint', async () => {
     const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-ws-test-'));
     try {
-      const longContent = 'x'.repeat(10000);
+      // Derived from the budget, not a hardcoded twin of it: this test pinned 10k
+      // against an 8k cap, so raising the budget to 32k silently turned it into an
+      // assertion that a file UNDER the cap gets truncated.
+      const cap = SIZE_BUDGETS.projectInstructions;
+      const longContent = 'x'.repeat(cap + 2000);
       await fs.writeFile(path.join(tmpDir, 'CLAUDE.md'), longContent);
 
       // Acquisition no longer pre-slices — it returns exactly what it read.
       const result = await loadProjectInstructions(tmpDir);
       assert.ok(result !== null);
-      assert.equal(result.content.length, 10000);
+      assert.equal(result.content.length, cap + 2000);
 
-      // The cap is applied once, at the injection site (mirrors enrichCliBuilder):
-      // formatProjectInstructionsBlock truncates to the shared 8000 budget.
+      // The cap is applied once, at the injection site (mirrors enrichCliBuilder).
       const block = formatProjectInstructionsBlock(result.content, { source: result.file });
       assert.ok(block.includes('truncated'), 'injection block should be capped');
-      assert.ok(!block.includes('x'.repeat(8001)), 'capped below the raw length');
+      assert.ok(!block.includes('x'.repeat(cap + 1)), 'capped below the raw length');
     } finally {
       await fs.rm(tmpDir, { recursive: true, force: true });
     }

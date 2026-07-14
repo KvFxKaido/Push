@@ -75,7 +75,7 @@ export const EXPLORER_ROUND_TIMEOUT_MS = 60_000;
 // writing essay-length preambles between tool calls. The wall-clock timer
 // fires once per round regardless of activity, bounding unproductive loops.
 export const EXPLORER_ROUND_WALL_CLOCK_MS = 120_000;
-export const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
+export const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructions;
 
 export const EXPLORER_GITHUB_TOOL_NAMES = getToolPublicNames({
   source: 'github',
