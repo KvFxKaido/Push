@@ -24,20 +24,24 @@ import type { DaemonTranscriptRow } from './daemon-transcript-mirror.js';
 import { isToolCardPayload } from '../lib/tool-cards.js';
 
 /**
- * Ceiling on a single clipboard payload, in characters of source text.
+ * Ceiling on a single clipboard payload, in UTF-8 BYTES of source text.
  *
- * OSC 52 is a single escape sequence carrying base64 on the wire, and terminals
- * cap what they will accept — xterm's default `maxClipboard` is ~100KB and an
- * oversized sequence is dropped ON THE FLOOR, with no error and no partial
- * write. So a naive "copy the whole transcript" would appear to succeed and
- * silently copy nothing.
+ * OSC 52 is one escape sequence carrying base64 on the wire, and terminals cap
+ * what they will accept — xterm's default `maxClipboard` is ~100KB — and an
+ * oversized sequence is dropped ON THE FLOOR: no error, no partial write. So an
+ * unreported cap looks exactly like a successful copy.
  *
- * We therefore cap the SOURCE at a size whose base64 (4/3 + overhead) stays
- * well inside that budget, and — per CLAUDE.md's no-silent-caps rule — the
- * caller must tell the user when the cap bit. Truncation returns a flag rather
- * than being swallowed here.
+ * Bytes, not `String#length`. `osc52Copy` encodes UTF-8 before base64, so a
+ * character is 1–4 bytes and base64 adds 4/3 on top. Capping by string length
+ * (the first version of this, caught by Codex on #1474) means 64k CJK
+ * characters — 192KB of UTF-8, ~256KB of base64 — sail past the check with
+ * `truncated: false`, blow the terminal's ceiling, get silently dropped, and
+ * the status line cheerfully reports a successful copy. Exactly the silent cap
+ * this constant exists to prevent.
+ *
+ * 48KB of source → ~64KB of base64, comfortably inside a 100KB ceiling.
  */
-export const MAX_COPY_CHARS = 64_000;
+export const MAX_COPY_BYTES = 48_000;
 
 export interface CopyPayload {
   /** The text to place on the clipboard. Already truncated to MAX_COPY_CHARS. */
@@ -48,17 +52,71 @@ export interface CopyPayload {
   label: string;
 }
 
-/** Render an EditDiff back to unified-diff text — the form you can paste into a patch. */
+/**
+ * Split an EditDiff's flat line list back into hunks.
+ *
+ * `EditDiff` encodes hunk boundaries IMPLICITLY: its own doc comment says "a
+ * jump in line numbers between consecutive entries means skipped context". So a
+ * new hunk starts wherever the old- or new-file line number is not exactly one
+ * past the previous line's.
+ */
+interface CopyHunk {
+  oldStart: number;
+  newStart: number;
+  lines: EditDiff['lines'];
+}
+
+function toHunks(diff: EditDiff): CopyHunk[] {
+  const hunks: CopyHunk[] = [];
+  let current: CopyHunk | null = null;
+  let expectedOld: number | null = null;
+  let expectedNew: number | null = null;
+
+  for (const line of diff.lines) {
+    const contiguous =
+      current !== null &&
+      (line.oldLine === undefined || expectedOld === null || line.oldLine === expectedOld) &&
+      (line.newLine === undefined || expectedNew === null || line.newLine === expectedNew);
+
+    if (!contiguous) {
+      current = {
+        // A hunk that opens on an `add` has no old line; unified diffs still
+        // need a start, and the line before the insertion point is the anchor.
+        oldStart: line.oldLine ?? Math.max(1, (expectedOld ?? 1) as number),
+        newStart: line.newLine ?? Math.max(1, (expectedNew ?? 1) as number),
+        lines: [],
+      };
+      hunks.push(current);
+    }
+    current!.lines.push(line);
+    if (line.oldLine !== undefined) expectedOld = line.oldLine + 1;
+    if (line.newLine !== undefined) expectedNew = line.newLine + 1;
+  }
+  return hunks;
+}
+
+/**
+ * Render an EditDiff back to a REAL unified diff — `@@` headers and all.
+ *
+ * The first version of this emitted `---`/`+++` plus bare `+`/`-` lines and no
+ * hunk headers. `git apply` rejects that outright ("No valid patches in input"),
+ * so the paste-into-a-patch flow this whole function exists for did not work —
+ * caught by Codex on #1474 after I asserted it in the PR body without ever
+ * running `git apply` on the output. The line numbers were already on every
+ * `EditDiffLine`; only the headers were missing.
+ */
 function diffToText(diff: EditDiff): string {
-  const header = `--- a/${diff.path}\n+++ b/${diff.path}`;
-  const body = diff.lines
-    .map((line) => {
+  const out = [`--- a/${diff.path}`, `+++ b/${diff.path}`];
+  for (const hunk of toHunks(diff)) {
+    const oldCount = hunk.lines.filter((l) => l.kind === 'ctx' || l.kind === 'del').length;
+    const newCount = hunk.lines.filter((l) => l.kind === 'ctx' || l.kind === 'add').length;
+    out.push(`@@ -${hunk.oldStart},${oldCount} +${hunk.newStart},${newCount} @@`);
+    for (const line of hunk.lines) {
       const marker = line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' ';
-      return `${marker}${line.text}`;
-    })
-    .join('\n');
-  const note = diff.truncated ? '\n[diff truncated for display — copy is partial]' : '';
-  return `${header}\n${body}${note}`;
+      out.push(`${marker}${line.text}`);
+    }
+  }
+  return out.join('\n');
 }
 
 /**
@@ -83,7 +141,9 @@ function cardToText(card: NonNullable<DaemonTranscriptRow['card']>): string {
  */
 export function copyTextForRow(row: DaemonTranscriptRow): { text: string; label: string } {
   if (row.kind === 'tool') {
-    if (row.diff) return { text: diffToText(row.diff), label: 'diff' };
+    if (row.diff) {
+      return { text: diffToText(row.diff), label: row.diff.truncated ? 'partial diff' : 'diff' };
+    }
     if (isToolCardPayload(row.card)) {
       const display = formatToolCard(row.card);
       return { text: cardToText(row.card), label: display.title };
@@ -94,35 +154,70 @@ export function copyTextForRow(row: DaemonTranscriptRow): { text: string; label:
 }
 
 /**
- * The last row worth copying — the assistant's most recent answer.
+ * The last row worth copying — the most recent thing the assistant PRODUCED.
  *
- * Deliberately skips `tool_prose` (narration ABOUT a tool call, not an answer),
- * status rows, and the user's own input. Returns null when the transcript holds
- * no assistant message yet, which the caller must report rather than silently
- * copying nothing.
+ * Message rows are not the only such thing, and treating them as the only such
+ * thing was a real bug: the first version of this filtered `kind !== 'message'`,
+ * which made every diff/card branch of `copyTextForRow` above **unreachable
+ * from the production command**. Ctrl+O on a turn that ended in an edit would
+ * copy an older message, or report nothing at all — while the unit tests stayed
+ * green, because they called `copyTextForRow` directly. Codex and the Push
+ * reviewer both caught it independently on #1474.
+ *
+ * So the candidate set is "assistant output", not "assistant prose":
+ *  - `message` (any non-user role) — the answer
+ *  - `tool` (settled) — the diff or the card IS the output for an edit turn
+ *  - `review` — a verdict is output too
+ *
+ * Still excluded, deliberately:
+ *  - `user` — their own input, which they already have
+ *  - `tool_prose` — narration ABOUT a call, not the result of one
+ *  - `status` — our own chrome, including the "Copied…" line this very command
+ *    appends (copying that back would be a fine way to make Ctrl+O idempotent
+ *    in the worst sense)
+ *  - `pending` — output still streaming; copying a half-written answer is worse
+ *    than saying there is nothing to copy yet
  */
-export function lastAssistantRow(rows: readonly DaemonTranscriptRow[]): DaemonTranscriptRow | null {
+const COPYABLE_KINDS = new Set<DaemonTranscriptRow['kind']>(['message', 'tool', 'review']);
+
+export function lastCopyableRow(rows: readonly DaemonTranscriptRow[]): DaemonTranscriptRow | null {
   for (let i = rows.length - 1; i >= 0; i--) {
     const row = rows[i];
     if (!row) continue;
-    if (row.kind !== 'message') continue;
+    if (!COPYABLE_KINDS.has(row.kind)) continue;
     if (row.role === 'user') continue;
     if (row.pending) continue;
-    if (row.text.trim().length === 0) continue;
+    if (copyTextForRow(row).text.trim().length === 0) continue;
     return row;
   }
   return null;
 }
 
-/** Apply the OSC 52 ceiling, reporting rather than hiding the cut. */
+/**
+ * Apply the OSC 52 ceiling, reporting rather than hiding the cut.
+ *
+ * Slices by CODE POINT, not by UTF-16 index: `String#slice` at a byte-derived
+ * offset can land between a surrogate pair and emit a lone half, which base64s
+ * fine and pastes as U+FFFD.
+ */
 export function boundCopyText(text: string, label: string): CopyPayload {
-  if (text.length <= MAX_COPY_CHARS) return { text, truncated: false, label };
-  return { text: text.slice(0, MAX_COPY_CHARS), truncated: true, label };
+  if (Buffer.byteLength(text, 'utf8') <= MAX_COPY_BYTES) {
+    return { text, truncated: false, label };
+  }
+  let used = 0;
+  let out = '';
+  for (const codePoint of text) {
+    const size = Buffer.byteLength(codePoint, 'utf8');
+    if (used + size > MAX_COPY_BYTES) break;
+    out += codePoint;
+    used += size;
+  }
+  return { text: out, truncated: true, label };
 }
 
 /** Resolve the payload for "copy the last response". Null when there is nothing to copy. */
 export function copyLastResponse(rows: readonly DaemonTranscriptRow[]): CopyPayload | null {
-  const row = lastAssistantRow(rows);
+  const row = lastCopyableRow(rows);
   if (!row) return null;
   const { text, label } = copyTextForRow(row);
   if (text.trim().length === 0) return null;
