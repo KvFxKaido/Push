@@ -5,24 +5,44 @@
 # package version in app/package.json — version mismatch produces SDK warnings
 # and can break features.
 #
-# Base image (`-python` variant) already provides: Ubuntu 22.04, Node.js 20,
-# Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip, procps,
-# ca-certificates, matplotlib, numpy, pandas, ipython.
+# Base image (`-python` variant) already provides: Ubuntu 22.04, Node.js 22
+# (v22.23.1), Bun, Python 3.11 (pip + venv), git, curl, wget, jq, zip, unzip,
+# procps, ca-certificates, matplotlib, numpy, pandas, ipython.
 #
-# NOTE ON NODE: this image stays on the base image's Node 20 even though the
-# repo-wide floor is Node 24 (root package.json `engines`, .nvmrc, CI). The
-# sandbox executes the *user's* repo commands, not Push's own toolchain, and
-# Cloudflare's base image runs its control plane on the Node it ships — pinning
-# NodeSource 24 over it would swap `/usr/bin/node` underneath their server for
-# no benefit we need. sandbox/app.py (Modal) mirrors this pin; the two backends
-# must agree, so both move only when the Cloudflare base image does.
+# NOTE ON NODE: this image stays on whatever Node the base image ships — today
+# v22.23.1 — even though the repo-wide floor is Node 24 (root package.json
+# `engines`, .nvmrc, CI). The sandbox executes the *user's* repo commands, not
+# Push's own toolchain, and the base image's `/usr/local/bin/node` backs the
+# container server's JS/TS interpreter pools (JAVASCRIPT_POOL_MIN_SIZE /
+# TYPESCRIPT_POOL_MIN_SIZE); pinning NodeSource 24 over it would swap that Node
+# underneath Cloudflare's server for no benefit we need. sandbox/app.py (Modal)
+# mirrors this pin; the two backends must agree, so both move only when the
+# Cloudflare base image does.
+#
+# Don't trust this line — verify it. The version is a property of the base image,
+# not of anything we declare, so it moves without us:
+#   cid=$(docker create cloudflare/sandbox:0.12.3-python)
+#   docker cp "$cid:/usr/local/lib/node_modules/npm/package.json" -   # npm major -> Node major
+#   docker rm "$cid"
+# (This note said "Node 20" for a while after the base had already moved to 22,
+# which in turn made the pnpm rationale below false. Re-check it on base bumps.)
+#
+# Push's own `engines: node >=24` makes pnpm print an "Unsupported engine" WARNING
+# inside this sandbox when it installs Push itself (e.g. the autonomous reviewer
+# checking out this repo). It is warn-only and non-fatal: nothing sets
+# `engine-strict`, and pnpm exits 0. Do not "fix" it by forcing Node 24 in here.
 
 FROM docker.io/cloudflare/sandbox:0.12.3-python
 ARG PUSH_SANDBOX_COREPACK_VERSION=0.35.0
-# pnpm 10.x, NOT 11.x: pnpm 11 requires Node >=22.13 and this base image ships
-# Node 20, so a prefetched pnpm 11 cannot actually run here — for Push's own
-# pre-bake below or for a user's pnpm repo. Raise this only when the base image
-# ships Node >=22.13. Keep it on the same major as the repo's `packageManager`.
+# pnpm 10.x, NOT 11.x: keep this on the same major as the repo's `packageManager`
+# (pnpm@10.34.5), because the pre-bake below installs Push's own node_modules with
+# it and a corepack `packageManager` pin wins at runtime anyway — a different major
+# baked here would just be re-downloaded.
+#
+# This previously claimed pnpm 11 "cannot run here" because the base ships Node 20.
+# That reason is dead: the base ships Node v22.23.1, which satisfies pnpm 11's
+# Node >=22.13 floor. The pin stands on the packageManager-parity reason alone, so
+# move it when the repo's `packageManager` moves — not when the base image does.
 ARG PUSH_SANDBOX_PNPM_VERSION=10.34.5
 ARG PUSH_SANDBOX_YARN_VERSION=4.17.0
 
@@ -75,8 +95,9 @@ RUN npm install -g corepack@"${PUSH_SANDBOX_COREPACK_VERSION}" \
 # into an identically-shaped /workspace keeps them resolving.
 #
 # The pnpm version comes from the repo's own `packageManager` field via corepack,
-# so there is no second place to keep in sync. NB: it must stay pnpm 10.x while
-# this base image ships Node 20 — pnpm 11 requires Node >=22.13.
+# so there is no second place to keep in sync. It tracks that field (pnpm 10.x
+# today) — not the base image's Node, which at v22.23.1 clears pnpm 11's >=22.13
+# floor anyway. See PUSH_SANDBOX_PNPM_VERSION above.
 #
 # `HUSKY=0 CI=1` suppresses the husky git-hook install the repo's `prepare`
 # script runs (we have no .git here); build scripts otherwise stay enabled so

@@ -31,11 +31,14 @@ sandbox_image = (
     .apt_install("git", "curl", "ripgrep", "jq", "zip", "unzip")
     .pip_install("ruff", "pytest")
     .run_commands(
-        # Node 20 — deliberately NOT the repo-wide Node 24 floor. This image
+        # Node 22 — deliberately NOT the repo-wide Node 24 floor. This image
         # mirrors Dockerfile.sandbox, whose Node comes from the Cloudflare
-        # sandbox base image (Node 20). The two sandbox backends must agree, so
-        # this pin moves only when the Cloudflare base image does.
-        "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",
+        # sandbox base image (cloudflare/sandbox:0.12.3-python ships v22.23.1 —
+        # verified from the binary in the image, not from its docs). The two
+        # sandbox backends must agree, so this pin moves only when the Cloudflare
+        # base image does. Both images run the *user's* repo commands, not Push's
+        # own toolchain, which is why they sit below the repo's Node 24 floor.
+        "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -",
         "apt-get install -y nodejs",
         # Default git identity — overridden per-session when GitHub token is available
         "git config --global user.email 'sandbox@diff.app'",
