@@ -1,6 +1,6 @@
 import { stripToolCallPayload } from '@push/lib/tool-prose';
 
-export { ONLY_BRACKETS_RE, looksLikeToolCall, stripToolCallPayload } from '@push/lib/tool-prose';
+export { stripToolCallPayload } from '@push/lib/tool-prose';
 
 /**
  * Salvage the user-visible text of an assistant turn whose answer never made

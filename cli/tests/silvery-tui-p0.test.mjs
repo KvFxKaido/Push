@@ -340,6 +340,14 @@ describe('silvery Phase 0 fault shell', () => {
 });
 
 describe('silvery TUI Phase 1 chat surface', () => {
+  it('does not strip tool-call-shaped JSON from untyped assistant history', async () => {
+    const { sessionMessagesToTranscriptRows } = await import('../tui-history.ts');
+    const content = '```json\n{"tool":"Read","args":{"path":"a.ts"}}\n```';
+    assert.deepEqual(sessionMessagesToTranscriptRows([{ role: 'assistant', content }]), [
+      { role: 'assistant', text: content },
+    ]);
+  });
+
   it('maps real session rows and keeps the measured fallback pinned to the newest row', {
     skip: silverySkip,
   }, async () => {

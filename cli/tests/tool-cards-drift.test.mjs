@@ -5,7 +5,7 @@
  * TUI dispatch on the SAME `ToolCard` union. When that vocabulary lived on one
  * surface (`app/src/types/index.ts`), the other surface had to *guess* — which
  * is exactly how the TUI ended up regex-sniffing tool output for diffs
- * (`looksLikeUnifiedDiff`) and guessing which argument mattered.
+ * and guessing which argument mattered before Slice 5 deleted both paths.
  *
  * These tests fail if the vocabulary starts to re-diverge. They are deliberately
  * source-text assertions rather than type assertions: the failure mode being

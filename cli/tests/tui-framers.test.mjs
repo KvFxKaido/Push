@@ -10,7 +10,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { renderEntryLines, looksLikeUnifiedDiff } from '../tui-framers.ts';
+import { renderEntryLines } from '../tui-framers.ts';
 import { createTheme } from '../tui-theme.ts';
 
 const WIDTH = 80;
@@ -19,9 +19,9 @@ function makeTheme() {
   return createTheme({ tier: 'none', unicode: true, name: 'default' });
 }
 
-function render(entry, ctx = {}) {
+function render(entry) {
   const out = [];
-  renderEntryLines(out, entry, WIDTH, makeTheme(), ctx);
+  renderEntryLines(out, entry, WIDTH, makeTheme());
   return out;
 }
 
@@ -49,17 +49,12 @@ describe('renderEntryLines: user / assistant', () => {
     ]);
   });
 
-  it('renders JSON tool-call fence as collapsed payload header + summary', () => {
-    // The collapsed-payload path lives in renderAssistantEntryLines; the
-    // pre-cleanup version had a snapshot for it under the badge-led
-    // standard layout. Copilot review on PR #552: this assertion was lost
-    // in the deletion. Pinning under the bullet-led renderer keeps the
-    // JSON-fence path covered.
+  it('keeps tool-call-shaped JSON as ordinary explicitly tagged code', () => {
     const lines = render({
       role: 'assistant',
       text: '```json\n{"tool":"Read","args":{"path":"a.ts"}}\n```',
     });
-    assert.deepEqual(lines, ['• ▸ JSON payload · 1 tool call · collapsed', '  → Read  a.ts']);
+    assert.deepEqual(lines, ['• code (json)', '  {"tool":"Read","args":{"path":"a.ts"}}']);
   });
 
   it('wraps long user text with bullet on first line, 2-space continuation indent', () => {
@@ -77,13 +72,13 @@ describe('renderEntryLines: user / assistant', () => {
 });
 
 describe('renderEntryLines: tool_call', () => {
-  it('renders pending call with bullet, status icon, and parens-wrapped args', () => {
+  it('renders pending calls by declared tool name without guessing an argument label', () => {
     const lines = render({
       role: 'tool_call',
       text: 'Read',
       args: { path: 'src/foo.ts' },
     });
-    assert.deepEqual(lines, ['• … Read(src/foo.ts)']);
+    assert.deepEqual(lines, ['• … Read']);
   });
 
   it('renders successful call with branch-line trailer for result preview', () => {
@@ -94,7 +89,7 @@ describe('renderEntryLines: tool_call', () => {
       duration: 42,
       resultPreview: 'first line of output\nrest ignored',
     });
-    assert.deepEqual(lines, ['• ✓ Read(src/foo.ts) 42ms', '  └─ first line of output']);
+    assert.deepEqual(lines, ['• ✓ Read 42ms', '  └─ first line of output']);
   });
 
   it('renders errored call with cross icon, no trailer', () => {
@@ -105,7 +100,7 @@ describe('renderEntryLines: tool_call', () => {
       error: true,
       duration: 5,
     });
-    assert.deepEqual(lines, ['• ✗ Bash(false) 5ms']);
+    assert.deepEqual(lines, ['• ✗ Bash 5ms']);
   });
 });
 
@@ -132,7 +127,7 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
       editDiff,
     });
     assert.deepEqual(lines, [
-      '• ✓ edit_file(src/foo.ts) 12ms',
+      '• ✓ edit_file 12ms',
       '  └─ +1 -1',
       '     1   alpha',
       '     2 - old line',
@@ -159,7 +154,7 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
       },
     });
     assert.deepEqual(lines, [
-      '• ✓ edit_file(a.md) 3ms',
+      '• ✓ edit_file 3ms',
       '  └─ Added 2 lines',
       '      2 + first',
       '        ⋮',
@@ -183,7 +178,7 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
       },
     });
     assert.deepEqual(lines, [
-      '• ✓ write_file(big.txt) 7ms',
+      '• ✓ write_file 7ms',
       '  └─ Added 500 lines',
       '     1 + head',
       '     … diff truncated',
@@ -199,7 +194,7 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
       resultPreview: 'Applied 1 hashline edits to x.ts',
       editDiff: { path: 'x.ts', lines: 'nope' },
     });
-    assert.deepEqual(lines, ['• ✓ edit_file(x.ts) 2ms', '  └─ Applied 1 hashline edits to x.ts']);
+    assert.deepEqual(lines, ['• ✓ edit_file 2ms', '  └─ Applied 1 hashline edits to x.ts']);
   });
 
   it('keeps the plain error rendering when the call failed', () => {
@@ -211,7 +206,7 @@ describe('renderEntryLines: tool_call edit card (structured editDiff)', () => {
       error: true,
       editDiff,
     });
-    assert.deepEqual(lines, ['• ✗ edit_file(x.ts) 2ms']);
+    assert.deepEqual(lines, ['• ✗ edit_file 2ms']);
   });
 });
 
@@ -252,8 +247,8 @@ describe('renderEntryLines: activity_group', () => {
       [
         '▾ 3 steps · 1 edit',
         '  ◆ Thought for 800ms',
-        '  ◆ Read src/foo.ts  42ms',
-        '  ◆ Edit src/foo.ts  12ms',
+        '  ◆ Read  42ms',
+        '  ◆ Edit  12ms',
         '  └─ +1 -1',
         '     2 - old line',
         '     2 + new line',
@@ -291,7 +286,7 @@ describe('renderEntryLines: activity_group', () => {
           },
         ],
       }),
-      ['▾ 1 step · 1 failed', '  ✗ Run npm test  1.4s', '      2 tests failed'],
+      ['▾ 1 step · 1 failed', '  ✗ Run  1.4s', '      2 tests failed'],
     );
   });
 });
@@ -307,18 +302,13 @@ describe('renderEntryLines: diff fences', () => {
     );
   });
 
-  it('auto-detects an untagged fence whose body is a unified diff', () => {
+  it('keeps an untagged unified-diff-shaped fence as ordinary code', () => {
     assert.deepEqual(render({ role: 'assistant', text: '```\n@@ -1,1 +1,1 @@\n-a\n+b\n```' }), [
-      '• diff (+1 -1)',
-      '    @@ -1,1 +1,1 @@',
-      '  - a',
-      '  + b',
+      '• code',
+      '  @@ -1,1 +1,1 @@',
+      '  -a',
+      '  +b',
     ]);
-  });
-
-  it('does not mistake ordinary prose for a diff', () => {
-    assert.equal(looksLikeUnifiedDiff('a line with + and - chars\nbut no hunk header'), false);
-    assert.equal(looksLikeUnifiedDiff('@@ -1,2 +1,2 @@ ctx'), true);
   });
 });
 

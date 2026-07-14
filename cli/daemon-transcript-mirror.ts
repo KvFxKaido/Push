@@ -94,6 +94,31 @@ function reviewText(payload: Record<string, unknown>, fallback: string): string 
   return [summary, ...findings].filter(Boolean).join('\n\n');
 }
 
+/**
+ * Classify assistant rounds from the structured event order, never from their
+ * persisted text. An assistant completion followed by tool execution before
+ * the next completion is a tool-call round; its raw model-facing payload must
+ * not become a transcript message. Modern runs emit `assistant.tool_prose`
+ * separately, so suppressing the completion does not suppress narration.
+ */
+function assistantDoneToolRounds(events: readonly SessionEvent[]): boolean[] {
+  const rounds: boolean[] = [];
+  for (let index = 0; index < events.length; index++) {
+    if (events[index]?.type !== 'assistant_done') continue;
+    let hasTool = false;
+    for (let next = index + 1; next < events.length; next++) {
+      const type = events[next]?.type;
+      if (type === 'assistant_done' || type === 'user_message') break;
+      if (type === 'tool_call' || type === 'tool.execution_start') {
+        hasTool = true;
+        break;
+      }
+    }
+    rounds.push(hasTool);
+  }
+  return rounds;
+}
+
 export function createDaemonTranscriptMirror(
   snapshot?: Partial<DaemonTranscriptSnapshot> | null,
 ): DaemonTranscriptMirror {
@@ -290,7 +315,7 @@ export function rebuildDaemonTranscriptMirror(
     );
   let userIndex = 0;
   let assistantSlotIndex = 0;
-  let assistantVisibleCount = 0;
+  let assistantConsumedCount = 0;
   const mirror = createDaemonTranscriptMirror();
 
   // Event journal is append-only across compact/revert/unrevert while
@@ -306,6 +331,8 @@ export function rebuildDaemonTranscriptMirror(
     if (isTranscriptMutationEvent(event.type)) replayFrom = index + 1;
   }
   const replayEvents = events.slice(replayFrom);
+  const toolRoundByAssistantDone = assistantDoneToolRounds(replayEvents);
+  let assistantDoneIndex = 0;
 
   // Post-mutation events describe only activity *after* the rewrite. Pair them
   // with the *tail* of rewritten dialogue (not the head, which is summary /
@@ -340,7 +367,7 @@ export function rebuildDaemonTranscriptMirror(
     }
     userIndex = prefixUserCount;
     assistantSlotIndex = prefixAssistantCount;
-    assistantVisibleCount = prefixAssistantCount;
+    assistantConsumedCount = prefixAssistantCount;
   }
 
   for (const event of replayEvents) {
@@ -354,9 +381,11 @@ export function rebuildDaemonTranscriptMirror(
     }
     if (event.type === 'assistant_done') {
       const row = assistantSlots[assistantSlotIndex++];
+      const toolRound = toolRoundByAssistantDone[assistantDoneIndex++] === true;
       if (row) {
-        assistantVisibleCount += 1;
-        if (!mirror.liveText) mirror.liveText = row.text;
+        assistantConsumedCount += 1;
+        if (toolRound) mirror.liveText = '';
+        else if (!mirror.liveText) mirror.liveText = row.text;
       }
     }
     applyDaemonTranscriptEvent(mirror, event);
@@ -372,7 +401,7 @@ export function rebuildDaemonTranscriptMirror(
   for (let index = 0; index < dialogue.length; index++) {
     const row = dialogue[index]!;
     if (row.role === 'user' && skippedUsers++ < userIndex) continue;
-    if (row.role === 'assistant' && skippedAssistants++ < assistantVisibleCount) continue;
+    if (row.role === 'assistant' && skippedAssistants++ < assistantConsumedCount) continue;
     mirror.rows.push({
       id: `daemon-history-${row.role}-${index}`,
       kind: 'message',

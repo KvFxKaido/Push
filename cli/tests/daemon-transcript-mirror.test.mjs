@@ -153,7 +153,7 @@ describe('daemon transcript mirror', () => {
     );
   });
 
-  it('keeps tool-call-only assistant rounds from consuming later visible prose', () => {
+  it('uses structured tool events to suppress tool-call rounds without consuming later prose', () => {
     const mirror = rebuildDaemonTranscriptMirror(
       [
         { role: 'user', content: 'inspect it' },

@@ -10,10 +10,6 @@ function isToolCallObject(value: unknown): boolean {
 // eslint-disable-next-line no-useless-escape -- \[ inside character class aids readability
 export const ONLY_BRACKETS_RE = /^[\[{}\],\s]*$/;
 
-const BRACED_TOOL_OBJECT_START = /\{\s*["']?tool["']?\s*:\s*(?:["'][^"'\n]*["']|[^,\n{}]+)/s;
-const BRACELESS_QUOTED_TOOL_START = /(?:^|\n)\s*["']tool["']\s*:\s*["'][^"'\n]*["']/s;
-const BRACELESS_TOOL_WITH_ARGS_OBJECT =
-  /(?:^|\n)\s*["']?tool["']?\s*:\s*["'][^"'\n]*["']\s*,\s*["']?args["']?\s*:\s*\{/s;
 const NATIVE_TOOL_ECHO_RE = /(?:^|\n)\s*[a-z_]\w*["']\s*,\s*["'][a-z_]+["']\s*:/i;
 const ORPHANED_JSON_TAIL_RE = /",?\s*["']?[a-z_]+["']?\s*:\s*[^}]*\}\s*\}\s*$/s;
 
@@ -21,7 +17,6 @@ const XML_TOOL_NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
 const XML_TOOL_NS_REQUIRED = String.raw`[|｜]{1,2}[\w.\-]+[|｜]{1,2}`;
 const XML_TOOL_CALL_BLOCK_PATTERN = String.raw`<${XML_TOOL_NS}(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}(?:function_calls|tool_calls)\s*>|<${XML_TOOL_NS}tool_call\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}tool_call\s*>|<${XML_TOOL_NS}invoke\b[^>]*?\bname\s*=[^>]*>[\s\S]*?<\/${XML_TOOL_NS}invoke\s*>`;
 const XML_TOOL_CALL_BLOCK_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'gi');
-const XML_TOOL_CALL_BLOCK_TEST_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'i');
 const XML_TOOL_CALL_START_RE = new RegExp(
   String.raw`<(?:${XML_TOOL_NS_REQUIRED}(?:tool_call|function_calls|tool_calls|invoke)|${XML_TOOL_NS}(?:function_calls|tool_calls))\b`,
   'i',
@@ -82,19 +77,6 @@ function stripBareToolCallJson(text: string): string {
     cursor = range.end;
   }
   return output + text.slice(cursor);
-}
-
-export function looksLikeToolCall(text: string): boolean {
-  return (
-    text.includes('```json') ||
-    BRACED_TOOL_OBJECT_START.test(text) ||
-    BRACELESS_QUOTED_TOOL_START.test(text) ||
-    BRACELESS_TOOL_WITH_ARGS_OBJECT.test(text) ||
-    NATIVE_TOOL_ECHO_RE.test(text) ||
-    ORPHANED_JSON_TAIL_RE.test(text) ||
-    XML_TOOL_CALL_BLOCK_TEST_RE.test(text) ||
-    XML_TOOL_CALL_START_RE.test(text)
-  );
 }
 
 /** Remove model-facing tool-call syntax while retaining its prose prefix. */

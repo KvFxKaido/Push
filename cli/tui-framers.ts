@@ -44,59 +44,6 @@ export function makeBadge(theme: Theme, label: string, opts: BadgeOptions = {}):
   return bold ? theme.bold(styled) : styled;
 }
 
-export function safeJsonStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return '[unserializable]';
-  }
-}
-
-export function summarizeToolArgs(args: unknown, maxWidth: number): string {
-  if (!args || typeof args !== 'object') return '';
-  const a = args as Record<string, unknown>;
-  let preview = '';
-  if (typeof a.command === 'string' && a.command) preview = a.command;
-  else if (typeof a.path === 'string' && a.path) preview = a.path;
-  else if (typeof a.file === 'string' && a.file) preview = a.file;
-  else preview = safeJsonStringify(args);
-  return truncate(preview, Math.max(1, maxWidth));
-}
-
-export interface ToolCallSpec {
-  tool: string;
-  args: unknown;
-}
-
-export function parseJsonToolCalls(text: string): ToolCallSpec[] | null {
-  try {
-    const parsed = JSON.parse(text);
-    if (
-      parsed &&
-      typeof parsed === 'object' &&
-      !Array.isArray(parsed) &&
-      typeof (parsed as { tool?: unknown }).tool === 'string'
-    ) {
-      const p = parsed as { tool: string; args?: unknown };
-      return [{ tool: p.tool, args: p.args ?? null }];
-    }
-    if (Array.isArray(parsed)) {
-      const calls = parsed
-        .filter(
-          (item): item is { tool: string; args?: unknown } =>
-            !!item &&
-            typeof item === 'object' &&
-            typeof (item as { tool?: unknown }).tool === 'string',
-        )
-        .map((item) => ({ tool: item.tool, args: item.args ?? null }));
-      return calls.length ? calls : null;
-    }
-  } catch {
-    // fall through
-  }
-  return null;
-}
-
 export interface PushWrappedOptions {
   firstPrefix?: string;
   nextPrefix?: string;
@@ -133,37 +80,9 @@ export function pushWrappedLines(
   }
 }
 
-// Conservative unified-diff sniff for untagged fences: a real hunk header, or
-// both file headers present. Tight enough that prose containing a stray `+`/`-`
-// line won't trip it — only fenced bodies that are unambiguously a patch.
-export function looksLikeUnifiedDiff(body: string): boolean {
-  if (/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m.test(body)) return true;
-  return /^--- /m.test(body) && /^\+\+\+ /m.test(body);
-}
-
 // ── Assistant rendering (markdown-aware) ────────────────────────────
 
-export interface PayloadBlock {
-  id: string;
-  startLine: number;
-  endLine: number;
-  expanded: boolean;
-  selected: boolean;
-  visible: boolean;
-  toolCount: number;
-}
-
-export interface PayloadUI {
-  blocks?: PayloadBlock[];
-  cursorId?: string | null;
-  expandedIds?: Set<string> | null;
-  inspectorOpen?: boolean;
-}
-
 export interface AssistantRenderOptions {
-  expandToolJsonPayloads?: boolean;
-  entryKey?: string | null;
-  payloadUI?: PayloadUI | null;
   /**
    * When true, the leading bullet glyph is suppressed and the first line uses
    * the continuation prefix instead. Retained for callers that frame a message
@@ -179,12 +98,7 @@ export function renderAssistantEntryLines(
   theme: Theme,
   opts: AssistantRenderOptions = {},
 ): void {
-  const {
-    expandToolJsonPayloads = false,
-    entryKey = null,
-    payloadUI = null,
-    firstPrefixConsumed = false,
-  } = opts;
+  const { firstPrefixConsumed = false } = opts;
 
   // Single bullet prefix — same shape `assistantFramer` and the
   // streaming render path use. Earlier versions accepted a
@@ -197,7 +111,6 @@ export function renderAssistantEntryLines(
   const firstPrefix = `${theme.style('fg.muted', bullet)} `;
   const nextPrefix = '  ';
   let canUseFirstPrefix = !firstPrefixConsumed;
-  let jsonFenceOrdinal = 0;
 
   const pushAssistant = (
     lineText: string,
@@ -209,10 +122,6 @@ export function renderAssistantEntryLines(
       styleFn,
     });
     canUseFirstPrefix = false;
-  };
-
-  const pushToolSummary = (summary: string): void => {
-    pushAssistant(summary, (s) => theme.style('accent.secondary', s));
   };
 
   // Render inline markdown (bold / code / links) for a prose-like line: the
@@ -297,58 +206,8 @@ export function renderAssistantEntryLines(
   const flushFence = (): void => {
     const body = fenceBuf.join('\n').trim();
     const lang = (fenceLang || '').toLowerCase();
-    const jsonFenceIndex = lang === 'json' ? jsonFenceOrdinal++ : null;
-    const payloadId =
-      lang === 'json' && entryKey != null ? `${entryKey}:json:${jsonFenceIndex}` : null;
-    const selected = Boolean(payloadId && payloadUI?.cursorId === payloadId);
-    const expandedByBlock = Boolean(payloadId && payloadUI?.expandedIds?.has(payloadId));
-    const expanded = expandToolJsonPayloads || expandedByBlock;
 
-    if (lang === 'json' && body) {
-      const toolCalls = parseJsonToolCalls(body);
-      if (toolCalls) {
-        const blockStart = out.length;
-        const marker = expanded ? (theme.unicode ? '▾' : 'v') : theme.unicode ? '▸' : '>';
-        const countLabel =
-          toolCalls.length === 1 ? '1 tool call' : `${toolCalls.length} tool calls`;
-        const modeHint = expanded ? 'expanded' : 'collapsed';
-        const headerText = `${marker} JSON payload · ${countLabel} · ${modeHint}`;
-        pushAssistant(headerText, (s) => {
-          if (selected && payloadUI?.inspectorOpen) return theme.inverse(s);
-          return theme.style('fg.dim', s);
-        });
-
-        if (expanded) {
-          pushHighlightedFence('json');
-        } else {
-          for (const call of toolCalls) {
-            const preview = summarizeToolArgs(call.args, Math.max(10, width - 28));
-            const summary = preview
-              ? `${theme.glyphs.arrow} ${call.tool}  ${theme.style('fg.dim', preview)}`
-              : `${theme.glyphs.arrow} ${call.tool}`;
-            pushToolSummary(summary);
-          }
-        }
-
-        if (payloadId && Array.isArray(payloadUI?.blocks)) {
-          payloadUI.blocks.push({
-            id: payloadId,
-            startLine: blockStart,
-            endLine: Math.max(blockStart, out.length - 1),
-            expanded,
-            selected,
-            visible: false,
-            toolCount: toolCalls.length,
-          });
-        }
-
-        fenceLang = null;
-        fenceBuf = [];
-        return;
-      }
-    }
-
-    if ((lang === 'diff' || lang === 'patch' || (!lang && looksLikeUnifiedDiff(body))) && body) {
+    if ((lang === 'diff' || lang === 'patch') && body) {
       pushDiffFence();
       fenceLang = null;
       fenceBuf = [];
@@ -435,12 +294,6 @@ export type Role =
   | 'verdict'
   | 'divider';
 
-export interface FramerContext {
-  expandToolJsonPayloads?: boolean;
-  entryKey?: string | null;
-  payloadUI?: PayloadUI | null;
-}
-
 // Loose shape — each framer reads only the fields it needs. Kept open
 // because the transcript queue carries different per-role payloads and
 // type-narrowing them across the dispatch boundary buys nothing here.
@@ -462,13 +315,7 @@ export interface TranscriptEntry {
 }
 
 export interface EntryFramer {
-  render(
-    out: string[],
-    entry: TranscriptEntry,
-    width: number,
-    theme: Theme,
-    ctx: FramerContext,
-  ): void;
+  render(out: string[], entry: TranscriptEntry, width: number, theme: Theme): void;
 }
 
 function bulletGlyph(theme: Theme): string {
@@ -496,12 +343,8 @@ const userFramer: EntryFramer = {
 };
 
 const assistantFramer: EntryFramer = {
-  render(out, entry, width, theme, ctx) {
-    renderAssistantEntryLines(out, String(entry.text ?? ''), width, theme, {
-      expandToolJsonPayloads: ctx.expandToolJsonPayloads,
-      entryKey: ctx.entryKey,
-      payloadUI: ctx.payloadUI,
-    });
+  render(out, entry, width, theme) {
+    renderAssistantEntryLines(out, String(entry.text ?? ''), width, theme);
   },
 };
 
@@ -607,10 +450,8 @@ const toolCallFramer: EntryFramer = {
     const firstPrefix = `${theme.style('fg.muted', bullet)} `;
     const nextPrefix = '  ';
     const verb = theme.bold(theme.style('fg.primary', String(entry.text ?? '')));
-    const argsHint = summarizeToolArgs(entry.args, Math.max(10, width - 24));
-    const argsStr = argsHint ? theme.style('fg.dim', `(${argsHint})`) : '';
     const dur = entry.duration ? theme.style('fg.dim', ` ${entry.duration}ms`) : '';
-    const head = `${status} ${verb}${argsStr}${dur}`;
+    const head = `${status} ${verb}${dur}`;
     pushWrappedLines(out, head, width, {
       firstPrefix,
       nextPrefix,
@@ -671,12 +512,10 @@ function renderActivityTool(
       ? theme.style('state.error', theme.glyphs.cross_mark || 'x')
       : theme.style('state.success', theme.unicode ? '◆' : '*');
   const name = String(item.text ?? 'tool');
-  const target = summarizeToolArgs(item.args, Math.max(10, width - 28));
   const duration = formatActivityDuration(item.duration);
   const label = theme.bold(theme.style('fg.primary', activityToolVerb(name)));
-  const targetText = target ? ` ${theme.style('accent.secondary', target)}` : '';
   const durationText = duration ? theme.style('fg.dim', `  ${duration}`) : '';
-  out.push(`  ${status} ${label}${targetText}${durationText}`);
+  out.push(`  ${status} ${label}${durationText}`);
 
   const important = item.error === true || isEditDiff(item.editDiff);
   if (!showDetails && !important) return;
@@ -828,8 +667,7 @@ export function renderEntryLines(
   entry: TranscriptEntry,
   width: number,
   theme: Theme,
-  ctx: FramerContext = {},
 ): void {
   const framer = framers[entry.role as Role];
-  if (framer) framer.render(out, entry, width, theme, ctx);
+  if (framer) framer.render(out, entry, width, theme);
 }
