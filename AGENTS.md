@@ -63,9 +63,7 @@ Push derives validation commands (test, lint, typecheck, format, build, check) f
 For this repo:
 
 ```bash
-# NOTE: text on a `# kind:` line IS the command (the parser's inline form). Keep
-# prose on its own comment line — a parenthetical here silently becomes the command
-# and the real one below is dropped. One pnpm install covers root + app/ + mcp/.
+# Text after `# kind:` IS the command — keep prose on its own line.
 # setup:
 pnpm install
 # test:
