@@ -150,6 +150,72 @@ function listSectionLines(
   return lines;
 }
 
+/**
+ * A field the generic fallback should render as text rather than squeeze into a
+ * row. `formatValue` truncates every string to VALUE_LIMIT, which is right for a
+ * branch name and destroys a log: `get_job_logs` and `get_issue` (whose `body` is
+ * prose) would each render as a 180-char stump.
+ *
+ * "Has a newline in its trimmed content" is the test. That is structure, not
+ * meaning — the same class of judgment as "this array holds objects" — so it
+ * stays inside the declared-not-sniffed line. A trailing newline alone does not
+ * count: `"main\n"` is a branch name, not a document.
+ */
+function isTextBody(value: unknown): value is string {
+  return typeof value === 'string' && value.trimEnd().includes('\n');
+}
+
+/**
+ * Bound one body line WITHOUT normalizing whitespace.
+ *
+ * `truncate` collapses `\s+` to a single space, which is correct for a one-line
+ * label and wrong for a document: it would strip the leading indent off every
+ * line of a log or stack trace, which is most of what makes it readable.
+ */
+function clipLine(text: string): string {
+  if (text.length <= VALUE_LIMIT) return text;
+  return `${text.slice(0, VALUE_LIMIT - 1)}…`;
+}
+
+/**
+ * Render a multi-line string field as a headed section.
+ *
+ * Deliberately tones every line `context`, unlike `boundedBodyLines`, which
+ * colors `+`/`-` prefixes as diff add/delete. `diff-preview` has *declared*
+ * itself a diff, so tinting its lines is reading the contract. An arbitrary log
+ * has declared nothing — a stack trace line starting with `-` is not a deletion,
+ * and coloring it red would be exactly the text-sniffing this track deleted.
+ */
+function textSectionLines(label: string, value: string): NonNullable<ToolCardDisplay['bodyLines']> {
+  const prefix = value.slice(0, BODY_CHAR_LIMIT);
+  const sourceTruncated = value.length > prefix.length;
+  const all = prefix.trimEnd().split('\n');
+  const shown = all.slice(0, BODY_LINE_LIMIT);
+  const hidden = all.length - shown.length;
+
+  // Two independent caps, and they can BOTH bite. `all` is derived from the
+  // char-truncated prefix, so `all.length` and `hidden` only ever describe the
+  // first BODY_CHAR_LIMIT chars — never the whole value. Reporting either as if
+  // it were the total is a lie a reader cannot detect: a 50k-line CI log would
+  // render as `Logs (2511 lines)` / `… +2271 more` and someone diagnosing a
+  // failure would believe they had seen all of it.
+  //
+  // So: mark the count `+` when the source was cut, and emit BOTH signals rather
+  // than letting one shadow the other. (`CLAUDE.md`: no silent caps — a bounded
+  // render must say what it dropped, or it reads as complete.)
+  const lines: NonNullable<ToolCardDisplay['bodyLines']> = [
+    { text: `${label} (${all.length}${sourceTruncated ? '+' : ''} lines)`, tone: 'context' },
+    ...shown.map((text) => ({ text: `  ${clipLine(text)}`, tone: 'context' as const })),
+  ];
+  const dropped: string[] = [];
+  if (hidden > 0) dropped.push(`+${hidden} more`);
+  if (sourceTruncated) dropped.push('payload truncated');
+  if (dropped.length > 0) {
+    lines.push({ text: `  … ${dropped.join(', ')}`, tone: 'context' });
+  }
+  return lines;
+}
+
 function boundedBodyLines(value: string): ToolCardDisplay['bodyLines'] {
   const prefix = value.slice(0, BODY_CHAR_LIMIT);
   const sourceTruncated = value.length > prefix.length;
@@ -266,6 +332,11 @@ export function formatToolCard(card: ToolCardPayload): ToolCardDisplay {
     // say "N items", and the count is already in the section header.
     if (isObjectList(value)) {
       bodyLines.push(...listSectionLines(label, value));
+      continue;
+    }
+    // Likewise a multi-line string: a row would truncate a log to a stump.
+    if (isTextBody(value)) {
+      bodyLines.push(...textSectionLines(label, value));
       continue;
     }
     rows.push({ label, value: formatValue(value) });

@@ -3,6 +3,14 @@ import { describe, it } from 'node:test';
 
 import { formatToolCard } from '../tool-card-format.ts';
 
+/**
+ * Trips BOTH caps: >BODY_CHAR_LIMIT (24k) chars, and the surviving prefix still
+ * holds >BODY_LINE_LIMIT (240) lines. 5k lines (~45KB) is the smallest fixture
+ * that does — the earlier 50k version bought no coverage and just added memory
+ * churn to every CI run. Built once and shared; two tests need the same input.
+ */
+const OVERSIZED_LOG = Array.from({ length: 5_000 }, (_, i) => `line ${i}`).join('\n');
+
 describe('generic CLI tool-card fallback', () => {
   it('renders a known card as a title plus bounded key/value rows', () => {
     assert.deepEqual(
@@ -139,19 +147,24 @@ describe('generic CLI tool-card fallback', () => {
   });
 
   it('bounds a pathological object list without summarizing every item', () => {
+    // 5k items, not 100k. The assertions are on output *shape* — slice-before-map
+    // is exercised by any N over LIST_ITEM_LIMIT — so a bigger N buys no coverage
+    // and costs real memory. The 100k × 1KB version of this allocated ~100MB per
+    // run and was plausibly raising the flake rate of timing-sensitive daemon
+    // tests sharing the CI runner.
     const display = formatToolCard({
       type: 'commit-list',
       data: {
-        commits: Array.from({ length: 100_000 }, (_, index) => ({
+        commits: Array.from({ length: 5_000 }, (_, index) => ({
           sha: `sha${index}`,
-          message: 'x'.repeat(1_000),
+          message: 'x'.repeat(200),
         })),
       },
     });
     // header + LIST_ITEM_LIMIT items + the "more" line.
     assert.equal(display.bodyLines.length, 14);
-    assert.equal(display.bodyLines[0].text, 'Commits (100000)');
-    assert.equal(display.bodyLines.at(-1).text, '  … +99988 more');
+    assert.equal(display.bodyLines[0].text, 'Commits (5000)');
+    assert.equal(display.bodyLines.at(-1).text, '  … +4988 more');
     for (const line of display.bodyLines) {
       assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
     }
@@ -187,6 +200,116 @@ describe('generic CLI tool-card fallback', () => {
       { label: 'Mixed', value: '2 items' },
     ]);
     assert.equal(display.bodyLines, undefined);
+  });
+
+  it('renders a multi-line string as a text section instead of a truncated row', () => {
+    // get_job_logs / get_issue carry prose or log bodies. As a row they became a
+    // 180-char stump — the row budget is right for a branch name and destroys a log.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: {
+        job: 'test (cli)',
+        logs: 'Run pnpm test\n  3310 passing\n  0 failing\nDone in 22s',
+      },
+    });
+
+    assert.deepEqual(display.rows, [{ label: 'Job', value: 'test (cli)' }]);
+    assert.deepEqual(display.bodyLines, [
+      { text: 'Logs (4 lines)', tone: 'context' },
+      { text: '  Run pnpm test', tone: 'context' },
+      { text: '    3310 passing', tone: 'context' },
+      { text: '    0 failing', tone: 'context' },
+      { text: '  Done in 22s', tone: 'context' },
+    ]);
+  });
+
+  it('does not tone a generic text body as a diff', () => {
+    // boundedBodyLines colors +/- prefixes for diff-preview, which DECLARED itself
+    // a diff. An arbitrary log declared nothing: a stack-trace line starting with
+    // "-" is not a deletion, and tinting it red is the text-sniffing we deleted.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: '- npm ERR! failed\n+ retrying\n  ok' },
+    });
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.tone),
+      ['context', 'context', 'context', 'context'],
+    );
+  });
+
+  it('treats a trailing newline as a scalar, not a document', () => {
+    // "main\n" is a branch name. Only a newline inside the trimmed content promotes.
+    const display = formatToolCard({
+      type: 'sandbox',
+      data: { branch: 'main\n', blank: '\n\n\n', empty: '' },
+    });
+    assert.deepEqual(display.rows, [
+      { label: 'Branch', value: 'main' },
+      { label: 'Blank', value: '' },
+      { label: 'Empty', value: '' },
+    ]);
+    assert.equal(display.bodyLines, undefined);
+  });
+
+  it('bounds a pathological text body without splitting the whole string', () => {
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: OVERSIZED_LOG },
+    });
+    // header + BODY_LINE_LIMIT lines + the "dropped" line.
+    assert.equal(display.bodyLines.length, 242);
+    for (const line of display.bodyLines) {
+      assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
+    }
+  });
+
+  it('never reports a prefix-scoped line count as if it were the total', () => {
+    // Codex P2 on #1470. BOTH caps bite here: the value exceeds BODY_CHAR_LIMIT
+    // *and* the surviving prefix still exceeds BODY_LINE_LIMIT. `hidden` counts
+    // only lines inside the prefix, so emitting "+N more" alone would state a
+    // number that is not the number of dropped lines, and the reader could not
+    // tell. Both signals must survive, and the count must be marked as a floor.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: OVERSIZED_LOG },
+    });
+    assert.match(display.bodyLines[0].text, /^Logs \(\d+\+ lines\)$/, 'count must be marked "+"');
+    const last = display.bodyLines.at(-1).text;
+    assert.match(last, /\+\d+ more/, 'must still say how many lines were held back');
+    assert.match(last, /payload truncated/, 'must ALSO say the source itself was cut');
+  });
+
+  it('marks a char-truncated body even when no lines are held back', () => {
+    // One long line over BODY_CHAR_LIMIT, plus a second: hidden === 0, but the
+    // source was still cut. The truncation marker must not vanish.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: `${'x'.repeat(30_000)}\nsecond line` },
+    });
+    assert.equal(display.bodyLines.at(-1).text, '  … payload truncated');
+  });
+
+  it('does not mark a body that fits within both caps', () => {
+    const display = formatToolCard({ type: 'workflow-logs', data: { logs: 'one\ntwo' } });
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.text),
+      ['Logs (2 lines)', '  one', '  two'],
+    );
+  });
+
+  it('renders a card carrying both a list and a text body', () => {
+    const display = formatToolCard({
+      type: 'ci-status',
+      data: {
+        checks: [{ name: 'build', conclusion: 'failure' }],
+        logs: 'error: exit 1\n  at build.ts:3',
+      },
+    });
+    assert.deepEqual(display.rows, []);
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.text),
+      ['Checks (1)', '  build · failure', 'Logs (2 lines)', '  error: exit 1', '    at build.ts:3'],
+    );
   });
 
   it('keeps workspace status paths visible outside the generic row budget', () => {
