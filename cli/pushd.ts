@@ -721,6 +721,8 @@ import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
 import { makeCliReadOnlyToolExec } from './lead-explorer.ts';
 import { getBuildStamp, peekBuildStamp, RUNTIME_VERSION } from './build-stamp.js';
+import { isToolCard } from '../lib/tool-cards.ts';
+import { isEditDiff } from '../lib/edit-diff.ts';
 
 const VERSION = RUNTIME_VERSION;
 const DAEMON_STARTED_AT_MS = Date.now();
@@ -3214,10 +3216,15 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
         runId,
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';
+      const meta = result?.meta as Record<string, unknown> | null | undefined;
+      const card = isToolCard(meta?.card) ? meta.card : undefined;
+      const editDiff = isEditDiff(meta?.editDiff) ? meta.editDiff : undefined;
       if (result && result.ok === true) {
         return {
           kind: 'executed',
           resultText,
+          ...(card ? { card } : {}),
+          ...(editDiff ? { editDiff } : {}),
         };
       }
       // Tool ran to completion but reported failure. Feed the opaque
@@ -3229,6 +3236,8 @@ export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
         kind: 'executed',
         resultText,
         errorType: result?.structuredError?.code,
+        ...(card ? { card } : {}),
+        ...(editDiff ? { editDiff } : {}),
       };
     } catch (err) {
       // `executeToolCall` throwing is the rare exception path —

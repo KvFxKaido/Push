@@ -142,6 +142,9 @@ describe('handleWriteFile', () => {
   it('writes on guard-allowed path and records creation + mutation', async () => {
     const ctx = makeContext({
       writeResult: { ok: true, new_version: 'v2', bytes_written: 12 },
+      execResult: okExec(
+        'diff --git a/src/app.ts b/src/app.ts\n--- /dev/null\n+++ b/src/app.ts\n+const x = 1;',
+      ),
     });
 
     const result = await handleWriteFile(ctx, {
@@ -157,6 +160,7 @@ describe('handleWriteFile', () => {
       expect.objectContaining({ outcome: 'success' }),
     );
     expect(result.text).toContain('[Tool Result — sandbox_write_file]');
+    expect(result.card?.type).toBe('diff-preview');
     expect(result.postconditions?.touchedFiles[0]?.mutation).toBe('write');
   });
 
@@ -232,12 +236,59 @@ describe('handleWriteFile', () => {
 
     const result = await handleWriteFile(ctx, {
       path: '/workspace/src/new.ts',
-      content: 'hello',
+      content: 'hello\n',
     });
 
     expect(ctx.recordLedgerCreation).toHaveBeenCalledWith('/workspace/src/new.ts');
     expect(ctx.writeToSandbox).toHaveBeenCalled();
     expect(result.text).toContain('[Tool Result — sandbox_write_file]');
+    expect(result.card?.type).toBe('diff-preview');
+    if (result.card?.type === 'diff-preview') {
+      expect(result.card.data.additions).toBe(1);
+      expect(result.card.data.deletions).toBe(0);
+    }
+  });
+
+  it('builds a before/after card for a later write to an existing untracked file', async () => {
+    const ctx = makeContext({
+      readResults: [{ content: 'before\n', version: 'v1', truncated: false }],
+      writeResult: { ok: true, new_version: 'v2', bytes_written: 6 },
+      // Shell-backed git diff is empty for untracked files.
+      execResult: okExec(),
+    });
+
+    const result = await handleWriteFile(ctx, {
+      path: '/workspace/src/untracked.ts',
+      content: 'after\n',
+    });
+
+    expect(result.card?.type).toBe('diff-preview');
+    if (result.card?.type === 'diff-preview') {
+      expect(result.card.data.additions).toBe(1);
+      expect(result.card.data.deletions).toBe(1);
+    }
+  });
+
+  it('does not invent an added line for an empty new file', async () => {
+    const ctx = makeContext({
+      writeAllowedVerdict: {
+        allowed: false,
+        code: 'READ_REQUIRED',
+        reason: 'Unread file /workspace/empty.txt',
+      },
+      readResults: [
+        { content: '', truncated: false, error: 'ENOENT: no such file' } as FileReadResult,
+      ],
+      writeResult: { ok: true, new_version: 'v1', bytes_written: 0 },
+      execResult: okExec(),
+    });
+
+    const result = await handleWriteFile(ctx, {
+      path: '/workspace/empty.txt',
+      content: '',
+    });
+
+    expect(result.card).toBeUndefined();
   });
 });
 

@@ -65,6 +65,7 @@ import {
   buildPatchsetDiagnosticSummary,
   buildPerEditDiagnosticSummary,
 } from './sandbox-mutation-postconditions';
+import { buildDiffPreviewToolCard, buildTextChangeToolCard } from '@push/lib/tool-card-producers';
 
 type WriteFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_write_file' }>['args'];
 type ApplyPatchsetArgs = Extract<SandboxToolCall, { tool: 'sandbox_apply_patchset' }>['args'];
@@ -156,6 +157,8 @@ export interface WriteHandlerContext {
   // Optional diagnostics overrides (native sessions have no shell/runtime).
   runPerEditDiagnostics?: (sandboxId: string, path: string) => Promise<string | null>;
   runPatchsetDiagnostics?: (sandboxId: string, changedFiles: string[]) => Promise<string | null>;
+  /** Per-file working-copy diff for shell-less/native sessions. */
+  getFileDiffHunks?: (sandboxId: string, path: string) => Promise<string | null>;
   // No shell on this surface: post-write `checks` can't run. When set, the
   // patchset handler SKIPS checks (reporting them skipped) instead of running
   // them through an exec stub whose universal exit 127 would read as "check
@@ -318,6 +321,7 @@ export async function handleWriteFile(
 ): Promise<ToolExecutionResult> {
   const writeStart = Date.now();
   const cacheKey = fileVersionKey(ctx.sandboxId, args.path);
+  let beforeContentForCard: string | null = null;
 
   // Sensitive-path refusal lives in the handler (not per-dispatch-case) so
   // every surface — cloud, daemon, native — inherits it by construction,
@@ -355,6 +359,7 @@ export async function handleWriteFile(
           autoReadWorkspaceRevision = expanded.workspaceRevision ?? autoReadWorkspaceRevision;
           autoReadTruncated = expanded.truncated;
         }
+        if (!autoReadTruncated) beforeContentForCard = autoReadContent;
 
         const autoLineCount = autoReadContent.split('\n').length;
         ctx.recordLedgerRead(args.path, {
@@ -406,6 +411,7 @@ export async function handleWriteFile(
           errMsg.includes('not found') ||
           errMsg.includes('does not exist')
         ) {
+          beforeContentForCard = '';
           ctx.recordLedgerCreation(args.path);
           ctx.recordLedgerMutation(args.path, 'agent');
           ctx.invalidateSymbolLedger(args.path);
@@ -454,6 +460,28 @@ export async function handleWriteFile(
         ),
         structuredError: guardErr3,
       };
+    }
+  }
+
+  // Keep a structured before-image for the diff card. `git diff` cannot show
+  // existing untracked files, so a second write to a file created earlier in
+  // the session needs this fallback. Best-effort only: card preparation must
+  // not turn an otherwise valid write into a failure.
+  if (beforeContentForCard === null) {
+    try {
+      const beforeRead = (await ctx.readFromSandbox(ctx.sandboxId, args.path)) as FileReadResult & {
+        error?: string;
+      };
+      if (!beforeRead.error && !beforeRead.truncated) {
+        beforeContentForCard = beforeRead.content;
+      } else if (
+        typeof beforeRead.error === 'string' &&
+        /no such file|not found|does not exist/i.test(beforeRead.error)
+      ) {
+        beforeContentForCard = '';
+      }
+    } catch {
+      // Leave the fallback unavailable; the write path remains authoritative.
     }
   }
 
@@ -598,6 +626,28 @@ export async function handleWriteFile(
     ctx.recordLedgerMutation(args.path, 'agent');
     ctx.invalidateSymbolLedger(args.path);
 
+    let diffHunks = '';
+    try {
+      if (ctx.getFileDiffHunks) {
+        diffHunks = ((await ctx.getFileDiffHunks(ctx.sandboxId, args.path)) ?? '').trim();
+      } else {
+        const escapedPath = args.path.replace(/'/g, "'\\''");
+        const diffResult = await ctx.execInSandbox(
+          ctx.sandboxId,
+          `cd /workspace && git diff -- '${escapedPath}'`,
+        );
+        diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
+      }
+    } catch {
+      // The write already succeeded. A best-effort render payload must never
+      // turn that mutation into a reported tool failure.
+    }
+    const writeCard = diffHunks
+      ? buildDiffPreviewToolCard(diffHunks)
+      : beforeContentForCard !== null
+        ? buildTextChangeToolCard(args.path, beforeContentForCard, args.content)
+        : undefined;
+
     const writeDiagnostics = await (ctx.runPerEditDiagnostics ?? runPerEditDiagnostics)(
       ctx.sandboxId,
       args.path,
@@ -626,7 +676,11 @@ export async function handleWriteFile(
       durationMs: Date.now() - writeStart,
       outcome: 'success',
     });
-    return { text: lines.join('\n'), postconditions: writePostconditions };
+    return {
+      text: lines.join('\n'),
+      ...(writeCard ? { card: writeCard } : {}),
+      postconditions: writePostconditions,
+    };
   } catch (writeErr) {
     const errMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
     const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'WRITE_EXCEPTION';

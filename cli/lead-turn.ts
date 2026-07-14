@@ -631,7 +631,7 @@ export async function runLeadKernelTurn(
     // fan-out is disabled by policy, fall through so `executeToolCall`'s
     // dispatch gate returns its canonical TOOL_DISABLED denial.
     if (rawCall.tool === 'delegate_explorer' && explorerFanOutEnabled) {
-      const { resultText } = await runLeadExplorerDelegation(rawCall.args ?? {}, {
+      const { resultText, card } = await runLeadExplorerDelegation(rawCall.args ?? {}, {
         cwd: state.cwd,
         sessionId: state.sessionId,
         providerConfig,
@@ -654,7 +654,7 @@ export async function runLeadKernelTurn(
           dispatchEvent(type, payload);
         },
       });
-      return { kind: 'executed', resultText };
+      return { kind: 'executed', resultText, ...(card ? { card } : {}) };
     }
     // Synthesize the start event the engine loop emits before each tool run
     // (Codex P2, PR #904): the TUI creates the transcript tool entry and its

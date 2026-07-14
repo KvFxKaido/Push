@@ -58,6 +58,7 @@ import {
   buildHashlineChangedSpans,
   buildPerEditDiagnosticSummary,
 } from './sandbox-mutation-postconditions';
+import { buildDiffPreviewToolCard, buildTextChangeToolCard } from '@push/lib/tool-card-producers';
 
 type EditFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_edit_file' }>['args'];
 type EditRangeArgs = Extract<SandboxToolCall, { tool: 'sandbox_edit_range' }>['args'];
@@ -711,8 +712,15 @@ export async function handleEditFile(
     writeVerified,
   };
   appendMutationPostconditions(editLines, editPostconditions);
+  const editCard = diffHunks
+    ? buildDiffPreviewToolCard(diffHunks)
+    : buildTextChangeToolCard(path, readResult.content, editResult.content);
 
-  return { text: editLines.join('\n'), postconditions: editPostconditions };
+  return {
+    text: editLines.join('\n'),
+    ...(editCard ? { card: editCard } : {}),
+    postconditions: editPostconditions,
+  };
 }
 
 export async function handleEditRange(

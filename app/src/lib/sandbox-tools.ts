@@ -734,6 +734,7 @@ function buildWriteContext(
     invalidateSymbolLedger: (path) => symbolLedger.invalidate(path),
     runPerEditDiagnostics: nativeFs ? async () => null : undefined,
     runPatchsetDiagnostics: nativeFs ? async () => null : undefined,
+    getFileDiffHunks: nativeFs ? nativeFileDiffHunks(nativeFs) : undefined,
     // No shell on native: never run patchset `checks` through the exec stub —
     // its universal exit 127 would read as a failed check and roll back
     // writes that succeeded.
