@@ -8,7 +8,7 @@ describe('SIZE_BUDGETS', () => {
     expect(SIZE_BUDGETS).toEqual({
       projectInstructionsDefault: 8_000,
       projectInstructionsAgent: 12_000,
-      agentsMdCoder: 4_000,
+      agentsMdCoder: 8_000,
       roleProjectHints: 2_500,
       workspaceMemory: 4_000,
       reviewGuidance: 8_000,

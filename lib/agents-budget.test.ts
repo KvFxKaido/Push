@@ -25,4 +25,20 @@ describe('AGENTS.md injection budget', () => {
     const content = readFileSync(join(REPO_ROOT, 'AGENTS.md'), 'utf8');
     expect(content.length).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructionsDefault);
   });
+
+  // The Coder is the only role that MUTATES the repo, so it is the last one that
+  // should be guessing at the conventions. At the old 4k budget this file was cut in
+  // half and the Coder lost Validation commands, "Behavior lives in code",
+  // decision-doc discipline, and the new-feature checklist — every rule constraining
+  // how code gets written here, withheld from the role writing it. It gets a "full
+  // file available at /workspace/AGENTS.md" pointer when truncated, but that is
+  // opt-in and a model does not reliably go read the rulebook it was not handed.
+  //
+  // Same remedy as above if this fails: TRIM AGENTS.md. Raising agentsMdCoder past
+  // the orchestrator's own budget would mean the Coder carries more project prose
+  // than the lead agent, which is not a thing we want to discover by accident.
+  it('fits within the Coder budget — the mutating role reads the whole file', () => {
+    const content = readFileSync(join(REPO_ROOT, 'AGENTS.md'), 'utf8');
+    expect(content.length).toBeLessThanOrEqual(SIZE_BUDGETS.agentsMdCoder);
+  });
 });
