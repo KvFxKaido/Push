@@ -21,6 +21,7 @@ import {
 
 import { getTranscriptRoleLabel } from '../../lib/role-display.js';
 import { resolveContextWindow } from '../../lib/context-budget.js';
+import { formatToolCard } from '../tool-card-format.js';
 import { getCuratedModels } from '../model-catalog.js';
 import { getProviderList } from '../provider.js';
 import { createTabCompleter, type CompletionState } from '../tui-completer.js';
@@ -182,14 +183,26 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const mark = streamMark(toolMarkKind(item), glyphs);
+  const card = item.card ? formatToolCard(item.card) : null;
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
       <Text bold={mark.bold} color={mark.color}>
         {mark.glyph} {item.toolName ?? item.text}
         {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
       </Text>
-      {item.diff ? <DiffCard item={item} /> : null}
-      {!item.diff && item.resultPreview ? (
+      {card ? (
+        <Box flexDirection="column">
+          <Text color={card.known ? VL_COLOR.primary : VL_COLOR.muted}>{card.title}</Text>
+          {card.rows.map((row, index) => (
+            <Text key={`${row.label}-${index}`} color={VL_COLOR.muted}>
+              {row.label}: {row.value}
+            </Text>
+          ))}
+        </Box>
+      ) : item.diff ? (
+        <DiffCard item={item} />
+      ) : null}
+      {!card && !item.diff && item.resultPreview ? (
         <Text color={VL_COLOR.muted}>
           {expanded ? item.resultPreview : item.resultPreview.split('\n')[0]}
         </Text>

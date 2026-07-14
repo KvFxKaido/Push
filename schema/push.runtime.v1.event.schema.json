@@ -516,6 +516,22 @@
         "branch": {
           "type": "string"
         },
+        "card": {
+          "type": "object",
+          "required": [
+            "type",
+            "data"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "minLength": 1
+            },
+            "data": {
+              "type": "object"
+            }
+          }
+        },
         "diff": {
           "type": "object",
           "required": [

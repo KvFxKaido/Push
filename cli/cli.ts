@@ -68,6 +68,8 @@ import {
 } from './skill-loader.js';
 import { ALL_CAPABILITIES, type Capability } from '../lib/capabilities.js';
 import { ATTACH_CLIENT_CAPABILITIES } from '../lib/daemon-capabilities.js';
+import { isToolCardPayload } from '../lib/tool-cards.js';
+import { formatToolCard } from './tool-card-format.js';
 import { createCompleter } from './completer.js';
 import { fmt, formatRelativeTime, Spinner } from './format.js';
 import { formatWorkspaceStateView } from './tui-status.js';
@@ -411,11 +413,20 @@ export function makeCLIEventHandler() {
       case 'tool.execution_complete': {
         spinner.stop();
         const ok = !event.payload.isError;
+        const card = isToolCardPayload(event.payload.card)
+          ? formatToolCard(event.payload.card)
+          : null;
         const text = truncateText(event.payload.text || event.payload.preview || '', 420);
-        if (ok) {
-          process.stdout.write(`${fmt.green('[tool:ok]')} ${fmt.dim(text)}\n`);
+        const badge = ok ? fmt.green('[tool:ok]') : fmt.red('[tool:error]');
+        if (card) {
+          process.stdout.write(`${badge} ${card.title}\n`);
+          for (const row of card.rows) {
+            process.stdout.write(`  ${fmt.dim(`${row.label}: ${row.value}`)}\n`);
+          }
+        } else if (ok) {
+          process.stdout.write(`${badge} ${fmt.dim(text)}\n`);
         } else {
-          process.stdout.write(`${fmt.red('[tool:error]')} ${text}\n`);
+          process.stdout.write(`${badge} ${text}\n`);
         }
         break;
       }

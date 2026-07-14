@@ -226,8 +226,9 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
   }),
 
   // `tool_result` + `tool.execution_complete`. `diff` is the optional
-  // structured edit diff for file-mutation tools (shape owned by
-  // lib/edit-diff.ts; strict validation in lib/protocol-schema.ts).
+  // structured edit diff for file-mutation tools; `card` is the
+  // forward-compatible render payload. Their strict runtime validation lives
+  // in lib/protocol-schema.ts.
   ToolResult: objectNode(['toolName', 'isError'], {
     toolName: nestr(),
     isError: bool(),
@@ -236,6 +237,10 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     target: str(),
     durationMs: num(),
     branch: str(),
+    card: objectNode(['type', 'data'], {
+      type: nestr(),
+      data: { type: 'object' },
+    }),
     diff: objectNode(['path', 'adds', 'dels', 'lines'], {
       path: nestr(),
       adds: num(),

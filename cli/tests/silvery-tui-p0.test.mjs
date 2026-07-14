@@ -491,6 +491,57 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('keeps a declared tool card on the inline TUI activity row', {
+    skip: silverySkip,
+  }, async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'inline-card-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const card = { type: 'ci-status', data: { repo: 'KvFxKaido/Push', checkCount: 3 } };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (_state, _provider, _key, _text, _rounds, options) => {
+          options.emit({
+            type: 'tool.execution_complete',
+            payload: {
+              toolName: 'ci_status',
+              isError: false,
+              preview: 'RAW_MODEL_PREVIEW',
+              card,
+            },
+            runId: 'run-card',
+            sessionId: state.sessionId,
+          });
+          return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-card' };
+        },
+      },
+    );
+
+    await controller.submit('show CI');
+    const row = controller.getSnapshot().rows.find((candidate) => candidate.kind === 'tool');
+    assert.deepEqual(row?.card, card);
+    await controller.dispose();
+  });
+
   it('handles retained slash commands without sending them to the model', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {
@@ -1833,6 +1884,71 @@ describe('silvery TUI Phase 1 chat surface', () => {
     hook.changeComposerInput('?');
     await sleep(30);
     assert.deepEqual(submissions, ['/help']);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('renders a typed card in Silvery instead of the model-facing preview', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const snapshot = {
+      rows: [
+        {
+          id: 'card-1',
+          kind: 'tool',
+          role: 'coder',
+          text: 'ci_status complete',
+          toolName: 'ci_status',
+          pending: false,
+          resultPreview: 'RAW_MODEL_PREVIEW',
+          card: {
+            type: 'ci-status',
+            data: { repo: 'KvFxKaido/Push', checkCount: 3 },
+          },
+        },
+      ],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook: {} }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(120);
+
+    assert.match(stdout.bytes, /CI Status/);
+    assert.match(stdout.bytes, /Repo: KvFxKaido\/Push/);
+    assert.match(stdout.bytes, /Check Count: 3/);
+    assert.doesNotMatch(stdout.bytes, /RAW_MODEL_PREVIEW/);
 
     instance.unmount();
     await lifecycle;

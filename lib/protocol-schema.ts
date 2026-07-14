@@ -65,6 +65,8 @@
  * fields or fields with the wrong type.
  */
 
+import { isToolCardPayload } from './tool-cards.js';
+
 /**
  * The wire-protocol version tag pinned on every envelope. Bump this
  * when introducing a breaking change to the envelope shape or the
@@ -1153,6 +1155,12 @@ function validateToolResult(payload: unknown, basePath: string): ValidationIssue
   // trust field types without re-validating per line.
   if ('diff' in payload && payload.diff !== undefined) {
     issues.push(...validateEditDiffField(payload.diff, `${basePath}.diff`));
+  }
+  if ('card' in payload && payload.card !== undefined && !isToolCardPayload(payload.card)) {
+    issues.push({
+      path: `${basePath}.card`,
+      message: 'expected { type: non-empty string, data: plain object }',
+    });
   }
   return issues;
 }

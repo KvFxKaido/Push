@@ -64,6 +64,7 @@ import {
   TUI_DAEMON_CAPABILITIES,
   ATTACH_CLIENT_CAPABILITIES,
   EVENT_V2,
+  TOOL_CARDS_V1,
   WORKSPACE_STATE_V1,
   isDaemonCapability,
 } from '../../lib/daemon-capabilities.ts';
@@ -6901,6 +6902,80 @@ describe('v1 synthetic downgrade', () => {
     };
   }
 
+  function makeToolCardComplete(sessionId) {
+    return {
+      v: PROTOCOL_VERSION,
+      kind: 'event',
+      sessionId,
+      runId: 'run_tool_card',
+      seq: 78,
+      ts: Date.now(),
+      type: 'tool.execution_complete',
+      payload: {
+        round: 1,
+        executionId: 'exec_tool_card',
+        toolName: 'ci_status',
+        toolSource: 'github',
+        durationMs: 12,
+        isError: false,
+        preview: '3 checks',
+        card: { type: 'ci-status', data: { checks: 3 } },
+      },
+    };
+  }
+
+  it('strips cards from legacy clients while capable clients receive them live', async () => {
+    const ctx = await startTestSession();
+    try {
+      const legacyEvents = [];
+      const cardEvents = [];
+      await handleRequest(
+        makeRequest(
+          'attach_session',
+          { sessionId: ctx.sessionId, attachToken: ctx.attachToken },
+          ctx.sessionId,
+        ),
+        (event) => legacyEvents.push(event),
+      );
+      await handleRequest(
+        makeRequest(
+          'attach_session',
+          {
+            sessionId: ctx.sessionId,
+            attachToken: ctx.attachToken,
+            capabilities: [TOOL_CARDS_V1],
+          },
+          ctx.sessionId,
+        ),
+        (event) => cardEvents.push(event),
+      );
+
+      const legacyBaseline = legacyEvents.length;
+      const cardBaseline = cardEvents.length;
+      const event = makeToolCardComplete(ctx.sessionId);
+      broadcastEvent(ctx.sessionId, event);
+
+      const legacy = legacyEvents.slice(legacyBaseline)[0];
+      const capable = cardEvents.slice(cardBaseline)[0];
+      assert.equal(Object.hasOwn(legacy.payload, 'card'), false);
+      assert.deepEqual(capable.payload.card, event.payload.card);
+      assert.deepEqual(event.payload.card, { type: 'ci-status', data: { checks: 3 } });
+    } finally {
+      await ctx.cleanup();
+    }
+  });
+
+  it('applies the same card gate on replay without mutating the persisted event', () => {
+    const event = makeToolCardComplete('sess_replay_cards_abcdef');
+    const legacy = [];
+    const capable = [];
+    emitEventWithDowngrade(event, (value) => legacy.push(value), new Set());
+    emitEventWithDowngrade(event, (value) => capable.push(value), new Set([TOOL_CARDS_V1]));
+    assert.equal(Object.hasOwn(legacy[0].payload, 'card'), false);
+    assert.deepEqual(capable[0].payload.card, event.payload.card);
+    assert.ok(event.payload.card, 'the persisted event must keep its card');
+  });
+
   it('v2 client with capabilities: ["event_v2"] sees raw delegation events', async () => {
     const ctx = await startTestSession();
     try {
@@ -7426,6 +7501,7 @@ describe('daemon capability vocabulary drift (#745)', () => {
         'event_v2',
         'multi_agent',
         'workspace_state_v1',
+        'tool_cards_v1',
       ],
     );
   });
@@ -7463,18 +7539,26 @@ describe('daemon capability vocabulary drift (#745)', () => {
     assert.ok(isDaemonCapability(WORKSPACE_STATE_V1));
   });
 
+  it('keeps the named TOOL_CARDS_V1 constant in sync with the vocabulary', () => {
+    assert.equal(TOOL_CARDS_V1, 'tool_cards_v1');
+    assert.ok(isDaemonCapability(TOOL_CARDS_V1));
+  });
+
   it('the TUI profile opts into reconnect snapshots, raw v2 events, and workspace state', () => {
     // Guards the specific contract the TUI source-guard test asserts on the
     // consumer side — pinned here against the canonical profile so the two
     // can't drift apart.
     assert.deepEqual(
       [...TUI_DAEMON_CAPABILITIES],
-      ['event_v2', 'session_snapshot_v1', 'workspace_state_v1'],
+      ['event_v2', 'session_snapshot_v1', 'workspace_state_v1', 'tool_cards_v1'],
     );
   });
 
   it('the attach profile opts into raw v2 events and workspace state', () => {
-    assert.deepEqual([...ATTACH_CLIENT_CAPABILITIES], ['event_v2', 'workspace_state_v1']);
+    assert.deepEqual(
+      [...ATTACH_CLIENT_CAPABILITIES],
+      ['event_v2', 'workspace_state_v1', 'tool_cards_v1'],
+    );
   });
 });
 

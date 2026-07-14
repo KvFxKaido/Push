@@ -986,6 +986,22 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.target'));
   });
 
+  it('validates the optional tool-card envelope without rejecting future types', () => {
+    const payload = {
+      toolName: 'ci_status',
+      isError: false,
+      preview: 'ok',
+      card: { type: 'future-ci-card', data: { checks: 3 } },
+    };
+    assert.deepEqual(validateRunEventPayload('tool.execution_complete', payload), []);
+
+    const issues = validateRunEventPayload('tool.execution_complete', {
+      ...payload,
+      card: { type: 'ci-status', data: [] },
+    });
+    assert.ok(issues.some((issue) => issue.path === 'payload.card'));
+  });
+
   it('accepts job.started (detail optional)', () => {
     assert.deepEqual(
       validateRunEventPayload('job.started', { executionId: 'job_1', role: 'coder' }),

@@ -65,6 +65,7 @@ import {
 import { TUI_DAEMON_CAPABILITIES } from '../../lib/daemon-capabilities.js';
 import { normalizeDaemonExecMode, type DaemonExecMode } from '../../lib/daemon-runtime-settings.js';
 import { isTranscriptMutationEvent } from '../../lib/session-transcript-events.js';
+import { isToolCardPayload } from '../../lib/tool-cards.js';
 import type { RunTuiOptions } from './entry.js';
 
 export type SilveryTranscriptItem = DaemonTranscriptRow;
@@ -493,6 +494,7 @@ export async function createSilveryController(
             kind: 'tool',
             role: activityRole(event),
             text: activityText(event),
+            ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),
           },
         ];
         break;

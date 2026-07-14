@@ -87,6 +87,19 @@ export type ToolCard =
   | { type: 'artifact'; data: ArtifactCardData }
   | { type: 'workspace-patch'; data: WorkspacePatchCardData };
 
+/**
+ * Forward-compatible wire/render shape for a tool card.
+ *
+ * `ToolCard` is the producer vocabulary known to this build. A resumed chat
+ * may contain a card type written by a newer build, though, so consumers keep
+ * the structural envelope even when the discriminant is unknown and render a
+ * tombstone instead of dropping or crashing on it.
+ */
+export interface ToolCardPayload {
+  type: string;
+  data: Record<string, unknown>;
+}
+
 /** Inline artifact card — wraps a fully-formed `ArtifactRecord` so the renderer
  *  can dispatch on `record.kind` without a second fetch. */
 export interface ArtifactCardData {
@@ -586,6 +599,19 @@ export const TOOL_CARD_TYPES = [
 
 const TOOL_CARD_TYPE_SET: ReadonlySet<string> = new Set(TOOL_CARD_TYPES);
 
+/** True for the forward-compatible card envelope consumed by renderers. */
+export function isToolCardPayload(value: unknown): value is ToolCardPayload {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const card = value as { type?: unknown; data?: unknown };
+  return (
+    typeof card.type === 'string' &&
+    card.type.length > 0 &&
+    typeof card.data === 'object' &&
+    card.data !== null &&
+    !Array.isArray(card.data)
+  );
+}
+
 /**
  * Structural guard for a card crossing an untyped boundary.
  *
@@ -598,8 +624,5 @@ const TOOL_CARD_TYPE_SET: ReadonlySet<string> = new Set(TOOL_CARD_TYPES);
  * our own.
  */
 export function isToolCard(value: unknown): value is ToolCard {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  const c = value as { type?: unknown; data?: unknown };
-  if (typeof c.type !== 'string' || !TOOL_CARD_TYPE_SET.has(c.type)) return false;
-  return typeof c.data === 'object' && c.data !== null;
+  return isToolCardPayload(value) && TOOL_CARD_TYPE_SET.has(value.type);
 }
