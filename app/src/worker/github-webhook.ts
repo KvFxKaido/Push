@@ -410,9 +410,13 @@ export async function handleGitHubWebhook(
   const selected = selectReviewablePullRequest(eventName, payload);
   if (!selected.ok) {
     log('debug', 'webhook_skipped_event', { deliveryId, eventName, reason: selected.reason });
-    // 204 must not carry a body (the Response constructor rejects one); the
-    // reason is in the structured log above.
-    return new Response(null, { status: 204 });
+    // 200-with-body, not a bare 204. The reason IS logged above — but this Worker's
+    // observability captures HTTP traces, not console.log, so that line is
+    // unreadable in practice. GitHub's own delivery log renders the response body,
+    // and it is the one sink an operator can actually see; a skip that says nothing
+    // there is indistinguishable from a reviewer that is broken. (Cost us an outage:
+    // every PR event skipped silently, with a green 2xx on every delivery.)
+    return json({ ok: true, status: 'skipped', event: eventName, reason: selected.reason }, 200);
   }
   const pr = selected.pr;
 
@@ -423,7 +427,20 @@ export async function handleGitHubWebhook(
       installationId: pr.installationId,
       repo: pr.repoFullName,
     });
-    return json({ error: 'INSTALLATION_NOT_ALLOWED' }, 403);
+    // Carry the DENIED id and whether the allowlist is even populated. This gate
+    // fails CLOSED (`allowlist.size > 0 && allowlist.has(id)`), so an empty or stale
+    // GITHUB_ALLOWED_INSTALLATION_IDS silently denies every PR — and the operator's
+    // only visible signal is this response body. Naming the id turns "the reviewer
+    // stopped working" into a one-line fix. Neither value is a secret: the id is in
+    // the webhook payload GitHub just sent us, and the count leaks nothing.
+    return json(
+      {
+        error: 'INSTALLATION_NOT_ALLOWED',
+        installationId: pr.installationId,
+        allowlistConfigured: allowlist.size > 0,
+      },
+      403,
+    );
   }
 
   // Reviewer kill-switch (in-app toggle). Checked before any DO work so a
