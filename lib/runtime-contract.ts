@@ -7,6 +7,12 @@
  */
 
 import type { EditDiff } from './edit-diff.js';
+// Type-only, and deliberately circular: `tool-cards.ts` imports the delegation
+// types from here (a delegation-result card renders a DelegationStatus), and the
+// run event here carries a card. The render vocabulary and the runtime protocol
+// genuinely reference each other. `import type` is erased at build time, so no
+// runtime cycle is emitted.
+import type { ToolCard } from './tool-cards.js';
 import type { ReviewResult } from './provider-contract.js';
 import type { PromptSnapshot } from './system-prompt-builder.js';
 
@@ -475,6 +481,20 @@ export type RunEventInput =
        *  TUI as a line-numbered edit card. Omitted for non-mutation tools,
        *  no-op edits, and oversized files. */
       diff?: EditDiff;
+      /**
+       * Typed render payload for this tool result — what the USER sees.
+       *
+       * NEVER sent to the model: the model reads the tool's `text`, the shells
+       * render this. Both the web `CardRenderer` and the TUI dispatch on
+       * `card.type`, so neither has to infer presentation from the model-facing
+       * output — which is how the TUI ended up regex-sniffing for diffs.
+       *
+       * `diff` above is the same idea, predating this field and specialised to
+       * one tool; it stays until the edit card folds into the union.
+       *
+       * See `docs/decisions/Tool Render Payload — Cards Are Declared, Not Sniffed.md`.
+       */
+      card?: ToolCard;
     }
   | {
       type: 'branch_desync';

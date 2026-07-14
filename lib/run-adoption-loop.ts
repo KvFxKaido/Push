@@ -33,6 +33,7 @@
  * shapes for a host that provisioned secrets out-of-band.
  */
 
+import type { ToolCard } from './tool-cards.js';
 import {
   type ApprovalGateRegistry,
   type ApprovalMode,
@@ -181,7 +182,7 @@ export function buildApprovalResolutionNote(resolution: RunHostResolvedApproval)
  * client that owns the original cards is gone, and a reclaiming client
  * rebuilds UI state from its own store.
  */
-export function runCheckpointToCoderResumeState<TCard = unknown>(
+export function runCheckpointToCoderResumeState<TCard extends ToolCard = ToolCard>(
   checkpoint: RunCheckpointV1,
   opts?: { resolvedApproval?: RunHostResolvedApproval | null },
 ): CoderCheckpointState<TCard> {
@@ -233,7 +234,7 @@ function toRunCheckpointMessage(msg: CoderLoopMessage): RunCheckpointMessage {
  * schema both homes write — a reclaim or a later adoption resumes from this
  * exactly as it would from a client-mirrored checkpoint.
  */
-export function coderStateToRunCheckpoint<TCard>(
+export function coderStateToRunCheckpoint<TCard extends ToolCard = ToolCard>(
   base: RunCheckpointV1,
   state: Pick<CoderCheckpointState<TCard>, 'round' | 'messages' | 'workingMemory'>,
   opts: { savedAt: number; pendingApproval?: RunCheckpointPendingApproval | null },
@@ -320,7 +321,10 @@ export function fingerprintApprovalArgs(args: Record<string, unknown>): string {
 // The adoption tool gate
 // ---------------------------------------------------------------------------
 
-export interface AdoptionToolGateOptions<TCall extends TaggedCallShape, TCard> {
+export interface AdoptionToolGateOptions<
+  TCall extends TaggedCallShape,
+  TCard extends ToolCard = ToolCard,
+> {
   /** The run's locked approval mode (from the host record / checkpoint). */
   mode: ApprovalMode;
   /** The real executor for sandbox / web-search / memory calls (the wrapped
@@ -367,7 +371,10 @@ export interface AdoptionToolGateOptions<TCall extends TaggedCallShape, TCard> {
  * model-readable, and no further side effects execute (the gate keeps
  * pausing/denying until a client reclaims the run).
  */
-export function createAdoptionToolGate<TCall extends TaggedCallShape, TCard>(
+export function createAdoptionToolGate<
+  TCall extends TaggedCallShape,
+  TCard extends ToolCard = ToolCard,
+>(
   options: AdoptionToolGateOptions<TCall, TCard>,
 ): (
   call: TCall,

@@ -57,6 +57,7 @@ import type {
 } from './provider-contract.js';
 import type { AcceptanceCriterion, MemoryRecord, RunEventInput } from './runtime-contract.js';
 import type { EditDiff } from './edit-diff.js';
+import type { ToolCard } from './tool-cards.js';
 import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
 import { buildToolResultBlock, buildToolUseBlock, createToolUseBlockId } from './tool-blocks.js';
@@ -757,7 +758,7 @@ Working Memory:
  * serialize/copy them within the callback rather than retaining the live
  * references for later use.
  */
-export interface CoderCheckpointState<TCard = unknown> {
+export interface CoderCheckpointState<TCard extends ToolCard = ToolCard> {
   /**
    * The loop's 0-based `round` index at the top of which this checkpoint was
    * taken — before that round's model call and tool execution. (Note this is
@@ -774,7 +775,7 @@ export interface CoderCheckpointState<TCard = unknown> {
   cards: TCard[];
 }
 
-export interface CoderAgentCallbacks<TCard = unknown> {
+export interface CoderAgentCallbacks<TCard extends ToolCard = ToolCard> {
   onStatus: (phase: string, detail?: string) => void;
   signal?: AbortSignal;
   onCheckpointRequest?: (question: string, context: string) => Promise<string>;
@@ -840,7 +841,7 @@ export type CoderAfterModelResult =
  * sandbox health probe into this flattened shape so the lib kernel stays
  * ignorant of all of them.
  */
-export type CoderToolExecResult<TCard> =
+export type CoderToolExecResult<TCard extends ToolCard = ToolCard> =
   | {
       kind: 'executed';
       resultText: string;
@@ -882,7 +883,7 @@ export type CoderToolExecResult<TCard> =
  * shell's card shape. The kernel never inspects either type internally —
  * it only forwards calls to `toolExec` and collects the returned cards.
  */
-export interface CoderAgentOptions<TCall, TCard> {
+export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
   provider: AIProviderType;
   /**
    * PushStream the Coder iterates directly. Phase 6 of the PushStream
@@ -1101,7 +1102,7 @@ export interface CoderAgentOptions<TCall, TCard> {
  * `capabilitySnapshot`, which the Web shim attaches at the boundary from its
  * own `CapabilityLedger`.
  */
-export interface CoderAgentResult<TCard> {
+export interface CoderAgentResult<TCard extends ToolCard = ToolCard> {
   summary: string;
   cards: TCard[];
   rounds: number;
@@ -1124,7 +1125,7 @@ export interface CoderAgentResult<TCard> {
 // Main Coder agent loop
 // ---------------------------------------------------------------------------
 
-export async function runCoderAgent<TCall, TCard>(
+export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   options: CoderAgentOptions<TCall, TCard>,
   callbacks: CoderAgentCallbacks<TCard>,
 ): Promise<CoderAgentResult<TCard>> {
@@ -2189,6 +2190,7 @@ export async function runCoderAgent<TCall, TCard>(
               (call as unknown as { call: { args?: unknown } }).call.args,
             ),
             ...(entry.kind === 'executed' && entry.editDiff ? { diff: entry.editDiff } : {}),
+            ...(entry.kind === 'executed' && entry.card ? { card: entry.card } : {}),
           });
           return { call, entry };
         }),
@@ -2271,6 +2273,7 @@ export async function runCoderAgent<TCall, TCard>(
           ...(mutResult.kind === 'executed' && mutResult.editDiff
             ? { diff: mutResult.editDiff }
             : {}),
+          ...(mutResult.kind === 'executed' && mutResult.card ? { card: mutResult.card } : {}),
         });
         if (mutResult.kind === 'denied') {
           const content = `[TOOL_DENIED] ${mutResult.reason} [/TOOL_DENIED]`;
@@ -2713,6 +2716,7 @@ export async function runCoderAgent<TCall, TCard>(
       preview: result.kind === 'executed' ? summarizeToolResultPreview(result.resultText) : '',
       target: getToolTargetDetail(singleCall.call.tool, singleCall.call.args),
       ...(result.kind === 'executed' && result.editDiff ? { diff: result.editDiff } : {}),
+      ...(result.kind === 'executed' && result.card ? { card: result.card } : {}),
     });
 
     if (result.kind === 'denied') {
