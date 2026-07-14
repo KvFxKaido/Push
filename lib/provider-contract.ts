@@ -576,12 +576,20 @@ export interface ReviewVerification {
   typecheck: ReviewVerifierStatus;
   tests: ReviewVerifierStatus;
   /**
-   * Why the environment stopped a `blocked` verifier — surfaced on the check run
-   * so the cause survives without the model having to narrate it. Only rendered
-   * when a verifier is actually `blocked`, so a stale reason left behind by an
-   * earlier attempt that later passed is inert.
+   * Why the environment stopped each `blocked` verifier — surfaced on the check
+   * run so the cause survives without the model having to narrate it.
+   *
+   * Keyed PER VERIFIER, not global. A single field would misattribute: the two
+   * verifiers are tracked independently and can each be invoked more than once, so
+   * `tests` blocking (reason A) then `typecheck` blocking (reason B) then
+   * `typecheck` being retried and passing leaves `tests: 'blocked'` beside reason
+   * B — printing typecheck's cause against the still-blocked tests. A PR whose
+   * entire point is attributing blame correctly does not get to fumble that.
+   *
+   * An entry is dropped when its verifier leaves `blocked` (a later run produced a
+   * real verdict), so a stale reason can never outlive the state it explains.
    */
-  blockedReason?: string;
+  blockedReasons?: Partial<Record<'typecheck' | 'tests', string>>;
 }
 
 export interface ReviewResult {
