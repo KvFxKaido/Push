@@ -220,7 +220,12 @@ describe('handleGitHubWebhook', () => {
     expect(res.status).toBe(401);
   });
 
-  it('returns 204 for non-reviewable events', async () => {
+  it('skips non-reviewable events with a body that NAMES the reason', async () => {
+    // Was a bare 204. The reason is logged, but this Worker's observability captures
+    // HTTP traces and not console.log, so that line is unreadable — and GitHub's
+    // delivery log (which renders the response body) is the one sink an operator can
+    // actually see. A silent 2xx skip is indistinguishable from a broken reviewer,
+    // which is exactly how an outage hid behind a wall of green deliveries.
     const body = JSON.stringify({ action: 'closed' });
     const res = await handleGitHubWebhook(
       makeRequest(body, {
@@ -229,10 +234,15 @@ describe('handleGitHubWebhook', () => {
       }),
       fakeDoEnv(async () => new Response('{}')),
     );
-    expect(res.status).toBe(204);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      status: 'skipped',
+      event: 'pull_request',
+      reason: 'action:closed',
+    });
   });
 
-  it('returns 403 when the installation is not allowlisted', async () => {
+  it('returns 403 when the installation is not allowlisted — and names the denied id', async () => {
     const body = JSON.stringify(prPayload({ installation: { id: 999 } }));
     const res = await handleGitHubWebhook(
       makeRequest(body, {
@@ -242,6 +252,15 @@ describe('handleGitHubWebhook', () => {
       fakeDoEnv(async () => new Response('{}')),
     );
     expect(res.status).toBe(403);
+    // This gate fails CLOSED, so a stale or empty GITHUB_ALLOWED_INSTALLATION_IDS
+    // denies every PR forever. The denied id in the body is what turns "the reviewer
+    // silently stopped" into a one-line fix — and it is not a secret, it is the id
+    // GitHub just sent us in the payload.
+    expect(await res.json()).toMatchObject({
+      error: 'INSTALLATION_NOT_ALLOWED',
+      installationId: '999',
+      allowlistConfigured: true,
+    });
   });
 
   it('enqueues to the DO and acks 202 on the happy path', async () => {
