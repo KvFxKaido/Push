@@ -21,7 +21,13 @@
  *
  * Card data shapes that already lived in `lib/` are imported, not redefined —
  * see the imports below. Adding a card type here (rather than on a surface) is
- * the whole point; keep it type-only so `lib/` stays runtime-free at this seam.
+ * the whole point.
+ *
+ * Mostly types, plus the `isToolCard` guard: a guard belongs with the type it
+ * guards, and producers that carry cards through an untyped `meta` bag (the CLI
+ * tool executor does) need one at the boundary. The `import type` cycle with
+ * runtime-contract.ts is erased at build time, so no runtime cycle exists even
+ * with a value export here.
  */
 
 import type { ArtifactRecord } from './artifacts/types.js';
@@ -537,4 +543,63 @@ export interface ApprovalCardData {
   /** Undefined/'pending' = awaiting decision; set on resolve. 'expired' = the
    *  card was actioned after its waiter was gone (refresh/Stop) — nothing ran. */
   status?: 'pending' | 'approved' | 'rejected' | 'expired';
+}
+
+/**
+ * Every `ToolCard['type']`. The union is the source of truth; this is its
+ * runtime shadow, needed by `isToolCard` and by the drift test.
+ *
+ * Keep in sync with the union above — `cli/tests/tool-cards-drift.test.mjs`
+ * fails if they diverge.
+ */
+export const TOOL_CARD_TYPES = [
+  'pr',
+  'pr-list',
+  'commit-list',
+  'file',
+  'branch-list',
+  'file-list',
+  'sandbox',
+  'sandbox-state',
+  'diff-preview',
+  'audit-verdict',
+  'commit-review',
+  'ci-status',
+  'editor',
+  'file-search',
+  'commit-files',
+  'test-results',
+  'type-check',
+  'sandbox-download',
+  'workflow-runs',
+  'workflow-logs',
+  'web-search',
+  'delegation-result',
+  'evaluation',
+  'ask-user',
+  'approval',
+  'coder-progress',
+  'coder-job',
+  'artifact',
+  'workspace-patch',
+] as const satisfies readonly ToolCard['type'][];
+
+const TOOL_CARD_TYPE_SET: ReadonlySet<string> = new Set(TOOL_CARD_TYPES);
+
+/**
+ * Structural guard for a card crossing an untyped boundary.
+ *
+ * The CLI tool executor returns results with an untyped `meta` bag
+ * (`cli/tools.ts`), so the card arrives as `unknown` and has to be validated
+ * before it can ride `tool.execution_complete`. Deliberately shallow: it checks
+ * the discriminant and that `data` is an object. Validating each variant's data
+ * shape here would duplicate the type in runtime code and rot — the producer is
+ * typed, and this guard exists to reject *foreign* values, not to re-typecheck
+ * our own.
+ */
+export function isToolCard(value: unknown): value is ToolCard {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const c = value as { type?: unknown; data?: unknown };
+  if (typeof c.type !== 'string' || !TOOL_CARD_TYPE_SET.has(c.type)) return false;
+  return typeof c.data === 'object' && c.data !== null;
 }

@@ -34,6 +34,7 @@ import {
 import { groupCallsByPhase } from '../lib/tool-call-grouping.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isEditDiff } from '../lib/edit-diff.ts';
+import { isToolCard } from '../lib/tool-cards.ts';
 import { createRuntimeContext } from '../lib/runtime-context.ts';
 import type {
   AIProviderType,
@@ -695,8 +696,17 @@ export async function runLeadKernelTurn(
       // File-mutation results carry a structured diff in meta.editDiff
       // (cli/tools.ts) — lift it onto the exec result so the kernel can
       // stamp it on `tool.execution_complete` for transcript rendering.
-      const metaDiff = (result?.meta as Record<string, unknown> | null | undefined)?.editDiff;
+      const meta = result?.meta as Record<string, unknown> | null | undefined;
+      const metaDiff = meta?.editDiff;
       const editDiff = isEditDiff(metaDiff) ? metaDiff : undefined;
+      // Typed render payload. GitHub tools (and any tool that builds one) return
+      // it as `meta.card` (cli/tools.ts) — lift it the same way as editDiff so
+      // the kernel can stamp it on `tool.execution_complete`. Without this the
+      // CLI has a card slot it can never fill: `pr_list` / `ci_status` would emit
+      // run events with no card and the TUI would be back to guessing.
+      // `meta` is untyped, so validate at the boundary.
+      const metaCard = meta?.card;
+      const card = isToolCard(metaCard) ? metaCard : undefined;
       // Adaptive-harness signal: file-mutation OUTCOMES feed editErrorRate
       // (shrink Rule 2). Keyed on FILE_MUTATION_TOOLS (write_file / edit_file /
       // undo_edit) — the arg-shape oracle `writeTargetOf` misses edit_file's
@@ -719,7 +729,12 @@ export async function runLeadKernelTurn(
         }
       }
       if (result && result.ok === true) {
-        return { kind: 'executed', resultText, ...(editDiff ? { editDiff } : {}) };
+        return {
+          kind: 'executed',
+          resultText,
+          ...(editDiff ? { editDiff } : {}),
+          ...(card ? { card } : {}),
+        };
       }
       // Tool ran but reported failure — feed the structured-error code into
       // the kernel's mutation-failure tracker via `errorType`.
@@ -728,6 +743,7 @@ export async function runLeadKernelTurn(
         resultText,
         errorType: result?.structuredError?.code,
         ...(editDiff ? { editDiff } : {}),
+        ...(card ? { card } : {}),
       };
     } catch (err) {
       // Approval timeout, abort during exec, catastrophic I/O. Surface as

@@ -159,3 +159,69 @@ describe('tool-card vocabulary — single source of truth', () => {
     }
   });
 });
+
+describe('isToolCard — the untyped-boundary guard', () => {
+  it('accepts a real card', async () => {
+    const { isToolCard } = await import('../../lib/tool-cards.ts');
+    assert.equal(isToolCard({ type: 'ci-status', data: { checks: [] } }), true);
+  });
+
+  it('rejects foreign values that would otherwise ride the run event', async () => {
+    const { isToolCard } = await import('../../lib/tool-cards.ts');
+    // The CLI lifts this off an UNTYPED `meta` bag (cli/tools.ts), so the guard
+    // is the only thing between a stray meta field and `tool.execution_complete`.
+    for (const bad of [
+      null,
+      undefined,
+      'ci-status',
+      42,
+      [],
+      {},
+      { type: 'ci-status' }, // no data
+      { type: 'not-a-card', data: {} }, // unknown discriminant
+      { data: {} }, // no type
+      { type: 'ci-status', data: null },
+    ]) {
+      assert.equal(isToolCard(bad), false, `should reject ${JSON.stringify(bad)}`);
+    }
+  });
+
+  it('TOOL_CARD_TYPES matches the union pin', async () => {
+    const mod = await import('../../lib/tool-cards.ts');
+    assert.deepEqual([...mod.TOOL_CARD_TYPES].sort(), [...TOOL_CARD_TYPES].sort());
+  });
+});
+
+describe('the CLI lead lane actually lifts the card', () => {
+  // Codex caught this on PR #1456: Slice 1 removed the CLI's *type* barrier
+  // (`TCard = unknown`) but left the *data path* broken — `cli/lead-turn.ts`
+  // lifted `meta.editDiff` off the untyped tool-result bag and never
+  // `meta.card`. GitHub tools (pr_list, ci_status, ...) return a card under
+  // `meta.card` (cli/tools.ts), so CLI lead runs emitted `tool.execution_complete`
+  // with no card and the TUI stayed blind.
+  //
+  // A source-shape assertion, not a behavioural one: driving it end-to-end needs
+  // a mocked GitHub API, and the failure being guarded is "someone deletes the
+  // lift" — which is exactly what source shape catches.
+  const LEAD_TURN = readFileSync(join(ROOT, 'cli', 'lead-turn.ts'), 'utf8');
+
+  it('validates the card at the untyped meta boundary', () => {
+    assert.match(
+      LEAD_TURN,
+      /isToolCard\(metaCard\)/,
+      '`meta` is untyped — the card must go through isToolCard() before it can ride the run event',
+    );
+  });
+
+  it('carries the card on BOTH executed return paths (ok and tool-reported-failure)', () => {
+    const spreads = LEAD_TURN.match(/\.\.\.\(card \? \{ card \} : \{\}\)/g) ?? [];
+    assert.equal(
+      spreads.length,
+      2,
+      'both `kind: executed` returns must spread the card — a failing tool still has a card to render',
+    );
+    // Mirrors editDiff, which proved the pattern; if that count changes, this should too.
+    const diffSpreads = LEAD_TURN.match(/\.\.\.\(editDiff \? \{ editDiff \} : \{\}\)/g) ?? [];
+    assert.equal(spreads.length, diffSpreads.length, 'card must ride wherever editDiff rides');
+  });
+});
