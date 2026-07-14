@@ -187,6 +187,37 @@ auth/config failure. A dead box is not a bad token.)
 - The sandbox stays available for **inspection** (read/search), which is what it is
   actually good at in a review, and can degrade to the GitHub contents API.
 
+**The reviewer MUST exclude its own check run, or it deadlocks on itself.** (Codex,
+PR #1469 — caught in the design, before a line was written.) `runReview` calls
+`createInProgressReviewCheckRun` BEFORE the executor starts, so `Push review` is
+itself a check run on the head SHA, sitting `in_progress` for the entire review.
+Verified live against this PR's own SHA:
+
+```
+Workers Builds: push  |  app=cloudflare-workers-and-pages  |  status=completed
+Push review           |  app=push-agent (id=2801157)       |  status=in_progress
+```
+
+A verifier that waits for "all check runs on this SHA" would wait for ITSELF, block to
+the deadline, and report `blocked` — on every review that publishes a visible check,
+i.e. the normal case. The failure would look exactly like the sandbox failure this
+decision exists to fix, which is how it would have survived a review cycle.
+
+Filter by the **check-run id we created** (exact), and defensively by **owning app id**
+(a rerun or superseded attempt can leave a second `push-agent` check on the same SHA).
+Never filter by NAME alone — `REVIEW_CHECK_NAME` is user-visible text and a repo can
+mint a check run that collides with it.
+
+**Which checks count is a second open question, and it is not "all of them".** The
+record has `typecheck` and `tests` fields; CI has arbitrary check names ("Format,
+Typecheck, Test (cli)", "Lint, Test, Build (app)", "Workers Builds: push"). Mapping
+names to verifier slots is brittle. The recommendation: stop pretending the record is
+per-verifier and source ONE aggregate verdict from the non-self check runs (all
+completed and none failed → `pass`; any failure → `fail`), because "did the head SHA's
+checks pass" is exactly the fact the check run reports and exactly the gate the change
+merges on. That is a change to `ReviewVerification`'s shape and should be decided
+before implementation, not discovered during it.
+
 **This makes the verification claim stronger, not weaker.** CI is the gate the change
 merges on. A reviewer that says "tests pass" because *the gate you merge on* passed is
 making a better-evidenced claim than one reporting a half-vCPU container's opinion.
