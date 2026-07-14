@@ -3,6 +3,14 @@ import { describe, it } from 'node:test';
 
 import { formatToolCard } from '../tool-card-format.ts';
 
+/**
+ * Trips BOTH caps: >BODY_CHAR_LIMIT (24k) chars, and the surviving prefix still
+ * holds >BODY_LINE_LIMIT (240) lines. 5k lines (~45KB) is the smallest fixture
+ * that does — the earlier 50k version bought no coverage and just added memory
+ * churn to every CI run. Built once and shared; two tests need the same input.
+ */
+const OVERSIZED_LOG = Array.from({ length: 5_000 }, (_, i) => `line ${i}`).join('\n');
+
 describe('generic CLI tool-card fallback', () => {
   it('renders a known card as a title plus bounded key/value rows', () => {
     assert.deepEqual(
@@ -139,19 +147,24 @@ describe('generic CLI tool-card fallback', () => {
   });
 
   it('bounds a pathological object list without summarizing every item', () => {
+    // 5k items, not 100k. The assertions are on output *shape* — slice-before-map
+    // is exercised by any N over LIST_ITEM_LIMIT — so a bigger N buys no coverage
+    // and costs real memory. The 100k × 1KB version of this allocated ~100MB per
+    // run and was plausibly raising the flake rate of timing-sensitive daemon
+    // tests sharing the CI runner.
     const display = formatToolCard({
       type: 'commit-list',
       data: {
-        commits: Array.from({ length: 100_000 }, (_, index) => ({
+        commits: Array.from({ length: 5_000 }, (_, index) => ({
           sha: `sha${index}`,
-          message: 'x'.repeat(1_000),
+          message: 'x'.repeat(200),
         })),
       },
     });
     // header + LIST_ITEM_LIMIT items + the "more" line.
     assert.equal(display.bodyLines.length, 14);
-    assert.equal(display.bodyLines[0].text, 'Commits (100000)');
-    assert.equal(display.bodyLines.at(-1).text, '  … +99988 more');
+    assert.equal(display.bodyLines[0].text, 'Commits (5000)');
+    assert.equal(display.bodyLines.at(-1).text, '  … +4988 more');
     for (const line of display.bodyLines) {
       assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
     }
@@ -241,7 +254,7 @@ describe('generic CLI tool-card fallback', () => {
   it('bounds a pathological text body without splitting the whole string', () => {
     const display = formatToolCard({
       type: 'workflow-logs',
-      data: { logs: Array.from({ length: 50_000 }, (_, i) => `line ${i}`).join('\n') },
+      data: { logs: OVERSIZED_LOG },
     });
     // header + BODY_LINE_LIMIT lines + the "dropped" line.
     assert.equal(display.bodyLines.length, 242);
@@ -258,7 +271,7 @@ describe('generic CLI tool-card fallback', () => {
     // tell. Both signals must survive, and the count must be marked as a floor.
     const display = formatToolCard({
       type: 'workflow-logs',
-      data: { logs: Array.from({ length: 50_000 }, (_, i) => `line ${i}`).join('\n') },
+      data: { logs: OVERSIZED_LOG },
     });
     assert.match(display.bodyLines[0].text, /^Logs \(\d+\+ lines\)$/, 'count must be marked "+"');
     const last = display.bodyLines.at(-1).text;
