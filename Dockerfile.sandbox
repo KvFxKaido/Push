@@ -20,10 +20,19 @@
 # Cloudflare base image does.
 #
 # Don't trust this line — verify it. The version is a property of the base image,
-# not of anything we declare, so it moves without us:
+# not of anything we declare, so it moves without us. Ask node itself (the base's
+# ENTRYPOINT is the container server, so override it):
+#   docker run --rm --entrypoint node cloudflare/sandbox:0.12.3-python -v
+#
+# Fallback, if your Docker cannot start containers — read the version string out of
+# the binary without running it. Note `docker cp <cid>:<path> -` writes a TAR STREAM
+# to stdout, so copy to a file, don't pipe it:
 #   cid=$(docker create cloudflare/sandbox:0.12.3-python)
-#   docker cp "$cid:/usr/local/lib/node_modules/npm/package.json" -   # npm major -> Node major
-#   docker rm "$cid"
+#   docker cp "$cid:/usr/local/bin/node" ./node.bin && docker rm "$cid"
+#   strings ./node.bin | grep -m1 -E '^v[0-9]+\.[0-9]+\.[0-9]+$'
+# Don't substitute npm's version as a proxy — npm major does not track Node major
+# reliably enough to hang this rationale on.
+#
 # (This note said "Node 20" for a while after the base had already moved to 22,
 # which in turn made the pnpm rationale below false. Re-check it on base bumps.)
 #
