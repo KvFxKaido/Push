@@ -35,8 +35,26 @@ export const PROJECT_INSTRUCTIONS_CLOSE = '[/PROJECT_INSTRUCTIONS]';
 /** Markdown ATX heading (`# ` … `###### `) at line start. Setext headings are not
  *  matched: they'd need lookahead and are rare in instruction files. */
 const HEADING_LINE_RE = /^(#{1,6}) +(.+)$/;
-/** A fenced-code delimiter (``` or ~~~), possibly indented, possibly with an info string. */
-const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})/;
+/** A fenced-code delimiter (``` or ~~~), possibly indented, plus its trailing text. */
+const FENCE_LINE_RE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+
+interface OpenFence {
+  marker: '`' | '~';
+  length: number;
+}
+
+/** Advance Markdown fence state for one delimiter line.
+ *
+ * Opening fences may carry an info string. Closing fences may not, and must use
+ * the same character with a run at least as long as the opener. Tracking the full
+ * delimiter matters: ``` cannot close ```` and backticks cannot close ~~~. */
+function advanceFence(fence: OpenFence | null, run: string, tail: string): OpenFence | null {
+  const marker = run[0] as OpenFence['marker'];
+  if (fence === null) return { marker, length: run.length };
+  const isClosingFence =
+    marker === fence.marker && run.length >= fence.length && /^[\t \r]*$/.test(tail);
+  return isClosingFence ? null : fence;
+}
 
 /**
  * The minimum share of the budget a heading cut must preserve to be worth taking.
@@ -67,14 +85,11 @@ const MIN_BOUNDARY_RETENTION = 0.5;
 function scanHeadings(raw: string): Array<{ index: number; title: string }> {
   const headings: Array<{ index: number; title: string }> = [];
   let offset = 0;
-  let fence: string | null = null;
+  let fence: OpenFence | null = null;
   for (const line of raw.split('\n')) {
     const fenceMatch = FENCE_LINE_RE.exec(line);
     if (fenceMatch) {
-      const marker = fenceMatch[1][0];
-      // An opening fence is closed only by a fence of the SAME character.
-      if (fence === null) fence = marker;
-      else if (fence === marker) fence = null;
+      fence = advanceFence(fence, fenceMatch[1], fenceMatch[2]);
     } else if (fence === null) {
       const heading = HEADING_LINE_RE.exec(line);
       if (heading) headings.push({ index: offset, title: line.trim() });
@@ -84,17 +99,15 @@ function scanHeadings(raw: string): Array<{ index: number; title: string }> {
   return headings;
 }
 
-/** True when `text` ends with an unterminated code fence. */
-function hasOpenFence(text: string): boolean {
-  let fence: string | null = null;
+/** Return the unterminated fence at the end of `text`, if any. */
+function findOpenFence(text: string): OpenFence | null {
+  let fence: OpenFence | null = null;
   for (const line of text.split('\n')) {
     const m = FENCE_LINE_RE.exec(line);
     if (!m) continue;
-    const marker = m[1][0];
-    if (fence === null) fence = marker;
-    else if (fence === marker) fence = null;
+    fence = advanceFence(fence, m[1], m[2]);
   }
-  return fence !== null;
+  return fence;
 }
 
 /**
@@ -131,7 +144,8 @@ export function truncateOnStructureBoundary(
   let content = raw.slice(0, cutAt).trimEnd();
   // A hard slice can sever a fenced block. Close it, or the truncation marker below —
   // and everything after it — renders as code in the model's view of the block.
-  if (hasOpenFence(content)) content += '\n```';
+  const openFence = findOpenFence(content);
+  if (openFence) content += `\n${openFence.marker.repeat(openFence.length)}`;
 
   return {
     content,

@@ -179,6 +179,32 @@ ${'r'.repeat(40_000)}`;
     expect(fences % 2).toBe(0);
   });
 
+  it('closes a severed tilde fence with tildes, not backticks', () => {
+    const body = 'echo hi\n'.repeat(200);
+    const doc = ['# T', '', '~~~bash', body, '~~~', ''].join('\n');
+    const cut = truncateOnStructureBoundary(doc, 300);
+    expect(cut.content.endsWith('\n~~~')).toBe(true);
+    expect(cut.content).not.toContain('```');
+    expect((cut.content.match(/~~~/g) ?? []).length % 2).toBe(0);
+  });
+
+  it('requires a valid, sufficiently long closing fence before scanning headings', () => {
+    const doc = [
+      '# Title',
+      'a'.repeat(120),
+      '````ts',
+      '```', // Too short to close the four-backtick fence.
+      '# pseudo heading after short fence',
+      '```` still code', // Closing fences cannot carry trailing content.
+      '# pseudo heading after info string',
+      '````',
+      '## Real Section',
+      'x'.repeat(500),
+    ].join('\n');
+    const cut = truncateOnStructureBoundary(doc, 300);
+    expect(cut.droppedSections).toEqual(['## Real Section']);
+  });
+
   it('bounds the marker: a pathological heading cannot ride into it (fugu)', () => {
     // A heading is `.+` to end-of-line, so capping the COUNT alone left the marker
     // unbounded — the branch enforcing the budget was the branch blowing it, and it
