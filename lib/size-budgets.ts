@@ -58,6 +58,17 @@ export const SIZE_BUDGETS = Object.freeze({
    * bills EVERY turn on EVERY surface; this one bills once per delegated Coder run.
    * Different blast radius, different call. Files past 8k still truncate and still
    * get the sandbox pointer.
+   *
+   * KNOWN GAP — this does not yet mean "the Coder sees the whole AGENTS.md". On the
+   * web path for the canonical Push repo, `buildEffectiveProjectInstructions`
+   * PREPENDS ~2.4k of built-in Push context and the budget is applied to the COMBINED
+   * string, so ~10.4k gets capped to 8k and AGENTS.md is still cut from the tail. 8k
+   * is a strict improvement (the Coder previously saw ~1.5k of the file, now ~5.5k)
+   * but not the fix. The fix is to bill this budget against repo-provided text only
+   * and account for our own preamble separately — which needs the exempt length
+   * threaded to the injection sites EXPLICITLY, because a marker the sanitizer sniffs
+   * for would let a repo exempt itself from its own cap on the CLI path, and that
+   * sanitizer is the injection-defense boundary. Follow-up, not folded in here.
    */
   agentsMdCoder: 8_000,
   /** Reviewer/Auditor compact project-policy hints — side guidance, not the

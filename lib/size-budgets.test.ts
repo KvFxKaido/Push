@@ -26,6 +26,14 @@ describe('SIZE_BUDGETS', () => {
     expect(SIZE_BUDGETS.projectInstructionsAgent).toBeGreaterThan(
       SIZE_BUDGETS.projectInstructionsDefault,
     );
+    // The Coder — the only role that MUTATES the repo — reads the project's
+    // conventions on the same budget as the lead agent, never less. And never MORE:
+    // the Coder carrying more project prose than the orchestrator is not a thing we
+    // want to discover by accident. Encoded directly rather than left to the two
+    // AGENTS.md-fit assertions, which only diverge once these constants do (fugu,
+    // PR #1458).
+    expect(SIZE_BUDGETS.agentsMdCoder).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructionsDefault);
+    expect(SIZE_BUDGETS.agentsMdCoder).toEqual(SIZE_BUDGETS.projectInstructionsDefault);
     // The Coder's tool-result window is the largest; side hints get the smallest budget.
     expect(SIZE_BUDGETS.toolResultCoder).toBeGreaterThan(SIZE_BUDGETS.toolResultReadOnly);
     expect(SIZE_BUDGETS.roleProjectHints).toBeLessThan(SIZE_BUDGETS.projectInstructionsDefault);
