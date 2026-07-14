@@ -99,6 +99,19 @@ describe('agentDevReporter', () => {
         modules: 2,
       }),
     );
+
+    // POSIX separators regardless of host. This event is read by AGENTS, and every
+    // other path they hold is workspace-relative POSIX — a raw path.relative() emits
+    // `src\components\Foo.tsx` on Windows, which no agent can match against what it
+    // already has.
+    //
+    // NOTE: on Linux CI this assertion is vacuous — path.relative never yields a
+    // backslash there, so it passes whether or not the normalization exists. It is
+    // the requirement written down, not a guard. The only thing that actually catches
+    // a regression here is running the suite on Windows, which is precisely why this
+    // shipped broken: the `test (cli)` and app jobs are Linux-only.
+    const hmr = cap.events().find((e) => e.event === 'hmr_update');
+    expect(String(hmr?.file)).not.toContain('\\');
   });
 
   it('emits hmr_error for overlay-error payloads and still passes them through', () => {
