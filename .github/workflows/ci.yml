@@ -242,6 +242,65 @@ jobs:
       - name: Test
         run: pnpm run test:cli
 
+  windows-tests:
+    name: Test (cli + app, windows-latest)
+    runs-on: windows-latest
+    # Both suites on Windows. Only the TEST step gets a Windows leg — lint,
+    # format, typecheck and build are platform-independent, so duplicating them
+    # would burn minutes to re-prove the same thing.
+    #
+    # WHY THIS EXISTS: every other test job is ubuntu-only, so an entire class of
+    # bug shipped green and sat there — five of them, found only because someone
+    # ran the suites on Windows by hand:
+    #   - eval-harness: `node -e '...'` (POSIX quoting) under cmd.exe, where `'`
+    #     is not a quote character; the whole eval harness was broken on Windows.
+    #   - pushd sandbox_exec: `pwd` reports `C:/dev/Push` where process.cwd() is
+    #     `C:\dev\Push`.
+    #   - post-edit diagnostics: path.relative() leaked `src\a.ts` into the note
+    #     the MODEL reads, where every other path is POSIX.
+    #   - agent-dev-reporter: same, into the hmr_update event agents read.
+    #   - two load-sensitive flakes that only surfaced under a saturated runner.
+    # The cli-binary job's matrix already carries this reasoning ("A Linux-only
+    # smoke was green through that bug"). This extends it from the binary to the
+    # suites.
+    #
+    # It is also what makes a green local run MEAN something on Windows. A
+    # permanently-red suite has no signal left to give: the palette flake fixed in
+    # #1448 hid for weeks inside a failure list that always had entries in it.
+    #
+    # Runs the suites only — a Windows-specific FAILURE here is a real bug on a
+    # real platform, so this is blocking, not a canary. If it goes flaky rather
+    # than red, fix the flake; do not demote the job.
+    timeout-minutes: 25
+    defaults:
+      run:
+        # Git Bash, matching cli-binary. Keeps commands identical across runners
+        # and keeps us honest: cmd.exe quoting differences are a bug class we
+        # want the suites to catch, not one the CI shell papers over.
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      # One root install covers the workspace (root + app/ + mcp/github-server).
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test (cli)
+        run: pnpm run test:cli
+
+      - name: Test (app)
+        run: pnpm --filter my-app test
+
   cli-binary:
     name: Single-binary compile + smoke (cli, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
