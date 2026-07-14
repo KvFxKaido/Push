@@ -367,9 +367,32 @@ async function runSandboxRoute(
           message,
           code,
         });
-        // The owner token lives inside the container. Failing to reach that
-        // file is a sandbox/backend failure; only a successful read followed
-        // by a mismatch is an authentication failure.
+        // The token file was unreachable, so it never proved this caller owns
+        // the sandbox. Fall back to the durable token record before exposing
+        // backend state; otherwise this auth gate becomes a sandbox-id oracle.
+        let fallbackAuth: VerifyResult;
+        try {
+          fallbackAuth = await verifyToken(env.SANDBOX_TOKENS, sandboxId, providedToken);
+        } catch (fallbackErr) {
+          wlog('error', 'cf_sandbox_auth_fallback_throw', {
+            requestId,
+            route,
+            message: fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr),
+          });
+          return Response.json(
+            { error: 'Sandbox request failed', code: 'CF_ERROR' },
+            { status: 500 },
+          );
+        }
+        if (!fallbackAuth.ok) {
+          return Response.json(
+            { error: authErrorMessage(fallbackAuth.code), code: fallbackAuth.code },
+            { status: fallbackAuth.status },
+          );
+        }
+
+        // Ownership is proven out-of-band. Preserve the real sandbox/backend
+        // classification for the legitimate caller's recovery path.
         return Response.json({ error: message, code }, { status: 500 });
       }
     }

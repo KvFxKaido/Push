@@ -1280,6 +1280,44 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(sandbox.exec).toHaveBeenCalledTimes(1);
   });
 
+  it('does not expose owner-token probe failures before fallback ownership is verified', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockRejectedValueOnce(new Error('Sandbox is unreachable: container sb-1 crashed'));
+
+    const response = await callRoute('exec', {
+      sandbox_id: 'sb-1',
+      owner_token: 'wrong-token',
+      command: 'ls',
+    });
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Owner token does not match',
+      code: 'AUTH_FAILURE',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps owner-token probe failures opaque when fallback verification throws', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockRejectedValueOnce(new Error('Sandbox is unreachable: container sb-1 crashed'));
+    const tokens = makeDefaultTokensKV();
+    tokens.get.mockRejectedValueOnce(new Error('KV unavailable'));
+
+    const response = await callRoute(
+      'exec',
+      { sandbox_id: 'sb-1', command: 'ls' },
+      makeEnv({ SANDBOX_TOKENS: tokens as unknown as Env['SANDBOX_TOKENS'] }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Sandbox request failed',
+      code: 'CF_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+  });
+
   // The `read` route is covered comprehensively in worker-cf-sandbox-read.test.ts
   // (10 tests), which exercises the in-container sed/stat/sha256sum/awk
   // pipeline introduced by this PR. The old test in this file mocked
