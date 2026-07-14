@@ -38,9 +38,39 @@ export const SIZE_BUDGETS = Object.freeze({
   /** Per-run project-instructions budget for the read-only investigation agents
    *  (Explorer, Deep Reviewer) — looser than the orchestrator default. */
   projectInstructionsAgent: 12_000,
-  /** Coder's AGENTS.md budget — tighter, since the Coder already carries the
-   *  most other context and the full file stays readable in the sandbox. */
-  agentsMdCoder: 4_000,
+  /**
+   * Coder's AGENTS.md budget. Matches `projectInstructionsDefault` on purpose: the
+   * Coder is the only role that MUTATES the repo, so it is the last one that should
+   * be guessing at the project's conventions.
+   *
+   * Was 4_000, on the rationale that the Coder already carries the most other
+   * context and can read the full file from the sandbox on demand. The fallback is
+   * real — a truncated block appends "Full file available at /workspace/AGENTS.md"
+   * — but it is opt-in, and a model does not reliably go fetch the rulebook it was
+   * not handed. At 4k this repo's own AGENTS.md lost its entire second half:
+   * Validation commands, "Behavior lives in code", decision-doc discipline, and the
+   * new-feature checklist — i.e. every convention that constrains how code gets
+   * written here, withheld from the role writing it. Meanwhile the read-only
+   * Explorer, which cannot change a line, got 12k.
+   *
+   * This deliberately cuts against the "trim, don't raise" rule in
+   * lib/agents-budget.test.ts. That rule guards `projectInstructionsDefault`, which
+   * bills EVERY turn on EVERY surface; this one bills once per delegated Coder run.
+   * Different blast radius, different call. Files past 8k still truncate and still
+   * get the sandbox pointer.
+   *
+   * KNOWN GAP — this does not yet mean "the Coder sees the whole AGENTS.md". On the
+   * web path for the canonical Push repo, `buildEffectiveProjectInstructions`
+   * PREPENDS ~2.4k of built-in Push context and the budget is applied to the COMBINED
+   * string, so ~10.4k gets capped to 8k and AGENTS.md is still cut from the tail. 8k
+   * is a strict improvement (the Coder previously saw ~1.5k of the file, now ~5.5k)
+   * but not the fix. The fix is to bill this budget against repo-provided text only
+   * and account for our own preamble separately — which needs the exempt length
+   * threaded to the injection sites EXPLICITLY, because a marker the sanitizer sniffs
+   * for would let a repo exempt itself from its own cap on the CLI path, and that
+   * sanitizer is the injection-defense boundary. Follow-up, not folded in here.
+   */
+  agentsMdCoder: 8_000,
   /** Reviewer/Auditor compact project-policy hints — side guidance, not the
    *  primary input, so it gets the smallest budget. */
   roleProjectHints: 2_500,
