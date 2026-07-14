@@ -109,7 +109,11 @@ function assistantDoneToolRounds(events: readonly SessionEvent[]): boolean[] {
     for (let next = index + 1; next < events.length; next++) {
       const type = events[next]?.type;
       if (type === 'assistant_done' || type === 'user_message') break;
-      if (type === 'tool_call' || type === 'tool.execution_start') {
+      if (
+        type === 'tool_call' ||
+        type === 'tool.execution_start' ||
+        type === 'tool.call_malformed'
+      ) {
         hasTool = true;
         break;
       }
