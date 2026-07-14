@@ -551,18 +551,37 @@ export interface ReviewComment {
  * Outcome of one sandbox verifier over a review run. `pass`/`fail` mean the
  * verifier ran to COMPLETION with a real exit code (exit 0 / non-zero);
  * timeouts, lost contact, and abnormal deaths without an exit code record no
- * verdict — an environment failure must not read as "tests failed" — so the
- * status stays `not_run`. `not_run` therefore means no verifier outcome was
- * banked (never invoked, or invoked but unable to complete); `unavailable`
- * means it could not have run (no sandbox — cross-fork PRs — or no repo test
- * command).
+ * verdict — an environment failure must not read as "tests failed".
+ *
+ * The two no-verdict states are deliberately DISTINCT, because they blame
+ * different parties and the check-run summary names the party:
+ *  - `not_run`   — the model never invoked the verifier. On the model.
+ *  - `blocked`   — the model DID invoke it, and the environment stopped it: the
+ *                  setup gate failed, or the verifier could not run to
+ *                  completion (timeout / lost contact). On us, not the model.
+ *  - `unavailable` — it could not have run at all (no sandbox on cross-fork PRs,
+ *                  or the repo declares no test command).
+ *
+ * These were one state (`not_run`) until the check run started reporting
+ * "the reviewer did not run typecheck/tests despite an available sandbox" for
+ * reviews where the runtime had in fact handed the model a hard "Verification
+ * cannot run in this review's sandbox". The instrument blamed the model for an
+ * environment failure, which made the real cause unfalsifiable from the outside
+ * — the only witness left was the model's own (unreliable) narration of why.
  */
-export type ReviewVerifierStatus = 'pass' | 'fail' | 'not_run' | 'unavailable';
+export type ReviewVerifierStatus = 'pass' | 'fail' | 'not_run' | 'blocked' | 'unavailable';
 
 /** Per-verifier record for a review run — see {@link ReviewVerifierStatus}. */
 export interface ReviewVerification {
   typecheck: ReviewVerifierStatus;
   tests: ReviewVerifierStatus;
+  /**
+   * Why the environment stopped a `blocked` verifier — surfaced on the check run
+   * so the cause survives without the model having to narrate it. Only rendered
+   * when a verifier is actually `blocked`, so a stale reason left behind by an
+   * earlier attempt that later passed is inert.
+   */
+  blockedReason?: string;
 }
 
 export interface ReviewResult {

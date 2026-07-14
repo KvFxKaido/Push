@@ -1104,6 +1104,41 @@ describe('cleanPassCheckStatus', () => {
     expect(s1.summary).toContain('tests failed');
   });
 
+  it("separates 'blocked' (our outage) from 'not_run' (the model skipped it)", () => {
+    // The whole reason `blocked` exists. Both land on a neutral clean pass, but the
+    // summaries assign blame to different parties, and only one of them is true for
+    // a given review. Conflating them accused the model of skipping verification we
+    // had in fact denied it — and left its own narration as the only account of why.
+    const blocked = cleanPassCheckStatus({
+      typecheck: 'blocked',
+      tests: 'blocked',
+      blockedReason: 'ERR_PNPM_UNSUPPORTED_ENGINE · the real cause',
+    });
+    expect(blocked.conclusion).toBe('neutral');
+    expect(blocked.title).toBe('No blocking findings (verification blocked)');
+    expect(blocked.summary).toContain('the environment stopped it');
+    expect(blocked.summary).toContain("OUR failure, not the model's");
+    // The cause must survive to the check run without the model narrating it.
+    expect(blocked.summary).toContain('ERR_PNPM_UNSUPPORTED_ENGINE');
+
+    const skipped = cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' });
+    expect(skipped.title).toBe('No blocking findings (unverified)');
+    expect(skipped.summary).toContain('did not run typecheck/tests');
+    expect(skipped.summary).not.toContain('the environment stopped it');
+  });
+
+  it('a real verdict still wins over a blocked sibling, but the block is disclosed', () => {
+    const s = cleanPassCheckStatus({
+      typecheck: 'pass',
+      tests: 'blocked',
+      blockedReason: 'tests verifier timed out after 480000ms',
+    });
+    expect(s.conclusion).toBe('success');
+    expect(s.title).toBe('No blocking findings — verified (typecheck)');
+    expect(s.summary).toContain('blocked by the environment');
+    expect(s.summary).toContain('timed out');
+  });
+
   it('labels never-verified clean passes neutral: unverified vs unavailable vs unknown', () => {
     expect(cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' })).toMatchObject({
       conclusion: 'neutral',

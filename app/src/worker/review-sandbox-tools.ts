@@ -99,16 +99,50 @@ export interface ReviewSetupResult {
 }
 
 /** Structured verifier outcome riding a verification tool's result, so the
- *  executor can record pass/fail without parsing the model-facing text. */
+ *  executor can record the verdict without parsing the model-facing text.
+ *
+ *  `blocked` is emitted when the verifier WAS invoked but the environment stopped
+ *  it — the setup gate failed, or the run never completed (timeout / lost
+ *  contact). It is not a verdict on the code and must never read as a failure;
+ *  it exists so the check run can say the environment broke instead of accusing
+ *  the model of skipping verification. `reason` is the short, human-facing why. */
 export interface ReviewVerificationOutcome {
   kind: 'typecheck' | 'tests';
-  pass: boolean;
+  status: 'pass' | 'fail' | 'blocked';
+  /** Present on `blocked` — a trimmed reason for the check run and logs. */
+  reason?: string;
 }
 
 /** Tool result plus optional verification metadata (verifier tools only). */
 export type ReviewSandboxToolResult = ToolExecutionResult & {
   verification?: ReviewVerificationOutcome;
 };
+
+/** Max chars of blocked-reason carried to the check run. Long enough for a real
+ *  install error's tail, short enough for a check-run summary line. */
+const BLOCKED_REASON_CAP = 400;
+
+/**
+ * Condense a blocked verifier's cause into one check-run-safe line.
+ *
+ * The input is UNTRUSTED: for the setup-gate path it's the tail of an install's
+ * stdout/stderr, which flows from a PR branch's own config and lands in a GitHub
+ * check-run summary (rendered as markdown). Sanitize and flatten, keep the TAIL —
+ * the actual error is at the end of an install log, not the start.
+ */
+export async function summarizeBlockedReason(text: string): Promise<string> {
+  // Dynamic import for the same reason the verifier paths use one — this module is
+  // statically imported by pr-review-job-do and must stay off the graph that can't
+  // resolve `cloudflare:`-scheme deps under vitest.
+  const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
+  const flattened = sanitizeUntrustedSource(text)
+    .split('\n')
+    .map((line: string) => line.trim())
+    .filter(Boolean)
+    .join(' · ');
+  if (flattened.length <= BLOCKED_REASON_CAP) return flattened;
+  return `…${flattened.slice(-BLOCKED_REASON_CAP)}`;
+}
 
 // One deadline per verifier: test suites routinely run longer than tsc, but
 // each must fit inside the review's 15-min no-progress budget. Setup + one
@@ -564,7 +598,24 @@ async function runReviewVerifier(
     timedOut: result.timedOut,
   });
 
-  return { text: lines.join('\n'), ...(completed ? { verification: { kind, pass } } : {}) };
+  // A verifier that never completed is BLOCKED, not `not_run`. It ran — the
+  // environment killed it — so bank that distinctly rather than dropping the
+  // outcome and letting the record read as "the model never invoked this".
+  const verification: ReviewVerificationOutcome = completed
+    ? { kind, status: pass ? 'pass' : 'fail' }
+    : {
+        kind,
+        status: 'blocked',
+        reason: await summarizeBlockedReason(
+          result.timedOut
+            ? `${kind} verifier timed out after ${deadlineMs}ms`
+            : `${kind} verifier did not complete (${result.terminalReason ?? 'lost contact'})${
+                result.error ? `: ${result.error}` : ''
+              }`,
+        ),
+      };
+
+  return { text: lines.join('\n'), verification };
 }
 
 /**
@@ -657,13 +708,20 @@ export async function executeReviewSandboxTool(
    */
   touchProgress?: () => void,
 ): Promise<ReviewSandboxToolResult> {
-  const setupGate = async (): Promise<ReviewSandboxToolResult | null> => {
+  // Takes the verifier `kind` so a setup failure is BANKED against the verifier the
+  // model actually invoked. Without this the tool returns an error and no outcome,
+  // leaving the record at `not_run` — indistinguishable from a model that never
+  // called the verifier, which is what the check run then (wrongly) reported.
+  const setupGate = async (
+    kind: ReviewVerificationOutcome['kind'],
+  ): Promise<ReviewSandboxToolResult | null> => {
     if (!ensureSetup) return null;
     const setup = await ensureSetup();
     touchProgress?.();
     if (setup.ok) return null;
     return {
       text: `[Tool Error] ${setup.text}\nVerification cannot run in this review's sandbox — investigate via the diff and read tools, and note the review as unverified.`,
+      verification: { kind, status: 'blocked', reason: await summarizeBlockedReason(setup.text) },
     };
   };
   switch (call.tool) {
@@ -683,7 +741,7 @@ export async function executeReviewSandboxTool(
       return handleListDir(ctx, call.args);
     }
     case 'sandbox_check_types': {
-      const blocked = await setupGate();
+      const blocked = await setupGate('typecheck');
       if (blocked) return blocked;
       return runReviewTypecheck(env, sandbox, commands.typecheck);
     }
@@ -693,7 +751,7 @@ export async function executeReviewSandboxTool(
           text: '[Tool Error] This repository declares no test command (no `# test:` hint in AGENTS.md at the base ref) — tests are unavailable for this review. Use typecheck instead.',
         };
       }
-      const blocked = await setupGate();
+      const blocked = await setupGate('tests');
       if (blocked) return blocked;
       return runReviewTests(env, sandbox, commands.tests);
     }

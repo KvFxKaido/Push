@@ -241,7 +241,9 @@ export function cleanPassCheckStatus(verification: ReviewVerification | undefine
   const v = verification;
   const anyFail = v?.typecheck === 'fail' || v?.tests === 'fail';
   const anyPass = v?.typecheck === 'pass' || v?.tests === 'pass';
+  const anyBlocked = v?.typecheck === 'blocked' || v?.tests === 'blocked';
   const anyAvailable = v != null && (v.typecheck !== 'unavailable' || v.tests !== 'unavailable');
+  const blockedReason = v?.blockedReason;
 
   if (anyFail) {
     const failed = [
@@ -263,10 +265,31 @@ export function cleanPassCheckStatus(verification: ReviewVerification | undefine
     ]
       .filter(Boolean)
       .join(' + ');
+    const blockedNote = anyBlocked
+      ? ` The other verifier was blocked by the environment${blockedReason ? `: ${blockedReason}` : ''}.`
+      : '';
     return {
       conclusion: 'success',
       title: `No blocking findings — verified (${passed})`,
-      summary: `No blocking issues. Verified against the PR head: ${passed} passed.`,
+      summary: `No blocking issues. Verified against the PR head: ${passed} passed.${blockedNote}`,
+    };
+  }
+  // Invoked, but the environment stopped it. Distinct from the `not_run` arm
+  // below, which blames the model — say the truth about which one happened, and
+  // carry the reason so diagnosing it doesn't depend on the model's narration.
+  if (anyBlocked) {
+    const blocked = [
+      v?.typecheck === 'blocked' ? 'typecheck' : null,
+      v?.tests === 'blocked' ? 'tests' : null,
+    ]
+      .filter(Boolean)
+      .join(' + ');
+    return {
+      conclusion: 'neutral',
+      title: 'No blocking findings (verification blocked)',
+      summary:
+        `No blocking issues found, but ${blocked} could not run on the PR head — the reviewer invoked it and the environment stopped it (setup failure, timeout, or lost contact). This is OUR failure, not the model's, and not a verdict on the code; the clean pass is unverified.` +
+        (blockedReason ? `\n\nReason: ${blockedReason}` : ''),
     };
   }
   if (!anyAvailable) {
@@ -1997,12 +2020,25 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
               hooks?.onToolProgress,
             );
             if (r.verification) {
-              verification[r.verification.kind] = r.verification.pass ? 'pass' : 'fail';
-              log('info', 'pr_review_verification_recorded', {
-                deliveryId: input.deliveryId,
-                verifier: r.verification.kind,
-                pass: r.verification.pass,
-              });
+              verification[r.verification.kind] = r.verification.status;
+              // Keep the newest blocked reason so the check run can say WHY the
+              // environment stopped verification, instead of leaving the model's
+              // narration as the only surviving account of it.
+              if (r.verification.status === 'blocked' && r.verification.reason) {
+                verification.blockedReason = r.verification.reason;
+              }
+              log(
+                r.verification.status === 'blocked' ? 'warn' : 'info',
+                r.verification.status === 'blocked'
+                  ? 'pr_review_verification_blocked'
+                  : 'pr_review_verification_recorded',
+                {
+                  deliveryId: input.deliveryId,
+                  verifier: r.verification.kind,
+                  status: r.verification.status,
+                  ...(r.verification.reason ? { reason: r.verification.reason } : {}),
+                },
+              );
               hooks?.onVerification?.({ ...verification });
             }
             return { resultText: r.text };

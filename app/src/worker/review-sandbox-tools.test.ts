@@ -217,7 +217,7 @@ describe('executeReviewSandboxTool', () => {
     );
     expect(r.text).toContain('[Tool Result — tests]');
     expect(r.text).toContain('Result: PASS');
-    expect(r.verification).toEqual({ kind: 'tests', pass: true });
+    expect(r.verification).toEqual({ kind: 'tests', status: 'pass' });
   });
 
   it('reports fail (verification metadata included) on a non-zero test exit', async () => {
@@ -236,7 +236,7 @@ describe('executeReviewSandboxTool', () => {
       commands,
     );
     expect(r.text).toContain('Result: FAIL');
-    expect(r.verification).toEqual({ kind: 'tests', pass: false });
+    expect(r.verification).toEqual({ kind: 'tests', status: 'fail' });
   });
 
   it('routes sandbox_check_types through the detached runner and reports pass on exit 0', async () => {
@@ -338,7 +338,7 @@ describe('executeReviewSandboxTool', () => {
     expect(r.text).toContain('Exit code: 2');
     expect(r.text).toContain('Result: FAIL');
     expect(r.text).toContain('error TS2322');
-    expect(r.verification).toEqual({ kind: 'typecheck', pass: false });
+    expect(r.verification).toEqual({ kind: 'typecheck', status: 'fail' });
   });
 
   it('never throws when detached exec transport fails before start confirmation — and records NO verdict', async () => {
@@ -355,12 +355,16 @@ describe('executeReviewSandboxTool', () => {
     expect(r.text).toContain('Result: DID NOT COMPLETE');
     expect(r.text).toContain('transport down');
     expect(r.text).toContain('unverified');
-    // Environment outcome, not a verifier verdict — recording pass:false here
-    // would paint the check-run "typecheck failed" over a sandbox problem.
-    expect(r.verification).toBeUndefined();
+    // Environment outcome, not a verifier verdict — recording 'fail' here would
+    // paint the check-run "typecheck failed" over a sandbox problem. But it is
+    // NOT `not_run` either: the model invoked the verifier, so bank 'blocked' and
+    // carry the reason, or the check run blames the model for our outage.
+    expect(r.verification?.status).toBe('blocked');
+    expect(r.verification?.kind).toBe('typecheck');
+    expect(r.verification?.reason).toContain('did not complete');
   });
 
-  it('records NO verdict when the command hits the overall deadline (exit 124)', async () => {
+  it("records 'blocked' (not a verdict, not not_run) when the command hits the overall deadline (exit 124)", async () => {
     runDetachedMock.mockResolvedValueOnce({
       stdout: 'partial output',
       stderr: '',
@@ -379,10 +383,11 @@ describe('executeReviewSandboxTool', () => {
 
     expect(r.text).toContain('Result: DID NOT COMPLETE');
     expect(r.text).toContain('NOT a tests failure');
-    expect(r.verification).toBeUndefined();
+    expect(r.verification?.status).toBe('blocked');
+    expect(r.verification?.reason).toContain('timed out');
   });
 
-  it('records NO verdict when the process died without an exit code (completed, exit -1)', async () => {
+  it("records 'blocked' when the process died without an exit code (completed, exit -1)", async () => {
     runDetachedMock.mockResolvedValueOnce({
       stdout: '',
       stderr: '',
@@ -395,7 +400,8 @@ describe('executeReviewSandboxTool', () => {
     const r = await runReviewTypecheck(env, sb, 'npm run typecheck');
 
     expect(r.text).toContain('Result: DID NOT COMPLETE');
-    expect(r.verification).toBeUndefined();
+    expect(r.verification?.status).toBe('blocked');
+    expect(r.verification?.reason).toContain('did not complete');
   });
 });
 
@@ -524,10 +530,10 @@ describe('environment setup before verifiers', () => {
       ensureSetup,
     );
     expect(ensureSetup).toHaveBeenCalledTimes(1);
-    expect(r.verification).toEqual({ kind: 'typecheck', pass: true });
+    expect(r.verification).toEqual({ kind: 'typecheck', status: 'pass' });
   });
 
-  it('a failed setup short-circuits the verifier with NO verification metadata', async () => {
+  it("a failed setup short-circuits the verifier and banks 'blocked' against the invoked kind", async () => {
     const ensureSetup = vi.fn(async () => ({
       ok: false,
       text: 'Environment setup failed (exit 1): npm ERR! network down',
@@ -540,11 +546,41 @@ describe('environment setup before verifiers', () => {
       commands,
       ensureSetup,
     );
-    // The verifier never ran: environment outcome, not a verifier fail.
+    // The verifier never ran: environment outcome, not a verifier fail. But the
+    // model DID invoke it, so this must not degrade to `not_run` — that is the
+    // state the check run reports as "the reviewer did not run typecheck/tests",
+    // which blamed the model for an install failure and left its (unreliable)
+    // narration as the only account of the cause.
     expect(runDetachedMock).not.toHaveBeenCalled();
-    expect(r.verification).toBeUndefined();
+    expect(r.verification).toEqual({
+      kind: 'tests',
+      status: 'blocked',
+      reason: 'Environment setup failed (exit 1): npm ERR! network down',
+    });
     expect(r.text).toContain('Environment setup failed');
     expect(r.text).toContain('note the review as unverified');
+  });
+
+  it('carries the setup failure TAIL into the blocked reason, flattened and capped', async () => {
+    // The real cause is at the END of an install log, so the reason keeps the tail.
+    const noise = Array.from({ length: 200 }, (_, i) => `line ${i} of install noise`).join('\n');
+    const ensureSetup = vi.fn(async () => ({
+      ok: false,
+      text: `${noise}\nERR_PNPM_UNSUPPORTED_ENGINE  the real cause`,
+    }));
+
+    const r = await executeReviewSandboxTool(
+      env,
+      sb,
+      { tool: 'sandbox_check_types', args: {} } as never,
+      commands,
+      ensureSetup,
+    );
+
+    expect(r.verification?.status).toBe('blocked');
+    expect(r.verification?.reason).toContain('the real cause');
+    expect(r.verification?.reason).not.toContain('\n');
+    expect((r.verification?.reason ?? '').length).toBeLessThanOrEqual(401);
   });
 
   it('marks progress after the setup gate settles — pass AND fail — and never for inspection tools', async () => {
