@@ -9,6 +9,7 @@ import type {
   CommitListCardData,
   DelegationResultCardData,
   DiffPreviewCardData,
+  SandboxStateCardData,
   TestResultsCardData,
   ToolCard,
   TypeCheckCardData,
@@ -17,6 +18,8 @@ import type {
 const MAX_COMMAND_CARD_OUTPUT_CHARS = 24_000;
 const MAX_DIFF_CARD_CHARS = 24_000;
 const MAX_TYPECHECK_ERRORS = 100;
+const MAX_GIT_STATUS_PREVIEW_ITEMS = 12;
+const MAX_GIT_STATUS_PREVIEW_CHARS = 240;
 
 function boundedText(value: string, maxChars: number): { text: string; truncated: boolean } {
   if (value.length <= maxChars) return { text: value, truncated: false };
@@ -291,6 +294,39 @@ export function buildCommitToolCard(input: {
     ],
   };
   return { type: 'commit-list', data };
+}
+
+/** Build the local-daemon workspace-state card for a `git_status` outcome. */
+export function buildGitStatusToolCard(input: {
+  repoPath: string;
+  branch: string;
+  statusLine?: string;
+  changedFiles: number;
+  stagedFiles: number;
+  unstagedFiles: number;
+  untrackedFiles: number;
+  preview?: readonly string[];
+  fetchedAt?: string;
+}): ToolCard {
+  const preview = (input.preview ?? []).slice(0, MAX_GIT_STATUS_PREVIEW_ITEMS).map((line) => {
+    const singleLine = line.replace(/[\r\n]+/g, ' ');
+    return singleLine.length > MAX_GIT_STATUS_PREVIEW_CHARS
+      ? `${singleLine.slice(0, MAX_GIT_STATUS_PREVIEW_CHARS - 1)}…`
+      : singleLine;
+  });
+  const data: SandboxStateCardData = {
+    sandboxId: 'local-daemon',
+    repoPath: input.repoPath,
+    branch: input.branch,
+    ...(input.statusLine ? { statusLine: input.statusLine } : {}),
+    changedFiles: input.changedFiles,
+    stagedFiles: input.stagedFiles,
+    unstagedFiles: input.unstagedFiles,
+    untrackedFiles: input.untrackedFiles,
+    preview,
+    fetchedAt: input.fetchedAt ?? new Date().toISOString(),
+  };
+  return { type: 'sandbox-state', data };
 }
 
 export function buildDelegationResultToolCard(

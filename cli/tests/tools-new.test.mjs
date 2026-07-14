@@ -106,6 +106,9 @@ describe('git_status', () => {
     assert.equal(typeof result.meta.unstaged, 'number', 'should have unstaged count');
     assert.equal(typeof result.meta.untracked, 'number', 'should have untracked count');
     assert.ok(result.text.includes('Branch:'), 'structured output should include Branch: line');
+    assert.equal(result.meta.card?.type, 'sandbox-state');
+    assert.equal(result.meta.card?.data.branch, result.meta.branch);
+    assert.equal(result.meta.card?.data.changedFiles, result.meta.changedFiles);
   });
 
   it('is classified as read-only', () => {
@@ -127,6 +130,10 @@ describe('git_diff', () => {
     assert.equal(typeof result.meta.insertions, 'number', 'should have insertions count');
     assert.equal(typeof result.meta.deletions, 'number', 'should have deletions count');
     assert.ok(Array.isArray(result.meta.files), 'should have files array');
+    assert.equal(result.meta.card?.type, 'diff-preview');
+    assert.equal(result.meta.card?.data.filesChanged, result.meta.filesChanged);
+    assert.equal(result.meta.card?.data.additions, result.meta.insertions);
+    assert.equal(result.meta.card?.data.deletions, result.meta.deletions);
   });
 
   it('accepts staged flag', async () => {

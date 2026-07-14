@@ -192,6 +192,8 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
       : item.card
         ? formatToolCard(item.card)
         : null;
+  const cardBodyLines = card?.bodyLines ?? [];
+  const visibleCardBodyLines = expanded ? cardBodyLines : cardBodyLines.slice(0, 8);
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
       <Text bold={mark.bold} color={mark.color}>
@@ -206,6 +208,24 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
               {row.label}: {row.value}
             </Text>
           ))}
+          {visibleCardBodyLines.map((line, index) => (
+            <Text
+              key={`${line.tone}-${index}`}
+              color={
+                line.tone === 'add'
+                  ? diffLineColor('add')
+                  : line.tone === 'delete'
+                    ? diffLineColor('del')
+                    : VL_COLOR.muted
+              }
+              bold={line.tone === 'add'}
+            >
+              {line.text}
+            </Text>
+          ))}
+          {cardBodyLines.length > visibleCardBodyLines.length ? (
+            <Text color={VL_COLOR.muted}>click to expand details</Text>
+          ) : null}
         </Box>
       ) : null}
       {item.diff ? <DiffCard item={item} /> : null}

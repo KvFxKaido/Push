@@ -50,7 +50,9 @@ import { commandRequiresApproval, isSinglePlainCommand } from '../lib/command-po
 import {
   buildCommandToolCard,
   buildCommitToolCard,
+  buildDiffPreviewToolCard,
   buildEditDiffToolCard,
+  buildGitStatusToolCard,
   buildTypeCheckToolCard,
 } from '../lib/tool-card-producers.ts';
 
@@ -3427,6 +3429,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               staged: staged.length,
               unstaged: unstaged.length,
               untracked: untracked.length,
+              card: buildGitStatusToolCard({
+                repoPath: workspaceRoot,
+                branch,
+                statusLine: sections[0],
+                changedFiles: changes.length,
+                stagedFiles: staged.length,
+                unstagedFiles: unstaged.length,
+                untrackedFiles: untracked.length,
+                preview: changes.map((change) => `${change.status} ${change.path}`),
+              }),
             },
           };
         } catch (err) {
@@ -3472,6 +3484,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
           const insertions = (summaryLine.match(/(\d+) insertion/) || [])[1];
           const deletions = (summaryLine.match(/(\d+) deletion/) || [])[1];
+          const changedFileCount = (summaryLine.match(/(\d+) files? changed/) || [])[1];
+          const totalFilesChanged = changedFileCount
+            ? parseInt(changedFileCount, 10)
+            : filesChanged.length;
 
           return {
             ok: true,
@@ -3479,10 +3495,15 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             meta: {
               staged,
               path: diffPath,
-              filesChanged: filesChanged.length,
+              filesChanged: totalFilesChanged,
               insertions: insertions ? parseInt(insertions, 10) : 0,
               deletions: deletions ? parseInt(deletions, 10) : 0,
               files: filesChanged,
+              card: buildDiffPreviewToolCard(diffOut.trim(), {
+                filesChanged: totalFilesChanged,
+                additions: insertions ? parseInt(insertions, 10) : 0,
+                deletions: deletions ? parseInt(deletions, 10) : 0,
+              }),
             },
           };
         } catch (err) {

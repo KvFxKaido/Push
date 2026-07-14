@@ -6,6 +6,7 @@ import {
   buildCommitToolCard,
   buildDelegationResultToolCard,
   buildEditDiffToolCard,
+  buildGitStatusToolCard,
   buildTextChangeToolCard,
   buildTypeCheckToolCard,
 } from '../../lib/tool-card-producers.ts';
@@ -174,5 +175,30 @@ describe('tool card producers', () => {
     });
     assert.equal(delegation.type, 'delegation-result');
     assert.equal(delegation.data.agent, 'explorer');
+  });
+
+  it('builds a bounded local workspace-state card from git status', () => {
+    const preview = Array.from({ length: 14 }, (_, index) =>
+      index === 0 ? `M src/${'x'.repeat(300)}.ts\nspoofed` : `?? file-${index}.txt`,
+    );
+    const card = buildGitStatusToolCard({
+      repoPath: '/workspace/push',
+      branch: 'feat/cards',
+      statusLine: 'Branch: feat/cards → origin/feat/cards [ahead 1]',
+      changedFiles: 14,
+      stagedFiles: 1,
+      unstagedFiles: 2,
+      untrackedFiles: 11,
+      preview,
+      fetchedAt: '2026-07-14T00:00:00.000Z',
+    });
+
+    assert.equal(card.type, 'sandbox-state');
+    assert.equal(card.data.sandboxId, 'local-daemon');
+    assert.equal(card.data.changedFiles, 14);
+    assert.equal(card.data.preview.length, 12);
+    assert.equal(card.data.preview[0].includes('\n'), false);
+    assert.ok(card.data.preview[0].endsWith('…'));
+    assert.equal(card.data.fetchedAt, '2026-07-14T00:00:00.000Z');
   });
 });

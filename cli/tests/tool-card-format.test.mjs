@@ -72,4 +72,53 @@ describe('generic CLI tool-card fallback', () => {
     const display = formatToolCard({ type: 'sandbox', data });
     assert.deepEqual(display.rows, [{ label: 'More', value: 'Additional fields' }]);
   });
+
+  it('renders diff-preview cards as multiline diffs instead of a collapsed row', () => {
+    const display = formatToolCard({
+      type: 'diff-preview',
+      data: {
+        diff: '--- a/file.ts\n+++ b/file.ts\n-old\n+new',
+        filesChanged: 1,
+        additions: 1,
+        deletions: 1,
+        truncated: false,
+      },
+    });
+
+    assert.deepEqual(display.rows, [
+      { label: 'Files Changed', value: '1' },
+      { label: 'Additions', value: '1' },
+      { label: 'Deletions', value: '1' },
+    ]);
+    assert.deepEqual(display.bodyLines, [
+      { text: '--- a/file.ts', tone: 'context' },
+      { text: '+++ b/file.ts', tone: 'context' },
+      { text: '-old', tone: 'delete' },
+      { text: '+new', tone: 'add' },
+    ]);
+  });
+
+  it('keeps workspace status paths visible outside the generic row budget', () => {
+    const display = formatToolCard({
+      type: 'sandbox-state',
+      data: {
+        sandboxId: 'local-daemon',
+        repoPath: '/repo',
+        branch: 'feat/cards',
+        statusLine: 'Branch: feat/cards',
+        changedFiles: 2,
+        stagedFiles: 0,
+        unstagedFiles: 1,
+        untrackedFiles: 1,
+        preview: ['M src/app.ts', '?? notes.txt'],
+        fetchedAt: '2026-07-14T00:00:00.000Z',
+      },
+    });
+
+    assert.equal(display.title, 'Workspace Status');
+    assert.deepEqual(display.bodyLines, [
+      { text: 'M src/app.ts', tone: 'context' },
+      { text: '?? notes.txt', tone: 'context' },
+    ]);
+  });
 });
