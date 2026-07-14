@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
 import http from 'node:http';
 import { promisify } from 'node:util';
 
@@ -15,6 +16,25 @@ export const isWindows = process.platform === 'win32';
 export const skipOnWindows = isWindows
   ? { skip: 'POSIX-only file mode; run the CLI suite in WSL/Linux' }
   : {};
+
+// Remove a temp directory that was handed to a session as its workspace root.
+//
+// Windows locks a directory while any live process has it as cwd; POSIX does
+// not. The daemon spawns short-lived `git` children into the workspace root
+// and does not await them (`void emitWorkspaceState(...)` at start_session is
+// the usual one), so a test that deletes a workspace it just handed to a
+// session races those children and a plain rmdir fails EBUSY. It is a race, so
+// it only loses under load — which is why it survived every local run and
+// first surfaced on the Windows CI leg.
+//
+// `maxRetries` is Node's documented remedy (it retries EBUSY/EPERM/ENOTEMPTY).
+// It tolerates a *transient* handle without hiding a permanent one: a genuinely
+// leaked handle still exhausts the retries and throws, so a real regression
+// stays red. Do not swap this for a try/catch — that would hide the leak this
+// is careful to still surface.
+export function rmWorkspace(dir) {
+  return fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+}
 
 export async function canCaptureChildStdout() {
   try {
