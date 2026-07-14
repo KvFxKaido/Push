@@ -168,6 +168,52 @@ export function splitVisibleContent(text: string): { visible: string; toolCallAc
   return { visible: text.slice(0, cut).replace(/\s+$/, ''), toolCallActive: true };
 }
 
+/**
+ * Append-only stream projection of `splitVisibleContent`.
+ *
+ * A replaceable web placeholder can briefly show `{` and remove it once a
+ * later delta reveals `{"tool": ...}`. CLI event streams cannot retract an
+ * `assistant_token`, so hold an unresolved JSON suffix until it either closes
+ * as ordinary content or becomes a recognized tool construct.
+ */
+export function splitAppendOnlyVisibleContent(text: string): {
+  visible: string;
+  toolCallActive: boolean;
+} {
+  const split = splitVisibleContent(text);
+  if (split.toolCallActive) return split;
+
+  const stack: Array<{ char: '{' | '['; index: number }> = [];
+  let inDoubleQuote = false;
+  let escaped = false;
+  for (let index = 0; index < split.visible.length; index++) {
+    const char = split.visible[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inDoubleQuote && char === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (char === '"') {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    if (inDoubleQuote) continue;
+    if (char === '{' || char === '[') {
+      stack.push({ char, index });
+      continue;
+    }
+    if (char === '}' && stack.at(-1)?.char === '{') stack.pop();
+    if (char === ']' && stack.at(-1)?.char === '[') stack.pop();
+  }
+
+  const unresolvedStart = stack[0]?.index;
+  if (unresolvedStart === undefined) return split;
+  return { visible: split.visible.slice(0, unresolvedStart), toolCallActive: false };
+}
+
 /** Settled narration for a round that contains at least one executable tool call. */
 export function extractToolProse(content: string): string {
   return stripToolCallPayload(splitVisibleContent(content).visible);

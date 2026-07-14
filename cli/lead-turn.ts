@@ -36,7 +36,7 @@ import { groupCallsByPhase } from '../lib/tool-call-grouping.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isEditDiff } from '../lib/edit-diff.ts';
 import { isToolCard } from '../lib/tool-cards.ts';
-import { splitVisibleContent } from '../lib/tool-prose.ts';
+import { splitAppendOnlyVisibleContent } from '../lib/tool-prose.ts';
 import { createRuntimeContext } from '../lib/runtime-context.ts';
 import type {
   AIProviderType,
@@ -500,7 +500,7 @@ export async function runLeadKernelTurn(
         reasoningOpen = false;
         dispatchEvent('assistant_thinking_done', {});
       }
-      const visible = splitVisibleContent(roundText).visible;
+      const visible = splitAppendOnlyVisibleContent(roundText).visible;
       if (visible.length > visibleCharsEmitted) {
         dispatchEvent('assistant_token', { text: visible.slice(visibleCharsEmitted) });
         visibleCharsEmitted = visible.length;

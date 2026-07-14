@@ -115,7 +115,7 @@ import {
   createInlineTranscriptMirror,
   startInlineCoderTurn,
 } from './chat-send-inline';
-import { splitVisibleContent } from '@push/lib/tool-prose';
+import { splitAppendOnlyVisibleContent, splitVisibleContent } from '@push/lib/tool-prose';
 import { buildRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
 import { validateRunCheckpoint } from '@push/lib/run-checkpoint';
 import {
@@ -487,6 +487,21 @@ describe('createInlineTranscriptMirror', () => {
 });
 
 describe('splitVisibleContent', () => {
+  it('withholds unresolved JSON suffixes from append-only streams', () => {
+    expect(splitAppendOnlyVisibleContent('Checking\n{')).toEqual({
+      visible: 'Checking\n',
+      toolCallActive: false,
+    });
+    expect(splitAppendOnlyVisibleContent('Checking\n{"tool":')).toEqual({
+      visible: 'Checking',
+      toolCallActive: true,
+    });
+    expect(splitAppendOnlyVisibleContent('Result: {"ok":true}')).toEqual({
+      visible: 'Result: {"ok":true}',
+      toolCallActive: false,
+    });
+  });
+
   it('passes plain prose through untouched', () => {
     expect(splitVisibleContent('hello, world')).toEqual({
       visible: 'hello, world',

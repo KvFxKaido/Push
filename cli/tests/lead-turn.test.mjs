@@ -362,14 +362,12 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     await withTempWorkspace(async (cwd) => {
       await fs.writeFile(path.join(cwd, 'notes.txt'), 'hello from notes\n');
 
-      const toolCall = [
-        '```json',
-        JSON.stringify({ tool: 'read_file', args: { path: 'notes.txt' } }),
-        '```',
-      ].join('\n');
+      const toolCall = JSON.stringify({ tool: 'read_file', args: { path: 'notes.txt' } });
 
       const server = await startSequencedProviderServer([
-        { tokens: [toolCall] },
+        // The opening brace arrives before the `tool` key is recognizable.
+        // An append-only client must not receive that ambiguous byte.
+        { tokens: ['{', toolCall.slice(1)] },
         { tokens: ['notes.txt says: hello from notes'] },
       ]);
 
@@ -406,6 +404,13 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         const completeIdx = emitted.findIndex((e) => e.type === 'tool.execution_complete');
         assert.ok(startIdx >= 0, 'missing tool.execution_start event');
         assert.ok(completeIdx > startIdx, 'tool.execution_start must precede complete');
+        const streamedBeforeTool = emitted
+          .slice(0, startIdx)
+          .filter((event) => event.type === 'assistant_token')
+          .map((event) => event.payload.text)
+          .join('');
+        assert.equal(streamedBeforeTool, '');
+        assert.equal(streamedBeforeTool.includes('{'), false, 'raw tool prefix leaked');
         const startEvent = emitted[startIdx];
         assert.equal(startEvent.payload.toolName, 'read_file');
         assert.deepEqual(startEvent.payload.args, { path: 'notes.txt' });
