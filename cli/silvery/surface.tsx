@@ -44,6 +44,8 @@ import {
   MOTION_TICKS,
   modalFadeAmount,
   modeLabel,
+  PUSH_BRAND_ART_COLS,
+  pushBrandArt,
   reduceModalMotion,
   resolveGlyphs,
   shortenPath,
@@ -246,7 +248,7 @@ function messageMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
   if (item.role === 'auditor') return 'auditor';
   if (item.role === 'status') return 'status';
   if (item.role === 'coder' || item.role === 'explorer') {
-    // Activity from delegated phases still rides the diamond spine, not a color.
+    // Activity from delegated phases still rides the dot spine, not a color.
     return item.pending || item.live ? 'tool_pending' : 'tool_ok';
   }
   return 'assistant';
@@ -404,6 +406,26 @@ function Transcript({
   // the cause.) `tailWindow` stays exported as the measured fallback, pinned by the
   // Phase 1 test; the render test's `real row 13/14/15` window guards this config.
   const shown = snapshot.rows;
+  if (shown.length === 0) {
+    const art = pushBrandArt(detectUnicode());
+    return (
+      <Box
+        width={width}
+        height={height}
+        flexDirection="column"
+        alignItems="center"
+        justifyContent="center"
+      >
+        {height >= art.length && width >= PUSH_BRAND_ART_COLS
+          ? art.map((line, index) => (
+              <Text key={index} color={VL_COLOR.muted}>
+                {line}
+              </Text>
+            ))
+          : null}
+      </Box>
+    );
+  }
   return (
     <ListView
       items={shown}

@@ -36,7 +36,7 @@ import { VL_COLOR, type VlColor } from './visual-language.js';
 // a character is emoji only if it defaults to emoji rendering
 // (`\p{Emoji_Presentation}`) or is explicitly forced to it with VS16 (U+FE0F).
 // Text-default pictographs — arrows (↔ ↩ ➡), ▶, ✓ — are meaningful prose and
-// are kept. Push's own chrome glyphs (◆ ⬡ ░ — geometric, not pictographic) are
+// are kept. Push's own chrome glyphs (▪ ▫ ⬡ ░ — geometric, not pictographic) are
 // never pictographic at all, so they are always safe.
 //
 // One emoji unit = a base (default-emoji, or pictograph+VS16) + an optional
