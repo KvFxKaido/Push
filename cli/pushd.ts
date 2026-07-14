@@ -1114,6 +1114,24 @@ function eventForClientCapabilities(event, capabilities) {
 }
 
 /**
+ * Keep reconnect snapshots on the same capability boundary as live/replayed
+ * events. The daemon-owned mirror stays canonical; only the response copy is
+ * stripped for clients that do not understand tool cards.
+ */
+function transcriptSnapshotForClientCapabilities(mirror, capabilities) {
+  const snapshot = snapshotDaemonTranscript(mirror);
+  if (capabilities.has(TOOL_CARDS_V1)) return snapshot;
+  return {
+    ...snapshot,
+    rows: snapshot.rows.map((row) => {
+      if (!row?.card) return row;
+      const { card: _card, ...legacyRow } = row;
+      return legacyRow;
+    }),
+  };
+}
+
+/**
  * Validate an outbound envelope before fan-out.
  *
  * Strict mode (`PUSH_PROTOCOL_STRICT=1`, set by the daemon-integration test
@@ -2417,6 +2435,9 @@ async function handleGetSessionSnapshot(req) {
   const state = entry.state || {};
   const currentSeq = typeof state.eventSeq === 'number' ? state.eventSeq : 0;
   const recentEventLimit = normalizeRecentEventLimit(req.payload?.recentEventLimit);
+  const clientCapabilities = new Set(
+    Array.isArray(req.payload?.capabilities) ? req.payload.capabilities : [],
+  );
 
   let recentEvents = [];
   let allEvents = [];
@@ -2515,8 +2536,10 @@ async function handleGetSessionSnapshot(req) {
     pendingApproval,
     transcript: {
       lastSeq: currentSeq,
-      recentEvents,
-      mirror: snapshotDaemonTranscript(entry.transcriptMirror),
+      recentEvents: recentEvents.map((event) =>
+        eventForClientCapabilities(event, clientCapabilities),
+      ),
+      mirror: transcriptSnapshotForClientCapabilities(entry.transcriptMirror, clientCapabilities),
     },
   });
 }

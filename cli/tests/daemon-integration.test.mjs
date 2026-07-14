@@ -542,6 +542,70 @@ describe('get_session_snapshot (remote session status packet)', () => {
     assert.equal(response.payload.transcript.recentEvents[0].type, 'approval_required');
   });
 
+  it('capability-gates cards in reconnect events and mirror rows without mutating state', async () => {
+    const sessionId = makeSessionId();
+    const attachToken = 'pushd_test_snapshot_cards';
+    const card = { type: 'ci-status', data: { checks: 3 } };
+    const state = createSessionState({
+      sessionId,
+      attachToken,
+      provider: 'ollama',
+      model: 'card-test',
+      cwd: tmpRoot,
+      messages: [{ role: 'system', content: 'system' }],
+    });
+    await saveSessionState(state);
+    await appendSessionEvent(
+      state,
+      'tool.execution_complete',
+      {
+        round: 1,
+        executionId: 'exec_snapshot_card',
+        toolName: 'ci_status',
+        durationMs: 12,
+        isError: false,
+        preview: '3 checks',
+        card,
+      },
+      'run_snapshot_card',
+    );
+    const transcriptMirror = {
+      rows: [
+        {
+          id: 'tool-snapshot-card',
+          kind: 'tool',
+          role: 'assistant',
+          text: 'ci_status complete',
+          toolName: 'ci_status',
+          card,
+        },
+      ],
+      liveText: '',
+      lastSeq: state.eventSeq,
+      nextLocalId: 0,
+    };
+    __setActiveSessionForTesting(sessionId, { state, attachToken, transcriptMirror });
+
+    const legacy = await handleRequest(
+      makeRequest('get_session_snapshot', { sessionId, attachToken }),
+      () => {},
+    );
+    const capable = await handleRequest(
+      makeRequest('get_session_snapshot', {
+        sessionId,
+        attachToken,
+        capabilities: [TOOL_CARDS_V1],
+      }),
+      () => {},
+    );
+
+    assert.equal(Object.hasOwn(legacy.payload.transcript.recentEvents[0].payload, 'card'), false);
+    assert.equal(Object.hasOwn(legacy.payload.transcript.mirror.rows[0], 'card'), false);
+    assert.deepEqual(capable.payload.transcript.recentEvents[0].payload.card, card);
+    assert.deepEqual(capable.payload.transcript.mirror.rows[0].card, card);
+    assert.deepEqual(transcriptMirror.rows[0].card, card);
+  });
+
   it('reports background delegation/graph work as running even when activeRunId is null', async () => {
     // Codex #743: the orchestrator turn that kicks off a delegation returns
     // (clearing activeRunId) while the sub-agent work is still in flight.

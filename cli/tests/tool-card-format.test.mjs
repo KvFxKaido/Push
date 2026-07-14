@@ -41,7 +41,35 @@ describe('generic CLI tool-card fallback', () => {
       ),
     });
     assert.equal(display.rows.length, 9);
-    assert.equal(display.rows.at(-1).value, '2 fields');
+    assert.equal(display.rows.at(-1).value, 'Additional fields');
+    assert.equal(display.rows[0].value, '[structured data]');
     assert.ok(display.rows[0].value.length <= 180);
+  });
+
+  it('bounds type names, labels, strings, and arrays before rendering', () => {
+    const display = formatToolCard({
+      type: 'future-'.repeat(100_000),
+      data: {},
+    });
+    assert.ok(display.title.length <= 80);
+
+    const known = formatToolCard({
+      type: 'sandbox',
+      data: {
+        ['very_long_key_'.repeat(100_000)]: 'x'.repeat(1_000_000),
+        hugeArray: Array.from({ length: 100_000 }, () => 'not joined'),
+      },
+    });
+    assert.ok(known.rows[0].label.length <= 48);
+    assert.ok(known.rows[0].value.length <= 180);
+    assert.equal(known.rows[1].value, '100000 items');
+  });
+
+  it('caps field traversal even when early values are omitted', () => {
+    const data = Object.fromEntries(
+      Array.from({ length: 100_000 }, (_, index) => [`omitted_${index}`, undefined]),
+    );
+    const display = formatToolCard({ type: 'sandbox', data });
+    assert.deepEqual(display.rows, [{ label: 'More', value: 'Additional fields' }]);
   });
 });

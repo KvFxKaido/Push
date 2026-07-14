@@ -1889,7 +1889,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await lifecycle;
   });
 
-  it('renders a typed card in Silvery instead of the model-facing preview', {
+  it('renders a typed card alongside a diff instead of the model-facing preview', {
     skip: silverySkip,
   }, async () => {
     const React = (await import('react')).default;
@@ -1910,6 +1910,20 @@ describe('silvery TUI Phase 1 chat surface', () => {
           card: {
             type: 'ci-status',
             data: { repo: 'KvFxKaido/Push', checkCount: 3 },
+          },
+          diff: {
+            path: 'cli/pushd.ts',
+            adds: 1,
+            dels: 0,
+            truncated: false,
+            lines: [
+              {
+                kind: 'add',
+                newLine: 1,
+                text: 'const card = true;',
+                textTruncated: false,
+              },
+            ],
           },
         },
       ],
@@ -1948,6 +1962,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.match(stdout.bytes, /CI Status/);
     assert.match(stdout.bytes, /Repo: KvFxKaido\/Push/);
     assert.match(stdout.bytes, /Check Count: 3/);
+    assert.match(stdout.bytes, /cli\/pushd\.ts · \+1 -0/);
     assert.doesNotMatch(stdout.bytes, /RAW_MODEL_PREVIEW/);
 
     instance.unmount();

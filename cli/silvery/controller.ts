@@ -675,6 +675,7 @@ export async function createSilveryController(
           sessionId: daemon.sessionId,
           attachToken: daemon.attachToken,
           recentEventLimit: 1,
+          capabilities: [...SILVERY_DAEMON_CAPABILITIES],
         },
         daemon.sessionId,
         1500,

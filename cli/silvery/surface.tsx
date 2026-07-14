@@ -199,9 +199,8 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
             </Text>
           ))}
         </Box>
-      ) : item.diff ? (
-        <DiffCard item={item} />
       ) : null}
+      {item.diff ? <DiffCard item={item} /> : null}
       {!card && !item.diff && item.resultPreview ? (
         <Text color={VL_COLOR.muted}>
           {expanded ? item.resultPreview : item.resultPreview.split('\n')[0]}
