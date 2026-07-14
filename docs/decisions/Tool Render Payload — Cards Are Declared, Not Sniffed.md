@@ -121,7 +121,48 @@ The daemon then **strips or forwards** per client capability (`tool_cards_v1`), 
 
 (Caught in review of this doc — the original draft put emission in the daemon and would have shipped the bug it was written to prevent.)
 
-### 7. Pin the vocabulary with a drift test
+### 7. Narration (`tool_prose`) is the same payload, and rides the same rails
+
+Assistant **narration** — the prose a model streams before its tool calls — is a render-only payload with exactly the properties this doc describes: typed, structured, shown to the user, and **never sent back to the model**. It is not a separate problem. It is the second instance of this one.
+
+Its history is confusing enough to be worth stating plainly, because the record has already misled once:
+
+| PR | What happened |
+|---|---|
+| **#1252** | Per-round inline narration exposed |
+| **#1254** | **Reverted** — intermediate text was too variable across the fleet (deepseek-v4 rendered *"The user wants a recent-activity overview. I'll fetch commits…"* as a user-facing bubble) |
+| **#1294** | **Shipped anyway**, and correctly: narration survives as settled, display-only `kind: 'tool_prose'` messages (`visibleToModel: false`), interleaved `prose → tool group → prose → tool group → final answer` |
+
+**Narration is not collapsed today. It is live on web.** Any note claiming otherwise predates #1294.
+
+And it is stranded on exactly the same side of the boundary as the cards:
+
+| | narration |
+|---|---|
+| **Web** | typed `tool_prose` messages; `visibleToModel: false` drops them from the context transformer, checkpoint capture, and the inline seed filter |
+| **CLI/TUI** | **nothing.** `tool_prose` does not appear anywhere in `cli/` |
+
+The splitting logic is stranded too: `stripToolCallPayload` and `splitVisibleContent` live in `app/src/lib/message-content.ts` — web-only, absent from `lib/` and `cli/`. And `app/src/lib/message-content.ts:115` carries `looksLikeToolCall(text)`, **a third text-sniffing heuristic of the same species as `looksLikeUnifiedDiff`.**
+
+So narration folds into this track rather than getting its own: move the prose-splitting into `lib/`, carry the narration payload on the run-event stream from the kernel (same rails as `card`, same `visibleToModel: false` invariant the kernel already enforces for `editDiff`), and render it on both shells.
+
+### 8. Rejected: a model-declared `phase` on assistant text
+
+Codex CLI stamps every assistant message with a `phase` — `commentary` or `final_answer` (measured: 1,119 vs 70 across 25 sessions). The model *declares* whether it is narrating or answering, and the UI renders accordingly. It is a genuinely elegant answer to a problem Push has fought, and it was the original motivation for this section.
+
+**We are not adopting it.** It violates a rule Push already holds (`CLAUDE.md`, *Behavior lives in code, not prompts*):
+
+> *"Prompts are guidance for cooperating models — not a control plane. Test: if a non-cooperating model could break it, the fix belongs in code."*
+
+A `phase` the model must emit correctly **is** a prompt-level control plane, and a non-cooperating model breaks it silently — the UI simply mislabels prose. Codex can lean on it because it ships one model family. Push routes a fleet, and the #1254 revert is the evidence: the model that leaked third-person reasoning into a user-facing bubble is exactly the model you would be trusting to self-label.
+
+Push's mechanism is **structural, not declarative** — narration is identified by *position* (the prose prefix preceding a tool call in a round), which is model-independent and cannot be broken by an uncooperative provider. That is the more robust design for a multi-provider runtime, and it is already in place.
+
+Recorded here so it is not re-litigated: the idea is good, the constraint is ours, and the answer is no. What Codex actually validates is the *invariant* — narration and answer are different things and must be typed differently — which Push already satisfies via `kind: 'tool_prose'`.
+
+The residual problem from #1254 — narration *content quality* (filler, third-person reasoning leak) — is a **rendering-affordance question**, not a protocol one: commentary rendered as dim, inline, collapsible status makes filler tolerable, whereas a full user-facing bubble does not. Out of scope here; it belongs to design, not the contract.
+
+### 9. Pin the vocabulary with a drift test
 
 The vocabulary gets strict-mode validators in `lib/protocol-schema.ts` and a pin in `cli/tests/protocol-drift.test.mjs`, per the cross-surface checklist in `CLAUDE.md`:
 
@@ -135,7 +176,8 @@ Without the drift test, web and TUI re-diverge in a month and we are back here.
 - **Slice 1 — Kernel emission.** Spread `card` onto `tool.execution_complete` at the three sites that already spread `diff` (`lib/coder-agent.ts:2191, 2271, 2715`). This is the whole mechanism, and it is a handful of lines because `editDiff` already proved the path. Add the load-bearing test: **no card field ever reaches an `LlmMessage`.**
 - **Slice 2 — Consumers.** TUI reads `card` off the run event (inline **and** daemon-attached — one producer, so both work for free) and renders via a generic typed fallback: title + key/value rows derived from the card's declared shape. The daemon strips cards for clients that don't advertise `tool_cards_v1`. The JSON-dump path stops being reachable for card-bearing tools.
 - **Slice 3 — Producers.** Walk the tool catalog and attach cards, highest-traffic first (`sandbox_exec`, file writes/edits, test/typecheck, commit/push, delegation). Each tool that gains a card immediately improves every surface.
-- **Slice 4 — Delete the sniffing.** Remove `looksLikeUnifiedDiff` and the arg-guessing fallback once no path depends on them. This slice is the acceptance criterion for the whole track.
+- **Slice 4 — Narration parity.** Promote `stripToolCallPayload` / `splitVisibleContent` from `app/src/lib/message-content.ts` into `lib/`; carry the narration payload on the run-event stream from the kernel; render `tool_prose` in the TUI. Web behavior unchanged — it stops owning the vocabulary, that's all. (Independent of Slices 1–3; sequenced last only because the card path proves the rails first.)
+- **Slice 5 — Delete the sniffing.** Remove `looksLikeUnifiedDiff`, `looksLikeToolCall`, and the arg-guessing fallback once no path depends on them. **This slice is the acceptance criterion for the whole track:** when nothing in either shell has to guess what it is rendering, the contract is real.
 
 ## Hard problems + decisions
 
@@ -156,4 +198,5 @@ Without the drift test, web and TUI re-diverge in a month and we are back here.
 ## Out of scope
 
 - **Tool-call scheduling.** The per-turn budget (`lib/tool-call-grouping.ts` — contiguous reads → mutations → one trailing side-effect) is a *separate* concern with separate invariants, and it is **not** what makes the UI feel wrong. It has real questions (a per-path mutation queue would be strictly more permissive than the batch rule, and a read emitted after a write could be *scheduled* rather than *rejected*), but they are orthogonal to this doc and should not ride along with it.
-- **The `commentary` / `final_answer` phase on assistant text** (Codex's answer to the narration-collapse problem that #1252 tried to infer and #1254 reverted). Closely related — it is the same "declare, don't infer" principle applied to prose instead of tool output — but it is a distinct contract change and deserves its own doc.
+- **Narration content quality** — filler and third-person reasoning leak (the #1254 complaint). A rendering-affordance question (dim/inline/collapsible commentary), not a contract question. Design owns it; see §8.
+- **A model-declared `phase` on assistant text.** Not deferred — **decided against**, in §8. It is a prompt-level control plane, and Push's rule is that a non-cooperating model must not be able to break the runtime. Recorded so it is not re-proposed.
