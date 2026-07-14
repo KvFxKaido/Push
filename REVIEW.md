@@ -105,6 +105,31 @@ Kept first so it survives the reviewer-context size cap.
   gesture. Confirm anything hidden-until-hover/reveal gates `pointer-events`
   (`pointer-events-none` at rest, `-auto` only when shown) — or uses
   `visibility`/unmount, which do stop hit-testing.
+- **Unreachable from the real caller.** A helper can be correct, fully tested, and
+  impossible to reach from production — its unit tests stay green because they
+  call it *directly*, so nothing goes red. Two shapes, both shipped here: a
+  function with **zero production callers** (`osc52Copy` was written, unit-tested,
+  and never wired), and a function whose **only caller filters it out** (a copy
+  command that selected `kind === 'message'` rows, making the module's entire
+  diff/card path dead code). For any new behavior, find the production entry point
+  and check a test drives **that** — not the helper. If no caller can reach the
+  code, the tests are a green light on nothing.
+- **Unit-of-measure at an encoding boundary.** Bytes, characters (UTF-16 code
+  units), and code points are three different numbers, and the wrong one fails
+  *silently* — the check passes, the payload doesn't. `String#length` is not a byte
+  count: 48k CJK characters are ~144KB of UTF-8, so a size cap measured in
+  characters lets an oversized payload through with `truncated: false`, and the
+  consumer (terminal, wire protocol, DB column) drops it while the code reports
+  success. Cap at the boundary the **consumer** measures, and cut on code-point
+  boundaries — slicing at a byte-derived index severs surrogate pairs.
+- **Claims asserted but never executed.** Flag any claim in the diff, its tests, or
+  its PR body that could have been *run* and evidently was not: "you can `git
+  apply` this" (was the patch ever fed to `git apply`? one shipped with no `@@`
+  headers), "this path is wired" (does a test drive the production caller, or only
+  the helper?), "the cause is X" (was the mechanism reproduced, or inferred from an
+  error string?). A named failure mode in a comment is not evidence it was checked
+  — several defects here shipped in PRs whose own commit message described the very
+  class they contained.
 
 ### Consult the canonical docs
 
