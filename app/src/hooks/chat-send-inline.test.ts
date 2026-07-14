@@ -113,9 +113,9 @@ vi.mock('@/lib/auditor-delegation-handler', () => ({
 import {
   buildInlineTurnPreamble,
   createInlineTranscriptMirror,
-  splitVisibleContent,
   startInlineCoderTurn,
 } from './chat-send-inline';
+import { splitVisibleContent } from '@push/lib/tool-prose';
 import { buildRunCheckpointV1 } from '@/lib/run-checkpoint-capture';
 import { validateRunCheckpoint } from '@push/lib/run-checkpoint';
 import {
@@ -483,47 +483,6 @@ describe('createInlineTranscriptMirror', () => {
     ctx.abortRef.current = true;
     mirror({ type: 'text_delta', text: 'late token' } as PushStreamEvent);
     expect(lastAssistant(store).content).toBe('');
-  });
-
-  it('stashes each settled round narration in the prose sink, dropping it if unconsumed', () => {
-    const { ctx } = makeHarness();
-    const sink = { pending: '' };
-    const mirror = createInlineTranscriptMirror(ctx, undefined, undefined, sink);
-
-    // Round 1: prose then a tool construct — only the visible prefix lands
-    // in the sink when the round's stream settles.
-    mirror({ type: 'text_delta', text: 'Let me check the file.' } as PushStreamEvent);
-    mirror({
-      type: 'text_delta',
-      text: '\n{"tool":"sandbox_read_file","args":{}}',
-    } as PushStreamEvent);
-    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
-    expect(sink.pending).toBe('Let me check the file.');
-
-    // A new round starting before any tool consumed the stash drops it —
-    // recovery/nudge rounds have no disclosure to anchor the narration to.
-    mirror({ type: 'text_delta', text: 'Retrying with valid JSON.' } as PushStreamEvent);
-    expect(sink.pending).toBe('');
-  });
-
-  it('strips native tool-call echoes from the stashed narration (Codex P2 on #1294)', () => {
-    const { ctx } = makeHarness();
-    const sink = { pending: '' };
-    const mirror = createInlineTranscriptMirror(ctx, undefined, undefined, sink);
-
-    // Some providers echo the native call's arguments into delta.content
-    // without the `{"tool": "` prefix, ahead of (or instead of) a fenced
-    // form. `splitVisibleContent` has no marker to cut on for the echo, so
-    // the stash must run the full stripToolCallPayload pass — otherwise raw
-    // protocol text persists into a settled tool_prose message.
-    mirror({ type: 'text_delta', text: 'Checking the repo.' } as PushStreamEvent);
-    mirror({
-      type: 'text_delta',
-      text: '\nrepo_read", "args": {"repo": "KvFxKaido/Push", "path": "README.md"}}',
-    } as PushStreamEvent);
-    mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
-
-    expect(sink.pending).toBe('Checking the repo.');
   });
 });
 
@@ -1336,6 +1295,11 @@ describe('interleaved round narration + live tool disclosure', () => {
         } as PushStreamEvent);
         mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
         callbacks.onRunEvent?.({
+          type: 'assistant.tool_prose',
+          round: 1,
+          text: 'Let me read the config.',
+        });
+        callbacks.onRunEvent?.({
           type: 'tool.execution_complete',
           round: 1,
           executionId: 'e1',
@@ -1354,6 +1318,11 @@ describe('interleaved round narration + live tool disclosure', () => {
         // Round 2: fresh narration, second tool.
         mirror({ type: 'text_delta', text: 'Now running the tests.' } as PushStreamEvent);
         mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent?.({
+          type: 'assistant.tool_prose',
+          round: 2,
+          text: 'Now running the tests.',
+        });
         callbacks.onRunEvent?.({
           type: 'tool.execution_complete',
           round: 2,
@@ -1420,6 +1389,11 @@ describe('interleaved round narration + live tool disclosure', () => {
         // Round 2 executes for real.
         mirror({ type: 'text_delta', text: 'Second attempt.' } as PushStreamEvent);
         mirror({ type: 'done', finishReason: 'tool_calls' } as PushStreamEvent);
+        callbacks.onRunEvent?.({
+          type: 'assistant.tool_prose',
+          round: 2,
+          text: 'Second attempt.',
+        });
         callbacks.onRunEvent?.({
           type: 'tool.execution_complete',
           round: 2,

@@ -1470,9 +1470,12 @@ describe('runCoderAgent (PushStream consumer)', () => {
     // buckets + a non-null detectAnyToolCall), so it loops back via the natural
     // fall-through rather than an early continue/return. That path must still
     // finish the round — the regression was a turn_start with no turn_end.
-    const { stream } = makePushStream([
+    const { stream, capturedRequests } = makePushStream([
       [
-        { type: 'text_delta', text: '{"tool":"sandbox_read_file","args":{"path":"README.md"}}' },
+        {
+          type: 'text_delta',
+          text: 'I’ll inspect the README.\n{"tool":"sandbox_read_file","args":{"path":"README.md"}}',
+        },
         { type: 'done', finishReason: 'stop' },
       ],
       [
@@ -1486,6 +1489,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
       outcome?: string;
       toolName?: string;
       target?: string;
+      text?: string;
     }> = [];
 
     await runCoderAgent(
@@ -1518,6 +1522,24 @@ describe('runCoderAgent (PushStream consumer)', () => {
         target: 'README.md',
       }),
     );
+    expect(events.find((e) => e.type === 'assistant.tool_prose')).toEqual({
+      type: 'assistant.tool_prose',
+      round: 0,
+      text: 'I’ll inspect the README.',
+    });
+    expect(events.findIndex((e) => e.type === 'assistant.tool_prose')).toBeLessThan(
+      events.findIndex((e) => e.type === 'tool.execution_complete'),
+    );
+
+    // The event is render-only. Round 1 sees the original assistant tool-call
+    // message plus its result, never an extra synthetic narration message.
+    const secondRequest = capturedRequests[1] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const roundZeroAssistants = secondRequest.messages.filter(
+      (message) => message.role === 'assistant' && message.content.includes('inspect the README'),
+    );
+    expect(roundZeroAssistants).toHaveLength(1);
   });
 
   it('nudges and continues when a tool call is buried in reasoning tokens', async () => {

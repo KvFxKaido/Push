@@ -491,7 +491,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
-  it('keeps a declared tool card on the inline TUI activity row', {
+  it('orders render-only tool prose before the inline TUI tool card', {
     skip: silverySkip,
   }, async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
@@ -521,6 +521,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
         saveState: async () => undefined,
         runTurn: async (_state, _provider, _key, _text, _rounds, options) => {
           options.emit({
+            type: 'assistant.tool_prose',
+            payload: { round: 0, text: 'I’ll check CI.' },
+            runId: 'run-card',
+            sessionId: state.sessionId,
+          });
+          options.emit({
             type: 'tool.execution_complete',
             payload: {
               toolName: 'ci_status',
@@ -537,7 +543,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
     );
 
     await controller.submit('show CI');
-    const row = controller.getSnapshot().rows.find((candidate) => candidate.kind === 'tool');
+    const rows = controller.getSnapshot().rows;
+    const proseIndex = rows.findIndex((candidate) => candidate.kind === 'tool_prose');
+    const toolIndex = rows.findIndex((candidate) => candidate.kind === 'tool');
+    const row = rows[toolIndex];
+    assert.equal(rows[proseIndex]?.text, 'I’ll check CI.');
+    assert.ok(proseIndex >= 0 && proseIndex < toolIndex);
     assert.deepEqual(row?.card, card);
     await controller.dispose();
   });

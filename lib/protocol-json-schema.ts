@@ -202,6 +202,11 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     text: str(),
   }),
 
+  AssistantToolProse: objectNode(['round', 'text'], {
+    round: uint(),
+    text: nestr(),
+  }),
+
   // `assistant_citations` — web-search sources (OpenRouter). Each entry's
   // `url` is required non-empty; `title`/`content` are required strings (may
   // be empty); the `startIndex`/`endIndex` offsets are optional.
@@ -539,6 +544,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   'task_graph.graph_completed': 'TaskGraphGraphCompleted',
   assistant_token: 'AssistantTextChunk',
   assistant_thinking_token: 'AssistantTextChunk',
+  'assistant.tool_prose': 'AssistantToolProse',
   assistant_citations: 'AssistantCitations',
   tool_call: 'ToolCall',
   'tool.execution_start': 'ToolCall',

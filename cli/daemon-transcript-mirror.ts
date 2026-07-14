@@ -2,6 +2,7 @@ import { isEditDiff, type EditDiff } from '../lib/edit-diff.ts';
 import { getSubagentDisplay } from '../lib/role-display.ts';
 import { isTranscriptMutationEvent } from '../lib/session-transcript-events.ts';
 import { isToolCardPayload, type ToolCardPayload } from '../lib/tool-cards.ts';
+import { stripToolCallPayload } from '../lib/tool-prose.ts';
 import type { SessionEvent } from './session-store.ts';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
 
@@ -16,7 +17,7 @@ export type DaemonTranscriptRole =
 
 export interface DaemonTranscriptRow {
   id: string;
-  kind: 'message' | 'tool' | 'status' | 'review';
+  kind: 'message' | 'tool_prose' | 'tool' | 'status' | 'review';
   role: DaemonTranscriptRole;
   text: string;
   live?: boolean;
@@ -149,6 +150,26 @@ export function applyDaemonTranscriptEvent(
       }
       mirror.liveText = '';
       break;
+    case 'assistant.tool_prose': {
+      const text = stringField(payload, 'text').trim();
+      if (!text) break;
+      const previous = mirror.rows.at(-1);
+      if (
+        previous?.kind === 'message' &&
+        previous.role === 'assistant' &&
+        stripToolCallPayload(previous.text).trim() === text
+      ) {
+        mirror.rows.pop();
+      }
+      mirror.rows.push({
+        id: eventId(mirror, event, 'tool-prose'),
+        kind: 'tool_prose',
+        role: 'assistant',
+        text,
+        ...(typeof event.ts === 'number' ? { timestampMs: event.ts } : {}),
+      });
+      break;
+    }
     case 'tool_call':
     case 'tool.execution_start': {
       const toolName = stringField(payload, 'toolName') || 'work';

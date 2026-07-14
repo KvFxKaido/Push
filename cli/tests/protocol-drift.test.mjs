@@ -80,6 +80,7 @@ describe('protocol drift characterization — schema surface', () => {
       'approval_received',
       'approval_required',
       'assistant.prompt_snapshot',
+      'assistant.tool_prose',
       'assistant.turn_end',
       'assistant.turn_start',
       'assistant_citations',

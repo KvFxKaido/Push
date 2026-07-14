@@ -432,6 +432,23 @@
         }
       }
     },
+    "AssistantToolProse": {
+      "type": "object",
+      "required": [
+        "round",
+        "text"
+      ],
+      "properties": {
+        "round": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "AssistantCitations": {
       "type": "object",
       "required": [
@@ -1707,6 +1724,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/AssistantTextChunk"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "assistant.tool_prose"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AssistantToolProse"
           }
         }
       }

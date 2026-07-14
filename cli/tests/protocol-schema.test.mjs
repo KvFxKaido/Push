@@ -940,6 +940,17 @@ describe('validateRunEventPayload — RunEventInput passthrough events', () => {
     assert.ok(issues.some((i) => i.path === 'payload.round'));
   });
 
+  it('accepts render-only assistant tool prose with its round', () => {
+    assert.deepEqual(
+      validateRunEventPayload('assistant.tool_prose', {
+        round: 2,
+        text: 'I’ll run the focused tests.',
+      }),
+      [],
+    );
+    assert.ok(validateRunEventPayload('assistant.tool_prose', { round: 2, text: '' }).length > 0);
+  });
+
   it('accepts assistant.turn_end with a valid outcome', () => {
     const issues = validateRunEventPayload('assistant.turn_end', {
       round: 3,

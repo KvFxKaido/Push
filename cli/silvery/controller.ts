@@ -483,6 +483,18 @@ export async function createSilveryController(
       case 'assistant_done':
         liveText = '';
         break;
+      case 'assistant.tool_prose':
+        liveText = '';
+        activityRows = [
+          ...activityRows,
+          {
+            id: nextId('tool-prose'),
+            kind: 'tool_prose',
+            role: 'assistant',
+            text: String(payload.text ?? ''),
+          },
+        ];
+        break;
       case 'tool_call':
       case 'tool.execution_start':
       case 'tool_result':

@@ -15,9 +15,10 @@
  * shipped behind a preference and then became the only path).
  *
  * Event protocol: the lane speaks the engine's existing event vocabulary
- * (`assistant_token`, `assistant_thinking_token`, `assistant_done`, `status`,
- * `tool.execution_complete`, `run_complete`, `error`) so the TUI, REPL, and
- * daemon attach clients render it without changes — no new envelope types.
+ * (`assistant_token`, `assistant_thinking_token`, `assistant_done`,
+ * `assistant.tool_prose`, `status`, `tool.execution_complete`,
+ * `run_complete`, `error`) so the TUI, REPL, and daemon attach clients share
+ * one ordered transcript vocabulary.
  *
  * Safety boundary unchanged: tools execute through the same
  * `executeToolCall` the engine loop uses, so the Auditor commit gate,
@@ -35,6 +36,7 @@ import { groupCallsByPhase } from '../lib/tool-call-grouping.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isEditDiff } from '../lib/edit-diff.ts';
 import { isToolCard } from '../lib/tool-cards.ts';
+import { splitVisibleContent } from '../lib/tool-prose.ts';
 import { createRuntimeContext } from '../lib/runtime-context.ts';
 import type {
   AIProviderType,
@@ -484,6 +486,8 @@ export async function runLeadKernelTurn(
   // rounds. The kernel makes one stream call per round; each `done` commits
   // the streamed text as an assistant transcript entry (`assistant_done`).
   let reasoningOpen = false;
+  let roundText = '';
+  let visibleCharsEmitted = 0;
   const mirror = (event: PushStreamEvent): void => {
     if (event.type === 'reasoning_delta') {
       reasoningOpen = true;
@@ -491,11 +495,16 @@ export async function runLeadKernelTurn(
       return;
     }
     if (event.type === 'text_delta') {
+      roundText += event.text;
       if (reasoningOpen) {
         reasoningOpen = false;
         dispatchEvent('assistant_thinking_done', {});
       }
-      dispatchEvent('assistant_token', { text: event.text });
+      const visible = splitVisibleContent(roundText).visible;
+      if (visible.length > visibleCharsEmitted) {
+        dispatchEvent('assistant_token', { text: visible.slice(visibleCharsEmitted) });
+        visibleCharsEmitted = visible.length;
+      }
       return;
     }
     if (event.type === 'done') {
@@ -506,6 +515,8 @@ export async function runLeadKernelTurn(
       const messageId = `asst_${Date.now().toString(36)}`;
       void persistEvent('assistant_done', { messageId });
       dispatchEvent('assistant_done', { messageId });
+      roundText = '';
+      visibleCharsEmitted = 0;
     }
   };
   // Provider failover (decision #13), opt-in via PUSH_PROVIDER_FAILOVER. The
