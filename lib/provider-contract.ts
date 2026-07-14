@@ -548,48 +548,67 @@ export interface ReviewComment {
 }
 
 /**
- * Outcome of one sandbox verifier over a review run. `pass`/`fail` mean the
- * verifier ran to COMPLETION with a real exit code (exit 0 / non-zero);
- * timeouts, lost contact, and abnormal deaths without an exit code record no
- * verdict — an environment failure must not read as "tests failed".
+ * Verdict of a review's verification, sourced from the check runs GitHub already
+ * produced for the head SHA under review (decision doc §9a).
  *
- * The two no-verdict states are deliberately DISTINCT, because they blame
- * different parties and the check-run summary names the party:
- *  - `not_run`   — the model never invoked the verifier. On the model.
- *  - `blocked`   — the model DID invoke it, and the environment stopped it: the
- *                  setup gate failed, or the verifier could not run to
- *                  completion (timeout / lost contact). On us, not the model.
- *  - `unavailable` — it could not have run at all (no sandbox on cross-fork PRs,
- *                  or the repo declares no test command).
+ *  - `pass`        — every non-self check run on the head SHA completed, and none
+ *                    failed. This is the gate the change merges on.
+ *  - `fail`        — at least one completed with a failing conclusion.
+ *  - `blocked`     — checks exist, and the environment produced no verdict: CI was
+ *                    still in flight at the reviewer's deadline, the check-runs API
+ *                    could not be read, or every check ended without a real
+ *                    conclusion (all cancelled/skipped). NOT a statement about the
+ *                    code — on us (or on CI), never on the model.
+ *  - `unavailable` — the head SHA has no check runs at all: the repo runs no CI, so
+ *                    there was never a verdict to read.
  *
- * These were one state (`not_run`) until the check run started reporting
- * "the reviewer did not run typecheck/tests despite an available sandbox" for
- * reviews where the runtime had in fact handed the model a hard "Verification
- * cannot run in this review's sandbox". The instrument blamed the model for an
- * environment failure, which made the real cause unfalsifiable from the outside
- * — the only witness left was the model's own (unreliable) narration of why.
+ * There is deliberately no `not_run`. Verification is no longer something the model
+ * invokes and can decline — the runtime reads it from GitHub — so there is no longer
+ * a party to blame for "didn't run it". That state existed only to distinguish the
+ * model declining a verifier from the environment killing one, and both halves of
+ * that distinction die with the sandbox verifiers.
+ *
+ * `blocked` survives from the sandbox era with its meaning intact: invoked, and the
+ * environment did not produce a verdict. It exists because the check run once
+ * reported "the reviewer did not run typecheck/tests" for reviews where the runtime
+ * had in fact handed the model a hard "verification cannot run" — the instrument
+ * blamed the model for an environment failure, leaving the model's own (unreliable)
+ * narration as the only witness.
  */
-export type ReviewVerifierStatus = 'pass' | 'fail' | 'not_run' | 'blocked' | 'unavailable';
+export type ReviewVerifierStatus = 'pass' | 'fail' | 'blocked' | 'unavailable';
 
-/** Per-verifier record for a review run — see {@link ReviewVerifierStatus}. */
+/** One check run the verdict was computed from. */
+export interface ReviewCheckRunSummary {
+  name: string;
+  /** GitHub's conclusion, or null while the run is still in flight. */
+  conclusion: string | null;
+  detailsUrl?: string;
+}
+
+/** Verification record for a review run — see {@link ReviewVerifierStatus}. */
 export interface ReviewVerification {
-  typecheck: ReviewVerifierStatus;
-  tests: ReviewVerifierStatus;
   /**
-   * Why the environment stopped each `blocked` verifier — surfaced on the check
-   * run so the cause survives without the model having to narrate it.
+   * Aggregate verdict over the head SHA's check runs, EXCLUDING the reviewer's own.
    *
-   * Keyed PER VERIFIER, not global. A single field would misattribute: the two
-   * verifiers are tracked independently and can each be invoked more than once, so
-   * `tests` blocking (reason A) then `typecheck` blocking (reason B) then
-   * `typecheck` being retried and passing leaves `tests: 'blocked'` beside reason
-   * B — printing typecheck's cause against the still-blocked tests. A PR whose
-   * entire point is attributing blame correctly does not get to fumble that.
-   *
-   * An entry is dropped when its verifier leaves `blocked` (a later run produced a
-   * real verdict), so a stale reason can never outlive the state it explains.
+   * One aggregate rather than per-verifier (`typecheck` / `tests`) slots, because CI
+   * emits arbitrary check names ("Format, Typecheck, Test (cli)", "Lint, Test, Build
+   * (app)", "Workers Builds: push") and mapping those onto fixed slots is guesswork
+   * that fails silently when a repo renames a job. "Did the head SHA's checks pass"
+   * is both the fact the check-runs API actually reports and the gate the change
+   * merges on.
    */
-  blockedReasons?: Partial<Record<'typecheck' | 'tests', string>>;
+  ci: ReviewVerifierStatus;
+  /**
+   * Why the verdict is `blocked` — a deadline, an unreadable API, or checks that
+   * produced no conclusion. Surfaced on the check run so the cause survives without
+   * the model narrating it. Never a claim about the code.
+   */
+  blockedReason?: string;
+  /**
+   * The check runs the verdict was computed from. Named on the check run so a reader
+   * can audit the claim against GitHub's own UI instead of trusting an aggregate.
+   */
+  checks?: ReviewCheckRunSummary[];
 }
 
 export interface ReviewResult {
@@ -616,9 +635,10 @@ export interface ReviewResult {
    * result carries zero findings by construction; consumers must present it
    * as an incomplete review, never as a clean pass. */
   degraded?: boolean;
-  /** Sandbox verification record for the run (typecheck/tests). Attached by
-   * the webhook reviewer's executor; absent on paths that don't track it
-   * (web in-app reviews, rows persisted before the field existed) — treat a
-   * missing value as unknown, not as verified. */
+  /** CI verification record for the run (§9a — read from the head SHA's check
+   * runs, not executed by the reviewer). Attached by the webhook reviewer's
+   * executor; absent on paths that don't track it (web in-app reviews, rows
+   * persisted before the field existed) — treat a missing value as unknown,
+   * not as verified. */
   verification?: ReviewVerification;
 }

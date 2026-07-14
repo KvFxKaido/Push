@@ -1407,6 +1407,113 @@ export async function createInProgressReviewCheckRun(
   return data.id;
 }
 
+/** One check run on a commit, as the reviewer needs to see it (§9a). */
+export interface CheckRunForSha {
+  id: number;
+  name: string;
+  /** GitHub's status vocabulary, passed through (including Actions-only waiting states). */
+  status: string;
+  /** null while the run has not completed. */
+  conclusion: string | null;
+  /** Owning GitHub App id — `null` for checks not created by an App. */
+  appId: number | null;
+  detailsUrl?: string;
+}
+
+/** GitHub's cap for this endpoint; also our page size. */
+const CHECK_RUNS_PER_PAGE = 100;
+/** Backstop so a pathological SHA can't spin the reviewer through unbounded pages. */
+const CHECK_RUNS_MAX_PAGES = 10;
+
+/**
+ * All check runs GitHub has for a commit — the reviewer's verification source
+ * (decision doc §9a). Paginated: a truncated first page would silently drop a
+ * FAILING check and turn a `fail` verdict into a `pass`, which is the one error
+ * this whole path exists to avoid.
+ *
+ * Returns `null` (never throws) when the API can't be read, so the caller can
+ * record `blocked` — "we could not see CI" — instead of a fabricated verdict.
+ */
+export async function fetchCheckRunsForSha(
+  repo: string,
+  sha: string,
+  auth?: GitHubAuth,
+): Promise<CheckRunForSha[] | null> {
+  const runs: CheckRunForSha[] = [];
+  const seenIds = new Set<number>();
+  let expectedTotal: number | null = null;
+  try {
+    for (let page = 1; page <= CHECK_RUNS_MAX_PAGES; page += 1) {
+      const res = await githubFetch(
+        `https://api.github.com/repos/${repo}/commits/${sha}/check-runs?per_page=${CHECK_RUNS_PER_PAGE}&page=${page}`,
+        { headers: resolveHeaders(auth) },
+      );
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        total_count?: number;
+        check_runs?: Array<{
+          id?: number;
+          name?: string;
+          status?: string;
+          conclusion?: string | null;
+          html_url?: string;
+          details_url?: string;
+          app?: { id?: number } | null;
+        }>;
+      };
+      // A malformed 200 is not evidence that the commit has no CI. Fail closed
+      // instead of turning an unreadable response into `unavailable`.
+      if (
+        !Array.isArray(data.check_runs) ||
+        typeof data.total_count !== 'number' ||
+        !Number.isInteger(data.total_count) ||
+        data.total_count < 0
+      ) {
+        return null;
+      }
+      if (expectedTotal === null) expectedTotal = data.total_count;
+      // The collection changed under pagination. Continuing could duplicate one
+      // run and omit another (including the only failure), so do not aggregate it.
+      if (data.total_count !== expectedTotal) return null;
+      const batch = data.check_runs;
+      for (const run of batch) {
+        // Required verdict fields must be structurally trustworthy. Dropping or
+        // defaulting one could hide the only failing/pending check and fabricate a
+        // pass. A duplicate id means pagination shifted while we were reading it.
+        if (
+          typeof run.id !== 'number' ||
+          seenIds.has(run.id) ||
+          typeof run.status !== 'string' ||
+          (run.conclusion !== null && typeof run.conclusion !== 'string')
+        ) {
+          return null;
+        }
+        seenIds.add(run.id);
+        runs.push({
+          id: run.id,
+          name: run.name || 'unknown-check',
+          status: run.status,
+          conclusion: run.conclusion,
+          appId: typeof run.app?.id === 'number' ? run.app.id : null,
+          detailsUrl: run.html_url || run.details_url,
+        });
+      }
+      if (batch.length < CHECK_RUNS_PER_PAGE) {
+        return runs.length < expectedTotal ? null : runs;
+      }
+      // GitHub caps this endpoint at the 1000 most recent check suites. A full
+      // final page may therefore be truncated with a failure beyond our view;
+      // never turn that incomplete set into a green aggregate.
+      if (page === CHECK_RUNS_MAX_PAGES) return null;
+    }
+  } catch {
+    // githubFetch can still reject after its bounded retry budget, and JSON
+    // parsing can fail. The verification caller maps null to a blocked verdict.
+    return null;
+  }
+  return null;
+}
+
 /** Patch an existing check-run to a terminal `completed` state in place. */
 export async function finalizeReviewCheckRun(
   repo: string,

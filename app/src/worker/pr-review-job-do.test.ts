@@ -11,7 +11,7 @@ import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
   cleanPassCheckStatus,
-  shouldNudgeForVerification,
+  verificationNote,
   repoGatingEnabled,
   type PrReviewExecutor,
   type PrReviewStartInput,
@@ -73,10 +73,7 @@ interface ReviewRow {
 
 function createMockCtx() {
   const reviews = new Map<string, ReviewRow>();
-  const checkpoints = new Map<
-    string,
-    { state_json: string; round: number; updated_at: number; verification_json: string | null }
-  >();
+  const checkpoints = new Map<string, { state_json: string; round: number; updated_at: number }>();
   const events: Array<{ seq: number; delivery_id: string; type: string; payload_json: string }> =
     [];
   const pending: Promise<unknown>[] = [];
@@ -86,8 +83,6 @@ function createMockCtx() {
     if (/^CREATE /i.test(sql) || /^ALTER TABLE/i.test(sql)) return [];
     // ensureColumns() probes for the post-v1 columns; report all present so
     // the mock never has to model ALTER.
-    if (/^PRAGMA table_info\(review_checkpoint\)/i.test(sql))
-      return [{ name: 'verification_json' }];
     if (/^PRAGMA table_info\(review\)/i.test(sql))
       return [
         { name: 'result_json' },
@@ -103,13 +98,10 @@ function createMockCtx() {
         state_json: p[1] as string,
         round: p[2] as number,
         updated_at: p[3] as number,
-        verification_json: (p[4] as string | null) ?? null,
       });
       return [];
     }
-    if (
-      /^SELECT state_json, round, updated_at, verification_json FROM review_checkpoint/i.test(sql)
-    ) {
+    if (/^SELECT state_json, round, updated_at FROM review_checkpoint/i.test(sql)) {
       const c = checkpoints.get(p[0] as string);
       return c ? [{ ...c }] : [];
     }
@@ -1086,136 +1078,103 @@ describe('PrReviewJob orphan sweep', () => {
 // (2026-06-11, PR #887) — the runtime reclaims the DO instance ~1–3 min into
 // an unwatched review, so from-scratch retries can never converge. Per-round
 // checkpoints + watchdog relaunch make progress monotone.
-describe('shouldNudgeForVerification', () => {
-  it('nudges only when NO verifier was invoked', () => {
-    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'not_run' })).toBe(true);
-    // No test command in the repo — tests were never invocable, so typecheck is
-    // still owed.
-    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'unavailable' })).toBe(true);
-  });
-
-  it('treats a blocked verifier as RUN — symmetrically (fugu P2, PR #1455)', () => {
-    // The bug: the gate read `typecheck !== 'not_run' || tests === 'pass' || tests
-    // === 'fail'`, so `blocked` counted as a run for typecheck but NOT for tests. A
-    // model that called sandbox_run_tests first and got blocked was then nudged to
-    // "run a verifier" it had already run — burning a round, and possibly another
-    // 480s timeout, to rediscover that the environment is broken.
-    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'blocked' })).toBe(false);
-    expect(shouldNudgeForVerification({ typecheck: 'blocked', tests: 'not_run' })).toBe(false);
-    expect(shouldNudgeForVerification({ typecheck: 'blocked', tests: 'blocked' })).toBe(false);
-  });
-
-  it('does not nudge once a real verdict exists', () => {
-    expect(shouldNudgeForVerification({ typecheck: 'pass', tests: 'not_run' })).toBe(false);
-    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'fail' })).toBe(false);
-  });
-});
-
-describe('cleanPassCheckStatus', () => {
-  it('concludes success only when a verifier ran and passed', () => {
-    expect(cleanPassCheckStatus({ typecheck: 'pass', tests: 'not_run' })).toMatchObject({
-      conclusion: 'success',
-      title: 'No blocking findings — verified (typecheck)',
-    });
-    expect(cleanPassCheckStatus({ typecheck: 'pass', tests: 'pass' })).toMatchObject({
-      conclusion: 'success',
-      title: 'No blocking findings — verified (typecheck + tests)',
-    });
-  });
-
-  it('flags a failed verifier behind a clean pass as neutral, naming the verifier', () => {
-    const s1 = cleanPassCheckStatus({ typecheck: 'pass', tests: 'fail' });
-    expect(s1.conclusion).toBe('neutral');
-    expect(s1.title).toBe('No blocking findings — verification failed');
-    expect(s1.summary).toContain('tests failed');
-  });
-
-  it("separates 'blocked' (our outage) from 'not_run' (the model skipped it)", () => {
-    // The whole reason `blocked` exists. Both land on a neutral clean pass, but the
-    // summaries assign blame to different parties, and only one of them is true for
-    // a given review. Conflating them accused the model of skipping verification we
-    // had in fact denied it — and left its own narration as the only account of why.
-    const blocked = cleanPassCheckStatus({
-      typecheck: 'blocked',
-      tests: 'blocked',
-      blockedReasons: {
-        typecheck: 'ERR_PNPM_UNSUPPORTED_ENGINE · the real cause',
-        tests: 'tests verifier timed out after 480000ms',
-      },
-    });
-    expect(blocked.conclusion).toBe('neutral');
-    expect(blocked.title).toBe('No blocking findings (verification blocked)');
-    expect(blocked.summary).toContain('the environment stopped it');
-    expect(blocked.summary).toContain("OUR failure, not the model's");
-    // Each cause must survive to the check run, against ITS OWN verifier.
-    expect(blocked.summary).toContain('typecheck: ERR_PNPM_UNSUPPORTED_ENGINE');
-    expect(blocked.summary).toContain('tests: tests verifier timed out');
-
-    const skipped = cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' });
-    expect(skipped.title).toBe('No blocking findings (unverified)');
-    expect(skipped.summary).toContain('did not run typecheck/tests');
-    expect(skipped.summary).not.toContain('the environment stopped it');
-  });
-
-  it('a real verdict still wins over a blocked sibling, but the block is disclosed', () => {
+describe('cleanPassCheckStatus (§9a — CI-sourced)', () => {
+  it("concludes success only when the head SHA's own CI passed", () => {
     const s = cleanPassCheckStatus({
-      typecheck: 'pass',
-      tests: 'blocked',
-      blockedReasons: { tests: 'tests verifier timed out after 480000ms' },
+      ci: 'pass',
+      checks: [{ name: 'Test (cli)', conclusion: 'success' }],
     });
     expect(s.conclusion).toBe('success');
-    expect(s.title).toBe('No blocking findings — verified (typecheck)');
-    expect(s.summary).toContain('Blocked by the environment');
-    expect(s.summary).toContain('tests: tests verifier timed out');
+    expect(s.title).toBe('No blocking findings — verified (CI green)');
+    // The claim is auditable: name the checks it was computed from.
+    expect(s.summary).toContain('Test (cli): success');
   });
 
-  it("never stamps one verifier's block reason onto the other (fugu, PR #1455)", () => {
-    // The exact sequence a single global reason got wrong: tests blocks (reason A),
-    // typecheck blocks (reason B, overwriting A), then typecheck is retried and
-    // PASSES. A global field leaves tests:'blocked' printed beside typecheck's
-    // reason B — an accurate-blame PR misattributing blame.
+  it('flags a clean pass sitting on RED CI as neutral, naming the failed checks', () => {
     const s = cleanPassCheckStatus({
-      typecheck: 'pass',
-      tests: 'blocked',
-      // typecheck's entry was dropped when it left 'blocked'; only tests' survives.
-      blockedReasons: { tests: 'reason A — the tests install died' },
+      ci: 'fail',
+      checks: [
+        { name: 'Test (cli)', conclusion: 'failure' },
+        { name: 'Lint', conclusion: 'success' },
+      ],
     });
-    expect(s.summary).toContain('tests: reason A');
-    expect(s.summary).not.toContain('reason B');
+    expect(s.conclusion).toBe('neutral');
+    expect(s.title).toBe('No blocking findings — CI is failing');
+    expect(s.summary).toContain('Test (cli)');
+    // "No findings" must never launder a red commit into a green check.
+    expect(s.conclusion).not.toBe('success');
   });
 
-  it('names a blocked verifier even when its reason went missing', () => {
-    const s = cleanPassCheckStatus({ typecheck: 'blocked', tests: 'unavailable' });
-    expect(s.title).toBe('No blocking findings (verification blocked)');
-    // Degrade to "no detail" — never to some other verifier's detail.
-    expect(s.summary).toContain('typecheck: (no detail captured)');
+  it("keeps 'blocked' meaning OUR outage, not a verdict on the code", () => {
+    // The reason `blocked` survived the sandbox era. A no-verdict environment
+    // failure must not read as "the code failed" NOR as "the model skipped it" —
+    // conflating those accused the model of skipping verification we had denied it,
+    // leaving its own narration as the only account of why.
+    const s = cleanPassCheckStatus({
+      ci: 'blocked',
+      blockedReason:
+        'CI had not completed for this commit within 300s (still running: Test (cli)).',
+      checks: [{ name: 'Test (cli)', conclusion: null }],
+    });
+    expect(s.conclusion).toBe('neutral');
+    expect(s.title).toBe('No blocking findings (CI verdict unavailable)');
+    expect(s.summary).toContain('not a verdict on the code');
+    // The cause survives to the check run without the model narrating it.
+    expect(s.summary).toContain('still running: Test (cli)');
+    expect(s.summary).toContain('Test (cli): still running');
   });
 
-  it('labels never-verified clean passes neutral: unverified vs unavailable vs unknown', () => {
-    expect(cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' })).toMatchObject({
+  it('degrades to "no detail" when a blocked reason went missing — never to a guess', () => {
+    const s = cleanPassCheckStatus({ ci: 'blocked' });
+    expect(s.title).toBe('No blocking findings (CI verdict unavailable)');
+    expect(s.summary).toContain('(no detail captured)');
+  });
+
+  it('distinguishes no-CI-at-all from an unrecorded verification', () => {
+    expect(cleanPassCheckStatus({ ci: 'unavailable', checks: [] })).toMatchObject({
+      conclusion: 'neutral',
+      title: 'No blocking findings (no CI to verify against)',
+    });
+    // Absent record (pre-§9a rows) must not read as verified.
+    expect(cleanPassCheckStatus(undefined)).toMatchObject({
       conclusion: 'neutral',
       title: 'No blocking findings (unverified)',
     });
-    expect(cleanPassCheckStatus({ typecheck: 'unavailable', tests: 'unavailable' })).toMatchObject({
-      conclusion: 'neutral',
-      title: 'No blocking findings (verification unavailable)',
-    });
-    // Absent record (pre-verification rows) must not read as verified.
-    expect(cleanPassCheckStatus(undefined).conclusion).toBe('neutral');
+  });
+});
+
+describe('verificationNote', () => {
+  it('states the CI verdict in one line for every state', () => {
+    expect(verificationNote({ ci: 'pass' })).toContain('CI passed');
+    expect(
+      verificationNote({
+        ci: 'fail',
+        checks: [
+          { name: 'Test (cli)', conclusion: 'failure' },
+          { name: 'Approval gate', conclusion: 'action_required' },
+        ],
+      }),
+    ).toContain('Approval gate');
+    expect(verificationNote({ ci: 'blocked', blockedReason: 'deadline' })).toContain('deadline');
+    expect(verificationNote({ ci: 'unavailable' })).toContain('no CI');
+    expect(verificationNote(undefined)).toContain('not recorded');
   });
 });
 
 describe('PrReviewJob verification gate (check-run policy)', () => {
   const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
 
-  it('finalizes a VERIFIED clean pass as success with the verifier in the title', async () => {
+  it('finalizes a clean pass on GREEN CI as success', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
     __setPrReviewExecutorOverride('d1', async () => ({
       result: {
         ...RESULT,
         comments: [],
-        verification: { typecheck: 'pass' as const, tests: 'pass' as const },
+        verification: {
+          ci: 'pass' as const,
+          checks: [{ name: 'Test (cli)', conclusion: 'success' }],
+        },
       },
       commentsPosted: 0,
       posted: true,
@@ -1225,17 +1184,17 @@ describe('PrReviewJob verification gate (check-run policy)', () => {
 
     const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
     expect(lastFinalize?.[2]).toBe('success');
-    expect(lastFinalize?.[3].title).toContain('verified (typecheck + tests)');
+    expect(lastFinalize?.[3].title).toContain('verified (CI green)');
   });
 
-  it('finalizes an UNVERIFIED clean pass as neutral — never success', async () => {
+  it('finalizes a clean pass with NO CI verdict as neutral — never success', async () => {
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
     __setPrReviewExecutorOverride('d1', async () => ({
       result: {
         ...RESULT,
         comments: [],
-        verification: { typecheck: 'not_run' as const, tests: 'not_run' as const },
+        verification: { ci: 'blocked' as const, blockedReason: 'CI had not completed' },
       },
       commentsPosted: 0,
       posted: true,
@@ -1245,16 +1204,22 @@ describe('PrReviewJob verification gate (check-run policy)', () => {
 
     const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
     expect(lastFinalize?.[2]).toBe('neutral');
-    expect(lastFinalize?.[3].title).toBe('No blocking findings (unverified)');
+    expect(lastFinalize?.[3].title).toBe('No blocking findings (CI verdict unavailable)');
   });
 
-  it('reviews WITH findings keep the success/finding-count check regardless of verification', async () => {
+  it('reviews WITH findings keep the finding-count check AND disclose the CI verdict', async () => {
+    // The hole §9a closed: the clean-pass path disclosed verification and the
+    // findings path said nothing at all, so "CI is red" was invisible exactly when
+    // the reviewer had ALSO found problems — the case where you most want to know.
     const mock = createMockCtx();
     const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
     __setPrReviewExecutorOverride('d1', async () => ({
       result: {
         ...RESULT,
-        verification: { typecheck: 'not_run' as const, tests: 'not_run' as const },
+        verification: {
+          ci: 'fail' as const,
+          checks: [{ name: 'Test (cli)', conclusion: 'failure' }],
+        },
       },
       commentsPosted: 1,
       posted: true,
@@ -1265,6 +1230,8 @@ describe('PrReviewJob verification gate (check-run policy)', () => {
     const lastFinalize = vi.mocked(finalizeReviewCheckRun).mock.calls.at(-1);
     expect(lastFinalize?.[2]).toBe('success');
     expect(lastFinalize?.[3].title).toBe('1 finding');
+    expect(lastFinalize?.[3].summary).toContain('CI FAILED');
+    expect(lastFinalize?.[3].summary).toContain('Test (cli)');
   });
 
   it('onToolProgress touches the checkpoint so long tool runs count as progress', async () => {
@@ -1289,50 +1256,6 @@ describe('PrReviewJob verification gate (check-run policy)', () => {
     await Promise.allSettled(mock.pending);
     expect(touchedAt).toBeGreaterThan(0);
     expect(mock.reviews.get('tp1')!.status).toBe('completed');
-  });
-
-  it('persists verifier outcomes with the round checkpoint and seeds them into a relaunch', async () => {
-    const mock = createMockCtx();
-    const do_ = new PrReviewJob(mock.ctx as never, {} as Env);
-    // First attempt: records a typecheck pass, checkpoints a round, then dies
-    // (never resolves) — the sweep relaunches from the checkpoint.
-    __setPrReviewExecutorOverride('v1', async (_i, _e, _s, hooks) => {
-      hooks?.onVerification?.({ typecheck: 'pass', tests: 'not_run' });
-      hooks?.onRoundState?.({
-        messages: [],
-        nextRound: 3,
-        totalToolCalls: 2,
-        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
-      });
-      return new Promise(() => {});
-    });
-    await do_.fetch(startRequest(startInput({ deliveryId: 'v1' })));
-    // runReview runs under waitUntil and the executor never resolves — wait
-    // for the checkpoint write instead of settling the (hung) pending set.
-    await vi.waitFor(() => {
-      expect(mock.checkpoints.has('v1')).toBe(true);
-    });
-
-    // The persisted checkpoint carries the verification snapshot.
-    expect(JSON.parse(mock.checkpoints.get('v1')!.verification_json!)).toEqual({
-      typecheck: 'pass',
-      tests: 'not_run',
-    });
-
-    // Simulate instance death + relaunch: a fresh DO over the same storage
-    // sweeps the orphaned running row and relaunches with the checkpoint.
-    let resumed: unknown = null;
-    __setPrReviewExecutorOverride('v1', async (_i, _e, _s, hooks) => {
-      resumed = hooks?.resumeVerification ?? null;
-      return { result: { ...RESULT, comments: [] }, commentsPosted: 0, posted: true };
-    });
-    const do2 = new PrReviewJob(mock.ctx as never, {} as Env);
-    await do2.fetch(new Request('https://do/status?deliveryId=v1'));
-    await vi.waitFor(() => {
-      expect(mock.reviews.get('v1')!.status).toBe('completed');
-    });
-
-    expect(resumed).toEqual({ typecheck: 'pass', tests: 'not_run' });
   });
 });
 
@@ -1379,7 +1302,6 @@ describe('PrReviewJob relaunch-from-checkpoint', () => {
       state_json: JSON.stringify(CKPT_STATE),
       round: CKPT_STATE.nextRound,
       updated_at: updatedAt,
-      verification_json: null,
     });
   }
 

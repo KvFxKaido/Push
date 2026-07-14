@@ -150,19 +150,39 @@ Source note:
 
 ### 9a. The reviewer verifies from CI check runs, not its own sandbox
 
-**Status: Draft** — design agreed, not implemented.
+**Status: Current** — implemented 2026-07-14.
 
-The reviewer currently re-runs `typecheck` and the repo's `# test:` command inside
-its own sandbox. It should instead **read the check runs GitHub already produced for
-the head SHA it is reviewing**.
+**Shipped shape.** `ReviewVerification` collapsed to ONE aggregate verdict
+(`ci: 'pass' | 'fail' | 'blocked' | 'unavailable'`) plus the check roll-call it was
+computed from — the former open question below, settled on one aggregate.
+`not_run` is gone: verification is no longer something the model can decline, so
+there is no longer a party to blame for skipping it. Sourced by
+`app/src/worker/review-ci-verification.ts`; the reviewer's sandbox is now
+inspection-only (`search` / `read` / `ls`).
 
-**Why the sandbox path cannot work here.** CI has already run those exact commands,
-on that exact commit, on real hardware, with a warm dependency cache, in ~90s. The
-reviewer then provisions a `standard` container (½ vCPU / 4 GiB) and runs them again:
+Deleted with it: the setup gate, `resolveReviewCommands` (so a review no longer
+depends on the repo's `# setup:` / `# test:` hints at all — the #1457 bug class is
+gone at the root), both 480s verifier deadlines, the 600s setup deadline, the eager
+sandbox warm-up, the verifier completion-gate nudge, and the checkpoint's
+`verification_json` resume machinery (a single idempotent GitHub read has nothing to
+resume). `review-sandbox-tools.ts` shrank from 764 lines to roughly 280.
+
+Also closed a disclosure hole found while implementing: the CI verdict is now stated
+on EVERY posted review's check run. The clean-pass path disclosed it and the
+findings path did not, so "CI is red" was invisible precisely when the reviewer had
+also found problems — the case where you most want to know.
+
+**Previous behavior.** The reviewer re-ran `typecheck` and the repo's `# test:`
+command inside its own sandbox. The shipped replacement **reads the check runs GitHub
+already produced for the head SHA it is reviewing**.
+
+**Why the sandbox path could not work here.** CI had already run those exact commands,
+on that exact commit, on real hardware, with a warm dependency cache, in ~90s. The old
+reviewer then provisioned a `standard` container (½ vCPU / 4 GiB) and ran them again:
 a full monorepo `pnpm install` (600s setup deadline) followed by a 3,248-test suite
 (480s verifier deadline) that takes ~5 minutes on a 16-core machine. `Dockerfile.sandbox`
-already records that this container class gets OOM-killed by repo test suites. We are
-asking the box to do something it cannot do, and then reading the corpse as flakiness.
+already records that this container class gets OOM-killed by repo test suites. We were
+asking the box to do something it could not do, and then reading the corpse as flakiness.
 
 Observed consequence (PR #1467, the first review after the setup gate was fixed):
 
@@ -208,15 +228,26 @@ Filter by the **check-run id we created** (exact), and defensively by **owning a
 Never filter by NAME alone — `REVIEW_CHECK_NAME` is user-visible text and a repo can
 mint a check run that collides with it.
 
-**Which checks count is a second open question, and it is not "all of them".** The
-record has `typecheck` and `tests` fields; CI has arbitrary check names ("Format,
-Typecheck, Test (cli)", "Lint, Test, Build (app)", "Workers Builds: push"). Mapping
-names to verifier slots is brittle. The recommendation: stop pretending the record is
-per-verifier and source ONE aggregate verdict from the non-self check runs (all
-completed and none failed → `pass`; any failure → `fail`), because "did the head SHA's
-checks pass" is exactly the fact the check run reports and exactly the gate the change
-merges on. That is a change to `ReviewVerification`'s shape and should be decided
-before implementation, not discovered during it.
+**Which checks count — resolved as one aggregate.** The old record had `typecheck` and
+`tests` fields; CI has arbitrary check names ("Format, Typecheck, Test (cli)", "Lint,
+Test, Build (app)", "Workers Builds: push"). Mapping names to verifier slots is brittle.
+The implementation instead sources ONE aggregate verdict from the non-self check runs
+(all completed and none failed → `pass`; any failure → `fail`), because "did the head
+SHA's checks pass" is exactly the fact the check-run API reports and exactly the gate
+the change merges on.
+
+Implementation refinements, all about not lying:
+
+- A **failure short-circuits** — no point waiting out the still-running checks to
+  reach a verdict already determined, when waiting costs the whole deadline.
+- A check that ended **without a real conclusion** (`skipped` / `cancelled` /
+  `neutral` / `stale`) is not a pass. If those are ALL there is, the verdict is
+  `blocked`, not `pass` — otherwise a repo that cancels CI launders a green
+  verification out of a commit nothing ever checked.
+- An initially empty result gets one discovery poll before `unavailable`, because
+  GitHub registers Actions check suites asynchronously from the PR webhook. Malformed,
+  shifting, unreadable, or capped pagination returns `blocked`; an incomplete list can
+  never become a green aggregate.
 
 **This makes the verification claim stronger, not weaker.** CI is the gate the change
 merges on. A reviewer that says "tests pass" because *the gate you merge on* passed is

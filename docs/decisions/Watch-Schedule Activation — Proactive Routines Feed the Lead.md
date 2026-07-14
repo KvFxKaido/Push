@@ -160,15 +160,14 @@ gap below is a daemon-shaped idea expressed in this doc's vocabulary:
   floor, not a cost to optimize; for a solo repo the review's job is catching what the author
   missed, and token cost is noise. The real enforcement gap was verification, shipped as the
   next bullet.)* ~~Classify the diff and route trivial diffs to the quick pass.~~
-- **Verify-before-clean-pass (runtime-gated verification).** *(Shipped 2026-07-09.)* The
-  reviewer's verification was doubly prompt-suggested: the only verifier tool was typecheck,
-  and nothing checked whether it ran. Now: a `tests` verifier (base-ref `# test:` hint command,
-  unavailable without one), runtime tracking of verifier runs (`ReviewVerification` on
-  `ReviewResult`, persisted with round checkpoints), a `completionGate` in the deep reviewer
-  that bounces an unverified zero-findings completion once with a nudge, and a check-run policy
-  where `success` on a clean pass requires a verifier to have run and passed — everything else
-  concludes `neutral` with the reason in the title (unverified / verification failed /
-  verification unavailable). The same didn't-happen ≠ clean-pass rule as the degraded path.
+- **Verify-before-clean-pass (CI-sourced verification).** *(Superseded 2026-07-14 by
+  [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
+  §9a.)* The 2026-07-09 implementation added sandbox `typecheck` / `tests` verifiers,
+  runtime-tracked their results, and gated a clean-pass check on at least one passing verifier.
+  §9a removed that path after the review container proved unable to run the repo workload
+  reliably. Verification now reads one aggregate verdict from the PR head's GitHub check runs;
+  a clean pass is green only when that CI verdict passes, and missing/blocked/failing CI cannot
+  launder into a successful review check.
 - **Per-repo policy as repo contract (the frontmatter split).** `REVIEW.md` is already the
   prose contract with the right trust posture (fetched from the base ref, never the fork
   head), but the machine policy lives in worker env (`PR_REVIEW_GATING_REPOS`, installation

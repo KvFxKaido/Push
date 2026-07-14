@@ -13,6 +13,7 @@ import {
   detectToolCall,
   executePostPRReview,
   findMergedPRForBranch,
+  fetchCheckRunsForSha,
   fetchReviewGuidance,
 } from './github-tools';
 import type { ReviewResult } from '@/types';
@@ -83,6 +84,87 @@ describe('injected GitHub auth', () => {
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe('token install-token-xyz');
     expect(headers['User-Agent']).toBeTruthy();
+  });
+});
+
+describe('fetchCheckRunsForSha', () => {
+  const checkRun = (id: number) => ({
+    id,
+    name: `check-${id}`,
+    status: 'completed',
+    conclusion: 'success',
+    app: { id: 42 },
+  });
+
+  it('paginates until the complete check-run set has been read', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 101,
+            check_runs: Array.from({ length: 100 }, (_, i) => checkRun(i + 1)),
+          }),
+          {
+            status: 200,
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ total_count: 101, check_runs: [checkRun(101)] }), {
+          status: 200,
+        }),
+      );
+
+    const result = await fetchCheckRunsForSha('octo/repo', 'sha-1', { token: 'tok' });
+
+    expect(result).toHaveLength(101);
+    expect(githubFetchMock).toHaveBeenCalledTimes(2);
+    expect(githubFetchMock.mock.calls[1]?.[0]).toContain('page=2');
+  });
+
+  it('fails closed when a successful response is malformed or contains an unidentifiable run', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ total_count: 0 }), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            total_count: 1,
+            check_runs: [
+              { name: 'failure-without-an-id', status: 'completed', conclusion: 'failure' },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    await expect(fetchCheckRunsForSha('octo/repo', 'sha-1')).resolves.toBeNull();
+    await expect(fetchCheckRunsForSha('octo/repo', 'sha-1')).resolves.toBeNull();
+  });
+
+  it('returns null after transport retries are exhausted instead of throwing', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock.mockRejectedValueOnce(new Error('transport down'));
+
+    await expect(fetchCheckRunsForSha('octo/repo', 'sha-1')).resolves.toBeNull();
+  });
+
+  it('fails closed when the endpoint cap leaves the check-run set potentially truncated', async () => {
+    githubFetchMock.mockReset();
+    githubFetchMock.mockImplementation(async () => {
+      const page = githubFetchMock.mock.calls.length;
+      return new Response(
+        JSON.stringify({
+          total_count: 1000,
+          check_runs: Array.from({ length: 100 }, (_, i) => checkRun(page * 100 + i)),
+        }),
+        { status: 200 },
+      );
+    });
+
+    await expect(fetchCheckRunsForSha('octo/repo', 'sha-1')).resolves.toBeNull();
+    expect(githubFetchMock).toHaveBeenCalledTimes(10);
   });
 });
 

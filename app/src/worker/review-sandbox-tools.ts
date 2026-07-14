@@ -5,17 +5,15 @@
  * grep/read across the *checked-out PR head* so it can trace a changed symbol
  * into non-diff files (the gap that let the #1219 normalizer strip slip past
  * review). It provisions a sandbox with the PR head checked out and dispatches a
- * small tool set (search/read/ls/typecheck/tests) into the reviewer's tool loop.
+ * small inspection tool set (search/read/ls) into the reviewer's tool loop.
  *
  * Security posture — deliberately reuses the existing read-only inspection
  * handlers (`handleSearch`/`handleReadFile`/`handleListDir`) rather than calling
  * sandbox routes raw, so the reviewer inherits the SAME redaction the web
  * Coder/Explorer get: sensitive-path hiding + secret-value redaction
  * (`handleSearch`) and envelope-boundary escaping (`handleReadFile`). The raw
- * `sandbox_exec` route is NEVER exposed. The only executable verifiers are
- * `sandbox_check_types` and `sandbox_run_tests`, and their commands are
- * supplied by the Durable Object from trusted base-ref instructions, never
- * from the model or the checked-out PR.
+ * `sandbox_exec` route is NEVER exposed. Verification comes from the PR head's
+ * GitHub check runs (§9a), not from executable tools in this sandbox.
  *
  * Reachability uses the internal, gate-free `dispatchSandboxRouteInternal`
  * (proved by the reachability spike): the DO is inside the trust boundary and
@@ -24,16 +22,12 @@
  *
  * Imports are TYPE-ONLY at module scope; the runtime deps (`worker-cf-sandbox`,
  * which pulls the CF Sandbox SDK's `cloudflare:`-scheme imports, and the
- * inspection handlers, and detached runner) are loaded via dynamic `import()`
+ * inspection handlers) are loaded via dynamic `import()`
  * inside the functions so this module — and `pr-review-job-do` which statically
  * imports it — stay off the vitest/node graph that can't resolve `cloudflare:`
  * (same reason the reachability spike was dynamically imported).
  */
 
-import type {
-  DetachedExecPrimitives,
-  DetachedTerminalReason,
-} from '@push/lib/detached-exec-runner';
 import type { ExecResult, FileEntry, FileReadResult } from '@/lib/sandbox-client';
 import type { ReadOnlyInspectionHandlerContext } from '@/lib/sandbox-read-only-inspection-handlers';
 import type { SandboxToolCall } from '@/lib/sandbox-tool-detection';
@@ -46,167 +40,32 @@ import type { Env } from './worker-middleware';
  *  detector resolves only canonical/public/alias names, so advertising
  *  anything else produces calls that silently never execute (Codex P2,
  *  PR #1385). */
-export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls', 'typecheck', 'test'] as const;
-/** Full public names string (every tool, tests included). */
+export const REVIEW_SANDBOX_TOOLS = ['search', 'read', 'ls'] as const;
+/** Full public names string. */
 export const REVIEW_SANDBOX_TOOL_NAMES = REVIEW_SANDBOX_TOOLS.join(', ');
 
 /**
- * Public names for the reviewer tool-protocol `- Sandbox:` line, narrowed to
- * what this review can actually serve: `tests` is advertised only when the
- * repo declares a test command (AGENTS.md `# test:` hint at the base ref) —
- * there is no safe universal default the way typecheck has `npx tsc --noEmit`.
- */
-export function reviewSandboxToolNames(testsAvailable: boolean): string {
-  return (
-    testsAvailable ? REVIEW_SANDBOX_TOOLS : REVIEW_SANDBOX_TOOLS.filter((t) => t !== 'test')
-  ).join(', ');
-}
-
-/** Verifier commands the DO resolves from trusted base-ref instructions.
- *  `tests: null` = no repo test command → the tests tool is unavailable.
- *  `setup` runs once before the first verifier (repo `# setup:` hint, else
- *  the conditional root-install default). */
-export interface ReviewVerifierCommands {
-  typecheck: string;
-  tests: string | null;
-  setup: string;
-}
-
-/**
- * Default environment setup when the repo declares no `# setup:` hint —
- * the coder-side `handleCheckTypes` precedent (install root deps when a
- * package.json exists and node_modules doesn't), made conditional so it's a
- * no-op on warm sandboxes and non-Node repos, and package-manager-aware via
- * lockfile detection (a bare `npm install` on a pnpm/yarn/bun repo fails
- * needlessly — fugu WARNING, PR #1387). If the detected manager isn't
- * available in the sandbox image the setup fails and the review proceeds
- * unverified — honest, and no worse than the wrong installer. Monorepos with
- * nested installs (like Push itself: root + app/ + mcp/) need the explicit
- * hint.
- */
-export const REVIEW_DEFAULT_SETUP_COMMAND =
-  'if [ -f package.json ] && [ ! -d node_modules ]; then ' +
-  'if [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm install; ' +
-  'elif [ -f yarn.lock ]; then corepack enable yarn && yarn install; ' +
-  'elif [ -f bun.lockb ] || [ -f bun.lock ]; then bun install; ' +
-  'else npm install; fi; fi';
-
-/** Outcome of the one-time environment setup run. */
-export interface ReviewSetupResult {
-  ok: boolean;
-  /** Reduced stdout/stderr for the failure path (model- and log-facing). */
-  text: string;
-}
-
-/** Structured verifier outcome riding a verification tool's result, so the
- *  executor can record the verdict without parsing the model-facing text.
+ * Public names for the reviewer tool-protocol `- Sandbox:` line.
  *
- *  `blocked` is emitted when the verifier WAS invoked but the environment stopped
- *  it — the setup gate failed, or the run never completed (timeout / lost
- *  contact). It is not a verdict on the code and must never read as a failure;
- *  it exists so the check run can say the environment broke instead of accusing
- *  the model of skipping verification. `reason` is the short, human-facing why. */
-export interface ReviewVerificationOutcome {
-  kind: 'typecheck' | 'tests';
-  status: 'pass' | 'fail' | 'blocked';
-  /** Present on `blocked` — a trimmed reason for the check run and logs. */
-  reason?: string;
-}
-
-/** Tool result plus optional verification metadata (verifier tools only). */
-export type ReviewSandboxToolResult = ToolExecutionResult & {
-  verification?: ReviewVerificationOutcome;
-};
-
-/** Max chars of blocked-reason carried to the check run. Long enough for a real
- *  install error's tail, short enough for a check-run summary line. */
-const BLOCKED_REASON_CAP = 400;
-
-/**
- * Condense a blocked verifier's cause into one check-run-safe line.
- *
- * The input is UNTRUSTED: for the setup-gate path it's the tail of an install's
- * stdout/stderr, which flows from a PR branch's own config and lands in a GitHub
- * check-run summary (rendered as markdown). Sanitize and flatten, keep the TAIL —
- * the actual error is at the end of an install log, not the start.
+ * INSPECTION ONLY since §9a. `typecheck` and `test` used to live here: the reviewer
+ * re-ran the repo's own commands inside a half-vCPU container that `Dockerfile.sandbox`
+ * documents as getting OOM-killed by repo test suites, while CI had already run those
+ * exact commands on that exact commit in ~90s. Verification now reads the head SHA's
+ * check runs; the sandbox keeps the job it is actually good at — reading the code.
  */
-export async function summarizeBlockedReason(text: string): Promise<string> {
-  // Dynamic import for the same reason the verifier paths use one — this module is
-  // statically imported by pr-review-job-do and must stay off the graph that can't
-  // resolve `cloudflare:`-scheme deps under vitest.
-  const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
-  const flattened = sanitizeUntrustedSource(text)
-    .split('\n')
-    .map((line: string) => line.trim())
-    .filter(Boolean)
-    .join(' · ');
-  if (flattened.length <= BLOCKED_REASON_CAP) return flattened;
-  return `…${flattened.slice(-BLOCKED_REASON_CAP)}`;
+export function reviewSandboxToolNames(): string {
+  return REVIEW_SANDBOX_TOOL_NAMES;
 }
 
-// One deadline per verifier: test suites routinely run longer than tsc, but
-// each must fit inside the review's 15-min no-progress budget. Setup + one
-// verifier run back-to-back inside a single tool round on top of the model's
-// round wall-clock, which can exceed that budget in sum — so the executor
-// reports tool-start progress (hooks.onToolProgress → checkpoint touch) and
-// the budget measures from the LAST progress mark, not the round top
-// (Codex P2, PR #1387). Setup gets 10 min: a cold monorepo install (Push's
-// own `# setup:` hint runs three npm trees) doesn't fit the old 5; the DO
-// kicks setup eagerly at review start and re-touches progress after the
-// setup gate, so the wider deadline stays inside the no-progress budget.
-const REVIEW_TYPECHECK_DEADLINE_MS = 480_000;
-const REVIEW_TESTS_DEADLINE_MS = 480_000;
-const REVIEW_SETUP_DEADLINE_MS = 600_000;
-const FALLBACK_STREAM_CAP_CHARS = 80_000;
-
-// Per-call deadlines on the detached-exec primitives. The CF sandbox control
-// plane can hang at minute scale under load (observed 2026-07-09: startProcess
-// 55s in flight, getProcess status polls 44–70s, all ending only when the
-// caller was killed). The runner's overall deadline is checked BETWEEN awaits,
-// so a single hung primitive call stalls the whole verifier until the review's
-// 15-min budget kills the attempt. Bounding each call turns that stall into a
-// thrown error the runner already classifies (status → lost-contact, logs →
-// swallowed mid-run drain, start → the caller's transport-failed result).
-// Status/logs get retries — a slow poll under npm load may recover; start does
-// not (a retried start could double-spawn the command).
-const REVIEW_PRIMITIVE_START_DEADLINE_MS = 60_000;
-const REVIEW_PRIMITIVE_POLL_DEADLINE_MS = 30_000;
-const REVIEW_PRIMITIVE_POLL_ATTEMPTS = 3;
-
-/** Reject with a labeled error when `run` doesn't settle within `ms`. The
- *  underlying subrequest keeps running — we stop waiting, not the work. */
-function withDeadline<T>(run: () => Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} did not respond within ${ms}ms`)),
-      ms,
-    );
-    run().then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
+/** Tool result for a reviewer sandbox call. Inspection-only since §9a, so there is
+ *  no verification metadata riding on it any more — the verdict comes from the head
+ *  SHA's check runs (see review-ci-verification.ts), not from anything this module
+ *  executes. */
+export type ReviewSandboxToolResult = ToolExecutionResult;
 
 export interface ReviewSandbox {
   sandboxId: string;
   ownerToken: string;
-}
-
-interface ReviewDetachedExecResult {
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-  truncated: boolean;
-  timedOut: boolean;
-  error?: string;
-  terminalReason?: DetachedTerminalReason;
 }
 
 function log(event: string, ctx: Record<string, unknown>): void {
@@ -233,24 +92,6 @@ async function callRoute(
 }
 
 const okStatus = (s: number): boolean => s >= 200 && s < 300;
-
-function routeError(route: string, status: number, json: Record<string, unknown> | null): Error {
-  const detail = typeof json?.error === 'string' ? json.error : `HTTP ${status}`;
-  const err = new Error(`sandbox ${route} failed: ${detail}`);
-  const code = typeof json?.code === 'string' ? json.code : undefined;
-  Object.assign(err, { statusCode: status, ...(code ? { code } : {}) });
-  return err;
-}
-
-async function callRequiredRoute(
-  env: Env,
-  route: string,
-  body: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const { status, json } = await callRoute(env, route, body);
-  if (!okStatus(status)) throw routeError(route, status, json);
-  return json ?? {};
-}
 
 async function bestEffortCleanup(env: Env, sandboxId: string, ownerToken: string): Promise<void> {
   try {
@@ -338,7 +179,7 @@ export async function cleanupReviewSandbox(env: Env, sandbox: ReviewSandbox): Pr
 /**
  * Build a read-only inspection context whose transport dispatches to the
  * review's sandbox via the internal route entry. Client-side cache/ledger hooks
- * are no-ops — the DO has no per-session workspace cache to keep coherent.
+ * are no-ops â€” the DO has no per-session workspace cache to keep coherent.
  */
 function buildReviewInspectionContext(
   env: Env,
@@ -380,14 +221,14 @@ function buildReviewInspectionContext(
       }));
     },
     // Symbols/refs are not in the v1 reviewer tool set; never invoked because
-    // executeReviewSandboxTool routes only search/read/ls/typecheck. Throw defensively.
+    // executeReviewSandboxTool routes only search/read/ls. Throw defensively.
     readSymbolsFromSandbox: async () => {
       throw new Error('sandbox_read_symbols is not available in PR review');
     },
     findReferencesInSandbox: async () => {
       throw new Error('sandbox_find_references is not available in PR review');
     },
-    // Client-side coherence caches — no-ops in the DO.
+    // Client-side coherence caches â€” no-ops in the DO.
     syncReadSnapshot: () => {},
     invalidateWorkspaceSnapshots: () => 0,
     deleteFileVersion: () => {},
@@ -398,332 +239,25 @@ function buildReviewInspectionContext(
   };
 }
 
-async function runDetachedReviewExec(
-  env: Env,
-  sandbox: ReviewSandbox,
-  command: string,
-  deadlineMs: number,
-): Promise<ReviewDetachedExecResult> {
-  const auth = { sandbox_id: sandbox.sandboxId, owner_token: sandbox.ownerToken };
-  // Bounded poll: per-call deadline, retried — the transport owns retries per
-  // the runner's contract (its status/logs failure paths assume "retries
-  // already exhausted"). Non-timeout errors (404 etc.) retry too; the extra
-  // round-trips are cheap and a transient route error shouldn't kill a
-  // 5-minute install at minute 4.
-  const boundedPoll = async (
-    route: 'exec-status' | 'exec-logs',
-    body: Record<string, unknown>,
-  ): Promise<Record<string, unknown>> => {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < REVIEW_PRIMITIVE_POLL_ATTEMPTS; attempt++) {
-      try {
-        return await withDeadline(
-          () => callRequiredRoute(env, route, body),
-          REVIEW_PRIMITIVE_POLL_DEADLINE_MS,
-          `sandbox ${route}`,
-        );
-      } catch (err) {
-        lastErr = err;
-      }
-    }
-    throw lastErr;
-  };
-  const primitives: DetachedExecPrimitives = {
-    start: async (cmd, opts) => {
-      const raw = await withDeadline(
-        () =>
-          callRequiredRoute(env, 'exec-start', {
-            ...auth,
-            command: cmd,
-            workdir: opts.workdir,
-          }),
-        REVIEW_PRIMITIVE_START_DEADLINE_MS,
-        'sandbox exec-start',
-      );
-      const processId = typeof raw.process_id === 'string' ? raw.process_id : '';
-      if (!processId) throw new Error('sandbox exec-start did not return process_id');
-      return { processId };
-    },
-    status: async (processId) => {
-      const raw = await boundedPoll('exec-status', { ...auth, process_id: processId });
-      if (typeof raw.running !== 'boolean') {
-        throw new Error('sandbox exec-status did not return running');
-      }
-      const exitCode =
-        typeof raw.exit_code === 'number' || raw.exit_code === null ? raw.exit_code : null;
-      return {
-        running: raw.running,
-        exitCode,
-        ...(typeof raw.branch === 'string' ? { branch: raw.branch } : {}),
-      };
-    },
-    logs: async (processId, cursors) => {
-      const raw = await boundedPoll('exec-logs', {
-        ...auth,
-        process_id: processId,
-        cursor_stdout: cursors.cursorStdout,
-        cursor_stderr: cursors.cursorStderr,
-      });
-      if (
-        typeof raw.next_cursor_stdout !== 'number' ||
-        typeof raw.next_cursor_stderr !== 'number'
-      ) {
-        throw new Error('sandbox exec-logs did not return log cursors');
-      }
-      return {
-        stdout: typeof raw.stdout === 'string' ? raw.stdout : '',
-        stderr: typeof raw.stderr === 'string' ? raw.stderr : '',
-        nextCursorStdout: raw.next_cursor_stdout,
-        nextCursorStderr: raw.next_cursor_stderr,
-      };
-    },
-    interrupt: async (processId) => {
-      await withDeadline(
-        () => callRequiredRoute(env, 'exec-kill', { ...auth, process_id: processId }),
-        REVIEW_PRIMITIVE_POLL_DEADLINE_MS,
-        'sandbox exec-kill',
-      );
-    },
-  };
-
-  try {
-    const { runDetachedToCompletion } = await import('@push/lib/detached-exec-runner');
-    const result = await runDetachedToCompletion(primitives, command, {
-      workdir: '/workspace',
-      overallTimeoutMs: deadlineMs,
-    });
-    return {
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      truncated: result.truncated,
-      timedOut: result.terminalReason === 'deadline',
-      terminalReason: result.terminalReason,
-      ...(result.error ? { error: result.error } : {}),
-    };
-  } catch (err) {
-    const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
-    return {
-      stdout: '',
-      stderr: `Detached verifier transport failed: ${message}`,
-      exitCode: -1,
-      truncated: false,
-      timedOut: false,
-      error: message,
-      terminalReason: 'start-unconfirmed',
-    };
-  }
-}
-
-function capFallbackStream(text: string): string {
-  if (text.length <= FALLBACK_STREAM_CAP_CHARS) return text;
-  return `${text.slice(0, FALLBACK_STREAM_CAP_CHARS)}\n[...truncated]`;
-}
-
-async function reduceReviewTypecheckOutput(
-  command: string,
-  result: ReviewDetachedExecResult,
-): Promise<{ stdout: string; stderr: string }> {
-  try {
-    const { reduceToolOutput } = await import('@push/lib/tool-output-reducers');
-    const reduced = reduceToolOutput({
-      command,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-    });
-    return { stdout: reduced.stdout, stderr: reduced.stderr };
-  } catch {
-    return {
-      stdout: capFallbackStream(result.stdout),
-      stderr: capFallbackStream(result.stderr),
-    };
-  }
-}
-
 /**
- * Run a base-ref-selected verifier command (typecheck or tests) against the
- * checked-out PR head. NEVER throws: failures are returned as model-facing
- * tool results so the review loop can keep going and reason about pass/fail.
+ * Execute one reviewer sandbox tool against the checked-out PR head.
  *
- * Verdict policy: the structured `verification` field is attached ONLY when
- * the command actually ran to completion with a real exit code. A deadline
- * kill, lost contact, an abort, or an abnormal death (no exit code) is an
- * environment outcome — recording it as `pass: false` would paint the
- * check-run "tests failed" over a sandbox problem. Those runs return
- * model-facing text explaining the verifier could not complete and leave the
- * review's verification state at `not_run` (unverified).
- */
-async function runReviewVerifier(
-  env: Env,
-  sandbox: ReviewSandbox,
-  command: string,
-  kind: ReviewVerificationOutcome['kind'],
-  deadlineMs: number,
-): Promise<ReviewSandboxToolResult> {
-  const trimmedCommand = command.trim();
-  const executedCommand = `cd /workspace && ${trimmedCommand}`;
-  const result = await runDetachedReviewExec(env, sandbox, executedCommand, deadlineMs);
-  const reduced = await reduceReviewTypecheckOutput(trimmedCommand, result);
-  const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
-
-  // A synthetic exit code (-1: never started / lost mid-run / died without a
-  // code) is not a command outcome even when terminalReason says 'completed'.
-  const completed = result.terminalReason === 'completed' && result.exitCode >= 0;
-  const pass = completed && result.exitCode === 0;
-  const lines: string[] = [
-    `[Tool Result — ${kind}]`,
-    `Command: ${trimmedCommand}`,
-    `Exit code: ${result.exitCode}`,
-    `Result: ${completed ? (pass ? 'PASS' : 'FAIL') : 'DID NOT COMPLETE'}`,
-  ];
-  if (reduced.stdout) lines.push(`\nStdout:\n${sanitizeUntrustedSource(reduced.stdout)}`);
-  if (reduced.stderr) lines.push(`\nStderr:\n${sanitizeUntrustedSource(reduced.stderr)}`);
-  if (result.truncated) lines.push('\n[Output truncated]');
-  if (result.timedOut) {
-    lines.push(`\n[Timed out after ${deadlineMs}ms]`);
-  }
-  if (result.error) lines.push(`\n[Note] ${sanitizeUntrustedSource(result.error)}`);
-  if (!completed) {
-    lines.push(
-      `\n[Note] The ${kind} verifier could not run to completion in this review's sandbox (timeout, lost contact, or abnormal termination). This is an environment outcome, NOT a ${kind} failure — do not report it as a finding. Note the review as unverified for ${kind}.`,
-    );
-  }
-
-  log('review_verifier_finished', {
-    kind,
-    completed,
-    exitCode: result.exitCode,
-    terminalReason: result.terminalReason ?? null,
-    timedOut: result.timedOut,
-  });
-
-  // A verifier that never completed is BLOCKED, not `not_run`. It ran — the
-  // environment killed it — so bank that distinctly rather than dropping the
-  // outcome and letting the record read as "the model never invoked this".
-  const verification: ReviewVerificationOutcome = completed
-    ? { kind, status: pass ? 'pass' : 'fail' }
-    : {
-        kind,
-        status: 'blocked',
-        reason: await summarizeBlockedReason(
-          result.timedOut
-            ? `${kind} verifier timed out after ${deadlineMs}ms`
-            : `${kind} verifier did not complete (${result.terminalReason ?? 'lost contact'})${
-                result.error ? `: ${result.error}` : ''
-              }`,
-        ),
-      };
-
-  return { text: lines.join('\n'), verification };
-}
-
-/**
- * One-time environment setup before the verifiers — dependency installs etc.
- * Command comes from the repo's base-ref `# setup:` hint, else
- * {@link REVIEW_DEFAULT_SETUP_COMMAND}. NEVER throws; a failure is returned
- * for the caller to surface (verification then simply cannot run — that is
- * an environment outcome, not a verifier fail).
- */
-export async function runReviewSetup(
-  env: Env,
-  sandbox: ReviewSandbox,
-  command: string,
-): Promise<ReviewSetupResult> {
-  const trimmedCommand = command.trim() || REVIEW_DEFAULT_SETUP_COMMAND;
-  const result = await runDetachedReviewExec(
-    env,
-    sandbox,
-    `cd /workspace && ${trimmedCommand}`,
-    REVIEW_SETUP_DEADLINE_MS,
-  );
-  const ok = result.exitCode === 0;
-  log(ok ? 'review_sandbox_setup_succeeded' : 'review_sandbox_setup_failed', {
-    exitCode: result.exitCode,
-    timedOut: result.timedOut,
-  });
-  if (ok) return { ok, text: '' };
-  const reduced = await reduceReviewTypecheckOutput(trimmedCommand, result);
-  const { sanitizeUntrustedSource } = await import('@push/lib/untrusted-content');
-  const detail = [reduced.stderr, reduced.stdout].filter(Boolean).join('\n').slice(0, 2_000);
-  return {
-    ok,
-    text: `Environment setup failed (exit ${result.exitCode}${result.timedOut ? ', timed out' : ''}): ${sanitizeUntrustedSource(detail)}`,
-  };
-}
-
-/** Typecheck verifier — falls back to the universal `npx tsc --noEmit`. */
-export async function runReviewTypecheck(
-  env: Env,
-  sandbox: ReviewSandbox,
-  command: string,
-): Promise<ReviewSandboxToolResult> {
-  return runReviewVerifier(
-    env,
-    sandbox,
-    command.trim() || 'npx tsc --noEmit',
-    'typecheck',
-    REVIEW_TYPECHECK_DEADLINE_MS,
-  );
-}
-
-/** Test verifier — command comes from the repo's base-ref `# test:` hint;
- *  callers must not invoke this without one (there is no safe default). */
-export async function runReviewTests(
-  env: Env,
-  sandbox: ReviewSandbox,
-  command: string,
-): Promise<ReviewSandboxToolResult> {
-  return runReviewVerifier(env, sandbox, command, 'tests', REVIEW_TESTS_DEADLINE_MS);
-}
-
-/**
- * Execute an allowlisted sandbox tool call against the review's sandbox. Only
- * the reviewer set (search/read/ls/typecheck/tests) is honored; anything else
- * returns a model-readable error rather than reaching the sandbox. Inspection
- * tools reuse the redacting handlers, and the verifiers run only commands
- * supplied by the Durable Object from trusted base-ref instructions — never
- * from the model or the checked-out PR head (the model's `framework` arg to
- * `sandbox_run_tests` is deliberately ignored for the same reason).
+ * INSPECTION ONLY since §9a — search / read / ls. The verifier cases
+ * (`sandbox_check_types`, `sandbox_run_tests`) and the setup gate that fed them are
+ * gone: the reviewer no longer re-runs the repo's commands on a half-vCPU container,
+ * it reads the verdict CI already produced for the head SHA.
+ *
+ * That deletes the whole failure class this module kept generating — the 600s setup
+ * install, the two 480s verifier deadlines, and the setup gate whose model-facing
+ * "[Tool Error] … Verification cannot run in this review's sandbox" the model would
+ * then relay as its own reasoning, making an environment outage look like a model
+ * excuse.
  */
 export async function executeReviewSandboxTool(
   env: Env,
   sandbox: ReviewSandbox,
   call: SandboxToolCall,
-  commands: ReviewVerifierCommands,
-  /**
-   * Memoized one-time environment setup, awaited by the VERIFIER cases only
-   * (inspection tools don't need dependencies). Supplied by the executor so
-   * one setup run covers every verifier call in the review. A failed setup
-   * short-circuits the verifier with a model-readable error and NO
-   * verification metadata — the verifier didn't fail, it couldn't run.
-   */
-  ensureSetup?: () => Promise<ReviewSetupResult>,
-  /**
-   * Progress mark for the review's no-progress budget, called after the setup
-   * gate settles so a verifier that waited on a long install still gets its
-   * full deadline measured from the install's END, not the tool-call start
-   * (setup 600s + verifier 480s would otherwise overrun the 15-min budget
-   * with no progress mark in between).
-   */
-  touchProgress?: () => void,
 ): Promise<ReviewSandboxToolResult> {
-  // Takes the verifier `kind` so a setup failure is BANKED against the verifier the
-  // model actually invoked. Without this the tool returns an error and no outcome,
-  // leaving the record at `not_run` — indistinguishable from a model that never
-  // called the verifier, which is what the check run then (wrongly) reported.
-  const setupGate = async (
-    kind: ReviewVerificationOutcome['kind'],
-  ): Promise<ReviewSandboxToolResult | null> => {
-    if (!ensureSetup) return null;
-    const setup = await ensureSetup();
-    touchProgress?.();
-    if (setup.ok) return null;
-    return {
-      text: `[Tool Error] ${setup.text}\nVerification cannot run in this review's sandbox — investigate via the diff and read tools, and note the review as unverified.`,
-      verification: { kind, status: 'blocked', reason: await summarizeBlockedReason(setup.text) },
-    };
-  };
   switch (call.tool) {
     case 'sandbox_search': {
       const ctx = buildReviewInspectionContext(env, sandbox);
@@ -740,24 +274,9 @@ export async function executeReviewSandboxTool(
       const { handleListDir } = await import('@/lib/sandbox-read-only-inspection-handlers');
       return handleListDir(ctx, call.args);
     }
-    case 'sandbox_check_types': {
-      const blocked = await setupGate('typecheck');
-      if (blocked) return blocked;
-      return runReviewTypecheck(env, sandbox, commands.typecheck);
-    }
-    case 'sandbox_run_tests': {
-      if (!commands.tests) {
-        return {
-          text: '[Tool Error] This repository declares no test command (no `# test:` hint in AGENTS.md at the base ref) — tests are unavailable for this review. Use typecheck instead.',
-        };
-      }
-      const blocked = await setupGate('tests');
-      if (blocked) return blocked;
-      return runReviewTests(env, sandbox, commands.tests);
-    }
     default:
       return {
-        text: `[Tool Error] ${call.tool} is not available in automated PR review (sandbox tools: ${reviewSandboxToolNames(Boolean(commands.tests))}).`,
+        text: `[Tool Error] ${call.tool} is not available in automated PR review (sandbox tools: ${reviewSandboxToolNames()}). Verification comes from this commit's CI check runs, not from the review sandbox.`,
       };
   }
 }

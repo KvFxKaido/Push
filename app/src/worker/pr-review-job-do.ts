@@ -28,10 +28,7 @@ import type {
   PushStream,
   ReviewResult,
   ReviewVerification,
-  ReviewVerifierStatus,
 } from '@push/lib/provider-contract';
-import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
-import { parseAgentsMdHints } from '@push/lib/repo-commands';
 import { resolveReviewGuidance } from '@push/lib/review-guidance';
 import { buildReviewerContextBlock, type PriorReviewContext } from '@push/lib/role-context';
 import { runDeepReviewer, type DeepReviewerResumeState } from '@push/lib/deep-reviewer-agent';
@@ -40,7 +37,6 @@ import {
   createReviewCheckRun,
   executePostPRReview,
   executeReadOnlyGitHubToolWithToken,
-  fetchRepoFileContent,
   fetchPullRequestDiff,
   fetchPullRequestHeadSha,
   fetchReviewGuidance,
@@ -65,13 +61,13 @@ import {
   cleanupReviewSandbox,
   executeReviewSandboxTool,
   provisionReviewSandbox,
-  REVIEW_DEFAULT_SETUP_COMMAND,
   reviewSandboxToolNames,
-  runReviewSetup,
   type ReviewSandbox,
-  type ReviewSetupResult,
-  type ReviewVerifierCommands,
 } from './review-sandbox-tools';
+import {
+  fetchReviewCiVerification,
+  isFailingReviewCheckConclusion,
+} from './review-ci-verification';
 import type { ReviewablePullRequest } from './github-webhook';
 
 const DEFAULT_PROVIDER: AIProviderType = DEFAULT_PR_REVIEW_PROVIDER;
@@ -121,7 +117,6 @@ const RETRY_FALLBACK_ORIGIN = 'https://push.internal';
 // github-webhook.ts), so the old "push a new commit" advice was a dead end.
 const TERMINAL_RETRY_ADVICE =
   'New commits do not trigger reviews — close and reopen the PR to run a fresh review.';
-const DEFAULT_REVIEW_TYPECHECK_COMMAND = 'npx tsc --noEmit';
 
 /** Start payload the webhook receiver POSTs to the DO. */
 export interface PrReviewStartInput extends ReviewablePullRequest {
@@ -222,118 +217,107 @@ export function repoGatingEnabled(repo: string, gatingReposEnv: string | undefin
 }
 
 /**
- * Check-run conclusion for a POSTED zero-findings review, decided by the
- * runtime verification record — never by what the model claims. `success` is
- * reserved for "reviewed AND verified": at least one verifier ran and passed,
- * and none failed. Everything else is `neutral` with the reason in the title:
- *
- * - verifier failed        → the reviewer saw a red verifier and still posted
- *                            no findings; surface the contradiction.
- * - nothing ran, available → unverified (the model declined the nudge).
- * - nothing available      → cross-fork / sandbox off; honestly unverifiable.
- * - record absent          → pre-verification rows / unknown; treat as
- *                            unverified rather than assuming.
+ * Human-readable roll-call of the checks a verdict was computed from, so a reader
+ * can audit the claim against GitHub's own UI instead of trusting our aggregate.
+ * Capped — a monorepo can carry dozens of checks and the check-run summary is not
+ * the place to print all of them.
  */
-/**
- * Whether a zero-findings review still owes us a verifier run.
- *
- * A verifier counts as RUN once the model invoked it, whatever came back —
- * including `blocked`. Nudging a model to re-run something the environment already
- * killed just burns a round (and possibly another 480s verifier timeout) to
- * re-learn that the environment is broken, and the nudge's "if you have a concrete
- * reason verification cannot run, state it" is what invites a confabulated reason
- * in the first place.
- *
- * `unavailable` is NOT a run — nothing was ever invoked — so a repo with no test
- * command still gets nudged toward typecheck.
- *
- * Extracted and exported because it lived inline as an asymmetric expression
- * (`typecheck !== 'not_run' || tests === 'pass' || tests === 'fail'`) that counted
- * `blocked` for typecheck but not for tests, so a model that invoked tests FIRST and
- * got blocked was nudged anyway. Nothing tested it. Now something does.
- */
-export function shouldNudgeForVerification(verification: ReviewVerification): boolean {
-  const invoked = (s: ReviewVerifierStatus) => s !== 'not_run' && s !== 'unavailable';
-  return !invoked(verification.typecheck) && !invoked(verification.tests);
+const CHECK_ROLL_CALL_CAP = 12;
+function checkRollCall(verification: ReviewVerification | undefined): string {
+  const checks = verification?.checks ?? [];
+  if (checks.length === 0) return '';
+  const shown = checks.slice(0, CHECK_ROLL_CALL_CAP);
+  const lines = shown.map((c) => `- ${c.name}: ${c.conclusion ?? 'still running'}`).join('\n');
+  const more = checks.length > shown.length ? `\n- …and ${checks.length - shown.length} more` : '';
+  return `\n\nChecks on this commit:\n${lines}${more}`;
 }
 
+/**
+ * One line naming the CI verdict, appended to EVERY posted review's check run —
+ * including reviews that DID find something.
+ *
+ * The clean-pass path disclosed `blocked` while the findings path said nothing at
+ * all, so "CI is red on this PR" was invisible precisely when the reviewer had also
+ * found problems — the case where you most want to know. Same fact, same disclosure,
+ * both paths.
+ */
+export function verificationNote(verification: ReviewVerification | undefined): string {
+  switch (verification?.ci) {
+    case 'pass':
+      return "CI passed on this commit's checks.";
+    case 'fail':
+      return `CI FAILED on this commit${failedNames(verification) ? ` (${failedNames(verification)})` : ''}.`;
+    case 'blocked':
+      return `CI verdict unavailable — ${verification.blockedReason ?? 'no detail captured'}`;
+    case 'unavailable':
+      return 'This repo runs no CI on the commit, so there is no verification to read.';
+    default:
+      return 'CI verification was not recorded for this review.';
+  }
+}
+
+function failedNames(verification: ReviewVerification | undefined): string {
+  return (verification?.checks ?? [])
+    .filter((c) => isFailingReviewCheckConclusion(c.conclusion))
+    .map((c) => c.name)
+    .join(', ');
+}
+
+/**
+ * Check-run conclusion for a POSTED zero-findings review, decided by the runtime
+ * verification record — never by what the model claims.
+ *
+ * `success` is reserved for "reviewed AND verified": the head SHA's own CI checks
+ * passed. Everything else is `neutral` with the reason in the title, so "didn't
+ * check" can never launder into a green check:
+ *
+ * - CI failed      → the reviewer posted no findings on a commit whose CI is red;
+ *                    surface the contradiction rather than bless it.
+ * - CI blocked     → invoked, no verdict (still running at the deadline, or GitHub
+ *                    unreadable). OUR failure or CI's, never the model's.
+ * - unavailable    → the repo runs no CI; honestly unverifiable.
+ * - record absent  → pre-§9a rows / unknown; treat as unverified, never assume.
+ */
 export function cleanPassCheckStatus(verification: ReviewVerification | undefined): {
   conclusion: ReviewCheckConclusion;
   title: string;
   summary: string;
 } {
-  const v = verification;
-  const anyFail = v?.typecheck === 'fail' || v?.tests === 'fail';
-  const anyPass = v?.typecheck === 'pass' || v?.tests === 'pass';
-  const anyBlocked = v?.typecheck === 'blocked' || v?.tests === 'blocked';
-  const anyAvailable = v != null && (v.typecheck !== 'unavailable' || v.tests !== 'unavailable');
-  // Render each blocked verifier beside ITS OWN reason — never one cause stamped
-  // across both. Verifiers named even when their reason is missing, so a dropped
-  // reason degrades to "no detail" rather than to someone else's detail.
-  const blockedKinds = (['typecheck', 'tests'] as const).filter((k) => v?.[k] === 'blocked');
-  const blockedDetail = blockedKinds
-    .map((k) => {
-      const reason = v?.blockedReasons?.[k];
-      return reason ? `${k}: ${reason}` : `${k}: (no detail captured)`;
-    })
-    .join('\n');
-
-  if (anyFail) {
-    const failed = [
-      v?.typecheck === 'fail' ? 'typecheck' : null,
-      v?.tests === 'fail' ? 'tests' : null,
-    ]
-      .filter(Boolean)
-      .join(' + ');
-    return {
-      conclusion: 'neutral',
-      title: 'No blocking findings — verification failed',
-      summary: `The reviewer posted no findings, but ${failed} failed on the PR head. Check the verifier output before trusting the clean pass.`,
-    };
+  const rollCall = checkRollCall(verification);
+  switch (verification?.ci) {
+    case 'fail':
+      return {
+        conclusion: 'neutral',
+        title: 'No blocking findings — CI is failing',
+        summary: `The reviewer posted no findings, but ${verificationNote(verification)} Treat the clean pass with suspicion until CI is green.${rollCall}`,
+      };
+    case 'pass':
+      return {
+        conclusion: 'success',
+        title: 'No blocking findings — verified (CI green)',
+        summary: `No blocking issues. ${verificationNote(verification)} This is the same gate the PR merges on.${rollCall}`,
+      };
+    case 'blocked':
+      return {
+        conclusion: 'neutral',
+        title: 'No blocking findings (CI verdict unavailable)',
+        summary: `No blocking issues found, but Push could not read a CI verdict for this commit, so the clean pass is unverified. This is not a verdict on the code.\n\nReason: ${verification.blockedReason ?? '(no detail captured)'}${rollCall}`,
+      };
+    case 'unavailable':
+      return {
+        conclusion: 'neutral',
+        title: 'No blocking findings (no CI to verify against)',
+        summary:
+          'No blocking issues found from the diff and code reading. This repo runs no CI checks on the commit, so there was no verdict to read and the clean pass is unverified.',
+      };
+    default:
+      return {
+        conclusion: 'neutral',
+        title: 'No blocking findings (unverified)',
+        summary:
+          'No blocking issues found, but no CI verification was recorded for this review. The clean pass is unverified.',
+      };
   }
-  if (anyPass) {
-    const passed = [
-      v?.typecheck === 'pass' ? 'typecheck' : null,
-      v?.tests === 'pass' ? 'tests' : null,
-    ]
-      .filter(Boolean)
-      .join(' + ');
-    const blockedNote = anyBlocked
-      ? `\n\nBlocked by the environment (not a verdict on the code):\n${blockedDetail}`
-      : '';
-    return {
-      conclusion: 'success',
-      title: `No blocking findings — verified (${passed})`,
-      summary: `No blocking issues. Verified against the PR head: ${passed} passed.${blockedNote}`,
-    };
-  }
-  // Invoked, but the environment stopped it. Distinct from the `not_run` arm
-  // below, which blames the model — say the truth about which one happened, and
-  // carry the reason so diagnosing it doesn't depend on the model's narration.
-  if (anyBlocked) {
-    const blocked = blockedKinds.join(' + ');
-    return {
-      conclusion: 'neutral',
-      title: 'No blocking findings (verification blocked)',
-      summary:
-        `No blocking issues found, but ${blocked} could not run on the PR head — the reviewer invoked it and the environment stopped it (setup failure, timeout, or lost contact). This is OUR failure, not the model's, and not a verdict on the code; the clean pass is unverified.` +
-        `\n\nReason:\n${blockedDetail}`,
-    };
-  }
-  if (!anyAvailable) {
-    return {
-      conclusion: 'neutral',
-      title: 'No blocking findings (verification unavailable)',
-      summary:
-        'No blocking issues found from the diff and code reading. No sandbox verifier was available for this PR (cross-fork or sandbox disabled), so the clean pass is unverified.',
-    };
-  }
-  return {
-    conclusion: 'neutral',
-    title: 'No blocking findings (unverified)',
-    summary:
-      'No blocking issues found, but the reviewer did not run typecheck/tests despite an available sandbox. The clean pass is unverified.',
-  };
 }
 
 /** Checkpoint/resume hooks the DO threads into the executor. Optional fourth
@@ -344,23 +328,19 @@ export interface PrReviewExecutorHooks {
   /** Per-round state snapshot — the DO persists it synchronously. */
   onRoundState?: (state: DeepReviewerResumeState) => void;
   /**
-   * Seed the executor's verification record on relaunch. Verifier runs
-   * (typecheck/tests) live in executor memory; without this, a review that
-   * verified in rounds the checkpoint already banked would forget it after an
-   * eviction and finish "unverified" (or get nudged to re-run an 8-minute
-   * suite). Persisted next to the round checkpoint by the DO.
+   * The check run the DO opened for THIS review, which the CI verifier must
+   * exclude or it waits on itself (§9a; Codex, PR #1469). Null when we had no
+   * creds to open one — then there is no self-check to exclude.
    */
-  resumeVerification?: ReviewVerification;
-  /** Fired whenever a verifier records an outcome — the DO keeps the latest
-   *  snapshot and persists it with the next round checkpoint. */
-  onVerification?: (verification: ReviewVerification) => void;
+  selfCheckRunId?: number | null;
   /**
-   * Fired when a sandbox tool starts executing — and again after the verifier
-   * setup gate settles. The DO touches the round checkpoint's `updated_at` so
-   * long tool runs count as PROGRESS for `failTimedOutReviews`: model round
-   * wall-clock + setup (600s) + a verifier (480s) legitimately exceeds the
-   * 15-min no-progress budget measured from any single mark (Codex P2,
-   * PR #1387).
+   * Fired when a sandbox tool starts executing. The DO touches the round
+   * checkpoint's `updated_at` so long tool runs count as PROGRESS for
+   * `failTimedOutReviews` rather than reading as a stall (Codex P2, PR #1387).
+   *
+   * Since §9a the sandbox runs INSPECTION only (search/read/ls) — the 600s setup
+   * and 480s verifier legs that used to blow through the 15-min no-progress budget
+   * are gone, so this now marks progress for reads measured in seconds.
    */
   onToolProgress?: () => void;
 }
@@ -424,12 +404,16 @@ CREATE TABLE IF NOT EXISTS event (
   payload_json TEXT NOT NULL
 );
 
+-- No verification column: since §9a, verification is a single idempotent read of
+-- the head SHA's check runs at the end of the review, not a record accumulated
+-- across model rounds. There is nothing left for a resume to carry — a relaunch
+-- just reads GitHub again. (Existing DOs still carry the old verification_json
+-- column; it is inert and no longer read or written.)
 CREATE TABLE IF NOT EXISTS review_checkpoint (
   delivery_id TEXT PRIMARY KEY,
   state_json TEXT NOT NULL,
   round INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL,
-  verification_json TEXT
+  updated_at INTEGER NOT NULL
 );
 `;
 
@@ -461,10 +445,6 @@ export class PrReviewJob {
   private readonly ctx: DurableObjectState;
   private readonly env: Env;
   private readonly abortControllers = new Map<string, AbortController>();
-  // Latest verifier record per live delivery (fed by the executor's
-  // onVerification hook); persisted alongside each round checkpoint so it
-  // survives evictions with the rounds it belongs to.
-  private readonly verificationState = new Map<string, ReviewVerification>();
   // Reset on every cold start; the orphan sweep runs once per DO instance on
   // first fetch (a fresh instance has an empty abortControllers map, so any
   // `running` row it finds belonged to a prior, now-dead instance).
@@ -511,13 +491,10 @@ export class PrReviewJob {
         'ALTER TABLE review ADD COLUMN relaunch_count INTEGER NOT NULL DEFAULT 0',
       );
     }
-    const checkpointCols = this.ctx.storage.sql
-      .exec('PRAGMA table_info(review_checkpoint)')
-      .toArray() as Array<{ name: string }>;
-    const haveCheckpoint = new Set(checkpointCols.map((c) => c.name));
-    if (!haveCheckpoint.has('verification_json')) {
-      this.ctx.storage.sql.exec('ALTER TABLE review_checkpoint ADD COLUMN verification_json TEXT');
-    }
+    // `review_checkpoint.verification_json` is deliberately NOT migrated away.
+    // DOs created before §9a still have the column; it is nullable, nothing reads
+    // or writes it, and dropping it would buy nothing but a migration that can
+    // fail on a live object.
   }
 
   // -------------------------------------------------------------------------
@@ -527,15 +504,13 @@ export class PrReviewJob {
 
   private writeCheckpoint(deliveryId: string, state: DeepReviewerResumeState): void {
     const json = JSON.stringify(state);
-    const verification = this.verificationState.get(deliveryId) ?? null;
     this.ctx.storage.sql.exec(
-      'INSERT INTO review_checkpoint (delivery_id, state_json, round, updated_at, verification_json) VALUES (?, ?, ?, ?, ?) ' +
-        'ON CONFLICT(delivery_id) DO UPDATE SET state_json = excluded.state_json, round = excluded.round, updated_at = excluded.updated_at, verification_json = excluded.verification_json',
+      'INSERT INTO review_checkpoint (delivery_id, state_json, round, updated_at) VALUES (?, ?, ?, ?) ' +
+        'ON CONFLICT(delivery_id) DO UPDATE SET state_json = excluded.state_json, round = excluded.round, updated_at = excluded.updated_at',
       deliveryId,
       json,
       state.nextRound,
       Date.now(),
-      verification ? JSON.stringify(verification) : null,
     );
     log('info', 'pr_review_checkpoint_captured', {
       deliveryId,
@@ -548,36 +523,23 @@ export class PrReviewJob {
     state: DeepReviewerResumeState;
     round: number;
     updatedAt: number;
-    verification: ReviewVerification | null;
   } | null {
     const rows = this.ctx.storage.sql
       .exec(
-        'SELECT state_json, round, updated_at, verification_json FROM review_checkpoint WHERE delivery_id = ?',
+        'SELECT state_json, round, updated_at FROM review_checkpoint WHERE delivery_id = ?',
         deliveryId,
       )
       .toArray() as Array<{
       state_json: string;
       round: number;
       updated_at: number;
-      verification_json: string | null;
     }>;
     if (!rows.length) return null;
     try {
-      // A corrupt verification blob degrades to null (the attempt restarts
-      // its record) without dropping the round checkpoint with it.
-      let verification: ReviewVerification | null = null;
-      if (rows[0].verification_json) {
-        try {
-          verification = JSON.parse(rows[0].verification_json) as ReviewVerification;
-        } catch {
-          verification = null;
-        }
-      }
       return {
         state: JSON.parse(rows[0].state_json) as DeepReviewerResumeState,
         round: rows[0].round,
         updatedAt: rows[0].updated_at,
-        verification,
       };
     } catch (err) {
       // A corrupt checkpoint must not wedge the sweep — drop it loudly so the
@@ -997,7 +959,7 @@ export class PrReviewJob {
 
   private async runReview(
     input: PrReviewStartInput,
-    resume?: { state: DeepReviewerResumeState; verification?: ReviewVerification | null },
+    resume?: { state: DeepReviewerResumeState },
   ): Promise<void> {
     const controller = new AbortController();
     // Registration is SYNCHRONOUS (before the first await) — the sweep's
@@ -1052,18 +1014,12 @@ export class PrReviewJob {
     }
 
     const executor = EXECUTOR_OVERRIDES.get(input.deliveryId) ?? defaultPrReviewExecutor;
-    // Seed the in-memory verifier record from the relaunch checkpoint so the
-    // next writeCheckpoint doesn't wipe what a prior attempt banked.
-    if (resume?.verification) {
-      this.verificationState.set(input.deliveryId, resume.verification);
-    }
     try {
       const outcome = await executor(input, this.env, controller.signal, {
         resumeState: resume?.state,
-        resumeVerification: resume?.verification ?? undefined,
-        onVerification: (verification) => {
-          this.verificationState.set(input.deliveryId, verification);
-        },
+        // The reviewer's own check run — the CI verifier excludes it, or it blocks
+        // waiting on itself for the whole deadline (§9a).
+        selfCheckRunId: checkRunId,
         onToolProgress: () => {
           try {
             this.touchCheckpoint(input.deliveryId);
@@ -1175,20 +1131,28 @@ export class PrReviewJob {
               ? {
                   conclusion: 'failure' as ReviewCheckConclusion,
                   title: 'Critical findings',
-                  summary: outcome.result.summary || 'Critical issues found.',
+                  // Disclose the CI verdict even here. A critical finding on a
+                  // commit whose CI is ALSO red is a different situation from one
+                  // on a green commit, and the reader should not have to leave the
+                  // check run to learn which.
+                  summary: `${outcome.result.summary || 'Critical issues found.'}\n\n${verificationNote(outcome.result.verification)}`,
                 }
               : findings === 0
                 ? // Clean pass: `success` is reserved for reviews that actually
-                  // VERIFIED (a sandbox verifier ran and passed). A zero-findings
-                  // review that never executed anything — or whose verifier
-                  // failed — concludes `neutral` with the reason in the title,
-                  // so "didn't check" can't launder into a green check (the
-                  // same didn't-happen ≠ clean-pass rule as the degraded path).
+                  // VERIFIED (the head SHA's CI checks passed). A zero-findings
+                  // review on a commit whose CI is red, still running, or absent
+                  // concludes `neutral` with the reason in the title, so "didn't
+                  // check" can't launder into a green check (the same
+                  // didn't-happen ≠ clean-pass rule as the degraded path).
                   cleanPassCheckStatus(outcome.result.verification)
                 : {
                     conclusion: 'success' as ReviewCheckConclusion,
                     title: `${findings} finding${findings === 1 ? '' : 's'}`,
-                    summary: outcome.result.summary || `${findings} finding(s) posted.`,
+                    // Same disclosure as every other posted path. This one said
+                    // NOTHING about verification before §9a, so "CI is red" was
+                    // invisible exactly when the reviewer had also found problems
+                    // — the case where you most want to know.
+                    summary: `${outcome.result.summary || `${findings} finding(s) posted.`}\n\n${verificationNote(outcome.result.verification)}`,
                   };
         await this.finalizeCheckRun(
           input.repoFullName,
@@ -1263,7 +1227,6 @@ export class PrReviewJob {
       }
     } finally {
       this.abortControllers.delete(input.deliveryId);
-      this.verificationState.delete(input.deliveryId);
       // Every in-process exit is terminal for this attempt (completed, failed,
       // cancelled, superseded) — the checkpoint has served its purpose. The
       // relaunch path never reaches here: it exists precisely for promises
@@ -1633,7 +1596,7 @@ export class PrReviewJob {
                   pinnedProvider: row.pinned_provider ?? undefined,
                   pinnedModel: row.pinned_model ?? undefined,
                 },
-                { state: checkpoint.state, verification: checkpoint.verification },
+                { state: checkpoint.state },
               ),
             );
             continue;
@@ -1716,92 +1679,6 @@ export class PrReviewJob {
 // ---------------------------------------------------------------------------
 // Default executor — the model + GitHub leaf
 // ---------------------------------------------------------------------------
-
-/**
- * Resolve the reviewer's verifier commands from the repo's instruction files
- * at the BASE ref (trusted — never the head), in the canonical loader order
- * (`PROJECT_INSTRUCTION_FILENAMES`: PUSH.md → AGENTS.md → CLAUDE.md →
- * GEMINI.md) so a PUSH.md hint outranks an AGENTS.md one the way every other
- * instruction consumer resolves (Codex P2, PR #1385 — the old loop hardcoded
- * AGENTS.md/CLAUDE.md). Typecheck falls back to the universal
- * `npx tsc --noEmit`; tests have no safe default, so a repo without a
- * `# test:` hint gets `tests: null` and the test tool is not advertised.
- * Setup (`# setup:` hint, hint-only kind) falls back to the conditional
- * root-install default — it runs once before the first verifier so the
- * sandbox has dependencies (the PR #1386 signal: a bare checkout fails any
- * repo-level typecheck regardless of the diff).
- * Independent per kind: the first file that declares a kind wins for it.
- */
-async function resolveReviewCommands(
-  repoFullName: string,
-  baseRef: string,
-  auth: { token: string },
-): Promise<ReviewVerifierCommands> {
-  let typecheck: string | null = null;
-  let tests: string | null = null;
-  let setup: string | null = null;
-  for (const filename of PROJECT_INSTRUCTION_FILENAMES) {
-    if (typecheck && tests && setup) break;
-    try {
-      const content = await fetchRepoFileContent(repoFullName, filename, baseRef, auth);
-      if (!content) continue;
-      const hints = parseAgentsMdHints(content);
-      if (!typecheck) {
-        const hit = hints.find((hint) => hint.kind === 'typecheck');
-        if (hit?.command.trim()) {
-          typecheck = hit.command.trim();
-          log('debug', 'pr_review_typecheck_command_resolved', {
-            source: filename,
-            command: typecheck,
-          });
-        }
-      }
-      if (!tests) {
-        const hit = hints.find((hint) => hint.kind === 'test');
-        if (hit?.command.trim()) {
-          tests = hit.command.trim();
-          log('debug', 'pr_review_test_command_resolved', {
-            source: filename,
-            command: tests,
-          });
-        }
-      }
-      if (!setup) {
-        const hit = hints.find((hint) => hint.kind === 'setup');
-        if (hit?.command.trim()) {
-          setup = hit.command.trim();
-          log('debug', 'pr_review_setup_command_resolved', {
-            source: filename,
-            command: setup,
-          });
-        }
-      }
-    } catch (err) {
-      log('warn', 'pr_review_verifier_command_fetch_failed', {
-        source: filename,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }
-  if (!typecheck) {
-    log('debug', 'pr_review_typecheck_command_defaulted', {
-      command: DEFAULT_REVIEW_TYPECHECK_COMMAND,
-    });
-  }
-  if (!tests) {
-    log('debug', 'pr_review_test_command_absent', { repo: repoFullName });
-  }
-  if (!setup) {
-    log('debug', 'pr_review_setup_command_defaulted', {
-      command: REVIEW_DEFAULT_SETUP_COMMAND,
-    });
-  }
-  return {
-    typecheck: typecheck ?? DEFAULT_REVIEW_TYPECHECK_COMMAND,
-    tests,
-    setup: setup ?? REVIEW_DEFAULT_SETUP_COMMAND,
-  };
-}
 
 /**
  * Mint an installation token, fetch the PR diff, resolve REVIEW.md at the **base**
@@ -1898,33 +1775,19 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
 
   const detectors = createWebDetectorAdapter();
 
-  // Sandbox tools for the reviewer: provisioned eagerly at review start (see
-  // the warm-up kick below) so the environment install overlaps model rounds —
-  // the completion gate expects verifiers to run on every clean pass, so the
-  // old pay-nothing-if-unused laziness optimized for a case that no longer
-  // exists. Gated to same-repo PRs with a CF sandbox configured; killable via
-  // PUSH_REVIEWER_SANDBOX=0. Fail-safe — any provisioning/exec problem degrades
-  // to a diff-only review.
+  // Sandbox tools for the reviewer: INSPECTION ONLY since §9a (search / read /
+  // ls over the checked-out PR head). Verification no longer runs here — it is
+  // read from the head SHA's check runs after the rounds finish — so the sandbox
+  // is used for the one thing a half-vCPU container is actually good at, and is
+  // provisioned lazily again: with no setup install to overlap, there is nothing
+  // for an eager warm-up to hide. Gated to same-repo PRs with a CF sandbox
+  // configured; killable via PUSH_REVIEWER_SANDBOX=0. Fail-safe — any
+  // provisioning/exec problem degrades to a diff-only review.
   const sandboxToolsEnabled =
     Boolean(env.Sandbox && env.SANDBOX_TOKENS) &&
     !input.isCrossFork &&
     env.PUSH_REVIEWER_SANDBOX !== '0';
-  const reviewCommands: ReviewVerifierCommands = sandboxToolsEnabled
-    ? await resolveReviewCommands(input.repoFullName, input.baseRef, auth)
-    : {
-        typecheck: DEFAULT_REVIEW_TYPECHECK_COMMAND,
-        tests: null,
-        setup: REVIEW_DEFAULT_SETUP_COMMAND,
-      };
 
-  // Verification record for this attempt — runtime-tracked, never inferred
-  // from model claims. Seeded from the checkpoint on relaunch so verifier runs
-  // banked by earlier attempts survive DO evictions.
-  const verification: ReviewVerification = hooks?.resumeVerification
-    ? { ...hooks.resumeVerification }
-    : sandboxToolsEnabled
-      ? { typecheck: 'not_run', tests: reviewCommands.tests ? 'not_run' : 'unavailable' }
-      : { typecheck: 'unavailable', tests: 'unavailable' };
   let sandboxProvisionPromise: Promise<ReviewSandbox | null> | null = null;
   // Memoize the in-flight provision so concurrent (Promise.all) tool calls in a
   // single round share ONE sandbox instead of racing to create duplicates.
@@ -1940,49 +1803,6 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     }
     return sandboxProvisionPromise;
   };
-
-  // One environment-setup run per review, memoized like the provision above —
-  // concurrent verifier calls share it, and only verifier calls trigger it
-  // (inspection tools don't need dependencies). Failure is remembered too: a
-  // setup that can't succeed shouldn't re-run 300s installs per verifier call.
-  let setupPromise: Promise<ReviewSetupResult> | null = null;
-  const ensureSetup = (sb: ReviewSandbox): Promise<ReviewSetupResult> => {
-    if (!setupPromise) {
-      setupPromise = runReviewSetup(env, sb, reviewCommands.setup).then((setup) => {
-        log(
-          setup.ok ? 'info' : 'warn',
-          setup.ok ? 'pr_review_setup_succeeded' : 'pr_review_setup_failed',
-          {
-            deliveryId: input.deliveryId,
-            ...(setup.ok ? {} : { detail: setup.text.slice(0, 300) }),
-          },
-        );
-        return setup;
-      });
-    }
-    return setupPromise;
-  };
-
-  // Eager warm-up: provision the sandbox and start the one-time environment
-  // setup as soon as the review starts, so the multi-minute install overlaps
-  // model rounds instead of running serially inside the first verifier tool
-  // call. Observed 2026-07-09: models typically touch the sandbox only when
-  // the completion gate nudges them to verify, so the first verifier call was
-  // paying provision + cold install + verifier back-to-back under the 15-min
-  // budget — and no setup ever completed. Both functions never throw (they
-  // resolve null/failed); the catch is a defensive backstop so an unexpected
-  // rejection can't surface as an unhandled rejection in the DO.
-  // `reviewEnded` (set first thing in the .finally below) gates the setup
-  // kick: this subscriber is registered BEFORE the teardown's detached chase,
-  // so without the gate a provision that lands after a fast-ending review
-  // would launch a 600s setup against a sandbox the very next microtask
-  // destroys (local Codex P2, PR #1391).
-  let reviewEnded = false;
-  if (sandboxToolsEnabled) {
-    void getReviewSandbox()
-      .then((sb) => (sb && !reviewEnded ? ensureSetup(sb) : null))
-      .catch(() => {});
-  }
 
   const result = await runDeepReviewer<AnyToolCall, unknown>(
     diff,
@@ -2019,14 +1839,14 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
           );
           return { resultText: r.text };
         }
-        // Sandbox inspection + base-command typecheck over the checked-out PR
-        // head (same-repo only, lazily provisioned). Degrades to diff-only on
-        // any provisioning/tool failure.
+        // Sandbox INSPECTION over the checked-out PR head (same-repo only, lazily
+        // provisioned). No verifiers here since §9a — reads only. Degrades to
+        // diff-only on any provisioning/tool failure.
         if (sandboxToolsEnabled && toolCall.source === 'sandbox') {
           try {
-            // Mark progress before potentially long work (provision, setup,
-            // verifier) so the 15-min no-progress budget measures from here,
-            // not from the round top the model already spent streaming.
+            // Mark progress before the provision, so the 15-min no-progress budget
+            // measures from here rather than from the round top the model already
+            // spent streaming.
             hooks?.onToolProgress?.();
             const sb = await getReviewSandbox();
             if (!sb) {
@@ -2035,46 +1855,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
                   '[Tool Result] Sandbox unavailable — investigate via GitHub tools and the diff instead.',
               };
             }
-            const r = await executeReviewSandboxTool(
-              env,
-              sb,
-              toolCall.call,
-              reviewCommands,
-              () => ensureSetup(sb),
-              // Re-mark progress after the setup gate settles: a verifier that
-              // waited on the install needs its own deadline measured from the
-              // install's end, or setup (600s) + verifier (480s) overruns the
-              // 15-min no-progress budget with no mark in between.
-              hooks?.onToolProgress,
-            );
-            if (r.verification) {
-              const { kind, status, reason } = r.verification;
-              verification[kind] = status;
-              // Record the reason AGAINST ITS OWN VERIFIER so the check run can say
-              // why the environment stopped it, without the model's narration — and
-              // without attributing one verifier's cause to the other. Dropped when
-              // this verifier leaves 'blocked', so a reason never outlives its state.
-              if (status === 'blocked' && reason) {
-                verification.blockedReasons = { ...verification.blockedReasons, [kind]: reason };
-              } else if (verification.blockedReasons?.[kind]) {
-                const rest = { ...verification.blockedReasons };
-                delete rest[kind];
-                verification.blockedReasons = Object.keys(rest).length ? rest : undefined;
-              }
-              log(
-                r.verification.status === 'blocked' ? 'warn' : 'info',
-                r.verification.status === 'blocked'
-                  ? 'pr_review_verification_blocked'
-                  : 'pr_review_verification_recorded',
-                {
-                  deliveryId: input.deliveryId,
-                  verifier: r.verification.kind,
-                  status: r.verification.status,
-                  ...(r.verification.reason ? { reason: r.verification.reason } : {}),
-                },
-              );
-              hooks?.onVerification?.({ ...verification });
-            }
+            const r = await executeReviewSandboxTool(env, sb, toolCall.call);
             return { resultText: r.text };
           } catch {
             // toolExec must NEVER throw into the reviewer loop (it awaits this
@@ -2096,39 +1877,26 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       webSearchToolProtocol: '',
       webSearchAvailable: false,
       sandboxAvailable: sandboxToolsEnabled,
-      sandboxToolNames: reviewSandboxToolNames(Boolean(reviewCommands.tests)),
+      sandboxToolNames: reviewSandboxToolNames(),
       resumeState: hooks?.resumeState,
-      // Verify-before-clean-pass gate: a zero-findings review with an
-      // available sandbox and no verifier run gets one bounded nudge to run
-      // typecheck/tests (or stand by its conclusion — the second completion
-      // is accepted and the check-run labels it unverified). Runtime-tracked
-      // via `verification`, so a cooperative-sounding claim without a real
-      // tool run cannot satisfy it.
-      completionGate: (result) => {
-        if (!sandboxToolsEnabled) return null;
-        if (result.comments.length > 0) return null;
-        if (!shouldNudgeForVerification(verification)) return null;
-        log('info', 'pr_review_verification_nudged', { deliveryId: input.deliveryId });
-        return (
-          'You are reporting zero findings without having run any verification tool. ' +
-          `Run the typecheck${reviewCommands.tests ? ' and test' : ''} tool${reviewCommands.tests ? 's (one tool call per turn)' : ''} against the checked-out PR head, review the output, then emit ${'[REVIEW_COMPLETE]'} again — with any findings the verifier surfaces, or the same clean result if it passes. ` +
-          'If you have a concrete reason verification cannot run, state it and re-emit; the review will be marked unverified.'
-        );
-      },
+      // No completion gate since §9a. The old one nudged a zero-findings review
+      // to go run typecheck/tests before standing by its conclusion — which only
+      // made sense while verification was something the MODEL invoked. It is now
+      // read from GitHub after the rounds end, so there is nothing the model could
+      // do in response to a nudge, and asking it to justify why verification
+      // "cannot run" is precisely what invited the confabulated excuses the whole
+      // §9a arc started from.
     },
     { onStatus: () => {}, signal, onRoundState: hooks?.onRoundState },
   ).finally(async () => {
-    // Best-effort teardown on success, error, AND abort. Considers the
-    // provision promise, not a snapshot var — with the eager warm-up a
-    // provision can still be in flight when a fast-failing review ends. But
-    // an in-flight provision must NOT hold the already-computed result: its
-    // create/verify route awaits are unbounded, so a wedged sandbox create
-    // would turn a finished diff-only review into a stalled one (Codex P2,
-    // PR #1391). A settled provision keeps the awaited cleanup (the
-    // pre-warm-up critical path); a pending one is chased detached —
-    // cleanup never throws, and the 1h idle reaper is the backstop if the
-    // DO retires before the chase lands.
-    reviewEnded = true;
+    // Best-effort teardown on success, error, AND abort. Considers the provision
+    // promise, not a snapshot var: a lazily-provisioned sandbox can still be in
+    // flight when a fast-failing review ends. An in-flight provision must NOT hold
+    // the already-computed result — its create/verify route awaits are unbounded,
+    // so a wedged sandbox create would turn a finished diff-only review into a
+    // stalled one (Codex P2, PR #1391). A settled provision keeps the awaited
+    // cleanup; a pending one is chased detached — cleanup never throws, and the 1h
+    // idle reaper is the backstop if the DO retires before the chase lands.
     if (!sandboxProvisionPromise) return;
     const provisionPromise = sandboxProvisionPromise;
     const PENDING = Symbol('pending');
@@ -2144,17 +1912,16 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   });
   if (signal.aborted) throw new Error('aborted');
 
-  // Attach the runtime verification record before ANY return path — the
-  // check-run policy labels clean passes off it, and the head-advanced /
-  // degraded exits still persist the result for cross-review memory.
-  result.verification = { ...verification };
-
   // Pin the post to the SHA we reviewed. `fetchPullRequestDiff` returns the PR's
   // *current* diff; if the head advanced between the webhook delivery and now
   // (a push whose own delivery hasn't reached this DO yet), posting against the
   // stale `input.headSha` would attach the review to the wrong commit and risk
   // 422s on anchors that no longer match. Skip — the newer push has its own
   // delivery that will review the new head and coalesce this one out.
+  //
+  // Checked BEFORE verification on purpose: a superseded review would otherwise
+  // sit in the CI poll (up to REVIEW_CI_DEADLINE_MS) waiting on checks for a SHA
+  // it is about to discard, and the newer delivery verifies the new head anyway.
   const currentHead = await fetchPullRequestHeadSha(input.repoFullName, input.prNumber, auth);
   if (currentHead && currentHead !== input.headSha) {
     log('info', 'pr_review_head_advanced', {
@@ -2164,6 +1931,33 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
     });
     return { result, commentsPosted: 0, posted: false };
   }
+
+  // Verification (§9a): read the verdict CI already produced for the head SHA
+  // rather than re-running the repo's commands on a half-vCPU container that
+  // cannot finish them. Done AFTER the rounds so CI has had the review's whole
+  // duration to land — the reviewer usually outlives its own PR's CI.
+  //
+  // Excludes the reviewer's own check run, or it waits on itself for the entire
+  // deadline and reports `blocked` on every review that publishes a visible check
+  // (Codex, PR #1469). Never throws — an unreadable API records `blocked`.
+  //
+  // Attached before every REPORTING path: the check-run policy labels clean passes
+  // off it, the findings paths disclose it, and the degraded exit still persists it
+  // on the row.
+  result.verification = await fetchReviewCiVerification({
+    repoFullName: input.repoFullName,
+    headSha: input.headSha,
+    token,
+    selfCheckRunId: hooks?.selfCheckRunId ?? null,
+    selfAppId: Number(env.GITHUB_APP_ID) || null,
+    deliveryId: input.deliveryId,
+    signal,
+  });
+  // Cancellation can land while the CI poll is sleeping or fetching. The verifier
+  // records that abort as `blocked` (useful as a standalone boundary), but this
+  // executor must still stop before the external POST or a cancelled/superseded run
+  // can publish a review after its owner has withdrawn it.
+  if (signal.aborted) throw new Error('aborted');
 
   // A degraded result (fallback path — no structured [REVIEW_COMPLETE]
   // output; zero findings by construction) is not a review. Posting it put
