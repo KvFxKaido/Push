@@ -8,6 +8,34 @@
  * Silvery's chromatic Nord surface. Surfaces must still refuse `$fg-success` /
  * multi-color role chrome — that discipline lives in `visual-language.ts` +
  * `surface.tsx`.
+ *
+ * ── Which silvery components we may use ──────────────────────────────
+ *
+ * The import line is not an accident, and it is not an under-adoption to be
+ * cleaned up. Silvery's API splits cleanly in two, and only one half is
+ * compatible with law 2:
+ *
+ *  - STRUCTURAL — `Box`, `Text`, `ListView`, `TextArea`, `ModalDialog`,
+ *    `Screen`, `useInput`, … These carry no color semantics of their own; we
+ *    supply the color. Use freely. This is what the TUI is built on.
+ *
+ *  - SEMANTIC / CHROMATIC — `Diff`, `Alert`, `Badge`, `Banner`, `InlineAlert`,
+ *    variant-bearing toasts/progress. All of these render from silvery's
+ *    six-variant palette (`accent | error | warning | success | info |
+ *    destructive`), which is precisely the multi-color role chrome law 2
+ *    refuses. DO NOT ADOPT THEM, and do not "fix" our hand-rolled equivalents
+ *    by swapping them in.
+ *
+ * `Diff` is the trap, because our `EditDiff` fits its props almost exactly and
+ * a swap looks like free line-numbers + side-by-side. It is not: `Diff`
+ * hardcodes `{context: '$muted', add: '$success', remove: '$error'}` at module
+ * scope with NO override on `DiffProps`. Under our tokens every deleted line
+ * would render in `$fg-error` — the color reserved for the fault exception —
+ * so a deletion would read as an error. The only lever is redefining `$error`
+ * globally, but `VL_COLOR.fault` IS `$fg-error`, so that trades every real
+ * error in the TUI for a diff. See `diffLineColor()` in `visual-language.ts`,
+ * which states the rule directly: adds read primary, dels read muted, never
+ * success-green / delete-red.
  */
 
 import React, { useMemo, type ReactNode } from 'react';
