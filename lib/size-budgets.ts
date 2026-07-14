@@ -23,7 +23,7 @@
  * Lib-owned. The web `app/src/lib/agent-loop-utils.ts` copy imports the
  * read-only tool-result cap from here transitively. The CLI's project-
  * instruction cap routes through the shared `formatProjectInstructionsBlock`
- * (the 8K `projectInstructionsDefault` below), and its workspace free-text
+ * (the 32K `projectInstructions` below), and its workspace free-text
  * memory cap is now `workspaceMemory` here too. The CLI's entry-COUNT caps
  * (`MAX_TREE_ENTRIES`, `MAX_STRUCTURED_ENTRIES` in `cli/workspace-context.ts`)
  * stay local on purpose — they bound a *number of items*, not characters, so
@@ -32,47 +32,48 @@
  * Pure module — no imports, no I/O. Safe for both Web and CLI.
  */
 export const SIZE_BUDGETS = Object.freeze({
-  /** Default cap for the shared project-instructions sanitizer when a caller
-   *  passes no explicit budget (the web + CLI orchestrators). */
-  projectInstructionsDefault: 8_000,
-  /** Per-run project-instructions budget for the read-only investigation agents
-   *  (Explorer, Deep Reviewer) — looser than the orchestrator default. */
-  projectInstructionsAgent: 12_000,
   /**
-   * Coder's AGENTS.md budget. Matches `projectInstructionsDefault` on purpose: the
-   * Coder is the only role that MUTATES the repo, so it is the last one that should
-   * be guessing at the project's conventions.
+   * Project instructions (AGENTS.md / CLAUDE.md / PUSH.md / GEMINI.md) — ONE budget
+   * for every role that reads them.
    *
-   * Was 4_000, on the rationale that the Coder already carries the most other
-   * context and can read the full file from the sandbox on demand. The fallback is
-   * real — a truncated block appends "Full file available at /workspace/AGENTS.md"
-   * — but it is opt-in, and a model does not reliably go fetch the rulebook it was
-   * not handed. At 4k this repo's own AGENTS.md lost its entire second half:
-   * Validation commands, "Behavior lives in code", decision-doc discipline, and the
-   * new-feature checklist — i.e. every convention that constrains how code gets
-   * written here, withheld from the role writing it. Meanwhile the read-only
-   * Explorer, which cannot change a line, got 12k.
+   * 32_000 aligns with the only hard cap that exists anywhere in this ecosystem:
+   * Codex's `project_doc_max_bytes` (32 KiB, applied to the whole instruction chain,
+   * and truncated *silently*). Everyone else declines to cap at all — Claude Code's
+   * own docs say CLAUDE.md is "loaded in full regardless of length" (it warns at
+   * ~40k chars and suggests <200 lines, but drops nothing); Cursor's "<500 lines" is
+   * advice; Gemini CLI concatenates GEMINI.md into every prompt; Aider and the
+   * agents.md spec say nothing about size. So 32k is not a compromise between
+   * standards — it is the tightest real ceiling a cross-tool repo already has to
+   * respect, which makes it the one number worth matching.
    *
-   * This deliberately cuts against the "trim, don't raise" rule in
-   * lib/agents-budget.test.ts. That rule guards `projectInstructionsDefault`, which
-   * bills EVERY turn on EVERY surface; this one bills once per delegated Coder run.
-   * Different blast radius, different call. Files past 8k still truncate and still
-   * get the sandbox pointer.
+   * Was three numbers (8k orchestrator / 12k read-only agents / 8k Coder). The split
+   * was incoherent: a Coder and an Explorer would read *different halves* of the same
+   * AGENTS.md, and the role that MUTATES the repo got less of the rulebook than the
+   * role that cannot change a line. Every role should see the same file.
    *
-   * KNOWN GAP — this does not yet mean "the Coder sees the whole AGENTS.md". On the
-   * web path for the canonical Push repo, `buildEffectiveProjectInstructions`
-   * PREPENDS ~2.4k of built-in Push context and the budget is applied to the COMBINED
-   * string, so ~10.4k gets capped to 8k and AGENTS.md is still cut from the tail. 8k
-   * is a strict improvement (the Coder previously saw ~1.5k of the file, now ~5.5k)
-   * but not the fix. The fix is to bill this budget against repo-provided text only
-   * and account for our own preamble separately — which needs the exempt length
-   * threaded to the injection sites EXPLICITLY, because a marker the sanitizer sniffs
-   * for would let a repo exempt itself from its own cap on the CLI path, and that
-   * sanitizer is the injection-defense boundary. Follow-up, not folded in here.
+   * At 8k this repo's own CLAUDE.md kept 29%, cut mid-sentence, losing every
+   * convention section — Tool protocol, "Behavior lives in code", symmetric
+   * structured logs, decision-doc discipline, the new-feature checklist, and the PR
+   * self-review pass (section 12 of 14, so structurally unreachable under the cap).
+   * The checklist that exists to catch our recurring defect classes could never be
+   * delivered to the agent expected to follow it.
+   *
+   * The cost this was guarding against does not survive contact with arithmetic.
+   * Project instructions ride the SYSTEM PROMPT, which Push tags with `cache_control`
+   * — so the block sits in the cached prefix, written once and billed at cache-read
+   * rates thereafter. 8k -> 32k adds ~6k tokens: ~4% of a 200k window, ~$0.009/turn
+   * cached, ~$0.55 across a 50-turn session. That is the entire price of the thing
+   * the old "it bills every repo/user every turn" rule was protecting.
+   *
+   * NOT a licence for a bloated AGENTS.md — shorter files demonstrably produce better
+   * adherence, and ours is 88 lines on purpose. Authoring guidance belongs in the
+   * authoring guidance. A truncator's job is to be honest when a file overflows, not
+   * to enforce brevity by deleting the back half of someone's conventions.
    */
-  agentsMdCoder: 8_000,
-  /** Reviewer/Auditor compact project-policy hints — side guidance, not the
-   *  primary input, so it gets the smallest budget. */
+  projectInstructions: 32_000,
+  /** Reviewer/Auditor compact project-policy hints — a distilled side block, NOT the
+   *  instruction file itself, so it keeps its own (much smaller) budget. Deliberately
+   *  not folded into `projectInstructions`: different content, different job. */
   roleProjectHints: 2_500,
   /** CLI workspace-context free-text memory block (`.push/memory.md`) folded
    *  into the prompt (`cli/workspace-context.ts`). */

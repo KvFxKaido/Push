@@ -98,7 +98,7 @@ const DEEP_REVIEW_ROUND_WALL_CLOCK_MS = 180_000;
 // and the 180s wall-clock above still bound a true stall/runaway.
 const DEEP_REVIEW_FIRST_TOKEN_GRACE_MS = REASONING_HEAVY_FIRST_TOKEN_GRACE_MS;
 const REVIEW_COMPLETE_MARKER = '[REVIEW_COMPLETE]';
-const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructionsAgent;
+const MAX_PROJECT_INSTRUCTIONS_SIZE = SIZE_BUDGETS.projectInstructions;
 const DIFF_LIMIT = SIZE_BUDGETS.reviewerDiffChunk;
 
 const REVIEWER_GITHUB_TOOL_NAMES = getToolPublicNames({

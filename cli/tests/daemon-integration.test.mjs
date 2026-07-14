@@ -3574,8 +3574,10 @@ describe('submit_task_graph', needsLoopback, () => {
 // the terminal event is persisted (see handleDelegateExplorer / handleDelegateReviewer)
 // — polling `activeDelegations.has()` alone races the `await appendSessionEvent`
 // that lands `subagent.completed`/`subagent.failed` on disk. When a `sessionId`
-// is provided, also poll the events log until the terminal event appears so
-// callers can immediately `loadSessionEvents` without hitting the write race.
+// is provided, also poll the events log until the terminal event appears. A
+// successful Coder/Explorer terminal event carries `delegationOutcome`; for those,
+// wait for the following state-file write too so callers can immediately
+// `loadSessionState` without racing `saveSessionState` on slower Windows runners.
 async function waitForDelegationComplete(entry, subagentId, sessionId = null, timeoutMs = 5000) {
   const startWait = Date.now();
   while (Date.now() - startWait < timeoutMs) {
@@ -3588,7 +3590,14 @@ async function waitForDelegationComplete(entry, subagentId, sessionId = null, ti
           (e.type === 'subagent.completed' || e.type === 'subagent.failed') &&
           e.payload?.subagentId === subagentId,
       );
-      if (terminal) return;
+      if (terminal) {
+        if (!terminal.payload?.delegationOutcome) return;
+        const persisted = await loadSessionState(sessionId);
+        const hasPersistedOutcome = persisted.delegationOutcomes?.some(
+          (record) => record.subagentId === subagentId,
+        );
+        if (hasPersistedOutcome) return;
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
   }

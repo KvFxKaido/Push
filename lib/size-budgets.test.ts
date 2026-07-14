@@ -6,9 +6,7 @@ describe('SIZE_BUDGETS', () => {
     // Snapshot of the inventory — also fails if a key is added/removed without
     // updating this guard, so the single source of truth stays intentional.
     expect(SIZE_BUDGETS).toEqual({
-      projectInstructionsDefault: 8_000,
-      projectInstructionsAgent: 12_000,
-      agentsMdCoder: 8_000,
+      projectInstructions: 32_000,
       roleProjectHints: 2_500,
       workspaceMemory: 4_000,
       reviewGuidance: 8_000,
@@ -21,22 +19,26 @@ describe('SIZE_BUDGETS', () => {
     });
   });
 
+  it('keeps the project-instructions budget at or under the tightest ecosystem cap', () => {
+    // Codex's `project_doc_max_bytes` (32 KiB) is the ONLY hard cap any comparable
+    // agent enforces — Claude Code loads CLAUDE.md in full, Cursor/Aider/Gemini CLI
+    // and the agents.md spec don't cap at all. A cross-tool repo already has to fit
+    // 32 KiB, so exceeding it here would buy the model nothing it can rely on
+    // elsewhere. Raise only with a reason that survives that argument.
+    expect(SIZE_BUDGETS.projectInstructions).toBeLessThanOrEqual(32 * 1024);
+  });
+
   it('encodes the intended budget relationships', () => {
-    // Investigation agents get more instruction room than the orchestrator default.
-    expect(SIZE_BUDGETS.projectInstructionsAgent).toBeGreaterThan(
-      SIZE_BUDGETS.projectInstructionsDefault,
-    );
-    // The Coder — the only role that MUTATES the repo — reads the project's
-    // conventions on the same budget as the lead agent, never less. And never MORE:
-    // the Coder carrying more project prose than the orchestrator is not a thing we
-    // want to discover by accident. Encoded directly rather than left to the two
-    // AGENTS.md-fit assertions, which only diverge once these constants do (fugu,
-    // PR #1458).
-    expect(SIZE_BUDGETS.agentsMdCoder).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructionsDefault);
-    expect(SIZE_BUDGETS.agentsMdCoder).toEqual(SIZE_BUDGETS.projectInstructionsDefault);
+    // ONE instruction budget for every role. The old three-way split (8k lead /
+    // 12k read-only agents / 8k Coder) meant a Coder and an Explorer read DIFFERENT
+    // HALVES of the same AGENTS.md, and the only role that mutates the repo got less
+    // of the rulebook than the role that cannot change a line. There is no coherent
+    // reason for roles to disagree about what the project's conventions say.
+    //
     // The Coder's tool-result window is the largest; side hints get the smallest budget.
     expect(SIZE_BUDGETS.toolResultCoder).toBeGreaterThan(SIZE_BUDGETS.toolResultReadOnly);
-    expect(SIZE_BUDGETS.roleProjectHints).toBeLessThan(SIZE_BUDGETS.projectInstructionsDefault);
+    // Distilled policy hints are a side block, not the instruction file.
+    expect(SIZE_BUDGETS.roleProjectHints).toBeLessThan(SIZE_BUDGETS.projectInstructions);
     // The auditor's diff-chunking cap is intentionally tighter than the
     // reviewers' — it trades diff breadth for prompt headroom (file context +
     // security prompt). Keep this ordering if the values are ever retuned.

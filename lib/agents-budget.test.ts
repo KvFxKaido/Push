@@ -2,53 +2,71 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { sanitizeProjectInstructions } from './project-instructions.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const read = (name: string): string => readFileSync(join(REPO_ROOT, name), 'utf8');
 
+// AGENTS.md is the orientation file the instruction loaders actually inject:
+// first-found-wins resolves it ahead of CLAUDE.md / GEMINI.md, and there is no
+// PUSH.md. It is capped at SIZE_BUDGETS.projectInstructions on injection.
+//
+// The old rule here was "if this fails, TRIM AGENTS.md; do not raise the budget (it
+// bills every repo/user every turn)." That rule is retired, because its premise did
+// not survive arithmetic: project instructions ride the SYSTEM PROMPT, which Push tags
+// with `cache_control`, so they sit in the cached prefix — billed once at write and at
+// cache-read rates thereafter (~$0.009/turn for a 6k-token delta). The budget was
+// defending pennies by deleting the second half of the rulebook.
+//
+// The rule that replaces it: the file must FIT, and the assertions below measure what
+// is actually INJECTED — not the raw file, which is the mistake the previous version of
+// this test made (it passed while the Coder was still reading a truncated block).
 describe('AGENTS.md injection budget', () => {
-  // AGENTS.md is the orientation file the instruction loaders actually inject:
-  // first-found-wins resolves it ahead of CLAUDE.md / GEMINI.md, and there is
-  // no PUSH.md. At the orchestrator injection site it's capped at
-  // SIZE_BUDGETS.projectInstructionsDefault. Overflow isn't fully silent — the
-  // sanitizer leaves a "[Project instructions truncated …]" marker — but the
-  // tail content past the cap is gone (which once dropped the ARCHITECTURE.md
-  // precedence note). This pins the fix so the file can't quietly creep back
-  // over budget.
-  //
-  // The assertion measures String.length (UTF-16 code units) because that is
-  // exactly what `sanitizeProjectInstructions` compares against the cap — NOT
-  // byte length (`wc -c`), which over-counts AGENTS.md's many multi-byte em
-  // dashes and arrows. If this fails, trim AGENTS.md; do not raise the budget
-  // (it bills every repo/user every turn).
-  it('fits within the default project-instructions budget (code units)', () => {
-    const content = readFileSync(join(REPO_ROOT, 'AGENTS.md'), 'utf8');
-    expect(content.length).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructionsDefault);
+  // String.length (UTF-16 code units) is what `sanitizeProjectInstructions` compares
+  // against the cap — NOT byte length (`wc -c`), which over-counts AGENTS.md's many
+  // multi-byte em dashes and arrows.
+  it('fits within the project-instructions budget (code units)', () => {
+    expect(read('AGENTS.md').length).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructions);
   });
 
-  // The Coder is the only role that MUTATES the repo, so it is the last one that
-  // should be guessing at the conventions. At the old 4k budget this file was cut in
-  // half and the Coder lost Validation commands, "Behavior lives in code",
-  // decision-doc discipline, and the new-feature checklist — every rule constraining
-  // how code gets written here, withheld from the role writing it.
-  //
-  // Same remedy as above if this fails: TRIM AGENTS.md.
-  //
-  // ⚠️ THIS DOES NOT PROVE THE CODER SEES THE WHOLE FILE, and an earlier version of
-  // this test claimed it did. On the web path for the canonical Push repo,
-  // `buildEffectiveProjectInstructions` PREPENDS ~2.4k of built-in Push context and
-  // the role budget is applied to that COMBINED string — so the injected content is
-  // ~10.4k and AGENTS.md is still truncated from the tail (the `# setup:` block at
-  // char ~5.9k falls off). Measuring the raw file against the budget is necessary,
-  // not sufficient; it says nothing about the string actually injected.
-  //
-  // The real fix is to bill the budget against repo-provided text only and account
-  // for our own preamble separately. That needs the exempt length threaded to the
-  // injection sites explicitly — a marker the sanitizer sniffs for would let a repo
-  // exempt ITSELF from its cap on the CLI path, and that sanitizer is the
-  // injection-defense boundary. Tracked as a follow-up; do not paper over it here.
-  it('fits within the Coder budget (necessary, NOT sufficient — see comment)', () => {
-    const content = readFileSync(join(REPO_ROOT, 'AGENTS.md'), 'utf8');
-    expect(content.length).toBeLessThanOrEqual(SIZE_BUDGETS.agentsMdCoder);
+  // The assertion that actually matters, and the one the old test could not make:
+  // run the file through the real injection chokepoint and prove nothing was dropped.
+  // A raw-length check is necessary but NOT sufficient — it says nothing about the
+  // string the model receives.
+  it('survives the real sanitizer intact — nothing truncated at the injection site', () => {
+    const injected = sanitizeProjectInstructions(read('AGENTS.md'));
+    expect(injected).not.toContain('[Project instructions truncated');
+  });
+
+  // The conventions are the POINT of the file, and they live in its back half — which
+  // is exactly what an 8k cap used to delete. Pin a few load-bearing ones so a future
+  // trim can't quietly amputate the sections that constrain how code gets written here.
+  it('delivers the conventions, not just the orientation', () => {
+    const injected = sanitizeProjectInstructions(read('AGENTS.md'));
+    for (const marker of ['# setup:', '# test:', '# typecheck:']) {
+      expect(injected, `AGENTS.md must still declare "${marker}" after injection`).toContain(
+        marker,
+      );
+    }
+  });
+});
+
+// CLAUDE.md is not injected by Push's own loader (AGENTS.md wins first-found), but it
+// IS what every other agent on this repo reads, and it is the file that exposed how
+// destructive the old cap was: at 8k it kept 29% of CLAUDE.md, cut mid-sentence, losing
+// every convention section — Tool protocol, "Behavior lives in code", symmetric
+// structured logs, decision-doc discipline, the new-feature checklist, and the PR
+// self-review pass. This pins that it now fits.
+describe('CLAUDE.md injection budget', () => {
+  it('fits within the project-instructions budget, so no agent reads half a rulebook', () => {
+    expect(read('CLAUDE.md').length).toBeLessThanOrEqual(SIZE_BUDGETS.projectInstructions);
+  });
+
+  it('would survive the sanitizer intact if a loader reached it', () => {
+    const injected = sanitizeProjectInstructions(read('CLAUDE.md'));
+    expect(injected).not.toContain('[Project instructions truncated');
+    // The section that used to be structurally unreachable under the cap.
+    expect(injected).toContain('PR self-review pass');
   });
 });
