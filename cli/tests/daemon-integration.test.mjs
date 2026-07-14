@@ -71,7 +71,7 @@ import {
 import { getToolSpec } from '../../lib/tool-registry.ts';
 import { buildExplorerSystemPrompt } from '../../lib/explorer-agent.ts';
 import { startMockProviderServer, patchProviderConfig } from './mock-provider-server.mjs';
-import { canListenOnLoopback } from './test-environment.mjs';
+import { canListenOnLoopback, rmWorkspace } from './test-environment.mjs';
 
 const loopbackAvailable = await canListenOnLoopback();
 const needsLoopback = {
@@ -5497,7 +5497,8 @@ describe('delegate_deep_reviewer', needsLoopback, () => {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
-      await fs.rm(workRoot, { recursive: true, force: true });
+      // Handed to the session as its workspace root — see rmWorkspace.
+      await rmWorkspace(workRoot);
     }
   });
 });
@@ -6560,7 +6561,8 @@ describe('attach_session resume from lastSeenSeq', () => {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
-      await fs.rm(repoRoot, { recursive: true, force: true });
+      // Handed to the session as its workspace root — see rmWorkspace.
+      await rmWorkspace(repoRoot);
       try {
         if (!isNamedPipePath(sockPath)) await fs.unlink(sockPath);
       } catch {
@@ -6619,7 +6621,8 @@ describe('attach_session resume from lastSeenSeq', () => {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;
       else process.env.PUSH_SESSION_DIR = originalSessionDir;
       await fs.rm(tmpRoot, { recursive: true, force: true });
-      await fs.rm(repoRoot, { recursive: true, force: true });
+      // Handed to the session as its workspace root — see rmWorkspace.
+      await rmWorkspace(repoRoot);
     }
   });
 
