@@ -23,6 +23,7 @@
  * a mechanical lift of the same logic with the call boundary named.
  */
 
+import type { ToolCard } from './tool-cards.js';
 import {
   type CapabilityLedger,
   enforceRoleCapability,
@@ -140,7 +141,7 @@ export interface SandboxToolMeta {
 /** Minimal sandbox/web-search tool-execution result shape the
  * tool-exec closure consumes. The richer Web `ToolExecutionResult`
  * satisfies this structurally. */
-export interface SandboxToolExecResult<TCard> {
+export interface SandboxToolExecResult<TCard extends ToolCard = ToolCard> {
   text: string;
   card?: TCard;
   structuredError?: {
@@ -203,7 +204,7 @@ export interface CoderBindingServices<
   TCoderCall extends TaggedCallShape,
   TSandboxCall,
   TWebSearchCall extends { args: { query: string } },
-  TCard,
+  TCard extends ToolCard = ToolCard,
 > {
   // --- control plane ---
   policy: CoderPolicyAdapter;
@@ -285,7 +286,7 @@ export function buildCoderDetectors<
   TCoderCall extends TaggedCallShape,
   TSandboxCall,
   TWebSearchCall extends { args: { query: string } },
-  TCard,
+  TCard extends ToolCard = ToolCard,
 >(
   services: CoderBindingServices<TCoderCall, TSandboxCall, TWebSearchCall, TCard>,
 ): {
@@ -373,7 +374,7 @@ export function buildCoderEvaluateAfterModel<
   TCoderCall extends TaggedCallShape,
   TSandboxCall,
   TWebSearchCall extends { args: { query: string } },
-  TCard,
+  TCard extends ToolCard = ToolCard,
 >(
   services: CoderBindingServices<TCoderCall, TSandboxCall, TWebSearchCall, TCard>,
 ): (response: string, round: number) => Promise<CoderAfterModelResult> {
@@ -405,7 +406,7 @@ export function buildCoderToolExec<
   TCoderCall extends TaggedCallShape,
   TSandboxCall,
   TWebSearchCall extends { args: { query: string } },
-  TCard,
+  TCard extends ToolCard = ToolCard,
 >(
   services: CoderBindingServices<TCoderCall, TSandboxCall, TWebSearchCall, TCard>,
 ): (

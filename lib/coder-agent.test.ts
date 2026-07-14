@@ -15,6 +15,8 @@ import type {
   PushStreamEvent,
   ToolFunctionSchema,
 } from './provider-contract.js';
+import type { RunEventInput } from './runtime-contract.js';
+import type { ToolCard } from './tool-cards.js';
 
 type Call = { call: { tool: string; args: Record<string, unknown> }; thoughtSignature?: string };
 
@@ -97,23 +99,24 @@ describe('generateCheckpointAnswer (PushStream consumer)', () => {
 
 function baseCoderOptions(overrides: {
   stream: PushStream;
-  detectAnyToolCall?: CoderAgentOptions<Call, never>['detectAnyToolCall'];
-  detectAllToolCalls?: CoderAgentOptions<Call, never>['detectAllToolCalls'];
-  evaluateAfterModel?: CoderAgentOptions<Call, never>['evaluateAfterModel'];
+  detectAnyToolCall?: CoderAgentOptions<Call>['detectAnyToolCall'];
+  detectAllToolCalls?: CoderAgentOptions<Call>['detectAllToolCalls'];
+  evaluateAfterModel?: CoderAgentOptions<Call>['evaluateAfterModel'];
   leadMode?: boolean;
   leadToolGuidance?: boolean;
-  leadToolScope?: CoderAgentOptions<Call, never>['leadToolScope'];
+  leadToolScope?: CoderAgentOptions<Call>['leadToolScope'];
   harnessMaxRounds?: number;
-  initialMessages?: CoderAgentOptions<Call, never>['initialMessages'];
+  initialMessages?: CoderAgentOptions<Call>['initialMessages'];
   initialUserContentParts?: LlmContentPart[];
   linkedLibraryContent?: string;
-  sessionDigestRecords?: CoderAgentOptions<Call, never>['sessionDigestRecords'];
-  priorSessionDigest?: CoderAgentOptions<Call, never>['priorSessionDigest'];
-  onSessionDigestEmitted?: CoderAgentOptions<Call, never>['onSessionDigestEmitted'];
-  resumeState?: CoderAgentOptions<Call, never>['resumeState'];
-  repeatExemptTools?: CoderAgentOptions<Call, never>['repeatExemptTools'];
-  adaptMaxRounds?: CoderAgentOptions<Call, never>['adaptMaxRounds'];
-}): CoderAgentOptions<Call, never> {
+  sessionDigestRecords?: CoderAgentOptions<Call>['sessionDigestRecords'];
+  priorSessionDigest?: CoderAgentOptions<Call>['priorSessionDigest'];
+  onSessionDigestEmitted?: CoderAgentOptions<Call>['onSessionDigestEmitted'];
+  resumeState?: CoderAgentOptions<Call>['resumeState'];
+  repeatExemptTools?: CoderAgentOptions<Call>['repeatExemptTools'];
+  adaptMaxRounds?: CoderAgentOptions<Call>['adaptMaxRounds'];
+  toolExec?: CoderAgentOptions<Call>['toolExec'];
+}): CoderAgentOptions<Call> {
   return {
     provider: 'openrouter',
     stream: overrides.stream,
@@ -136,7 +139,7 @@ function baseCoderOptions(overrides: {
     resumeState: overrides.resumeState,
     repeatExemptTools: overrides.repeatExemptTools,
     adaptMaxRounds: overrides.adaptMaxRounds,
-    toolExec: async () => ({ kind: 'executed', resultText: 'tool ok' }),
+    toolExec: overrides.toolExec ?? (async () => ({ kind: 'executed', resultText: 'tool ok' })),
     detectAllToolCalls:
       overrides.detectAllToolCalls ??
       (() => ({
@@ -1822,5 +1825,89 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
     // Default halt path — emitted (explicitly, before finishRound's onRunEvent)
     // even though the turn_end handler threw.
     expect(receipts[0].stopReason).toBe('policy_halt');
+  });
+});
+
+describe('runCoderAgent — tool render payload (`card`) on tool.execution_complete', () => {
+  // A card is what the USER sees; `resultText` is what the MODEL reads. The
+  // card must ride the run event (so both shells can render it) and must NEVER
+  // be serialized into an LlmMessage. Slice 1 of the render-payload track.
+  // See `docs/decisions/Tool Render Payload — Cards Are Declared, Not Sniffed.md`.
+  const CARD_MARKER = 'CARD_ONLY_NEVER_SHOW_THE_MODEL';
+
+  const typeCheckCard = {
+    type: 'type-check',
+    data: {
+      tool: 'tsc',
+      errors: [{ file: CARD_MARKER, line: 1, column: 1, message: CARD_MARKER }],
+      errorCount: 1,
+      warningCount: 0,
+      exitCode: 2,
+      truncated: false,
+    },
+  } as const satisfies ToolCard;
+
+  async function runWithCard() {
+    const { stream, capturedRequests } = makePushStream([
+      [
+        { type: 'text_delta', text: '{"tool":"sandbox_read_file","args":{"path":"README.md"}}' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Done.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const events: RunEventInput[] = [];
+
+    await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        evaluateAfterModel: async () => null,
+        detectAnyToolCall: (text: string) =>
+          text.includes('sandbox_read_file')
+            ? ({
+                source: 'sandbox',
+                call: { tool: 'sandbox_read_file', args: { path: 'README.md' } },
+              } as never)
+            : null,
+        // The model-facing text is deliberately boring; everything rich is in the card.
+        toolExec: async () => ({
+          kind: 'executed' as const,
+          resultText: 'typecheck failed with 1 error',
+          card: typeCheckCard,
+        }),
+      }),
+      { onStatus: () => {}, onRunEvent: (event) => events.push(event) },
+    );
+
+    return { events, capturedRequests };
+  }
+
+  it('forwards the card onto the run event, verbatim', async () => {
+    const { events } = await runWithCard();
+    const complete = events.find((e) => e.type === 'tool.execution_complete');
+    expect(complete).toEqual(expect.objectContaining({ card: typeCheckCard }));
+  });
+
+  it('NEVER lets the card reach an LlmMessage', async () => {
+    // The load-bearing invariant of the whole track. If this fails, the card is
+    // being paid for in tokens and the model is reading render data.
+    const { capturedRequests } = await runWithCard();
+    expect(capturedRequests.length).toBeGreaterThan(0);
+    for (const req of capturedRequests) {
+      const wire = JSON.stringify((req as { messages: unknown[] }).messages);
+      expect(wire).not.toContain(CARD_MARKER);
+      expect(wire).not.toContain('type-check');
+    }
+  });
+
+  it('still gives the model the tool result text', async () => {
+    // Guard against "passing" the invariant above by dropping the result entirely.
+    const { capturedRequests } = await runWithCard();
+    const wire = JSON.stringify(
+      (capturedRequests[capturedRequests.length - 1] as { messages: unknown[] }).messages,
+    );
+    expect(wire).toContain('typecheck failed with 1 error');
   });
 });

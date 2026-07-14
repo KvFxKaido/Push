@@ -611,7 +611,7 @@ export async function runLeadKernelTurn(
   const toolExec = async (
     toolCall: CliKernelCall,
     execCtx: { round: number; phase?: string },
-  ): Promise<CoderToolExecResult<unknown>> => {
+  ): Promise<CoderToolExecResult> => {
     // Fall through for a bare flat call (tests that drive the executor
     // directly) — production calls always arrive kernel-wrapped.
     const rawCall: CliToolCall =
@@ -737,7 +737,7 @@ export async function runLeadKernelTurn(
     }
   };
 
-  const callbacks: CoderAgentCallbacks<unknown> = {
+  const callbacks: CoderAgentCallbacks = {
     onStatus: (phase, detail) => {
       // The kernel's "Reasoning Sync" status mirrors the first ~150 chars of
       // each round's text — built for the web's transient status bar. The
@@ -781,7 +781,7 @@ export async function runLeadKernelTurn(
   // maps don't accumulate one entry per turn on a long-running daemon.
 
   try {
-    const result = await runCoderAgent<CliKernelCall, unknown>(
+    const result = await runCoderAgent<CliKernelCall>(
       {
         provider: providerConfig.id as AIProviderType,
         stream,
