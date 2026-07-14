@@ -515,6 +515,35 @@ describe('protocol drift characterization — tool events', () => {
     );
   });
 
+  it('accepts a structural tool card, including an unknown future type', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('tool.execution_complete', {
+        toolName: 'ci_status',
+        isError: false,
+        preview: '3 checks',
+        card: { type: 'future-ci-card', data: { checks: 3 } },
+      }),
+    );
+  });
+
+  it('rejects malformed tool-card envelopes', () => {
+    for (const card of [
+      'ci-status',
+      { type: '', data: {} },
+      { type: 'ci-status' },
+      { type: 'ci-status', data: [] },
+    ]) {
+      assertStrictBroadcastFail(
+        makeEnvelope('tool.execution_complete', {
+          toolName: 'ci_status',
+          isError: false,
+          preview: 'x',
+          card,
+        }),
+      );
+    }
+  });
+
   it('accepts tool.execution_complete with a structured edit diff', () => {
     assertStrictBroadcastPass(
       makeEnvelope('tool.execution_complete', {

@@ -112,6 +112,15 @@ describe('JSON schema enums are built from canonical constants', () => {
   }
 });
 
+describe('JSON schema tool render payload', () => {
+  it('declares the forward-compatible card envelope on ToolResult', () => {
+    const card = PUSH_RUNTIME_EVENT_SCHEMA.$defs.ToolResult.properties.card;
+    assert.deepEqual(card.required, ['type', 'data']);
+    assert.equal(card.properties.type.minLength, 1);
+    assert.equal(card.properties.data.type, 'object');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 3. Required-field agreement with the validators
 // ---------------------------------------------------------------------------

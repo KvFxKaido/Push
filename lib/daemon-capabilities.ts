@@ -90,6 +90,10 @@ export const DAEMON_CAPABILITIES = [
   // for clients that don't consume them — see `docs/decisions/Workspace State
   // Events — Snapshot + Delta.md`.
   'workspace_state_v1',
+  // `tool_cards_v1`: `tool.execution_complete.payload.card` carries the
+  // typed render payload. Clients that omit this capability receive the same
+  // event with `card` stripped, preserving the pre-card wire shape.
+  'tool_cards_v1',
 ] as const;
 
 /** A capability the daemon advertises. */
@@ -110,6 +114,9 @@ export const EVENT_V2: DaemonCapability = 'event_v2';
  */
 export const WORKSPACE_STATE_V1: DaemonCapability = 'workspace_state_v1';
 
+/** Named constant for capability-gated tool-card delivery. */
+export const TOOL_CARDS_V1: DaemonCapability = 'tool_cards_v1';
+
 /** True if `value` is a capability the daemon advertises. */
 export function isDaemonCapability(value: unknown): value is DaemonCapability {
   return typeof value === 'string' && (DAEMON_CAPABILITIES as readonly string[]).includes(value);
@@ -126,6 +133,7 @@ export const TUI_DAEMON_CAPABILITIES = Object.freeze([
   'event_v2',
   'session_snapshot_v1',
   'workspace_state_v1',
+  'tool_cards_v1',
 ] satisfies DaemonCapability[]);
 
 /**
@@ -136,4 +144,5 @@ export const TUI_DAEMON_CAPABILITIES = Object.freeze([
 export const ATTACH_CLIENT_CAPABILITIES = Object.freeze([
   'event_v2',
   'workspace_state_v1',
+  'tool_cards_v1',
 ] satisfies DaemonCapability[]);

@@ -190,6 +190,15 @@ describe('isToolCard — the untyped-boundary guard', () => {
     const mod = await import('../../lib/tool-cards.ts');
     assert.deepEqual([...mod.TOOL_CARD_TYPES].sort(), [...TOOL_CARD_TYPES].sort());
   });
+
+  it('keeps an unknown future card as a renderable envelope, not a known producer card', async () => {
+    const { isToolCard, isToolCardPayload } = await import('../../lib/tool-cards.ts');
+    const future = { type: 'future-card', data: { version: 2 } };
+    assert.equal(isToolCardPayload(future), true);
+    assert.equal(isToolCard(future), false);
+    assert.equal(isToolCardPayload({ type: '', data: {} }), false);
+    assert.equal(isToolCardPayload({ type: 'ci-status', data: [] }), false);
+  });
 });
 
 describe('the CLI lead lane actually lifts the card', () => {

@@ -692,7 +692,12 @@ import {
   validateEvent,
   RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
-import { DAEMON_CAPABILITIES, EVENT_V2, WORKSPACE_STATE_V1 } from '../lib/daemon-capabilities.js';
+import {
+  DAEMON_CAPABILITIES,
+  EVENT_V2,
+  TOOL_CARDS_V1,
+  WORKSPACE_STATE_V1,
+} from '../lib/daemon-capabilities.js';
 import {
   DAEMON_EXEC_MODES,
   DAEMON_WEB_SEARCH_BACKENDS,
@@ -1097,6 +1102,36 @@ function removeSessionClient(sessionId, emitFn) {
 }
 
 /**
+ * Preserve the pre-Slice-2 event shape for clients that have not advertised
+ * `tool_cards_v1`. The canonical/persisted event keeps the card; only the
+ * per-client transport view is stripped.
+ */
+function eventForClientCapabilities(event, capabilities) {
+  if (capabilities.has(TOOL_CARDS_V1)) return event;
+  if (event?.type !== 'tool.execution_complete' || !event.payload?.card) return event;
+  const { card: _card, ...payload } = event.payload;
+  return { ...event, payload };
+}
+
+/**
+ * Keep reconnect snapshots on the same capability boundary as live/replayed
+ * events. The daemon-owned mirror stays canonical; only the response copy is
+ * stripped for clients that do not understand tool cards.
+ */
+function transcriptSnapshotForClientCapabilities(mirror, capabilities) {
+  const snapshot = snapshotDaemonTranscript(mirror);
+  if (capabilities.has(TOOL_CARDS_V1)) return snapshot;
+  return {
+    ...snapshot,
+    rows: snapshot.rows.map((row) => {
+      if (!row?.card) return row;
+      const { card: _card, ...legacyRow } = row;
+      return legacyRow;
+    }),
+  };
+}
+
+/**
  * Validate an outbound envelope before fan-out.
  *
  * Strict mode (`PUSH_PROTOCOL_STRICT=1`, set by the daemon-integration test
@@ -1160,9 +1195,9 @@ export function broadcastEvent(sessionId, event) {
   // `approval_required`, etc.).
   const isDelegation = isV2DelegationEvent(event.type);
   if (!isDelegation) {
-    for (const [emitFn] of clients) {
+    for (const [emitFn, meta] of clients) {
       try {
-        emitFn(event);
+        emitFn(eventForClientCapabilities(event, meta.capabilities));
       } catch {
         /* client may have disconnected */
       }
@@ -1236,7 +1271,7 @@ export function emitEventWithDowngrade(event, emitFn, capabilities) {
   const isDelegation = isV2DelegationEvent(event.type);
   if (!isDelegation || capabilities.has(EVENT_V2)) {
     try {
-      emitFn(event);
+      emitFn(eventForClientCapabilities(event, capabilities));
     } catch {
       /* client may have disconnected */
     }
@@ -2400,6 +2435,9 @@ async function handleGetSessionSnapshot(req) {
   const state = entry.state || {};
   const currentSeq = typeof state.eventSeq === 'number' ? state.eventSeq : 0;
   const recentEventLimit = normalizeRecentEventLimit(req.payload?.recentEventLimit);
+  const clientCapabilities = new Set(
+    Array.isArray(req.payload?.capabilities) ? req.payload.capabilities : [],
+  );
 
   let recentEvents = [];
   let allEvents = [];
@@ -2498,8 +2536,10 @@ async function handleGetSessionSnapshot(req) {
     pendingApproval,
     transcript: {
       lastSeq: currentSeq,
-      recentEvents,
-      mirror: snapshotDaemonTranscript(entry.transcriptMirror),
+      recentEvents: recentEvents.map((event) =>
+        eventForClientCapabilities(event, clientCapabilities),
+      ),
+      mirror: transcriptSnapshotForClientCapabilities(entry.transcriptMirror, clientCapabilities),
     },
   });
 }

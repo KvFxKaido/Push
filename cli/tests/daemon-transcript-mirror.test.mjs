@@ -33,6 +33,7 @@ describe('daemon transcript mirror', () => {
             isError: false,
             durationMs: 12,
             preview: 'updated a.ts',
+            card: { type: 'ci-status', data: { checks: [] } },
             diff: {
               path: 'a.ts',
               adds: 1,
@@ -59,8 +60,26 @@ describe('daemon transcript mirror', () => {
     assert.equal(mirror.rows[1].pending, false);
     assert.equal(mirror.rows[1].resultPreview, 'updated a.ts');
     assert.equal(mirror.rows[1].diff.path, 'a.ts');
+    assert.deepEqual(mirror.rows[1].card, { type: 'ci-status', data: { checks: [] } });
     assert.equal(mirror.rows[0].timestampMs, 1);
     assert.equal(mirror.rows[2].timestampMs, 4);
+  });
+
+  it('preserves unknown future card types for the renderer tombstone', () => {
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'tool.execution_complete',
+      payload: {
+        toolName: 'future_tool',
+        isError: false,
+        card: { type: 'future-card', data: { version: 2 } },
+      },
+    });
+    assert.deepEqual(mirror.rows[0].card, {
+      type: 'future-card',
+      data: { version: 2 },
+    });
   });
 
   it('applies the same broadcast reducer live and round-trips a snapshot', () => {

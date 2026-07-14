@@ -199,6 +199,29 @@ describe('makeCLIEventHandler delegation rendering', () => {
     assert.match(clean, /file not found/);
   });
 
+  it('renders a declared tool card instead of the model-facing preview', () => {
+    const handler = makeCLIEventHandler();
+    const { stdout } = capture(() => {
+      handler({
+        type: 'tool.execution_complete',
+        payload: {
+          toolName: 'ci_status',
+          isError: false,
+          preview: 'RAW_MODEL_PREVIEW',
+          card: {
+            type: 'ci-status',
+            data: { repo: 'KvFxKaido/Push', checkCount: 3 },
+          },
+        },
+      });
+    });
+    const clean = stripAnsi(stdout);
+    assert.match(clean, /\[tool:ok\] CI Status/);
+    assert.match(clean, /Repo: KvFxKaido\/Push/);
+    assert.match(clean, /Check Count: 3/);
+    assert.doesNotMatch(clean, /RAW_MODEL_PREVIEW/);
+  });
+
   it('silently ignores unrecognised event types', () => {
     const handler = makeCLIEventHandler();
     const { stdout } = capture(() => {
@@ -271,7 +294,11 @@ describe('makeCLIEventHandler delegation rendering', () => {
 
 describe('buildAttachSessionPayload', () => {
   it('opts attach clients into raw v2 delegation events and workspace state', () => {
-    assert.deepEqual(ATTACH_CLIENT_CAPABILITIES, ['event_v2', 'workspace_state_v1']);
+    assert.deepEqual(ATTACH_CLIENT_CAPABILITIES, [
+      'event_v2',
+      'workspace_state_v1',
+      'tool_cards_v1',
+    ]);
     assert.deepEqual(
       buildAttachSessionPayload({
         sessionId: 'sess_alpha1_abcdef',
@@ -280,7 +307,7 @@ describe('buildAttachSessionPayload', () => {
       {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 12,
-        capabilities: ['event_v2', 'workspace_state_v1'],
+        capabilities: ['event_v2', 'workspace_state_v1', 'tool_cards_v1'],
       },
     );
   });
@@ -296,7 +323,7 @@ describe('buildAttachSessionPayload', () => {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 0,
         attachToken: 'att_secret',
-        capabilities: ['event_v2', 'workspace_state_v1'],
+        capabilities: ['event_v2', 'workspace_state_v1', 'tool_cards_v1'],
       },
     );
   });
@@ -333,7 +360,7 @@ describe('buildAttachSessionPayload', () => {
         sessionId: 'sess_alpha1_abcdef',
         lastSeenSeq: 4,
         attachToken: 'att_local_secret',
-        capabilities: ['event_v2', 'workspace_state_v1'],
+        capabilities: ['event_v2', 'workspace_state_v1', 'tool_cards_v1'],
       });
     } finally {
       if (originalSessionDir === undefined) delete process.env.PUSH_SESSION_DIR;

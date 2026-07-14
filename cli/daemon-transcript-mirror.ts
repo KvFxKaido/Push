@@ -1,6 +1,7 @@
 import { isEditDiff, type EditDiff } from '../lib/edit-diff.ts';
 import { getSubagentDisplay } from '../lib/role-display.ts';
 import { isTranscriptMutationEvent } from '../lib/session-transcript-events.ts';
+import { isToolCardPayload, type ToolCardPayload } from '../lib/tool-cards.ts';
 import type { SessionEvent } from './session-store.ts';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
 
@@ -26,6 +27,7 @@ export interface DaemonTranscriptRow {
   durationMs?: number;
   resultPreview?: string;
   diff?: EditDiff;
+  card?: ToolCardPayload;
   timestampMs?: number;
 }
 
@@ -177,6 +179,7 @@ export function applyDaemonTranscriptEvent(
         if (typeof payload.durationMs === 'number') row.durationMs = payload.durationMs;
         if (resultPreview) row.resultPreview = resultPreview;
         if (isEditDiff(payload.diff)) row.diff = payload.diff;
+        if (isToolCardPayload(payload.card)) row.card = payload.card;
       } else {
         mirror.rows.push({
           id: eventId(mirror, event, 'tool-result'),
@@ -189,6 +192,7 @@ export function applyDaemonTranscriptEvent(
           resultPreview,
           ...(typeof payload.durationMs === 'number' ? { durationMs: payload.durationMs } : {}),
           ...(isEditDiff(payload.diff) ? { diff: payload.diff } : {}),
+          ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),
         });
       }
       break;
