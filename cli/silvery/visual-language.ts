@@ -58,8 +58,10 @@ export interface VisualGlyphs {
 export const GLYPHS_UNICODE: VisualGlyphs = {
   hexIdle: '⬡',
   hexActive: '⬢',
-  markWork: '▪',
-  markQuiet: '▫',
+  // Silvery promotes bare U+25AA/U+25AB to emoji presentation (VS16), making
+  // them two cells wide. VS15 keeps the square spine monochrome and one-cell.
+  markWork: '▪\uFE0E',
+  markQuiet: '▫\uFE0E',
   human: '›',
   density: ['░', '▒', '▓', '█'],
 };

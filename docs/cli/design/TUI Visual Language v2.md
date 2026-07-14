@@ -87,6 +87,8 @@ worst-supported glyph in the busiest slot would be the one decision that breaks 
 language in the field.
 
 The activity spine is a **square**: `▪` Push working, `▫` Push talking. ASCII `+` / `-`.
+The Unicode strings carry U+FE0E (text presentation) so Silvery and terminals keep both
+squares monochrome and one cell wide instead of promoting them to two-cell emoji.
 
 *Reversal (2026-07-14).* This law previously read "diamond workhorse" and kept `◆` / `◇` on
 the spine. Two reasons that was wrong, and neither is "diamonds are ugly":

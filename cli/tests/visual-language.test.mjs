@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { defaultDarkTheme, resolveThemeColor } from 'silvery';
+import { defaultDarkTheme, displayWidth, resolveThemeColor } from 'silvery';
 
 import { createPushSilveryTokens } from '../silvery/theme.tsx';
 import { VARIANTS } from '../tui-theme.ts';
@@ -47,8 +47,15 @@ describe('visual language v2 glyphs', () => {
   it('puts a SQUARE on the activity spine, never a diamond or the hexagon (law 5)', () => {
     // The workhorse must not rhyme with the signature: `◆` and `⬢` are both angular
     // filled polygons and read as the same family in a scrolling transcript.
-    assert.equal(GLYPHS_UNICODE.markWork, '▪');
-    assert.equal(GLYPHS_UNICODE.markQuiet, '▫');
+    assert.equal(GLYPHS_UNICODE.markWork, '▪\uFE0E');
+    assert.equal(GLYPHS_UNICODE.markQuiet, '▫\uFE0E');
+    assert.equal(displayWidth(GLYPHS_UNICODE.markWork), 1);
+    assert.equal(displayWidth(GLYPHS_UNICODE.markQuiet), 1);
+    assert.ok(!GLYPHS_UNICODE.markWork.includes('\uFE0F'), 'work mark is never emoji presentation');
+    assert.ok(
+      !GLYPHS_UNICODE.markQuiet.includes('\uFE0F'),
+      'quiet mark is never emoji presentation',
+    );
     assert.equal(GLYPHS_ASCII.markWork, '+');
     assert.equal(GLYPHS_ASCII.markQuiet, '-');
     for (const glyphs of [GLYPHS_UNICODE, GLYPHS_ASCII]) {
@@ -177,8 +184,8 @@ describe('visual language v2 color budget', () => {
     const user = streamMark('user', g);
     assert.equal(user.glyph, '›');
     assert.notEqual(user.glyph, g.hexActive); // not Push's face
-    assert.notEqual(user.glyph, g.dotActive); // not Push's activity spine
-    assert.notEqual(user.glyph, g.dotIdle);
+    assert.notEqual(user.glyph, g.markWork); // not Push's activity spine
+    assert.notEqual(user.glyph, g.markQuiet);
     assert.equal(user.color, VL_COLOR.accent);
     assert.equal(streamMark('user', GLYPHS_ASCII).glyph, '>');
   });

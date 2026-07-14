@@ -6496,12 +6496,13 @@ describe('attach_session resume from lastSeenSeq', () => {
         (event) => events.push(event),
       );
       assert.equal(attach.ok, true);
-      // The resync emit may read git asynchronously; let it settle.
-      await new Promise((resolve) => setTimeout(resolve, 100));
-
-      const snapshots = events.filter((e) => e.type === 'workspace.state_snapshot');
-      assert.ok(snapshots.length >= 1, 'expected at least one workspace.state_snapshot');
-      const snap = snapshots[snapshots.length - 1];
+      // The resync emit reads git asynchronously. Poll for the contract event
+      // instead of assuming a loaded Windows runner finishes within 100 ms.
+      const snap = await waitForBroadcast(
+        events,
+        (event) => event.type === 'workspace.state_snapshot',
+        { message: 'expected at least one workspace.state_snapshot' },
+      );
       assert.equal(typeof snap.payload.workspaceId, 'string');
       assert.ok(snap.payload.rev >= 0);
       assert.equal(typeof snap.payload.state.activeBranch, 'string');
