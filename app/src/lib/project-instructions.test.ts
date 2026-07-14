@@ -131,3 +131,65 @@ describe('truncateOnStructureBoundary (§ honest truncation)', () => {
     expect(out).toContain('Sections omitted: ## Conventions | ## PR self-review pass');
   });
 });
+
+describe('truncateOnStructureBoundary — review regressions (PR #1475)', () => {
+  it('does not trade the whole budget for a tidy boundary (Codex P2)', () => {
+    // `# Title` + one huge `## Rules` section used to cut at `## Rules` and inject
+    // SEVEN CHARACTERS of a 32k budget. The hard-slice fallback never fired, because
+    // a heading DID fit — only its content didn't. A mid-section cut that delivers the
+    // rules beats a clean cut that delivers a title.
+    const doc = `# Title
+
+## Rules
+${'r'.repeat(40_000)}`;
+    const cut = truncateOnStructureBoundary(doc, 32_000);
+    expect(cut.content.length).toBeGreaterThan(32_000 * 0.9);
+    expect(cut.content).toContain('rrrr');
+  });
+
+  it('ignores pseudo-headings inside fenced code blocks (Codex P2)', () => {
+    // This repo's own AGENTS.md puts `# setup:` / `# test:` shell comments inside a
+    // ```bash fence — line-start `# `, indistinguishable from an H1 to a naive scan.
+    const doc = [
+      '# Title',
+      'intro',
+      '',
+      '```bash',
+      '# setup:',
+      'pnpm install',
+      '# test:',
+      'pnpm test',
+      '```',
+      '',
+      '## Real Section',
+      'x'.repeat(500),
+    ].join('\n');
+    const cut = truncateOnStructureBoundary(doc, 400);
+    expect(cut.droppedSections).not.toContain('# setup:');
+    expect(cut.droppedSections).not.toContain('# test:');
+  });
+
+  it('never leaves a fence open when a hard slice severs a code block', () => {
+    // An unterminated fence renders the truncation marker — and everything after it —
+    // as code in the model's view of the block.
+    const body = 'echo hi\n'.repeat(200);
+    const doc = ['# T', '', '```bash', body, '```', ''].join('\n');
+    const cut = truncateOnStructureBoundary(doc, 300);
+    const fences = (cut.content.match(/```/g) ?? []).length;
+    expect(fences % 2).toBe(0);
+  });
+
+  it('bounds the marker: a pathological heading cannot ride into it (fugu)', () => {
+    // A heading is `.+` to end-of-line, so capping the COUNT alone left the marker
+    // unbounded — the branch enforcing the budget was the branch blowing it, and it
+    // fires only on files already over budget.
+    // The pathological heading must land AFTER the cut, so it is a *dropped* section
+    // and therefore a candidate for the roll-call — that is the path that used to
+    // carry 30k chars into the marker.
+    const doc = ['# T', 'a'.repeat(200), `## ${'H'.repeat(30_000)}`, 'body'].join('\n');
+    const out = sanitizeProjectInstructions(doc, 100);
+    expect(out.length).toBeLessThan(1_500); // was ~30,100
+    expect(out).toContain('…'); // the title was clamped, not carried whole
+    expect(out).not.toContain('H'.repeat(100));
+  });
+});
