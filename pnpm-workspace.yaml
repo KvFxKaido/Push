@@ -5,13 +5,17 @@
 # dependencies install into the root node_modules; each listed package gets its
 # own node_modules with symlinks into the shared store.
 #
-# ⚠️ WHY pnpm 10, NOT 11 (see `packageManager` in package.json): pnpm 11 requires
-# Node >=22.13, but the Cloudflare sandbox base image ships Node 20 — and the
-# sandbox pre-bakes Push's own node_modules (Dockerfile.sandbox) so Push-on-Push
-# sessions skip a cold install. On pnpm 11 that image could not install this repo
-# at all. pnpm 10 needs only Node >=18.12, which clears both the Node 20 sandbox
-# and the Node 24 floor everywhere else. Bump to 11 only once the Cloudflare
-# sandbox base image ships Node >=22.13.
+# WHY pnpm 10, NOT 11 (see `packageManager` in package.json): pnpm 10 needs only
+# Node >=18.12, which clears every environment Push installs in — including the
+# Cloudflare sandbox image, which pre-bakes Push's own node_modules
+# (Dockerfile.sandbox) so Push-on-Push sessions skip a cold install.
+#
+# The original blocker here — "pnpm 11 needs Node >=22.13 but the sandbox base
+# ships Node 20" — is no longer true. cloudflare/sandbox:0.12.3-python ships Node
+# v22.23.1 (verified from the binary in the image), which clears pnpm 11's floor.
+# The stated gate has therefore been met: a pnpm 11 bump is UNBLOCKED, but it is a
+# deliberate change of its own (lockfile format, corepack pins in Dockerfile.sandbox
+# and CI) and has not been made. Staying on 10 is now a choice, not a constraint.
 packages:
   - 'app'
   - 'mcp/github-server'
