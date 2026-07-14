@@ -142,6 +142,9 @@ describe('handleWriteFile', () => {
   it('writes on guard-allowed path and records creation + mutation', async () => {
     const ctx = makeContext({
       writeResult: { ok: true, new_version: 'v2', bytes_written: 12 },
+      execResult: okExec(
+        'diff --git a/src/app.ts b/src/app.ts\n--- /dev/null\n+++ b/src/app.ts\n+const x = 1;',
+      ),
     });
 
     const result = await handleWriteFile(ctx, {
@@ -157,6 +160,7 @@ describe('handleWriteFile', () => {
       expect.objectContaining({ outcome: 'success' }),
     );
     expect(result.text).toContain('[Tool Result — sandbox_write_file]');
+    expect(result.card?.type).toBe('diff-preview');
     expect(result.postconditions?.touchedFiles[0]?.mutation).toBe('write');
   });
 
@@ -238,6 +242,11 @@ describe('handleWriteFile', () => {
     expect(ctx.recordLedgerCreation).toHaveBeenCalledWith('/workspace/src/new.ts');
     expect(ctx.writeToSandbox).toHaveBeenCalled();
     expect(result.text).toContain('[Tool Result — sandbox_write_file]');
+    expect(result.card?.type).toBe('diff-preview');
+    if (result.card?.type === 'diff-preview') {
+      expect(result.card.data.additions).toBe(1);
+      expect(result.card.data.deletions).toBe(0);
+    }
   });
 });
 

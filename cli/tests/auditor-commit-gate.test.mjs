@@ -46,6 +46,8 @@ describe('git_commit Auditor gate', () => {
     });
     assert.equal(result.ok, true, result.text);
     assert.equal(result.meta?.auditorGate, undefined, 'no gate metadata when off');
+    assert.equal(result.meta?.card?.type, 'commit-list');
+    assert.equal(result.meta?.card?.data.commits[0]?.author, 'Push Test');
     const { stdout } = await execFileAsync('git', ['log', '--oneline'], { cwd: repo });
     assert.match(stdout, /add a/);
   });

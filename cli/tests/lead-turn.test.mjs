@@ -596,6 +596,12 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
           assert.equal(event.payload.status, 'complete');
           assert.ok(event.payload.summary.includes('Findings'));
         }
+        const delegationCards = emitted
+          .filter((event) => event.type === 'tool.execution_complete')
+          .map((event) => event.payload.card)
+          .filter((card) => card?.type === 'delegation-result');
+        assert.equal(delegationCards.length, 2);
+        assert.ok(delegationCards.every((card) => card.data.status === 'complete'));
 
         // Lifecycle events are persisted to the session log too.
         const events = await loadSessionEventsEventually(

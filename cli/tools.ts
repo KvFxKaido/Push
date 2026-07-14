@@ -47,6 +47,12 @@ import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
 import { createCliGitHubRuntime, hasEnvGitHubToken, resolveGitHubToken } from './github-runtime.js';
 import { commandRequiresApproval, isSinglePlainCommand } from '../lib/command-policy.ts';
+import {
+  buildCommandToolCard,
+  buildCommitToolCard,
+  buildEditDiffToolCard,
+  buildTypeCheckToolCard,
+} from '../lib/tool-card-producers.ts';
 
 /**
  * CLI tool execution is the pushd daemon surface — the daemon IS the
@@ -2745,6 +2751,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           return guard.result;
         }
 
+        const startedAt = Date.now();
         try {
           const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
           const args = isLocalSandbox
@@ -2787,7 +2794,18 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           return {
             ok: true,
             text: truncateText(formatExecOutput(reduced.stdout, reduced.stderr, 0)) + recall,
-            meta: { command, timeout_ms: timeoutMs, ...reductionMeta(reduced) },
+            meta: {
+              command,
+              timeout_ms: timeoutMs,
+              ...reductionMeta(reduced),
+              card: buildCommandToolCard({
+                command,
+                stdout,
+                stderr,
+                exitCode: 0,
+                durationMs: Date.now() - startedAt,
+              }),
+            },
           };
         } catch (err) {
           if (err.name === 'AbortError') throw err;
@@ -2826,6 +2844,13 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               exit_code: exitCode,
               timed_out: Boolean(err.killed),
               ...reductionMeta(reduced),
+              card: buildCommandToolCard({
+                command,
+                stdout: err.stdout || '',
+                stderr: err.stderr || err.message,
+                exitCode,
+                durationMs: Date.now() - startedAt,
+              }),
             },
           };
         }
@@ -3167,6 +3192,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             version: calculateContentVersion(content),
             ...(writeDiag.meta ? { diagnostics: writeDiag.meta } : {}),
             ...(writeEditDiff ? { editDiff: writeEditDiff } : {}),
+            ...(writeEditDiff ? { card: buildEditDiffToolCard(writeEditDiff) } : {}),
           },
         };
       }
@@ -3243,6 +3269,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             warnings: applied.warnings.length,
             ...(editDiag.meta ? { diagnostics: editDiag.meta } : {}),
             ...(editFileDiff ? { editDiff: editFileDiff } : {}),
+            ...(editFileDiff ? { card: buildEditDiffToolCard(editFileDiff) } : {}),
           },
         };
       }
@@ -3546,13 +3573,32 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const sha = await createLocalGitBackend(workspaceRoot, { timeoutMs: 0 }).headSha({
           short: true,
         });
+        const [identity, commitInfo] = await Promise.all([
+          resolveWorkspaceIdentity(workspaceRoot),
+          execFileAsync('git', ['show', '-s', '--format=%an%x00%cI', 'HEAD'], {
+            cwd: workspaceRoot,
+          }).catch(() => ({ stdout: '' })),
+        ]);
+        const [authorRaw, dateRaw] = String(commitInfo.stdout || '')
+          .trim()
+          .split('\0');
+        const author = authorRaw || 'unknown';
+        const date = dateRaw || new Date().toISOString();
+        const committedSha = sha ?? 'unknown';
         return {
           ok: true,
           text: commitResult.stdout.trim(),
           meta: {
-            sha: sha ?? 'unknown',
+            sha: committedSha,
             message,
             filesStaged: resolvedPaths.length || 'all',
+            card: buildCommitToolCard({
+              repo: identity.repoFullName,
+              sha: committedSha,
+              message,
+              author,
+              date,
+            }),
             // The gate ran for this commit. We don't assert 'safe' here: the
             // commit may have proceeded via an interactive UNSAFE override or
             // an empty-diff skip. The per-branch verdict lives in the
@@ -3896,7 +3942,20 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
               message: result.error.message,
               retryable: result.error.retryable,
             },
-            meta: { projectType: result.projectType },
+            meta: {
+              projectType: result.projectType,
+              card: buildTypeCheckToolCard({
+                tool:
+                  result.projectType === 'typescript'
+                    ? 'tsc'
+                    : result.projectType === 'python'
+                      ? 'pyright'
+                      : 'unknown',
+                diagnostics: [],
+                exitCode: 1,
+                errorCount: 1,
+              }),
+            },
           };
         }
 
@@ -3906,7 +3965,21 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           return {
             ok: true,
             text: `No diagnostics found (${projectType} project).`,
-            meta: { projectType, errors: 0, warnings: 0 },
+            meta: {
+              projectType,
+              errors: 0,
+              warnings: 0,
+              card: buildTypeCheckToolCard({
+                tool:
+                  projectType === 'typescript'
+                    ? 'tsc'
+                    : projectType === 'python'
+                      ? 'pyright'
+                      : 'unknown',
+                diagnostics: [],
+                exitCode: 0,
+              }),
+            },
           };
         }
 
@@ -3934,6 +4007,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             warnings: warnings.length,
             total: diagnostics.length,
             diagnostics: diagnostics.slice(0, 50), // Include structured data for programmatic use
+            card: buildTypeCheckToolCard({
+              tool:
+                projectType === 'typescript'
+                  ? 'tsc'
+                  : projectType === 'python'
+                    ? 'pyright'
+                    : 'unknown',
+              diagnostics,
+              exitCode: errors.length > 0 ? 1 : 0,
+            }),
           },
         };
       }

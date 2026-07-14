@@ -183,7 +183,15 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const mark = streamMark(toolMarkKind(item), glyphs);
-  const card = item.card ? formatToolCard(item.card) : null;
+  // File mutations carry both the cross-surface `diff-preview` card and the
+  // CLI-native line-numbered EditDiff. Prefer the richer local renderer while
+  // still keeping the declared card on the event for other consumers.
+  const card =
+    item.card?.type === 'diff-preview' && item.diff
+      ? null
+      : item.card
+        ? formatToolCard(item.card)
+        : null;
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
       <Text bold={mark.bold} color={mark.color}>

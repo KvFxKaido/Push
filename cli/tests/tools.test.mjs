@@ -453,6 +453,7 @@ describe('edit_file hashline flow', () => {
       assert.equal(edit.meta.editDiff.path, rel);
       assert.equal(edit.meta.editDiff.adds, 1);
       assert.equal(edit.meta.editDiff.dels, 1);
+      assert.equal(edit.meta.card?.type, 'diff-preview');
       const kinds = edit.meta.editDiff.lines.map((l) => l.kind);
       assert.ok(kinds.includes('add') && kinds.includes('del'), kinds.join(','));
     } finally {
@@ -472,6 +473,7 @@ describe('edit_file hashline flow', () => {
       assert.ok(created.meta.editDiff, 'create should attach meta.editDiff');
       assert.equal(created.meta.editDiff.adds, 2);
       assert.equal(created.meta.editDiff.dels, 0);
+      assert.equal(created.meta.card?.type, 'diff-preview');
 
       // Creating a file does not echo the just-authored content back.
       assert.ok(!created.text.includes('Changes ('), created.text);
@@ -497,6 +499,7 @@ describe('edit_file hashline flow', () => {
       );
       assert.equal(same.ok, true);
       assert.equal(same.meta.editDiff, undefined);
+      assert.equal(same.meta.card, undefined);
     } finally {
       await rmWithRetry(root);
     }
@@ -602,6 +605,7 @@ describe('exec headless hardening', () => {
       );
       assert.equal(result.ok, true);
       assert.ok(result.text.includes('hello'));
+      assert.equal(result.meta.card?.type, 'sandbox');
     } finally {
       await rmWithRetry(root);
     }
@@ -980,6 +984,7 @@ describe('lsp_diagnostics tool', () => {
       assert.equal(result.ok, false);
       assert.ok(result.structuredError);
       assert.equal(result.structuredError.code, 'UNSUPPORTED_PROJECT_TYPE');
+      assert.equal(result.meta.card?.type, 'type-check');
     } finally {
       await rmWithRetry(root);
     }
@@ -1017,6 +1022,7 @@ describe('lsp_diagnostics tool', () => {
         assert.ok(result.meta.projectType === 'typescript' || result.meta.projectType === 'node');
         assert.ok(typeof result.meta.errors === 'number');
         assert.ok(typeof result.meta.warnings === 'number');
+        assert.equal(result.meta.card?.type, 'type-check');
       } else {
         assert.ok(
           result.structuredError.code === 'DIAGNOSTIC_TOOL_NOT_FOUND' ||

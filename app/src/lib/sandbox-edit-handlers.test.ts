@@ -151,6 +151,9 @@ describe('handleEditFile', () => {
         { content: 'const x = 2;\n', version: 'v2', truncated: false } as FileReadResult,
       ],
       writeResult: { ok: true, new_version: 'v2', bytes_written: 14 },
+      execResult: okExec(
+        'diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n-const x = 1;\n+const x = 2;',
+      ),
     });
 
     // Hash by line-number ref so applyHashlineEdits can resolve it against the
@@ -166,6 +169,7 @@ describe('handleEditFile', () => {
     expect(ctx.recordLedgerMutation).toHaveBeenCalledWith('/workspace/src/app.ts', 'agent');
     expect(ctx.invalidateSymbolLedger).toHaveBeenCalledWith('/workspace/src/app.ts');
     expect(result.text).toContain('[Tool Result — sandbox_edit_file]');
+    expect(result.card?.type).toBe('diff-preview');
     expect(result.postconditions?.touchedFiles[0]?.mutation).toBe('edit');
   });
 

@@ -213,6 +213,10 @@ describe('the CLI lead lane actually lifts the card', () => {
   // a mocked GitHub API, and the failure being guarded is "someone deletes the
   // lift" — which is exactly what source shape catches.
   const LEAD_TURN = readFileSync(join(ROOT, 'cli', 'lead-turn.ts'), 'utf8');
+  const NORMAL_TOOL_EXEC = LEAD_TURN.slice(
+    LEAD_TURN.indexOf('// Synthesize the start event'),
+    LEAD_TURN.indexOf('const callbacks: CoderAgentCallbacks'),
+  );
 
   it('validates the card at the untyped meta boundary', () => {
     assert.match(
@@ -223,14 +227,15 @@ describe('the CLI lead lane actually lifts the card', () => {
   });
 
   it('carries the card on BOTH executed return paths (ok and tool-reported-failure)', () => {
-    const spreads = LEAD_TURN.match(/\.\.\.\(card \? \{ card \} : \{\}\)/g) ?? [];
+    const spreads = NORMAL_TOOL_EXEC.match(/\.\.\.\(card \? \{ card \} : \{\}\)/g) ?? [];
     assert.equal(
       spreads.length,
       2,
       'both `kind: executed` returns must spread the card — a failing tool still has a card to render',
     );
     // Mirrors editDiff, which proved the pattern; if that count changes, this should too.
-    const diffSpreads = LEAD_TURN.match(/\.\.\.\(editDiff \? \{ editDiff \} : \{\}\)/g) ?? [];
+    const diffSpreads =
+      NORMAL_TOOL_EXEC.match(/\.\.\.\(editDiff \? \{ editDiff \} : \{\}\)/g) ?? [];
     assert.equal(spreads.length, diffSpreads.length, 'card must ride wherever editDiff rides');
   });
 });

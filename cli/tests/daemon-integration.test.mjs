@@ -4579,6 +4579,8 @@ describe('makeDaemonCoderToolExec', () => {
       );
 
       assert.equal(result.kind, 'executed');
+      assert.equal(result.card?.type, 'diff-preview');
+      assert.ok(result.editDiff, 'daemon executor should preserve the structured edit diff');
 
       // The real assertion: the file landed on disk. If the stub is
       // still wired, this read fails.

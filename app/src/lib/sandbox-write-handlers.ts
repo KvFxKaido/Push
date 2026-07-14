@@ -65,6 +65,7 @@ import {
   buildPatchsetDiagnosticSummary,
   buildPerEditDiagnosticSummary,
 } from './sandbox-mutation-postconditions';
+import { buildDiffPreviewToolCard } from '@push/lib/tool-card-producers';
 
 type WriteFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_write_file' }>['args'];
 type ApplyPatchsetArgs = Extract<SandboxToolCall, { tool: 'sandbox_apply_patchset' }>['args'];
@@ -156,6 +157,8 @@ export interface WriteHandlerContext {
   // Optional diagnostics overrides (native sessions have no shell/runtime).
   runPerEditDiagnostics?: (sandboxId: string, path: string) => Promise<string | null>;
   runPatchsetDiagnostics?: (sandboxId: string, changedFiles: string[]) => Promise<string | null>;
+  /** Per-file working-copy diff for shell-less/native sessions. */
+  getFileDiffHunks?: (sandboxId: string, path: string) => Promise<string | null>;
   // No shell on this surface: post-write `checks` can't run. When set, the
   // patchset handler SKIPS checks (reporting them skipped) instead of running
   // them through an exec stub whose universal exit 127 would read as "check
@@ -318,6 +321,7 @@ export async function handleWriteFile(
 ): Promise<ToolExecutionResult> {
   const writeStart = Date.now();
   const cacheKey = fileVersionKey(ctx.sandboxId, args.path);
+  let isNewFileCreation = false;
 
   // Sensitive-path refusal lives in the handler (not per-dispatch-case) so
   // every surface — cloud, daemon, native — inherits it by construction,
@@ -406,6 +410,7 @@ export async function handleWriteFile(
           errMsg.includes('not found') ||
           errMsg.includes('does not exist')
         ) {
+          isNewFileCreation = true;
           ctx.recordLedgerCreation(args.path);
           ctx.recordLedgerMutation(args.path, 'agent');
           ctx.invalidateSymbolLedger(args.path);
@@ -598,6 +603,37 @@ export async function handleWriteFile(
     ctx.recordLedgerMutation(args.path, 'agent');
     ctx.invalidateSymbolLedger(args.path);
 
+    let diffHunks = '';
+    try {
+      if (ctx.getFileDiffHunks) {
+        diffHunks = ((await ctx.getFileDiffHunks(ctx.sandboxId, args.path)) ?? '').trim();
+      } else {
+        const escapedPath = args.path.replace(/'/g, "'\\''");
+        const diffResult = await ctx.execInSandbox(
+          ctx.sandboxId,
+          `cd /workspace && git diff -- '${escapedPath}'`,
+        );
+        diffHunks = diffResult.exitCode === 0 ? diffResult.stdout.trim() : '';
+      }
+    } catch {
+      // The write already succeeded. A best-effort render payload must never
+      // turn that mutation into a reported tool failure.
+    }
+    // Plain `git diff` omits an untracked creation. The write outcome tells us
+    // this had no prior version, so declare the addition from the structured
+    // write input instead of inferring it from result prose.
+    if (!diffHunks && isNewFileCreation) {
+      const displayPath =
+        args.path.replace(/^\/workspace\/?/, '').replace(/[\r\n]/g, '') || args.path;
+      diffHunks = [
+        `diff --git a/${displayPath} b/${displayPath}`,
+        'new file mode 100644',
+        '--- /dev/null',
+        `+++ b/${displayPath}`,
+        ...args.content.split('\n').map((line) => `+${line}`),
+      ].join('\n');
+    }
+
     const writeDiagnostics = await (ctx.runPerEditDiagnostics ?? runPerEditDiagnostics)(
       ctx.sandboxId,
       args.path,
@@ -626,7 +662,11 @@ export async function handleWriteFile(
       durationMs: Date.now() - writeStart,
       outcome: 'success',
     });
-    return { text: lines.join('\n'), postconditions: writePostconditions };
+    return {
+      text: lines.join('\n'),
+      ...(diffHunks ? { card: buildDiffPreviewToolCard(diffHunks) } : {}),
+      postconditions: writePostconditions,
+    };
   } catch (writeErr) {
     const errMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
     const errCode = errMsg.match(/\(([A-Z_]+)\)/)?.[1] || 'WRITE_EXCEPTION';

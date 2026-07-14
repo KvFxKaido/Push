@@ -27,8 +27,9 @@
  *   - No context-memory enrichment/write — the CLI's delegated Explorer
  *     paths don't do memory either (see `handleDelegateExplorer`); when LCM
  *     lands for CLI delegations both call sites should thread it together.
- *   - No result card — the CLI renders delegations from `subagent.*` events,
- *     not card objects (same as the daemon's delegated runs).
+ *   - Delegation lifecycle still renders from `subagent.*` events; the final
+ *     declared card additionally travels on `tool.execution_complete` so
+ *     non-TUI consumers receive the same structured outcome.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -43,6 +44,8 @@ import {
   roleCanUseTool,
 } from '../lib/capabilities.ts';
 import type { AgentRole } from '../lib/runtime-contract.ts';
+import { isToolCard, type ToolCard } from '../lib/tool-cards.ts';
+import { buildDelegationResultToolCard } from '../lib/tool-card-producers.ts';
 import { getSubagentLabel } from '../lib/role-display.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import type {
@@ -131,7 +134,7 @@ export function makeCliReadOnlyToolExec({
   return async (
     toolCall: unknown,
     _execCtx?: { round: number; phase?: string },
-  ): Promise<{ resultText: string }> => {
+  ): Promise<{ resultText: string; card?: ToolCard }> => {
     // Unwrap the `{ source, call: { tool, args } }` shape produced by
     // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall`. Tests
     // that hand in a bare CLI call fall through unchanged.
@@ -194,7 +197,9 @@ export function makeCliReadOnlyToolExec({
         role: role,
       });
       const resultText = typeof result?.text === 'string' ? result.text : '';
-      return { resultText };
+      const meta = result?.meta as Record<string, unknown> | null | undefined;
+      const card = isToolCard(meta?.card) ? meta.card : undefined;
+      return { resultText, ...(card ? { card } : {}) };
     } catch (err) {
       // `executeToolCall` throwing is the rare exception path (abort during
       // read, catastrophic I/O). Surface the message so the kernel can see
@@ -271,7 +276,7 @@ function asOptionalString(value: unknown): string | undefined {
 export async function runLeadExplorerDelegation<TCall>(
   args: LeadExplorerDelegationArgs,
   ctx: LeadExplorerRunContext<TCall>,
-): Promise<{ resultText: string }> {
+): Promise<{ resultText: string; card?: ToolCard }> {
   const task = asOptionalString(args.task);
   if (!task) {
     return {
@@ -423,6 +428,7 @@ export async function runLeadExplorerDelegation<TCall>(
       : result.rounds > 0 && summary
         ? 'complete'
         : 'inconclusive';
+    const elapsedMs = Date.now() - startMs;
     emitLifecycle('subagent.completed', {
       executionId,
       subagentId: executionId,
@@ -432,7 +438,7 @@ export async function runLeadExplorerDelegation<TCall>(
       summary: (summary || '(no findings)').slice(0, 500),
       rounds: result.rounds,
       status,
-      elapsedMs: Date.now() - startMs,
+      elapsedMs,
     });
 
     const capNote = result.hitRoundCap
@@ -440,6 +446,18 @@ export async function runLeadExplorerDelegation<TCall>(
       : '';
     return {
       resultText: `[EXPLORER_RESULT status=${status} rounds=${result.rounds}]\n${summary || '(no findings)'}${capNote}`,
+      card: buildDelegationResultToolCard({
+        status,
+        summary: summary || '(no findings)',
+        rounds: result.rounds,
+        checkpoints: 0,
+        elapsedMs,
+        gateVerdicts: [],
+        missingRequirements: result.hitRoundCap ? ['Investigation exceeded its round cap.'] : [],
+        nextRequiredAction: result.hitRoundCap
+          ? 'Re-delegate with a narrower scope or proceed with the partial findings.'
+          : null,
+      }),
     };
   } catch (err) {
     const isAbort =
