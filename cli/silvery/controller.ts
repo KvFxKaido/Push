@@ -50,6 +50,8 @@ import {
   type TerminalHandoff,
 } from '../tui-handoff.js';
 import { createDefaultTuiIo, type TuiIo } from '../tui-io.js';
+import { osc52Copy } from '../tui-renderer.js';
+import { copyLastResponse } from '../transcript-copy.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
@@ -156,6 +158,17 @@ export interface SilveryController {
   /** Apply the highlighted provider/model; disabled options keep the picker open. */
   selectPickerOption(id: string): void;
   clearDisplay(): void;
+  /**
+   * Yank the last assistant response to the system clipboard (OSC 52).
+   *
+   * Copies the row's CONTENT, not the screen rectangle under it: a tool row
+   * copies its diff or its declared card, so what lands on the clipboard is
+   * something you can paste into `git apply` or a message — not gutters and
+   * wrap artifacts. Always reports the outcome on the transcript, including
+   * "nothing to copy" and "truncated", because OSC 52 gives no delivery
+   * receipt and a silent no-op is indistinguishable from success.
+   */
+  copyLastResponse(): void;
   /** Wire Silvery Instance pause/resume after the renderer mounts. */
   setHandoffHooks(hooks: { onSuspend?: () => void; onResume?: () => void }): void;
   /**
@@ -363,9 +376,13 @@ export async function createSilveryController(
   let handoffResume = deps.onHandoffResume ?? (() => undefined);
   let terminalHandoff: TerminalHandoff | null = null;
 
+  // Hoisted out of getTerminalHandoff(): the clipboard write needs the same
+  // stdout the handoff writes its ANSI through, and a test needs to be able to
+  // inject one IO and observe both.
+  const io = deps.io ?? createDefaultTuiIo();
+
   function getTerminalHandoff(): TerminalHandoff {
     if (!terminalHandoff) {
-      const io = deps.io ?? createDefaultTuiIo();
       terminalHandoff = createTerminalHandoff({
         io,
         // Mirror the ANSI handoff sequences: leave alt screen + mouse for the
@@ -957,6 +974,7 @@ export async function createSilveryController(
           '  Ctrl+K                 Open the command palette',
           '  Ctrl+P                 Open the provider picker',
           '  Ctrl+L                 Clear the transcript display',
+          '  Ctrl+O                 Copy the last response to the clipboard',
           '  Ctrl+C                 Cancel the active turn or exit while idle',
           '  Shift/Alt+Enter        Insert a newline',
           '  Ctrl+A/E · Alt+B/F     Line start/end · word backward/forward',
@@ -1877,6 +1895,25 @@ export async function createSilveryController(
       activityRows = [];
       liveText = '';
       notify();
+    },
+    copyLastResponse() {
+      // Copy what the user can SEE, so the snapshot is the source — not the
+      // session log, which may hold rows cleared from the display.
+      const payload = copyLastResponse(currentSnapshot.rows);
+      if (!payload) {
+        appendStatus('Nothing to copy yet — no assistant response in view.');
+        return;
+      }
+      io.stdout.write(osc52Copy(payload.text));
+      // OSC 52 is fire-and-forget: the terminal may not support it, and there
+      // is no reply to wait on. Report what we SENT, never claim receipt — and
+      // never let the size cap bite silently (CLAUDE.md: no silent caps).
+      const size = `${payload.text.length} chars`;
+      appendStatus(
+        payload.truncated
+          ? `Copied ${payload.label} to clipboard — TRUNCATED at ${size} (OSC 52 payload ceiling; the rest was not sent).`
+          : `Copied ${payload.label} to clipboard (${size}).`,
+      );
     },
     async dispose() {
       disposed = true;

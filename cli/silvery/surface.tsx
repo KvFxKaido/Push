@@ -57,6 +57,7 @@ import {
 const COMMANDS = [
   { id: 'model', label: 'Switch model', hint: 'pick a curated model' },
   { id: 'provider', label: 'Switch provider', hint: 'pick a provider' },
+  { id: 'copy', label: 'Copy last response', hint: 'yank to clipboard · Ctrl+O' },
   { id: 'clear', label: 'Clear transcript', hint: 'hide the current display' },
   { id: 'cancel', label: 'Cancel turn', hint: 'abort the active round loop' },
   { id: 'quit', label: 'Quit', hint: 'return to the terminal' },
@@ -726,8 +727,15 @@ export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: (
   else exit();
 }
 
-export type ComposerShortcut = 'complete' | 'palette' | 'clear' | 'provider' | null;
+export type ComposerShortcut = 'complete' | 'palette' | 'clear' | 'provider' | 'copy' | null;
 
+/**
+ * Ctrl+O for copy, not the mnemonic Ctrl+Y: readline already owns Ctrl+Y for
+ * yank-paste in the composer (see `/help`), and the root handler and the
+ * TextArea both see every key — so binding a claimed chord here would fire
+ * BOTH actions on one press. Ctrl+A/E, Ctrl+U/W, Ctrl+Y and Alt+B/F are
+ * spoken for; Ctrl+O is not.
+ */
 export function resolveComposerShortcut(
   inputKey: string,
   key: { ctrl?: boolean; tab?: boolean },
@@ -737,6 +745,7 @@ export function resolveComposerShortcut(
   if (inputKey === 'k') return 'palette';
   if (inputKey === 'l') return 'clear';
   if (inputKey === 'p') return 'provider';
+  if (inputKey === 'o') return 'copy';
   return null;
 }
 
@@ -859,6 +868,7 @@ export function PushSurface({
       setPaletteOpen(false);
       if (id === 'model') controller.openPicker('model');
       else if (id === 'provider') controller.openPicker('provider');
+      else if (id === 'copy') controller.copyLastResponse();
       else if (id === 'clear') controller.clearDisplay();
       else if (id === 'cancel') controller.cancel();
       else exit();
@@ -916,6 +926,10 @@ export function PushSurface({
       }
       if (shortcut === 'clear') {
         controller.clearDisplay();
+        return;
+      }
+      if (shortcut === 'copy') {
+        controller.copyLastResponse();
         return;
       }
       if (shortcut === 'provider') controller.openPicker('provider');
