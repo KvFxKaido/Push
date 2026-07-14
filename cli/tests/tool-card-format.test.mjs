@@ -98,6 +98,97 @@ describe('generic CLI tool-card fallback', () => {
     ]);
   });
 
+  it('renders an object list as a section instead of collapsing it to a count', () => {
+    // The regression this guards: "Checks: 3 items" hid *which* check failed —
+    // the entire reason the tool was called. An object list is the shape of every
+    // high-traffic inspection card (pr-list, ci-status, commit-list, ...).
+    const display = formatToolCard({
+      type: 'ci-status',
+      data: {
+        repo: 'KvFxKaido/Push',
+        checks: [
+          { name: 'typecheck', status: 'completed', conclusion: 'success' },
+          { name: 'app-build', status: 'completed', conclusion: 'failure' },
+        ],
+      },
+    });
+
+    assert.deepEqual(display.rows, [{ label: 'Repo', value: 'KvFxKaido/Push' }]);
+    assert.deepEqual(display.bodyLines, [
+      { text: 'Checks (2)', tone: 'context' },
+      { text: '  typecheck · completed · success', tone: 'context' },
+      { text: '  app-build · completed · failure', tone: 'context' },
+    ]);
+  });
+
+  it('renders acronym plurals in section headers as acronyms', () => {
+    const display = formatToolCard({
+      type: 'pr-list',
+      data: { prs: [{ number: 1463, title: 'delete render sniffing', author: 'ishaw' }] },
+    });
+    assert.deepEqual(display.bodyLines, [
+      { text: 'PRs (1)', tone: 'context' },
+      { text: '  1463 · delete render sniffing · ishaw', tone: 'context' },
+    ]);
+  });
+
+  it('keeps an empty list on the row path so it reads as "none"', () => {
+    const display = formatToolCard({ type: 'ci-status', data: { checks: [] } });
+    assert.deepEqual(display.rows, [{ label: 'Checks', value: 'none' }]);
+    assert.equal(display.bodyLines, undefined);
+  });
+
+  it('bounds a pathological object list without summarizing every item', () => {
+    const display = formatToolCard({
+      type: 'commit-list',
+      data: {
+        commits: Array.from({ length: 100_000 }, (_, index) => ({
+          sha: `sha${index}`,
+          message: 'x'.repeat(1_000),
+        })),
+      },
+    });
+    // header + LIST_ITEM_LIMIT items + the "more" line.
+    assert.equal(display.bodyLines.length, 14);
+    assert.equal(display.bodyLines[0].text, 'Commits (100000)');
+    assert.equal(display.bodyLines.at(-1).text, '  … +99988 more');
+    for (const line of display.bodyLines) {
+      assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
+    }
+  });
+
+  it('skips nested structure inside a list item rather than expanding it', () => {
+    const display = formatToolCard({
+      type: 'file-list',
+      data: {
+        files: [
+          { path: 'src/app.ts', nested: { deep: 'ignored' }, tags: ['a'], size: 12 },
+          { onlyNested: { deep: 'ignored' } },
+        ],
+      },
+    });
+    assert.deepEqual(display.bodyLines, [
+      { text: 'Files (2)', tone: 'context' },
+      { text: '  src/app.ts · 12', tone: 'context' },
+      { text: '  [structured data]', tone: 'context' },
+    ]);
+  });
+
+  it('leaves scalar arrays and mixed arrays on the existing count path', () => {
+    const display = formatToolCard({
+      type: 'sandbox',
+      data: {
+        scalars: Array.from({ length: 100 }, () => 'x'),
+        mixed: [{ a: 1 }, 'not-an-object'],
+      },
+    });
+    assert.deepEqual(display.rows, [
+      { label: 'Scalars', value: '100 items' },
+      { label: 'Mixed', value: '2 items' },
+    ]);
+    assert.equal(display.bodyLines, undefined);
+  });
+
   it('keeps workspace status paths visible outside the generic row budget', () => {
     const display = formatToolCard({
       type: 'sandbox-state',

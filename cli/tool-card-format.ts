@@ -14,6 +14,8 @@ const ROW_LIMIT = 8;
 const ARRAY_PREVIEW_LIMIT = 6;
 const BODY_CHAR_LIMIT = 24_000;
 const BODY_LINE_LIMIT = 240;
+const LIST_ITEM_LIMIT = 12;
+const LIST_FIELD_LIMIT = 6;
 
 function truncate(value: string, limit: number): string {
   // Inspect only a bounded prefix. Slicing before whitespace normalization
@@ -28,6 +30,25 @@ function truncate(value: string, limit: number): string {
   return `${singleLine.slice(0, Math.max(0, limit - 1))}…`;
 }
 
+/**
+ * Title-cased tokens that should render as acronyms. A map rather than a
+ * `toUpperCase()` because the plurals keep a lowercase `s` — `prs` is "PRs",
+ * not "PRS", and object-list section headers are named after their field.
+ */
+const ACRONYMS: Readonly<Record<string, string>> = {
+  Api: 'API',
+  Ci: 'CI',
+  Cli: 'CLI',
+  Id: 'ID',
+  Ids: 'IDs',
+  Pr: 'PR',
+  Prs: 'PRs',
+  Sha: 'SHA',
+  Tui: 'TUI',
+  Url: 'URL',
+  Urls: 'URLs',
+};
+
 function humanize(value: string, limit: number): string {
   const bounded = truncate(value, limit);
   const label = bounded
@@ -35,7 +56,9 @@ function humanize(value: string, limit: number): string {
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
   return truncate(
-    label.replace(/\b(?:Api|Ci|Cli|Id|Pr|Sha|Tui|Url)\b/g, (token) => token.toUpperCase()),
+    label.replace(/\b(?:Api|Ci|Cli|Ids|Id|Prs|Pr|Sha|Tui|Urls|Url)\b/g, (token) => {
+      return ACRONYMS[token] ?? token;
+    }),
     limit,
   );
 }
@@ -59,6 +82,72 @@ function formatValue(value: unknown): string {
   }
   if (typeof value === 'object') return '[structured data]';
   return `[${typeof value}]`;
+}
+
+/**
+ * A field the generic fallback can render as a list rather than a count.
+ *
+ * `formatValue` collapses any array it cannot join to `"N items"`. For arrays of
+ * *scalars* that is fine — the count is the only honest summary once you pass the
+ * preview limit. For arrays of *objects* it is not: the high-traffic cards
+ * (`pr-list`, `ci-status`, `commit-list`, `branch-list`, `file-list`, ...) carry
+ * exactly one such field, and it holds the entire reason the tool was called.
+ * "Checks: 3 items" does not tell you which check failed.
+ *
+ * Empty arrays stay on the row path so they read as `Checks: none`.
+ */
+function isObjectList(value: unknown): value is ReadonlyArray<Record<string, unknown>> {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((item) => typeof item === 'object' && item !== null && !Array.isArray(item))
+  );
+}
+
+/**
+ * Summarize one list item from its *declared* scalar fields, values only, in
+ * declaration order — `1463 · delete render sniffing · ishaw`.
+ *
+ * Values-only rather than `key=value` because these lists are homogeneous: the
+ * columns repeat down the section, so the keys are noise after the first row.
+ * Nested objects and arrays inside an item are skipped rather than expanded —
+ * this is a bounded fallback, and a card that needs more has earned a
+ * specialized formatter (see `formatDiffPreviewCard`).
+ */
+function formatListItem(item: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key in item) {
+    if (!Object.hasOwn(item, key)) continue;
+    if (parts.length >= LIST_FIELD_LIMIT) break;
+    const value = item[key];
+    if (value === undefined || value === null) continue;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const rendered = truncate(String(value), VALUE_LIMIT);
+      if (rendered.length > 0) parts.push(rendered);
+    }
+  }
+  if (parts.length === 0) return '[structured data]';
+  return truncate(parts.join(' · '), VALUE_LIMIT);
+}
+
+/**
+ * Render an object-array field as a headed section of body lines. Slices before
+ * mapping so a pathological 100k-item payload never allocates 100k summaries.
+ */
+function listSectionLines(
+  label: string,
+  items: ReadonlyArray<Record<string, unknown>>,
+): NonNullable<ToolCardDisplay['bodyLines']> {
+  const shown = items.slice(0, LIST_ITEM_LIMIT);
+  const lines: NonNullable<ToolCardDisplay['bodyLines']> = [
+    { text: `${label} (${items.length})`, tone: 'context' },
+    ...shown.map((item) => ({ text: `  ${formatListItem(item)}`, tone: 'context' as const })),
+  ];
+  const hidden = items.length - shown.length;
+  if (hidden > 0) {
+    lines.push({ text: `  … +${hidden} more`, tone: 'context' });
+  }
+  return lines;
 }
 
 function boundedBodyLines(value: string): ToolCardDisplay['bodyLines'] {
@@ -161,6 +250,7 @@ export function formatToolCard(card: ToolCardPayload): ToolCardDisplay {
   if (specialized) return specialized;
 
   const rows: ToolCardDisplay['rows'] = [];
+  const bodyLines: NonNullable<ToolCardDisplay['bodyLines']> = [];
   let visited = 0;
   for (const key in card.data) {
     visited += 1;
@@ -171,14 +261,19 @@ export function formatToolCard(card: ToolCardPayload): ToolCardDisplay {
     if (!Object.hasOwn(card.data, key)) continue;
     const value = card.data[key];
     if (value === undefined) continue;
-    rows.push({
-      label: humanize(key, LABEL_LIMIT),
-      value: formatValue(value),
-    });
+    const label = humanize(key, LABEL_LIMIT);
+    // An object list becomes a section instead of a row: a row could only ever
+    // say "N items", and the count is already in the section header.
+    if (isObjectList(value)) {
+      bodyLines.push(...listSectionLines(label, value));
+      continue;
+    }
+    rows.push({ label, value: formatValue(value) });
   }
   return {
     title: humanize(card.type, TITLE_LIMIT),
     rows,
     known: true,
+    ...(bodyLines.length > 0 ? { bodyLines } : {}),
   };
 }
