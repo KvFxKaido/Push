@@ -63,7 +63,8 @@ Push derives validation commands (test, lint, typecheck, format, build, check) f
 For this repo:
 
 ```bash
-# setup: (pnpm workspace — one install covers root + app/ + mcp/github-server)
+# Text after `# kind:` IS the command — keep prose on its own line.
+# setup:
 pnpm install
 # test:
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm run test:cli && pnpm run test:mcp:github

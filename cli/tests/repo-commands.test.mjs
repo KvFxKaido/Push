@@ -550,3 +550,51 @@ describe('ensureRepoCommandsSeeded', () => {
     assert.equal(state.workingMemory.validationCommands?.test?.command, 'npm run test');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Drift detector: THIS repo's own AGENTS.md
+// ---------------------------------------------------------------------------
+//
+// The autonomous reviewer runs the `setup` hint verbatim in its sandbox before
+// typecheck/tests. #1446 wrote the directive as:
+//
+//   # setup: (pnpm workspace — one install covers root + app/ + mcp/github-server)
+//   pnpm install
+//
+// Text on a `# kind:` line IS the command (the parser's inline form), so the
+// resolved setup command became a SUBSHELL running `pnpm workspace` — exit 254,
+// `ERR_PNPM_RECURSIVE_EXEC_FIRST_FAIL Command "workspace" not found` — and the
+// real `pnpm install` below it was silently dropped. Every autonomous review since
+// failed its setup gate and came back unverified, and because the failure was only
+// visible to the model, the reviewer got blamed for it.
+//
+// A malformed hint in our own repo is not a hypothetical: pin what AGENTS.md
+// actually RESOLVES to, not what it looks like it says.
+describe("this repo's AGENTS.md resolves to the commands we think it does", () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../..');
+
+  it('setup is a real install command — never prose off the directive line', async () => {
+    const md = await fs.readFile(path.join(repoRoot, 'AGENTS.md'), 'utf8');
+    const hints = parseAgentsMdHints(md);
+    const setup = hints.find((h) => h.kind === 'setup');
+
+    assert.ok(setup, 'AGENTS.md must declare a `# setup:` hint — the reviewer needs it');
+    assert.equal(setup.command, 'pnpm install');
+    // The failure mode, stated as an assertion: a parenthetical left on the
+    // directive line runs as a subshell in the reviewer's sandbox.
+    assert.ok(
+      !setup.command.startsWith('('),
+      `setup hint is prose, not a command: ${setup.command}`,
+    );
+  });
+
+  it('every declared hint is a command, not a sentence', async () => {
+    const md = await fs.readFile(path.join(repoRoot, 'AGENTS.md'), 'utf8');
+    for (const hint of parseAgentsMdHints(md)) {
+      assert.ok(
+        !/^[([]/.test(hint.command),
+        `\`# ${hint.kind}:\` resolved to prose — move it to its own comment line: ${hint.command}`,
+      );
+    }
+  });
+});
