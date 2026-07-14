@@ -11,6 +11,7 @@ import {
   PrReviewJob,
   __setPrReviewExecutorOverride,
   cleanPassCheckStatus,
+  shouldNudgeForVerification,
   repoGatingEnabled,
   type PrReviewExecutor,
   type PrReviewStartInput,
@@ -1085,6 +1086,31 @@ describe('PrReviewJob orphan sweep', () => {
 // (2026-06-11, PR #887) — the runtime reclaims the DO instance ~1–3 min into
 // an unwatched review, so from-scratch retries can never converge. Per-round
 // checkpoints + watchdog relaunch make progress monotone.
+describe('shouldNudgeForVerification', () => {
+  it('nudges only when NO verifier was invoked', () => {
+    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'not_run' })).toBe(true);
+    // No test command in the repo — tests were never invocable, so typecheck is
+    // still owed.
+    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'unavailable' })).toBe(true);
+  });
+
+  it('treats a blocked verifier as RUN — symmetrically (fugu P2, PR #1455)', () => {
+    // The bug: the gate read `typecheck !== 'not_run' || tests === 'pass' || tests
+    // === 'fail'`, so `blocked` counted as a run for typecheck but NOT for tests. A
+    // model that called sandbox_run_tests first and got blocked was then nudged to
+    // "run a verifier" it had already run — burning a round, and possibly another
+    // 480s timeout, to rediscover that the environment is broken.
+    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'blocked' })).toBe(false);
+    expect(shouldNudgeForVerification({ typecheck: 'blocked', tests: 'not_run' })).toBe(false);
+    expect(shouldNudgeForVerification({ typecheck: 'blocked', tests: 'blocked' })).toBe(false);
+  });
+
+  it('does not nudge once a real verdict exists', () => {
+    expect(shouldNudgeForVerification({ typecheck: 'pass', tests: 'not_run' })).toBe(false);
+    expect(shouldNudgeForVerification({ typecheck: 'not_run', tests: 'fail' })).toBe(false);
+  });
+});
+
 describe('cleanPassCheckStatus', () => {
   it('concludes success only when a verifier ran and passed', () => {
     expect(cleanPassCheckStatus({ typecheck: 'pass', tests: 'not_run' })).toMatchObject({
@@ -1102,6 +1128,67 @@ describe('cleanPassCheckStatus', () => {
     expect(s1.conclusion).toBe('neutral');
     expect(s1.title).toBe('No blocking findings — verification failed');
     expect(s1.summary).toContain('tests failed');
+  });
+
+  it("separates 'blocked' (our outage) from 'not_run' (the model skipped it)", () => {
+    // The whole reason `blocked` exists. Both land on a neutral clean pass, but the
+    // summaries assign blame to different parties, and only one of them is true for
+    // a given review. Conflating them accused the model of skipping verification we
+    // had in fact denied it — and left its own narration as the only account of why.
+    const blocked = cleanPassCheckStatus({
+      typecheck: 'blocked',
+      tests: 'blocked',
+      blockedReasons: {
+        typecheck: 'ERR_PNPM_UNSUPPORTED_ENGINE · the real cause',
+        tests: 'tests verifier timed out after 480000ms',
+      },
+    });
+    expect(blocked.conclusion).toBe('neutral');
+    expect(blocked.title).toBe('No blocking findings (verification blocked)');
+    expect(blocked.summary).toContain('the environment stopped it');
+    expect(blocked.summary).toContain("OUR failure, not the model's");
+    // Each cause must survive to the check run, against ITS OWN verifier.
+    expect(blocked.summary).toContain('typecheck: ERR_PNPM_UNSUPPORTED_ENGINE');
+    expect(blocked.summary).toContain('tests: tests verifier timed out');
+
+    const skipped = cleanPassCheckStatus({ typecheck: 'not_run', tests: 'not_run' });
+    expect(skipped.title).toBe('No blocking findings (unverified)');
+    expect(skipped.summary).toContain('did not run typecheck/tests');
+    expect(skipped.summary).not.toContain('the environment stopped it');
+  });
+
+  it('a real verdict still wins over a blocked sibling, but the block is disclosed', () => {
+    const s = cleanPassCheckStatus({
+      typecheck: 'pass',
+      tests: 'blocked',
+      blockedReasons: { tests: 'tests verifier timed out after 480000ms' },
+    });
+    expect(s.conclusion).toBe('success');
+    expect(s.title).toBe('No blocking findings — verified (typecheck)');
+    expect(s.summary).toContain('Blocked by the environment');
+    expect(s.summary).toContain('tests: tests verifier timed out');
+  });
+
+  it("never stamps one verifier's block reason onto the other (fugu, PR #1455)", () => {
+    // The exact sequence a single global reason got wrong: tests blocks (reason A),
+    // typecheck blocks (reason B, overwriting A), then typecheck is retried and
+    // PASSES. A global field leaves tests:'blocked' printed beside typecheck's
+    // reason B — an accurate-blame PR misattributing blame.
+    const s = cleanPassCheckStatus({
+      typecheck: 'pass',
+      tests: 'blocked',
+      // typecheck's entry was dropped when it left 'blocked'; only tests' survives.
+      blockedReasons: { tests: 'reason A — the tests install died' },
+    });
+    expect(s.summary).toContain('tests: reason A');
+    expect(s.summary).not.toContain('reason B');
+  });
+
+  it('names a blocked verifier even when its reason went missing', () => {
+    const s = cleanPassCheckStatus({ typecheck: 'blocked', tests: 'unavailable' });
+    expect(s.title).toBe('No blocking findings (verification blocked)');
+    // Degrade to "no detail" — never to some other verifier's detail.
+    expect(s.summary).toContain('typecheck: (no detail captured)');
   });
 
   it('labels never-verified clean passes neutral: unverified vs unavailable vs unknown', () => {

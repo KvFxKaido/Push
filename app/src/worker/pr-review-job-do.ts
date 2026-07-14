@@ -28,6 +28,7 @@ import type {
   PushStream,
   ReviewResult,
   ReviewVerification,
+  ReviewVerifierStatus,
 } from '@push/lib/provider-contract';
 import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { parseAgentsMdHints } from '@push/lib/repo-commands';
@@ -233,6 +234,29 @@ export function repoGatingEnabled(repo: string, gatingReposEnv: string | undefin
  * - record absent          → pre-verification rows / unknown; treat as
  *                            unverified rather than assuming.
  */
+/**
+ * Whether a zero-findings review still owes us a verifier run.
+ *
+ * A verifier counts as RUN once the model invoked it, whatever came back —
+ * including `blocked`. Nudging a model to re-run something the environment already
+ * killed just burns a round (and possibly another 480s verifier timeout) to
+ * re-learn that the environment is broken, and the nudge's "if you have a concrete
+ * reason verification cannot run, state it" is what invites a confabulated reason
+ * in the first place.
+ *
+ * `unavailable` is NOT a run — nothing was ever invoked — so a repo with no test
+ * command still gets nudged toward typecheck.
+ *
+ * Extracted and exported because it lived inline as an asymmetric expression
+ * (`typecheck !== 'not_run' || tests === 'pass' || tests === 'fail'`) that counted
+ * `blocked` for typecheck but not for tests, so a model that invoked tests FIRST and
+ * got blocked was nudged anyway. Nothing tested it. Now something does.
+ */
+export function shouldNudgeForVerification(verification: ReviewVerification): boolean {
+  const invoked = (s: ReviewVerifierStatus) => s !== 'not_run' && s !== 'unavailable';
+  return !invoked(verification.typecheck) && !invoked(verification.tests);
+}
+
 export function cleanPassCheckStatus(verification: ReviewVerification | undefined): {
   conclusion: ReviewCheckConclusion;
   title: string;
@@ -241,7 +265,18 @@ export function cleanPassCheckStatus(verification: ReviewVerification | undefine
   const v = verification;
   const anyFail = v?.typecheck === 'fail' || v?.tests === 'fail';
   const anyPass = v?.typecheck === 'pass' || v?.tests === 'pass';
+  const anyBlocked = v?.typecheck === 'blocked' || v?.tests === 'blocked';
   const anyAvailable = v != null && (v.typecheck !== 'unavailable' || v.tests !== 'unavailable');
+  // Render each blocked verifier beside ITS OWN reason — never one cause stamped
+  // across both. Verifiers named even when their reason is missing, so a dropped
+  // reason degrades to "no detail" rather than to someone else's detail.
+  const blockedKinds = (['typecheck', 'tests'] as const).filter((k) => v?.[k] === 'blocked');
+  const blockedDetail = blockedKinds
+    .map((k) => {
+      const reason = v?.blockedReasons?.[k];
+      return reason ? `${k}: ${reason}` : `${k}: (no detail captured)`;
+    })
+    .join('\n');
 
   if (anyFail) {
     const failed = [
@@ -263,10 +298,26 @@ export function cleanPassCheckStatus(verification: ReviewVerification | undefine
     ]
       .filter(Boolean)
       .join(' + ');
+    const blockedNote = anyBlocked
+      ? `\n\nBlocked by the environment (not a verdict on the code):\n${blockedDetail}`
+      : '';
     return {
       conclusion: 'success',
       title: `No blocking findings — verified (${passed})`,
-      summary: `No blocking issues. Verified against the PR head: ${passed} passed.`,
+      summary: `No blocking issues. Verified against the PR head: ${passed} passed.${blockedNote}`,
+    };
+  }
+  // Invoked, but the environment stopped it. Distinct from the `not_run` arm
+  // below, which blames the model — say the truth about which one happened, and
+  // carry the reason so diagnosing it doesn't depend on the model's narration.
+  if (anyBlocked) {
+    const blocked = blockedKinds.join(' + ');
+    return {
+      conclusion: 'neutral',
+      title: 'No blocking findings (verification blocked)',
+      summary:
+        `No blocking issues found, but ${blocked} could not run on the PR head — the reviewer invoked it and the environment stopped it (setup failure, timeout, or lost contact). This is OUR failure, not the model's, and not a verdict on the code; the clean pass is unverified.` +
+        `\n\nReason:\n${blockedDetail}`,
     };
   }
   if (!anyAvailable) {
@@ -1997,12 +2048,31 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
               hooks?.onToolProgress,
             );
             if (r.verification) {
-              verification[r.verification.kind] = r.verification.pass ? 'pass' : 'fail';
-              log('info', 'pr_review_verification_recorded', {
-                deliveryId: input.deliveryId,
-                verifier: r.verification.kind,
-                pass: r.verification.pass,
-              });
+              const { kind, status, reason } = r.verification;
+              verification[kind] = status;
+              // Record the reason AGAINST ITS OWN VERIFIER so the check run can say
+              // why the environment stopped it, without the model's narration — and
+              // without attributing one verifier's cause to the other. Dropped when
+              // this verifier leaves 'blocked', so a reason never outlives its state.
+              if (status === 'blocked' && reason) {
+                verification.blockedReasons = { ...verification.blockedReasons, [kind]: reason };
+              } else if (verification.blockedReasons?.[kind]) {
+                const rest = { ...verification.blockedReasons };
+                delete rest[kind];
+                verification.blockedReasons = Object.keys(rest).length ? rest : undefined;
+              }
+              log(
+                r.verification.status === 'blocked' ? 'warn' : 'info',
+                r.verification.status === 'blocked'
+                  ? 'pr_review_verification_blocked'
+                  : 'pr_review_verification_recorded',
+                {
+                  deliveryId: input.deliveryId,
+                  verifier: r.verification.kind,
+                  status: r.verification.status,
+                  ...(r.verification.reason ? { reason: r.verification.reason } : {}),
+                },
+              );
               hooks?.onVerification?.({ ...verification });
             }
             return { resultText: r.text };
@@ -2037,11 +2107,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       completionGate: (result) => {
         if (!sandboxToolsEnabled) return null;
         if (result.comments.length > 0) return null;
-        const ran =
-          verification.typecheck !== 'not_run' ||
-          verification.tests === 'pass' ||
-          verification.tests === 'fail';
-        if (ran) return null;
+        if (!shouldNudgeForVerification(verification)) return null;
         log('info', 'pr_review_verification_nudged', { deliveryId: input.deliveryId });
         return (
           'You are reporting zero findings without having run any verification tool. ' +
