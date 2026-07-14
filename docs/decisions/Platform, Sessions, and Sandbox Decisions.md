@@ -148,6 +148,95 @@ GitHub App permissions in the target environment.
 Source note:
 [`Webhook-Triggered PR Review`](<../archive/decisions/Webhook-Triggered PR Review.md>).
 
+### 9a. The reviewer verifies from CI check runs, not its own sandbox
+
+**Status: Draft** — design agreed, not implemented.
+
+The reviewer currently re-runs `typecheck` and the repo's `# test:` command inside
+its own sandbox. It should instead **read the check runs GitHub already produced for
+the head SHA it is reviewing**.
+
+**Why the sandbox path cannot work here.** CI has already run those exact commands,
+on that exact commit, on real hardware, with a warm dependency cache, in ~90s. The
+reviewer then provisions a `standard` container (½ vCPU / 4 GiB) and runs them again:
+a full monorepo `pnpm install` (600s setup deadline) followed by a 3,248-test suite
+(480s verifier deadline) that takes ~5 minutes on a 16-core machine. `Dockerfile.sandbox`
+already records that this container class gets OOM-killed by repo test suites. We are
+asking the box to do something it cannot do, and then reading the corpse as flakiness.
+
+Observed consequence (PR #1467, the first review after the setup gate was fixed):
+
+```
+typecheck: did not complete (start-unconfirmed): sandbox exec-start failed: Sandbox not found or expired
+tests:     did not complete (lost-contact): sandbox exec-status failed: Auth check failed
+```
+
+Both are the same fact — the container is gone — surfaced through two different
+seams. (The second is also a status misclassification: the owner-token probe reads
+the token from *inside* the container, so an unreachable container reports as an
+auth/config failure. A dead box is not a bad token.)
+
+**The design.** `ReviewVerification` sources from `GET /repos/{repo}/commits/{sha}/check-runs`:
+
+- The DO already mints installation tokens, so no new auth surface.
+- `pass` / `fail` come from the check-run conclusions for the head SHA.
+- CI still in flight → poll to a deadline, then `blocked` (reason: "CI has not
+  completed for this SHA"). The `blocked` state (§ verification record) already
+  models exactly this: invoked, and the environment did not produce a verdict.
+- Repo has no CI → `unavailable`, same as today's no-test-command case.
+- The sandbox stays available for **inspection** (read/search), which is what it is
+  actually good at in a review, and can degrade to the GitHub contents API.
+
+**The reviewer MUST exclude its own check run, or it deadlocks on itself.** (Codex,
+PR #1469 — caught in the design, before a line was written.) `runReview` calls
+`createInProgressReviewCheckRun` BEFORE the executor starts, so `Push review` is
+itself a check run on the head SHA, sitting `in_progress` for the entire review.
+Verified live against this PR's own SHA:
+
+```
+Workers Builds: push  |  app=cloudflare-workers-and-pages  |  status=completed
+Push review           |  app=push-agent (id=2801157)       |  status=in_progress
+```
+
+A verifier that waits for "all check runs on this SHA" would wait for ITSELF, block to
+the deadline, and report `blocked` — on every review that publishes a visible check,
+i.e. the normal case. The failure would look exactly like the sandbox failure this
+decision exists to fix, which is how it would have survived a review cycle.
+
+Filter by the **check-run id we created** (exact), and defensively by **owning app id**
+(a rerun or superseded attempt can leave a second `push-agent` check on the same SHA).
+Never filter by NAME alone — `REVIEW_CHECK_NAME` is user-visible text and a repo can
+mint a check run that collides with it.
+
+**Which checks count is a second open question, and it is not "all of them".** The
+record has `typecheck` and `tests` fields; CI has arbitrary check names ("Format,
+Typecheck, Test (cli)", "Lint, Test, Build (app)", "Workers Builds: push"). Mapping
+names to verifier slots is brittle. The recommendation: stop pretending the record is
+per-verifier and source ONE aggregate verdict from the non-self check runs (all
+completed and none failed → `pass`; any failure → `fail`), because "did the head SHA's
+checks pass" is exactly the fact the check run reports and exactly the gate the change
+merges on. That is a change to `ReviewVerification`'s shape and should be decided
+before implementation, not discovered during it.
+
+**This makes the verification claim stronger, not weaker.** CI is the gate the change
+merges on. A reviewer that says "tests pass" because *the gate you merge on* passed is
+making a better-evidenced claim than one reporting a half-vCPU container's opinion.
+
+**The tradeoff we are accepting, stated plainly.** Sandbox verification runs commands
+resolved from the **base ref's** AGENTS.md — deliberately trusted input. CI check runs
+for a same-repo PR are produced by the **head ref's** workflow, which the PR author can
+edit. So this moves the reviewer's verification from author-proof to author-influenced.
+We accept it because (a) the reviewer is advisory, not a merge gate, (b) the human sees
+the same check runs, and (c) an author who can weaken CI has already defeated the
+merge gate, so the reviewer was never the thing standing in the way. If that ever stops
+being true, gate on workflows resolved at the base ref rather than reverting to a
+container we cannot feed.
+
+**Not in scope:** removing the sandbox. It is the web surface's entire execution
+capability — no local machine, no shell, no build. Deleting it removes "terminal" and
+"CI" from the stack Push claims to collapse, on the surface where that claim matters
+most. This decision removes the sandbox from the *review verification* path only.
+
 ### 10. Git seams stay narrow until proven
 
 The safest cross-language experiment is a narrow Git policy/read/write broker,
@@ -349,6 +438,23 @@ adopts the synced settings doc.
 6. Tighten any remaining daemon session-verb auth gaps.
 7. Keep Git/RPC broker work behind parity harnesses until the cross-language tax
    is measured.
+8. **Do not shop for a new sandbox provider until the flakiness is attributed.**
+   The instinct to replace the backend keeps recurring; the evidence does not yet
+   support it, and we have a documented history of misattributing our own bugs to it:
+   - #1270 — "sandbox dies after ~2 min idle" was a CLIENT-side false positive
+     (ephemeral-disk token loss). `sleepAfter` was an hour. We blamed the backend and
+     the bug was ours.
+   - 2026-07-14 — "the container keeps dying mid-review" appeared the moment the
+     reviewer's setup gate started doing real work (#1457). We are running a monorepo
+     install plus a 3,248-test suite on ½ vCPU / 4 GiB, a container class
+     `Dockerfile.sandbox` already documents as OOM-killed by repo test suites. Not
+     obviously the backend's fault. See §9a.
+   - #1391 — control-plane hangs (`startProcess`/`getProcess` at minute scale) ARE
+     genuinely upstream. One real upstream bug is not a migration case.
+
+   `SandboxProvider` exists precisely so this can be settled with evidence rather than
+   vibes: run the same workload on `PUSH_SANDBOX_PROVIDER=modal` and compare. That is a
+   day of measurement against a migration. Attribute first, then shop — if at all.
 
 ## Archived Context Worth Knowing
 
