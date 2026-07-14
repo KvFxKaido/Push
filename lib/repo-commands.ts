@@ -284,6 +284,11 @@ export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
     const lines = block.split('\n');
     let pendingKind: RepoCommandKind | null = null;
 
+    // The kind whose command was taken from the directive line itself. Cleared on
+    // the next directive or the next command line — it exists only to catch the
+    // line immediately after an inline directive.
+    let inlineKind: RepoCommandKind | null = null;
+
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
@@ -297,8 +302,10 @@ export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
           // pending kind is left dangling for the next line.
           record(kind, inline);
           pendingKind = null;
+          inlineKind = kind;
         } else {
           pendingKind = kind;
+          inlineKind = null;
         }
         continue;
       }
@@ -308,8 +315,26 @@ export function parseAgentsMdHints(markdown: string): AgentsMdHint[] {
 
       if (pendingKind) {
         record(pendingKind, line);
+      } else if (inlineKind) {
+        // A command line following an INLINE directive is dropped: the inline text
+        // already claimed the kind. Almost always this means the inline text was
+        // meant as prose and the real command is the line we're discarding —
+        // exactly how `# setup: (pnpm workspace — one install…)` shipped a subshell
+        // running `pnpm workspace` as this repo's review setup, failing every
+        // autonomous review's verifiers for days while the reviewer got blamed.
+        // Silent before; loud now. console.error, not log: lib/ also runs on the
+        // CLI, where stdout carries user output and --json payloads.
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: 'repo_hint_inline_shadowed_command',
+            kind: inlineKind,
+            droppedCommand: line.slice(0, 200),
+          }),
+        );
       }
       pendingKind = null;
+      inlineKind = null;
     }
   }
 
