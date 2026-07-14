@@ -189,6 +189,84 @@ describe('generic CLI tool-card fallback', () => {
     assert.equal(display.bodyLines, undefined);
   });
 
+  it('renders a multi-line string as a text section instead of a truncated row', () => {
+    // get_job_logs / get_issue carry prose or log bodies. As a row they became a
+    // 180-char stump — the row budget is right for a branch name and destroys a log.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: {
+        job: 'test (cli)',
+        logs: 'Run pnpm test\n  3310 passing\n  0 failing\nDone in 22s',
+      },
+    });
+
+    assert.deepEqual(display.rows, [{ label: 'Job', value: 'test (cli)' }]);
+    assert.deepEqual(display.bodyLines, [
+      { text: 'Logs (4 lines)', tone: 'context' },
+      { text: '  Run pnpm test', tone: 'context' },
+      { text: '    3310 passing', tone: 'context' },
+      { text: '    0 failing', tone: 'context' },
+      { text: '  Done in 22s', tone: 'context' },
+    ]);
+  });
+
+  it('does not tone a generic text body as a diff', () => {
+    // boundedBodyLines colors +/- prefixes for diff-preview, which DECLARED itself
+    // a diff. An arbitrary log declared nothing: a stack-trace line starting with
+    // "-" is not a deletion, and tinting it red is the text-sniffing we deleted.
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: '- npm ERR! failed\n+ retrying\n  ok' },
+    });
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.tone),
+      ['context', 'context', 'context', 'context'],
+    );
+  });
+
+  it('treats a trailing newline as a scalar, not a document', () => {
+    // "main\n" is a branch name. Only a newline inside the trimmed content promotes.
+    const display = formatToolCard({
+      type: 'sandbox',
+      data: { branch: 'main\n', blank: '\n\n\n', empty: '' },
+    });
+    assert.deepEqual(display.rows, [
+      { label: 'Branch', value: 'main' },
+      { label: 'Blank', value: '' },
+      { label: 'Empty', value: '' },
+    ]);
+    assert.equal(display.bodyLines, undefined);
+  });
+
+  it('bounds a pathological text body without splitting the whole string', () => {
+    const display = formatToolCard({
+      type: 'workflow-logs',
+      data: { logs: Array.from({ length: 50_000 }, (_, i) => `line ${i}`).join('\n') },
+    });
+    // header + BODY_LINE_LIMIT lines + the "more" line.
+    assert.equal(display.bodyLines.length, 242);
+    assert.match(display.bodyLines[0].text, /^Logs \(\d+ lines\)$/);
+    assert.match(display.bodyLines.at(-1).text, /… \+\d+ more|truncated/);
+    for (const line of display.bodyLines) {
+      assert.ok(line.text.length <= 180 + 2, `line must stay bounded: ${line.text.length}`);
+    }
+  });
+
+  it('renders a card carrying both a list and a text body', () => {
+    const display = formatToolCard({
+      type: 'ci-status',
+      data: {
+        checks: [{ name: 'build', conclusion: 'failure' }],
+        logs: 'error: exit 1\n  at build.ts:3',
+      },
+    });
+    assert.deepEqual(display.rows, []);
+    assert.deepEqual(
+      display.bodyLines.map((l) => l.text),
+      ['Checks (1)', '  build · failure', 'Logs (2 lines)', '  error: exit 1', '    at build.ts:3'],
+    );
+  });
+
   it('keeps workspace status paths visible outside the generic row budget', () => {
     const display = formatToolCard({
       type: 'sandbox-state',
