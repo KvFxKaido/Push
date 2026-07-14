@@ -1,0 +1,145 @@
+/**
+ * tool-cards-drift.test.mjs — the card vocabulary is single-sourced.
+ *
+ * The render payload is cross-surface semantics: the web `CardRenderer` and the
+ * TUI dispatch on the SAME `ToolCard` union. When that vocabulary lived on one
+ * surface (`app/src/types/index.ts`), the other surface had to *guess* — which
+ * is exactly how the TUI ended up regex-sniffing tool output for diffs
+ * (`looksLikeUnifiedDiff`) and guessing which argument mattered.
+ *
+ * These tests fail if the vocabulary starts to re-diverge. They are deliberately
+ * source-text assertions rather than type assertions: the failure mode being
+ * guarded is "someone declares a card type on a surface," which typechecks fine
+ * and is invisible to every other test in the repo.
+ *
+ * See `docs/decisions/Tool Render Payload — Cards Are Declared, Not Sniffed.md`.
+ */
+
+import { describe, it } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const LIB_CARDS = readFileSync(join(ROOT, 'lib', 'tool-cards.ts'), 'utf8');
+const WEB_TYPES = readFileSync(join(ROOT, 'app', 'src', 'types', 'index.ts'), 'utf8');
+
+/**
+ * The canonical union membership, pinned. Adding a card type is a deliberate
+ * act that must touch this list — which is the point: a new card that no shell
+ * knows how to render should be a conscious decision, not a surprise.
+ */
+const TOOL_CARD_TYPES = [
+  'approval',
+  'artifact',
+  'ask-user',
+  'audit-verdict',
+  'branch-list',
+  'ci-status',
+  'coder-job',
+  'coder-progress',
+  'commit-files',
+  'commit-list',
+  'commit-review',
+  'delegation-result',
+  'diff-preview',
+  'editor',
+  'evaluation',
+  'file',
+  'file-list',
+  'file-search',
+  'pr',
+  'pr-list',
+  'sandbox',
+  'sandbox-download',
+  'sandbox-state',
+  'test-results',
+  'type-check',
+  'web-search',
+  'workflow-logs',
+  'workflow-runs',
+  'workspace-patch',
+];
+
+/**
+ * Slice out the `ToolCard` union body. Naively cutting at the first `;` does
+ * NOT work — every union member contains one (`{ type: 'pr'; data: PRCardData }`)
+ * — so walk lines until one ends with `;` at brace depth 0.
+ */
+function toolCardUnionBody(source) {
+  const lines = source.split('\n');
+  const start = lines.findIndex((l) => l.startsWith('export type ToolCard ='));
+  assert.notEqual(start, -1, 'lib/tool-cards.ts must declare `export type ToolCard`');
+  let depth = 0;
+  for (let i = start; i < lines.length; i++) {
+    depth += (lines[i].match(/\{/g) ?? []).length - (lines[i].match(/\}/g) ?? []).length;
+    if (depth === 0 && lines[i].trimEnd().endsWith(';')) {
+      return lines.slice(start, i + 1).join('\n');
+    }
+  }
+  throw new Error('unterminated ToolCard union');
+}
+
+function unionMembers(source) {
+  return [...toolCardUnionBody(source).matchAll(/type:\s*'([a-z-]+)'/g)].map((m) => m[1]).sort();
+}
+
+describe('tool-card vocabulary — single source of truth', () => {
+  it('ToolCard is declared in lib/, not on a surface', () => {
+    assert.match(LIB_CARDS, /export type ToolCard =/);
+  });
+
+  it('the union membership matches the pin', () => {
+    assert.deepEqual(unionMembers(LIB_CARDS), [...TOOL_CARD_TYPES].sort());
+  });
+
+  it('the web surface does not re-declare the union', () => {
+    // `export type ChatCard = ToolCard` (the back-compat alias) is fine.
+    // `export type ChatCard = | { type: ... }` (a redeclaration) is not.
+    assert.doesNotMatch(
+      WEB_TYPES,
+      /export type ChatCard\s*=\s*\r?\n?\s*\|/,
+      'ChatCard must alias ToolCard from lib/, not redeclare the union',
+    );
+  });
+
+  it('the web surface declares no *CardData shapes of its own', () => {
+    const local = [...WEB_TYPES.matchAll(/export (?:interface|type) (\w*CardData)\b/g)].map(
+      (m) => m[1],
+    );
+    assert.deepEqual(
+      local,
+      [],
+      `card data shapes must live in lib/tool-cards.ts, not app/src/types/index.ts. Found: ${local.join(', ')}`,
+    );
+  });
+
+  it('CoderWorkingMemory and AskUserCardData are not duplicated on the web surface', () => {
+    // Both were previously declared in BOTH lib/ and app/src/types/index.ts, and
+    // `CoderWorkingMemory` had already drifted — the web copy was missing
+    // `validationCommands`. A duplicate typechecks fine and silently diverges.
+    for (const name of ['CoderWorkingMemory', 'AskUserCardData']) {
+      assert.doesNotMatch(
+        WEB_TYPES,
+        new RegExp(`export interface ${name}\\b`),
+        `${name} must be imported from lib/, not re-declared on the web surface`,
+      );
+    }
+  });
+
+  it('every card type in the union has a data shape reachable from lib/', () => {
+    const body = toolCardUnionBody(LIB_CARDS);
+    const shapes = [...body.matchAll(/data:\s*(\w+)/g)].map((m) => m[1]);
+    assert.equal(shapes.length, TOOL_CARD_TYPES.length, 'every member must carry a data shape');
+    const preamble = LIB_CARDS.slice(0, LIB_CARDS.indexOf('export type ToolCard'));
+    for (const shape of shapes) {
+      const declared = new RegExp(`export (?:interface|type) ${shape}\\b`).test(LIB_CARDS);
+      const imported = new RegExp(`\\b${shape}\\b`).test(preamble);
+      assert.ok(
+        declared || imported,
+        `${shape} is neither declared nor imported in lib/tool-cards.ts`,
+      );
+    }
+  });
+});

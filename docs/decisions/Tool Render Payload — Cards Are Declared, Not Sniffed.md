@@ -1,7 +1,7 @@
 # Tool Render Payload — Cards Are Declared, Not Sniffed
 
 Date: 2026-07-13
-Status: **Draft** — design in motion; needs roadmap promotion before implementation. Owner: Push runtime (shared `lib/` + both shells).
+Status: **Current** — **Slice 0 shipped**: the card vocabulary now lives in `lib/tool-cards.ts` (`ToolCard`, 29 members + 38 data shapes), `app/src/types/index.ts` re-exports it, two duplicated types were collapsed (`CoderWorkingMemory` had already **drifted** — the web copy was missing `validationCommands`), and `cli/tests/tool-cards-drift.test.mjs` pins it. Zero behavior change: app 7134/7134, CLI 3264/3264, `typecheck:all` clean. Slices 1–5 (kernel emission → consumers → producers → narration parity → delete the sniffing) remain. Owner: Push runtime (shared `lib/` + both shells).
 
 Related: [`Workspace State Events — Snapshot + Delta.md`](<Workspace State Events — Snapshot + Delta.md>) — the template this follows almost exactly (shared vocabulary in `lib/`, strict wire validators, capability-gated daemon producer, TUI + web consumers, drift tests). [`Structured Tool-Call Sourcing.md`](<Structured Tool-Call Sourcing.md>) — its complement: that doc structures the **model-facing** side of a tool exchange; this one structures the **render-facing** side. [`Agent Runtime Decisions.md`](<Agent Runtime Decisions.md>) §4 (roles are runtime labels; display vocabulary is separate) — the same "presentation is its own vocabulary" instinct, applied one level down.
 
