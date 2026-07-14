@@ -405,6 +405,16 @@ export type RunEventInput =
       outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered';
     }
   | {
+      /**
+       * User-visible prose prefix from a round that proceeds to tool
+       * execution. Render-only: it is never appended to the model message
+       * list. Emitted once per tool round before that round's first tool event.
+       */
+      type: 'assistant.tool_prose';
+      round: number;
+      text: string;
+    }
+  | {
       // Terminal lifecycle receipt for a foreground turn. Unlike
       // `assistant.turn_end`, this fires only after run cleanup completes and
       // no queued follow-up will immediately begin another turn.

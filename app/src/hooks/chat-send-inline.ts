@@ -72,7 +72,8 @@ import { applyBranchSwitchPayload } from '@/lib/branch-fork-migration';
 import { parseUntrackedFileSet } from '@/lib/auditor-delegation-handler';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import { buildToolMeta, buildToolResultMessage } from '@/lib/chat-tool-messages';
-import { strandedReasoningAnswerText, stripToolCallPayload } from '@/lib/message-content';
+import { strandedReasoningAnswerText } from '@/lib/message-content';
+import { splitVisibleContent } from '@push/lib/tool-prose';
 import {
   buildPriorTurnAttachmentParts,
   mergeInitialUserContentParts,
@@ -187,91 +188,10 @@ export function buildInlineTurnPreamble(
 // Streaming bridge — mirror kernel stream events into the placeholder
 // ---------------------------------------------------------------------------
 
-const XML_TOOL_NS = String.raw`(?:[|｜]{1,2}[\w.\-]+[|｜]{1,2})?`;
-const XML_TOOL_NS_REQUIRED = String.raw`[|｜]{1,2}[\w.\-]+[|｜]{1,2}`;
-const XML_TOOL_CALL_BLOCK_PATTERN = String.raw`<${XML_TOOL_NS}(?:function_calls|tool_calls)\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}(?:function_calls|tool_calls)\s*>|<${XML_TOOL_NS}tool_call\b[^>]*>[\s\S]*?<\/${XML_TOOL_NS}tool_call\s*>|<${XML_TOOL_NS}invoke\b[^>]*?\bname\s*=[^>]*>[\s\S]*?<\/${XML_TOOL_NS}invoke\s*>`;
-const XML_TOOL_CALL_BLOCK_RE = new RegExp(XML_TOOL_CALL_BLOCK_PATTERN, 'i');
-const XML_TOOL_CALL_START_RE = new RegExp(
-  String.raw`<(?:${XML_TOOL_NS_REQUIRED}(?:tool_call|function_calls|tool_calls|invoke)|${XML_TOOL_NS}(?:function_calls|tool_calls))\b`,
-  'i',
-);
-
 /**
- * Split a kernel round's accumulated content into the user-facing prefix
- * and a flag for whether a tool-call / state-update construct has begun.
- *
- * The coder kernel emits tool calls as fenced or bare JSON in the SAME
- * `content` stream as user-facing prose, and only classifies a round
- * (`detectAllToolCalls`) once it has fully accumulated. So a naive mirror
- * that streams every `text_delta` into the transcript leaks raw protocol
- * JSON — partial tool calls, `coder_update_state` working-memory blobs —
- * into the chat bubble before the kernel knows the round is final (the
- * leak Codex flagged on #891). This strips the construct per delta instead.
- *
- * Conservative by construction: the kernel still consumes the untouched
- * stream via the tee, and the authoritative final message is the kernel
- * summary (`completeAssistantMessage`). So over-hiding here only trims the
- * in-flight preview, never the committed turn — which is why we can safely
- * hide a dangling (unbalanced) fence: a final-answer code block reappears
- * the moment its closing fence lands, and lands in full at completion.
- */
-export function splitVisibleContent(text: string): { visible: string; toolCallActive: boolean } {
-  let cut = -1;
-  const mark = (idx: number) => {
-    if (idx >= 0 && (cut === -1 || idx < cut)) cut = idx;
-  };
-
-  // A tool-call object/array wrapped in a code fence. Cut at the fence so
-  // the ```` ```json ```` wrapper is hidden too, even once the closing fence
-  // has balanced the count. The key match tolerates every shape the text
-  // dispatcher executes — double/single/unquoted `tool` keys and a leading
-  // `[` for fenced arrays (`lib/tool-dispatch.test.ts`) — so a balanced
-  // `[{'tool':…}]` block can't reappear in the bubble (Codex #894).
-  const fencedTool = /```[^\n`]*\r?\n[ \t]*\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
-  if (fencedTool) mark(fencedTool.index);
-
-  // The same object/array emitted bare (no fence). Matched anywhere, not
-  // anchored to start: the kernel's `extractBareToolJsonObjects` brace-scans
-  // the whole content, so a `prose then {"tool":…}` round IS executed as a
-  // tool call — hiding it is correct, not a false positive. Over-hiding a
-  // genuine inline-JSON mention is harmless (the kernel summary is the
-  // authoritative final render; this only trims the in-flight preview).
-  const bareTool = /\[?\s*\{\s*['"]?tool['"]?\s*:/.exec(text);
-  if (bareTool) mark(bareTool.index);
-
-  // XML / DSML wrapper forms recovered by `tool-call-xml-recovery.ts`,
-  // including DeepSeek V4 Pro's doubled full-width namespace delimiters
-  // (`<｜｜DSML｜｜tool_calls>`). The authoritative dispatcher still consumes
-  // the untouched accumulated text; this only keeps raw envelopes out
-  // of the streaming placeholder. Complete bare `<tool_call>` / `<invoke>`
-  // blocks are hidden, while incomplete bare mentions stay visible so
-  // streaming and final render agree.
-  const xmlBlock = XML_TOOL_CALL_BLOCK_RE.exec(text);
-  if (xmlBlock) mark(xmlBlock.index);
-  const xmlTool = XML_TOOL_CALL_START_RE.exec(text);
-  if (xmlTool) mark(xmlTool.index);
-
-  // A trailing, unbalanced code fence: in a coder round a dangling ``` is a
-  // tool block forming before its key has streamed in. A completed prose
-  // fence is balanced and survives (a non-tool fence has no key to match
-  // above, so it stays visible once closed).
-  if (((text.match(/```/g) ?? []).length & 1) === 1) {
-    mark(text.lastIndexOf('```'));
-  }
-
-  if (cut === -1) return { visible: text, toolCallActive: false };
-  return { visible: text.slice(0, cut).replace(/\s+$/, ''), toolCallActive: true };
-}
-
-/**
- * Hand-off slot for a settled round's user-facing narration. The mirror
- * writes the round's visible prose here when the round's stream completes;
- * the first `tool.execution_complete` of that round consumes it (splicing
- * it into the transcript as a settled `tool_prose` message just above the
- * round's tool disclosure). If a new round starts before any tool completes
- * — a malformed-call recovery / nudge round — the stale narration is
- * dropped, matching the old behavior where non-final round text never
- * survived the placeholder reset.
+ * Hand-off slot for a settled round's user-facing narration. The kernel's
+ * `assistant.tool_prose` event writes it; the first tool completion consumes
+ * it while splicing the disclosure into the web transcript.
  */
 export interface InlineRoundProseSink {
   pending: string;
@@ -286,16 +206,13 @@ export interface InlineRoundProseSink {
  * never reaches the transcript (or the `ACCUMULATED_UPDATED` preview a
  * watching viewer / adopted checkpoint mirrors).
  *
- * When a `proseSink` is supplied, each settled round's visible prose is
- * stashed there (instead of silently dying with the next round's reset) so
- * the tool-disclosure splicer can keep the model's narration in the
- * transcript between tool groups.
+ * Settled narration is supplied by the kernel's `assistant.tool_prose`
+ * event; this mirror owns only the in-flight projection.
  */
 export function createInlineTranscriptMirror(
   ctx: SendLoopContext,
   thinkingVerbs?: string[],
   placeholderId?: string,
-  proseSink?: InlineRoundProseSink,
 ): (event: PushStreamEvent) => void {
   const { chatId } = ctx;
   let accumulated = '';
@@ -306,19 +223,6 @@ export function createInlineTranscriptMirror(
     if (ctx.abortRef.current) return;
     if (event.type === 'done') {
       roundSettled = true;
-      if (proseSink) {
-        // `splitVisibleContent` only cuts at tool-call constructs it can see
-        // per delta (fenced/bare JSON, XML envelopes). A native tool-call
-        // echo — `repo_read", "args": {...}}` content some providers emit
-        // alongside delta.tool_calls — has none of those markers, so it
-        // survives the cut and would persist into a settled tool_prose
-        // message (Codex P2 on this PR; pre-stash it only flashed in the
-        // placeholder and died with the round reset). The full
-        // stripToolCallPayload pass covers echoes + orphaned JSON tails and
-        // is cheap here: once per round on settled content, not per delta.
-        // Its output is already trimmed; the splicer owns the final trim.
-        proseSink.pending = stripToolCallPayload(splitVisibleContent(accumulated).visible);
-      }
       return;
     }
     if (event.type !== 'text_delta' && event.type !== 'reasoning_delta') return;
@@ -326,9 +230,6 @@ export function createInlineTranscriptMirror(
       accumulated = '';
       thinking = '';
       roundSettled = false;
-      // A new round began without any tool consuming the stash — recovery /
-      // nudge rounds produce no disclosure to anchor the narration to.
-      if (proseSink) proseSink.pending = '';
     }
     if (event.type === 'text_delta') {
       accumulated += event.text;
@@ -806,7 +707,7 @@ export async function startInlineCoderTurn(
   // Round-narration hand-off between the stream mirror (producer) and the
   // tool-disclosure splicer in onRunEvent (consumer) — see InlineRoundProseSink.
   const roundProse: InlineRoundProseSink = { pending: '' };
-  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId, roundProse);
+  const mirror = createInlineTranscriptMirror(ctx, thinkingVerbs, placeholderId);
   const stream = teePushStream(
     getProviderPushStream(lockedProvider) as unknown as PushStream<LlmMessage>,
     mirror,
@@ -1035,6 +936,10 @@ export async function startInlineCoderTurn(
         },
         onRunEvent: (event) => {
           ctx.appendRunEvent(chatId, event);
+          if (event.type === 'assistant.tool_prose') {
+            roundProse.pending = event.text;
+            return;
+          }
           if (event.type === 'tool.execution_complete' && !ctx.abortRef.current) {
             const toolEvent = event as ToolCompleteEvent;
             capturedToolEvents.push(toolEvent);

@@ -110,6 +110,34 @@ describe('daemon transcript mirror', () => {
     assert.equal(adopted.lastSeq, 4);
   });
 
+  it('replaces streamed tool-round text with ordered render-only tool prose', () => {
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'assistant_token',
+      payload: { text: 'I’ll inspect it.' },
+    });
+    applyDaemonTranscriptEvent(mirror, { seq: 2, type: 'assistant_done', payload: {} });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 3,
+      type: 'assistant.tool_prose',
+      payload: { round: 0, text: 'I’ll inspect it.' },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 4,
+      type: 'tool.execution_start',
+      payload: { toolName: 'read_file', args: { path: 'README.md' } },
+    });
+
+    assert.deepEqual(
+      mirror.rows.map((row) => [row.kind, row.text]),
+      [
+        ['tool_prose', 'I’ll inspect it.'],
+        ['tool', 'read_file'],
+      ],
+    );
+  });
+
   it('preserves dialogue order for legacy sessions without an event journal', () => {
     const mirror = rebuildDaemonTranscriptMirror(
       [

@@ -1610,6 +1610,18 @@ function validateAssistantTurnStart(payload: unknown, basePath: string): Validat
   return issue ? [issue] : [];
 }
 
+function validateAssistantToolProse(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const round = expectNonNegativeInteger(payload, 'round', basePath);
+  if (round) issues.push(round);
+  const text = expectNonEmptyString(payload, 'text', basePath);
+  if (text) issues.push(text);
+  return issues;
+}
+
 function validateAssistantTurnEnd(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
@@ -1781,6 +1793,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'turn.route': validateTurnRoute,
   'assistant.turn_start': validateAssistantTurnStart,
   'assistant.turn_end': validateAssistantTurnEnd,
+  'assistant.tool_prose': validateAssistantToolProse,
   'turn.quiesced': validateTurnQuiesced,
   'harness.adaptation': validateHarnessAdaptation,
   'job.started': validateJobStarted,

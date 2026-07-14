@@ -68,6 +68,7 @@ import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
 import { createRunTokenLedger } from './run-cost-budget.js';
 import { estimateTokens } from './context-budget.js';
 import { detectToolFromText } from './tool-call-parsing.js';
+import { extractToolProse } from './tool-prose.js';
 import { SIZE_BUDGETS } from './size-budgets.js';
 import { formatProjectInstructionsBlock } from './project-instructions.js';
 import {
@@ -2146,11 +2147,26 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     ];
     const batchTotal = parallelCalls.length + mutationQueue.length;
 
+    // The prose prefix belongs to the user's transcript, not the model's
+    // history. Emit it once, immediately before this round's tool group, so
+    // every shell can preserve prose -> tools ordering without re-parsing the
+    // provider stream or injecting a synthetic LlmMessage.
+    let toolProseEmitted = false;
+    const emitToolProse = (): void => {
+      if (toolProseEmitted) return;
+      toolProseEmitted = true;
+      const toolProse = extractToolProse(accumulated);
+      if (toolProse) {
+        callbacks.onRunEvent?.({ type: 'assistant.tool_prose', round, text: toolProse });
+      }
+    };
+
     if (batchTotal >= 2) {
       if (callbacks.signal?.aborted) {
         finishRound('aborted');
         throw new DOMException('Coder cancelled by user.', 'AbortError');
       }
+      emitToolProse();
       const { toolUses, toolUseIdByCall } = createToolUseSidecars([
         ...parallelCalls,
         ...mutationQueue,
@@ -2693,6 +2709,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       finishRound('aborted');
       throw new DOMException('Coder cancelled by user.', 'AbortError');
     }
+    emitToolProse();
 
     const singleCall = toolCall as unknown as {
       call: { tool: string; args: Record<string, unknown> };

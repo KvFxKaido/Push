@@ -259,7 +259,7 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
   const mark = streamMark(messageMarkKind(item), glyphs);
   const bodyColor = item.isError
     ? VL_COLOR.fault
-    : item.role === 'status'
+    : item.role === 'status' || item.kind === 'tool_prose'
       ? VL_COLOR.muted
       : undefined;
   const bodyText = item.kind === 'review' && !expanded ? item.text.split('\n')[0] : item.text;
