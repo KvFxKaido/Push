@@ -94,9 +94,25 @@ describe('tool-card vocabulary — single source of truth', () => {
     assert.deepEqual(unionMembers(LIB_CARDS), [...TOOL_CARD_TYPES].sort());
   });
 
-  it('the web surface does not re-declare the union', () => {
-    // `export type ChatCard = ToolCard` (the back-compat alias) is fine.
-    // `export type ChatCard = | { type: ... }` (a redeclaration) is not.
+  it('the web surface does not re-declare the union under ANY name', () => {
+    // Name-agnostic on purpose. Pinning the identifier `ChatCard` would let a
+    // future surface reintroduce the union under a different alias
+    // (`export type CardKind = | { type: 'pr'; data: PRCardData } | ...`) and
+    // walk straight past the guard. So match the *structural shape* of a union
+    // member instead — `{ type: '<kebab>'; data: <Ident> }`. That shape appears
+    // 29 times in lib/tool-cards.ts and zero times anywhere on the web surface,
+    // so it identifies a card union regardless of what it is called.
+    const members = [...WEB_TYPES.matchAll(/\{\s*type:\s*'[a-z-]+';\s*data:\s*\w+\s*\}/g)].map(
+      (m) => m[0],
+    );
+    assert.deepEqual(
+      members,
+      [],
+      `the card union must live in lib/tool-cards.ts, not be re-declared on a surface. Found: ${members.join(' | ')}`,
+    );
+
+    // Belt and braces: the back-compat alias must stay an alias.
+    // `export type ChatCard = ToolCard` is fine; `= | { ... }` is not.
     assert.doesNotMatch(
       WEB_TYPES,
       /export type ChatCard\s*=\s*\r?\n?\s*\|/,
