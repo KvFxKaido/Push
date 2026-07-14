@@ -1266,6 +1266,20 @@ describe('handleCloudflareSandbox happy paths', () => {
     }
   });
 
+  it('reports an unreachable owner-token probe as a container error, not an auth config error', async () => {
+    const sandbox = mockSandbox();
+    sandbox.exec.mockRejectedValueOnce(new Error('Sandbox is unreachable'));
+
+    const response = await callRoute('exec', { sandbox_id: 'sb-1', command: 'ls' });
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Sandbox is unreachable',
+      code: 'CONTAINER_ERROR',
+    });
+    expect(sandbox.exec).toHaveBeenCalledTimes(1);
+  });
+
   // The `read` route is covered comprehensively in worker-cf-sandbox-read.test.ts
   // (10 tests), which exercises the in-container sed/stat/sha256sum/awk
   // pipeline introduced by this PR. The old test in this file mocked

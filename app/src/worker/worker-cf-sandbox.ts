@@ -359,15 +359,18 @@ async function runSandboxRoute(
         });
         return Response.json({ error: err.message, code: 'TIMEOUT' }, { status: 504 });
       } else {
+        const message = err instanceof Error ? err.message : String(err);
+        const code = classifyCfError(err);
         wlog('error', 'cf_sandbox_auth_throw', {
           requestId,
           route,
-          message: err instanceof Error ? err.message : String(err),
+          message,
+          code,
         });
-        return Response.json(
-          { error: 'Auth check failed', code: 'NOT_CONFIGURED' },
-          { status: 503 },
-        );
+        // The owner token lives inside the container. Failing to reach that
+        // file is a sandbox/backend failure; only a successful read followed
+        // by a mismatch is an authentication failure.
+        return Response.json({ error: message, code }, { status: 500 });
       }
     }
     if (!auth.ok && route === 'cleanup') {
@@ -2879,7 +2882,7 @@ function classifyCfError(err: unknown): string {
     return 'FILE_NOT_FOUND';
   }
   if (/not found|no such/i.test(msg)) return 'NOT_FOUND';
-  if (/container|crashed|unhealthy/i.test(msg)) return 'CONTAINER_ERROR';
+  if (/container|crashed|unhealthy|unreachable/i.test(msg)) return 'CONTAINER_ERROR';
   return 'CF_ERROR';
 }
 
