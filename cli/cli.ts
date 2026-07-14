@@ -423,6 +423,15 @@ export function makeCLIEventHandler() {
           for (const row of card.rows) {
             process.stdout.write(`  ${fmt.dim(`${row.label}: ${row.value}`)}\n`);
           }
+          for (const line of card.bodyLines ?? []) {
+            const rendered =
+              line.tone === 'add'
+                ? fmt.green(line.text)
+                : line.tone === 'delete'
+                  ? fmt.red(line.text)
+                  : fmt.dim(line.text);
+            process.stdout.write(`  ${rendered}\n`);
+          }
         } else if (ok) {
           process.stdout.write(`${badge} ${fmt.dim(text)}\n`);
         } else {

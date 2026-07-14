@@ -222,6 +222,57 @@ describe('makeCLIEventHandler delegation rendering', () => {
     assert.doesNotMatch(clean, /RAW_MODEL_PREVIEW/);
   });
 
+  it('renders declared diff and workspace-status card bodies without hiding their detail', () => {
+    const handler = makeCLIEventHandler();
+    const { stdout } = capture(() => {
+      handler({
+        type: 'tool.execution_complete',
+        payload: {
+          toolName: 'git_diff',
+          isError: false,
+          preview: 'RAW_DIFF_PREVIEW',
+          card: {
+            type: 'diff-preview',
+            data: {
+              diff: '--- a/file.ts\n+++ b/file.ts\n-old\n+new',
+              filesChanged: 1,
+              additions: 1,
+              deletions: 1,
+              truncated: false,
+            },
+          },
+        },
+      });
+      handler({
+        type: 'tool.execution_complete',
+        payload: {
+          toolName: 'git_status',
+          isError: false,
+          preview: 'RAW_STATUS_PREVIEW',
+          card: {
+            type: 'sandbox-state',
+            data: {
+              sandboxId: 'local-daemon',
+              repoPath: '/repo',
+              branch: 'feat/cards',
+              changedFiles: 1,
+              stagedFiles: 0,
+              unstagedFiles: 1,
+              untrackedFiles: 0,
+              preview: ['M src/app.ts'],
+              fetchedAt: '2026-07-14T00:00:00.000Z',
+            },
+          },
+        },
+      });
+    });
+    const clean = stripAnsi(stdout);
+    assert.match(clean, /-old/);
+    assert.match(clean, /\+new/);
+    assert.match(clean, /M src\/app\.ts/);
+    assert.doesNotMatch(clean, /RAW_(?:DIFF|STATUS)_PREVIEW/);
+  });
+
   it('silently ignores unrecognised event types', () => {
     const handler = makeCLIEventHandler();
     const { stdout } = capture(() => {
