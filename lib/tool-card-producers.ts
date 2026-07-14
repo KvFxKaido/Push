@@ -52,34 +52,43 @@ function inferTypecheckTool(command: string): TypeCheckCardData['tool'] | null {
 function parseTestCounts(
   output: string,
 ): Pick<TestResultsCardData, 'passed' | 'failed' | 'skipped' | 'total'> {
-  let passed = 0;
-  let failed = 0;
-  let skipped = 0;
-  let total = 0;
-  const summary =
-    output.match(/Tests:\s*(\d+)\s*passed.*?(\d+)\s*failed.*?(\d+)\s*total/is) ||
-    output.match(/(\d+)\s*passed.*?(\d+)\s*failed/is) ||
-    output.match(/passed:\s*(\d+).*?failed:\s*(\d+)/is);
-  const cargo = output.match(/test result:.*?(\d+)\s*passed.*?(\d+)\s*failed/is);
+  const lines = output.split('\n');
+  const summaryLine =
+    lines.find((line) => /^\s*Tests\s*:/i.test(line)) ??
+    [...lines]
+      .reverse()
+      .find(
+        (line) =>
+          /\d+\s+(?:passed|failed)\b/i.test(line) || /(?:passed|failed)\s*:\s*\d+/i.test(line),
+      );
+  const count = (line: string | undefined, labels: readonly string[]): number => {
+    if (!line) return 0;
+    for (const label of labels) {
+      const suffix = line.match(new RegExp(`(\\d+)\\s+${label}\\b`, 'i'));
+      if (suffix) return Number(suffix[1]) || 0;
+      const prefix = line.match(new RegExp(`${label}\\s*:\\s*(\\d+)`, 'i'));
+      if (prefix) return Number(prefix[1]) || 0;
+    }
+    return 0;
+  };
+
+  let passed = count(summaryLine, ['passed']);
+  let failed = count(summaryLine, ['failed']);
+  let skipped = count(summaryLine, ['skipped', 'ignored', 'pending', 'todo']);
+  let total = count(summaryLine, ['total']);
+  if (skipped === 0) {
+    const standaloneSkipped = output.match(/^\s*(\d+)\s+(?:skipped|ignored|pending|todo)\b/im);
+    skipped = standaloneSkipped ? Number(standaloneSkipped[1]) || 0 : 0;
+  }
   const goPasses = output.match(/^ok\s+/gm);
   const goFailures = output.match(/^FAIL(?:\s+|$)/gm);
 
-  if (summary) {
-    passed = Number(summary[1]) || 0;
-    failed = Number(summary[2]) || 0;
-    total = summary[3] ? Number(summary[3]) || 0 : passed + failed;
-  } else if (cargo) {
-    passed = Number(cargo[1]) || 0;
-    failed = Number(cargo[2]) || 0;
-    total = passed + failed;
-  } else if (goPasses || goFailures) {
+  if (!summaryLine && (goPasses || goFailures)) {
     passed = goPasses?.length ?? 0;
     failed = goFailures?.length ?? 0;
     total = passed + failed;
   }
 
-  const skippedMatch = output.match(/(\d+)\s*(?:skipped|ignored)/i);
-  skipped = skippedMatch ? Number(skippedMatch[1]) || 0 : 0;
   if (total === 0 && passed + failed + skipped > 0) total = passed + failed + skipped;
   return { passed, failed, skipped, total };
 }
@@ -210,7 +219,12 @@ export function buildCommandToolCard(input: {
 /** Build a bounded diff-preview card from a real or synthetic unified diff. */
 export function buildDiffPreviewToolCard(
   diff: string,
-  options: { filesChanged?: number; truncated?: boolean } = {},
+  options: {
+    filesChanged?: number;
+    additions?: number;
+    deletions?: number;
+    truncated?: boolean;
+  } = {},
 ): ToolCard {
   const bounded = boundedText(diff, MAX_DIFF_CARD_CHARS);
   let additions = 0;
@@ -222,8 +236,8 @@ export function buildDiffPreviewToolCard(
   const data: DiffPreviewCardData = {
     diff: bounded.text,
     filesChanged: options.filesChanged ?? (diff.trim() ? 1 : 0),
-    additions,
-    deletions,
+    additions: options.additions ?? additions,
+    deletions: options.deletions ?? deletions,
     truncated: Boolean(options.truncated) || bounded.truncated,
   };
   return { type: 'diff-preview', data };
@@ -242,6 +256,8 @@ export function buildEditDiffToolCard(editDiff: EditDiff): ToolCard {
   ];
   return buildDiffPreviewToolCard(lines.join('\n'), {
     filesChanged: 1,
+    additions: editDiff.adds,
+    deletions: editDiff.dels,
     truncated: editDiff.truncated,
   });
 }

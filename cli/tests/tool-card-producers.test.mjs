@@ -33,6 +33,42 @@ describe('tool card producers', () => {
     );
   });
 
+  it('parses unordered Jest summaries and successful summaries with no failed count', () => {
+    const failedFirst = buildCommandToolCard({
+      command: 'npm test',
+      stdout: 'Test Suites: 1 failed, 1 total\nTests: 1 failed, 2 passed, 3 total',
+      stderr: '',
+      exitCode: 1,
+      durationMs: 10,
+    });
+    assert.equal(failedFirst.type, 'test-results');
+    assert.deepEqual(
+      {
+        passed: failedFirst.data.passed,
+        failed: failedFirst.data.failed,
+        total: failedFirst.data.total,
+      },
+      { passed: 2, failed: 1, total: 3 },
+    );
+
+    const allPassed = buildCommandToolCard({
+      command: 'pnpm test',
+      stdout: 'Tests: 3 passed, 3 total',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 8,
+    });
+    assert.equal(allPassed.type, 'test-results');
+    assert.deepEqual(
+      {
+        passed: allPassed.data.passed,
+        failed: allPassed.data.failed,
+        total: allPassed.data.total,
+      },
+      { passed: 3, failed: 0, total: 3 },
+    );
+  });
+
   it('declares parsed typecheck errors from a typecheck command outcome', () => {
     const card = buildCommandToolCard({
       command: 'pnpm run typecheck',
@@ -88,6 +124,22 @@ describe('tool card producers', () => {
     assert.equal(fromContent?.type, 'diff-preview');
     assert.equal(fromContent?.data.additions, 1);
     assert.equal(fromContent?.data.deletions, 1);
+
+    const truncated = buildEditDiffToolCard({
+      path: 'generated.ts',
+      adds: 200,
+      dels: 5,
+      lines: Array.from({ length: 80 }, (_, index) => ({
+        kind: 'add',
+        newLine: index + 1,
+        text: `line ${index + 1}`,
+      })),
+      truncated: true,
+    });
+    assert.equal(truncated.type, 'diff-preview');
+    assert.equal(truncated.data.additions, 200);
+    assert.equal(truncated.data.deletions, 5);
+    assert.equal(truncated.data.truncated, true);
   });
 
   it('builds structured diagnostics, commit, and delegation outcomes', () => {

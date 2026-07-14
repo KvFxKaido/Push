@@ -65,7 +65,7 @@ import {
   buildPatchsetDiagnosticSummary,
   buildPerEditDiagnosticSummary,
 } from './sandbox-mutation-postconditions';
-import { buildDiffPreviewToolCard } from '@push/lib/tool-card-producers';
+import { buildDiffPreviewToolCard, buildTextChangeToolCard } from '@push/lib/tool-card-producers';
 
 type WriteFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_write_file' }>['args'];
 type ApplyPatchsetArgs = Extract<SandboxToolCall, { tool: 'sandbox_apply_patchset' }>['args'];
@@ -321,7 +321,7 @@ export async function handleWriteFile(
 ): Promise<ToolExecutionResult> {
   const writeStart = Date.now();
   const cacheKey = fileVersionKey(ctx.sandboxId, args.path);
-  let isNewFileCreation = false;
+  let beforeContentForCard: string | null = null;
 
   // Sensitive-path refusal lives in the handler (not per-dispatch-case) so
   // every surface — cloud, daemon, native — inherits it by construction,
@@ -359,6 +359,7 @@ export async function handleWriteFile(
           autoReadWorkspaceRevision = expanded.workspaceRevision ?? autoReadWorkspaceRevision;
           autoReadTruncated = expanded.truncated;
         }
+        if (!autoReadTruncated) beforeContentForCard = autoReadContent;
 
         const autoLineCount = autoReadContent.split('\n').length;
         ctx.recordLedgerRead(args.path, {
@@ -410,7 +411,7 @@ export async function handleWriteFile(
           errMsg.includes('not found') ||
           errMsg.includes('does not exist')
         ) {
-          isNewFileCreation = true;
+          beforeContentForCard = '';
           ctx.recordLedgerCreation(args.path);
           ctx.recordLedgerMutation(args.path, 'agent');
           ctx.invalidateSymbolLedger(args.path);
@@ -459,6 +460,28 @@ export async function handleWriteFile(
         ),
         structuredError: guardErr3,
       };
+    }
+  }
+
+  // Keep a structured before-image for the diff card. `git diff` cannot show
+  // existing untracked files, so a second write to a file created earlier in
+  // the session needs this fallback. Best-effort only: card preparation must
+  // not turn an otherwise valid write into a failure.
+  if (beforeContentForCard === null) {
+    try {
+      const beforeRead = (await ctx.readFromSandbox(ctx.sandboxId, args.path)) as FileReadResult & {
+        error?: string;
+      };
+      if (!beforeRead.error && !beforeRead.truncated) {
+        beforeContentForCard = beforeRead.content;
+      } else if (
+        typeof beforeRead.error === 'string' &&
+        /no such file|not found|does not exist/i.test(beforeRead.error)
+      ) {
+        beforeContentForCard = '';
+      }
+    } catch {
+      // Leave the fallback unavailable; the write path remains authoritative.
     }
   }
 
@@ -619,20 +642,11 @@ export async function handleWriteFile(
       // The write already succeeded. A best-effort render payload must never
       // turn that mutation into a reported tool failure.
     }
-    // Plain `git diff` omits an untracked creation. The write outcome tells us
-    // this had no prior version, so declare the addition from the structured
-    // write input instead of inferring it from result prose.
-    if (!diffHunks && isNewFileCreation) {
-      const displayPath =
-        args.path.replace(/^\/workspace\/?/, '').replace(/[\r\n]/g, '') || args.path;
-      diffHunks = [
-        `diff --git a/${displayPath} b/${displayPath}`,
-        'new file mode 100644',
-        '--- /dev/null',
-        `+++ b/${displayPath}`,
-        ...args.content.split('\n').map((line) => `+${line}`),
-      ].join('\n');
-    }
+    const writeCard = diffHunks
+      ? buildDiffPreviewToolCard(diffHunks)
+      : beforeContentForCard !== null
+        ? buildTextChangeToolCard(args.path, beforeContentForCard, args.content)
+        : undefined;
 
     const writeDiagnostics = await (ctx.runPerEditDiagnostics ?? runPerEditDiagnostics)(
       ctx.sandboxId,
@@ -664,7 +678,7 @@ export async function handleWriteFile(
     });
     return {
       text: lines.join('\n'),
-      ...(diffHunks ? { card: buildDiffPreviewToolCard(diffHunks) } : {}),
+      ...(writeCard ? { card: writeCard } : {}),
       postconditions: writePostconditions,
     };
   } catch (writeErr) {
