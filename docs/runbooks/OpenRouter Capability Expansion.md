@@ -2,7 +2,7 @@
 
 Date: 2026-06-15
 Status: **in progress** — Phase 1 (native structured outputs) shipping; Phases
-2–6 are roadmap-tracked follow-ups, not yet promoted to `ROADMAP.md`.
+2–6 are follow-ups, not yet committed as priorities.
 Owner: Push
 
 ## Why this exists

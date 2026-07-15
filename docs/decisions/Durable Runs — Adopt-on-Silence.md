@@ -447,7 +447,7 @@ the second dead handoff across runs, a failure class only the wrapper has.
 owns a unique failure mode (the handoff itself dying).** The "inline ≥
 delegated before deleting the Planner/brief" gate (Single-Agent Loop step 1)
 is met. Default flip + Planner/brief deletion are unblocked as runtime work;
-tracked on the ROADMAP, not here.
+tracked as committed runtime priorities, not here.
 
 **Caveats:** n=1 per task; one model; the CLI `--delegate` task-graph path is
 a proxy for the web delegated arc, not the arc itself.

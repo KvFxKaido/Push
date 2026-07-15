@@ -74,10 +74,10 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - `cli/schemas/` (see `cli/schemas/README.md`)
   - Status: Active JSON Schema artifacts for runtime protocol envelopes/payloads.
 
-## Canonical Roadmap
+## Priority surface
 
-- `../ROADMAP.md` is the canonical product roadmap.
-- `docs/` is draft/exploration space unless an item is promoted to roadmap.
+- `docs/decisions/` is the canonical decision + priority surface — each doc carries a `Status:` (see the vocabulary in [`decisions/README.md`](decisions/README.md)). The root `ROADMAP.md` was retired 2026-07-15; the decision docs and the code are canonical for what has shipped and what is committed.
+- `docs/` is draft/exploration space; committing a draft means flipping its `Status:` and recording the decision in the relevant decision doc.
 
 ## Archive
 
@@ -124,7 +124,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - `archive/runbooks/UX Nice-to-Haves Plan.md`
   - Status: Archived 2026-05-15; old wishlist/reference, not current roadmap.
 - `archive/runbooks/Web-CLI Parity Plan.md`
-  - Status: Archived 2026-05-15; Tracks 1–4 shipped and remaining work is tracked by ROADMAP.
+  - Status: Archived 2026-05-15; Tracks 1–4 shipped and remaining work is tracked in the decision docs.
 - `archive/runbooks/Workspace Route Follow-up Plan.md`
   - Status: Archived 2026-05-15; route-boundary cleanup shipped and remaining work is optional/product-scoped elsewhere.
 - `archive/runbooks/WorkspaceScreen Extraction Plan.md`
@@ -134,7 +134,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - `archive/cli/runbooks/LSP Diagnostics Plan.md`
   - Status: Shipped CLI diagnostics plan retained as reference.
 - `archive/cli/runbooks/Push CLI Plan.md`
-  - Status: Archived 2026-05-15; superseded baseline, with live CLI priorities in ROADMAP.
+  - Status: Archived 2026-05-15; superseded baseline, with live CLI priorities in the decision docs.
 - `archive/cli/runbooks/Push CLI Bootstrap Execution Plan.md`
   - Status: Completed CLI bootstrap plan retained as reference.
 - `archive/cli/runbooks/Push CLI TUI Phase 1 Plan.md`
@@ -146,4 +146,4 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 - Keep durable, active decision summaries in `decisions/` or `cli/design/`.
 - Keep research, comparisons, shipped chronicles, and post-hoc analysis in `archive/decisions/` once their current takeaways are summarized in the live decision docs. Use `research/` for raw external source writeups.
 - When a plan is done but still worth keeping, move it into `archive/runbooks/` or `archive/cli/runbooks/`.
-- If a draft in `docs/` becomes an implementation commitment, promote a concise version into `../ROADMAP.md` first.
+- If a draft in `docs/` becomes an implementation commitment, flip its `Status:` and record the decision in the relevant decision doc.

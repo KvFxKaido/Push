@@ -15,11 +15,17 @@ as source notes and shipping provenance.
 
 ## Status Vocabulary
 
-- **Current** means this is the operating contract for new work.
-- **Roadmap-tracked** means implementation is committed through `ROADMAP.md` or an equivalent current priority note.
-- **Draft** means design-in-motion; implementation still needs roadmap promotion.
-- **Reference** means useful context, not an active task list.
-- **Archived** means provenance only. Prefer the live docs above unless you need history.
+The canonical `Status:` labels. A decision doc's field uses one, optionally with
+a parenthetical qualifier (e.g. `(partially implemented)`, `(Reference)`):
+
+- **Current** — the operating contract for new work; describes shipped/live behavior.
+- **Draft** — design-in-motion; implementation still needs an owner commitment.
+- **Reference** — useful context, not an active task list.
+- **Historical** — provenance only; prefer the live docs above unless you need history.
+- **Superseded by `<doc>`** / **Merged into `<doc>`** — pointer statuses: this doc's content moved to `<doc>`; follow the pointer.
+
+This list is the single source of truth for the vocabulary — CLAUDE.md and other
+docs point here rather than restating it.
 
 ## Editing Rules
 

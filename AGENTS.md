@@ -54,7 +54,7 @@ Prompts and docs describe behavior; they do not create it.
 
 ## Decision-doc discipline
 
-When you ship something specified in a `docs/decisions/` doc, flip that doc's `Status:` field in the same PR — part of the ship checklist, not a follow-up. Spec docs that drift become silently misleading. See `docs/decisions/README.md` for the status labels (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
+When you ship something specified in a `docs/decisions/` doc, flip that doc's `Status:` field in the same PR — part of the ship checklist, not a follow-up. Spec docs that drift become silently misleading. See `docs/decisions/README.md` for the canonical status labels (the single source of truth — don't restate them here).
 
 ## Validation commands
 

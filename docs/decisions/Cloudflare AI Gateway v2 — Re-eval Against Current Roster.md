@@ -1,7 +1,7 @@
 # Cloudflare AI Gateway v2 — Re-eval Against Current Roster
 
 Date: 2026-07-09
-Status: **Draft** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred then removed with Bucket D (#1378); Path 2 remains design (settings two-tier unlock spec'd below).
+Status: **Current** — Path 1 shipped, **verified live, and active in production** 2026-07-09 (openai/anthropic/google → `push-gate`, 200s in CF logs; prod `CF_AI_GATEWAY_*` secrets confirmed set; see Open questions); Path 1.5 spiked — `ollama` + 4 custom providers verified live 2026-07-09 (`kilocode` dropped); Bucket B — `deepseek` wired (first-party `/anthropic` verified), `vertex` deferred then removed with Bucket D (#1378); Path 2 remains design (settings two-tier unlock spec'd below).
 
 ## Why re-open this
 

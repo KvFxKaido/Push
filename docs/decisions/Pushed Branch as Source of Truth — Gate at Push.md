@@ -1,9 +1,11 @@
 # Pushed Branch as Source of Truth — Gate at Push, Sandbox as Disposable Compute
 
 Date: 2026-06-18
-Status: **Draft (partially implemented)** — design-in-motion; not yet
-roadmap-promoted. Poses the model and the owner calls it needs; OQ1 is now
-settled (Auditor moves to push — 2026-06-18), the rest remain open. On
+Status: **Current (partially implemented)** — the shipped parts (Move A
+gate-at-push + Move B2 auto-back) are the live web/cloud delivery model; B1
+(push-to-start) and OQ2/OQ3 remain open. Poses the model and the owner calls it
+needs; OQ1 is now settled (Auditor moves to push — 2026-06-18), the rest remain
+open. On
 implementation, the Current parts fold into
 [`Platform, Sessions, and Sandbox Decisions.md`](<Platform, Sessions, and Sandbox Decisions.md>)
 (which owns the commit/push/sandbox seams) and this file becomes provenance.
