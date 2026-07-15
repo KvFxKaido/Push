@@ -6,13 +6,20 @@ import os from 'node:os';
 import { promisify } from 'node:util';
 import path from 'node:path';
 
-import { canCaptureChildStdout } from './test-environment.mjs';
+import { canCaptureChildStdout, canListenOnLoopback } from './test-environment.mjs';
+import { startMockProviderServer } from './mock-provider-server.mjs';
 
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
 const childStdoutAvailable = await canCaptureChildStdout();
+const loopbackAvailable = await canListenOnLoopback();
 const needsChildStdout = {
   skip: !childStdoutAvailable && 'child_process stdout capture is unavailable in this sandbox',
+};
+const needsHeadlessJsonl = {
+  skip:
+    (!childStdoutAvailable && 'child_process stdout capture is unavailable in this sandbox') ||
+    (!loopbackAvailable && 'loopback networking is unavailable in this sandbox'),
 };
 
 function shQuote(arg) {
@@ -295,6 +302,107 @@ describe('--sandbox / --no-sandbox conflict', needsChildStdout, () => {
     ]);
     assert.equal(code, 1);
     assert.ok(stderr.includes('Invalid PUSH_LOCAL_SANDBOX value'));
+  });
+});
+
+describe('push run --jsonl', needsChildStdout, () => {
+  it('rejects --json and --jsonl together', async () => {
+    const { code, stderr } = await runCli(['run', '--task', 'hi', '--json', '--jsonl']);
+    assert.equal(code, 1);
+    assert.match(stderr, /--json and --jsonl cannot be combined/);
+  });
+
+  it('rejects --jsonl outside push run', async () => {
+    const { code, stderr } = await runCli(['resume', '--jsonl']);
+    assert.equal(code, 1);
+    assert.match(stderr, /supported only by `push run`/);
+  });
+});
+
+describe('push run --jsonl stream', needsHeadlessJsonl, () => {
+  it('emits push.runtime.v1 envelopes and ends with one run_complete', async () => {
+    const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
+    try {
+      const { code, stdout, stderr } = await runCli(
+        ['run', '--task', 'Say hello.', '--provider', 'openrouter', '--jsonl'],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+      assert.equal(code, 0, stripAnsi(stderr));
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      assert.ok(lines.length > 2);
+      assert.ok(
+        lines.every((event) => event.v === 'push.runtime.v1'),
+        `unexpected JSONL output: ${stdout}`,
+      );
+      assert.ok(lines.every((event) => event.kind === 'event'));
+      assert.ok(lines.every((event) => event.sessionId === lines[0].sessionId));
+      assert.ok(lines.every((event) => event.runId === lines[0].runId));
+      assert.equal(lines[0].type, 'user_message');
+      assert.ok(lines.some((event) => event.type === 'assistant_token'));
+      assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(lines.at(-1).type, 'run_complete');
+      assert.equal(lines.at(-1).payload.outcome, 'success');
+      assert.equal(lines.at(-1).payload.summary, 'Hello world.');
+    } finally {
+      await mock.stop();
+    }
+  });
+
+  it('persists one terminal event after failed acceptance checks', async () => {
+    const mock = await startMockProviderServer({ tokens: ['Implementation complete.'] });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-jsonl-acceptance-'));
+    const sessionRoot = path.join(root, 'sessions');
+    try {
+      const { code, stdout } = await runCli(
+        [
+          'run',
+          '--task',
+          'Complete the task.',
+          '--provider',
+          'openrouter',
+          '--jsonl',
+          '--accept',
+          'node -e "process.exit(7)"',
+        ],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_SESSION_DIR: sessionRoot,
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+      assert.equal(code, 1);
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      const acceptanceIndex = lines.findIndex((event) => event.type === 'acceptance_complete');
+      const terminalIndex = lines.findIndex((event) => event.type === 'run_complete');
+      assert.ok(acceptanceIndex >= 0);
+      assert.ok(terminalIndex > acceptanceIndex);
+      assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(lines.at(-1).payload.outcome, 'failed');
+
+      const persisted = (
+        await fs.readFile(path.join(sessionRoot, lines[0].sessionId, 'events.jsonl'), 'utf8')
+      )
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(persisted.at(-1).type, 'run_complete');
+      assert.equal(persisted.at(-1).payload.outcome, 'failed');
+    } finally {
+      await mock.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
   });
 });
 

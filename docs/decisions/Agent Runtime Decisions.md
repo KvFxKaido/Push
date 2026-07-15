@@ -77,6 +77,22 @@ wire contract is `push.runtime.v1` with envelope validation in
 The tool-call parser path is converged on the shared dispatcher. New tool/event
 vocabularies need a canonical definition and a drift test in the same PR.
 
+#### Headless JSONL machine interface (landed 2026-07-14)
+
+`push run --jsonl` exposes the existing `push.runtime.v1` event envelopes as a
+compact stdout JSONL stream. It does not define a parallel CLI event taxonomy:
+assistant tokens, tool lifecycle, status, errors, acceptance results, and the
+terminal `run_complete` use the same types and validators as pushd. Human and
+diagnostic output stays on stderr. `--json` remains the aggregate final-result
+mode and is mutually exclusive with `--jsonl`.
+
+The adapter withholds the kernel's early `run_complete` until post-run
+acceptance checks finish, so exactly one `run_complete` is the final line and
+its outcome represents the whole command. Envelope `seq` keeps daemon
+semantics: it is the session journal cursor, so live-only events may repeat the
+current value and consumers use line order for live delivery rather than
+advancing replay state from every line.
+
 #### Turn quiescence (landed 2026-07-11)
 
 `assistant.turn_end` is a **round** boundary, not proof that a foreground run

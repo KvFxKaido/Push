@@ -31,6 +31,7 @@ import {
   appendSessionEvent,
   loadSessionState,
   listSessions,
+  makeRunId,
   pruneSessions,
   rewriteMessagesLog,
   type PruneSelectors,
@@ -79,6 +80,7 @@ import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-del
 import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import { resolveExecSandboxBackend, runCommandInExecSandbox } from './exec-sandbox.js';
+import { createHeadlessJsonlWriter } from './headless-jsonl.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { getDefaultMemoryStore, setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.js';
@@ -116,6 +118,7 @@ const KNOWN_OPTIONS = new Set([
   'max-rounds',
   'maxRounds',
   'json',
+  'jsonl',
   'lint',
   'headless',
   'allow-exec',
@@ -297,6 +300,7 @@ Options:
   --worktree-name <name>        --worktree with a custom branch name
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
+  --jsonl                       Stream push.runtime.v1 events in headless mode
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
   --sandbox                     Enable local Docker sandbox
@@ -532,6 +536,7 @@ async function runHeadless(
   task,
   maxRounds,
   jsonOutput,
+  jsonlOutput,
   acceptanceChecks,
   {
     allowExec = false,
@@ -560,23 +565,55 @@ async function runHeadless(
           .join('\n')}`
       : '';
   const taskPrompt = `${task}${acceptanceBlock}`;
+  const runId = makeRunId();
+  const jsonl = jsonlOutput ? createHeadlessJsonlWriter(state) : null;
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
     referenceSourceText: task,
   });
-  await appendSessionEvent(state, 'user_message', {
+  const userMessagePayload = {
     chars: task.length,
     preview: task.slice(0, 280),
-  });
+  };
+  await appendSessionEvent(state, 'user_message', userMessagePayload, runId);
+  jsonl?.emit('user_message', userMessagePayload, runId);
+
+  // Shared runtime/tool telemetry uses console.log for daemon-friendly
+  // structured ops lines. A headless machine contract must keep stdout pure,
+  // so route those lines to stderr for the lifetime of either machine mode.
+  // This process runs one headless command, making the temporary global
+  // redirect scoped and deterministic; the JSON/JSONL writers use
+  // process.stdout.write directly and remain untouched.
+  const originalConsoleLog = console.log;
+  if (jsonOutput || jsonlOutput) console.log = console.error;
+
+  const emitJsonlRunComplete = async (
+    outcome: 'success' | 'failed' | 'aborted' | 'max_rounds',
+    summary: string,
+  ) => {
+    if (!jsonl) return;
+    const payload = { runId, outcome, summary };
+    await appendSessionEvent(state, 'run_complete', payload, runId);
+    await saveSessionState(state);
+    jsonl.emit('run_complete', payload, runId);
+  };
 
   const ac = new AbortController();
   const onSigint = () => ac.abort();
   process.on('SIGINT', onSigint);
 
   try {
-    // Headless run is silent during execution unless we want to wire up a log listener later
     const result = await runAssistantTurn(state, providerConfig, apiKey, taskPrompt, maxRounds, {
+      runId,
       signal: ac.signal,
-      emit: null,
+      // `run_complete` is emitted by the kernel before headless acceptance
+      // checks. Hold that one event back so the JSONL stream has exactly one
+      // terminal line reflecting the full command outcome.
+      emit: jsonl
+        ? (event) => {
+            if (event.type !== 'run_complete') jsonl.emitEngineEvent(event);
+          }
+        : null,
+      suppressRunComplete: Boolean(jsonl),
       allowExec,
       safeExecPatterns,
       execMode,
@@ -589,7 +626,9 @@ async function runHeadless(
 
     // Non-throw abort path (engine returned outcome: 'aborted' without throwing)
     if (result.outcome === 'aborted') {
-      if (jsonOutput) {
+      if (jsonl) {
+        await emitJsonlRunComplete('aborted', 'Aborted by user.');
+      } else if (jsonOutput) {
         process.stdout.write(
           `${JSON.stringify({ sessionId: state.sessionId, runId: result.runId || null, outcome: 'aborted' }, null, 2)}\n`,
         );
@@ -603,26 +642,32 @@ async function runHeadless(
 
     if (Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0) {
       acceptance = await runAcceptanceChecks(state.cwd, acceptanceChecks);
-      await appendSessionEvent(
-        state,
-        'acceptance_complete',
-        {
-          passed: acceptance.passed,
-          checks: acceptance.checks.map((check) => ({
-            command: check.command,
-            ok: check.ok,
-            exitCode: check.exitCode,
-            durationMs: check.durationMs,
-          })),
-        },
-        result.runId || null,
-      );
+      const acceptancePayload = {
+        passed: acceptance.passed,
+        checks: acceptance.checks.map((check) => ({
+          command: check.command,
+          ok: check.ok,
+          exitCode: check.exitCode,
+          durationMs: check.durationMs,
+        })),
+      };
+      await appendSessionEvent(state, 'acceptance_complete', acceptancePayload, runId);
+      jsonl?.emit('acceptance_complete', acceptancePayload, runId);
       await saveSessionState(state);
     }
 
     const success = result.outcome === 'success' && (!acceptance || acceptance.passed);
 
-    if (jsonOutput) {
+    if (jsonl) {
+      const outcome = success
+        ? 'success'
+        : acceptance && !acceptance.passed
+          ? 'failed'
+          : result.outcome === 'error'
+            ? 'failed'
+            : result.outcome;
+      await emitJsonlRunComplete(outcome, result.finalAssistantText);
+    } else if (jsonOutput) {
       process.stdout.write(
         `${JSON.stringify(
           {
@@ -657,7 +702,9 @@ async function runHeadless(
   } catch (err) {
     if (err.name === 'AbortError') {
       await saveSessionState(state);
-      if (jsonOutput) {
+      if (jsonl) {
+        await emitJsonlRunComplete('aborted', 'Aborted by user.');
+      } else if (jsonOutput) {
         process.stdout.write(
           `${JSON.stringify({ sessionId: state.sessionId, outcome: 'aborted' }, null, 2)}\n`,
         );
@@ -668,10 +715,14 @@ async function runHeadless(
     }
 
     const message = err instanceof Error ? err.message : String(err);
-    await appendSessionEvent(state, 'error', { message });
+    const errorPayload = { code: 'HEADLESS_RUN_ERROR', message, retryable: false };
+    await appendSessionEvent(state, 'error', errorPayload, runId);
     await saveSessionState(state);
 
-    if (jsonOutput) {
+    if (jsonl) {
+      jsonl.emit('error', errorPayload, runId);
+      await emitJsonlRunComplete('failed', message);
+    } else if (jsonOutput) {
       process.stdout.write(
         `${JSON.stringify({ sessionId: state.sessionId, outcome: 'error', error: message }, null, 2)}\n`,
       );
@@ -680,6 +731,7 @@ async function runHeadless(
     }
     return 1;
   } finally {
+    console.log = originalConsoleLog;
     process.removeListener('SIGINT', onSigint);
   }
 }
@@ -3479,6 +3531,7 @@ export async function main() {
       'max-rounds': { type: 'string' },
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
+      jsonl: { type: 'boolean', default: false },
       lint: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
@@ -3613,6 +3666,12 @@ export async function main() {
   }
 
   const subcommand = positionals[0] || '';
+  if (values.json && values.jsonl) {
+    throw new Error('Conflicting output flags: --json and --jsonl cannot be combined.');
+  }
+  if (values.jsonl && subcommand !== 'run') {
+    throw new Error('--jsonl is supported only by `push run`.');
+  }
   // TUI is the default UX for bare `push` in a TTY. Set PUSH_TUI_ENABLED=0
   // (or 'false') to opt back to the transcript REPL. The launcher used to
   // export PUSH_TUI_ENABLED=1 to achieve this; that's now the in-code
@@ -4230,6 +4289,7 @@ export async function main() {
         task,
         maxRounds,
         values.json,
+        values.jsonl,
         acceptanceChecks,
         headlessRunOpts,
       );

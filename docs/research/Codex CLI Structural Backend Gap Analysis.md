@@ -75,6 +75,10 @@ useful progression is:
 3. versioned daemon/app-server protocol plus generated TypeScript/JSON schemas;
 4. a thin SDK facade over that protocol.
 
+Step 1 landed on 2026-07-14: `push run --jsonl` emits the existing
+`push.runtime.v1` envelopes and terminates with one post-acceptance
+`run_complete`. Steps 2–4 remain open.
+
 The distinction is not capability. It is whether external consumers can rely on
 the capability without importing internal coordinator modules. Steps 1–2 are the
 near-term win; step 4 (the SDK facade) is demand-driven and can wait until a
