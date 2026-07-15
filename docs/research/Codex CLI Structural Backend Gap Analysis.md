@@ -1,6 +1,7 @@
 # Codex CLI Structural Backend Gap Analysis
 
-Status: Reference (research snapshot, 2026-07-14; reprioritized 2026-07-14)
+Status: Reference (research snapshot, 2026-07-14; reprioritized 2026-07-14;
+config-loader foundation started 2026-07-15)
 
 ## Question
 
@@ -97,6 +98,13 @@ The near-term win is the **loader with defined precedence** — the pre-MCP hygi
 that stops each subsystem (MCP config, hooks, permissions, provider settings) from
 inventing its own precedence and trust model. Building it before MCP lands is the
 point.
+
+The foundation started on 2026-07-15 with one pure layer/provenance engine, an
+explicit `user config < environment < validated CLI overrides` contract, and
+`push config explain`. Named profiles, trusted project layers, and managed policy
+remain subsequent layers in that same resolver; they must not introduce sibling
+readers. The sequencing and additional Mastra-derived lessons are recorded in
+[`Mastra — Lessons for Push.md`](<Mastra — Lessons for Push.md>).
 
 The **trusted-project and managed/team layers** — the constraint that project code
 must not redirect credentials or silently enable host-reach hooks merely by being

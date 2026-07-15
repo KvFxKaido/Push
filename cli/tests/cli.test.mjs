@@ -245,6 +245,86 @@ describe('--help', needsChildStdout, () => {
   });
 });
 
+// ─── config explain ─────────────────────────────────────────────
+
+describe('push config explain', needsChildStdout, () => {
+  it('shows effective values and exact winning sources without exposing secrets', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-config-explain-'));
+    const configPath = path.join(root, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        provider: 'ollama',
+        ollama: { apiKey: 'user-secret' },
+        anthropic: { model: 'claude-user' },
+      }),
+    );
+
+    try {
+      const { code, stdout, stderr } = await runCli(['config', 'explain'], {
+        env: {
+          PUSH_CONFIG_PATH: configPath,
+          PUSH_PROVIDER: 'anthropic',
+          PUSH_ANTHROPIC_MODEL: 'claude-env',
+          PUSH_ANTHROPIC_API_KEY: '',
+          ANTHROPIC_API_KEY: 'environment-secret',
+        },
+      });
+
+      assert.equal(code, 0, stderr);
+      assert.doesNotMatch(stdout, /user-secret|environment-secret/);
+      const result = JSON.parse(stdout);
+      assert.equal(result.config.provider, 'anthropic');
+      assert.equal(result.config.anthropic.model, 'claude-env');
+      assert.equal(result.provenance.provider.source, 'env:PUSH_PROVIDER');
+      assert.equal(result.provenance['anthropic.model'].source, 'env:PUSH_ANTHROPIC_MODEL');
+      assert.equal(result.provenance['anthropic.apiKey'].source, 'env:ANTHROPIC_API_KEY');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('places validated runtime flags above the environment layer', async () => {
+    const { code, stdout, stderr } = await runCli(
+      [
+        'config',
+        'explain',
+        '--provider',
+        'openai',
+        '--model',
+        'gpt-cli',
+        '--no-sandbox',
+        '--search-backend',
+        'duckduckgo',
+        '--mode',
+        'strict',
+      ],
+      {
+        env: {
+          PUSH_PROVIDER: 'anthropic',
+          PUSH_OPENAI_MODEL: 'gpt-env',
+          PUSH_LOCAL_SANDBOX: 'native',
+          PUSH_WEB_SEARCH_BACKEND: 'tavily',
+          PUSH_EXEC_MODE: 'auto',
+        },
+      },
+    );
+
+    assert.equal(code, 0, stderr);
+    const result = JSON.parse(stdout);
+    assert.equal(result.config.provider, 'openai');
+    assert.equal(result.config.openai.model, 'gpt-cli');
+    assert.equal(result.config.localSandbox, false);
+    assert.equal(result.config.webSearchBackend, 'duckduckgo');
+    assert.equal(result.config.execMode, 'strict');
+    assert.equal(result.provenance.provider.source, 'cli-overrides');
+    assert.equal(result.provenance['openai.model'].source, 'cli-overrides');
+    assert.equal(result.provenance.localSandbox.source, 'cli-overrides');
+    assert.equal(result.provenance.webSearchBackend.source, 'cli-overrides');
+    assert.equal(result.provenance.execMode.source, 'cli-overrides');
+  });
+});
+
 // ─── unknown subcommand ──────────────────────────────────────────
 
 describe('unknown subcommand', needsChildStdout, () => {

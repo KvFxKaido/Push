@@ -1,6 +1,11 @@
 import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { applyConfigToEnv, reapplyProviderConfigToEnv } from '../config-store.ts';
+import {
+  applyConfigToEnv,
+  reapplyProviderConfigToEnv,
+  resolveRuntimeConfig,
+} from '../config-store.ts';
+import { mergeConfigLayers } from '../../lib/config-layers.ts';
 
 const savedEnv = {
   PUSH_PROVIDER: process.env.PUSH_PROVIDER,
@@ -214,5 +219,135 @@ describe('reapplyProviderConfigToEnv', () => {
 
     assert.equal(process.env.PUSH_ZEN_API_KEY, 'sk-live');
     assert.deepEqual(changed, []);
+  });
+});
+
+describe('mergeConfigLayers', () => {
+  it('deep-merges objects, replaces arrays, and records the winning leaf source', () => {
+    const resolution = mergeConfigLayers([
+      {
+        id: 'user',
+        kind: 'user',
+        value: {
+          provider: 'ollama',
+          disabledTools: ['exec'],
+          anthropic: { model: 'claude-user', url: 'https://user.example' },
+        },
+      },
+      {
+        id: 'env:PUSH_ANTHROPIC_MODEL',
+        kind: 'environment',
+        value: {
+          disabledTools: ['write_file'],
+          anthropic: { model: 'claude-env' },
+        },
+      },
+    ]);
+
+    assert.deepEqual(resolution.config, {
+      provider: 'ollama',
+      disabledTools: ['write_file'],
+      anthropic: { model: 'claude-env', url: 'https://user.example' },
+    });
+    assert.equal(resolution.provenance.provider.source, 'user');
+    assert.equal(resolution.provenance.disabledTools.source, 'env:PUSH_ANTHROPIC_MODEL');
+    assert.equal(resolution.provenance['anthropic.model'].source, 'env:PUSH_ANTHROPIC_MODEL');
+    assert.equal(resolution.provenance['anthropic.url'].source, 'user');
+  });
+
+  it('clears stale child provenance when a higher layer replaces an object', () => {
+    const resolution = mergeConfigLayers([
+      { id: 'user', kind: 'user', value: { scrub: { allow: ['CI'] } } },
+      { id: 'cli', kind: 'cli', value: { scrub: false } },
+    ]);
+
+    assert.deepEqual(resolution.config, { scrub: false });
+    assert.equal(resolution.provenance.scrub.source, 'cli');
+    assert.equal(resolution.provenance['scrub.allow'], undefined);
+  });
+
+  it('rejects prototype-polluting keys instead of merging them', () => {
+    const hostile = JSON.parse('{"__proto__":{"polluted":true}}');
+
+    assert.throws(
+      () => mergeConfigLayers([{ id: 'project', kind: 'project', value: hostile }]),
+      /Unsafe configuration key: __proto__/,
+    );
+    assert.equal({}.polluted, undefined);
+  });
+});
+
+describe('resolveRuntimeConfig', () => {
+  it('resolves user < environment < CLI overrides with exact provenance', () => {
+    const resolution = resolveRuntimeConfig(
+      {
+        provider: 'ollama',
+        localSandbox: false,
+        anthropic: { model: 'claude-user', apiKey: 'user-secret' },
+      },
+      {
+        env: {
+          PUSH_PROVIDER: 'anthropic',
+          PUSH_LOCAL_SANDBOX: 'native',
+          PUSH_ANTHROPIC_MODEL: 'claude-env',
+          ANTHROPIC_API_KEY: 'env-secret',
+        },
+        overrides: { provider: 'openai' },
+      },
+    );
+
+    assert.equal(resolution.config.provider, 'openai');
+    assert.equal(resolution.config.localSandbox, 'native');
+    assert.deepEqual(resolution.config.anthropic, {
+      model: 'claude-env',
+      apiKey: 'env-secret',
+    });
+    assert.equal(resolution.provenance.provider.source, 'cli-overrides');
+    assert.equal(resolution.provenance.localSandbox.source, 'env:PUSH_LOCAL_SANDBOX');
+    assert.equal(resolution.provenance['anthropic.model'].source, 'env:PUSH_ANTHROPIC_MODEL');
+    assert.equal(resolution.provenance['anthropic.apiKey'].source, 'env:ANTHROPIC_API_KEY');
+  });
+
+  it('normalizes environment lists and booleans into the typed config shape', () => {
+    const resolution = resolveRuntimeConfig(
+      { disabledTools: ['exec'], scrub: { disabled: false } },
+      {
+        env: {
+          PUSH_DISABLED_TOOLS: 'read_file, write_file',
+          PUSH_SCRUB_DISABLED: 'true',
+        },
+      },
+    );
+
+    assert.deepEqual(resolution.config.disabledTools, ['read_file', 'write_file']);
+    assert.equal(resolution.config.scrub.disabled, true);
+  });
+
+  it('ignores invalid strict booleans instead of masking saved values', () => {
+    const resolution = resolveRuntimeConfig(
+      {
+        auditorGate: false,
+        postEditDiagnostics: false,
+        scrub: { disabled: true },
+      },
+      {
+        env: {
+          PUSH_AUDITOR_GATE: 'maybe',
+          PUSH_POST_EDIT_DIAGNOSTICS: 'perhaps',
+          PUSH_SCRUB_DISABLED: 'sometimes',
+        },
+      },
+    );
+
+    assert.equal(resolution.config.auditorGate, false);
+    assert.equal(resolution.config.postEditDiagnostics, false);
+    assert.equal(resolution.config.scrub.disabled, true);
+    assert.equal(resolution.provenance.auditorGate.source, 'user-config');
+    assert.equal(resolution.provenance.postEditDiagnostics.source, 'user-config');
+    assert.equal(resolution.provenance['scrub.disabled'].source, 'user-config');
+    assert.deepEqual(
+      resolution.layers.map((layer) => layer.id),
+      ['user-config'],
+    );
   });
 });

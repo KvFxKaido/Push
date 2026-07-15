@@ -4,6 +4,12 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { AUDITOR_GATE_ENV_VAR } from '../lib/auditor-policy.js';
+import {
+  mergeConfigLayers,
+  type ConfigLayer,
+  type ConfigResolution,
+} from '../lib/config-layers.js';
+import { getCliProviderDefinitions } from '../lib/provider-definition.js';
 import { RUN_TOKEN_BUDGET_ENV_VAR } from '../lib/run-cost-budget.js';
 import { POST_EDIT_DIAGNOSTICS_ENV_VAR } from './post-edit-diagnostics.ts';
 
@@ -112,6 +118,136 @@ export async function loadConfig(): Promise<PushConfig> {
     if (err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT') return {};
     throw err;
   }
+}
+
+export interface RuntimeConfigOptions {
+  env?: NodeJS.ProcessEnv;
+  /** Highest-precedence values already validated by the CLI caller. */
+  overrides?: PushConfig;
+}
+
+function configValueAtPath(pathParts: readonly string[], value: unknown): PushConfig {
+  let nested: unknown = value;
+  for (let index = pathParts.length - 1; index >= 0; index -= 1) {
+    nested = { [pathParts[index]]: nested };
+  }
+  return nested as PushConfig;
+}
+
+function firstEnvironmentValue(
+  env: NodeJS.ProcessEnv,
+  names: readonly string[],
+): { name: string; value: string } | null {
+  for (const name of names) {
+    const value = normalizeConfigEnvValue(env[name]);
+    if (value) return { name, value };
+  }
+  return null;
+}
+
+function parseEnvironmentBoolean(value: string): boolean | string {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true') return true;
+  if (normalized === '0' || normalized === 'false') return false;
+  return value;
+}
+
+function parseStrictEnvironmentBoolean(value: string): boolean | undefined {
+  const parsed = parseEnvironmentBoolean(value);
+  return typeof parsed === 'boolean' ? parsed : undefined;
+}
+
+function parseEnvironmentList(value: string): string[] {
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<PushConfig>> {
+  const layers: Array<ConfigLayer<PushConfig>> = [];
+  const add = (
+    names: readonly string[],
+    configPath: readonly string[],
+    transform: (value: string) => unknown = (value) => value,
+  ) => {
+    const resolved = firstEnvironmentValue(env, names);
+    if (!resolved) return;
+    const transformed = transform(resolved.value);
+    // Invalid typed environment values do not form a layer: a malformed
+    // higher-precedence value must not erase a valid saved setting.
+    if (transformed === undefined) return;
+    layers.push({
+      id: `env:${resolved.name}`,
+      kind: 'environment',
+      value: configValueAtPath(configPath, transformed),
+    });
+  };
+
+  add(['PUSH_PROVIDER'], ['provider']);
+  add(['PUSH_LOCAL_SANDBOX'], ['localSandbox'], parseEnvironmentBoolean);
+  add(['PUSH_EXPLAIN_MODE'], ['explainMode'], parseEnvironmentBoolean);
+  add(['PUSH_TAVILY_API_KEY', 'TAVILY_API_KEY', 'VITE_TAVILY_API_KEY'], ['tavilyApiKey']);
+  add(['PUSH_WEB_SEARCH_BACKEND'], ['webSearchBackend']);
+  add(['PUSH_EXEC_MODE'], ['execMode']);
+  add(['PUSH_THEME'], ['theme']);
+  add(['PUSH_SPINNER'], ['spinner']);
+  add(['PUSH_TUI_MOUSE_MODE'], ['tuiMouseMode']);
+  add([AUDITOR_GATE_ENV_VAR], ['auditorGate'], parseStrictEnvironmentBoolean);
+  add([POST_EDIT_DIAGNOSTICS_ENV_VAR], ['postEditDiagnostics'], parseStrictEnvironmentBoolean);
+  add([RUN_TOKEN_BUDGET_ENV_VAR], ['runTokenBudget'], (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : value;
+  });
+  add(['PUSH_DISABLED_TOOLS'], ['disabledTools'], parseEnvironmentList);
+  add(['PUSH_ALWAYS_ALLOW'], ['alwaysAllow'], parseEnvironmentList);
+  add(['PUSH_SCRUB_ALLOW'], ['scrub', 'allow'], parseEnvironmentList);
+  add(['PUSH_SCRUB_DISABLED'], ['scrub', 'disabled'], parseStrictEnvironmentBoolean);
+
+  for (const definition of getCliProviderDefinitions()) {
+    const cli = definition.cli;
+    if (!cli) continue;
+    const providerPath = [definition.id];
+    add(cli.urlEnvVars, [...providerPath, 'url']);
+    add([cli.modelEnvVar], [...providerPath, 'model']);
+    add(cli.apiKeyEnvVars ?? definition.apiKeyEnvVars ?? [], [...providerPath, 'apiKey']);
+  }
+
+  return layers;
+}
+
+/**
+ * Resolve the runtime configuration with one owned precedence chain:
+ *
+ *   user file < environment < validated CLI overrides
+ *
+ * Managed, profile, and trusted-project layers intentionally do not exist yet;
+ * they will slot into this same ordered list rather than adding new readers.
+ */
+export function resolveRuntimeConfig(
+  userConfig: PushConfig,
+  options: RuntimeConfigOptions = {},
+): ConfigResolution<PushConfig> {
+  const env = options.env ?? process.env;
+  const layers: Array<ConfigLayer<PushConfig>> = [
+    {
+      id: 'user-config',
+      kind: 'user',
+      path: getConfigPath(),
+      value: userConfig,
+    },
+    ...environmentConfigLayers(env),
+  ];
+  if (options.overrides && Object.keys(options.overrides).length > 0) {
+    layers.push({ id: 'cli-overrides', kind: 'cli', value: options.overrides });
+  }
+  return mergeConfigLayers(layers);
+}
+
+export async function loadRuntimeConfig(
+  options: RuntimeConfigOptions = {},
+): Promise<ConfigResolution<PushConfig>> {
+  return resolveRuntimeConfig(await loadConfig(), options);
 }
 
 export async function saveConfig(config: PushConfig): Promise<string> {
