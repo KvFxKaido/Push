@@ -19,7 +19,10 @@ build-out*.txt
 
 # claude code
 .claude/
-.codex
+.codex/*
+!.codex/environments/
+.codex/environments/*
+!.codex/environments/environment.toml
 .kilo
 
 # editor
