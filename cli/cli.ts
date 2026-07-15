@@ -48,7 +48,6 @@ import {
 } from './engine.js';
 import {
   loadConfig,
-  loadRuntimeConfig,
   resolveRuntimeConfig,
   saveConfig,
   applyConfigToEnv,
@@ -3840,19 +3839,11 @@ export async function main() {
     return 0;
   }
 
-  // Resolve one explicit runtime chain, then hydrate the compatibility env
-  // surface consumed by provider/tool modules and child processes.
-  // Provider is the first config-shaped CLI override routed through the
-  // loader. Other flags keep their existing dedicated validators until their
-  // value types move into the shared config schema in later slices.
-  const cliConfigOverrides = values.provider
-    ? { provider: parseProvider(values.provider) }
-    : undefined;
-  const runtimeConfigResolution = await loadRuntimeConfig({ overrides: cliConfigOverrides });
-  const { config: runtimeConfig } = runtimeConfigResolution;
-  applyConfigToEnv(runtimeConfig);
-
-  // Resolve final localSandbox state: flags > env > config
+  // Validate every config-shaped CLI value before assembling the highest-
+  // precedence layer. This keeps both runtime behavior and `config explain`
+  // on the same resolution snapshot.
+  const userConfig = await loadConfig();
+  const baselineConfig = resolveRuntimeConfig(userConfig).config;
   const sandboxBackendArg = values['sandbox-backend'] || values.sandboxBackend;
   if (values.sandbox && values['no-sandbox']) {
     throw new Error('Conflicting flags: --sandbox and --no-sandbox cannot both be set.');
@@ -3872,22 +3863,46 @@ export async function main() {
       : values['no-sandbox']
         ? false
         : undefined;
+
+  const searchBackendArg = getSearchBackendArg(values);
+  const cliSearchBackend = searchBackendArg ? parseSearchBackend(searchBackendArg) : undefined;
+
+  const VALID_EXEC_MODES = new Set(['strict', 'auto', 'yolo']);
+  if (values.mode && !VALID_EXEC_MODES.has(values.mode)) {
+    throw new Error(`Invalid --mode "${values.mode}". Valid values: strict, auto, yolo`);
+  }
+
+  const cliProvider =
+    values.provider || values.model
+      ? parseProvider(values.provider, baselineConfig.provider)
+      : undefined;
+  const cliConfigOverrides = {};
+  if (values.provider) cliConfigOverrides.provider = cliProvider;
+  if (values.model && cliProvider) {
+    cliConfigOverrides[cliProvider] = { model: values.model };
+  }
+  if (flagSandbox !== undefined) cliConfigOverrides.localSandbox = flagSandbox;
+  if (cliSearchBackend) cliConfigOverrides.webSearchBackend = cliSearchBackend;
+  if (values.mode) cliConfigOverrides.execMode = values.mode;
+
+  const runtimeConfigResolution = resolveRuntimeConfig(userConfig, {
+    overrides: cliConfigOverrides,
+  });
+  const { config: runtimeConfig } = runtimeConfigResolution;
+  applyConfigToEnv(runtimeConfig);
+
+  // Preserve explicit flags on the compatibility env surface consumed by
+  // provider/tool modules and child processes.
   const localSandbox = flagSandbox ?? envSandbox ?? runtimeConfig.localSandbox;
   if (localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(localSandbox);
   }
 
-  const searchBackendArg = getSearchBackendArg(values);
-  if (searchBackendArg) {
-    process.env.PUSH_WEB_SEARCH_BACKEND = parseSearchBackend(searchBackendArg);
+  if (cliSearchBackend) {
+    process.env.PUSH_WEB_SEARCH_BACKEND = cliSearchBackend;
   }
 
-  // --mode flag wins over config (config was already applied to env via applyConfigToEnv)
-  const VALID_EXEC_MODES = new Set(['strict', 'auto', 'yolo']);
   if (values.mode) {
-    if (!VALID_EXEC_MODES.has(values.mode)) {
-      throw new Error(`Invalid --mode "${values.mode}". Valid values: strict, auto, yolo`);
-    }
     process.env.PUSH_EXEC_MODE = values.mode;
   }
 

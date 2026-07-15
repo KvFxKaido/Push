@@ -284,15 +284,44 @@ describe('push config explain', needsChildStdout, () => {
     }
   });
 
-  it('places an explicit provider flag above the environment layer', async () => {
-    const { code, stdout, stderr } = await runCli(['config', 'explain', '--provider', 'openai'], {
-      env: { PUSH_PROVIDER: 'anthropic' },
-    });
+  it('places validated runtime flags above the environment layer', async () => {
+    const { code, stdout, stderr } = await runCli(
+      [
+        'config',
+        'explain',
+        '--provider',
+        'openai',
+        '--model',
+        'gpt-cli',
+        '--no-sandbox',
+        '--search-backend',
+        'duckduckgo',
+        '--mode',
+        'strict',
+      ],
+      {
+        env: {
+          PUSH_PROVIDER: 'anthropic',
+          PUSH_OPENAI_MODEL: 'gpt-env',
+          PUSH_LOCAL_SANDBOX: 'native',
+          PUSH_WEB_SEARCH_BACKEND: 'tavily',
+          PUSH_EXEC_MODE: 'auto',
+        },
+      },
+    );
 
     assert.equal(code, 0, stderr);
     const result = JSON.parse(stdout);
     assert.equal(result.config.provider, 'openai');
+    assert.equal(result.config.openai.model, 'gpt-cli');
+    assert.equal(result.config.localSandbox, false);
+    assert.equal(result.config.webSearchBackend, 'duckduckgo');
+    assert.equal(result.config.execMode, 'strict');
     assert.equal(result.provenance.provider.source, 'cli-overrides');
+    assert.equal(result.provenance['openai.model'].source, 'cli-overrides');
+    assert.equal(result.provenance.localSandbox.source, 'cli-overrides');
+    assert.equal(result.provenance.webSearchBackend.source, 'cli-overrides');
+    assert.equal(result.provenance.execMode.source, 'cli-overrides');
   });
 });
 

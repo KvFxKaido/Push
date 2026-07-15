@@ -322,4 +322,32 @@ describe('resolveRuntimeConfig', () => {
     assert.deepEqual(resolution.config.disabledTools, ['read_file', 'write_file']);
     assert.equal(resolution.config.scrub.disabled, true);
   });
+
+  it('ignores invalid strict booleans instead of masking saved values', () => {
+    const resolution = resolveRuntimeConfig(
+      {
+        auditorGate: false,
+        postEditDiagnostics: false,
+        scrub: { disabled: true },
+      },
+      {
+        env: {
+          PUSH_AUDITOR_GATE: 'maybe',
+          PUSH_POST_EDIT_DIAGNOSTICS: 'perhaps',
+          PUSH_SCRUB_DISABLED: 'sometimes',
+        },
+      },
+    );
+
+    assert.equal(resolution.config.auditorGate, false);
+    assert.equal(resolution.config.postEditDiagnostics, false);
+    assert.equal(resolution.config.scrub.disabled, true);
+    assert.equal(resolution.provenance.auditorGate.source, 'user-config');
+    assert.equal(resolution.provenance.postEditDiagnostics.source, 'user-config');
+    assert.equal(resolution.provenance['scrub.disabled'].source, 'user-config');
+    assert.deepEqual(
+      resolution.layers.map((layer) => layer.id),
+      ['user-config'],
+    );
+  });
 });

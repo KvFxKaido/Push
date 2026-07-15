@@ -152,6 +152,11 @@ function parseEnvironmentBoolean(value: string): boolean | string {
   return value;
 }
 
+function parseStrictEnvironmentBoolean(value: string): boolean | undefined {
+  const parsed = parseEnvironmentBoolean(value);
+  return typeof parsed === 'boolean' ? parsed : undefined;
+}
+
 function parseEnvironmentList(value: string): string[] {
   return value
     .split(',')
@@ -168,10 +173,14 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   ) => {
     const resolved = firstEnvironmentValue(env, names);
     if (!resolved) return;
+    const transformed = transform(resolved.value);
+    // Invalid typed environment values do not form a layer: a malformed
+    // higher-precedence value must not erase a valid saved setting.
+    if (transformed === undefined) return;
     layers.push({
       id: `env:${resolved.name}`,
       kind: 'environment',
-      value: configValueAtPath(configPath, transform(resolved.value)),
+      value: configValueAtPath(configPath, transformed),
     });
   };
 
@@ -184,8 +193,8 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   add(['PUSH_THEME'], ['theme']);
   add(['PUSH_SPINNER'], ['spinner']);
   add(['PUSH_TUI_MOUSE_MODE'], ['tuiMouseMode']);
-  add([AUDITOR_GATE_ENV_VAR], ['auditorGate'], parseEnvironmentBoolean);
-  add([POST_EDIT_DIAGNOSTICS_ENV_VAR], ['postEditDiagnostics'], parseEnvironmentBoolean);
+  add([AUDITOR_GATE_ENV_VAR], ['auditorGate'], parseStrictEnvironmentBoolean);
+  add([POST_EDIT_DIAGNOSTICS_ENV_VAR], ['postEditDiagnostics'], parseStrictEnvironmentBoolean);
   add([RUN_TOKEN_BUDGET_ENV_VAR], ['runTokenBudget'], (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : value;
@@ -193,7 +202,7 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   add(['PUSH_DISABLED_TOOLS'], ['disabledTools'], parseEnvironmentList);
   add(['PUSH_ALWAYS_ALLOW'], ['alwaysAllow'], parseEnvironmentList);
   add(['PUSH_SCRUB_ALLOW'], ['scrub', 'allow'], parseEnvironmentList);
-  add(['PUSH_SCRUB_DISABLED'], ['scrub', 'disabled'], parseEnvironmentBoolean);
+  add(['PUSH_SCRUB_DISABLED'], ['scrub', 'disabled'], parseStrictEnvironmentBoolean);
 
   for (const definition of getCliProviderDefinitions()) {
     const cli = definition.cli;
