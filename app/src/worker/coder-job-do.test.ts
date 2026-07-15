@@ -74,10 +74,20 @@ interface CheckpointRow {
   created_at: number;
 }
 
+interface SuspensionRow {
+  job_id: string;
+  round: number;
+  question: string;
+  context: string;
+  resume_schema_json: string;
+  created_at: number;
+}
+
 function createMockStorage() {
   const jobs = new Map<string, JobRow>();
   const events: EventRow[] = [];
   const checkpoints = new Map<string, CheckpointRow>();
+  const suspensions = new Map<string, SuspensionRow>();
   let nextSeq = 1;
 
   function exec(
@@ -211,7 +221,26 @@ function createMockStorage() {
       return [];
     }
 
-    if (/^UPDATE job SET status/i.test(sql)) {
+    // Durable suspend: markSuspended (literal status, id only).
+    if (/^UPDATE job SET status = 'suspended' WHERE id = \?/i.test(sql)) {
+      const row = jobs.get(params[0] as string);
+      if (row) row.status = 'suspended';
+      return [];
+    }
+
+    // Resume claim: suspended→running with a fresh started_at.
+    if (/^UPDATE job SET status = 'running', started_at = \? WHERE id = \?/i.test(sql)) {
+      const [started_at, id] = params;
+      const row = jobs.get(id as string);
+      if (row) {
+        row.status = 'running';
+        row.started_at = started_at as number;
+      }
+      return [];
+    }
+
+    // Generic terminal transition (markTerminal): 5 params.
+    if (/^UPDATE job SET status = \?, finished_at/i.test(sql)) {
       const [status, finished_at, result_json, error_text, id] = params;
       const row = jobs.get(id as string);
       if (row) {
@@ -221,6 +250,47 @@ function createMockStorage() {
         row.error_text = error_text as string | null;
       }
       return [];
+    }
+
+    if (/^INSERT OR REPLACE INTO suspension/i.test(sql)) {
+      const [job_id, round, question, context, resume_schema_json, created_at] = params;
+      suspensions.set(job_id as string, {
+        job_id: job_id as string,
+        round: round as number,
+        question: question as string,
+        context: context as string,
+        resume_schema_json: resume_schema_json as string,
+        created_at: created_at as number,
+      });
+      return [];
+    }
+
+    if (
+      /^SELECT round, question, context, resume_schema_json FROM suspension WHERE job_id = \?/i.test(
+        sql,
+      )
+    ) {
+      const row = suspensions.get(params[0] as string);
+      return row
+        ? [
+            {
+              round: row.round,
+              question: row.question,
+              context: row.context,
+              resume_schema_json: row.resume_schema_json,
+            },
+          ]
+        : [];
+    }
+
+    if (/^DELETE FROM suspension WHERE job_id = \?/i.test(sql)) {
+      suspensions.delete(params[0] as string);
+      return [];
+    }
+
+    if (/^SELECT input_json FROM job WHERE id = \?/i.test(sql)) {
+      const row = jobs.get(params[0] as string);
+      return row ? [{ input_json: row.input_json }] : [];
     }
 
     if (/^SELECT status FROM job WHERE id = \?/i.test(sql)) {
@@ -304,7 +374,7 @@ function createMockStorage() {
     throw new Error(`Unhandled SQL in mock: ${sql}`);
   }
 
-  return { exec, jobs, events, checkpoints };
+  return { exec, jobs, events, checkpoints, suspensions };
 }
 
 function makeCtx() {
@@ -373,6 +443,32 @@ function makeNoToolStreamFn(summary: string): PushStream<ChatMessage> {
         usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
       };
     })();
+}
+
+/** Stream fn that emits a single `coder_checkpoint` guidance call as fenced
+ * JSON. Under `durableSuspension` (leadMode jobs) the kernel throws
+ * `CoderSuspendedError` on seeing this, parking the run. */
+function makeCheckpointStreamFn(question: string, context = ''): PushStream<ChatMessage> {
+  const body = JSON.stringify({ tool: 'coder_checkpoint', args: { question, context } });
+  return () =>
+    (async function* () {
+      yield { type: 'text_delta', text: '```json\n' + body + '\n```' };
+      yield {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    })();
+}
+
+/** A leadMode start input — durable suspension is only wired for lead turns
+ * (the human is the counterparty to a guidance call). */
+function makeLeadStartInput(overrides: Partial<CoderJobStartInput> = {}): CoderJobStartInput {
+  const base = makeStartInput(overrides);
+  return {
+    ...base,
+    envelope: { ...base.envelope, leadMode: true } as CoderJobStartInput['envelope'],
+  };
 }
 
 function makeStartInput(overrides: Partial<CoderJobStartInput> = {}): CoderJobStartInput {
@@ -1571,5 +1667,176 @@ describe('CoderJob DO — end-to-end', () => {
     // failure instead of waiting on the wall-clock alarm.
     const terminal = storage.events.find((e) => e.type === 'job.failed');
     expect(terminal).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable suspend / typed resume
+// ---------------------------------------------------------------------------
+
+describe('CoderJob DO — durable suspend / resume', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const okSnapshot = async () => ({
+    ok: true as const,
+    snapshotId: 'snapshot:suspend-1',
+    restoreToken: 'rt-1',
+    sizeBytes: 1,
+  });
+
+  async function startAndSuspend(jobId: string) {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeLeadStartInput({ jobId });
+    __setCoderJobServiceOverrides(jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeCheckpointStreamFn('Which config approach — A or B?', 'two options on the table'),
+      snapshot: okSnapshot,
+    });
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+    return { ctx, storage, job };
+  }
+
+  it('parks a lead job that emits a guidance call: status=suspended, job.suspended, durable state persisted', async () => {
+    const { storage } = await startAndSuspend('job-suspend-1');
+
+    // Non-terminal park, not a completion or failure.
+    expect(storage.jobs.get('job-suspend-1')!.status).toBe('suspended');
+    expect(storage.jobs.get('job-suspend-1')!.finished_at).toBeNull();
+
+    const suspended = storage.events.find((e) => e.type === 'job.suspended');
+    expect(suspended).toBeDefined();
+    const payload = JSON.parse(suspended!.payload_json);
+    expect(payload.role).toBe('coder');
+    expect(payload.question).toBe('Which config approach — A or B?');
+    expect(payload.context).toBe('two options on the table');
+    // The typed resume contract rides the event so a caller knows what to send.
+    expect(JSON.parse(payload.resumeSchema)).toEqual({
+      required: ['answer'],
+      fields: { answer: 'string' },
+    });
+
+    // Both halves of the durable pair are persisted: the filesystem+loop
+    // checkpoint and the typed suspension metadata.
+    expect(storage.checkpoints.has('job-suspend-1')).toBe(true);
+    const suspension = storage.suspensions.get('job-suspend-1');
+    expect(suspension).toMatchObject({ question: 'Which config approach — A or B?' });
+
+    // Never marked terminal.
+    expect(storage.events.some((e) => e.type === 'job.completed')).toBe(false);
+    expect(storage.events.some((e) => e.type === 'job.failed')).toBe(false);
+  });
+
+  it('fails instead of parking when the suspend snapshot cannot be captured', async () => {
+    // No durable state → an un-resumable park. The job must fail, not hang in
+    // `suspended` forever awaiting a resume that could never restore anything.
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeLeadStartInput({ jobId: 'job-suspend-nostate' });
+    __setCoderJobServiceOverrides('job-suspend-nostate', {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeCheckpointStreamFn('Need guidance'),
+      // 413 = workspace over the snapshot cap — deterministic, non-retryable.
+      snapshot: async () => ({ ok: false as const, status: 413, error: 'too large' }),
+    });
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+
+    expect(storage.jobs.get('job-suspend-nostate')!.status).toBe('failed');
+    expect(storage.suspensions.has('job-suspend-nostate')).toBe(false);
+    expect(storage.events.some((e) => e.type === 'job.suspended')).toBe(false);
+    expect(storage.events.some((e) => e.type === 'job.failed')).toBe(true);
+  });
+
+  it('/resume rejects resumeData that violates the schema and leaves the job suspended', async () => {
+    const { job, storage } = await startAndSuspend('job-resume-bad');
+
+    const res = await job.fetch(
+      new Request('https://do/resume?jobId=job-resume-bad', {
+        method: 'POST',
+        body: JSON.stringify({ resumeData: {} }), // missing required `answer`
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; issues: string[] };
+    expect(body.error).toBe('INVALID_RESUME_DATA');
+    expect(body.issues.join(' ')).toMatch(/answer/);
+
+    // A rejected resume is a no-op: the job stays parked and re-resumable.
+    expect(storage.jobs.get('job-resume-bad')!.status).toBe('suspended');
+    expect(storage.suspensions.has('job-resume-bad')).toBe(true);
+  });
+
+  it('/resume on a non-suspended job returns 409 NOT_SUSPENDED', async () => {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeStartInput({ jobId: 'job-resume-running' });
+    __setCoderJobServiceOverrides('job-resume-running', {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeNoToolStreamFn('done'),
+    });
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+    expect(storage.jobs.get('job-resume-running')!.status).toBe('completed');
+
+    const res = await job.fetch(
+      new Request('https://do/resume?jobId=job-resume-running', {
+        method: 'POST',
+        body: JSON.stringify({ resumeData: { answer: 'x' } }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toBe('NOT_SUSPENDED');
+  });
+
+  it('/resume claims the job then fails terminally when the workspace restore fails', async () => {
+    // Valid resumeData clears schema validation; the DO claims suspended→running
+    // and clears the suspension, then the real restore (no SNAPSHOTS env) fails,
+    // so the job ends terminally rather than half-alive. Proves the claim +
+    // restore-failure path without needing a live snapshot store.
+    const { job, storage } = await startAndSuspend('job-resume-restorefail');
+
+    const res = await job.fetch(
+      new Request('https://do/resume?jobId=job-resume-restorefail', {
+        method: 'POST',
+        body: JSON.stringify({ resumeData: { answer: 'go with option A' } }),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    expect(res.status).toBe(502);
+    expect(((await res.json()) as { error: string }).error).toBe('RESUME_RESTORE_FAILED');
+
+    expect(storage.jobs.get('job-resume-restorefail')!.status).toBe('failed');
+    // Suspension metadata was consumed by the claim — no lingering parked state.
+    expect(storage.suspensions.has('job-resume-restorefail')).toBe(false);
+    // Restore fails before the resumed marker, so no job.resumed was emitted.
+    expect(storage.events.some((e) => e.type === 'job.resumed')).toBe(false);
+    expect(storage.events.some((e) => e.type === 'job.failed')).toBe(true);
   });
 });

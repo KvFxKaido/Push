@@ -188,6 +188,60 @@ export class SandboxUnreachableError extends Error {
   }
 }
 
+/**
+ * Typed payload the kernel hands the host when a run durably suspends. Mirrors
+ * the "suspend context" half of Mastra's suspend/resume: `question` + `context`
+ * are what the run needs answered, and `resumeSchema` declares the shape of the
+ * data the host must supply to `/resume`. Kept deliberately small — a single
+ * free-text `answer` field by default — but structured so a future checkpoint
+ * call that declares richer fields can widen it without a wire change.
+ */
+export interface CoderSuspendPayload {
+  /** What the run is blocked on — surfaced to the human who will resume it. */
+  question: string;
+  /** Supporting detail the run attached to the question (may be empty). */
+  context: string;
+  /**
+   * The contract the resume caller must satisfy. `required` names the fields
+   * `resumeData` must carry; `fields` maps each to its primitive type. Defaults
+   * to a single required `answer: string`, matching the free-text guidance the
+   * synchronous checkpoint path injects today.
+   */
+  resumeSchema: { required: string[]; fields: Record<string, 'string'> };
+}
+
+/** Default resume contract: one required free-text `answer`. */
+export const DEFAULT_CODER_RESUME_SCHEMA: CoderSuspendPayload['resumeSchema'] = {
+  required: ['answer'],
+  fields: { answer: 'string' },
+};
+
+/**
+ * Thrown by the Coder loop when it emits a guidance/checkpoint call while the
+ * host has opted into `durableSuspension` (the background AgentJob DO, where the
+ * counterparty is a human who may answer minutes or hours later and no
+ * in-memory `await` can survive a DO eviction). The host catches it to park the
+ * run: snapshot the workspace, persist `state` + `payload`, and flip the job to
+ * `suspended` until a typed `/resume` revives it. Distinct class — like
+ * `SandboxUnreachableError` — so the host tells a durable suspend apart from an
+ * ordinary failure or a sandbox-death resume.
+ *
+ * `state.round` is already advanced past the asking round, so a resume that
+ * appends the human's answer as the next user message re-enters the loop at the
+ * following round — identical to the synchronous path's post-answer `continue`.
+ */
+export class CoderSuspendedError<TCard extends ToolCard = ToolCard> extends Error {
+  readonly code = 'CODER_SUSPENDED' as const;
+  readonly payload: CoderSuspendPayload;
+  readonly state: CoderCheckpointState<TCard>;
+  constructor(payload: CoderSuspendPayload, state: CoderCheckpointState<TCard>) {
+    super(`Coder run suspended awaiting guidance: ${payload.question}`);
+    this.name = 'CoderSuspendedError';
+    this.payload = payload;
+    this.state = state;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Message shape — structural subset of Web `ChatMessage` used by the loop.
 // Lib kernel uses `LlmMessage & { isToolResult?, isToolCall? }` so the trim
@@ -1034,6 +1088,18 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
    * a freshly-restored sandbox whose filesystem matches this state.
    */
   resumeState?: CoderCheckpointState<TCard>;
+
+  /**
+   * Opt into durable suspension: when set, a guidance/checkpoint call the Coder
+   * emits throws `CoderSuspendedError` (host parks the run and revives it via a
+   * typed `/resume`) instead of the volatile in-memory `onCheckpointRequest`
+   * await. Only the background AgentJob DO sets this — its counterparty is a
+   * human who may answer long after the DO isolate that asked has been evicted,
+   * so the pause must be durable, not a held promise. Unset elsewhere: the web
+   * foreground lane keeps the synchronous `onCheckpointRequest` round-trip, and
+   * a delegated sub-Coder (no human to answer) keeps the fall-through-to-done.
+   */
+  durableSuspension?: boolean;
 
   /**
    * How often (in rounds) `callbacks.onCheckpoint` fires. Defaults to the
@@ -2596,6 +2662,27 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         if (callbacks.signal?.aborted) {
           finishRound('aborted');
           throw new DOMException('Coder cancelled by user.', 'AbortError');
+        }
+
+        // Durable suspension (background AgentJob DO): park the run instead of
+        // holding an in-memory await no DO eviction could survive. Close the
+        // round's event bracket, then throw a typed signal the host catches to
+        // snapshot + persist + flip the job to `suspended`. State is advanced to
+        // `round + 1` so a resume that appends the human's answer re-enters at
+        // the next round — the same position the synchronous path reaches via
+        // `continue` below. Takes precedence over `onCheckpointRequest`: the two
+        // are mutually exclusive counterparties (durable human vs. in-tab
+        // Orchestrator) and the DO never wires the synchronous callback.
+        if (options.durableSuspension) {
+          finishRound('continued');
+          throw new CoderSuspendedError(
+            {
+              question: checkpoint.args.question,
+              context: checkpoint.args.context || '',
+              resumeSchema: DEFAULT_CODER_RESUME_SCHEMA,
+            },
+            { round: round + 1, messages, workingMemory, cards: allCards },
+          );
         }
 
         if (callbacks.onCheckpointRequest && checkpointCount < MAX_CHECKPOINTS) {

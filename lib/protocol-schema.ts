@@ -1703,6 +1703,39 @@ function validateJobFailed(payload: unknown, basePath: string): ValidationIssue[
   return issues;
 }
 
+function validateJobSuspended(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const exec = expectNonEmptyString(payload, 'executionId', basePath);
+  if (exec) issues.push(exec);
+  const role = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (role) issues.push(role);
+  const question = expectNonEmptyString(payload, 'question', basePath);
+  if (question) issues.push(question);
+  // `context` may be empty (the run attached no supporting detail), so it is
+  // type-checked-if-present rather than required-non-empty. The emitter always
+  // sends a string (defaulting to ''), so expectOptionalString is exact here.
+  const context = expectOptionalString(payload, 'context', basePath);
+  if (context) issues.push(context);
+  const resumeSchema = expectNonEmptyString(payload, 'resumeSchema', basePath);
+  if (resumeSchema) issues.push(resumeSchema);
+  return issues;
+}
+
+function validateJobResumed(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  const exec = expectNonEmptyString(payload, 'executionId', basePath);
+  if (exec) issues.push(exec);
+  const role = expectAgentValue(payload, 'role', basePath, PROMPT_SNAPSHOT_ROLES);
+  if (role) issues.push(role);
+  return issues;
+}
+
 function validateUserFollowUpQueued(payload: unknown, basePath: string): ValidationIssue[] {
   if (!isPlainObject(payload)) {
     return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
@@ -1799,6 +1832,8 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   'job.started': validateJobStarted,
   'job.completed': validateJobCompleted,
   'job.failed': validateJobFailed,
+  'job.suspended': validateJobSuspended,
+  'job.resumed': validateJobResumed,
   'user.follow_up_queued': validateUserFollowUpQueued,
   'user.follow_up_steered': validateUserFollowUpSteered,
 
