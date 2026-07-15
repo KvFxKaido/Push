@@ -101,9 +101,15 @@ point.
 
 The foundation started on 2026-07-15 with one pure layer/provenance engine, an
 explicit `user config < environment < validated CLI overrides` contract, and
-`push config explain`. Named profiles, trusted project layers, and managed policy
-remain subsequent layers in that same resolver; they must not introduce sibling
-readers. The sequencing and additional Mastra-derived lessons are recorded in
+`push config explain`. Named profiles landed on 2026-07-15, slotting a `profile`
+layer between user config and environment (selected via `--profile`,
+`PUSH_PROFILE`, or `activeProfile`; the chain is now `user < profile <
+environment < CLI`). Trusted project layers and managed policy remain subsequent
+layers in that same resolver; they must not introduce sibling readers. Notably,
+the trusted-project layer is deliberately sequenced *after* its trust gating — an
+ungated project config that could repoint the provider, exec allowlist, or hooks
+is the exact "opened repo redirects behavior" footgun. The sequencing and
+additional Mastra-derived lessons are recorded in
 [`Mastra — Lessons for Push.md`](<Mastra — Lessons for Push.md>).
 
 The **trusted-project and managed/team layers** — the constraint that project code

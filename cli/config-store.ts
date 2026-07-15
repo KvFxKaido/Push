@@ -34,6 +34,15 @@ export interface ScrubConfig {
 
 export interface PushConfig {
   provider?: string;
+  /**
+   * Named configuration overlays. A selected profile (via `--profile`,
+   * `PUSH_PROFILE`, or `activeProfile`) layers on top of the base user config
+   * and below environment / CLI overrides. Profile meta keys never appear in
+   * the resolved config.
+   */
+  profiles?: Record<string, Partial<PushConfig>>;
+  /** Profile applied when neither `--profile` nor `PUSH_PROFILE` is set. */
+  activeProfile?: string;
   localSandbox?: boolean | string;
   explainMode?: boolean | string;
   tavilyApiKey?: string;
@@ -124,6 +133,11 @@ export interface RuntimeConfigOptions {
   env?: NodeJS.ProcessEnv;
   /** Highest-precedence values already validated by the CLI caller. */
   overrides?: PushConfig;
+  /**
+   * Selected profile name (from `--profile`). Falls back to `PUSH_PROFILE`,
+   * then the config's `activeProfile`. An unknown name fails loud.
+   */
+  profile?: string;
 }
 
 function configValueAtPath(pathParts: readonly string[], value: unknown): PushConfig {
@@ -216,13 +230,39 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   return layers;
 }
 
+const PROFILE_META_KEYS = ['profiles', 'activeProfile'] as const;
+
+/**
+ * Profile-meta keys (`profiles`, `activeProfile`) select behavior; they are not
+ * resolved config leaves. Strip them from every layer that can carry them — the
+ * base user layer AND a selected profile. A profile is `Partial<PushConfig>`, so
+ * it could nest either key, and `mergeConfigLayers` would otherwise surface it.
+ */
+function stripProfileMeta(config: PushConfig): PushConfig {
+  const stripped: PushConfig = { ...config };
+  for (const key of PROFILE_META_KEYS) delete stripped[key];
+  return stripped;
+}
+
+/** Selected profile name: `--profile` (option) > `PUSH_PROFILE` > `activeProfile`. */
+function selectedProfileName(
+  userConfig: PushConfig,
+  options: RuntimeConfigOptions,
+  env: NodeJS.ProcessEnv,
+): string | undefined {
+  if (options.profile) return options.profile;
+  const fromEnv = firstEnvironmentValue(env, ['PUSH_PROFILE']);
+  if (fromEnv) return fromEnv.value;
+  return typeof userConfig.activeProfile === 'string' ? userConfig.activeProfile : undefined;
+}
+
 /**
  * Resolve the runtime configuration with one owned precedence chain:
  *
- *   user file < environment < validated CLI overrides
+ *   user file < selected profile < environment < validated CLI overrides
  *
- * Managed, profile, and trusted-project layers intentionally do not exist yet;
- * they will slot into this same ordered list rather than adding new readers.
+ * Managed and trusted-project layers intentionally do not exist yet; they will
+ * slot into this same ordered list rather than adding new readers.
  */
 export function resolveRuntimeConfig(
   userConfig: PushConfig,
@@ -234,10 +274,33 @@ export function resolveRuntimeConfig(
       id: 'user-config',
       kind: 'user',
       path: getConfigPath(),
-      value: userConfig,
+      value: stripProfileMeta(userConfig),
     },
-    ...environmentConfigLayers(env),
   ];
+
+  const profileName = selectedProfileName(userConfig, options, env);
+  if (profileName) {
+    const profiles = userConfig.profiles;
+    const profileValue =
+      profiles && typeof profiles === 'object' ? profiles[profileName] : undefined;
+    if (!profileValue || typeof profileValue !== 'object') {
+      const available = profiles ? Object.keys(profiles) : [];
+      throw new Error(
+        `Unknown profile "${profileName}". ` +
+          (available.length
+            ? `Available profiles: ${available.join(', ')}.`
+            : 'No profiles are defined in the config.'),
+      );
+    }
+    layers.push({
+      id: `profile:${profileName}`,
+      kind: 'profile',
+      value: stripProfileMeta(profileValue),
+    });
+  }
+
+  layers.push(...environmentConfigLayers(env));
+
   if (options.overrides && Object.keys(options.overrides).length > 0) {
     layers.push({ id: 'cli-overrides', kind: 'cli', value: options.overrides });
   }

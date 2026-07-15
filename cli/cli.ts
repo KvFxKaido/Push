@@ -134,6 +134,7 @@ const KNOWN_OPTIONS = new Set([
   'sessionId',
   'output-schema',
   'outputSchema',
+  'profile',
   'lint',
   'headless',
   'allow-exec',
@@ -325,6 +326,7 @@ Options:
   --run-id <id>                 Select one run from a combined receipt
   --session-id <id>             Select one session from a combined receipt
   --output-schema <path>        Constrain the final push run output to a JSON Schema
+  --profile <name>              Apply a named config profile (else PUSH_PROFILE / activeProfile)
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
   --sandbox                     Enable local Docker sandbox
@@ -2018,7 +2020,8 @@ async function runConfigSubcommand(values, positionals, startupResolution = null
     // applyConfigToEnv() canonicalizes fallback aliases (for example
     // ANTHROPIC_API_KEY -> PUSH_ANTHROPIC_API_KEY); resolving again afterward
     // would report the synthetic canonical name instead of the user's source.
-    const resolution = startupResolution || resolveRuntimeConfig(config);
+    const resolution =
+      startupResolution || resolveRuntimeConfig(config, { profile: values.profile });
     process.stdout.write(
       `${JSON.stringify(
         {
@@ -3766,6 +3769,7 @@ export async function main() {
       sessionId: { type: 'string' },
       'output-schema': { type: 'string' },
       outputSchema: { type: 'string' },
+      profile: { type: 'string' },
       lint: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
@@ -3860,7 +3864,7 @@ export async function main() {
   // precedence layer. This keeps both runtime behavior and `config explain`
   // on the same resolution snapshot.
   const userConfig = await loadConfig();
-  const baselineConfig = resolveRuntimeConfig(userConfig).config;
+  const baselineConfig = resolveRuntimeConfig(userConfig, { profile: values.profile }).config;
   const sandboxBackendArg = values['sandbox-backend'] || values.sandboxBackend;
   if (values.sandbox && values['no-sandbox']) {
     throw new Error('Conflicting flags: --sandbox and --no-sandbox cannot both be set.');
@@ -3904,6 +3908,7 @@ export async function main() {
 
   const runtimeConfigResolution = resolveRuntimeConfig(userConfig, {
     overrides: cliConfigOverrides,
+    profile: values.profile,
   });
   const { config: runtimeConfig } = runtimeConfigResolution;
   applyConfigToEnv(runtimeConfig);

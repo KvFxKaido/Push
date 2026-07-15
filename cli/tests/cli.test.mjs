@@ -323,6 +323,55 @@ describe('push config explain', needsChildStdout, () => {
     assert.equal(result.provenance.webSearchBackend.source, 'cli-overrides');
     assert.equal(result.provenance.execMode.source, 'cli-overrides');
   });
+
+  it('applies a --profile layer between user config and environment', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-config-profile-'));
+    const configPath = path.join(root, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        provider: 'ollama',
+        profiles: { work: { provider: 'anthropic', theme: 'dark' } },
+      }),
+    );
+
+    try {
+      const { code, stdout, stderr } = await runCli(['--profile', 'work', 'config', 'explain'], {
+        env: { PUSH_CONFIG_PATH: configPath },
+      });
+
+      assert.equal(code, 0, stderr);
+      const result = JSON.parse(stdout);
+      assert.equal(result.config.provider, 'anthropic');
+      assert.equal(result.config.theme, 'dark');
+      assert.equal(result.provenance.provider.source, 'profile:work');
+      // Meta keys never leak into the resolved config.
+      assert.equal(result.config.profiles, undefined);
+      assert.ok(result.layers.some((layer) => layer.id === 'profile:work'));
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('exits non-zero on an unknown --profile', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-config-profile-bad-'));
+    const configPath = path.join(root, 'config.json');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ profiles: { work: { provider: 'anthropic' } } }),
+    );
+
+    try {
+      const { code, stderr } = await runCli(['--profile', 'ghost', 'config', 'explain'], {
+        env: { PUSH_CONFIG_PATH: configPath },
+      });
+
+      assert.equal(code, 1);
+      assert.match(stderr, /Unknown profile "ghost"\. Available profiles: work\./);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── unknown subcommand ──────────────────────────────────────────
