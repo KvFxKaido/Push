@@ -4,7 +4,7 @@ name = "Push"
 
 [setup]
 script = '''
-node -e "const major = Number(process.versions.node.split('.')[0]); if (major < 24) throw new Error('Push requires Node.js 24 or newer')"
+node -e "const major = Number(process.versions.node.split('.')[0]); if (major < 24) throw new Error('Push requires Node.js 24 or newer')" &&
 corepack pnpm install --frozen-lockfile
 '''
 
