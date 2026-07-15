@@ -6092,15 +6092,10 @@ async function handleSandboxExec(req, _emitEvent, context) {
   const timeoutMs = Math.min(Math.max(rawTimeout, 1_000), SANDBOX_EXEC_MAX_TIMEOUT_MS);
   const cwd = typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : process.cwd();
 
-  // Phase 3 allowlist gate: refuse exec if its cwd sits outside every
-  // allowed root. NB: this only constrains the *working directory* —
-  // the shell command itself can still touch any file the daemon
-  // process can reach (`cat /etc/passwd`, etc.). Containing the
-  // command-surface requires chroot/namespace isolation and is
-  // explicitly out of scope for Phase 3; the allowlist is meaningful
-  // for `sandbox_read_file` / `sandbox_write_file` / `sandbox_list_dir`
-  // / `sandbox_diff` which DO route paths through `resolveAndAuthorize`.
-  // Documented in `docs/decisions/Remote Sessions via pushd Relay.md`.
+  // Refuse exec if its cwd sits outside every allowed root. The allowlist is
+  // still the authorization boundary; when PUSH_LOCAL_SANDBOX=native the
+  // command is additionally placed in a Bubblewrap mount/network namespace
+  // rooted at this cwd, so it can no longer mutate arbitrary host paths.
   {
     const cwdSnapshot = await snapshotAllowlist(process.cwd());
     if (!isPathAllowed(path.resolve(cwd), cwdSnapshot)) {
@@ -6151,7 +6146,7 @@ async function handleSandboxExec(req, _emitEvent, context) {
   }
 
   const startedAt = Date.now();
-  const { runCommandInResolvedShell } = await import('./shell.js');
+  const { runCommandInExecSandbox } = await import('./exec-sandbox.js');
   const { scrubEnv } = await import('./env-scrub.js');
 
   // Phase 3 slice 3 audit emission. We build the payload incrementally
@@ -6176,7 +6171,7 @@ async function handleSandboxExec(req, _emitEvent, context) {
       env: scrubEnv(),
     };
     if (abortController) execOpts.signal = abortController.signal;
-    const { stdout, stderr } = await runCommandInResolvedShell(command, execOpts);
+    const { stdout, stderr } = await runCommandInExecSandbox(command, cwd, execOpts);
     // Success path can't actually carry truncated output: runCommand-
     // InResolvedShell enforces maxBuffer by rejecting once stdout+
     // stderr exceed it, so reaching here means both fit. Reporting

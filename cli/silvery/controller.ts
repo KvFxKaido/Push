@@ -10,6 +10,7 @@ import {
   type PushConfig,
 } from '../config-store.js';
 import { compactContext } from '../context-manager.js';
+import { resolveExecSandboxBackend } from '../exec-sandbox.js';
 import { runCheckpointCommand } from '../checkpoint-command.js';
 import {
   requestDaemonAdmin,
@@ -1090,7 +1091,7 @@ export async function createSilveryController(
             `url: ${providerCfg.url || PROVIDER_CONFIGS[state.provider]?.url || '(default)'}`,
             `tavily: ${maskSecret(config.tavilyApiKey) || '(unset)'}`,
             `daemon autostart: ${config.tuiDaemonAutoStart === false || config.tuiDaemonAutoStart === 'false' ? 'off' : 'auto'}`,
-            `sandbox: ${config.localSandbox === true || config.localSandbox === 'true' ? 'on' : 'off'}`,
+            `sandbox: ${resolveExecSandboxBackend(config.localSandbox)}`,
           ].join('\n'),
         );
         return true;
@@ -1158,14 +1159,17 @@ export async function createSilveryController(
       }
       if (subcommand === 'sandbox') {
         const mode = (restArgs[0] || '').toLowerCase();
-        if (mode !== 'on' && mode !== 'off') {
-          appendStatus('Usage: /config sandbox on|off', true);
+        if (!['on', 'off', 'host', 'docker', 'native'].includes(mode)) {
+          appendStatus('Usage: /config sandbox host|docker|native', true);
           return true;
         }
-        config.localSandbox = mode === 'on';
+        const backend = resolveExecSandboxBackend(
+          mode === 'on' ? 'docker' : mode === 'off' ? 'host' : mode,
+        );
+        config.localSandbox = backend === 'host' ? false : backend;
         await persistConfig(config);
-        applyConfigToEnv(config);
-        appendStatus(`Local sandbox: ${mode}`);
+        process.env.PUSH_LOCAL_SANDBOX = backend;
+        appendStatus(`Exec sandbox saved: ${backend}. Restart Push/pushd to apply it everywhere.`);
         return true;
       }
       if (subcommand === 'explain') {
@@ -1193,7 +1197,7 @@ export async function createSilveryController(
         return true;
       }
       appendStatus(
-        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url> | /config tavily <key> | /config sandbox on|off | /config explain on|off | /config daemon auto|off',
+        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url> | /config tavily <key> | /config sandbox host|docker|native | /config explain on|off | /config daemon auto|off',
         true,
       );
       return true;

@@ -62,6 +62,14 @@ describe('applyConfigToEnv', () => {
     assert.equal(process.env.PUSH_TAVILY_API_KEY, undefined);
   });
 
+  it('preserves a named local exec sandbox backend', () => {
+    delete process.env.PUSH_LOCAL_SANDBOX;
+
+    applyConfigToEnv({ localSandbox: 'native' });
+
+    assert.equal(process.env.PUSH_LOCAL_SANDBOX, 'native');
+  });
+
   it('applies webSearchBackend to PUSH_WEB_SEARCH_BACKEND when missing', () => {
     delete process.env.PUSH_WEB_SEARCH_BACKEND;
 

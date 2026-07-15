@@ -256,7 +256,7 @@ export function createTabCompleter({
         return resolved;
       }
       if (sub === 'sandbox') {
-        const opts = ['on', 'off'];
+        const opts = ['on', 'off', 'host', 'docker', 'native'];
         const resolved = opts
           .filter((o: string) => o.startsWith(rest))
           .map((o: string) => subPrefix + o);
