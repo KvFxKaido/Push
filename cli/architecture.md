@@ -33,10 +33,12 @@ Notable traits:
 - no interactive clarification loop
 - high-risk exec flows are blocked unless explicitly enabled
 - optional acceptance checks shape both runtime evaluation and process exit status
+- saved JSONL receipts can be evaluated offline through the shared deterministic reducer
 
 Primary entry points and helpers:
 
 - `cli.ts` — `push run` command handling
+- `runtime-eval-command.ts` — `push eval` receipt/policy loading, formatting, and exit semantics
 - `tools.ts` — execution policy and mode-specific tool restrictions
 
 ### Full-screen TUI

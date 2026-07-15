@@ -178,6 +178,108 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+const RUNTIME_EVAL_BOOLEAN_GATES = [
+  'terminalSuccess',
+  'noMalformedToolCalls',
+  'noToolErrors',
+  'noErrors',
+  'noBranchDesync',
+  'approvalsResolved',
+  'approvalsApproved',
+  'subagentsSettled',
+  'jobsSettled',
+  'acceptancePassed',
+] as const satisfies readonly (keyof RuntimeEvalGates)[];
+
+const RUNTIME_EVAL_TOOL_GATES = [
+  'requiredTools',
+  'forbiddenTools',
+] as const satisfies readonly (keyof RuntimeEvalGates)[];
+
+const RUNTIME_EVAL_SCORE_KEYS = [
+  'maxRounds',
+  'maxDurationMs',
+  'maxToolCalls',
+  'maxRetries',
+  'maxCompactions',
+] as const satisfies readonly (keyof RuntimeEvalScoreThresholds)[];
+
+function rejectUnknownKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  path: string,
+): void {
+  const allowedKeys = new Set(allowed);
+  const unknown = Object.keys(value).find((key) => !allowedKeys.has(key));
+  if (unknown) throw new Error(`Unknown runtime eval policy field: ${path}.${unknown}`);
+}
+
+/** Validate an untrusted JSON value as a versioned runtime-evaluation policy. */
+export function parseRuntimeEvalPolicy(value: unknown): RuntimeEvalPolicyV1 {
+  if (!isRecord(value)) throw new Error('Runtime eval policy must be a JSON object.');
+  rejectUnknownKeys(value, ['version', 'gates', 'scores'], 'policy');
+  if (value.version !== RUNTIME_EVAL_POLICY_VERSION) {
+    throw new Error(`Unsupported runtime eval policy version: ${String(value.version)}`);
+  }
+
+  let gates: Partial<RuntimeEvalGates> | undefined;
+  if (value.gates !== undefined) {
+    if (!isRecord(value.gates)) throw new Error('Runtime eval policy gates must be an object.');
+    rejectUnknownKeys(
+      value.gates,
+      [...RUNTIME_EVAL_BOOLEAN_GATES, ...RUNTIME_EVAL_TOOL_GATES],
+      'policy.gates',
+    );
+    const parsedGates: Record<string, boolean | string[]> = {};
+    for (const key of RUNTIME_EVAL_BOOLEAN_GATES) {
+      const candidate = value.gates[key];
+      if (candidate === undefined) continue;
+      if (typeof candidate !== 'boolean') {
+        throw new Error(`Runtime eval policy field policy.gates.${key} must be a boolean.`);
+      }
+      parsedGates[key] = candidate;
+    }
+    for (const key of RUNTIME_EVAL_TOOL_GATES) {
+      const candidate = value.gates[key];
+      if (candidate === undefined) continue;
+      if (
+        !Array.isArray(candidate) ||
+        candidate.some((tool) => typeof tool !== 'string' || !tool.trim())
+      ) {
+        throw new Error(
+          `Runtime eval policy field policy.gates.${key} must be an array of non-empty strings.`,
+        );
+      }
+      parsedGates[key] = [...candidate];
+    }
+    gates = parsedGates as Partial<RuntimeEvalGates>;
+  }
+
+  let scores: RuntimeEvalScoreThresholds | undefined;
+  if (value.scores !== undefined) {
+    if (!isRecord(value.scores)) throw new Error('Runtime eval policy scores must be an object.');
+    rejectUnknownKeys(value.scores, RUNTIME_EVAL_SCORE_KEYS, 'policy.scores');
+    const parsedScores: Record<string, number> = {};
+    for (const key of RUNTIME_EVAL_SCORE_KEYS) {
+      const candidate = value.scores[key];
+      if (candidate === undefined) continue;
+      if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0) {
+        throw new Error(
+          `Runtime eval policy field policy.scores.${key} must be a non-negative number.`,
+        );
+      }
+      parsedScores[key] = candidate;
+    }
+    scores = parsedScores;
+  }
+
+  return {
+    version: RUNTIME_EVAL_POLICY_VERSION,
+    ...(gates ? { gates } : {}),
+    ...(scores ? { scores } : {}),
+  };
+}
+
 function stringField(payload: unknown, key: string): string | null {
   if (!isRecord(payload)) return null;
   return typeof payload[key] === 'string' ? payload[key] : null;
