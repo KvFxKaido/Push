@@ -75,9 +75,11 @@ useful progression is:
 3. versioned daemon/app-server protocol plus generated TypeScript/JSON schemas;
 4. a thin SDK facade over that protocol.
 
-Step 1 landed on 2026-07-14: `push run --jsonl` emits the existing
+Steps 1–2 landed on 2026-07-14. `push run --jsonl` emits the existing
 `push.runtime.v1` envelopes and terminates with one post-acceptance
-`run_complete`. Steps 2–4 remain open.
+`run_complete`; `push run --output-schema <path>` precompiles a Draft 2020-12
+schema, validates the final result in code, and uses bounded tool-free repair
+requests before failing closed. Steps 3–4 remain open.
 
 The distinction is not capability. It is whether external consumers can rely on
 the capability without importing internal coordinator modules. Steps 1–2 are the
