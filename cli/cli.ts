@@ -78,6 +78,7 @@ import { compactContext } from './context-manager.js';
 import { createDelegationTranscriptRenderer, isDelegationEvent } from './tui-delegation-events.js';
 import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
+import { resolveExecSandboxBackend, runCommandInExecSandbox } from './exec-sandbox.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { getDefaultMemoryStore, setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.js';
@@ -123,6 +124,8 @@ const KNOWN_OPTIONS = new Set([
   'mode',
   'help',
   'sandbox',
+  'sandbox-backend',
+  'sandboxBackend',
   'no-sandbox',
   'version',
   'exec-mode',
@@ -297,6 +300,7 @@ Options:
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
   --sandbox                     Enable local Docker sandbox
+  --sandbox-backend <backend>   Subprocess isolation: host | docker | native (Linux/WSL Bubblewrap)
   --no-sandbox                  Disable local Docker sandbox
   -v, --version                 Show version
   -h, --help                    Show help
@@ -309,7 +313,7 @@ async function runAcceptanceChecks(cwd, checks) {
   for (const command of checks) {
     const startedAt = Date.now();
     try {
-      const { stdout, stderr } = await runCommandInResolvedShell(command, {
+      const { stdout, stderr } = await runCommandInExecSandbox(command, cwd, {
         cwd,
         timeout: 120_000,
         maxBuffer: 4_000_000,
@@ -969,7 +973,7 @@ async function runInteractive(
       state: 'idle',
       mode,
       provider: state.provider,
-      sandboxProvider: process.env.PUSH_LOCAL_SANDBOX === 'true' ? 'local' : 'modal',
+      sandboxProvider: resolveExecSandboxBackend() === 'host' ? 'modal' : 'local',
     });
     await saveSessionState(state);
   }
@@ -1120,7 +1124,7 @@ async function runInteractive(
       `${fmt.dim('provider:')} ${ctx.providerConfig.id} ${fmt.dim('|')} ${fmt.dim('model:')} ${state.model}\n` +
       `${fmt.dim('endpoint:')} ${ctx.providerConfig.url}\n` +
       `${fmt.dim('workspace:')} ${state.cwd}\n` +
-      `${fmt.dim('localSandbox:')} ${process.env.PUSH_LOCAL_SANDBOX === 'true'}\n` +
+      `${fmt.dim('execSandbox:')} ${resolveExecSandboxBackend()}\n` +
       `${fmt.dim('Type /help for commands.')}\n`,
   );
 
@@ -1797,6 +1801,12 @@ async function runConfigSubcommand(values, positionals) {
     next.localSandbox = true;
     changed = true;
   }
+  const sandboxBackendArg = values['sandbox-backend'] || values.sandboxBackend;
+  if (sandboxBackendArg) {
+    const backend = resolveExecSandboxBackend(sandboxBackendArg);
+    next.localSandbox = backend === 'host' ? false : backend;
+    changed = true;
+  }
   if (values['no-sandbox'] !== undefined) {
     next.localSandbox = false;
     changed = true;
@@ -1815,7 +1825,7 @@ async function runConfigSubcommand(values, positionals) {
 
   if (!changed) {
     throw new Error(
-      'No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --search-backend, --sandbox, --no-sandbox, --exec-mode',
+      'No config changes provided. Use one or more of: --provider, --model, --url, --api-key, --tavily-key, --search-backend, --sandbox, --sandbox-backend, --no-sandbox, --exec-mode',
     );
   }
 
@@ -3484,6 +3494,8 @@ export async function main() {
       'worktree-name': { type: 'string' },
       worktreeName: { type: 'string' },
       sandbox: { type: 'boolean' },
+      'sandbox-backend': { type: 'string' },
+      sandboxBackend: { type: 'string' },
       'exec-mode': { type: 'string' },
       'no-sandbox': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
@@ -3562,16 +3574,25 @@ export async function main() {
   applyConfigToEnv(persistedConfig);
 
   // Resolve final localSandbox state: flags > env > config
+  const sandboxBackendArg = values['sandbox-backend'] || values.sandboxBackend;
   if (values.sandbox && values['no-sandbox']) {
     throw new Error('Conflicting flags: --sandbox and --no-sandbox cannot both be set.');
   }
-  const envSandbox =
-    process.env.PUSH_LOCAL_SANDBOX === 'true'
+  if (sandboxBackendArg && (values.sandbox || values['no-sandbox'])) {
+    throw new Error(
+      'Conflicting sandbox flags: choose one of --sandbox, --sandbox-backend, or --no-sandbox.',
+    );
+  }
+  const envSandbox = process.env.PUSH_LOCAL_SANDBOX
+    ? resolveExecSandboxBackend(process.env.PUSH_LOCAL_SANDBOX)
+    : undefined;
+  const flagSandbox = sandboxBackendArg
+    ? resolveExecSandboxBackend(sandboxBackendArg)
+    : values.sandbox
       ? true
-      : process.env.PUSH_LOCAL_SANDBOX === 'false'
+      : values['no-sandbox']
         ? false
         : undefined;
-  const flagSandbox = values.sandbox ? true : values['no-sandbox'] ? false : undefined;
   const localSandbox = flagSandbox ?? envSandbox ?? persistedConfig.localSandbox;
   if (localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(localSandbox);

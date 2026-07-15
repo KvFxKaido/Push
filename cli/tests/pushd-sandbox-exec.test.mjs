@@ -7,10 +7,19 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { promises as fs } from 'node:fs';
+import { promisify } from 'node:util';
 import { handleRequest } from '../pushd.ts';
 import { PROTOCOL_VERSION } from '../../lib/protocol-schema.ts';
 
 const NOOP_EMIT = () => {};
+const execFileAsync = promisify(execFile);
+const hasBubblewrap =
+  process.platform === 'linux' &&
+  (await execFileAsync('sh', ['-c', 'command -v bwrap'])
+    .then(() => true)
+    .catch(() => false));
 
 function makeRequest(type, payload = {}) {
   return {
@@ -88,6 +97,28 @@ describe('sandbox_exec', () => {
     assert.equal(res.ok, true);
     assert.equal(res.payload.exitCode, 0);
     assert.equal(res.payload.stdout.trim(), process.cwd());
+  });
+
+  it('uses the native containment backend when configured', { skip: !hasBubblewrap }, async () => {
+    const original = process.env.PUSH_LOCAL_SANDBOX;
+    const deniedPath = `/etc/pushd-native-sandbox-${process.pid}`;
+    process.env.PUSH_LOCAL_SANDBOX = 'native';
+    try {
+      const res = await handleRequest(
+        makeRequest('sandbox_exec', {
+          command: `if touch ${deniedPath} 2>/dev/null; then exit 42; else echo contained; fi`,
+        }),
+        NOOP_EMIT,
+      );
+      assert.equal(res.ok, true);
+      assert.equal(res.payload.exitCode, 0);
+      assert.match(res.payload.stdout, /contained/);
+      await assert.rejects(() => fs.access(deniedPath));
+    } finally {
+      if (original === undefined) delete process.env.PUSH_LOCAL_SANDBOX;
+      else process.env.PUSH_LOCAL_SANDBOX = original;
+      await fs.rm(deniedPath, { force: true }).catch(() => {});
+    }
   });
 });
 

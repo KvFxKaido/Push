@@ -7,8 +7,13 @@ import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from
 import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
-import { runCommandInResolvedShell, spawnCommandInResolvedShell } from './shell.js';
+import { spawnCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
+import {
+  resolveExecSandboxBackend,
+  runCommandInExecSandbox,
+  spawnCommandInExecSandbox,
+} from './exec-sandbox.js';
 import {
   buildArtifactRecord,
   summarizeArtifact,
@@ -786,43 +791,25 @@ async function guardExecCommand(command, options = {}, mode = 'exec') {
 async function startExecSession(command, workspaceRoot, timeoutMs, ttyRequested = false) {
   ensureCleanupHooks();
 
-  const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
-  const canUseScriptTty = ttyRequested && !isLocalSandbox && (await hasScriptBinary());
-
-  const sandboxArgs = isLocalSandbox
-    ? [
-        'run',
-        '--rm',
-        '-i',
-        '-v',
-        `${workspaceRoot}:/workspace`,
-        '-w',
-        '/workspace',
-        'push-sandbox',
-        'bash',
-        '-lc',
-        command,
-      ]
-    : null;
+  const sandboxBackend = resolveExecSandboxBackend();
+  const canUseScriptTty = ttyRequested && sandboxBackend === 'host' && (await hasScriptBinary());
 
   const subprocessEnv = scrubEnv();
-  const { child } = isLocalSandbox
+  const { child } = canUseScriptTty
     ? {
-        child: spawn('docker', sandboxArgs!, {
+        child: spawn('script', ['-q', '-f', '-c', command, '/dev/null'], {
           cwd: workspaceRoot,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: subprocessEnv,
         }),
       }
-    : canUseScriptTty
-      ? {
-          child: spawn('script', ['-q', '-f', '-c', command, '/dev/null'], {
-            cwd: workspaceRoot,
-            stdio: ['pipe', 'pipe', 'pipe'],
-            env: subprocessEnv,
-          }),
-        }
-      : await spawnCommandInResolvedShell(command, {
+    : sandboxBackend === 'host'
+      ? await spawnCommandInResolvedShell(command, {
+          cwd: workspaceRoot,
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: subprocessEnv,
+        })
+      : await spawnCommandInExecSandbox(command, workspaceRoot, {
           cwd: workspaceRoot,
           stdio: ['pipe', 'pipe', 'pipe'],
           env: subprocessEnv,
@@ -2755,21 +2742,6 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
 
         const startedAt = Date.now();
         try {
-          const isLocalSandbox = process.env.PUSH_LOCAL_SANDBOX === 'true';
-          const args = isLocalSandbox
-            ? [
-                'run',
-                '--rm',
-                '-v',
-                `${workspaceRoot}:/workspace`,
-                '-w',
-                '/workspace',
-                'push-sandbox',
-                'bash',
-                '-lc',
-                command,
-              ]
-            : null;
           const execOpts = {
             cwd: workspaceRoot,
             timeout: timeoutMs,
@@ -2777,9 +2749,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             env: scrubEnv(),
           };
           if (options.signal) execOpts.signal = options.signal;
-          const { stdout, stderr } = isLocalSandbox
-            ? await execFileAsync('docker', args!, execOpts)
-            : await runCommandInResolvedShell(command, execOpts);
+          const { stdout, stderr } = await runCommandInExecSandbox(
+            command,
+            workspaceRoot,
+            execOpts,
+          );
           // Reduce the MODEL-FACING tool-result text. This is also what gets
           // persisted to the CLI transcript, so reduction is intentionally part
           // of the recorded context (the omission marker tells the model to

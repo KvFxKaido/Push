@@ -271,6 +271,31 @@ describe('--sandbox / --no-sandbox conflict', needsChildStdout, () => {
     assert.equal(code, 1);
     assert.ok(stderr.includes('Conflicting flags'));
   });
+
+  it('rejects a named backend combined with a legacy sandbox flag', async () => {
+    const { code, stderr } = await runCli([
+      '--sandbox-backend',
+      'native',
+      '--no-sandbox',
+      'run',
+      '--task',
+      'hi',
+    ]);
+    assert.equal(code, 1);
+    assert.ok(stderr.includes('Conflicting sandbox flags'));
+  });
+
+  it('rejects an unknown named backend', async () => {
+    const { code, stderr } = await runCli([
+      '--sandbox-backend',
+      'cardboard',
+      'run',
+      '--task',
+      'hi',
+    ]);
+    assert.equal(code, 1);
+    assert.ok(stderr.includes('Invalid PUSH_LOCAL_SANDBOX value'));
+  });
 });
 
 // ─── unknown flag warning ────────────────────────────────────────

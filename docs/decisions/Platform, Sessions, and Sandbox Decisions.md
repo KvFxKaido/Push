@@ -127,6 +127,35 @@ allowlist. Web sandbox isolation happens at the container/provider boundary.
 Source note:
 [`Subprocess Env Scrubbing`](<../archive/decisions/Subprocess Env Scrubbing.md>).
 
+### 7a. Native CLI containment starts at the subprocess boundary
+
+**Status: Current — Phase 1 available, opt-in (2026-07-14).**
+
+`PUSH_LOCAL_SANDBOX=native` (or `--sandbox-backend native`) routes foreground
+`exec`, detached `exec_start`, daemon `sandbox_exec`, and headless acceptance
+checks through one Linux/WSL Bubblewrap boundary. The host filesystem is mounted
+read-only, the selected workspace plus disposable temp filesystems are writable,
+process namespaces are isolated, `/run` is masked so conventional host service
+sockets such as Docker are not inherited, and network is unshared by default. A caller may
+temporarily opt into network with `PUSH_NATIVE_SANDBOX_NETWORK=1`; destination-
+scoped grants and a network broker remain future work. If native containment is
+requested and Bubblewrap is missing, execution fails closed.
+
+Compatibility is explicit: legacy `PUSH_LOCAL_SANDBOX=true` and `--sandbox`
+still select the Docker backend; `false` / `host` select direct execution. Native
+mode is not the default until toolchain/cache behavior has been exercised across
+Linux and WSL repositories.
+
+This is not the completed host boundary. Built-in file operations still rely on
+the symlink-aware workspace jail, macOS and native Windows backends do not exist,
+and the current read-only host view is broader than a future least-readable
+profile. The next contract step is a permission vocabulary (`read-only`,
+`workspace-write`, `full-access`) shared by subprocess and built-in mutation,
+followed by controlled network escalation.
+
+Research and phase plan:
+[`Codex CLI Structural Backend Gap Analysis`](<../research/Codex CLI Structural Backend Gap Analysis.md>).
+
 ### 8. Provider observability is shared, provider routing is not
 
 Cloudflare AI Gateway is useful for providers it supports. Workers Analytics

@@ -185,6 +185,7 @@ When `--accept` is present, Push also frames the task using the shared delegatio
 ./push config set --tavily-key tvly-abc123
 ./push config set --search-backend ollama
 ./push config set --sandbox     # enable local Docker sandbox
+./push config set --sandbox-backend native  # Linux/WSL Bubblewrap containment
 ./push config set --no-sandbox  # disable it
 ```
 
@@ -319,7 +320,9 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_POST_EDIT_DIAGNOSTICS_BUDGET_MS` | Time budget for a post-edit checker run in ms (default: 10000). A run that exceeds it disables the loop for that workspace for the rest of the process. |
 | `PUSH_DELEGATION_MODE` | `delegated` opts interactive turns (TUI/daemon) back into the planner → task-graph wrapper. Default: `inline` — the single conversational lead runs the turn in-loop with no planner pre-pass (Agent Runtime Decisions §10). Headless `push run` keeps its explicit `--delegate` flag. |
 | `PUSH_GITHUB_TOKEN` | GitHub token enabling the GitHub tools (PRs, checks, repo browse, create/merge PR, workflows). Falls back to `GITHUB_TOKEN`, then `GH_TOKEN`, then `gh auth token`. |
-| `PUSH_LOCAL_SANDBOX` | `true` to run exec commands in a Docker container |
+| `PUSH_LOCAL_SANDBOX` | Exec isolation backend: `native` (Linux/WSL Bubblewrap), `docker`/`true`, or `host`/`false` |
+| `PUSH_NATIVE_SANDBOX_NETWORK` | `1`/`true` to permit network inside the native sandbox; default is denied |
+| `PUSH_BWRAP_PATH` | Override the Bubblewrap executable used by the native sandbox |
 | `PUSH_SHELL` | Override the shell used for `exec` / acceptance checks. Useful on Windows if you want to force Git Bash, WSL bash, PowerShell, etc. |
 | `PUSH_SESSION_DIR` | Override session storage location (default: `~/.push/sessions`) |
 | `PUSH_CONFIG_PATH` | Override config file path |
@@ -482,15 +485,35 @@ Before any `write_file` or `edit_file` mutation, the original file is copied to 
 - **Output truncation:** Tool output is capped at 24KB to avoid context blowout.
 - **Subprocess env scrub:** Model-invoked commands (`sandbox_exec`, `exec`, `exec_start`, acceptance checks) run with a default-deny env allowlist defined in `cli/env-scrub.ts`. Provider API keys hydrated into the daemon's `process.env` by `applyConfigToEnv` (e.g. `PUSH_ANTHROPIC_API_KEY`, `ANTHROPIC_API_KEY`, `GITHUB_TOKEN`) are stripped before the spawn, so `env`-style introspection from a sandboxed command can't exfiltrate them. The allowlist covers `PATH`/`HOME`/`SHELL`/locale, the common Node/Python/Go/Rust/Docker-client vars, `CI`, and `npm_config_*` / `NPM_CONFIG_*` / `BUN_*`. Widen via `config.scrub.allow` (exact names or `PREFIX*` patterns), or set `config.scrub.disabled: true` (or `PUSH_SCRUB_DISABLED=1`) to opt out entirely — only for local debugging.
 
-## Docker sandbox
+## Local exec sandbox
 
-With `--sandbox` (or `PUSH_LOCAL_SANDBOX=true`), `exec` and `exec_start` commands run inside a Docker container instead of directly on your machine:
+Model-invoked subprocesses support three backends:
+
+- `host` — direct execution with workspace path policy, approvals, and env scrubbing;
+- `docker` — the legacy `--sandbox` / `PUSH_LOCAL_SANDBOX=true` container;
+- `native` — Linux/WSL Bubblewrap containment selected with
+  `--sandbox-backend native` or `PUSH_LOCAL_SANDBOX=native`.
+
+Native mode covers `exec`, `exec_start`, daemon `sandbox_exec`, and headless
+acceptance checks. It mounts the host read-only, keeps the workspace and
+disposable temp filesystems writable, masks conventional runtime sockets under
+`/run`, isolates process namespaces, and denies network by default. It fails closed when
+Bubblewrap is unavailable. Set `PUSH_NATIVE_SANDBOX_NETWORK=1` only when the run
+genuinely needs network access.
+
+Native mode is currently opt-in while Linux/WSL toolchain compatibility is
+exercised. Built-in file tools remain protected by the symlink-aware workspace
+jail; moving them behind the same OS broker and adding macOS/Windows backends are
+later containment phases.
+
+With the Docker backend, commands run as:
 
 ```bash
 docker run --rm -v $WORKSPACE:/workspace -w /workspace push-sandbox bash -lc "$COMMAND"
 ```
 
-The `push-sandbox` image must exist locally. File reads/writes still go through the host filesystem.
+The `push-sandbox` image must exist locally. Built-in file reads/writes still go
+through the host filesystem and workspace jail.
 
 ## Daemon (experimental)
 
@@ -575,6 +598,7 @@ Options:
   --no-attach             Resume: list sessions without prompting
   --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session
   --sandbox               Enable local Docker sandbox
+  --sandbox-backend <mode> host | docker | native (native requires Linux/WSL Bubblewrap)
   --no-sandbox            Disable local Docker sandbox
   -h, --help              Show help
 ```
