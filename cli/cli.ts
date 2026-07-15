@@ -3982,7 +3982,9 @@ export async function main() {
 
   if (subcommand === 'eval') {
     const { runRuntimeEvalSubcommand } = await import('./runtime-eval-command.ts');
-    return runRuntimeEvalSubcommand(values, positionals);
+    return runRuntimeEvalSubcommand(values, positionals, {
+      cwd: path.resolve(values.cwd || process.cwd()),
+    });
   }
 
   if (subcommand === 'resume' || subcommand === 'sessions') {

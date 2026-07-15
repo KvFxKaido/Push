@@ -358,9 +358,18 @@ describe('push eval', needsChildStdout, () => {
       payload: { runId: 'run_cli_eval', outcome: 'success', summary: 'done' },
     };
     await fs.writeFile(receiptPath, `${JSON.stringify(envelope)}\n`);
+    await fs.writeFile(path.join(root, 'policy.json'), JSON.stringify({ version: 1 }));
 
     try {
-      const { code, stdout, stderr } = await runCli(['eval', receiptPath, '--json']);
+      const { code, stdout, stderr } = await runCli([
+        '--cwd',
+        root,
+        'eval',
+        'run.jsonl',
+        '--policy',
+        'policy.json',
+        '--json',
+      ]);
       assert.equal(code, 0, stderr);
       const result = JSON.parse(stdout);
       assert.equal(result.verdict, 'pass');
