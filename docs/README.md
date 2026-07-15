@@ -76,7 +76,7 @@ Detailed per-doc status lives in [`runbooks/README.md`](runbooks/README.md). Sum
 
 ## Priority surface
 
-- `docs/decisions/` is the canonical decision + priority surface — each doc carries a `Status:` (Current / Draft / Historical / Reference). The root `ROADMAP.md` was retired 2026-07-15; the decision docs and the code are canonical for what has shipped and what is committed.
+- `docs/decisions/` is the canonical decision + priority surface — each doc carries a `Status:` (see the vocabulary in [`decisions/README.md`](decisions/README.md)). The root `ROADMAP.md` was retired 2026-07-15; the decision docs and the code are canonical for what has shipped and what is committed.
 - `docs/` is draft/exploration space; committing a draft means flipping its `Status:` and recording the decision in the relevant decision doc.
 
 ## Archive
