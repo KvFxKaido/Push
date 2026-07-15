@@ -162,6 +162,20 @@ test('every acceptance check passes on the solved fixture (tasks are satisfiable
 // CLI output parsing + scoring
 // ---------------------------------------------------------------------------
 
+function runtimeEvent(type, payload, index, overrides = {}) {
+  return {
+    v: 'push.runtime.v1',
+    kind: 'event',
+    sessionId: 'sess_eval',
+    runId: 'run_eval',
+    seq: index + 1,
+    ts: 1_000 + index,
+    type,
+    payload,
+    ...overrides,
+  };
+}
+
 test('parseCliJsonOutput tolerates prose before the JSON object', () => {
   const clean = parseCliJsonOutput('{"sessionId":"s1","outcome":"success","rounds":3}');
   assert.equal(clean.error, null);
@@ -210,15 +224,17 @@ test('extractCliRunFields reads both plain and delegated round counters', () => 
 
 test('countSessionEvents tallies tool calls, errors, and regression signals', () => {
   const counts = countSessionEvents([
-    { type: 'tool.execution_complete', payload: { isError: false } },
-    { type: 'tool.execution_complete', payload: { isError: true } },
-    { type: 'tool.execution_complete', payload: {} },
-    { type: 'tool.call_malformed', payload: { reason: 'bad json' } },
-    { type: 'harness.adaptation', payload: {} },
-    { type: 'error', payload: {} },
-    { type: 'assistant.turn_end', payload: {} },
-    null,
-    'garbage',
+    runtimeEvent('tool.execution_complete', { toolName: 'read_file', isError: false }, 0),
+    runtimeEvent('tool.execution_complete', { toolName: 'exec', isError: true }, 1),
+    runtimeEvent('tool.execution_complete', { toolName: 'write_file', isError: false }, 2),
+    runtimeEvent('tool.call_malformed', { round: 1, reason: 'bad json', preview: '{nope' }, 3),
+    runtimeEvent(
+      'harness.adaptation',
+      { round: 1, fromMaxRounds: 50, toMaxRounds: 40, reasons: ['looping'] },
+      4,
+    ),
+    runtimeEvent('error', { message: 'provider failed' }, 5),
+    runtimeEvent('assistant.turn_end', { round: 1, outcome: 'error' }, 6),
   ]);
   assert.deepEqual(counts, {
     toolCalls: 3,
@@ -226,6 +242,25 @@ test('countSessionEvents tallies tool calls, errors, and regression signals', ()
     malformed: 1,
     adaptations: 1,
     errors: 1,
+  });
+});
+
+test('countSessionEvents isolates the selected run in a shared session journal', () => {
+  const events = [
+    runtimeEvent('tool.execution_complete', { toolName: 'exec', isError: true }, 0, {
+      runId: 'run_old',
+    }),
+    runtimeEvent('tool.execution_complete', { toolName: 'read_file', isError: false }, 1, {
+      runId: 'run_target',
+    }),
+  ];
+
+  assert.deepEqual(countSessionEvents(events, { runId: 'run_target' }), {
+    toolCalls: 1,
+    toolErrors: 0,
+    malformed: 0,
+    adaptations: 0,
+    errors: 0,
   });
 });
 

@@ -23,6 +23,6 @@
     "allowUnreachableCode": true,
     "noEmit": false
   },
-  "include": ["**/*.ts", "**/*.tsx", "../lib/hashline.ts"],
+  "include": ["**/*.ts", "**/*.tsx", "../lib/hashline.ts", "../lib/runtime-eval.ts"],
   "exclude": ["node_modules", "dist", "tests"]
 }

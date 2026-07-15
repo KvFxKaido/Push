@@ -316,6 +316,20 @@ const PAYLOAD_DEFS: Record<string, JsonSchemaNode> = {
     by: nestr(),
   }),
 
+  AcceptanceComplete: objectNode(['passed', 'checks'], {
+    passed: bool(),
+    checks: {
+      type: 'array',
+      minItems: 1,
+      items: objectNode(['command', 'ok', 'exitCode', 'durationMs'], {
+        command: nestr(),
+        ok: bool(),
+        exitCode: uint(),
+        durationMs: uint(),
+      }),
+    },
+  }),
+
   RunComplete: objectNode(['outcome'], {
     outcome: enumOf(RUN_COMPLETE_OUTCOMES),
     summary: str(),
@@ -574,6 +588,7 @@ export const TYPE_TO_DEF: Record<string, string> = {
   status: 'StatusEvent',
   approval_required: 'ApprovalRequired',
   approval_received: 'ApprovalReceived',
+  acceptance_complete: 'AcceptanceComplete',
   run_complete: 'RunComplete',
   session_started: 'SessionStarted',
   user_message: 'UserMessage',

@@ -577,6 +577,10 @@ describe('validateRunEventPayload — task_graph events', () => {
       // to a runtime UI bug.
       'approval_received',
       'approval_required',
+      // Emitted by the headless CLI adapter after its post-run acceptance
+      // commands settle; it is part of the saved run receipt but not an
+      // event produced by the shared agent kernel.
+      'acceptance_complete',
       'assistant_citations',
       'assistant_thinking_token',
       'assistant_token',

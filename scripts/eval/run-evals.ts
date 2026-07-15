@@ -298,7 +298,10 @@ async function runTrial(task: EvalTask, trial: number): Promise<TrialResult> {
   }
 
   const events = fields.sessionId ? await readSessionEvents(fields.sessionId) : [];
-  const counts = countSessionEvents(events);
+  const counts = countSessionEvents(events, {
+    ...(fields.sessionId ? { sessionId: fields.sessionId } : {}),
+    ...(fields.runId ? { runId: fields.runId } : {}),
+  });
 
   const result: TrialResult = {
     taskId: task.id,
