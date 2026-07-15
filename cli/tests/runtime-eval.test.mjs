@@ -1,7 +1,11 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 
-import { evaluateRuntimeEvents, RUNTIME_EVAL_POLICY_VERSION } from '../../lib/runtime-eval.ts';
+import {
+  evaluateRuntimeEvents,
+  parseRuntimeEvalPolicy,
+  RUNTIME_EVAL_POLICY_VERSION,
+} from '../../lib/runtime-eval.ts';
 
 function event(type, payload, index, overrides = {}) {
   return {
@@ -24,6 +28,38 @@ function gate(result, id) {
 }
 
 describe('runtime receipt evaluation', () => {
+  it('validates untrusted policy JSON and rejects typoed or invalid fields', () => {
+    assert.deepEqual(
+      parseRuntimeEvalPolicy({
+        version: RUNTIME_EVAL_POLICY_VERSION,
+        gates: { acceptancePassed: true, requiredTools: ['read_file'] },
+        scores: { maxRounds: 4 },
+      }),
+      {
+        version: RUNTIME_EVAL_POLICY_VERSION,
+        gates: { acceptancePassed: true, requiredTools: ['read_file'] },
+        scores: { maxRounds: 4 },
+      },
+    );
+
+    assert.throws(
+      () =>
+        parseRuntimeEvalPolicy({
+          version: RUNTIME_EVAL_POLICY_VERSION,
+          gates: { requiredTool: ['read_file'] },
+        }),
+      /Unknown runtime eval policy field: policy\.gates\.requiredTool/,
+    );
+    assert.throws(
+      () =>
+        parseRuntimeEvalPolicy({
+          version: RUNTIME_EVAL_POLICY_VERSION,
+          scores: { maxRounds: -1 },
+        }),
+      /policy\.scores\.maxRounds must be a non-negative number/,
+    );
+  });
+
   it('reduces a successful receipt into gates, metrics, and passing scores', () => {
     const events = [
       event('assistant.turn_start', { round: 1 }, 0),

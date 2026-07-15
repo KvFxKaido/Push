@@ -197,6 +197,42 @@ session journal cursor, matching daemon behavior. Consumers should use line
 order for the live stream and advance replay cursors only from persisted event
 types.
 
+### Runtime receipt evaluation
+
+```bash
+./push run "Inspect the repository" --jsonl > run.jsonl
+./push eval run.jsonl
+./push eval run.jsonl --policy ci.eval.json --json
+```
+
+`push eval` validates and reduces a saved `push.runtime.v1` receipt without
+starting a model or requiring provider credentials. Its default deterministic
+floor requires one successful terminal event, no runtime/tool/protocol errors,
+and no unresolved approval, subagent, or background-job lifecycle. An explicit
+versioned policy can enable additional gates and score thresholds:
+
+```json
+{
+  "version": 1,
+  "gates": {
+    "acceptancePassed": true,
+    "requiredTools": ["read_file"],
+    "forbiddenTools": ["exec"]
+  },
+  "scores": {
+    "maxRounds": 8,
+    "maxDurationMs": 120000
+  }
+}
+```
+
+A failed gate returns exit code 1. A `score_miss` remains descriptive and
+returns 0; callers can inspect the JSON verdict if they want stricter
+higher-level handling. Use `--run-id` and optionally
+`--session-id` when evaluating one run from a combined session journal. Policy
+loading is explicit in this slice: `push eval` does not discover an ambient
+project policy.
+
 ## Configuration
 
 ### Config file (`~/.push/config.json`)
@@ -590,6 +626,9 @@ push                                Start TUI when enabled, otherwise interactiv
 push --session <id>                 Resume session (TUI when enabled, otherwise interactive)
 push run --task "..."               Headless mode (single task)
 push run "..."                      Headless mode (positional)
+push eval <run.jsonl>                Evaluate a saved runtime receipt
+push eval <run.jsonl> --policy <path>
+                                    Apply explicit gates and score thresholds
 push resume                         Pick a session and attach (TTY); list only when piped
 push resume --no-attach             List resumable sessions without prompting
 push sessions                       List resumable sessions (never prompts; script alias)
@@ -630,8 +669,11 @@ Options:
   --task <text>           Task for headless mode
   --accept <cmd>          Acceptance check (repeatable)
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
-  --json                  JSON output (headless/resume)
+  --json                  JSON output (headless/resume/eval)
   --jsonl                 Stream push.runtime.v1 events (headless run only)
+  --policy <path>         Runtime evaluation policy (push eval only)
+  --run-id <id>           Select one run from a combined receipt
+  --session-id <id>       Select one session from a combined receipt
   --output-schema <path>  Constrain push run final output to a JSON Schema
   --no-attach             Resume: list sessions without prompting
   --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session

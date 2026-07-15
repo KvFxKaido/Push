@@ -341,6 +341,45 @@ describe('unknown subcommand', needsChildStdout, () => {
   });
 });
 
+// ─── push eval ──────────────────────────────────────────────────
+
+describe('push eval', needsChildStdout, () => {
+  it('evaluates a saved runtime receipt without provider setup', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-cli-eval-'));
+    const receiptPath = path.join(root, 'run.jsonl');
+    const envelope = {
+      v: 'push.runtime.v1',
+      kind: 'event',
+      sessionId: 'sess_cli_eval',
+      runId: 'run_cli_eval',
+      seq: 1,
+      ts: 1_000,
+      type: 'run_complete',
+      payload: { runId: 'run_cli_eval', outcome: 'success', summary: 'done' },
+    };
+    await fs.writeFile(receiptPath, `${JSON.stringify(envelope)}\n`);
+    await fs.writeFile(path.join(root, 'policy.json'), JSON.stringify({ version: 1 }));
+
+    try {
+      const { code, stdout, stderr } = await runCli([
+        '--cwd',
+        root,
+        'eval',
+        'run.jsonl',
+        '--policy',
+        'policy.json',
+        '--json',
+      ]);
+      assert.equal(code, 0, stderr);
+      const result = JSON.parse(stdout);
+      assert.equal(result.verdict, 'pass');
+      assert.equal(result.runId, 'run_cli_eval');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // ─── --max-rounds validation ─────────────────────────────────────
 
 describe('--max-rounds validation', needsChildStdout, () => {

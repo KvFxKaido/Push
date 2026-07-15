@@ -127,6 +127,11 @@ const KNOWN_OPTIONS = new Set([
   'maxRounds',
   'json',
   'jsonl',
+  'policy',
+  'run-id',
+  'runId',
+  'session-id',
+  'sessionId',
   'output-schema',
   'outputSchema',
   'lint',
@@ -172,6 +177,7 @@ const KNOWN_OPTIONS = new Set([
 const KNOWN_SUBCOMMANDS = new Set([
   '',
   'run',
+  'eval',
   'config',
   'resume',
   'sessions',
@@ -251,6 +257,9 @@ Usage:
   push --no-resume-prompt       Start a new session without the resume prompt
   push run --task "..."         Run once in headless mode
   push run "..."                Run once in headless mode
+  push eval <run.jsonl>         Evaluate a saved push.runtime.v1 receipt
+  push eval <run.jsonl> --policy <policy.json> [--json]
+                                Apply explicit gates and score thresholds
   push resume                   Pick a session and attach (TTY); list only when piped
   push resume --no-attach       List resumable sessions without prompting (script-friendly)
   push sessions                 List resumable sessions (never prompts; alias for scripts)
@@ -310,8 +319,11 @@ Options:
   --worktree                    Run in an isolated git worktree + branch (auto-named); kept on exit only if it has changes
   --worktree-name <name>        --worktree with a custom branch name
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
-  --json                        JSON output in headless mode / resume
+  --json                        JSON output in headless mode / resume / eval
   --jsonl                       Stream push.runtime.v1 events in headless mode
+  --policy <path>               Runtime evaluation policy (push eval only)
+  --run-id <id>                 Select one run from a combined receipt
+  --session-id <id>             Select one session from a combined receipt
   --output-schema <path>        Constrain the final push run output to a JSON Schema
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
@@ -3747,6 +3759,11 @@ export async function main() {
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
       jsonl: { type: 'boolean', default: false },
+      policy: { type: 'string' },
+      'run-id': { type: 'string' },
+      runId: { type: 'string' },
+      'session-id': { type: 'string' },
+      sessionId: { type: 'string' },
       'output-schema': { type: 'string' },
       outputSchema: { type: 'string' },
       lint: { type: 'boolean', default: false },
@@ -3913,6 +3930,18 @@ export async function main() {
   if (values.jsonl && subcommand !== 'run') {
     throw new Error('--jsonl is supported only by `push run`.');
   }
+  if (values.policy !== undefined && subcommand !== 'eval') {
+    throw new Error('--policy is supported only by `push eval`.');
+  }
+  if (
+    (values['run-id'] !== undefined ||
+      values.runId !== undefined ||
+      values['session-id'] !== undefined ||
+      values.sessionId !== undefined) &&
+    subcommand !== 'eval'
+  ) {
+    throw new Error('--run-id and --session-id are supported only by `push eval`.');
+  }
   const outputSchemaArg = values['output-schema'] || values.outputSchema;
   if (outputSchemaArg && subcommand !== 'run') {
     throw new Error('--output-schema is supported only by `push run`.');
@@ -3949,6 +3978,13 @@ export async function main() {
   if (subcommand === 'audit-evals') {
     const { runAuditEvalsSubcommand } = await import('./audit-eval-replay.ts');
     return runAuditEvalsSubcommand(values, positionals);
+  }
+
+  if (subcommand === 'eval') {
+    const { runRuntimeEvalSubcommand } = await import('./runtime-eval-command.ts');
+    return runRuntimeEvalSubcommand(values, positionals, {
+      cwd: path.resolve(values.cwd || process.cwd()),
+    });
   }
 
   if (subcommand === 'resume' || subcommand === 'sessions') {
@@ -4275,7 +4311,7 @@ export async function main() {
 
   if (!KNOWN_SUBCOMMANDS.has(subcommand)) {
     throw new Error(
-      `Unknown command: ${subcommand}. Known commands: run, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, memory, init-deep, audit-evals. See: push --help`,
+      `Unknown command: ${subcommand}. Known commands: run, eval, config, sessions, skills, stats, daemon, attach, tui, theme, animate, spinner, memory, init-deep, audit-evals. See: push --help`,
     );
   }
 
