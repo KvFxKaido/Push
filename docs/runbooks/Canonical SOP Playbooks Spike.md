@@ -1,6 +1,6 @@
 # Canonical SOP Playbooks Spike
 
-Status: **Reference** (superseded 2026-07-15) — the `plan_tasks`/Planner decomposition this builds on was collapsed (Planner deleted, #940), and its "reusable canonical flows" need is now served by the skills system (`.push/skills`, `.claude/commands`). Originally a Draft spike (2026-04-14); kept for context.
+Status: **Reference** (superseded 2026-07-15) — the separate Planner pre-pass this spike's decomposition leaned on was deleted (#940); `plan_tasks` task graphs remain a live registered tool, but the spike's "reusable canonical flows" need is now served by the skills system (`.push/skills`, `.claude/commands`). Originally a Draft spike (2026-04-14); kept for context.
 Origin: [Task Graph Orchestration Plan](../archive/runbooks/Task%20Graph%20Orchestration%20Plan.md), [Harness Reliability Plan](../archive/runbooks/Harness%20Reliability%20Plan.md), r/ollama CPU SLM agent post (2026-04)
 
 ## Why This Exists

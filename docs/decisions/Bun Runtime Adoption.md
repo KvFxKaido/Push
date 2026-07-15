@@ -111,10 +111,13 @@ measurement: even with #5090 fixed, ~133 real failures and non-reproducible
 collection remain. Do not port the suite to `bun:test` to route around an
 upstream gap that is actively tracked.
 
-Revisit trigger, in order — each made observable by the canary: (1) **errors
-→ 0** (the #5090 shim lands — necessary but not sufficient); (2) the **fail**
-count worked down to ~0; (3) collection stable across local and CI. Only then
-flip the canonical test script, make Bun the dev default, and unlock Phase 2.
+Revisit trigger (now moot — retained as reference for the measurement, not as a
+live path): each was made observable by the canary — (1) **errors → 0** (the
+#5090 shim lands — necessary but not sufficient); (2) the **fail** count worked
+down to ~0; (3) collection stable across local and CI. These gated flipping the
+canonical test script and unlocking Phase 2; with Phase 2 dropped (see header)
+they no longer gate anything. Tests stay on `node --test` as a standing
+decision, not a pending one.
 
 ## Phase 2 — utility substitutions (DROPPED 2026-07-15 — runtime-API adoption abandoned)
 
