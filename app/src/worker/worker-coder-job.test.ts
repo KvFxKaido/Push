@@ -97,6 +97,13 @@ describe('matchJobsRoute', () => {
     });
   });
 
+  it('matches POST /api/jobs/:id/resume', () => {
+    expect(matchJobsRoute('/api/jobs/abc123/resume', 'POST')).toEqual({
+      action: 'resume',
+      jobId: 'abc123',
+    });
+  });
+
   it('rejects non-jobs prefix', () => {
     expect(matchJobsRoute('/api/sandbox/create', 'POST')).toBeNull();
     expect(matchJobsRoute('/api/jobs', 'GET')).toBeNull();
@@ -106,6 +113,7 @@ describe('matchJobsRoute', () => {
     expect(matchJobsRoute('/api/jobs/abc/events', 'POST')).toBeNull();
     expect(matchJobsRoute('/api/jobs/start', 'GET')).toBeNull();
     expect(matchJobsRoute('/api/jobs/abc/cancel', 'GET')).toBeNull();
+    expect(matchJobsRoute('/api/jobs/abc/resume', 'GET')).toBeNull();
   });
 });
 

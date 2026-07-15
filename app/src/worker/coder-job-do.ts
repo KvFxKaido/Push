@@ -1638,6 +1638,7 @@ export class CoderJob {
     if (!input) {
       const error = 'Job input missing; cannot resume.';
       if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
         await this.appendEvent(jobId, {
           type: 'job.failed',
           executionId: jobId,
@@ -1652,6 +1653,7 @@ export class CoderJob {
     if (!cp) {
       const error = 'Resume checkpoint missing; cannot resume.';
       if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
         await this.appendEvent(jobId, {
           type: 'job.failed',
           executionId: jobId,
@@ -1668,6 +1670,7 @@ export class CoderJob {
     } catch (err) {
       const error = `Resume state parse failed (${err instanceof Error ? err.message : String(err)}).`;
       if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
         await this.appendEvent(jobId, {
           type: 'job.failed',
           executionId: jobId,
@@ -1728,6 +1731,27 @@ export class CoderJob {
         });
       }
       return json({ error: 'RESUME_RESTORE_FAILED', jobId }, 502);
+    }
+
+    // Post-restore re-check — the same race the orphan-resume path guards. The
+    // claim flipped the row to 'running' before this long restore await, so a
+    // concurrent /cancel during the window is handled as a running orphan and
+    // marks the job 'cancelled' + emits a terminal event. Without this guard we
+    // would still append job.resumed and launch runLoop, running sandbox work
+    // after the client was told the job was terminal. Bail instead; the freshly
+    // restored sandbox is left to the provider's idle timeout (a rare-race
+    // efficiency loss, not a correctness gap), mirroring resumeOrphanedJob.
+    if (this.getJobStatus(jobId) !== 'running') {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'coder_resume_preempted',
+          jobId,
+          phase: 'post_restore',
+          sandboxId: restored.sandboxId,
+        }),
+      );
+      return json({ jobId, resumed: false, reason: 'PREEMPTED' }, 409);
     }
 
     console.log(
@@ -1916,11 +1940,17 @@ export class CoderJob {
 
   /**
    * Claim the terminal transition for a job. Returns true only if this
-   * call was the one that actually flipped the row from 'running' to a
-   * terminal state — false means someone else (runLoop, alarm, cancel)
-   * already wrote a terminal state first. Callers gate the terminal
-   * appendEvent on the return so SSE never sees two conflicting
-   * terminals for the same run.
+   * call was the one that actually flipped the row from a non-terminal
+   * state ('running' or 'suspended') to a terminal one — false means
+   * someone else (runLoop, alarm, cancel) already wrote a terminal state
+   * first, or the row is already terminal. Callers gate the terminal
+   * appendEvent on the return so SSE never sees two conflicting terminals
+   * for the same run.
+   *
+   * 'suspended' is claimable too: a parked job can be cancelled by the user
+   * or failed by a resume-precondition check (missing metadata/checkpoint),
+   * and those paths need the transition to actually land — guarding on
+   * 'running' alone silently no-oped them, stranding the row as 'suspended'.
    *
    * DO SQL is single-threaded and these two statements contain no
    * awaits, so the read-then-update is effectively atomic: no other
@@ -1933,7 +1963,7 @@ export class CoderJob {
     error: string | null,
   ): boolean {
     const current = this.getJobStatus(jobId);
-    if (current !== 'running') return false;
+    if (current !== 'running' && current !== 'suspended') return false;
     this.ctx.storage.sql.exec(
       `UPDATE job SET status = ?, finished_at = ?, result_json = ?, error_text = ? WHERE id = ?`,
       status,

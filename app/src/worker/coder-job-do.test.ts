@@ -1785,6 +1785,24 @@ describe('CoderJob DO — durable suspend / resume', () => {
     expect(storage.suspensions.has('job-resume-bad')).toBe(true);
   });
 
+  it('/cancel on a suspended job terminates it: status=cancelled, suspension cleared, job.failed', async () => {
+    // Regression guard for the markTerminal(running-only) bug: cancelling a
+    // suspended job must actually flip it terminal and drop the metadata, not
+    // silently no-op and leave it parked.
+    const { job, storage } = await startAndSuspend('job-cancel-suspended');
+    expect(storage.jobs.get('job-cancel-suspended')!.status).toBe('suspended');
+
+    const res = await job.fetch(
+      new Request('https://do/cancel?jobId=job-cancel-suspended', { method: 'POST' }),
+    );
+    const body = (await res.json()) as { cancelled: boolean; reason: string };
+    expect(body).toMatchObject({ cancelled: true, reason: 'CANCELLED_SUSPENDED' });
+
+    expect(storage.jobs.get('job-cancel-suspended')!.status).toBe('cancelled');
+    expect(storage.suspensions.has('job-cancel-suspended')).toBe(false);
+    expect(storage.events.some((e) => e.type === 'job.failed')).toBe(true);
+  });
+
   it('/resume on a non-suspended job returns 409 NOT_SUSPENDED', async () => {
     const { ctx, storage, waitUntilPromises } = makeCtx();
     const input = makeStartInput({ jobId: 'job-resume-running' });

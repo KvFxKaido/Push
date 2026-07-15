@@ -1243,6 +1243,65 @@
         }
       }
     },
+    "JobSuspended": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "role",
+        "question",
+        "resumeSchema"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        },
+        "context": {
+          "type": "string"
+        },
+        "resumeSchema": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "JobResumed": {
+      "type": "object",
+      "required": [
+        "executionId",
+        "role"
+      ],
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "orchestrator",
+            "explorer",
+            "coder",
+            "reviewer",
+            "auditor"
+          ]
+        }
+      }
+    },
     "UserFollowUpQueued": {
       "type": "object",
       "required": [
@@ -2294,6 +2353,44 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/JobFailed"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "job.suspended"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/JobSuspended"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "job.resumed"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/JobResumed"
           }
         }
       }
