@@ -72,7 +72,7 @@ export const NULL_CONTEXT_LOADER: ContextLoader = {
 export interface TurnSummaryResponse {
   jobId: string;
   chatId: string | null;
-  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  status: 'queued' | 'running' | 'suspended' | 'completed' | 'failed' | 'cancelled';
   task: string;
   summary: string | null;
   finishedAt: number | null;

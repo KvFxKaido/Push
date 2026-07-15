@@ -590,6 +590,26 @@ export type RunEventInput =
       error: string;
     }
   | {
+      // Durable suspension: a background job emitted a guidance call and parked
+      // itself awaiting a typed `/resume`. Non-terminal — the run is paused, not
+      // finished — but closes the SSE stream (nothing more arrives until resume).
+      // `question`/`context` are surfaced to the human; `resumeSchema` (JSON of
+      // the field contract) tells the caller what `resumeData` to supply.
+      type: 'job.suspended';
+      executionId: string;
+      role: AgentRole;
+      question: string;
+      context: string;
+      resumeSchema: string;
+    }
+  | {
+      // A suspended job was revived with typed `resumeData` and relaunched.
+      // Marks the boundary in the SSE log where the run picks back up.
+      type: 'job.resumed';
+      executionId: string;
+      role: AgentRole;
+    }
+  | {
       type: 'task_graph.task_ready';
       executionId: string;
       taskId: string;

@@ -29,7 +29,7 @@ import type { CoderJobStartInput } from './coder-job-do';
 const JOBS_PREFIX = '/api/jobs/';
 
 export interface JobsRouteMatch {
-  action: 'start' | 'events' | 'cancel' | 'status';
+  action: 'start' | 'events' | 'cancel' | 'status' | 'resume';
   jobId: string | null;
 }
 
@@ -53,6 +53,12 @@ export function matchJobsRoute(pathname: string, method: string): JobsRouteMatch
   }
   if (segments.length === 2 && segments[1] === 'cancel' && method === 'POST') {
     return { action: 'cancel', jobId: segments[0] };
+  }
+  // POST /api/jobs/:id/resume — body carries { resumeData } for a suspended
+  // (durably-parked) job. Forwarded verbatim to the DO's /resume action, which
+  // validates it against the stored resume schema.
+  if (segments.length === 2 && segments[1] === 'resume' && method === 'POST') {
+    return { action: 'resume', jobId: segments[0] };
   }
   return null;
 }
@@ -95,6 +101,8 @@ export async function handleJobsRoute(
       return forwardToDo(env, match.jobId!, 'cancel', request);
     case 'status':
       return forwardToDo(env, match.jobId!, 'status', request);
+    case 'resume':
+      return forwardToDo(env, match.jobId!, 'resume', request);
   }
 }
 
@@ -188,7 +196,7 @@ function requiredStartFields(input: CoderJobStartInput): string[] {
 async function forwardToDo(
   env: Env,
   jobId: string,
-  action: 'start' | 'events' | 'cancel' | 'status',
+  action: 'start' | 'events' | 'cancel' | 'status' | 'resume',
   original: Request,
   overrideBody?: string,
 ): Promise<Response> {

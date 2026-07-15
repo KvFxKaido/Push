@@ -27,11 +27,13 @@
 
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import {
+  CoderSuspendedError,
   resolveLeadRoundOptions,
   runCoderAgent as runCoderAgentLib,
   SandboxUnreachableError,
   type CoderAgentOptions,
   type CoderCheckpointState,
+  type CoderSuspendPayload,
   type LeadToolScope,
 } from '@push/lib/coder-agent';
 import {
@@ -207,7 +209,17 @@ export class UnsupportedRoleError extends Error {
   }
 }
 
-export type CoderJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type CoderJobStatus =
+  | 'queued'
+  | 'running'
+  // Durably parked awaiting a typed `/resume` — non-terminal (the run is
+  // paused, not finished). Excluded from the orphan sweep and wall-clock alarm
+  // (both key on status='running'), so a suspended job neither relaunches nor
+  // gets force-failed while it waits.
+  | 'suspended'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface CoderJobStatusSnapshot {
   jobId: string;
@@ -355,6 +367,20 @@ CREATE TABLE IF NOT EXISTS checkpoint (
   agent_state_json TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+-- Typed suspension metadata for a durably-parked job. The resumable filesystem
+-- + loop state lives in the checkpoint table (captured at suspend time); this
+-- table holds only the human-facing question/context and the resume-data
+-- contract, so /resume can render the prompt and validate the caller's payload.
+-- One row per job, cleared on resume or cancel.
+CREATE TABLE IF NOT EXISTS suspension (
+  job_id TEXT PRIMARY KEY,
+  round INTEGER NOT NULL,
+  question TEXT NOT NULL,
+  context TEXT NOT NULL,
+  resume_schema_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `;
 
 // ---------------------------------------------------------------------------
@@ -457,6 +483,11 @@ export class CoderJob {
           return this.handleEvents(request);
         case 'cancel':
           return await this.handleCancel(url.searchParams.get('jobId') ?? '');
+        case 'resume':
+          return await this.handleResume(
+            url.searchParams.get('jobId') ?? '',
+            (await request.json().catch(() => ({}))) as { resumeData?: unknown },
+          );
         case 'status':
           return this.handleStatus(url.searchParams.get('jobId') ?? '');
         case 'turn-summary':
@@ -640,6 +671,14 @@ export class CoderJob {
         });
       }
     } catch (err) {
+      // Durable suspension is not a failure: `suspendJob` (called from
+      // executeCoderJob before the rethrow) already flipped the row to
+      // 'suspended' and emitted `job.suspended`. Returning here leaves that
+      // non-terminal state intact — markTerminal below would otherwise no-op on
+      // it anyway (the row isn't 'running'), but returning also skips emitting a
+      // spurious `job.failed`. The `finally` still runs: it clears the in-memory
+      // controller and reschedules the alarm off this now-parked job.
+      if (err instanceof CoderSuspendedError) return;
       const message = err instanceof Error ? err.message : String(err);
       // Role for the failure event: if the input shape itself is bad
       // (UnsupportedRoleError thrown from executeJob), fall back to the
@@ -887,6 +926,14 @@ export class CoderJob {
         harnessTokenBudget: input.envelope.harnessSettings?.runTokenBudget,
         harnessContextResetsEnabled: input.envelope.harnessSettings?.contextResetsEnabled,
         resumeState,
+        // Durable suspension only when the job IS the user's own turn (leadMode):
+        // the counterparty to a guidance call is then the human, who may answer
+        // long after this DO isolate is evicted, so the pause must survive as
+        // persisted state, not a held await. A delegated sub-Coder has no human
+        // to answer, so it keeps the kernel's fall-through-to-done and never
+        // parks. `leadMode` is the same discriminator resolveJobLeadModeOptions
+        // uses to pick lead vs. coder persona.
+        durableSuspension: input.envelope.leadMode === true,
       };
 
       const checkpointSandboxId = sandboxId;
@@ -901,11 +948,25 @@ export class CoderJob {
             void this.appendEvent(input.jobId, event);
           },
           // Durable resume checkpoint: snapshot the workspace + persist loop
-          // state every few rounds so a sandbox death can be recovered.
-          onCheckpoint: (state) => this.captureCheckpoint(input.jobId, checkpointSandboxId, state),
+          // state every few rounds so a sandbox death can be recovered. The
+          // captured/skipped boolean is only consumed by the suspend path (which
+          // calls captureCheckpoint directly); the cadence hook discards it.
+          onCheckpoint: async (state) => {
+            await this.captureCheckpoint(input.jobId, checkpointSandboxId, state);
+          },
         });
         return { summary: result.summary };
       } catch (err) {
+        // Durable suspension: the run asked for guidance and parked itself.
+        // Snapshot + persist here (sandboxId is in scope) while the job is still
+        // 'running', then rethrow so runLoop skips its terminal handling and
+        // leaves the row 'suspended'. If the snapshot can't be captured there's
+        // no durable state to resume from, so `suspendJob` rethrows a plain
+        // error and the job fails as usual rather than parking un-resumably.
+        if (err instanceof CoderSuspendedError) {
+          await this.suspendJob(input.jobId, checkpointSandboxId, input.role, err);
+          throw err;
+        }
         if (!(err instanceof SandboxUnreachableError)) throw err;
         const recovered = await this.resumeFromCheckpoint(input.jobId, resumesUsed);
         if (!recovered) throw err;
@@ -1006,6 +1067,145 @@ export class CoderJob {
       }),
     );
     return { sandboxId: restored.sandboxId, ownerToken: restored.ownerToken, resumeState };
+  }
+
+  // -------------------------------------------------------------------------
+  // Durable suspend / typed resume
+  // -------------------------------------------------------------------------
+
+  /**
+   * Park a run that emitted a durable guidance call. Called from
+   * executeCoderJob's catch while the row is still 'running' and `sandboxId` is
+   * in scope. Captures the workspace + loop state into the `checkpoint` table
+   * (the same durable pair a sandbox-death resume uses), persists the typed
+   * suspension metadata, flips the row to 'suspended', and emits `job.suspended`.
+   *
+   * If the checkpoint can't be captured there is no durable state to resume
+   * from, so this rethrows a plain error and lets runLoop fail the job — parking
+   * a job we could never revive would strand it in 'suspended' forever.
+   */
+  private async suspendJob(
+    jobId: string,
+    sandboxId: string,
+    role: AgentRole,
+    err: CoderSuspendedError<ChatCard>,
+  ): Promise<void> {
+    const captured = await this.captureCheckpoint(jobId, sandboxId, err.state);
+    if (!captured) {
+      // captureCheckpoint already logged the snapshot failure (coder_checkpoint_
+      // failed / _too_large). Add the suspend-specific consequence so tail logs
+      // show *why* the guidance call became a hard failure instead of a pause.
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_suspend_no_durable_state',
+          jobId,
+          round: err.state.round,
+        }),
+      );
+      throw new Error(
+        'Run tried to suspend for guidance but its workspace snapshot could not be captured, so there is no durable state to resume from.',
+      );
+    }
+
+    // Claim the running→suspended transition. Mirrors markTerminal's atomic
+    // read-then-update (single-threaded SQL, no await between): if /cancel or
+    // the alarm already moved the row off 'running' while the snapshot was in
+    // flight, we lose the claim and skip both the metadata write and the event.
+    if (!this.markSuspended(jobId)) {
+      console.log(JSON.stringify({ level: 'info', event: 'coder_suspend_preempted', jobId }));
+      return;
+    }
+
+    this.persistSuspension(jobId, {
+      round: err.state.round,
+      question: err.payload.question,
+      context: err.payload.context,
+      resumeSchemaJson: JSON.stringify(err.payload.resumeSchema),
+    });
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_job_suspended',
+        jobId,
+        round: err.state.round,
+      }),
+    );
+
+    await this.appendEvent(jobId, {
+      type: 'job.suspended',
+      executionId: jobId,
+      role,
+      question: err.payload.question,
+      context: err.payload.context,
+      resumeSchema: JSON.stringify(err.payload.resumeSchema),
+    });
+  }
+
+  /**
+   * Claim the running→suspended transition. Returns true only if this call
+   * flipped a 'running' row — false if some other path (cancel, alarm) already
+   * moved it. `finished_at` stays null: a suspended job is paused, not finished.
+   */
+  private markSuspended(jobId: string): boolean {
+    if (this.getJobStatus(jobId) !== 'running') return false;
+    this.ctx.storage.sql.exec("UPDATE job SET status = 'suspended' WHERE id = ?", jobId);
+    return true;
+  }
+
+  private persistSuspension(
+    jobId: string,
+    s: { round: number; question: string; context: string; resumeSchemaJson: string },
+  ): void {
+    this.ctx.storage.sql.exec(
+      `INSERT OR REPLACE INTO suspension
+         (job_id, round, question, context, resume_schema_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      jobId,
+      s.round,
+      s.question,
+      s.context,
+      s.resumeSchemaJson,
+      Date.now(),
+    );
+  }
+
+  private readSuspension(jobId: string): {
+    round: number;
+    question: string;
+    context: string;
+    resumeSchema: CoderSuspendPayload['resumeSchema'];
+  } | null {
+    const row = this.ctx.storage.sql
+      .exec(
+        'SELECT round, question, context, resume_schema_json FROM suspension WHERE job_id = ?',
+        jobId,
+      )
+      .toArray()[0] as
+      | { round?: number; question?: string; context?: string; resume_schema_json?: string }
+      | undefined;
+    if (!row || typeof row.question !== 'string') return null;
+    let resumeSchema: CoderSuspendPayload['resumeSchema'];
+    try {
+      resumeSchema = JSON.parse(
+        row.resume_schema_json ?? '{}',
+      ) as CoderSuspendPayload['resumeSchema'];
+    } catch {
+      // A corrupt schema shouldn't block resume — fall back to the default
+      // free-text contract so a stored suspension is never un-resumable.
+      resumeSchema = { required: ['answer'], fields: { answer: 'string' } };
+    }
+    return {
+      round: row.round ?? 0,
+      question: row.question,
+      context: row.context ?? '',
+      resumeSchema,
+    };
+  }
+
+  private clearSuspension(jobId: string): void {
+    this.ctx.storage.sql.exec('DELETE FROM suspension WHERE job_id = ?', jobId);
   }
 
   // -------------------------------------------------------------------------
@@ -1272,7 +1472,7 @@ export class CoderJob {
                 }),
               ),
             );
-            if (isTerminalEventType(event.type)) {
+            if (isStreamHaltEventType(event.type)) {
               dropListener();
               controller.close();
             }
@@ -1283,10 +1483,12 @@ export class CoderJob {
         activeListener = listener;
         liveListeners.add(listener);
 
-        // If the job is already terminal and we replayed everything,
-        // close immediately.
+        // If the job is already terminal — or suspended, which produces no
+        // further events until a /resume — and we replayed everything, close
+        // immediately rather than holding a heartbeat loop open on a run that
+        // won't emit again on this connection.
         const status = jobStatusLookup(jobId);
-        if (status && isTerminalStatus(status)) {
+        if (status && isStreamHaltStatus(status)) {
           dropListener();
           controller.close();
           return;
@@ -1365,7 +1567,232 @@ export class CoderJob {
       }
       return json({ jobId, cancelled: true, reason: 'CANCELLED_ORPHAN' });
     }
+    // A suspended job has no live run to abort, but the user can still cancel
+    // the pause outright. markTerminal flips suspended→cancelled (it only guards
+    // against re-terminating an already-terminal row, and 'suspended' isn't
+    // terminal), and we drop the now-dead suspension metadata so a later /resume
+    // can't revive a cancelled job.
+    if (status === 'suspended') {
+      const error = 'cancelled while suspended';
+      if (this.markTerminal(jobId, 'cancelled', null, error)) {
+        this.clearSuspension(jobId);
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: 'coder',
+          error,
+        });
+      }
+      return json({ jobId, cancelled: true, reason: 'CANCELLED_SUSPENDED' });
+    }
     return json({ jobId, cancelled: false, reason: 'NO_ACTIVE_RUN' });
+  }
+
+  // -------------------------------------------------------------------------
+  // /resume — revive a suspended job with typed resumeData
+  // -------------------------------------------------------------------------
+
+  /**
+   * Revive a durably-suspended job. Validates `resumeData` against the stored
+   * resume schema, restores the checkpoint workspace into a fresh sandbox,
+   * appends the caller's answer as the next user message (so the kernel re-enters
+   * exactly where the synchronous checkpoint path's `continue` would land), flips
+   * suspended→running, and relaunches runLoop seeded with that state.
+   *
+   * The suspended→running claim is synchronous (single-threaded SQL, no await
+   * between read and update) so two concurrent /resume calls can't both relaunch
+   * the same job. The claim happens BEFORE the long snapshot restore; if the
+   * restore then fails, the job is failed terminally rather than left half-alive.
+   */
+  private async handleResume(jobId: string, body: { resumeData?: unknown }): Promise<Response> {
+    if (!jobId) return json({ error: 'MISSING_JOB_ID' }, 400);
+
+    const status = this.getJobStatus(jobId);
+    if (status == null) return json({ error: 'JOB_NOT_FOUND', jobId }, 404);
+    if (status !== 'suspended') {
+      return json({ error: 'NOT_SUSPENDED', jobId, status }, 409);
+    }
+
+    const suspension = this.readSuspension(jobId);
+    if (!suspension) {
+      // Status says suspended but the metadata row is gone — inconsistent state
+      // we can't resume from. Fail the job so the client stops waiting.
+      const error = 'Suspension metadata missing; cannot resume.';
+      if (this.markTerminal(jobId, 'failed', null, error)) {
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: 'coder',
+          error,
+        });
+      }
+      return json({ error: 'SUSPENSION_STATE_MISSING', jobId }, 409);
+    }
+
+    const validation = validateResumeData(body.resumeData, suspension.resumeSchema);
+    if (!validation.ok) {
+      return json({ error: 'INVALID_RESUME_DATA', jobId, issues: validation.issues }, 400);
+    }
+
+    const input = this.readJobInput(jobId);
+    if (!input) {
+      const error = 'Job input missing; cannot resume.';
+      if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: 'coder',
+          error,
+        });
+      }
+      return json({ error: 'JOB_INPUT_MISSING', jobId }, 409);
+    }
+
+    const cp = this.readCheckpoint(jobId);
+    if (!cp) {
+      const error = 'Resume checkpoint missing; cannot resume.';
+      if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: input.role,
+          error,
+        });
+      }
+      return json({ error: 'CHECKPOINT_MISSING', jobId }, 409);
+    }
+
+    let resumeState: CoderCheckpointState<ChatCard>;
+    try {
+      resumeState = JSON.parse(cp.agentStateJson) as CoderCheckpointState<ChatCard>;
+    } catch (err) {
+      const error = `Resume state parse failed (${err instanceof Error ? err.message : String(err)}).`;
+      if (this.markTerminal(jobId, 'failed', null, error)) {
+        this.clearSuspension(jobId);
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: input.role,
+          error,
+        });
+      }
+      return json({ error: 'RESUME_STATE_PARSE_FAILED', jobId }, 409);
+    }
+
+    // Claim suspended→running synchronously so a concurrent /resume loses the
+    // race and no-ops below. Restart the wall-clock budget (started_at = now):
+    // a resumed run gets a fresh MAX_JOB_WALL_CLOCK_MS window, not the residue
+    // of the pre-suspension clock.
+    if (this.getJobStatus(jobId) !== 'suspended') {
+      return json({ error: 'NOT_SUSPENDED', jobId, status: this.getJobStatus(jobId) }, 409);
+    }
+    this.ctx.storage.sql.exec(
+      "UPDATE job SET status = 'running', started_at = ? WHERE id = ?",
+      Date.now(),
+      jobId,
+    );
+    this.clearSuspension(jobId);
+
+    // Inject the human's answer as the next user message. Mirrors the
+    // synchronous checkpoint path's `[CHECKPOINT RESPONSE …]` envelope so the
+    // kernel treats durable-resumed guidance identically to in-tab guidance.
+    const answer = extractResumeAnswer(body.resumeData);
+    resumeState.messages.push({
+      id: `coder-resume-answer-${resumeState.round}`,
+      role: 'user',
+      content: `[CHECKPOINT RESPONSE — guidance from the user]\n${answer}\n[/CHECKPOINT RESPONSE]`,
+      timestamp: Date.now(),
+    });
+
+    const restored = await restoreWorkspaceSnapshot(this.env, {
+      snapshotId: cp.snapshotId,
+      restoreToken: cp.restoreToken,
+    });
+    if (!restored.ok) {
+      const error = `Resume workspace restore failed (${restored.error}).`;
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'coder_resume_restore_failed',
+          jobId,
+          round: cp.round,
+          phase: 'suspend_resume',
+          error: restored.error,
+        }),
+      );
+      if (this.markTerminal(jobId, 'failed', null, error)) {
+        await this.appendEvent(jobId, {
+          type: 'job.failed',
+          executionId: jobId,
+          role: input.role,
+          error,
+        });
+      }
+      return json({ error: 'RESUME_RESTORE_FAILED', jobId }, 502);
+    }
+
+    // Post-restore re-check — the same race the orphan-resume path guards. The
+    // claim flipped the row to 'running' before this long restore await, so a
+    // concurrent /cancel during the window is handled as a running orphan and
+    // marks the job 'cancelled' + emits a terminal event. Without this guard we
+    // would still append job.resumed and launch runLoop, running sandbox work
+    // after the client was told the job was terminal. Bail instead; the freshly
+    // restored sandbox is left to the provider's idle timeout (a rare-race
+    // efficiency loss, not a correctness gap), mirroring resumeOrphanedJob.
+    if (this.getJobStatus(jobId) !== 'running') {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'coder_resume_preempted',
+          jobId,
+          phase: 'post_restore',
+          sandboxId: restored.sandboxId,
+        }),
+      );
+      return json({ jobId, resumed: false, reason: 'PREEMPTED' }, 409);
+    }
+
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'coder_job_resumed_from_suspend',
+        jobId,
+        round: resumeState.round,
+        sandboxId: restored.sandboxId,
+      }),
+    );
+
+    await this.appendEvent(jobId, {
+      type: 'job.resumed',
+      executionId: jobId,
+      role: input.role,
+    });
+
+    this.ctx.waitUntil(
+      this.runLoop(input, {
+        sandboxId: restored.sandboxId,
+        ownerToken: restored.ownerToken,
+        resumeState,
+      }),
+    );
+    await this.rescheduleAlarm().catch(() => {});
+
+    return json({ jobId, resumed: true }, 202);
+  }
+
+  /** Read + parse a job's persisted start input, or null if absent/corrupt. */
+  private readJobInput(jobId: string): AgentJobStartInput | null {
+    const row = this.ctx.storage.sql
+      .exec('SELECT input_json FROM job WHERE id = ?', jobId)
+      .toArray()[0] as { input_json?: string } | undefined;
+    if (!row?.input_json) return null;
+    try {
+      return JSON.parse(row.input_json) as AgentJobStartInput;
+    } catch {
+      return null;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -1513,11 +1940,17 @@ export class CoderJob {
 
   /**
    * Claim the terminal transition for a job. Returns true only if this
-   * call was the one that actually flipped the row from 'running' to a
-   * terminal state — false means someone else (runLoop, alarm, cancel)
-   * already wrote a terminal state first. Callers gate the terminal
-   * appendEvent on the return so SSE never sees two conflicting
-   * terminals for the same run.
+   * call was the one that actually flipped the row from a non-terminal
+   * state ('running' or 'suspended') to a terminal one — false means
+   * someone else (runLoop, alarm, cancel) already wrote a terminal state
+   * first, or the row is already terminal. Callers gate the terminal
+   * appendEvent on the return so SSE never sees two conflicting terminals
+   * for the same run.
+   *
+   * 'suspended' is claimable too: a parked job can be cancelled by the user
+   * or failed by a resume-precondition check (missing metadata/checkpoint),
+   * and those paths need the transition to actually land — guarding on
+   * 'running' alone silently no-oped them, stranding the row as 'suspended'.
    *
    * DO SQL is single-threaded and these two statements contain no
    * awaits, so the read-then-update is effectively atomic: no other
@@ -1530,7 +1963,7 @@ export class CoderJob {
     error: string | null,
   ): boolean {
     const current = this.getJobStatus(jobId);
-    if (current !== 'running') return false;
+    if (current !== 'running' && current !== 'suspended') return false;
     this.ctx.storage.sql.exec(
       `UPDATE job SET status = ?, finished_at = ?, result_json = ?, error_text = ? WHERE id = ?`,
       status,
@@ -1565,7 +1998,7 @@ export class CoderJob {
     jobId: string,
     sandboxId: string,
     state: CoderCheckpointState<ChatCard>,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const prior = this.readCheckpoint(jobId);
     const snapshotFn =
       SERVICE_OVERRIDES.get(jobId)?.snapshot ??
@@ -1599,7 +2032,7 @@ export class CoderJob {
           error: snap.error,
         }),
       );
-      return;
+      return false;
     }
     this.persistCheckpoint(jobId, {
       round: state.round,
@@ -1637,6 +2070,7 @@ export class CoderJob {
     ) {
       await this.env.SNAPSHOTS.delete(prior.snapshotId).catch(() => {});
     }
+    return true;
   }
 
   private persistCheckpoint(jobId: string, cp: JobCheckpoint): void {
@@ -1695,4 +2129,57 @@ function isTerminalEventType(type: string): boolean {
 
 function isTerminalStatus(status: CoderJobStatus): boolean {
   return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/**
+ * Statuses at which the SSE stream should close: the terminals plus `suspended`.
+ * A suspended job emits no further events until a `/resume` relaunches it (which
+ * a new SSE connection then follows), so holding the pipe open would just leak a
+ * heartbeat loop against a run that isn't producing anything.
+ */
+function isStreamHaltStatus(status: CoderJobStatus): boolean {
+  return isTerminalStatus(status) || status === 'suspended';
+}
+
+/** Event types that close the SSE stream when observed live — terminals + suspend. */
+function isStreamHaltEventType(type: string): boolean {
+  return isTerminalEventType(type) || type === 'job.suspended';
+}
+
+/**
+ * Validate a `/resume` caller's `resumeData` against a stored suspend schema.
+ * The schema is deliberately small (string fields only), so this checks that
+ * every `required` field is present as a non-empty string. Structured issues are
+ * returned to the caller so a bad payload is a clear 400, not a silent stall.
+ */
+function validateResumeData(
+  data: unknown,
+  schema: CoderSuspendPayload['resumeSchema'],
+): { ok: true } | { ok: false; issues: string[] } {
+  const issues: string[] = [];
+  if (typeof data !== 'object' || data === null || Array.isArray(data)) {
+    return { ok: false, issues: ['resumeData must be a JSON object'] };
+  }
+  const obj = data as Record<string, unknown>;
+  for (const field of schema.required) {
+    const value = obj[field];
+    if (typeof value !== 'string' || value.trim().length === 0) {
+      issues.push(`field "${field}" is required and must be a non-empty string`);
+    }
+  }
+  return issues.length === 0 ? { ok: true } : { ok: false, issues };
+}
+
+/**
+ * Extract the free-text answer to inject into the resumed run's message history.
+ * The default schema names it `answer`; a richer future schema without one falls
+ * back to a compact JSON rendering so the guidance is never dropped on the floor.
+ */
+function extractResumeAnswer(data: unknown): string {
+  if (typeof data === 'object' && data !== null && !Array.isArray(data)) {
+    const answer = (data as Record<string, unknown>).answer;
+    if (typeof answer === 'string') return answer;
+    return JSON.stringify(data);
+  }
+  return String(data);
 }
