@@ -543,7 +543,9 @@ const OUTPUT_REPAIR_TIMEOUT_MS = 120_000;
 
 /**
  * Run one output-only repair request. No tool schemas or executor are attached,
- * so this cannot replay the primary turn's filesystem/GitHub side effects.
+ * and every provider-native server tool is explicitly disabled, so this cannot
+ * replay the primary turn's filesystem/GitHub/command or provider-search side
+ * effects.
  */
 async function generateOutputSchemaRepair(state, providerConfig, apiKey, prompt, signal) {
   const abortError = () => {
@@ -573,6 +575,13 @@ async function generateOutputSchemaRepair(state, providerConfig, apiKey, prompt,
       model: state.model || providerConfig.defaultModel,
       messages,
       signal: compositeSignal,
+      // The CLI adapters default several provider-owned search tools on when
+      // these flags are omitted. Repairs must be output-only even when those
+      // defaults or their environment variables are enabled.
+      openrouterWebSearch: false,
+      anthropicWebSearch: false,
+      googleSearchGrounding: false,
+      responsesWebSearch: false,
     })) {
       if (event.type === 'text_delta') text += event.text;
     }
@@ -769,7 +778,11 @@ async function runHeadless(
 
     let acceptance = null;
 
-    if (Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0) {
+    if (
+      constrainedOutput?.ok !== false &&
+      Array.isArray(acceptanceChecks) &&
+      acceptanceChecks.length > 0
+    ) {
       acceptance = await runAcceptanceChecks(state.cwd, acceptanceChecks);
       const acceptancePayload = {
         passed: acceptance.passed,

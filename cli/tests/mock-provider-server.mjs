@@ -31,16 +31,26 @@ import { PROVIDER_CONFIGS } from '../provider.ts';
 
 /**
  * @param {{ tokens?: string[], responses?: string[][], hang?: boolean, streamShape?: 'chat' | 'responses' }} [opts]
- * @returns {Promise<{ url: string, port: number, requestCount: () => number, stop: () => Promise<void> }>}
+ * @returns {Promise<{ url: string, port: number, requestCount: () => number, requestBodies: () => unknown[], stop: () => Promise<void> }>}
  */
 export async function startMockProviderServer(opts = {}) {
   const { tokens = [], responses = null, hang = false, streamShape = 'chat' } = opts;
   let requestCount = 0;
+  const requestBodies = [];
 
   const server = http.createServer((req, res) => {
     // Drain request body before responding so the client's write is flushed.
-    req.on('data', () => {});
+    let rawBody = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      rawBody += chunk;
+    });
     req.on('end', () => {
+      try {
+        requestBodies.push(JSON.parse(rawBody));
+      } catch {
+        requestBodies.push(rawBody);
+      }
       const requestIndex = requestCount;
       requestCount += 1;
 
@@ -109,6 +119,8 @@ export async function startMockProviderServer(opts = {}) {
     port,
     /** Number of completed requests the mock has served so far. */
     requestCount: () => requestCount,
+    /** Parsed request bodies in arrival order. */
+    requestBodies: () => requestBodies,
     async stop() {
       await new Promise((resolve) => {
         server.closeAllConnections?.();

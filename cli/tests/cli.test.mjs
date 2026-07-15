@@ -450,6 +450,16 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
 
       assert.equal(code, 0, stripAnsi(stderr));
       assert.equal(mock.requestCount(), 3, 'one tool round + one final round + one repair');
+      const requestBodies = mock.requestBodies();
+      assert.ok(
+        requestBodies[0].tools.some((tool) => tool.type === 'openrouter:web_search'),
+        'the primary turn should retain provider-native web search',
+      );
+      assert.equal(
+        requestBodies.at(-1).tools,
+        undefined,
+        'the output-only repair must disable provider-native and local tools',
+      );
       const lines = stdout.trim().split('\n').map(JSON.parse);
       assert.equal(lines.filter((event) => event.type === 'tool.execution_start').length, 1);
       assert.equal(lines.filter((event) => event.type === 'tool.execution_complete').length, 1);
@@ -483,6 +493,7 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-output-schema-fail-'));
     const schemaPath = path.join(root, 'result.schema.json');
     const sessionRoot = path.join(root, 'sessions');
+    const acceptanceMarker = path.join(root, 'acceptance-ran');
     try {
       await fs.writeFile(schemaPath, JSON.stringify(resultSchema));
       const { code, stdout, stderr } = await runCli(
@@ -497,6 +508,8 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
           '--jsonl',
           '--output-schema',
           schemaPath,
+          '--accept',
+          `node -e "require('node:fs').writeFileSync('acceptance-ran', 'yes')"`,
         ],
         {
           timeout: 15_000,
@@ -514,11 +527,20 @@ describe('push run --output-schema', needsHeadlessJsonl, () => {
       const lines = stdout.trim().split('\n').map(JSON.parse);
       const error = lines.find((event) => event.type === 'error');
       assert.equal(error.payload.code, 'OUTPUT_SCHEMA_VALIDATION_FAILED');
+      assert.equal(
+        lines.some((event) => event.type === 'acceptance_complete'),
+        false,
+      );
       assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.deepEqual(
+        lines.slice(-2).map((event) => event.type),
+        ['error', 'run_complete'],
+      );
       assert.equal(lines.at(-1).type, 'run_complete');
       assert.equal(lines.at(-1).payload.outcome, 'failed');
       assert.match(lines.at(-1).payload.summary, /Output schema validation failed/);
       assert.match(stderr, /"event":"output_schema_validation_failed","repairs":2/);
+      await assert.rejects(fs.access(acceptanceMarker), { code: 'ENOENT' });
       const persisted = (
         await fs.readFile(path.join(sessionRoot, lines[0].sessionId, 'events.jsonl'), 'utf8')
       )
