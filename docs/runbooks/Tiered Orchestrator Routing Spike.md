@@ -1,6 +1,6 @@
 # Tiered Orchestrator Routing Spike
 
-Status: Draft spike, added 2026-04-14
+Status: **Reference** (superseded 2026-07-15) — the cost motivation survives, but the mechanism (a router in front of the Orchestrator) conflicts with the single conversational lead thesis; a revival would need reframing as a cheap lead-internal fast-path, not a front-door router. Originally a Draft spike (2026-04-14); kept for context.
 Origin: [External Resource Review — Harness Engineering and Ralph Loop](../archive/decisions/External%20Resource%20Review%20%E2%80%94%20Harness%20Engineering%20and%20Ralph%20Loop.md), r/ollama CPU SLM agent post (2026-04)
 
 ## Why This Exists

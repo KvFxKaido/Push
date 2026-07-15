@@ -1,10 +1,13 @@
 # Bun Runtime Adoption
 
 Date: 2026-07-04
-Status: **Current** — the guardrails (ground rules 1–4) and Phase 0/1 below are
-shipped and enforced; `bun --compile` is the live single-binary distribution
-path. Phases 2–3 remain design-in-motion pending the upstream `node:test` gap.
-Owner: Push CLI.
+Status: **Current** — retained scope: `bun --compile` as the single-binary
+distribution path, plus the Phase 0/1 guardrails (ground rules 1–4, compiled-binary
+hygiene, the Bun-aware daemon spawn). **Bun *runtime-API* adoption (Phases 2–3) is
+dropped (2026-07-15):** the CLI will not migrate hand-rolled code to `Bun.*` APIs,
+and running *under* Bun stays a distribution/dev concern, not a call surface. The
+Phase 1 "make Bun the test runtime" revisit-triggers are moot — their only purpose
+was to unlock Phase 2. Phase 2/3 content is retained below as reference. Owner: Push CLI.
 
 Companion to [`Go Migration Assessment.md`](<Go Migration Assessment.md>),
 which established Bun `--compile` as the distribution mechanism. This doc
@@ -113,7 +116,7 @@ Revisit trigger, in order — each made observable by the canary: (1) **errors
 count worked down to ~0; (3) collection stable across local and CI. Only then
 flip the canonical test script, make Bun the dev default, and unlock Phase 2.
 
-## Phase 2 — utility substitutions (blocked on Phase 1)
+## Phase 2 — utility substitutions (DROPPED 2026-07-15 — runtime-API adoption abandoned)
 
 Once dev + test + prod all run Bun, these replace hand-rolled code
 unconditionally (no seams, no fallbacks):
@@ -160,7 +163,7 @@ in one PR, under Bun-run tests.
 - **`Bun.semver` / `Bun.deepEquals` / `Bun.which` / `Bun.peek` /
   `Bun.gzipSync` / `Bun.escapeHTML`** — zero call sites in the repo.
 
-## Phase 3 — process spawning (optional, last)
+## Phase 3 — process spawning (DROPPED 2026-07-15 — runtime-API adoption abandoned)
 
 `Bun.spawn` could subsume `node:child_process` across `cli/shell.ts`,
 `cli/git-backend.ts`, `cli/tools.ts`, `cli/pushd.ts` — but that seam is

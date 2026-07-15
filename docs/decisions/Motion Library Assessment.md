@@ -1,7 +1,7 @@
 # Motion Library Assessment
 
 Date: 2026-06-24
-Status: **Draft (Reference)** — recommendation is **do not adopt Motion now**;
+Status: **Reference** — recommendation is **do not adopt Motion now**;
 keep the CSS-token primitive system as tier 1, and only reach for Motion at a
 *specific* seam (FLIP layout or true exit animations) if and when a concrete
 consumer needs it — scoped to the web surface and benched on the Android shell

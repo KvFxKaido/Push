@@ -1,7 +1,7 @@
 # Astro Migration Assessment
 
 Date: 2026-06-23
-Status: **Draft (Reference)** — recommendation is **do not migrate the `app/`
+Status: **Reference** — recommendation is **do not migrate the `app/`
 SPA to Astro**; instead lift the Astro 7 agent-dev ergonomics onto the existing
 Vite 8 setup. No implementation committed. Owner: Push web.
 
