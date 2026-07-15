@@ -351,3 +351,72 @@ describe('resolveRuntimeConfig', () => {
     );
   });
 });
+
+describe('resolveRuntimeConfig profiles', () => {
+  const baseConfig = {
+    provider: 'ollama',
+    profiles: {
+      work: { provider: 'anthropic', anthropic: { model: 'claude-work' } },
+    },
+  };
+
+  it('layers a --profile selection over user config and strips profile meta keys', () => {
+    const resolution = resolveRuntimeConfig(baseConfig, { env: {}, profile: 'work' });
+
+    assert.equal(resolution.config.provider, 'anthropic');
+    assert.equal(resolution.config.anthropic.model, 'claude-work');
+    assert.equal(resolution.provenance.provider.source, 'profile:work');
+    // Profile meta keys select behavior; they are not resolved config leaves.
+    assert.equal(resolution.config.profiles, undefined);
+    assert.equal(resolution.config.activeProfile, undefined);
+    assert.deepEqual(
+      resolution.layers.map((layer) => layer.id),
+      ['user-config', 'profile:work'],
+    );
+  });
+
+  it('keeps environment and CLI overrides winning over a selected profile', () => {
+    const resolution = resolveRuntimeConfig(baseConfig, {
+      env: { PUSH_PROVIDER: 'openai' },
+      profile: 'work',
+      overrides: { anthropic: { model: 'claude-cli' } },
+    });
+
+    assert.equal(resolution.config.provider, 'openai');
+    assert.equal(resolution.config.anthropic.model, 'claude-cli');
+    assert.equal(resolution.provenance.provider.source, 'env:PUSH_PROVIDER');
+    assert.equal(resolution.provenance['anthropic.model'].source, 'cli-overrides');
+  });
+
+  it('selects via --profile > PUSH_PROFILE > activeProfile', () => {
+    const fromEnv = resolveRuntimeConfig(baseConfig, { env: { PUSH_PROFILE: 'work' } });
+    assert.equal(fromEnv.provenance.provider.source, 'profile:work');
+
+    const fromActive = resolveRuntimeConfig({ ...baseConfig, activeProfile: 'work' }, { env: {} });
+    assert.equal(fromActive.config.provider, 'anthropic');
+
+    const precedence = resolveRuntimeConfig(
+      {
+        activeProfile: 'work',
+        profiles: {
+          work: { provider: 'anthropic' },
+          play: { provider: 'openai' },
+          demo: { provider: 'google' },
+        },
+      },
+      { env: { PUSH_PROFILE: 'play' }, profile: 'demo' },
+    );
+    assert.equal(precedence.config.provider, 'google');
+  });
+
+  it('fails loud on an unknown profile name', () => {
+    assert.throws(
+      () => resolveRuntimeConfig(baseConfig, { env: {}, profile: 'ghost' }),
+      /Unknown profile "ghost"\. Available profiles: work\./,
+    );
+    assert.throws(
+      () => resolveRuntimeConfig({ provider: 'ollama' }, { env: {}, profile: 'ghost' }),
+      /Unknown profile "ghost"\. No profiles are defined/,
+    );
+  });
+});

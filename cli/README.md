@@ -252,6 +252,29 @@ project policy.
 
 Per-provider settings (model, endpoint URL, API key) are stored under the provider name. The config file is chmod 0600.
 
+### Config profiles
+
+Named profiles are config overlays stored under a `profiles` key. A selected
+profile layers **on top of** the base user config and **below** environment
+variables and CLI overrides — so `push run --profile work` swaps in the profile's
+values while `PUSH_*` env vars and per-flag overrides still win per key.
+
+```json
+{
+  "provider": "ollama",
+  "activeProfile": "work",
+  "profiles": {
+    "work": { "provider": "anthropic", "anthropic": { "model": "claude-opus-4-8" } },
+    "cheap": { "provider": "openrouter", "openrouter": { "model": "deepseek/deepseek-v4" } }
+  }
+}
+```
+
+Selection precedence is `--profile <name>` > `PUSH_PROFILE` > `activeProfile`; an
+unknown name fails loud. The `profiles` / `activeProfile` meta keys never appear
+in the resolved config. `push config explain` reports the active profile as the
+winning source (`profile:<name>`) for any value it overrides.
+
 ### Auditor commit gate
 
 `git_commit` is routed through the **Auditor** — a binary SAFE/UNSAFE review of the staged diff (secrets, injection vectors, disabled security controls) — before the commit lands. It is **on by default**. On UNSAFE the commit is blocked and the changes stay staged; in an interactive session you can approve the override at the prompt, while headless / daemon runs stay blocked. The gate fails closed: if it's enabled but no provider/model/key is available, the commit is refused rather than waved through.
@@ -675,6 +698,7 @@ Options:
   --run-id <id>           Select one run from a combined receipt
   --session-id <id>       Select one session from a combined receipt
   --output-schema <path>  Constrain push run final output to a JSON Schema
+  --profile <name>        Apply a named config profile (else PUSH_PROFILE / activeProfile)
   --no-attach             Resume: list sessions without prompting
   --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session
   --sandbox               Enable local Docker sandbox
