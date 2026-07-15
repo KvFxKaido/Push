@@ -106,6 +106,10 @@ export interface UseBackgroundCoderJobResult {
    *  docs/runbooks/Background Coder Tasks Phase 2.md. */
   startMainChatJob: (input: StartBackgroundJobInput) => Promise<StartBackgroundJobResult>;
   cancelJob: (jobId: string) => Promise<void>;
+  /** Resume a durably-suspended job with the user's typed answer. POSTs to
+   *  /api/jobs/:id/resume and re-opens the SSE stream (suspend closed it).
+   *  Returns false if the POST is rejected so the caller can re-enable input. */
+  resumeJob: (chatId: string, jobId: string, answer: string) => Promise<boolean>;
   /** Exposed so the delegation branch point can render the placeholder
    * text with the real job id. */
   formatPlaceholderText: (jobId: string) => string;
@@ -413,6 +417,42 @@ export function useBackgroundCoderJob({
           );
           break;
         }
+        case 'job.suspended': {
+          // Durable suspension: the run parked itself awaiting the user's
+          // typed guidance. Non-terminal — the card surfaces the question and a
+          // resume input. The DO closes the SSE stream after this event, so the
+          // reconnect sweep deliberately skips 'suspended' jobs; the stream is
+          // re-opened only when the user actually resumes (see `resumeJob`).
+          upsertJobEntry(chatId, jobId, { status: 'suspended', lastEventId: runEvent.id });
+          upsertJobCardData(chatId, jobId, {
+            status: 'suspended',
+            latestStatusLine: 'Waiting for your guidance',
+            question: runEvent.question,
+            context: runEvent.context,
+            resumeSchema: runEvent.resumeSchema,
+            lastEventAt: eventAt,
+          });
+          updateAgentStatus(
+            { active: false, phase: 'Background Coder awaiting guidance' },
+            { chatId, log: false },
+          );
+          break;
+        }
+        case 'job.resumed': {
+          // The user answered and the job relaunched. Clear the suspend prompt
+          // and return the card to a running view; subsequent events stream over
+          // the freshly re-opened SSE connection.
+          upsertJobEntry(chatId, jobId, { status: 'running', lastEventId: runEvent.id });
+          upsertJobCardData(chatId, jobId, {
+            status: 'running',
+            latestStatusLine: 'Resumed',
+            question: undefined,
+            context: undefined,
+            resumeSchema: undefined,
+            lastEventAt: eventAt,
+          });
+          break;
+        }
         default:
           // PR 1 only emits the three job.* events above. Anything
           // else is either a future event type (benign — appended to
@@ -452,7 +492,9 @@ export function useBackgroundCoderJob({
           console.warn(
             `[useBackgroundCoderJob] Failed to open SSE stream for ${jobId}: ${resp.status}`,
           );
-          openStreamsRef.current.delete(jobId);
+          if (openStreamsRef.current.get(jobId) === controller) {
+            openStreamsRef.current.delete(jobId);
+          }
           return;
         }
 
@@ -483,11 +525,30 @@ export function useBackgroundCoderJob({
           console.warn(`[useBackgroundCoderJob] SSE stream for ${jobId} errored`, err);
         }
       } finally {
-        openStreamsRef.current.delete(jobId);
+        // Only clear the registry entry if it still points at THIS stream. A
+        // resume that force-replaces a stale suspended stream (closeStream +
+        // reopen) registers a NEW controller under the same jobId; this stream's
+        // teardown must not delete that replacement out from under it.
+        if (openStreamsRef.current.get(jobId) === controller) {
+          openStreamsRef.current.delete(jobId);
+        }
       }
     },
     [dispatchServerEvent],
   );
+
+  /** Force-close the SSE stream registered for `jobId`, if any: abort its fetch
+   *  and remove the registry entry so a subsequent openSseStream isn't a no-op.
+   *  Needed on resume — the suspended stream can still be registered locally in
+   *  the window between `job.suspended` being parsed (card becomes resumable) and
+   *  the old reader's teardown, so reopening without this could be dropped. */
+  const closeStream = useCallback((jobId: string) => {
+    const controller = openStreamsRef.current.get(jobId);
+    if (controller) {
+      controller.abort();
+      openStreamsRef.current.delete(jobId);
+    }
+  }, []);
 
   // -------------------------------------------------------------------------
   // Public API
@@ -666,6 +727,71 @@ export function useBackgroundCoderJob({
     }
   }, []);
 
+  /** Resume a durably-suspended job with the user's typed answer. POSTs to
+   *  /api/jobs/:id/resume, then — because suspend closed the SSE stream
+   *  server-side — optimistically flips the card back to running and re-opens
+   *  the stream so the relaunched run's events (starting with job.resumed) flow
+   *  in. Returns false on a rejected POST so the caller can re-enable its input.
+   *  Unlike cancel (which rides the still-open stream), resume MUST re-open. */
+  const resumeJob = useCallback(
+    async (chatId: string, jobId: string, answer: string): Promise<boolean> => {
+      // Optimistic flip: hide the guidance panel immediately (status → running)
+      // for a responsive feel. `question`/`context` are deliberately KEPT so a
+      // rejected POST can roll straight back to the suspended panel intact; the
+      // job.resumed event clears them once the relaunch actually lands.
+      const entry = conversationsRef.current[chatId]?.pendingJobIds?.[jobId];
+      const rollback = () => {
+        upsertJobEntry(chatId, jobId, { status: 'suspended' });
+        upsertJobCardData(chatId, jobId, {
+          status: 'suspended',
+          latestStatusLine: 'Waiting for your guidance',
+        });
+      };
+      upsertJobEntry(chatId, jobId, { status: 'running' });
+      upsertJobCardData(chatId, jobId, { status: 'running', latestStatusLine: 'Resuming…' });
+      try {
+        const res = await fetch(resolveApiUrl(`/api/jobs/${encodeURIComponent(jobId)}/resume`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ resumeData: { answer } }),
+        });
+        if (!res.ok) {
+          console.warn(`[useBackgroundCoderJob] Resume rejected for ${jobId}: ${res.status}`);
+          if (res.status === 400) {
+            // Bad input (INVALID_RESUME_DATA) — the DO validates before claiming
+            // the job, so it's still suspended with no new lifecycle event. Roll
+            // back to the guidance panel for a retry.
+            rollback();
+          } else {
+            // Any other rejection means the DO's server-side state diverged from
+            // the client's: several handleResume failure paths (missing
+            // metadata/checkpoint, restore failure) mark the job FAILED and emit
+            // a terminal job.failed BEFORE returning 409/502. Re-open the stream
+            // to drain that event and reconcile the card — parking it back at
+            // 'suspended' would strand it forever, since the reconnect sweep
+            // skips suspended jobs.
+            closeStream(jobId);
+            void openSseStream(chatId, jobId, entry?.lastEventId ?? null);
+          }
+          return false;
+        }
+        // Re-open the stream from the last replayed event so the relaunched
+        // run's events are not missed. Force-close any stale suspended stream
+        // first: it may still be registered locally (the window between parsing
+        // job.suspended and the old reader's teardown), which would make
+        // openSseStream a no-op and drop the resumed run's events.
+        closeStream(jobId);
+        void openSseStream(chatId, jobId, entry?.lastEventId ?? null);
+        return true;
+      } catch (err) {
+        console.warn(`[useBackgroundCoderJob] Failed to resume ${jobId}`, err);
+        rollback();
+        return false;
+      }
+    },
+    [closeStream, conversationsRef, openSseStream, upsertJobCardData, upsertJobEntry],
+  );
+
   // -------------------------------------------------------------------------
   // Reconnect on foreground — the third visibilitychange listener per
   // the runbook. Existing listeners are in useChat.ts (persistence
@@ -680,6 +806,10 @@ export function useBackgroundCoderJob({
       if (!pending) continue;
       for (const entry of Object.values(pending)) {
         if (isTerminalStatus(entry.status)) continue;
+        // A suspended job has no live stream — the DO closes it after the
+        // suspend event and re-opening would just replay-and-close. It stays
+        // parked until the user resumes (which re-opens the stream itself).
+        if (entry.status === 'suspended') continue;
         if (openStreamsRef.current.has(entry.jobId)) continue;
         void openSseStream(chatId, entry.jobId, entry.lastEventId);
       }
@@ -718,7 +848,7 @@ export function useBackgroundCoderJob({
   }, []);
 
   return useMemo(
-    () => ({ startJob, startMainChatJob, cancelJob, formatPlaceholderText }),
-    [startJob, startMainChatJob, cancelJob, formatPlaceholderText],
+    () => ({ startJob, startMainChatJob, cancelJob, resumeJob, formatPlaceholderText }),
+    [startJob, startMainChatJob, cancelJob, resumeJob, formatPlaceholderText],
   );
 }

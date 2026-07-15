@@ -110,12 +110,28 @@ export interface ArtifactCardData {
 // Mirrors CoderJobStatus in app/src/worker/coder-job-do.ts. Kept in the
 // client types so the hook + card can reference it without importing
 // Worker-side modules.
-export type BackgroundJobStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type BackgroundJobStatus =
+  | 'queued'
+  | 'running'
+  // Durably parked awaiting the user's typed guidance (a lead-mode job emitted a
+  // guidance call). Non-terminal: the card shows the question + a resume input.
+  | 'suspended'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 export interface CoderJobCardData {
   jobId: string;
   chatId: string;
   status: BackgroundJobStatus;
+  /** Populated on `job.suspended`: what the run is blocked on, shown in the
+   *  card's guidance panel so the user knows what to answer. */
+  question?: string;
+  /** Supporting detail the run attached to the suspend question (may be empty). */
+  context?: string;
+  /** JSON-encoded resume-data contract from the `job.suspended` event. Carried
+   *  so a future richer schema can drive the input; today it's `{answer:string}`. */
+  resumeSchema?: string;
   /** Client-side wall clock of the POST /api/jobs/start response. */
   startedAt: number;
   /** Set when status transitions to a terminal value. Used by

@@ -5,11 +5,13 @@ import {
   CircleDashed,
   Loader2,
   Ban,
+  PauseCircle,
+  Play,
   TriangleAlert,
   XCircle,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import type { BackgroundJobStatus, CoderJobCardData } from '@/types';
+import type { BackgroundJobStatus, CardAction, CoderJobCardData } from '@/types';
 import { resolveApiUrl } from '@/lib/api-url';
 import { getRoleLabel } from '@push/lib/role-display';
 import {
@@ -17,10 +19,12 @@ import {
   CARD_BADGE_INFO,
   CARD_BADGE_SUCCESS,
   CARD_BADGE_WARNING,
+  CARD_BUTTON_CLASS,
   CARD_HEADER_BG_ERROR,
   CARD_HEADER_BG_INFO,
   CARD_HEADER_BG_SUCCESS,
   CARD_HEADER_BG_WARNING,
+  CARD_INPUT_CLASS,
   CARD_SHELL_CLASS,
   CARD_TEXT_ERROR,
   CARD_TEXT_SUCCESS,
@@ -43,6 +47,8 @@ function getStatusLabel(status: BackgroundJobStatus): string {
       return 'Queued';
     case 'running':
       return 'Running';
+    case 'suspended':
+      return 'Waiting';
     case 'completed':
       return 'Completed';
     case 'failed':
@@ -58,6 +64,10 @@ function getStatusClasses(status: BackgroundJobStatus) {
       return { header: CARD_HEADER_BG_INFO, badge: CARD_BADGE_INFO, text: 'text-push-fg' };
     case 'running':
       return { header: CARD_HEADER_BG_INFO, badge: CARD_BADGE_WARNING, text: 'text-push-fg' };
+    case 'suspended':
+      // Attention state: header warning tint + warning badge to draw the eye,
+      // since the run is blocked on the user answering.
+      return { header: CARD_HEADER_BG_WARNING, badge: CARD_BADGE_WARNING, text: CARD_TEXT_WARNING };
     case 'completed':
       return { header: CARD_HEADER_BG_SUCCESS, badge: CARD_BADGE_SUCCESS, text: CARD_TEXT_SUCCESS };
     case 'failed':
@@ -70,6 +80,7 @@ function getStatusClasses(status: BackgroundJobStatus) {
 const STATUS_ICONS: Record<BackgroundJobStatus, LucideIcon> = {
   queued: CircleDashed,
   running: Loader2,
+  suspended: PauseCircle,
   completed: CheckCircle2,
   failed: TriangleAlert,
   cancelled: Ban,
@@ -94,7 +105,92 @@ async function postCancel(jobId: string): Promise<boolean> {
   }
 }
 
-export function JobCard({ data }: { data: CoderJobCardData }) {
+/**
+ * Guidance panel for a durably-suspended job: shows what the run is blocked on
+ * and an input to answer it. Mounted only while `status === 'suspended'`, so its
+ * local `answer`/`submitting` state resets naturally on unmount — a successful
+ * resume flips the job to running (unmounts this), and a rejected resume rolls
+ * the job back to suspended (remounts fresh). `onResume` is fire-and-forget; the
+ * parent's optimistic status flip drives the mount/unmount.
+ */
+function SuspendedGuidancePanel({
+  question,
+  context,
+  onResume,
+}: {
+  question?: string;
+  context?: string;
+  onResume: (answer: string) => void;
+}) {
+  const [answer, setAnswer] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = (): void => {
+    const trimmed = answer.trim();
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    onResume(trimmed);
+  };
+
+  return (
+    <div
+      className={`space-y-2 rounded-md border border-push-edge ${CARD_HEADER_BG_WARNING} px-3 py-2.5`}
+    >
+      <div className="flex items-start gap-2">
+        <PauseCircle className={`mt-0.5 h-4 w-4 shrink-0 ${CARD_TEXT_WARNING}`} />
+        <div className="min-w-0 flex-1">
+          <p className={`text-push-xs font-medium ${CARD_TEXT_WARNING}`}>Needs your guidance</p>
+          {question && (
+            <p className="text-push-sm text-push-fg-secondary leading-relaxed whitespace-pre-wrap">
+              {question}
+            </p>
+          )}
+          {context && (
+            <p className="mt-1 text-push-2xs text-push-fg-muted leading-relaxed whitespace-pre-wrap">
+              {context}
+            </p>
+          )}
+        </div>
+      </div>
+      <textarea
+        value={answer}
+        onChange={(event) => setAnswer(event.target.value)}
+        onKeyDown={(event) => {
+          // Cmd/Ctrl+Enter submits, matching the app's other multiline inputs.
+          if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+            event.preventDefault();
+            submit();
+          }
+        }}
+        rows={3}
+        disabled={submitting}
+        placeholder="Type your guidance to resume the job…"
+        className={`${CARD_INPUT_CLASS} resize-none leading-relaxed disabled:opacity-50`}
+      />
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!answer.trim() || submitting}
+        className={`${CARD_BUTTON_CLASS} h-9 w-full`}
+      >
+        <Play className="h-3.5 w-3.5" />
+        {submitting ? 'Resuming…' : 'Resume job'}
+      </button>
+    </div>
+  );
+}
+
+export function JobCard({
+  data,
+  messageId = '',
+  cardIndex = 0,
+  onAction,
+}: {
+  data: CoderJobCardData;
+  messageId?: string;
+  cardIndex?: number;
+  onAction?: (action: CardAction) => void;
+}) {
   const classes = getStatusClasses(data.status);
   const StatusIcon = STATUS_ICONS[data.status];
   const isActive = data.status === 'queued' || data.status === 'running';
@@ -180,6 +276,21 @@ export function JobCard({ data }: { data: CoderJobCardData }) {
         )}
         {data.error && (data.status === 'failed' || data.status === 'cancelled') && (
           <p className={`text-push-sm leading-relaxed ${CARD_TEXT_ERROR}`}>{data.error}</p>
+        )}
+        {data.status === 'suspended' && (
+          <SuspendedGuidancePanel
+            question={data.question}
+            context={data.context}
+            onResume={(answer) =>
+              onAction?.({
+                type: 'job-resume',
+                messageId,
+                cardIndex,
+                jobId: data.jobId,
+                answer,
+              })
+            }
+          />
         )}
         {isStalled && (
           <div

@@ -141,7 +141,13 @@ export function resolveSendEngineTrigger(opts: {
 export function hasActiveBackgroundJob(conv: Conversation | undefined): boolean {
   if (!conv?.pendingJobIds) return false;
   for (const entry of Object.values(conv.pendingJobIds)) {
-    if (entry.status === 'queued' || entry.status === 'running') return true;
+    // `suspended` counts as active: a job parked awaiting guidance is still
+    // resumable and holds an older checkpoint. Letting a new send start while it
+    // waits would let the eventual resume race against newer chat work from a
+    // stale checkpoint — so block new sends until it's resumed or cancelled.
+    if (entry.status === 'queued' || entry.status === 'running' || entry.status === 'suspended') {
+      return true;
+    }
   }
   return false;
 }

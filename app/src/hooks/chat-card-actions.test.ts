@@ -109,6 +109,7 @@ describe('chat-card-actions', () => {
       sendMessageRef: { current: sendMessage },
       isStreaming: false,
       messages: conversations['chat-1'].messages,
+      resumeJob: async () => true,
     });
 
     await handleCardAction({
@@ -128,6 +129,76 @@ describe('chat-card-actions', () => {
       },
     });
     expect(dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+  });
+
+  it('job-resume forwards the trimmed answer to resumeJob', async () => {
+    let conversations = makeConversation([
+      { id: 'message-1', role: 'assistant', content: '', timestamp: 1, status: 'done', cards: [] },
+    ]);
+    const resumeJob = vi.fn().mockResolvedValue(true);
+    const { handleCardAction } = useChatCardActions({
+      setConversations: (updater) => {
+        conversations = typeof updater === 'function' ? updater(conversations) : updater;
+      },
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      activeChatId: 'chat-1',
+      sandboxIdRef: { current: null },
+      isMainProtectedRef: { current: false },
+      branchInfoRef: { current: undefined },
+      repoRef: { current: null },
+      updateAgentStatus: vi.fn(),
+      sendMessageRef: { current: vi.fn().mockResolvedValue(undefined) },
+      isStreaming: false,
+      messages: conversations['chat-1'].messages,
+      resumeJob,
+    });
+
+    await handleCardAction({
+      type: 'job-resume',
+      messageId: 'message-1',
+      cardIndex: 0,
+      jobId: 'job-x',
+      answer: '  use option A  ',
+    });
+
+    expect(resumeJob).toHaveBeenCalledWith('chat-1', 'job-x', 'use option A');
+  });
+
+  it('job-resume injects a retry message when the resume is rejected', async () => {
+    let conversations = makeConversation([
+      { id: 'message-1', role: 'assistant', content: '', timestamp: 1, status: 'done', cards: [] },
+    ]);
+    const resumeJob = vi.fn().mockResolvedValue(false);
+    const { handleCardAction } = useChatCardActions({
+      setConversations: (updater) => {
+        conversations = typeof updater === 'function' ? updater(conversations) : updater;
+      },
+      dirtyConversationIdsRef: { current: new Set<string>() },
+      activeChatId: 'chat-1',
+      sandboxIdRef: { current: null },
+      isMainProtectedRef: { current: false },
+      branchInfoRef: { current: undefined },
+      repoRef: { current: null },
+      updateAgentStatus: vi.fn(),
+      sendMessageRef: { current: vi.fn().mockResolvedValue(undefined) },
+      isStreaming: false,
+      messages: conversations['chat-1'].messages,
+      resumeJob,
+    });
+
+    await handleCardAction({
+      type: 'job-resume',
+      messageId: 'message-1',
+      cardIndex: 0,
+      jobId: 'job-x',
+      answer: 'answer',
+    });
+
+    expect(resumeJob).toHaveBeenCalled();
+    const injected = conversations['chat-1'].messages.find((m) =>
+      /Couldn't resume/.test(m.content),
+    );
+    expect(injected).toBeDefined();
   });
 
   it('approval-approve flips the card to approved when a waiter is released', async () => {
@@ -156,6 +227,7 @@ describe('chat-card-actions', () => {
       sendMessageRef: { current: null },
       isStreaming: false,
       messages: conversations['chat-1'].messages,
+      resumeJob: async () => true,
     });
     await handleCardAction({
       type: 'approval-approve',
@@ -194,6 +266,7 @@ describe('chat-card-actions', () => {
       sendMessageRef: { current: null },
       isStreaming: false,
       messages: conversations['chat-1'].messages,
+      resumeJob: async () => true,
     });
     await handleCardAction({
       type: 'approval-approve',
@@ -225,6 +298,7 @@ describe('chat-card-actions', () => {
       sendMessageRef: { current: null },
       isStreaming: false,
       messages: conversations['chat-1'].messages,
+      resumeJob: async () => true,
     });
 
     const sandboxStateCard: ChatCard = {
@@ -308,6 +382,7 @@ describe('chat-card-actions', () => {
       sendMessageRef: { current: null },
       isStreaming: false,
       messages: conversations['chat-1'].messages,
+      resumeJob: async () => true,
     });
 
     await handleCardAction({
@@ -393,6 +468,7 @@ describe('chat-card-actions', () => {
         sendMessageRef: { current: null },
         isStreaming: false,
         messages: conversations['chat-1'].messages,
+        resumeJob: async () => true,
       },
       getCard: () => conversations['chat-1'].messages[0].cards?.[0],
       updateAgentStatus,
