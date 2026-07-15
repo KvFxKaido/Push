@@ -497,9 +497,13 @@ Model-invoked subprocesses support three backends:
 Native mode covers `exec`, `exec_start`, daemon `sandbox_exec`, and headless
 acceptance checks. It mounts the host read-only, keeps the workspace and
 disposable temp filesystems writable, masks conventional runtime sockets under
-`/run`, isolates process namespaces, and denies network by default. It fails closed when
-Bubblewrap is unavailable. Set `PUSH_NATIVE_SANDBOX_NETWORK=1` only when the run
-genuinely needs network access.
+`/run`, isolates process namespaces, and denies network by default. For a linked
+Git worktree, Push also makes its registered gitdir/common-dir writable after
+validating the worktree's reciprocal metadata pointers, so ordinary `git add`
+and `git commit` operations continue to work. It fails closed when Bubblewrap is
+unavailable or the linked-worktree metadata is inconsistent. Set
+`PUSH_NATIVE_SANDBOX_NETWORK=1` only when the run genuinely needs network
+access.
 
 Native mode is currently opt-in while Linux/WSL toolchain compatibility is
 exercised. Built-in file tools remain protected by the symlink-aware workspace

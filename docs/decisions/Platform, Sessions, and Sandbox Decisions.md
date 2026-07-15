@@ -141,6 +141,13 @@ temporarily opt into network with `PUSH_NATIVE_SANDBOX_NETWORK=1`; destination-
 scoped grants and a network broker remain future work. If native containment is
 requested and Bubblewrap is missing, execution fails closed.
 
+Linked Git worktrees are the narrow filesystem exception: their `.git` marker
+points outside the checkout, so Push resolves the registered gitdir/common-dir,
+validates the marker and reciprocal pointer before every spawn, and mounts that
+repository metadata writable. Inconsistent metadata fails closed; this preserves
+ordinary Git mutations without trusting a workspace-controlled redirect to an
+unrelated checkout.
+
 Compatibility is explicit: legacy `PUSH_LOCAL_SANDBOX=true` and `--sandbox`
 still select the Docker backend; `false` / `host` select direct execution. Native
 mode is not the default until toolchain/cache behavior has been exercised across

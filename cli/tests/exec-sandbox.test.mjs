@@ -44,10 +44,12 @@ describe('buildNativeSandboxArgs', () => {
   const shell = { bin: '/bin/bash', argsPrefix: ['-lc'], commandMode: 'argv' };
 
   it('makes the host read-only, workspace writable, and network isolated', () => {
+    const workspaceRoot = path.resolve('/workspace/repo');
+    const cwd = path.join(workspaceRoot, 'packages/cli');
     const args = buildNativeSandboxArgs({
       command: 'pnpm test',
-      workspaceRoot: '/workspace/repo',
-      cwd: '/workspace/repo/packages/cli',
+      workspaceRoot,
+      cwd,
       shell,
     });
 
@@ -61,10 +63,25 @@ describe('buildNativeSandboxArgs', () => {
     ]);
     assert.ok(args.includes('--ro-bind'));
     assert.ok(args.includes('--bind'));
-    assert.ok(args.includes('/workspace/repo'));
-    assert.ok(args.includes('/workspace/repo/packages/cli'));
+    assert.ok(args.includes(workspaceRoot));
+    assert.ok(args.includes(cwd));
     assert.ok(args.includes('/run'), 'host runtime sockets are masked');
     assert.equal(args.at(-1), 'pnpm test');
+  });
+
+  it('adds validated external Git metadata as an additional writable mount', () => {
+    const workspaceRoot = path.resolve('/workspace/repo');
+    const gitCommonDir = path.resolve('/repos/main/.git');
+    const args = buildNativeSandboxArgs({
+      command: 'git add file.txt',
+      workspaceRoot,
+      cwd: workspaceRoot,
+      shell,
+      writableGitMetadataPaths: [gitCommonDir],
+    });
+
+    const bindIndex = args.lastIndexOf('--bind');
+    assert.deepEqual(args.slice(bindIndex, bindIndex + 3), ['--bind', gitCommonDir, gitCommonDir]);
   });
 
   it('allows an explicit network opt-in without widening filesystem access', () => {
@@ -117,6 +134,53 @@ describe('native exec sandbox integration', { skip: !hasBubblewrap }, () => {
     } finally {
       await fs.rm(workspace, { recursive: true, force: true });
       await fs.rm(deniedPath, { force: true }).catch(() => {});
+    }
+  });
+
+  it('keeps linked-worktree Git metadata writable', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-native-worktree-'));
+    const main = path.join(root, 'main');
+    const worktree = path.join(root, 'linked');
+    process.env.PUSH_LOCAL_SANDBOX = 'native';
+
+    try {
+      await fs.mkdir(main);
+      await execFileAsync('git', ['init', '-q'], { cwd: main });
+      await execFileAsync('git', ['config', 'user.email', 'push@example.test'], { cwd: main });
+      await execFileAsync('git', ['config', 'user.name', 'Push Test'], { cwd: main });
+      await fs.writeFile(path.join(main, 'tracked.txt'), 'before\n');
+      await execFileAsync('git', ['add', 'tracked.txt'], { cwd: main });
+      await execFileAsync('git', ['commit', '-qm', 'initial'], { cwd: main });
+      await execFileAsync('git', ['worktree', 'add', '-qb', 'native-review', worktree], {
+        cwd: main,
+      });
+
+      const result = await runCommandInExecSandbox(
+        "printf 'after\\n' >> tracked.txt && git add tracked.txt && git commit -qm native",
+        worktree,
+        { cwd: worktree, env: { ...process.env } },
+      );
+      assert.equal(result.backend, 'native');
+      const subject = await execFileAsync('git', ['log', '-1', '--format=%s'], {
+        cwd: worktree,
+        encoding: 'utf8',
+      });
+      assert.equal(subject.stdout.trim(), 'native');
+
+      // The workspace marker is writable. Redirecting it at another checkout
+      // must not convince the host-side resolver to grant that checkout's Git
+      // metadata write access on the next command.
+      await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${path.join(main, '.git')}\n`);
+      await assert.rejects(
+        () =>
+          runCommandInExecSandbox('true', worktree, {
+            cwd: worktree,
+            env: { ...process.env },
+          }),
+        /inconsistent linked-worktree metadata/,
+      );
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
     }
   });
 });

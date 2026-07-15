@@ -119,6 +119,127 @@ export interface NativeSandboxArgsInput {
   cwd: string;
   shell: { bin: string; argsPrefix: string[]; commandMode: 'argv' | 'stdin' };
   networkAccess?: boolean;
+  writableGitMetadataPaths?: string[];
+}
+
+function isInsidePath(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return (
+    relative === '' ||
+    (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative))
+  );
+}
+
+function resolveGitFileTarget(contents: string, baseDir: string, label: string): string {
+  const value = contents.trim();
+  const target = label === '.git' ? value.match(/^gitdir:\s*(.+)$/i)?.[1] : value;
+  if (!target) throw new Error(`Native exec sandbox could not parse linked-worktree ${label}.`);
+  return path.resolve(baseDir, target);
+}
+
+async function resolveNativeGitMetadataPaths(
+  workspaceRoot: string,
+  env: NodeJS.ProcessEnv,
+): Promise<string[]> {
+  // Do not let caller-provided Git routing variables redirect the host-side
+  // discovery command. The fixed `-C` root is the only authority here.
+  const gitEnv = { ...env };
+  delete gitEnv.GIT_DIR;
+  delete gitEnv.GIT_WORK_TREE;
+  delete gitEnv.GIT_COMMON_DIR;
+
+  let output: string;
+  try {
+    const { stdout } = await execFileAsync(
+      'git',
+      [
+        '-C',
+        workspaceRoot,
+        'rev-parse',
+        '--path-format=absolute',
+        '--show-toplevel',
+        '--git-dir',
+        '--git-common-dir',
+      ],
+      { env: gitEnv, encoding: 'utf8' },
+    );
+    output = String(stdout);
+  } catch {
+    return [];
+  }
+
+  const [rawTopLevel, rawGitDir, rawCommonDir] = output.split(/\r?\n/).filter(Boolean);
+  if (!rawTopLevel || !rawGitDir || !rawCommonDir) {
+    throw new Error('Native exec sandbox could not resolve Git metadata paths safely.');
+  }
+
+  const [topLevel, gitDir, commonDir] = await Promise.all([
+    fs.realpath(rawTopLevel),
+    fs.realpath(rawGitDir),
+    fs.realpath(rawCommonDir),
+  ]);
+  if (!isInsidePath(topLevel, workspaceRoot)) {
+    throw new Error(
+      'Native exec sandbox refused Git metadata whose worktree does not contain the workspace.',
+    );
+  }
+  const marker = path.join(topLevel, '.git');
+  const markerStat = await fs.stat(marker);
+
+  if (markerStat.isFile()) {
+    // A linked worktree's writable metadata lives outside its checkout. Verify
+    // both pointers before granting that external directory write access: the
+    // workspace marker must name this gitdir, and the registered gitdir must
+    // point back to the same marker. A command can edit the workspace marker,
+    // but it cannot forge the read-only reciprocal pointer outside the sandbox.
+    try {
+      const markerTarget = await fs.realpath(
+        resolveGitFileTarget(await fs.readFile(marker, 'utf8'), path.dirname(marker), '.git'),
+      );
+      const reciprocalTarget = await fs.realpath(
+        resolveGitFileTarget(
+          await fs.readFile(path.join(gitDir, 'gitdir'), 'utf8'),
+          gitDir,
+          'gitdir',
+        ),
+      );
+      const registeredCommonDir = await fs.realpath(
+        resolveGitFileTarget(
+          await fs.readFile(path.join(gitDir, 'commondir'), 'utf8'),
+          gitDir,
+          'commondir',
+        ),
+      );
+      const realMarker = await fs.realpath(marker);
+      if (
+        markerTarget !== gitDir ||
+        reciprocalTarget !== realMarker ||
+        registeredCommonDir !== commonDir
+      ) {
+        throw new Error('pointer mismatch');
+      }
+    } catch {
+      throw new Error('Native exec sandbox refused inconsistent linked-worktree metadata.');
+    }
+  } else if (!markerStat.isDirectory()) {
+    throw new Error('Native exec sandbox refused an unsupported .git marker.');
+  }
+
+  const externalPaths = [...new Set([gitDir, commonDir])]
+    .filter((candidate) => !isInsidePath(workspaceRoot, candidate))
+    .sort((left, right) => left.length - right.length)
+    .filter((candidate, index, paths) =>
+      paths.slice(0, index).every((parent) => !isInsidePath(parent, candidate)),
+    );
+
+  for (const candidate of externalPaths) {
+    if (candidate === path.parse(candidate).root || isInsidePath(candidate, workspaceRoot)) {
+      throw new Error(
+        `Native exec sandbox refused dangerously broad Git metadata path: ${candidate}`,
+      );
+    }
+  }
+  return externalPaths;
 }
 
 /** Exported as a pure builder so the security boundary has direct tests. */
@@ -173,6 +294,11 @@ export function buildNativeSandboxArgs(input: NativeSandboxArgsInput): string[] 
     '--bind',
     workspaceRoot,
     workspaceRoot,
+    ...(input.writableGitMetadataPaths || []).flatMap((metadataPath) => [
+      '--bind',
+      metadataPath,
+      metadataPath,
+    ]),
     '--chdir',
     cwd,
     input.shell.bin,
@@ -227,7 +353,11 @@ export async function createExecSandboxPlan(
       'Native exec sandbox refuses to use the filesystem root as a writable workspace.',
     );
   }
-  const [bwrap, shell] = await Promise.all([resolveBubblewrapBinary(env), resolveCommandShell()]);
+  const [bwrap, shell, writableGitMetadataPaths] = await Promise.all([
+    resolveBubblewrapBinary(env),
+    resolveCommandShell(),
+    resolveNativeGitMetadataPaths(root, env),
+  ]);
   return {
     backend,
     bin: bwrap,
@@ -237,6 +367,7 @@ export async function createExecSandboxPlan(
       cwd,
       shell,
       networkAccess: nativeNetworkAllowed(env),
+      writableGitMetadataPaths,
     }),
     cwd: root,
   };

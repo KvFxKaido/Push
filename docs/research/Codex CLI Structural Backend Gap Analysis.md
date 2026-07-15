@@ -123,8 +123,8 @@ reason to exist (local reach, real filesystem, real shell).
 
 The target contract is:
 
-- spawned commands cannot write outside the selected workspace and disposable
-  temporary storage;
+- spawned commands cannot write outside the selected workspace, its validated
+  linked-worktree Git metadata, and disposable temporary storage;
 - spawned commands cannot reach host service sockets;
 - network is denied unless the run receives an explicit network grant;
 - the boundary applies symmetrically to foreground exec, detached exec, daemon
@@ -138,8 +138,8 @@ The target contract is:
 1. **Linux/WSL subprocess boundary.** Add an opt-in Bubblewrap backend shared by
    CLI exec, detached exec, daemon exec, and acceptance checks. Host root is
    read-only; workspace and tmpfs are writable; process namespaces are isolated;
-   conventional runtime sockets under `/run` are masked; network is off by
-   default.
+   conventional runtime sockets under `/run` are masked; registered linked-
+   worktree metadata remains writable; network is off by default.
 2. **Permission vocabulary.** Replace backend-shaped booleans with explicit
    `read-only`, `workspace-write`, and `full-access` modes, with an escalation
    path rather than a global network escape hatch.
