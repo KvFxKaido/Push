@@ -322,9 +322,10 @@ describe('push run --jsonl', needsChildStdout, () => {
 describe('push run --jsonl stream', needsHeadlessJsonl, () => {
   it('emits push.runtime.v1 envelopes and ends with one run_complete', async () => {
     const mock = await startMockProviderServer({ tokens: ['Hello', ' world.'] });
+    const task = `Say hello. ${'x'.repeat(300)}`;
     try {
       const { code, stdout, stderr } = await runCli(
-        ['run', '--task', 'Say hello.', '--provider', 'openrouter', '--jsonl'],
+        ['run', '--task', task, '--provider', 'openrouter', '--jsonl'],
         {
           timeout: 15_000,
           env: {
@@ -345,6 +346,8 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
       assert.ok(lines.every((event) => event.sessionId === lines[0].sessionId));
       assert.ok(lines.every((event) => event.runId === lines[0].runId));
       assert.equal(lines[0].type, 'user_message');
+      assert.equal(lines[0].payload.text, task);
+      assert.equal(lines[0].payload.preview.length, 280);
       assert.ok(lines.some((event) => event.type === 'assistant_token'));
       assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(lines.at(-1).type, 'run_complete');
@@ -396,6 +399,14 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
         .trim()
         .split('\n')
         .map(JSON.parse);
+      const streamedUserMessage = lines.find((event) => event.type === 'user_message');
+      assert.match(
+        streamedUserMessage.payload.text,
+        /Acceptance criteria \(verified after the run\)/,
+      );
+      assert.match(streamedUserMessage.payload.text, /node -e "process\.exit\(7\)"/);
+      const persistedUserMessage = persisted.find((event) => event.type === 'user_message');
+      assert.equal(Object.hasOwn(persistedUserMessage.payload, 'text'), false);
       assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(persisted.at(-1).type, 'run_complete');
       assert.equal(persisted.at(-1).payload.outcome, 'failed');

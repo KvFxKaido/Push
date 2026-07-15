@@ -575,7 +575,7 @@ async function runHeadless(
     preview: task.slice(0, 280),
   };
   await appendSessionEvent(state, 'user_message', userMessagePayload, runId);
-  jsonl?.emit('user_message', userMessagePayload, runId);
+  jsonl?.emit('user_message', { ...userMessagePayload, text: taskPrompt }, runId);
 
   // Shared runtime/tool telemetry uses console.log for daemon-friendly
   // structured ops lines. A headless machine contract must keep stdout pure,
