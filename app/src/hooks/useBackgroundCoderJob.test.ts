@@ -972,11 +972,106 @@ describe('useBackgroundCoderJob — durable suspend / resume', () => {
     vi.unstubAllGlobals();
   });
 
-  it('resumeJob rolls the card back to suspended and returns false when the POST is rejected', async () => {
+  it('resumeJob re-opens the stream even when the stale suspended stream is still registered', async () => {
+    // Race guard (push-agent WARNING): the suspended stream can still be
+    // registered locally in the window between parsing job.suspended (card
+    // becomes resumable) and the old reader's teardown. Without closeStream, the
+    // reopen would be a no-op and the resumed run's events would be dropped. Here
+    // the first /events stream emits job.suspended but never closes, so it stays
+    // registered while resumeJob runs; the reopen must still fire.
+    const startedEvent = {
+      id: 'ev-1',
+      timestamp: 1,
+      type: 'job.started',
+      executionId: 'job-race',
+      role: 'coder',
+      detail: 'x',
+    };
+    const suspendedEvent = {
+      id: 'ev-2',
+      timestamp: 2,
+      type: 'job.suspended',
+      executionId: 'job-race',
+      role: 'coder',
+      question: 'Which?',
+      context: '',
+      resumeSchema: '{"required":["answer"]}',
+    };
+    const openSse =
+      `id: ${startedEvent.id}\nevent: ${startedEvent.type}\ndata: ${JSON.stringify(startedEvent)}\n\n` +
+      `id: ${suspendedEvent.id}\nevent: ${suspendedEvent.type}\ndata: ${JSON.stringify(suspendedEvent)}\n\n`;
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      // POST /start
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-race' }), { status: 202 }) as Response,
+      )
+      // GET /events — emits job.suspended but never closes (stays registered)
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(openSse));
+              // deliberately no c.close() — the stream stays open
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      )
+      // POST /resume
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-race', resumed: true }), {
+          status: 202,
+        }) as Response,
+      )
+      // reopened GET /events — closes immediately
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, getConvs } = useHarness({ 'chat-1': makeConversation('chat-1') });
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The card is parked and the first stream is still registered (never closed).
+    const parked = getConvs()['chat-1'].pendingJobIds?.['job-race'];
+    expect(parked?.status).toBe('suspended');
+
+    const ok = await hook.resumeJob('chat-1', 'job-race', 'do it');
+    expect(ok).toBe(true);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Despite the stale stream still being registered, the reopen fired: the
+    // 4th fetch targets /events (call order: start, events, resume, events).
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/jobs/job-race/resume');
+    expect(fetchMock.mock.calls[3][0]).toBe('/api/jobs/job-race/events');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('resumeJob rolls the card back to suspended on a 400 (bad input) without re-opening the stream', async () => {
+    // 400 = INVALID_RESUME_DATA: the DO validates before claiming the job, so it
+    // is still suspended with no new lifecycle event. Roll back for a retry.
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ error: 'NOT_SUSPENDED' }), { status: 409 }) as Response,
+        new Response(JSON.stringify({ error: 'INVALID_RESUME_DATA' }), { status: 400 }) as Response,
       );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -984,7 +1079,7 @@ describe('useBackgroundCoderJob — durable suspend / resume', () => {
     const ok = await hook.resumeJob('chat-1', 'job-susp', 'answer');
     expect(ok).toBe(false);
 
-    // No stream re-open on failure — only the rejected POST was issued.
+    // No stream re-open on a 400 — only the rejected POST was issued.
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Card rolled back so the guidance panel returns for a retry.
@@ -994,6 +1089,68 @@ describe('useBackgroundCoderJob — durable suspend / resume', () => {
       | undefined;
     expect(card?.data.status).toBe('suspended');
     expect(card?.data.question).toBe('Which config approach?');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('resumeJob re-opens the stream (not rollback) on a non-400 rejection so a server-side terminal event is drained', async () => {
+    // 502 = RESUME_RESTORE_FAILED: the DO already marked the job FAILED and
+    // emitted a terminal job.failed before returning. Re-open the stream to
+    // drain it — a job.failed replay flips the card to failed. Parking it back
+    // at 'suspended' would strand it forever (the reconnect sweep skips
+    // suspended jobs).
+    const failedEvent = {
+      id: 'ev-10',
+      timestamp: 2000,
+      type: 'job.failed',
+      executionId: 'job-susp',
+      role: 'coder',
+      error: 'Resume workspace restore failed.',
+    };
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      // POST /resume → 502 with a terminal event already persisted server-side
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'RESUME_RESTORE_FAILED' }), {
+          status: 502,
+        }) as Response,
+      )
+      // re-opened SSE stream replays the terminal job.failed then closes
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(
+                encoder.encode(
+                  `id: ${failedEvent.id}\nevent: ${failedEvent.type}\ndata: ${JSON.stringify(failedEvent)}\n\n`,
+                ),
+              );
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, getConvs } = useHarness(makeSuspendedConvs('job-susp'));
+    const ok = await hook.resumeJob('chat-1', 'job-susp', 'answer');
+    expect(ok).toBe(false);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The stream was re-opened (2nd fetch) to reconcile — not parked at suspended.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/jobs/job-susp/events');
+
+    // The drained terminal event flipped the card to failed.
+    const convCards = getConvs()['chat-1'].messages.flatMap((m) => m.cards ?? []);
+    const card = convCards.find((c) => c.type === 'coder-job') as
+      | { data: CoderJobCardData }
+      | undefined;
+    expect(card?.data.status).toBe('failed');
 
     vi.unstubAllGlobals();
   });

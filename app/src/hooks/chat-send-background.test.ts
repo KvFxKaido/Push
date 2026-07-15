@@ -43,7 +43,11 @@ vi.mock('@/hooks/useUserProfile', () => ({
 
 import { getActiveProvider } from '@/lib/orchestrator';
 import { isProviderEngineCapable } from '@/lib/provider-engine-capability';
-import { resolveSendEngineTrigger, startBackgroundMainChatTurn } from './chat-send-background';
+import {
+  hasActiveBackgroundJob,
+  resolveSendEngineTrigger,
+  startBackgroundMainChatTurn,
+} from './chat-send-background';
 
 const BG_KEY = 'push:background-mode-preference';
 const MODE_KEY = 'push:delegation-mode-preference';
@@ -310,5 +314,35 @@ describe('startBackgroundMainChatTurn', () => {
         }),
       }),
     );
+  });
+});
+
+describe('hasActiveBackgroundJob', () => {
+  function convWith(status: string): Conversation {
+    return {
+      id: 'chat-1',
+      title: 't',
+      messages: [],
+      createdAt: 1,
+      lastMessageAt: 1,
+      pendingJobIds: {
+        'job-1': { jobId: 'job-1', status, lastEventId: null, startedAt: 1, updatedAt: 1 },
+      },
+    } as unknown as Conversation;
+  }
+
+  it('counts queued / running / suspended jobs as active', () => {
+    expect(hasActiveBackgroundJob(convWith('queued'))).toBe(true);
+    expect(hasActiveBackgroundJob(convWith('running'))).toBe(true);
+    // A job parked awaiting guidance holds an older checkpoint — a new send must
+    // be blocked so the eventual resume doesn't race newer chat work.
+    expect(hasActiveBackgroundJob(convWith('suspended'))).toBe(true);
+  });
+
+  it('does not count terminal jobs or empty conversations as active', () => {
+    expect(hasActiveBackgroundJob(convWith('completed'))).toBe(false);
+    expect(hasActiveBackgroundJob(convWith('failed'))).toBe(false);
+    expect(hasActiveBackgroundJob(convWith('cancelled'))).toBe(false);
+    expect(hasActiveBackgroundJob(undefined)).toBe(false);
   });
 });

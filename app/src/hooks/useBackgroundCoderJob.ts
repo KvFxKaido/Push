@@ -492,7 +492,9 @@ export function useBackgroundCoderJob({
           console.warn(
             `[useBackgroundCoderJob] Failed to open SSE stream for ${jobId}: ${resp.status}`,
           );
-          openStreamsRef.current.delete(jobId);
+          if (openStreamsRef.current.get(jobId) === controller) {
+            openStreamsRef.current.delete(jobId);
+          }
           return;
         }
 
@@ -523,11 +525,30 @@ export function useBackgroundCoderJob({
           console.warn(`[useBackgroundCoderJob] SSE stream for ${jobId} errored`, err);
         }
       } finally {
-        openStreamsRef.current.delete(jobId);
+        // Only clear the registry entry if it still points at THIS stream. A
+        // resume that force-replaces a stale suspended stream (closeStream +
+        // reopen) registers a NEW controller under the same jobId; this stream's
+        // teardown must not delete that replacement out from under it.
+        if (openStreamsRef.current.get(jobId) === controller) {
+          openStreamsRef.current.delete(jobId);
+        }
       }
     },
     [dispatchServerEvent],
   );
+
+  /** Force-close the SSE stream registered for `jobId`, if any: abort its fetch
+   *  and remove the registry entry so a subsequent openSseStream isn't a no-op.
+   *  Needed on resume — the suspended stream can still be registered locally in
+   *  the window between `job.suspended` being parsed (card becomes resumable) and
+   *  the old reader's teardown, so reopening without this could be dropped. */
+  const closeStream = useCallback((jobId: string) => {
+    const controller = openStreamsRef.current.get(jobId);
+    if (controller) {
+      controller.abort();
+      openStreamsRef.current.delete(jobId);
+    }
+  }, []);
 
   // -------------------------------------------------------------------------
   // Public API
@@ -736,12 +757,30 @@ export function useBackgroundCoderJob({
         });
         if (!res.ok) {
           console.warn(`[useBackgroundCoderJob] Resume rejected for ${jobId}: ${res.status}`);
-          rollback();
+          if (res.status === 400) {
+            // Bad input (INVALID_RESUME_DATA) — the DO validates before claiming
+            // the job, so it's still suspended with no new lifecycle event. Roll
+            // back to the guidance panel for a retry.
+            rollback();
+          } else {
+            // Any other rejection means the DO's server-side state diverged from
+            // the client's: several handleResume failure paths (missing
+            // metadata/checkpoint, restore failure) mark the job FAILED and emit
+            // a terminal job.failed BEFORE returning 409/502. Re-open the stream
+            // to drain that event and reconcile the card — parking it back at
+            // 'suspended' would strand it forever, since the reconnect sweep
+            // skips suspended jobs.
+            closeStream(jobId);
+            void openSseStream(chatId, jobId, entry?.lastEventId ?? null);
+          }
           return false;
         }
         // Re-open the stream from the last replayed event so the relaunched
-        // run's events are not missed. openSseStream no-ops if one is already
-        // open for this jobId, so a redundant call is safe.
+        // run's events are not missed. Force-close any stale suspended stream
+        // first: it may still be registered locally (the window between parsing
+        // job.suspended and the old reader's teardown), which would make
+        // openSseStream a no-op and drop the resumed run's events.
+        closeStream(jobId);
         void openSseStream(chatId, jobId, entry?.lastEventId ?? null);
         return true;
       } catch (err) {
@@ -750,7 +789,7 @@ export function useBackgroundCoderJob({
         return false;
       }
     },
-    [conversationsRef, openSseStream, upsertJobCardData, upsertJobEntry],
+    [closeStream, conversationsRef, openSseStream, upsertJobCardData, upsertJobEntry],
   );
 
   // -------------------------------------------------------------------------
