@@ -150,6 +150,7 @@ Skill discovery:
 ./push run "Fix the failing test in utils.test.js"
 ./push run --task "Refactor auth module" --accept "pnpm test" --accept "pnpm run lint" --json
 ./push run "Inspect the repository" --jsonl
+./push run "Summarize test results" --jsonl --output-schema ./result.schema.json
 ```
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
@@ -179,6 +180,17 @@ line. It uses the same event types and payloads as pushd, including assistant
 tokens, tool lifecycle events, warnings, errors, and acceptance results. The
 last line is always `run_complete`; its outcome reflects acceptance checks as
 well as the agent run. `--json` and `--jsonl` are mutually exclusive.
+
+`--output-schema <path>` constrains a `push run` final response using a Draft
+2020-12 JSON Schema. Push compiles the schema before starting the run, asks the
+agent for exact JSON, and validates the result in code. If the first result is
+invalid, Push makes up to two output-only repair requests; those requests have
+no tools attached and do not replay the task or its side effects. Exhausting
+the repairs exits non-zero and, under `--jsonl`, emits an `error` followed by
+the single failed `run_complete`. On success, `run_complete.payload.summary`
+contains the canonical serialized JSON. The flag also works with `--json` and
+plain headless output; aggregate `--json` adds an `outputSchema` object with
+`valid`, `repairs`, and an `error` on failure.
 
 Live-only events can repeat the current `seq` because that field remains the
 session journal cursor, matching daemon behavior. Consumers should use line
@@ -612,6 +624,7 @@ Options:
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
   --json                  JSON output (headless/resume)
   --jsonl                 Stream push.runtime.v1 events (headless run only)
+  --output-schema <path>  Constrain push run final output to a JSON Schema
   --no-attach             Resume: list sessions without prompting
   --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session
   --sandbox               Enable local Docker sandbox

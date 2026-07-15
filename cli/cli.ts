@@ -9,6 +9,7 @@ import process from 'node:process';
 import {
   PROVIDER_CONFIGS,
   DEPRECATED_PROVIDERS,
+  createProviderStream,
   resolveApiKey,
   getProviderList,
 } from './provider.js';
@@ -24,7 +25,7 @@ import {
 } from './worktree.js';
 import { getCuratedModels, DEFAULT_MODELS } from './model-catalog.js';
 import { safeCitations, citationHost, sanitizeCitationText } from './citation-format.js';
-import type { UrlCitation } from '../lib/provider-contract.ts';
+import type { AIProviderType, LlmMessage, UrlCitation } from '../lib/provider-contract.ts';
 import {
   createSessionState,
   saveSessionState,
@@ -81,6 +82,12 @@ import { runCommandInResolvedShell } from './shell.js';
 import { scrubEnv } from './env-scrub.js';
 import { resolveExecSandboxBackend, runCommandInExecSandbox } from './exec-sandbox.js';
 import { createHeadlessJsonlWriter } from './headless-jsonl.js';
+import {
+  constrainOutputToSchema,
+  formatOutputSchemaInstruction,
+  loadOutputSchema,
+  type ConstrainedOutputResult,
+} from './output-schema.js';
 import { ensureRepoCommandsSeeded } from './repo-commands.js';
 import { getDefaultMemoryStore, setDefaultMemoryStore } from '../lib/context-memory-store.js';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.js';
@@ -119,6 +126,8 @@ const KNOWN_OPTIONS = new Set([
   'maxRounds',
   'json',
   'jsonl',
+  'output-schema',
+  'outputSchema',
   'lint',
   'headless',
   'allow-exec',
@@ -301,6 +310,7 @@ Options:
   --mode <strict|auto|yolo>     Exec approval mode: strict=prompt all, auto=prompt high-risk (default), yolo=no prompts
   --json                        JSON output in headless mode / resume
   --jsonl                       Stream push.runtime.v1 events in headless mode
+  --output-schema <path>        Constrain the final push run output to a JSON Schema
   --no-attach                   Resume: list sessions without prompting (script-friendly)
   --no-resume-prompt            Bare push: skip the "resume or new" prompt and start a new session
   --sandbox                     Enable local Docker sandbox
@@ -529,6 +539,68 @@ export function makeCLIEventHandler() {
   };
 }
 
+const OUTPUT_REPAIR_TIMEOUT_MS = 120_000;
+
+/**
+ * Run one output-only repair request. No tool schemas or executor are attached,
+ * and every provider-native server tool is explicitly disabled, so this cannot
+ * replay the primary turn's filesystem/GitHub/command or provider-search side
+ * effects.
+ */
+async function generateOutputSchemaRepair(state, providerConfig, apiKey, prompt, signal) {
+  const abortError = () => {
+    const error = new Error('Output-schema repair aborted.');
+    error.name = 'AbortError';
+    return error;
+  };
+  const timeoutController = new AbortController();
+  const timeout = setTimeout(() => timeoutController.abort(), OUTPUT_REPAIR_TIMEOUT_MS);
+  const signals = [timeoutController.signal];
+  if (signal) signals.push(signal);
+  const compositeSignal = AbortSignal.any(signals);
+  const stream = createProviderStream(providerConfig, apiKey, { sessionId: state.sessionId });
+  const messages: LlmMessage[] = [
+    {
+      id: `output-repair-${Date.now().toString(36)}`,
+      role: 'user',
+      content: prompt,
+      timestamp: Date.now(),
+    },
+  ];
+  let text = '';
+
+  try {
+    for await (const event of stream({
+      provider: providerConfig.id as AIProviderType,
+      model: state.model || providerConfig.defaultModel,
+      messages,
+      signal: compositeSignal,
+      // The CLI adapters default several provider-owned search tools on when
+      // these flags are omitted. Repairs must be output-only even when those
+      // defaults or their environment variables are enabled.
+      openrouterWebSearch: false,
+      anthropicWebSearch: false,
+      googleSearchGrounding: false,
+      responsesWebSearch: false,
+    })) {
+      if (event.type === 'text_delta') text += event.text;
+    }
+    if (signal?.aborted) throw abortError();
+    if (timeoutController.signal.aborted && !signal?.aborted) {
+      throw new Error(`Output-schema repair timed out after ${OUTPUT_REPAIR_TIMEOUT_MS / 1000}s.`);
+    }
+    return text;
+  } catch (error) {
+    if (signal?.aborted) throw abortError();
+    if (timeoutController.signal.aborted && !signal?.aborted) {
+      throw new Error(`Output-schema repair timed out after ${OUTPUT_REPAIR_TIMEOUT_MS / 1000}s.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function runHeadless(
   state,
   providerConfig,
@@ -550,6 +622,7 @@ async function runHeadless(
     // Auditor commit gate (opt-out, default on). `undefined` → the tool layer
     // resolves it against `PUSH_AUDITOR_GATE` then the default.
     auditorGate,
+    outputSchema = null,
     // True when the user set an explicit --max-rounds (disables adaptation).
     explicitMaxRounds = false,
   } = {},
@@ -564,9 +637,13 @@ async function runHeadless(
           .map((c) => `- ${c}`)
           .join('\n')}`
       : '';
-  const taskPrompt = `${task}${acceptanceBlock}`;
+  const outputSchemaBlock = outputSchema
+    ? `\n\n${formatOutputSchemaInstruction(outputSchema)}`
+    : '';
+  const taskPrompt = `${task}${acceptanceBlock}${outputSchemaBlock}`;
   const runId = makeRunId();
   const jsonl = jsonlOutput ? createHeadlessJsonlWriter(state) : null;
+  const ownsTerminalRunComplete = Boolean(jsonl || outputSchema);
   await appendUserMessageWithFileReferences(state, taskPrompt, state.cwd, {
     referenceSourceText: task,
   });
@@ -586,15 +663,17 @@ async function runHeadless(
   const originalConsoleLog = console.log;
   if (jsonOutput || jsonlOutput) console.log = console.error;
 
-  const emitJsonlRunComplete = async (
+  let terminalRunCompleteEmitted = false;
+  const emitHeadlessRunComplete = async (
     outcome: 'success' | 'failed' | 'aborted' | 'max_rounds',
     summary: string,
   ) => {
-    if (!jsonl) return;
+    if (!ownsTerminalRunComplete || terminalRunCompleteEmitted) return;
     const payload = { runId, outcome, summary };
     await appendSessionEvent(state, 'run_complete', payload, runId);
+    terminalRunCompleteEmitted = true;
     await saveSessionState(state);
-    jsonl.emit('run_complete', payload, runId);
+    jsonl?.emit('run_complete', payload, runId);
   };
 
   const ac = new AbortController();
@@ -605,15 +684,16 @@ async function runHeadless(
     const result = await runAssistantTurn(state, providerConfig, apiKey, taskPrompt, maxRounds, {
       runId,
       signal: ac.signal,
-      // `run_complete` is emitted by the kernel before headless acceptance
-      // checks. Hold that one event back so the JSONL stream has exactly one
-      // terminal line reflecting the full command outcome.
+      // `run_complete` is emitted by the kernel before headless acceptance and
+      // output-schema checks. When this adapter owns the terminal receipt,
+      // hold the early event back so the persisted/JSONL outcome reflects all
+      // post-run gates.
       emit: jsonl
         ? (event) => {
             if (event.type !== 'run_complete') jsonl.emitEngineEvent(event);
           }
         : null,
-      suppressRunComplete: Boolean(jsonl),
+      suppressRunComplete: ownsTerminalRunComplete,
       allowExec,
       safeExecPatterns,
       execMode,
@@ -626,21 +706,83 @@ async function runHeadless(
 
     // Non-throw abort path (engine returned outcome: 'aborted' without throwing)
     if (result.outcome === 'aborted') {
-      if (jsonl) {
-        await emitJsonlRunComplete('aborted', 'Aborted by user.');
-      } else if (jsonOutput) {
+      await emitHeadlessRunComplete('aborted', 'Aborted by user.');
+      if (jsonOutput && !jsonl) {
         process.stdout.write(
           `${JSON.stringify({ sessionId: state.sessionId, runId: result.runId || null, outcome: 'aborted' }, null, 2)}\n`,
         );
-      } else {
+      } else if (!jsonl) {
         process.stderr.write(`${fmt.yellow('[aborted]')}\n`);
       }
       return 130;
     }
 
+    let constrainedOutput: ConstrainedOutputResult | null = null;
+    if (outputSchema && result.outcome === 'success') {
+      constrainedOutput = await constrainOutputToSchema(
+        outputSchema,
+        task,
+        result.finalAssistantText,
+        (repairPrompt) =>
+          generateOutputSchemaRepair(state, providerConfig, apiKey, repairPrompt, ac.signal),
+      );
+
+      if (constrainedOutput.ok) {
+        result.finalAssistantText = constrainedOutput.text;
+        // The lead kernel already persisted its unconstrained final summary.
+        // Replace that tail entry so resumed model context matches the value
+        // returned to the machine consumer. saveSessionState detects the
+        // same-length tail mutation and atomically rewrites messages.jsonl.
+        for (let i = state.messages.length - 1; i >= 0; i -= 1) {
+          const message = state.messages[i];
+          if (message && typeof message === 'object' && message.role === 'assistant') {
+            message.content = constrainedOutput.text;
+            break;
+          }
+        }
+        await saveSessionState(state);
+        if (constrainedOutput.repairs > 0 && (jsonOutput || jsonlOutput)) {
+          console.error(
+            JSON.stringify({
+              level: 'info',
+              event: 'output_schema_validated',
+              repairs: constrainedOutput.repairs,
+              schemaPath: outputSchema.path,
+            }),
+          );
+        }
+      } else {
+        const message = `Final output did not satisfy --output-schema after ${constrainedOutput.repairs} repair attempts: ${constrainedOutput.error}`;
+        const payload = {
+          code: 'OUTPUT_SCHEMA_VALIDATION_FAILED',
+          message,
+          retryable: false,
+          repairs: constrainedOutput.repairs,
+        };
+        await appendSessionEvent(state, 'error', payload, runId);
+        jsonl?.emit('error', payload, runId);
+        await saveSessionState(state);
+        if (jsonOutput || jsonlOutput) {
+          console.error(
+            JSON.stringify({
+              level: 'error',
+              event: 'output_schema_validation_failed',
+              repairs: constrainedOutput.repairs,
+              schemaPath: outputSchema.path,
+              error: constrainedOutput.error,
+            }),
+          );
+        }
+      }
+    }
+
     let acceptance = null;
 
-    if (Array.isArray(acceptanceChecks) && acceptanceChecks.length > 0) {
+    if (
+      constrainedOutput?.ok !== false &&
+      Array.isArray(acceptanceChecks) &&
+      acceptanceChecks.length > 0
+    ) {
       acceptance = await runAcceptanceChecks(state.cwd, acceptanceChecks);
       const acceptancePayload = {
         passed: acceptance.passed,
@@ -656,17 +798,27 @@ async function runHeadless(
       await saveSessionState(state);
     }
 
-    const success = result.outcome === 'success' && (!acceptance || acceptance.passed);
+    const outputSchemaPassed = !outputSchema || constrainedOutput?.ok === true;
+    const success =
+      result.outcome === 'success' && outputSchemaPassed && (!acceptance || acceptance.passed);
 
-    if (jsonl) {
-      const outcome = success
-        ? 'success'
-        : acceptance && !acceptance.passed
+    const terminalOutcome = success
+      ? 'success'
+      : acceptance && !acceptance.passed
+        ? 'failed'
+        : constrainedOutput && !constrainedOutput.ok
           ? 'failed'
           : result.outcome === 'error'
             ? 'failed'
             : result.outcome;
-      await emitJsonlRunComplete(outcome, result.finalAssistantText);
+    const terminalSummary =
+      constrainedOutput && !constrainedOutput.ok
+        ? `Output schema validation failed: ${constrainedOutput.error}`
+        : result.finalAssistantText;
+    await emitHeadlessRunComplete(terminalOutcome, terminalSummary);
+
+    if (jsonl) {
+      // The terminal event was emitted above after every post-run gate.
     } else if (jsonOutput) {
       process.stdout.write(
         `${JSON.stringify(
@@ -677,17 +829,36 @@ async function runHeadless(
               ? 'success'
               : acceptance && !acceptance.passed
                 ? 'acceptance_failed'
-                : result.outcome,
+                : constrainedOutput && !constrainedOutput.ok
+                  ? 'output_schema_failed'
+                  : result.outcome,
             rounds: result.rounds,
             assistant: result.finalAssistantText,
             acceptance,
+            ...(outputSchema
+              ? {
+                  outputSchema: constrainedOutput
+                    ? {
+                        valid: constrainedOutput.ok,
+                        repairs: constrainedOutput.repairs,
+                        ...(constrainedOutput.ok ? {} : { error: constrainedOutput.error }),
+                      }
+                    : { valid: false, repairs: 0, error: 'run did not complete successfully' },
+                }
+              : {}),
           },
           null,
           2,
         )}\n`,
       );
     } else {
-      process.stdout.write(`${result.finalAssistantText}\n`);
+      if (constrainedOutput && !constrainedOutput.ok) {
+        process.stderr.write(
+          `${fmt.error('Error:')} Output schema validation failed: ${constrainedOutput.error}\n`,
+        );
+      } else {
+        process.stdout.write(`${result.finalAssistantText}\n`);
+      }
       if (acceptance) {
         const verdict = acceptance.passed ? fmt.green('PASS') : fmt.red('FAIL');
         process.stdout.write(`\nAcceptance checks: ${verdict}\n`);
@@ -702,13 +873,12 @@ async function runHeadless(
   } catch (err) {
     if (err.name === 'AbortError') {
       await saveSessionState(state);
-      if (jsonl) {
-        await emitJsonlRunComplete('aborted', 'Aborted by user.');
-      } else if (jsonOutput) {
+      await emitHeadlessRunComplete('aborted', 'Aborted by user.');
+      if (jsonOutput && !jsonl) {
         process.stdout.write(
           `${JSON.stringify({ sessionId: state.sessionId, outcome: 'aborted' }, null, 2)}\n`,
         );
-      } else {
+      } else if (!jsonl) {
         process.stderr.write(`${fmt.yellow('[aborted]')}\n`);
       }
       return 130;
@@ -719,14 +889,13 @@ async function runHeadless(
     await appendSessionEvent(state, 'error', errorPayload, runId);
     await saveSessionState(state);
 
-    if (jsonl) {
-      jsonl.emit('error', errorPayload, runId);
-      await emitJsonlRunComplete('failed', message);
-    } else if (jsonOutput) {
+    jsonl?.emit('error', errorPayload, runId);
+    await emitHeadlessRunComplete('failed', message);
+    if (jsonOutput && !jsonl) {
       process.stdout.write(
         `${JSON.stringify({ sessionId: state.sessionId, outcome: 'error', error: message }, null, 2)}\n`,
       );
-    } else {
+    } else if (!jsonl) {
       process.stderr.write(`${fmt.error('Error:')} ${message}\n`);
     }
     return 1;
@@ -3532,6 +3701,8 @@ export async function main() {
       maxRounds: { type: 'string' },
       json: { type: 'boolean', default: false },
       jsonl: { type: 'boolean', default: false },
+      'output-schema': { type: 'string' },
+      outputSchema: { type: 'string' },
       lint: { type: 'boolean', default: false },
       headless: { type: 'boolean', default: false },
       'allow-exec': { type: 'boolean' },
@@ -3672,6 +3843,15 @@ export async function main() {
   if (values.jsonl && subcommand !== 'run') {
     throw new Error('--jsonl is supported only by `push run`.');
   }
+  const outputSchemaArg = values['output-schema'] || values.outputSchema;
+  if (outputSchemaArg && subcommand !== 'run') {
+    throw new Error('--output-schema is supported only by `push run`.');
+  }
+  // Resolve relative to the invoking shell before --worktree can re-root the
+  // session cwd. Schema errors fail before provider auth or agent side effects.
+  const outputSchema = outputSchemaArg
+    ? await loadOutputSchema(outputSchemaArg, process.cwd())
+    : null;
   // TUI is the default UX for bare `push` in a TTY. Set PUSH_TUI_ENABLED=0
   // (or 'false') to opt back to the transcript REPL. The launcher used to
   // export PUSH_TUI_ENABLED=1 to achieve this; that's now the in-code
@@ -4280,6 +4460,7 @@ export async function main() {
         disabledTools: headlessDisabledTools,
         alwaysAllow: headlessAlwaysAllow,
         auditorGate: headlessAuditorGate,
+        outputSchema,
         explicitMaxRounds,
       };
       return await runHeadless(

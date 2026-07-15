@@ -318,6 +318,243 @@ describe('push run --jsonl', needsChildStdout, () => {
     assert.equal(code, 1);
     assert.match(stderr, /supported only by `push run`/);
   });
+
+  it('rejects --output-schema outside push run', async () => {
+    const { code, stderr } = await runCli(['resume', '--output-schema', 'result.schema.json']);
+    assert.equal(code, 1);
+    assert.match(stderr, /--output-schema is supported only by `push run`/);
+  });
+
+  it('preflights --output-schema before provider auth or agent work', async () => {
+    const missing = path.join(os.tmpdir(), `missing-output-schema-${Date.now()}.json`);
+    const { code, stderr } = await runCli([
+      'run',
+      '--task',
+      'hi',
+      '--provider',
+      'openrouter',
+      '--output-schema',
+      missing,
+    ]);
+    assert.equal(code, 1);
+    assert.match(stderr, /Could not read --output-schema/);
+    assert.doesNotMatch(stderr, /Missing API key/);
+  });
+});
+
+describe('push run --output-schema', needsHeadlessJsonl, () => {
+  const resultSchema = {
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['ok'] },
+      filesRead: { type: 'integer', minimum: 1 },
+    },
+    required: ['status', 'filesRead'],
+    additionalProperties: false,
+  };
+
+  it('keeps --json aggregate output pure and persists one post-schema terminal event', async () => {
+    const mock = await startMockProviderServer({
+      tokens: ['{ "status": "ok", "filesRead": 1 }'],
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-output-schema-json-'));
+    const schemaPath = path.join(root, 'result.schema.json');
+    const sessionRoot = path.join(root, 'sessions');
+    try {
+      await fs.writeFile(schemaPath, JSON.stringify(resultSchema));
+      const { code, stdout, stderr } = await runCli(
+        [
+          '--cwd',
+          root,
+          'run',
+          '--task',
+          'Return the result.',
+          '--provider',
+          'openrouter',
+          '--json',
+          '--output-schema',
+          schemaPath,
+        ],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_SESSION_DIR: sessionRoot,
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.equal(mock.requestCount(), 1);
+      const aggregate = JSON.parse(stdout);
+      assert.equal(aggregate.outcome, 'success');
+      assert.equal(aggregate.assistant, '{"status":"ok","filesRead":1}');
+      assert.deepEqual(aggregate.outputSchema, { valid: true, repairs: 0 });
+      assert.doesNotMatch(stderr, /output_schema_validated/);
+      const persisted = (
+        await fs.readFile(path.join(sessionRoot, aggregate.sessionId, 'events.jsonl'), 'utf8')
+      )
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(persisted.at(-1).type, 'run_complete');
+      assert.equal(persisted.at(-1).payload.outcome, 'success');
+      assert.equal(persisted.at(-1).payload.summary, aggregate.assistant);
+    } finally {
+      await mock.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('repairs only the final output and leaves the primary tool turn single-shot', async () => {
+    const mock = await startMockProviderServer({
+      responses: [
+        [JSON.stringify({ tool: 'read_file', args: { path: 'target.txt' } })],
+        ['Finished reading the file.'],
+        ['{"status":"ok","filesRead":1}'],
+      ],
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-output-schema-cli-'));
+    const schemaPath = path.join(root, 'result.schema.json');
+    const sessionRoot = path.join(root, 'sessions');
+    try {
+      await fs.writeFile(path.join(root, 'target.txt'), 'file body\n');
+      await fs.writeFile(schemaPath, JSON.stringify(resultSchema));
+      const { code, stdout, stderr } = await runCli(
+        [
+          '--cwd',
+          root,
+          'run',
+          '--task',
+          'Read target.txt and report the result.',
+          '--provider',
+          'openrouter',
+          '--jsonl',
+          '--output-schema',
+          schemaPath,
+        ],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_SESSION_DIR: sessionRoot,
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+
+      assert.equal(code, 0, stripAnsi(stderr));
+      assert.equal(mock.requestCount(), 3, 'one tool round + one final round + one repair');
+      const requestBodies = mock.requestBodies();
+      assert.ok(
+        requestBodies[0].tools.some((tool) => tool.type === 'openrouter:web_search'),
+        'the primary turn should retain provider-native web search',
+      );
+      assert.equal(
+        requestBodies.at(-1).tools,
+        undefined,
+        'the output-only repair must disable provider-native and local tools',
+      );
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      assert.equal(lines.filter((event) => event.type === 'tool.execution_start').length, 1);
+      assert.equal(lines.filter((event) => event.type === 'tool.execution_complete').length, 1);
+      assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(lines.at(-1).type, 'run_complete');
+      assert.equal(lines.at(-1).payload.outcome, 'success');
+      assert.deepEqual(JSON.parse(lines.at(-1).payload.summary), {
+        status: 'ok',
+        filesRead: 1,
+      });
+      assert.match(stderr, /"event":"output_schema_validated","repairs":1/);
+      const persisted = (
+        await fs.readFile(path.join(sessionRoot, lines[0].sessionId, 'events.jsonl'), 'utf8')
+      )
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(persisted.at(-1).type, 'run_complete');
+      assert.equal(persisted.at(-1).payload.outcome, 'success');
+    } finally {
+      await mock.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed after two invalid repair responses', async () => {
+    const mock = await startMockProviderServer({
+      responses: [['not json'], ['still not json'], ['{"status":"wrong"}']],
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-output-schema-fail-'));
+    const schemaPath = path.join(root, 'result.schema.json');
+    const sessionRoot = path.join(root, 'sessions');
+    const acceptanceMarker = path.join(root, 'acceptance-ran');
+    try {
+      await fs.writeFile(schemaPath, JSON.stringify(resultSchema));
+      const { code, stdout, stderr } = await runCli(
+        [
+          '--cwd',
+          root,
+          'run',
+          '--task',
+          'Return the result.',
+          '--provider',
+          'openrouter',
+          '--jsonl',
+          '--output-schema',
+          schemaPath,
+          '--accept',
+          `node -e "require('node:fs').writeFileSync('acceptance-ran', 'yes')"`,
+        ],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_SESSION_DIR: sessionRoot,
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+
+      assert.equal(code, 1);
+      assert.equal(mock.requestCount(), 3);
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      const error = lines.find((event) => event.type === 'error');
+      assert.equal(error.payload.code, 'OUTPUT_SCHEMA_VALIDATION_FAILED');
+      assert.equal(
+        lines.some((event) => event.type === 'acceptance_complete'),
+        false,
+      );
+      assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.deepEqual(
+        lines.slice(-2).map((event) => event.type),
+        ['error', 'run_complete'],
+      );
+      assert.equal(lines.at(-1).type, 'run_complete');
+      assert.equal(lines.at(-1).payload.outcome, 'failed');
+      assert.match(lines.at(-1).payload.summary, /Output schema validation failed/);
+      assert.match(stderr, /"event":"output_schema_validation_failed","repairs":2/);
+      await assert.rejects(fs.access(acceptanceMarker), { code: 'ENOENT' });
+      const persisted = (
+        await fs.readFile(path.join(sessionRoot, lines[0].sessionId, 'events.jsonl'), 'utf8')
+      )
+        .trim()
+        .split('\n')
+        .map(JSON.parse);
+      assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(persisted.at(-1).type, 'run_complete');
+      assert.equal(persisted.at(-1).payload.outcome, 'failed');
+    } finally {
+      await mock.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('push run --jsonl stream', needsHeadlessJsonl, () => {

@@ -77,7 +77,7 @@ wire contract is `push.runtime.v1` with envelope validation in
 The tool-call parser path is converged on the shared dispatcher. New tool/event
 vocabularies need a canonical definition and a drift test in the same PR.
 
-#### Headless JSONL machine interface (landed 2026-07-14)
+#### Headless machine interface (landed 2026-07-14)
 
 `push run --jsonl` exposes the existing `push.runtime.v1` event envelopes as a
 compact stdout JSONL stream. It does not define a parallel CLI event taxonomy:
@@ -87,11 +87,22 @@ diagnostic output stays on stderr. `--json` remains the aggregate final-result
 mode and is mutually exclusive with `--jsonl`.
 
 The adapter withholds the kernel's early `run_complete` until post-run
-acceptance checks finish, so exactly one `run_complete` is the final line and
-its outcome represents the whole command. Envelope `seq` keeps daemon
-semantics: it is the session journal cursor, so live-only events may repeat the
-current value and consumers use line order for live delivery rather than
-advancing replay state from every line.
+acceptance and output-schema checks finish, so exactly one `run_complete` is
+the final line and its outcome represents the whole command. Envelope `seq`
+keeps daemon semantics: it is the session journal cursor, so live-only events
+may repeat the current value and consumers use line order for live delivery
+rather than advancing replay state from every line.
+
+`push run --output-schema <path>` adds the final-result contract paired with
+that event stream. The CLI precompiles a Draft 2020-12 schema before the run,
+prompts for exact JSON, and validates the final assistant text in code. An
+invalid candidate gets at most two output-only repair requests through the
+locked provider/model. Repair requests have no tools attached, so they cannot
+repeat the primary turn's filesystem, GitHub, or command side effects. If no
+candidate conforms, the command fails closed with
+`OUTPUT_SCHEMA_VALIDATION_FAILED`; JSONL still ends with exactly one failed
+`run_complete`. Native provider constraints remain an optional optimization —
+post-generation validation is the provider-independent enforcement floor.
 
 #### Turn quiescence (landed 2026-07-11)
 
