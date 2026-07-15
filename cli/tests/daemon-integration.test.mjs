@@ -3591,7 +3591,23 @@ async function waitForDelegationComplete(entry, subagentId, sessionId = null, ti
           e.payload?.subagentId === subagentId,
       );
       if (terminal) {
-        if (!terminal.payload?.delegationOutcome) return;
+        // A failed terminal that carries no outcome is genuinely done —
+        // nothing is written to `delegationOutcomes`, so don't poll for a
+        // record that will never appear.
+        if (terminal.type === 'subagent.failed' && !terminal.payload?.delegationOutcome) return;
+        // Reviewer-family delegations signal completion via a `reviewResult`
+        // on the terminal event and never persist a `delegationOutcomes`
+        // record — the event itself is their completion signal.
+        if (terminal.payload?.reviewResult) return;
+        // Coder/Explorer delegations persist a `delegationOutcomes` record.
+        // The terminal event (and the cleared `activeDelegations` entry) can
+        // be observed a beat before that durable session-state write lands —
+        // a race that surfaces first on the slower Windows runner. Keying the
+        // early return on `terminal.payload.delegationOutcome` (as before) is
+        // itself racy: that field attaches in the same lagging write, so an
+        // event read mid-write looked outcome-less and returned prematurely,
+        // and the caller then read stale state. Poll the persisted record
+        // instead, which is the durable fact the callers assert on.
         const persisted = await loadSessionState(sessionId);
         const hasPersistedOutcome = persisted.delegationOutcomes?.some(
           (record) => record.subagentId === subagentId,
