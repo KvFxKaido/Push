@@ -204,6 +204,7 @@ types.
 ```bash
 ./push config init              # interactive wizard
 ./push config show              # print current config (keys masked)
+./push config explain           # print effective config + winning sources
 ./push config set --provider openrouter --model mistralai/mistral-large-2512
 ./push config set --api-key sk-abc123
 ./push config set --tavily-key tvly-abc123
@@ -352,6 +353,12 @@ Config resolves in order: CLI flags > env vars > config file > defaults.
 | `PUSH_CONFIG_PATH` | Override config file path |
 
 Fallback env vars from the web app (`VITE_OLLAMA_API_KEY`, `OLLAMA_API_KEY`, `VITE_TAVILY_API_KEY`, etc.) are also checked.
+
+Runtime configuration resolves through one ordered chain: saved user config,
+then environment variables, then validated CLI overrides. Run
+`push config explain` to see the effective redacted config and the exact winning
+source for each value. `push config show` continues to show the saved user file
+only.
 
 > **Retired:** `PUSH_LEAD_RUNTIME` no longer exists — interactive turns always run on the shared coder kernel (`cli/lead-turn.ts`, Agent Runtime Decisions §10). The former `=engine` opt-out is a no-op; setting it has no effect.
 
@@ -596,6 +603,7 @@ push daemon relay enable|disable|status
                                     to the already-persisted deployment, --token falls back to PUSH_RELAY_TOKEN.
 push attach <session-id>            Attach to daemon-backed session
 push config show                    Show saved config
+push config explain                 Show effective config and winning sources
 push config init                    Interactive setup wizard
 push config set ...                 Save provider config
 

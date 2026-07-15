@@ -48,6 +48,8 @@ import {
 } from './engine.js';
 import {
   loadConfig,
+  loadRuntimeConfig,
+  resolveRuntimeConfig,
   saveConfig,
   applyConfigToEnv,
   getConfigPath,
@@ -279,6 +281,7 @@ Usage:
   push audit-evals replay       Replay the corpus through the Auditor; exits non-zero on regressions
   push audit-evals replay --no-rejected --limit <n> --json
   push config show              Show saved CLI config
+  push config explain           Show effective config and winning sources
   push config init              Interactive setup wizard
   push config set ...           Save provider config defaults
   push theme                    Show current TUI theme
@@ -1161,21 +1164,34 @@ async function runInteractive(
   providerConfig,
   apiKey,
   maxRounds,
-  { alreadyPersisted = false, explicitMaxRounds = false } = {},
+  { alreadyPersisted = false, explicitMaxRounds = false, runtimeConfig = null } = {},
 ) {
   // Mutable context — allows mid-session provider/model switching
   const ctx = { providerConfig, apiKey };
+  // Keep the raw user file for commands that persist changes, but consume the
+  // resolved runtime view for policy. Otherwise an explicit list in the user
+  // file would mask a higher-precedence PUSH_DISABLED_TOOLS / ALWAYS_ALLOW
+  // environment layer on the interactive path while headless behaved
+  // correctly.
   const config = await loadConfig();
-  if (!Array.isArray(config.safeExecPatterns)) {
+  const policyConfig = runtimeConfig || config;
+  if (!Array.isArray(policyConfig.safeExecPatterns)) {
     config.safeExecPatterns = [];
   }
-  const safeExecPatterns = config.safeExecPatterns;
+  const safeExecPatterns = Array.isArray(policyConfig.safeExecPatterns)
+    ? [...policyConfig.safeExecPatterns]
+    : [];
   // Pass undefined (not []) when the key is absent so `executeToolCall`'s
   // env-var fallback (`PUSH_DISABLED_TOOLS` / `PUSH_ALWAYS_ALLOW`) actually
   // applies. An explicit empty array is an opt-out and would mask the env.
-  const disabledTools = Array.isArray(config.disabledTools) ? config.disabledTools : undefined;
-  const alwaysAllow = Array.isArray(config.alwaysAllow) ? config.alwaysAllow : undefined;
-  const auditorGate = typeof config.auditorGate === 'boolean' ? config.auditorGate : undefined;
+  const disabledTools = Array.isArray(policyConfig.disabledTools)
+    ? policyConfig.disabledTools
+    : undefined;
+  const alwaysAllow = Array.isArray(policyConfig.alwaysAllow)
+    ? policyConfig.alwaysAllow
+    : undefined;
+  const auditorGate =
+    typeof policyConfig.auditorGate === 'boolean' ? policyConfig.auditorGate : undefined;
 
   // Lazy session creation: defer disk writes until first user message.
   let sessionPersisted = alreadyPersisted;
@@ -1783,19 +1799,29 @@ function sanitizeConfig(config) {
     if (out.apiKey) out.apiKey = maskSecret(out.apiKey);
     return out;
   };
-  return {
+  const sanitized = {
     provider: config.provider || null,
     localSandbox: config.localSandbox ?? null,
+    explainMode: config.explainMode ?? null,
     tavilyApiKey: config.tavilyApiKey ? maskSecret(config.tavilyApiKey) : null,
     webSearchBackend: config.webSearchBackend || null,
+    execMode: config.execMode || null,
+    theme: config.theme || null,
+    spinner: config.spinner || null,
+    tuiMouseMode: config.tuiMouseMode || null,
+    tuiDaemonAutoStart: config.tuiDaemonAutoStart ?? null,
     safeExecPatterns: Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [],
     disabledTools: Array.isArray(config.disabledTools) ? config.disabledTools : [],
     alwaysAllow: Array.isArray(config.alwaysAllow) ? config.alwaysAllow : [],
-    ollama: config.ollama ? redactProvider(config.ollama) : {},
-    openrouter: config.openrouter ? redactProvider(config.openrouter) : {},
-    zen: config.zen ? redactProvider(config.zen) : {},
-    nvidia: config.nvidia ? redactProvider(config.nvidia) : {},
+    auditorGate: config.auditorGate ?? null,
+    postEditDiagnostics: config.postEditDiagnostics ?? null,
+    runTokenBudget: config.runTokenBudget ?? null,
+    scrub: config.scrub || {},
   };
+  for (const provider of Object.keys(PROVIDER_CONFIGS)) {
+    sanitized[provider] = config[provider] ? redactProvider(config[provider]) : {};
+  }
+  return sanitized;
 }
 
 async function runConfigInit(values, config) {
@@ -1958,7 +1984,7 @@ async function runConfigInit(values, config) {
   }
 }
 
-async function runConfigSubcommand(values, positionals) {
+async function runConfigSubcommand(values, positionals, startupResolution = null) {
   const action = (positionals[1] || 'show').toLowerCase();
   const config = await loadConfig();
 
@@ -1976,13 +2002,34 @@ async function runConfigSubcommand(values, positionals) {
     return 0;
   }
 
+  if (action === 'explain') {
+    // Use the pre-hydration resolution captured at process startup. Calling
+    // applyConfigToEnv() canonicalizes fallback aliases (for example
+    // ANTHROPIC_API_KEY -> PUSH_ANTHROPIC_API_KEY); resolving again afterward
+    // would report the synthetic canonical name instead of the user's source.
+    const resolution = startupResolution || resolveRuntimeConfig(config);
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          precedence: ['user', 'environment', 'cli'],
+          layers: resolution.layers,
+          config: sanitizeConfig(resolution.config),
+          provenance: resolution.provenance,
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return 0;
+  }
+
   if (action === 'init') {
     return runConfigInit(values, config);
   }
 
   if (action !== 'set') {
     throw new Error(
-      `Unknown config action: ${action}. Use: push config show | push config init | push config set ...`,
+      `Unknown config action: ${action}. Use: push config show | push config explain | push config init | push config set ...`,
     );
   }
 
@@ -3793,9 +3840,17 @@ export async function main() {
     return 0;
   }
 
-  // Apply persisted defaults before resolving runtime config; shell env still wins.
-  const persistedConfig = await loadConfig();
-  applyConfigToEnv(persistedConfig);
+  // Resolve one explicit runtime chain, then hydrate the compatibility env
+  // surface consumed by provider/tool modules and child processes.
+  // Provider is the first config-shaped CLI override routed through the
+  // loader. Other flags keep their existing dedicated validators until their
+  // value types move into the shared config schema in later slices.
+  const cliConfigOverrides = values.provider
+    ? { provider: parseProvider(values.provider) }
+    : undefined;
+  const runtimeConfigResolution = await loadRuntimeConfig({ overrides: cliConfigOverrides });
+  const { config: runtimeConfig } = runtimeConfigResolution;
+  applyConfigToEnv(runtimeConfig);
 
   // Resolve final localSandbox state: flags > env > config
   const sandboxBackendArg = values['sandbox-backend'] || values.sandboxBackend;
@@ -3817,7 +3872,7 @@ export async function main() {
       : values['no-sandbox']
         ? false
         : undefined;
-  const localSandbox = flagSandbox ?? envSandbox ?? persistedConfig.localSandbox;
+  const localSandbox = flagSandbox ?? envSandbox ?? runtimeConfig.localSandbox;
   if (localSandbox !== undefined) {
     process.env.PUSH_LOCAL_SANDBOX = String(localSandbox);
   }
@@ -3861,7 +3916,7 @@ export async function main() {
     process.env.PUSH_TUI_ENABLED === '0' || process.env.PUSH_TUI_ENABLED === 'false';
   const tuiEnabled = !tuiOptOut;
   if (subcommand === 'config') {
-    return runConfigSubcommand(values, positionals);
+    return runConfigSubcommand(values, positionals, runtimeConfigResolution);
   }
 
   if (subcommand === 'theme') {
@@ -4209,7 +4264,7 @@ export async function main() {
     );
   }
 
-  const provider = parseProvider(values.provider, persistedConfig.provider);
+  const provider = parseProvider(values.provider, runtimeConfig.provider);
   const providerConfig = PROVIDER_CONFIGS[provider];
   const cwd = path.resolve(values.cwd || process.cwd());
   if (values.cwd) {
@@ -4437,22 +4492,22 @@ export async function main() {
       const apiKey = resolveApiKey(providerConfig);
       const allowExec =
         values['allow-exec'] || values.allowExec || process.env.PUSH_ALLOW_EXEC === 'true';
-      const headlessSafePatterns = Array.isArray(persistedConfig.safeExecPatterns)
-        ? persistedConfig.safeExecPatterns
+      const headlessSafePatterns = Array.isArray(runtimeConfig.safeExecPatterns)
+        ? runtimeConfig.safeExecPatterns
         : [];
       // Same env-fallback contract as the REPL path: undefined -> env wins,
       // explicit array -> opt-out.
-      const headlessDisabledTools = Array.isArray(persistedConfig.disabledTools)
-        ? persistedConfig.disabledTools
+      const headlessDisabledTools = Array.isArray(runtimeConfig.disabledTools)
+        ? runtimeConfig.disabledTools
         : undefined;
-      const headlessAlwaysAllow = Array.isArray(persistedConfig.alwaysAllow)
-        ? persistedConfig.alwaysAllow
+      const headlessAlwaysAllow = Array.isArray(runtimeConfig.alwaysAllow)
+        ? runtimeConfig.alwaysAllow
         : undefined;
       const headlessExecMode = process.env.PUSH_EXEC_MODE || 'auto';
       // Raw (not pre-resolved) so PUSH_AUDITOR_GATE can still override at the
       // tool layer. Default on when unset.
       const headlessAuditorGate =
-        typeof persistedConfig.auditorGate === 'boolean' ? persistedConfig.auditorGate : undefined;
+        typeof runtimeConfig.auditorGate === 'boolean' ? runtimeConfig.auditorGate : undefined;
       const headlessRunOpts = {
         allowExec,
         safeExecPatterns: headlessSafePatterns,
@@ -4503,6 +4558,7 @@ export async function main() {
       // first user message.
       alreadyPersisted: !!resumedSessionId,
       explicitMaxRounds,
+      runtimeConfig,
     });
   } finally {
     // Clean-if-clean teardown: remove the worktree only when it has no
