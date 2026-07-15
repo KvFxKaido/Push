@@ -317,6 +317,15 @@ function transitionLifecycle(
     evidenceOut.push(evidence(indexed, `job ${id} suspended more than once without a resume`, id));
     return;
   }
+  if (
+    previous.state === 'suspended' &&
+    (indexed.event.type === 'job.completed' || indexed.event.type === 'job.failed')
+  ) {
+    evidenceOut.push(
+      evidence(indexed, `job ${id} emitted ${indexed.event.type} while suspended`, id),
+    );
+    return;
+  }
 
   states.set(id, { state: next, index: indexed.index });
 }

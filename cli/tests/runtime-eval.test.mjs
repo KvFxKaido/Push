@@ -232,6 +232,43 @@ describe('runtime receipt evaluation', () => {
     assert.equal(result.metrics.danglingJobs, 0);
   });
 
+  it('rejects terminal job events while the job is suspended', () => {
+    const terminalEvents = [
+      ['job.completed', { executionId: 'job_1', role: 'coder', summary: 'done' }],
+      ['job.failed', { executionId: 'job_1', role: 'coder', error: 'failed' }],
+    ];
+
+    for (const [terminalType, terminalPayload] of terminalEvents) {
+      const result = evaluateRuntimeEvents([
+        event('job.started', { executionId: 'job_1', role: 'coder' }, 0),
+        event(
+          'job.suspended',
+          {
+            executionId: 'job_1',
+            role: 'coder',
+            question: 'Need input',
+            context: 'Blocked',
+            resumeSchema: '{}',
+          },
+          1,
+        ),
+        event(terminalType, terminalPayload, 2),
+        event('run_complete', { outcome: 'success' }, 3),
+      ]);
+
+      assert.equal(result.verdict, 'fail', terminalType);
+      assert.equal(gate(result, 'jobs.settled').status, 'fail', terminalType);
+      assert.equal(result.metrics.suspendedJobs, 1, terminalType);
+      assert.equal(result.metrics.danglingJobs, 1, terminalType);
+      assert.ok(
+        gate(result, 'jobs.settled').evidence.some(
+          (item) => item.type === terminalType && item.message.endsWith('while suspended'),
+        ),
+        terminalType,
+      );
+    }
+  });
+
   it('fails unresolved and invalid lifecycle state', () => {
     const result = evaluateRuntimeEvents([
       event(
