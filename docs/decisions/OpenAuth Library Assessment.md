@@ -1,7 +1,7 @@
 # OpenAuth Library Assessment
 
 Date: 2026-06-26
-Status: **Draft (Reference)** — recommendation is **do not adopt OpenAuth now**.
+Status: **Reference** — recommendation is **do not adopt OpenAuth now**.
 Keep the home-grown GitHub-anchored session (`app/src/worker/worker-session.ts`)
 as the identity primitive. Reconsider only at a *specific* future seam — a
 genuine multi-provider / multi-tenant identity model — and even then evaluate
