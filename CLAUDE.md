@@ -204,5 +204,4 @@ Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first
 - [`app/README.md`](app/README.md) — frontend, Worker secrets, sandbox backend selection, Android
 - [`docs/decisions/`](docs/decisions/) — design decisions with `Status:` lifecycle
 - [`docs/runbooks/`](docs/runbooks/), [`docs/security/`](docs/security/) — ops + provider usage policies
-- [`ROADMAP.md`](ROADMAP.md) — current product priorities
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — philosophy, what fits, what may be declined

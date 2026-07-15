@@ -7,7 +7,7 @@ This folder contains active plans, draft spikes, deferred designs, and a few shi
 ## How To Read These Docs
 
 - Prefer docs marked **Current** when picking follow-up work.
-- Treat docs marked **Draft spike** as exploration that has not been promoted into `ROADMAP.md` yet.
+- Treat docs marked **Draft spike** as exploration that has not been committed as a priority yet.
 - Treat docs marked **Deferred** as reference designs, not pending commitments.
 - If a plan conflicts with the code, prefer the code and refresh the plan.
 
@@ -34,7 +34,7 @@ This folder contains active plans, draft spikes, deferred designs, and a few shi
 If we are choosing implementation work from this folder, the live clusters are:
 
 1. Chat-surface Track C (explicit context escalation) once the plain-chat baseline has settled.
-2. Playbooks + Tiered Routing spikes — both are cheap-to-try wins that would reduce Orchestrator cost and latency; promote whichever measures better to `ROADMAP.md`.
+2. Playbooks + Tiered Routing spikes — both are cheap-to-try wins that would reduce Orchestrator cost and latency; commit whichever measures better as a priority.
 3. Workspace-to-GitHub publish follow-through after the first in-app publish flow shipped.
 4. Deferred/background execution work (`Background Coder Tasks Plan.md`) only if product scope changes.
 

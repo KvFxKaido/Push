@@ -1,9 +1,10 @@
 # Bun Runtime Adoption
 
 Date: 2026-07-04
-Status: **Draft** — the guardrails and Phase 0/1 below are shipped; Phases 2–3
-are design-in-motion pending the upstream `node:test` gap and need roadmap
-promotion before implementation. Owner: Push CLI.
+Status: **Current** — the guardrails (ground rules 1–4) and Phase 0/1 below are
+shipped and enforced; `bun --compile` is the live single-binary distribution
+path. Phases 2–3 remain design-in-motion pending the upstream `node:test` gap.
+Owner: Push CLI.
 
 Companion to [`Go Migration Assessment.md`](<Go Migration Assessment.md>),
 which established Bun `--compile` as the distribution mechanism. This doc

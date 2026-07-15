@@ -16,8 +16,8 @@ as source notes and shipping provenance.
 ## Status Vocabulary
 
 - **Current** means this is the operating contract for new work.
-- **Roadmap-tracked** means implementation is committed through `ROADMAP.md` or an equivalent current priority note.
-- **Draft** means design-in-motion; implementation still needs roadmap promotion.
+- **Roadmap-tracked** means implementation is a committed priority, recorded as an owner decision in the relevant decision doc. *(The root `ROADMAP.md` was retired 2026-07-15; the label name is retained for continuity.)*
+- **Draft** means design-in-motion; implementation still needs an owner commitment.
 - **Reference** means useful context, not an active task list.
 - **Archived** means provenance only. Prefer the live docs above unless you need history.
 

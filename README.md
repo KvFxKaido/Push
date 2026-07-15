@@ -111,7 +111,7 @@ pnpm install
 
 ## Start here
 
-- [ROADMAP.md](ROADMAP.md) — current product and engineering priorities
+- [`docs/decisions/`](docs/decisions/) — the live decision + priority surface (each doc carries a `Status:`)
 - [CONTRIBUTING.md](CONTRIBUTING.md) — project philosophy and contribution guidelines
 - [AGENTS.md](AGENTS.md) — project context for AI collaborators
 - [CLAUDE.md](CLAUDE.md) — quick start and entry points
@@ -121,7 +121,7 @@ pnpm install
 
 ## Current direction
 
-Push's active direction is collapsing its internal multi-agent scaffolding onto a **single conversational lead** that behaves the same on every surface (web, terminal, daemon) and differs only in reach; making the **pushed branch the durable source of truth** so nothing lands on `main` unaudited and the sandbox stays disposable compute; and hardening **session continuity** between the terminal and the phone. See [ROADMAP.md](ROADMAP.md) for near-term priorities and [`docs/decisions/`](docs/decisions/) for the live decision surface.
+Push's active direction is collapsing its internal multi-agent scaffolding onto a **single conversational lead** that behaves the same on every surface (web, terminal, daemon) and differs only in reach; making the **pushed branch the durable source of truth** so nothing lands on `main` unaudited and the sandbox stays disposable compute; and hardening **session continuity** between the terminal and the phone. See [`docs/decisions/`](docs/decisions/) for the live decision surface and near-term priorities.
 
 ## Contributors
 
