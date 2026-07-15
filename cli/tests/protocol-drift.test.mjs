@@ -77,6 +77,7 @@ function assertStrictBroadcastFail(event, type = event.type) {
 describe('protocol drift characterization — schema surface', () => {
   it('pins the current set of schema-validated event types', () => {
     assert.deepEqual([...SCHEMA_VALIDATED_EVENT_TYPES].sort(), [
+      'acceptance_complete',
       'approval_received',
       'approval_required',
       'assistant.prompt_snapshot',
@@ -397,6 +398,28 @@ describe('protocol drift characterization — approval family', () => {
         { approvalId: 'approval_123', decision: 'approve', by: 'client' },
         { seq: -1 },
       ),
+    );
+  });
+});
+
+describe('protocol drift characterization — acceptance results', () => {
+  installStrictModeHooks();
+
+  it('accepts a well-formed acceptance_complete envelope in strict mode', () => {
+    assertStrictBroadcastPass(
+      makeEnvelope('acceptance_complete', {
+        passed: true,
+        checks: [{ command: 'pnpm test', ok: true, exitCode: 0, durationMs: 42 }],
+      }),
+    );
+  });
+
+  it('rejects acceptance_complete with malformed check evidence', () => {
+    assertStrictBroadcastFail(
+      makeEnvelope('acceptance_complete', {
+        passed: true,
+        checks: [{ command: 'pnpm test', ok: 'yes', exitCode: 0, durationMs: 42 }],
+      }),
     );
   });
 });

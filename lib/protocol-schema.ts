@@ -1408,6 +1408,48 @@ function validateApprovalReceived(payload: unknown, basePath: string): Validatio
   return issues;
 }
 
+/** Post-run acceptance checks emitted by headless `push run --jsonl`. */
+function validateAcceptanceComplete(payload: unknown, basePath: string): ValidationIssue[] {
+  if (!isPlainObject(payload)) {
+    return [{ path: basePath, message: `expected plain object, got ${typeof payload}` }];
+  }
+  const issues: ValidationIssue[] = [];
+  if (typeof payload.passed !== 'boolean') {
+    issues.push({
+      path: `${basePath}.passed`,
+      message: `expected boolean, got ${JSON.stringify(payload.passed)}`,
+    });
+  }
+  if (!Array.isArray(payload.checks) || payload.checks.length === 0) {
+    issues.push({
+      path: `${basePath}.checks`,
+      message: `expected non-empty array, got ${JSON.stringify(payload.checks)}`,
+    });
+    return issues;
+  }
+  for (let i = 0; i < payload.checks.length; i += 1) {
+    const check = payload.checks[i];
+    const path = `${basePath}.checks[${i}]`;
+    if (!isPlainObject(check)) {
+      issues.push({ path, message: `expected plain object, got ${typeof check}` });
+      continue;
+    }
+    const command = expectNonEmptyString(check, 'command', path);
+    if (command) issues.push(command);
+    if (typeof check.ok !== 'boolean') {
+      issues.push({
+        path: `${path}.ok`,
+        message: `expected boolean, got ${JSON.stringify(check.ok)}`,
+      });
+    }
+    const exitCode = expectNonNegativeInteger(check, 'exitCode', path);
+    if (exitCode) issues.push(exitCode);
+    const durationMs = expectNonNegativeInteger(check, 'durationMs', path);
+    if (durationMs) issues.push(durationMs);
+  }
+  return issues;
+}
+
 /** Allowed values for `run_complete.outcome`. Mirrors the union used by
  * the engine's emit sites (`cli/engine.ts` + the daemon's failure
  * fallback in `cli/pushd.ts:handleSendUserMessage`). Kept narrow so a
@@ -1807,6 +1849,7 @@ const PAYLOAD_VALIDATORS: Record<string, PayloadValidator> = {
   status: validateStatusPayload,
   approval_required: validateApprovalRequired,
   approval_received: validateApprovalReceived,
+  acceptance_complete: validateAcceptanceComplete,
   run_complete: validateRunComplete,
   session_started: validateSessionStarted,
   user_message: validateUserMessage,

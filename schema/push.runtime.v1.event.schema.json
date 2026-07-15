@@ -769,6 +769,48 @@
         }
       }
     },
+    "AcceptanceComplete": {
+      "type": "object",
+      "required": [
+        "passed",
+        "checks"
+      ],
+      "properties": {
+        "passed": {
+          "type": "boolean"
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "command",
+              "ok",
+              "exitCode",
+              "durationMs"
+            ],
+            "properties": {
+              "command": {
+                "type": "string",
+                "minLength": 1
+              },
+              "ok": {
+                "type": "boolean"
+              },
+              "exitCode": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "durationMs": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      }
+    },
     "RunComplete": {
       "type": "object",
       "required": [
@@ -2030,6 +2072,25 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/ApprovalReceived"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "acceptance_complete"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/AcceptanceComplete"
           }
         }
       }

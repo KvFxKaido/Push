@@ -9,6 +9,8 @@
  * were gated on.
  */
 
+import { evaluateRuntimeEvents, type RuntimeEvalRunSelector } from '../../lib/runtime-eval.js';
+
 // ---------------------------------------------------------------------------
 // Task manifest types
 // ---------------------------------------------------------------------------
@@ -81,25 +83,18 @@ export interface EventCounts {
  * carries `payload.isError`; `tool.call_malformed`, `harness.adaptation`,
  * and `error` are counted as-is.
  */
-export function countSessionEvents(events: unknown[]): EventCounts {
-  const counts: EventCounts = {
-    toolCalls: 0,
-    toolErrors: 0,
-    malformed: 0,
-    adaptations: 0,
-    errors: 0,
+export function countSessionEvents(
+  events: unknown[],
+  selector: RuntimeEvalRunSelector = {},
+): EventCounts {
+  const { metrics } = evaluateRuntimeEvents(events, undefined, selector);
+  return {
+    toolCalls: metrics.toolCalls,
+    toolErrors: metrics.toolErrors,
+    malformed: metrics.malformedToolCalls,
+    adaptations: metrics.harnessAdaptations,
+    errors: metrics.errorEvents,
   };
-  for (const evt of events) {
-    if (typeof evt !== 'object' || evt === null) continue;
-    const { type, payload } = evt as { type?: string; payload?: { isError?: boolean } };
-    if (type === 'tool.execution_complete') {
-      counts.toolCalls++;
-      if (payload && payload.isError === true) counts.toolErrors++;
-    } else if (type === 'tool.call_malformed') counts.malformed++;
-    else if (type === 'harness.adaptation') counts.adaptations++;
-    else if (type === 'error') counts.errors++;
-  }
-  return counts;
 }
 
 /**
