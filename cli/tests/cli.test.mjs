@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import { canCaptureChildStdout, canListenOnLoopback } from './test-environment.mjs';
 import { startMockProviderServer } from './mock-provider-server.mjs';
+import { validateEvent } from '../../lib/protocol-schema.ts';
 
 const execFileAsync = promisify(execFile);
 const CLI_PATH = path.resolve(import.meta.dirname, '..', 'cli.ts');
@@ -410,6 +411,59 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
       assert.equal(persisted.filter((event) => event.type === 'run_complete').length, 1);
       assert.equal(persisted.at(-1).type, 'run_complete');
       assert.equal(persisted.at(-1).payload.outcome, 'failed');
+    } finally {
+      await mock.stop();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('validates tool-lifecycle events streamed from a real tool call', async () => {
+    // The plain-text turns above never route a tool event through the writer's
+    // unconditional `assertValidEvent`. Drive a real read-only tool call so
+    // `tool.execution_start` / `tool.execution_complete` — both validator-backed
+    // (toolName + args object; toolName + boolean isError) — cross that boundary.
+    // A schema violation would throw mid-stream, so exit code 0 is itself the
+    // core assertion that none did.
+    const mock = await startMockProviderServer({
+      responses: [
+        // Round 1: bare-JSON tool call in content (the text-dispatch path).
+        // read_file is read-only, so a headless run needs no approval.
+        [JSON.stringify({ tool: 'read_file', args: { path: 'target.txt' } })],
+        // Round 2: a plain answer ends the turn.
+        ['Read it.'],
+      ],
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-jsonl-tool-'));
+    try {
+      await fs.writeFile(path.join(root, 'target.txt'), 'file body\n');
+      const { code, stdout, stderr } = await runCli(
+        ['--cwd', root, 'run', '--task', 'Read target.txt.', '--provider', 'openrouter', '--jsonl'],
+        {
+          timeout: 15_000,
+          env: {
+            PUSH_OPENROUTER_URL: mock.url,
+            PUSH_OPENROUTER_API_KEY: 'test-key',
+            PUSH_OPENROUTER_TRANSPORT: 'chat',
+          },
+        },
+      );
+      assert.equal(code, 0, stripAnsi(stderr));
+      const lines = stdout.trim().split('\n').map(JSON.parse);
+      // Belt-and-suspenders over the exit code: re-validate every envelope.
+      for (const event of lines) {
+        assert.deepEqual(validateEvent(event), [], `invalid envelope: ${JSON.stringify(event)}`);
+      }
+      const start = lines.find((event) => event.type === 'tool.execution_start');
+      const done = lines.find((event) => event.type === 'tool.execution_complete');
+      assert.ok(start, `no tool.execution_start in stream: ${stdout}`);
+      assert.equal(start.payload.toolName, 'read_file');
+      assert.ok(start.payload.args && typeof start.payload.args === 'object');
+      assert.ok(done, 'no tool.execution_complete in stream');
+      assert.equal(done.payload.toolName, 'read_file');
+      assert.equal(done.payload.isError, false);
+      assert.equal(lines.filter((event) => event.type === 'run_complete').length, 1);
+      assert.equal(lines.at(-1).type, 'run_complete');
+      assert.equal(lines.at(-1).payload.outcome, 'success');
     } finally {
       await mock.stop();
       await fs.rm(root, { recursive: true, force: true });
