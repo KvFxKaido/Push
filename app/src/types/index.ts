@@ -701,7 +701,8 @@ export type CardAction =
       expectedWorkspaceRevision?: number;
     }
   | { type: 'approval-approve'; messageId: string; cardIndex: number; approvalId: string }
-  | { type: 'approval-reject'; messageId: string; cardIndex: number; approvalId: string };
+  | { type: 'approval-reject'; messageId: string; cardIndex: number; approvalId: string }
+  | { type: 'job-resume'; messageId: string; cardIndex: number; jobId: string; answer: string };
 
 export interface AgentStatus {
   active: boolean;

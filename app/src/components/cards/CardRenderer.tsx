@@ -231,7 +231,6 @@ const DATA_ONLY_CARDS: Record<string, ComponentType<{ data: any }>> = {
   'web-search': WebSearchCard,
   'delegation-result': DelegationResultCard,
   'coder-progress': CoderProgressCard,
-  'coder-job': JobCard,
   artifact: ArtifactCard,
 };
 
@@ -250,6 +249,9 @@ const ACTION_CARDS: Record<
   editor: EditorCard,
   'ask-user': AskUserCard,
   approval: ConfirmationCard,
+  // JobCard is action-bearing: a suspended background job renders a "resume with
+  // guidance" input that dispatches a `job-resume` CardAction.
+  'coder-job': JobCard,
 };
 
 // ---------------------------------------------------------------------------

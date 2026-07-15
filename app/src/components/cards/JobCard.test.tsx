@@ -101,6 +101,33 @@ describe('JobCard', () => {
     expect(html).toContain('Cancel');
   });
 
+  it('renders the guidance panel with the question + resume affordance when suspended', () => {
+    const html = renderToStaticMarkup(
+      <JobCard
+        data={baseData({
+          status: 'suspended',
+          question: 'Which config approach — A or B?',
+          context: 'two options on the table',
+        })}
+        messageId="m1"
+        cardIndex={0}
+      />,
+    );
+    expect(html).toContain('Waiting');
+    expect(html).toContain('Needs your guidance');
+    expect(html).toContain('Which config approach — A or B?');
+    expect(html).toContain('two options on the table');
+    expect(html).toContain('Resume job');
+    // The suspended panel is not a terminal/stall state — no cancel nag.
+    expect(html).not.toContain('Looks stalled');
+  });
+
+  it('does not render the guidance panel for a running job', () => {
+    const html = renderToStaticMarkup(<JobCard data={baseData({ status: 'running' })} />);
+    expect(html).not.toContain('Needs your guidance');
+    expect(html).not.toContain('Resume job');
+  });
+
   it('falls back to startedAt when lastEventAt is undefined', () => {
     // Covers the pre-existing-state path (e.g. a card persisted before
     // this field was introduced). Old cards without lastEventAt should

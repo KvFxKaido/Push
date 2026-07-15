@@ -66,6 +66,9 @@ export interface ChatCardActionsParams {
   sendMessageRef: MutableRefObject<((text: string) => Promise<void>) | null>;
   isStreaming: boolean;
   messages: ChatMessage[];
+  /** Resume a durably-suspended background job with the user's typed guidance.
+   *  Provided by useBackgroundCoderJob; drives the `job-resume` card action. */
+  resumeJob: (chatId: string, jobId: string, answer: string) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +89,7 @@ export function useChatCardActions({
   sendMessageRef,
   isStreaming,
   messages,
+  resumeJob,
 }: ChatCardActionsParams) {
   const updateCardInMessage = useCallback(
     (
@@ -931,6 +935,23 @@ export function useChatCardActions({
           break;
         }
 
+        case 'job-resume': {
+          const answer = action.answer.trim();
+          if (!answer) return;
+          // resumeJob POSTs /api/jobs/:id/resume, optimistically flips the card
+          // to running, and re-opens the SSE stream (suspend closed it). On a
+          // rejected POST it rolls the card back to suspended and returns false;
+          // surface that so the user knows to retry (the panel is already back).
+          const ok = await resumeJob(chatId, action.jobId, answer);
+          if (!ok) {
+            injectSyntheticMessage(
+              chatId,
+              `Couldn't resume the background job — it may have already been cancelled or completed. If it's still waiting, try answering again.`,
+            );
+          }
+          break;
+        }
+
         case 'editor-save': {
           updateAgentStatus(
             { active: true, phase: 'Saving file...' },
@@ -1034,6 +1055,7 @@ export function useChatCardActions({
       lockedProvider,
       messages,
       repoRef,
+      resumeJob,
       sandboxIdRef,
       sendMessageRef,
       setConversations,

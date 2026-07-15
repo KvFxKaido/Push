@@ -850,6 +850,7 @@ export function useChat(
     >,
     isStreaming,
     messages,
+    resumeJob: backgroundCoderJob.resumeJob,
   });
 
   // Full Auto: auto-approve the Auditor's SAFE commit-review card (sibling hook).

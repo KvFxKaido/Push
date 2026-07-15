@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
   BackgroundJobPersistenceEntry,
   ChatCard,
+  CoderJobCardData,
   Conversation,
   DelegationEnvelope,
   UserProfile,
@@ -802,6 +803,197 @@ describe('useBackgroundCoderJob — SSE dispatch', () => {
     // Initial connect — no Last-Event-ID expected.
     expect(headers['Last-Event-ID']).toBeUndefined();
     expect(headers['Accept']).toBe('text/event-stream');
+
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('useBackgroundCoderJob — durable suspend / resume', () => {
+  /** A conversation carrying one suspended coder-job card + pendingJobIds entry. */
+  function makeSuspendedConvs(jobId = 'job-susp'): Record<string, Conversation> {
+    return {
+      'chat-1': {
+        id: 'chat-1',
+        title: 'Test chat',
+        createdAt: 1,
+        lastMessageAt: 1,
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            content: 'delegate_coder …',
+            timestamp: 1,
+            isToolCall: true,
+            cards: [
+              {
+                type: 'coder-job',
+                data: {
+                  jobId,
+                  chatId: 'chat-1',
+                  status: 'suspended',
+                  startedAt: 1,
+                  question: 'Which config approach?',
+                  context: 'two options',
+                  resumeSchema: '{"required":["answer"],"fields":{"answer":"string"}}',
+                },
+              },
+            ],
+          },
+        ],
+        pendingJobIds: {
+          [jobId]: {
+            jobId,
+            status: 'suspended',
+            lastEventId: 'ev-9',
+            startedAt: 1,
+            updatedAt: 1,
+            source: 'main-chat',
+          },
+        },
+      } as Conversation,
+    };
+  }
+
+  it('a job.suspended SSE event parks the card with the question/context/resumeSchema', async () => {
+    const suspendedEvent = {
+      id: 'ev-2',
+      timestamp: 1234,
+      type: 'job.suspended',
+      executionId: 'job-77',
+      role: 'coder',
+      question: 'Which config approach — A or B?',
+      context: 'two options on the table',
+      resumeSchema: '{"required":["answer"],"fields":{"answer":"string"}}',
+    };
+    const startedEvent = {
+      id: 'ev-1',
+      timestamp: 1233,
+      type: 'job.started',
+      executionId: 'job-77',
+      role: 'coder',
+      detail: 'Fix the thing',
+    };
+    const sse =
+      `id: ${startedEvent.id}\nevent: ${startedEvent.type}\ndata: ${JSON.stringify(startedEvent)}\n\n` +
+      `id: ${suspendedEvent.id}\nevent: ${suspendedEvent.type}\ndata: ${JSON.stringify(suspendedEvent)}\n\n`;
+
+    const encoder = new TextEncoder();
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-77' }), { status: 202 }) as Response,
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue(encoder.encode(sse));
+              c.close();
+            },
+          }),
+          { status: 200 },
+        ) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, getConvs } = useHarness({ 'chat-1': makeConversation('chat-1') });
+    await hook.startJob({
+      chatId: 'chat-1',
+      repoFullName: 'acme/web',
+      branch: 'main',
+      sandboxId: 'sbx-1',
+      ownerToken: 'tok-1',
+      envelope: makeEnvelope(),
+      provider: 'openrouter',
+      model: undefined,
+      userProfile: null,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const entry = getConvs()['chat-1']?.pendingJobIds?.['job-77'];
+    expect(entry?.status).toBe('suspended');
+    expect(entry?.lastEventId).toBe('ev-2');
+
+    const convCards = getConvs()['chat-1'].messages.flatMap((m) => m.cards ?? []);
+    const card = convCards.find((c) => c.type === 'coder-job') as
+      | { data: CoderJobCardData }
+      | undefined;
+    expect(card?.data.status).toBe('suspended');
+    expect(card?.data.question).toBe('Which config approach — A or B?');
+    expect(card?.data.context).toBe('two options on the table');
+    expect(card?.data.resumeSchema).toContain('answer');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('resumeJob POSTs the typed answer, flips the card to running, and re-opens the stream', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      // POST /resume
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ jobId: 'job-susp', resumed: true }), {
+          status: 202,
+        }) as Response,
+      )
+      // re-opened SSE stream — closes immediately
+      .mockResolvedValueOnce(
+        new Response(new ReadableStream({ start: (c) => c.close() }), { status: 200 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, getConvs } = useHarness(makeSuspendedConvs('job-susp'));
+    const ok = await hook.resumeJob('chat-1', 'job-susp', 'go with option A');
+    expect(ok).toBe(true);
+
+    // POST body carries the typed resumeData contract.
+    const postCall = fetchMock.mock.calls[0];
+    expect(postCall[0]).toBe('/api/jobs/job-susp/resume');
+    expect((postCall[1] as RequestInit).method).toBe('POST');
+    expect(JSON.parse((postCall[1] as RequestInit).body as string)).toEqual({
+      resumeData: { answer: 'go with option A' },
+    });
+
+    // Stream re-opened from the last replayed event (suspend closed it).
+    const sseCall = fetchMock.mock.calls[1];
+    expect(sseCall[0]).toBe('/api/jobs/job-susp/events');
+    expect(((sseCall[1] as RequestInit).headers as Record<string, string>)['Last-Event-ID']).toBe(
+      'ev-9',
+    );
+
+    // Card optimistically flipped to running.
+    const convCards = getConvs()['chat-1'].messages.flatMap((m) => m.cards ?? []);
+    const card = convCards.find((c) => c.type === 'coder-job') as
+      | { data: CoderJobCardData }
+      | undefined;
+    expect(card?.data.status).toBe('running');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('resumeJob rolls the card back to suspended and returns false when the POST is rejected', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'NOT_SUSPENDED' }), { status: 409 }) as Response,
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { hook, getConvs } = useHarness(makeSuspendedConvs('job-susp'));
+    const ok = await hook.resumeJob('chat-1', 'job-susp', 'answer');
+    expect(ok).toBe(false);
+
+    // No stream re-open on failure — only the rejected POST was issued.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Card rolled back so the guidance panel returns for a retry.
+    const convCards = getConvs()['chat-1'].messages.flatMap((m) => m.cards ?? []);
+    const card = convCards.find((c) => c.type === 'coder-job') as
+      | { data: CoderJobCardData }
+      | undefined;
+    expect(card?.data.status).toBe('suspended');
+    expect(card?.data.question).toBe('Which config approach?');
 
     vi.unstubAllGlobals();
   });
