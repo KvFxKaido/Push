@@ -152,7 +152,7 @@ In-band with the change that introduces the silent path — not as a follow-up. 
 
 ### Decision-doc discipline
 
-When you ship something specified in `docs/decisions/`, **flip that doc's `Status:` field in the same PR**. Don't leave specs at "Draft" while the code has landed. See `docs/decisions/README.md` for the label vocabulary (Current / Historical / Draft / Reference / Superseded by `<doc>` / Merged into `<doc>`).
+When you ship something specified in `docs/decisions/`, **flip that doc's `Status:` field in the same PR**. Don't leave specs at "Draft" while the code has landed. See `docs/decisions/README.md` for the canonical label vocabulary (the single source of truth — don't restate it here).
 
 ### New feature checklist (cross-surface work)
 
