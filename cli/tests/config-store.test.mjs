@@ -419,4 +419,25 @@ describe('resolveRuntimeConfig profiles', () => {
       /Unknown profile "ghost"\. No profiles are defined/,
     );
   });
+
+  it('strips profile-meta keys nested inside a selected profile', () => {
+    const resolution = resolveRuntimeConfig(
+      {
+        provider: 'ollama',
+        profiles: {
+          work: {
+            provider: 'anthropic',
+            activeProfile: 'sneaky',
+            profiles: { other: { provider: 'openai' } },
+          },
+        },
+      },
+      { env: {}, profile: 'work' },
+    );
+
+    assert.equal(resolution.config.provider, 'anthropic');
+    // A profile that carries meta keys must not surface them in the resolved config.
+    assert.equal(resolution.config.activeProfile, undefined);
+    assert.equal(resolution.config.profiles, undefined);
+  });
 });

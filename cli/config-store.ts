@@ -233,13 +233,15 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
 const PROFILE_META_KEYS = ['profiles', 'activeProfile'] as const;
 
 /**
- * The base user layer must not carry profile-meta keys: `profiles` and
- * `activeProfile` select behavior, they are not resolved config leaves.
+ * Profile-meta keys (`profiles`, `activeProfile`) select behavior; they are not
+ * resolved config leaves. Strip them from every layer that can carry them — the
+ * base user layer AND a selected profile. A profile is `Partial<PushConfig>`, so
+ * it could nest either key, and `mergeConfigLayers` would otherwise surface it.
  */
-function baseUserConfig(userConfig: PushConfig): PushConfig {
-  const base: PushConfig = { ...userConfig };
-  for (const key of PROFILE_META_KEYS) delete base[key];
-  return base;
+function stripProfileMeta(config: PushConfig): PushConfig {
+  const stripped: PushConfig = { ...config };
+  for (const key of PROFILE_META_KEYS) delete stripped[key];
+  return stripped;
 }
 
 /** Selected profile name: `--profile` (option) > `PUSH_PROFILE` > `activeProfile`. */
@@ -272,7 +274,7 @@ export function resolveRuntimeConfig(
       id: 'user-config',
       kind: 'user',
       path: getConfigPath(),
-      value: baseUserConfig(userConfig),
+      value: stripProfileMeta(userConfig),
     },
   ];
 
@@ -290,7 +292,11 @@ export function resolveRuntimeConfig(
             : 'No profiles are defined in the config.'),
       );
     }
-    layers.push({ id: `profile:${profileName}`, kind: 'profile', value: profileValue });
+    layers.push({
+      id: `profile:${profileName}`,
+      kind: 'profile',
+      value: stripProfileMeta(profileValue),
+    });
   }
 
   layers.push(...environmentConfigLayers(env));
