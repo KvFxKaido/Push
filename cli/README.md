@@ -149,6 +149,7 @@ Skill discovery:
 ./push run --task "Add error handling to src/parser.ts"
 ./push run "Fix the failing test in utils.test.js"
 ./push run --task "Refactor auth module" --accept "pnpm test" --accept "pnpm run lint" --json
+./push run "Inspect the repository" --jsonl
 ```
 
 Runs a single task and exits. No interaction. High-risk commands are blocked (no approval prompt).
@@ -172,6 +173,17 @@ When `--accept` is present, Push also frames the task using the shared delegatio
   }
 }
 ```
+
+`--jsonl` streams one compact `push.runtime.v1` event envelope per stdout
+line. It uses the same event types and payloads as pushd, including assistant
+tokens, tool lifecycle events, warnings, errors, and acceptance results. The
+last line is always `run_complete`; its outcome reflects acceptance checks as
+well as the agent run. `--json` and `--jsonl` are mutually exclusive.
+
+Live-only events can repeat the current `seq` because that field remains the
+session journal cursor, matching daemon behavior. Consumers should use line
+order for the live stream and advance replay cursors only from persisted event
+types.
 
 ## Configuration
 
@@ -599,6 +611,7 @@ Options:
   --accept <cmd>          Acceptance check (repeatable)
   --max-rounds <n>        Tool-loop cap (default: 8, max: 30)
   --json                  JSON output (headless/resume)
+  --jsonl                 Stream push.runtime.v1 events (headless run only)
   --no-attach             Resume: list sessions without prompting
   --no-resume-prompt      Bare push: skip the "resume or new" prompt and start a new session
   --sandbox               Enable local Docker sandbox
