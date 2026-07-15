@@ -1,14 +1,15 @@
 import { promises as fs } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import { Ajv2020, type ErrorObject, type ValidateFunction } from 'ajv/dist/2020.js';
-
-// Both packages publish CommonJS entry points. NodeNext correctly models their
-// runtime namespace shape, but a synthetic default import is not callable in
-// declaration builds, so load the plugin through Node's explicit CJS bridge.
-const require = createRequire(import.meta.url);
-const addFormats = require('ajv-formats') as (ajv: Ajv2020) => Ajv2020;
+// Static default import, NOT a `createRequire` bridge: `bun build --compile`
+// only embeds statically-imported packages, so a dynamic require of ajv-formats
+// bundles cleanly but throws "Cannot find package 'ajv-formats'" at runtime in
+// the single-file binary — the smoke-test failure this replaces. Under NodeNext
+// the CJS default import is typed as the module namespace (no call signature)
+// even though the runtime value is the callable plugin, so bind it via a cast.
+import addFormatsModule from 'ajv-formats';
+const addFormats = addFormatsModule as unknown as (ajv: Ajv2020) => void;
 
 const MAX_SCHEMA_BYTES = 256_000;
 const MAX_REPAIR_CONTEXT_CHARS = 50_000;
