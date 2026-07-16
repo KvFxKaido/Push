@@ -3474,7 +3474,7 @@ export async function buildAttachSessionPayloadForSession(sessionId, lastSeenSeq
 /**
  * `push attach <session-id>` — stream live events from a pushd session.
  *
- * Behavior contract (see ROADMAP.md "`pushd` Attach + Event Stream UX"):
+ * Behavior contract:
  *   1. Attach to a live session.
  *   2. Watch events in a readable transcript — delegation events route
  *      through `delegationEventToTranscript` via `makeCLIEventHandler`.

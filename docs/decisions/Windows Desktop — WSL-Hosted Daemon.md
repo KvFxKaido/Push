@@ -2,7 +2,8 @@
 
 Date: 2026-06-21
 Status: **Draft** — design agreed (Option B; "WSL required" accepted). Validating
-with B-WSLg before building the native shell; not yet roadmap-promoted. Owner: Push CLI/desktop.
+with B-WSLg before building the native shell; implementation still needs an owner
+commitment. Owner: Push CLI/desktop.
 
 ## Problem
 

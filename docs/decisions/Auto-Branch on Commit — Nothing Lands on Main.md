@@ -42,8 +42,9 @@ model-namer from the commit path can be grafted on later if slugs read poorly.
 
 ## Problem
 
-The first-priority track (`Single-Agent Loop + Branch-at-Commit Persistence`,
-ROADMAP) decided the persistence model months ago: **talk on `main`
+The first-priority track (`Single-Agent Loop + Branch-at-Commit Persistence`, in
+the since-retired root `ROADMAP.md`) decided the persistence model months ago:
+**talk on `main`
 branch-free, and the first commit auto-creates + auto-pushes a branch so
 nothing ever lands on `main`.** The supporting pieces have since shipped —
 the deterministic pre-push secret scan (`lib/secret-scan.ts` + the

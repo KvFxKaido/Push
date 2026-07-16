@@ -177,8 +177,8 @@ only); retrieval rides the existing packing with its retrieved-memory framing,
 so the model says "a previous session fixed this" instead of claiming lived
 history. Persistence policy caps freshness to the last few summaries per repo
 (`lib/memory-persistence-policy.ts` is the home for that call). Kernel goes in
-`lib/` per the cross-surface checklist. Design-in-motion; needs roadmap
-promotion before implementation.
+`lib/` per the cross-surface checklist. Design-in-motion; implementation still
+needs an owner commitment.
 
 Source notes:
 [`Context Memory and Retrieval Architecture`](<../archive/decisions/Context Memory and Retrieval Architecture.md>),
@@ -787,7 +787,7 @@ Source notes:
 4. Finish TUI daemon-session controller extraction — **shipped 2026-07-09** (#1369): `cli/tui-daemon-session.ts` owns the daemon-session state/lifecycle/verbs behind a hook seam; `runTUI`'s ~100 ambient reads collapsed to `daemon.*`. Phase 2 of the TUI decomposition (command-handler module) stays optional; see the archived decision doc.
 5. Graduate loop detection enforcement only after telemetry supports thresholds.
 6. Memory Phase 3 immutable verbatim logs — **shipped 2026-06-21** (kernel + CLI file backend + write-path `verbatimRef` stamping + `memory_expand` resolution + reducer raw-retention/recall via `memory_expand` `refs`). Only the Worker durable backend remains, tracked in **#1063** (blocked on a Worker-side typed-memory store). See the LCM doc's Phase 3.
-7. Promote the diff/annotation envelope only when a roadmap item needs it.
+7. Promote the diff/annotation envelope only when a committed decision needs it.
 8. TUI focus-stack migration (§12) — **complete**: the whole `processInput` dispatch resolves through the stack across six declarative scopes. Push/pop self-registration was considered and declined (see §12); declarative `isActive()` against authoritative state is the end state.
 9. Converge the CLI/daemon terminal chat onto the single conversational lead (a `leadMode` run of the shared kernel), so the TUI feels like the app with local reach (§10) instead of the delegated org-chart model. Step 1 landed 2026-06-12: interactive turns default to the in-loop lead with the Planner wrapper behind `PUSH_DELEGATION_MODE=delegated`. Step 2 landed 2026-06-12: the lead-kernel lane (`cli/lead-turn.ts`) runs the turn on the shared kernel in `leadMode`. Step 3 landed 2026-06-12: the lane is the **default**; `PUSH_LEAD_RUNTIME=engine` is the exact-match opt-out while it bakes. Step 4 — **complete**: the bake-period `PUSH_LEAD_RUNTIME=engine` opt-out and the CLI-local engine round loop are retired; `runAssistantTurn` delegates unconditionally to the kernel lane and the now-unreachable helper cluster the loop left behind in `cli/engine.ts` (awareness guard, finalization/parse-error builders, mid-session distill — no callers once `runAssistantLoop` was gone; the kernel owns these live concerns) plus its obsolete tests were removed. Behavior-neutral removal. Step 5 landed 2026-07-08: Explorer fan-out parity — the CLI lead wires the same Explorer-only delegation arc as the web inline lane (`cli/lead-explorer.ts`, cap 2, shared-grouper bucket, `subagent.*` lifecycle events); see the §10 arc paragraph.
 10. Tool-output compaction (§13): the TokenJuice pattern is **already shipped** (`lib/tool-output-reducers.ts`, both surfaces). The remaining "keep the raw output losslessly" half is folded into memory Phase 3 (item 6) — a reduced result stamps a `verbatimRef` into `lib/verbatim-log.ts`. A declarative `.push/`-scoped rule overlay is deliberately deferred (YAGNI until a repo needs custom rules).

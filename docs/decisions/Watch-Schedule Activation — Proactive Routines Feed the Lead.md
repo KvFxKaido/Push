@@ -1,6 +1,6 @@
 # Watch/Schedule Activation — Proactive Routines Feed the Lead
 
-**Status:** Draft — design-in-motion; needs roadmap promotion before implementation.
+**Status:** Draft — design-in-motion; implementation still needs an owner commitment.
 **Date:** 2026-07-09
 Related:
 [`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>)
