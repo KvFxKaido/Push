@@ -47,6 +47,7 @@ import {
   createDeviceAdminHandlers,
   resolveOrMintTargetAttachToken,
 } from './pushd/device-admin-handlers.js';
+import { createSessionRuntime } from './pushd/session-runtime.js';
 
 /**
  * Dispatcher-level audit emission for request types whose handlers
@@ -229,18 +230,7 @@ import {
   resolveReviewGuidance,
 } from '../lib/review-guidance.ts';
 import { validateTaskGraph, executeTaskGraph, formatTaskGraphResult } from '../lib/task-graph.ts';
-import {
-  assertValidEvent,
-  isStrictModeEnabled,
-  isProtocolObserveEnabled,
-  validateEvent,
-} from '../lib/protocol-schema.js';
-import {
-  DAEMON_CAPABILITIES,
-  EVENT_V2,
-  TOOL_CARDS_V1,
-  WORKSPACE_STATE_V1,
-} from '../lib/daemon-capabilities.js';
+import { DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
 import {
   DAEMON_EXEC_MODES,
   DAEMON_WEB_SEARCH_BACKENDS,
@@ -248,13 +238,7 @@ import {
   normalizeDaemonExecMode,
   normalizeDaemonWebSearchBackend,
 } from '../lib/daemon-runtime-settings.ts';
-import { isV2DelegationEvent, synthesizeV1DelegationEvent } from './v1-downgrade.js';
-import { nextWorkspaceStateEvent, readWorkspaceStateFromGit } from './workspace-state-emitter.js';
-import {
-  applyDaemonTranscriptEvent,
-  rebuildDaemonTranscriptMirror,
-  snapshotDaemonTranscript,
-} from './daemon-transcript-mirror.ts';
+import { rebuildDaemonTranscriptMirror } from './daemon-transcript-mirror.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.ts';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.ts';
@@ -269,18 +253,12 @@ import { isEditDiff } from '../lib/edit-diff.ts';
 
 const VERSION = RUNTIME_VERSION;
 const DAEMON_STARTED_AT_MS = Date.now();
-// Drain state: once set, the daemon refuses new runs (`send_user_message`) and
-// self-exits the moment it goes idle, so a client can respawn a fresh daemon
-// from current code without killing in-flight work. See `handleDrain`.
-let draining = false;
 // The daemon's advertised protocol capability set. The canonical vocabulary
 // (with per-capability docs) lives in `lib/daemon-capabilities.ts` so the
 // client surfaces that advertise subsets back can't drift from it — see #745.
 const CAPABILITIES = DAEMON_CAPABILITIES;
 
 const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewer', 'auditor']);
-
-const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 // ─── Phase 1 extractions (Pushd Decomposition Plan) ──────────────
 // Implementations moved to typed modules under cli/pushd/. This file stays
@@ -344,38 +322,30 @@ export {
 export { makeAttachToken };
 export { resolveOrMintTargetAttachToken };
 
-// ─── Session registry (in-memory) ────────────────────────────────
+// ─── Session runtime composition (Phase 4) ────────────────────────
 
-// sessionId → { state, attachToken, abortController?, activeRunId?, pendingApproval?, activeDelegations?, activeGraphs? }
-const activeSessions = new Map();
+const sessionRuntime = createSessionRuntime({
+  isRelayRunning: () => relayCoordinator.isRunning(),
+});
+
+// Compatibility facade for delegation/recovery slices that move in Phases 5–6.
+// The runtime owns the Map; pushd only retains a temporary reference.
+const activeSessions = sessionRuntime.sessions;
 
 export function ensureRuntimeState(entry) {
-  if (!entry.activeDelegations) entry.activeDelegations = new Map();
-  if (!entry.activeGraphs) entry.activeGraphs = new Map();
-  return entry;
+  return sessionRuntime.ensureRuntimeState(entry);
 }
 
 export function __getActiveSessionForTesting(sessionId) {
-  return activeSessions.get(sessionId) || null;
+  return sessionRuntime.get(sessionId);
 }
 
-/**
- * Test-only: evict a session from the in-memory registry so the next
- * handler call has to lazy-load it from disk. Used to simulate the
- * daemon-restart path without actually restarting the daemon.
- */
 export function __evictActiveSessionForTesting(sessionId) {
-  return activeSessions.delete(sessionId);
+  return sessionRuntime.evict(sessionId);
 }
 
-/**
- * Insert a synthetic active session. Test seam for handlers that read
- * `activeSessions` directly — e.g. `handleGetSessionMessages` (PR #687).
- * Returns the entry so callers can hold a ref for assertions.
- */
 export function __setActiveSessionForTesting(sessionId, entry) {
-  activeSessions.set(sessionId, entry);
-  return entry;
+  return sessionRuntime.set(sessionId, entry);
 }
 
 // Test-only seam for deterministic delegate_explorer race coverage.
@@ -389,126 +359,34 @@ export function __setDelegateExplorerHooksForTesting(hooks = null) {
   delegateExplorerTestHooks.afterTerminalDecision = hooks?.afterTerminalDecision || null;
 }
 
-// ─── Shared approval builder ─────────────────────────────────────
-
-/**
- * Build an approvalFn for a session entry. The returned function emits
- * approval_required events and awaits a client decision (or times out).
- * Used by both normal runs and crash-recovery runs.
- */
 function buildApprovalFn(sessionId, entry, runId) {
-  return async (tool, detail) => {
-    const approvalId = makeApprovalId();
-    // Display fields, computed once and shared between the `approval_required`
-    // event payload and the persisted `entry.pendingApproval` so a reconnect
-    // snapshot can rebuild a faithful pane (see below + handleGetSessionSnapshot).
-    const approvalKind = tool?.tool || 'tool_execution';
-    const approvalTitle = `Approve ${tool?.tool || 'action'}`;
-    const approvalSummary = typeof detail === 'string' ? detail : JSON.stringify(detail || {});
-
-    const approvalPromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
-        entry.pendingApproval = null;
-        reject(new Error('Approval timed out'));
-      }, APPROVAL_TIMEOUT_MS);
-
-      // Store the runId alongside the approvalId so `handleSubmitApproval`
-      // can emit `approval_received` on the SAME runId we emitted
-      // `approval_required` on. Without this, delegation + task-graph
-      // approvals mismatched: the required event fired on the child
-      // runId while the received event fell back to `entry.activeRunId`
-      // (which is the parent for delegations, and null for task-graph
-      // nodes), making client-side correlation impossible (codex P1
-      // on PR #282).
-      //
-      // Also persist the display fields (kind/title/summary). A client that
-      // reconnects while an approval is pending — with the `approval_required`
-      // event already outside its replay window — rebuilds the pane from the
-      // snapshot's `pendingApproval`; without these it could only show a
-      // generic "waiting for approval" pane (#746).
-      entry.pendingApproval = {
-        approvalId,
-        resolve,
-        reject,
-        timer,
-        runId,
-        kind: approvalKind,
-        title: approvalTitle,
-        summary: approvalSummary,
-      };
-    });
-
-    const approvalPayload = {
-      approvalId,
-      kind: approvalKind,
-      title: approvalTitle,
-      summary: approvalSummary,
-      options: ['approve', 'deny'],
-    };
-    await appendSessionEvent(entry.state, 'approval_required', approvalPayload, runId);
-    broadcastEvent(sessionId, {
-      v: PROTOCOL_VERSION,
-      kind: 'event',
-      sessionId,
-      runId,
-      seq: entry.state.eventSeq,
-      ts: Date.now(),
-      type: 'approval_required',
-      payload: approvalPayload,
-    });
-
-    try {
-      const decision = await approvalPromise;
-      return decision === 'approve';
-    } catch {
-      return false;
-    }
-  };
+  return sessionRuntime.buildApprovalFn(sessionId, entry, runId);
 }
 
-// ─── Multi-client fan-out ────────────────────────────────────────
-
-// sessionId → Map<emitFn, { capabilities: Set<string> }>
-//
-// Keyed on the emitFn itself so `removeSessionClient(sessionId, emitFn)`
-// can find the entry without the caller needing to hold on to an
-// opaque handle. The Map is iterated in insertion order, so the
-// effective broadcast order matches the v1 Set-based implementation
-// and existing tests that assert "client A attached first, so it gets
-// events first" still hold.
-const sessionClients = new Map();
-
-/**
- * Register a client listener for a session.
- *
- * @param sessionId     the session the client is attached to
- * @param emitFn        a function that takes an event envelope and
- *                      writes it to the client
- * @param capabilities  optional list of v2 capability names the
- *                      client advertises. Clients that include
- *                      `'event_v2'` receive raw delegation events;
- *                      clients that omit it (including the v1
- *                      default) receive synthesized `assistant_token`
- *                      shadows built by `cli/v1-downgrade.ts`.
- */
 function addSessionClient(sessionId, emitFn, capabilities = []) {
-  if (!sessionClients.has(sessionId)) {
-    sessionClients.set(sessionId, new Map());
-  }
-  const caps = new Set(Array.isArray(capabilities) ? capabilities : []);
-  sessionClients.get(sessionId).set(emitFn, { capabilities: caps });
+  sessionRuntime.addClient(sessionId, emitFn, capabilities);
 }
 
 function removeSessionClient(sessionId, emitFn) {
-  const clients = sessionClients.get(sessionId);
-  if (clients) {
-    clients.delete(emitFn);
-    if (clients.size === 0) sessionClients.delete(sessionId);
-  }
+  sessionRuntime.removeClient(sessionId, emitFn);
 }
 
-// Phase 3 composition: the coordinator owns every relay mutable. The spine
-// supplies only dispatch/fan-out callbacks and narrow WS/session accessors.
+export function broadcastEvent(sessionId, event) {
+  sessionRuntime.broadcast(sessionId, event);
+}
+
+export function emitEventWithDowngrade(event, emitFn, capabilities) {
+  sessionRuntime.emitWithDowngrade(event, emitFn, capabilities);
+}
+
+function transcriptSnapshotForClientCapabilities(mirror, capabilities) {
+  return sessionRuntime.transcriptSnapshotForCapabilities(mirror, capabilities);
+}
+
+function eventForClientCapabilities(event, capabilities) {
+  return sessionRuntime.eventForCapabilities(event, capabilities);
+}
+
 const relayCoordinator = createRelayCoordinator({
   dispatch: (request, emitEvent, context) => handleRequest(request, emitEvent, context),
   addSessionClient,
@@ -533,194 +411,6 @@ const {
   saveSessionState,
 });
 
-/**
- * Preserve the pre-Slice-2 event shape for clients that have not advertised
- * `tool_cards_v1`. The canonical/persisted event keeps the card; only the
- * per-client transport view is stripped.
- */
-function eventForClientCapabilities(event, capabilities) {
-  if (capabilities.has(TOOL_CARDS_V1)) return event;
-  if (event?.type !== 'tool.execution_complete' || !event.payload?.card) return event;
-  const { card: _card, ...payload } = event.payload;
-  return { ...event, payload };
-}
-
-/**
- * Keep reconnect snapshots on the same capability boundary as live/replayed
- * events. The daemon-owned mirror stays canonical; only the response copy is
- * stripped for clients that do not understand tool cards.
- */
-function transcriptSnapshotForClientCapabilities(mirror, capabilities) {
-  const snapshot = snapshotDaemonTranscript(mirror);
-  if (capabilities.has(TOOL_CARDS_V1)) return snapshot;
-  return {
-    ...snapshot,
-    rows: snapshot.rows.map((row) => {
-      if (!row?.card) return row;
-      const { card: _card, ...legacyRow } = row;
-      return legacyRow;
-    }),
-  };
-}
-
-/**
- * Validate an outbound envelope before fan-out.
- *
- * Strict mode (`PUSH_PROTOCOL_STRICT=1`, set by the daemon-integration test
- * harness at module load) throws, so envelope drift lands as a CI failure
- * instead of silent consumer-side breakage.
- *
- * Otherwise observe mode (ON by default in the daemon, opt out via
- * `PUSH_PROTOCOL_OBSERVE=0`) validates and emits a structured
- * `protocol_drift_detected` log, but still lets the event through —
- * fail-open, so a drifted envelope is surfaced to ops rather than dropped
- * for every attached client. The log goes to stdout via `console.log` like
- * the daemon's other structured logs; the NDJSON wire is the per-client WS
- * (`emitFn`), never stdout, so it can't corrupt a client stream.
- */
-function checkOutboundEvent(event) {
-  if (isStrictModeEnabled()) {
-    assertValidEvent(event);
-    return;
-  }
-  if (!isProtocolObserveEnabled()) return;
-  const issues = validateEvent(event);
-  if (issues.length === 0) return;
-  console.log(
-    JSON.stringify({
-      level: 'warn',
-      event: 'protocol_drift_detected',
-      sessionId: event?.sessionId,
-      type: event?.type,
-      seq: event?.seq,
-      // Log only the dotted paths, never `i.message` — validator messages embed
-      // JSON.stringify(value) of the offending field, and a drifted tool-call /
-      // approval / stream payload can carry user prompts, tool args, or command
-      // output. Path + type + seq is enough drift signal; reproduce with
-      // PUSH_PROTOCOL_STRICT=1 locally to see the full values.
-      issuePaths: issues.map((i) => i.path || '(root)'),
-    }),
-  );
-}
-
-export function broadcastEvent(sessionId, event) {
-  checkOutboundEvent(event);
-  const entry = activeSessions.get(sessionId);
-  if (entry) {
-    if (
-      event.type === 'context_compacted' ||
-      event.type === 'session_reverted' ||
-      event.type === 'session_unreverted'
-    ) {
-      entry.transcriptMirror = null;
-    } else if (entry.transcriptMirror) {
-      applyDaemonTranscriptEvent(entry.transcriptMirror, event);
-    }
-  }
-  const clients = sessionClients.get(sessionId);
-  if (!clients) return;
-
-  // Fast path: non-delegation events pass through unchanged to every
-  // client regardless of capabilities. This covers the vast majority
-  // of traffic (`assistant_token`, `tool_call`, `tool_result`,
-  // `status`, `run_complete`, `error`, `session_started`,
-  // `approval_required`, etc.).
-  const isDelegation = isV2DelegationEvent(event.type);
-  if (!isDelegation) {
-    for (const [emitFn, meta] of clients) {
-      try {
-        emitFn(eventForClientCapabilities(event, meta.capabilities));
-      } catch {
-        /* client may have disconnected */
-      }
-    }
-    return;
-  }
-
-  // Slow path: a v2 delegation event. Every client that advertised
-  // `event_v2` at attach time gets the raw envelope; every other
-  // client gets the synthesized v1-shaped `assistant_token` shadow(s)
-  // built by `cli/v1-downgrade.ts`. A single synthesis per v1 event
-  // is sufficient even with multiple v1 clients — the envelope is
-  // pure data and can be fanned out as-is.
-  //
-  // Approval events are NOT delegation events (see
-  // `isV2DelegationEvent` in `cli/v1-downgrade.ts`) and take the fast
-  // path above. They reach v1 clients verbatim, and the daemon's
-  // internal approvalId → delegation map routes the response back to
-  // the correct child — the v1 client never has to know a delegation
-  // was involved.
-  let synthesized = null;
-  for (const [emitFn, meta] of clients) {
-    if (meta.capabilities.has(EVENT_V2)) {
-      try {
-        emitFn(event);
-      } catch {
-        /* client may have disconnected */
-      }
-      continue;
-    }
-    // v1 client: build the downgrade lazily on first need so sessions
-    // with only v2 clients pay nothing.
-    if (synthesized === null) {
-      synthesized = synthesizeV1DelegationEvent(event);
-      for (const synth of synthesized) checkOutboundEvent(synth);
-    }
-    for (const synth of synthesized) {
-      try {
-        emitFn(synth);
-      } catch {
-        /* client may have disconnected */
-      }
-    }
-  }
-}
-
-/**
- * Emit a single event to a single client applying the same v1 synthetic
- * downgrade rules as `broadcastEvent`'s live-fanout slow path. Used by
- * the replay path inside `handleAttachSession` so a v1 client that
- * reconnects with `lastSeenSeq` doesn't receive raw `subagent.*` /
- * `task_graph.*` events from disk and silently drop them.
- *
- * Fixes the PR #281 codex P1 feedback: before this helper, the replay
- * loop called `emitEvent(event)` directly, which reintroduced the exact
- * "unknown event gets dropped" gap the live broadcast was meant to
- * close. Now every path that emits a delegation event to a client goes
- * through capability-aware synthesis.
- *
- * `capabilities` is a `Set<string>` matching the shape stored in
- * `sessionClients`. Callers that track capabilities as arrays should
- * wrap in `new Set(arr)` before calling.
- */
-export function emitEventWithDowngrade(event, emitFn, capabilities) {
-  // Validate the original envelope on the replay path too — this is the only
-  // path a reconnecting client sees persisted-but-not-live-broadcast events
-  // (the recovery trio), and the direct-emit branch below would otherwise skip
-  // it. Mirrors broadcastEvent's top-of-function check. The synth branch
-  // additionally validates each downgraded shadow.
-  checkOutboundEvent(event);
-  const isDelegation = isV2DelegationEvent(event.type);
-  if (!isDelegation || capabilities.has(EVENT_V2)) {
-    try {
-      emitFn(eventForClientCapabilities(event, capabilities));
-    } catch {
-      /* client may have disconnected */
-    }
-    return;
-  }
-  // v1 client + delegation event — synthesize the downgrade shadow(s).
-  const synthesized = synthesizeV1DelegationEvent(event);
-  for (const synth of synthesized) checkOutboundEvent(synth);
-  for (const synth of synthesized) {
-    try {
-      emitFn(synth);
-    } catch {
-      /* client may have disconnected */
-    }
-  }
-}
-
 // ─── Request handlers ────────────────────────────────────────────
 
 async function handleHello(req) {
@@ -744,222 +434,44 @@ async function handlePing(req) {
   });
 }
 
-/**
- * True when no session has an in-flight assistant run or background work
- * (delegations / task graphs). The drain path uses this to decide whether it
- * can self-exit immediately or must wait for active work to settle.
- */
 function isDaemonIdle() {
-  for (const [, entry] of activeSessions) {
-    if (entry.activeRunId) return false;
-    if (entry.activeDelegations && entry.activeDelegations.size > 0) return false;
-    if (entry.activeGraphs && entry.activeGraphs.size > 0) return false;
-  }
-  return true;
-}
-
-/**
- * Summarize the work still in flight — surfaced in the drain response so the
- * requesting client can tell the user exactly what it's waiting on before the
- * stale daemon respawns. Reports ALL tracked work types (assistant runs,
- * delegations, task graphs), not just top-level runs, so the client never says
- * "0 active runs" while the daemon is actually blocked on background work.
- */
-function pendingWorkSummary() {
-  const runs = [];
-  let delegations = 0;
-  let graphs = 0;
-  for (const [sessionId, entry] of activeSessions) {
-    if (entry.activeRunId) runs.push({ sessionId, runId: entry.activeRunId });
-    if (entry.activeDelegations) delegations += entry.activeDelegations.size;
-    if (entry.activeGraphs) graphs += entry.activeGraphs.size;
-  }
-  return { runs, delegations, graphs, total: runs.length + delegations + graphs };
-}
-
-let drainExitScheduled = false;
-let drainIdleWatcher = null;
-// Poll cadence for the drain idle watcher. A daemon refresh isn't latency-
-// sensitive, so a coarse poll keeps the catch-all cheap.
-const DRAIN_IDLE_POLL_MS = 250;
-// Injectable so tests can assert the drain self-exit decision without actually
-// SIGTERM-ing the test runner. Production raises SIGTERM so the existing
-// `main()` shutdown closure runs the full teardown.
-let drainExitFn = () => {
-  process.kill(process.pid, 'SIGTERM');
-};
-/**
- * Self-exit so the existing `main()` shutdown closure runs the full teardown
- * (relay close, WS close, socket/pidfile cleanup). Deferred a tick so the
- * in-flight drain ack (or final run_complete) flushes to the socket first.
- * Idempotent: only the first idle transition schedules the exit.
- */
-function clearDrainIdleWatcher() {
-  if (drainIdleWatcher) {
-    clearTimeout(drainIdleWatcher);
-    drainIdleWatcher = null;
-  }
-}
-
-function scheduleDrainExit() {
-  if (drainExitScheduled) return;
-  drainExitScheduled = true;
-  clearDrainIdleWatcher();
-  console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_exit_scheduled' }));
-  setTimeout(() => {
-    drainExitFn();
-  }, 50);
-}
-
-/**
- * Catch-all idle watcher for the drain self-exit. `noteRunSettled()` fires the
- * exit immediately when an assistant run completes, but background work
- * (delegations, task graphs) settles on cleanup paths that don't call it — and
- * `isDaemonIdle()` counts that work, so a drain blocked solely on a delegation
- * would otherwise never self-exit. While draining, this polls idle so the
- * refresh completes for ALL work types in one place, instead of hooking every
- * `activeDelegations`/`activeGraphs` delete site (which must stay in sync and
- * would still miss future trackers).
- */
-function startDrainIdleWatcher() {
-  if (drainIdleWatcher || drainExitScheduled) return;
-  const tick = () => {
-    drainIdleWatcher = null;
-    if (!draining || drainExitScheduled) return;
-    if (isDaemonIdle()) {
-      console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_idle_reached' }));
-      scheduleDrainExit();
-      return;
-    }
-    drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
-  };
-  drainIdleWatcher = setTimeout(tick, DRAIN_IDLE_POLL_MS);
-}
-
-// ── Idle lifecycle exit ────────────────────────────────────────────────────
-// Default-on: the daemon's lifetime tracks the local TUI's. When the last
-// loopback client disconnects, self-exit after a grace window — but only once
-// the daemon is idle (durable runs / delegations finish first) and no relay
-// (paired phone) is attached. The grace window is cancelled if a client
-// reconnects, so the self-heal drain→respawn and transient disconnects never
-// kill a daemon that's still in use. This bends the persistence default toward
-// the single-user "quit the TUI, the daemon goes too" behaviour; remote and
-// durable use stay alive via the two guards.
-let liveConnections = 0;
-let lifecycleExitTimer = null;
-let lifecycleExitArmed = false;
-let lifecycleExitFired = false;
-let lifecycleGraceMs = (() => {
-  const raw = Number(process.env.PUSH_DAEMON_IDLE_GRACE_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 8000;
-})();
-// Injectable so a test can observe the exit decision without SIGTERM-ing the
-// runner. Production raises SIGTERM so `main()`'s shutdown closure runs the full
-// teardown (relay close, WS close, socket/pidfile cleanup) — same path as drain.
-let lifecycleExitFn = () => {
-  process.kill(process.pid, 'SIGTERM');
-};
-
-function clearLifecycleExitTimer() {
-  if (lifecycleExitTimer) {
-    clearTimeout(lifecycleExitTimer);
-    lifecycleExitTimer = null;
-  }
+  return sessionRuntime.isIdle();
 }
 
 function noteLifecycleClientConnected() {
-  liveConnections += 1;
-  cancelLifecycleExit('client_connected');
+  sessionRuntime.noteClientConnected();
 }
 
 function noteLifecycleClientDisconnected() {
-  liveConnections = Math.max(0, liveConnections - 1);
-  maybeScheduleLifecycleExit();
+  sessionRuntime.noteClientDisconnected();
 }
 
-/** A client (re)connected or a relay attached — abort any pending exit. */
 function cancelLifecycleExit(reason) {
-  clearLifecycleExitTimer();
-  if (lifecycleExitArmed) {
-    lifecycleExitArmed = false;
-    console.log(JSON.stringify({ level: 'info', event: 'pushd_lifecycle_exit_cancelled', reason }));
-  }
+  sessionRuntime.cancelLifecycleExit(reason);
 }
 
-/**
- * Arm (or re-arm) the grace-window self-exit. Safe to call repeatedly — from the
- * last socket close, a relay detach, or a run settling. When the grace timer
- * fires it re-checks every guard: it exits only with no clients, no relay, and
- * an idle daemon; re-arms if a durable run/delegation is still finishing; and
- * bails if a client or relay came back. The drain path owns the exit while
- * draining, so this defers to it.
- */
 function maybeScheduleLifecycleExit() {
-  if (draining || drainExitScheduled || lifecycleExitFired) return;
-  if (liveConnections > 0 || relayCoordinator.isRunning()) {
-    cancelLifecycleExit('client_or_relay_present');
-    return;
-  }
-  if (lifecycleExitTimer) return; // already counting down
-  if (!lifecycleExitArmed) {
-    lifecycleExitArmed = true;
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        event: 'pushd_lifecycle_exit_armed',
-        graceMs: lifecycleGraceMs,
-        idle: isDaemonIdle(),
-      }),
-    );
-  }
-  lifecycleExitTimer = setTimeout(() => {
-    lifecycleExitTimer = null;
-    if (draining || drainExitScheduled || lifecycleExitFired) return;
-    if (liveConnections > 0 || relayCoordinator.isRunning()) {
-      cancelLifecycleExit('client_or_relay_present');
-      return;
-    }
-    if (!isDaemonIdle()) {
-      // Still finishing a durable run / delegation — wait another window.
-      maybeScheduleLifecycleExit();
-      return;
-    }
-    lifecycleExitFired = true;
-    lifecycleExitArmed = false;
-    console.log(JSON.stringify({ level: 'info', event: 'pushd_lifecycle_exit_fired' }));
-    lifecycleExitFn();
-  }, lifecycleGraceMs);
+  sessionRuntime.maybeScheduleLifecycleExit();
 }
 
-/**
- * Test seam: replace the drain self-exit and reset drain state so a test can
- * drive `handleDrain` / `noteRunSettled` and observe the exit decision without
- * terminating the process. Call with no args to restore the SIGTERM default.
- */
+function noteRunSettled() {
+  sessionRuntime.noteRunSettled();
+}
+
+function handleDrain(req, emitEvent, context = null) {
+  return sessionRuntime.handleDrain(req, emitEvent, context);
+}
+
 export function __setDrainExitForTesting(fn) {
-  drainExitFn = typeof fn === 'function' ? fn : () => process.kill(process.pid, 'SIGTERM');
-  draining = false;
-  drainExitScheduled = false;
-  clearDrainIdleWatcher();
+  sessionRuntime.setDrainExitForTesting(fn);
 }
 
-/**
- * Test seam: replace the lifecycle self-exit and reset its state so a test can
- * drive `maybeScheduleLifecycleExit` and observe the decision without
- * terminating the runner. `opts.graceMs` shrinks the grace window for fast
- * tests. Call with no args to restore the SIGTERM default.
- */
 export function __setLifecycleExitForTesting(fn, opts) {
-  lifecycleExitFn = typeof fn === 'function' ? fn : () => process.kill(process.pid, 'SIGTERM');
-  if (opts && Number.isFinite(opts.graceMs)) lifecycleGraceMs = opts.graceMs;
-  liveConnections = 0;
-  lifecycleExitArmed = false;
-  lifecycleExitFired = false;
-  clearLifecycleExitTimer();
+  sessionRuntime.setLifecycleExitForTesting(fn, opts);
 }
 
 export function __setLiveConnectionsForTesting(n) {
-  liveConnections = Math.max(0, Math.trunc(n) || 0);
+  sessionRuntime.setLiveConnectionsForTesting(n);
 }
 
 export function __setActiveRelayForTesting(handle) {
@@ -973,82 +485,6 @@ export {
   maybeScheduleLifecycleExit,
   cancelLifecycleExit,
 };
-
-/**
- * Called when an assistant run settles (activeRunId cleared) — the 0-latency
- * path to the drain self-exit. Background work relies on the idle watcher
- * instead. If a drain is pending and the daemon has gone fully idle, trigger
- * the deferred self-exit. Symmetric-log both branches so "draining but still
- * busy" is observable.
- */
-function noteRunSettled() {
-  if (!draining) return;
-  if (isDaemonIdle()) {
-    console.log(JSON.stringify({ level: 'info', event: 'pushd_drain_idle_reached' }));
-    scheduleDrainExit();
-  } else {
-    console.log(
-      JSON.stringify({
-        level: 'info',
-        event: 'pushd_drain_awaiting_idle',
-        pendingWork: pendingWorkSummary().total,
-      }),
-    );
-  }
-}
-
-/**
- * Mark the daemon draining for a runtime refresh. Idempotent. After this:
- *   - new `send_user_message` requests are rejected with `DAEMON_DRAINING`;
- *   - the daemon self-exits the moment it goes idle (immediately if already
- *     idle), letting the client respawn a fresh daemon from current code.
- * Active runs are NOT aborted — the whole point is to let in-flight work finish
- * on the code it started under, then refresh cleanly.
- */
-async function handleDrain(req, _emitEvent, context = null) {
-  // Loopback-only: drain self-exits the daemon, which is a local-client
-  // lifecycle concern (the TUI refreshing stale code over the unix socket).
-  // A relay-originated request carries a `relaySenderId`; reject those so a
-  // paired phone can't churn the daemon for every local session it shares.
-  if (context?.relaySenderId) {
-    return makeErrorResponse(
-      req.requestId,
-      'drain',
-      'FORBIDDEN',
-      'drain is a loopback-only operation',
-    );
-  }
-  const reason = typeof req.payload?.reason === 'string' ? req.payload.reason : null;
-  draining = true;
-  const work = pendingWorkSummary();
-  const idle = work.total === 0;
-  console.log(
-    JSON.stringify({
-      level: 'info',
-      event: 'pushd_drain_requested',
-      idle,
-      pendingRuns: work.runs.length,
-      pendingDelegations: work.delegations,
-      pendingGraphs: work.graphs,
-      reason,
-    }),
-  );
-  if (idle) {
-    scheduleDrainExit();
-  } else {
-    // Block solely on background work (delegation/task graph) settles on paths
-    // that don't call noteRunSettled(); the watcher guarantees the eventual exit.
-    startDrainIdleWatcher();
-  }
-  return makeResponse(req.requestId, 'drain', null, true, {
-    draining: true,
-    idle,
-    pendingRuns: work.runs,
-    pendingDelegations: work.delegations,
-    pendingGraphs: work.graphs,
-    pendingWork: work.total,
-  });
-}
 
 async function handleListSessions(req) {
   // Validate `limit` instead of accepting any truthy value via `|| 20`.
@@ -1256,7 +692,7 @@ async function handleSendUserMessage(req, emitEvent) {
   // Refuse new runs once draining: the daemon is on its way out for a runtime
   // refresh, so starting work here would run it on stale code. The client
   // routes around this by respawning a fresh daemon and retrying there.
-  if (draining) {
+  if (sessionRuntime.isDraining()) {
     return makeErrorResponse(
       req.requestId,
       'send_user_message',
@@ -1711,141 +1147,12 @@ async function readGitBranch(cwd) {
   }
 }
 
-// `GitExec` adapter over the daemon's execFileAsync. Resolves null on any git
-// failure (not a repo, git missing) so the emitter treats it as "no state".
-async function gitExecForWorkspaceState(args, cwd) {
-  try {
-    const { stdout } = await execFileAsync('git', args, {
-      cwd,
-      timeout: 5_000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    return { stdout };
-  } catch {
-    return null;
-  }
-}
-
-// Emit a workspace-state event live-only, gated on the `workspace_state_v1`
-// capability. These are non-persistent (see `shouldPersistRunEvent`): they ride
-// the current `eventSeq` like streaming tokens and are never appended to the
-// session journal, so they must NOT reach clients that reconcile the seq-based
-// replay stream without consuming them — hence per-client capability gating
-// rather than a blanket `broadcastEvent`. `runId` is omitted — the timeline is
-// ambient, not turn-scoped.
-function broadcastWorkspaceStateEvent(sessionId, entry, event) {
-  const { type, ...payload } = event;
-  const envelope = {
-    v: PROTOCOL_VERSION,
-    kind: 'event',
-    sessionId,
-    seq: entry.state?.eventSeq ?? 0,
-    ts: Date.now(),
-    type,
-    payload,
-  };
-  // Fail-fast strict validation even with zero capable clients, mirroring
-  // `broadcastEvent`'s top-of-function `checkOutboundEvent`.
-  checkOutboundEvent(envelope);
-  const clients = sessionClients.get(sessionId);
-  if (!clients) return;
-  for (const [emitFn, meta] of clients) {
-    if (!meta.capabilities.has(WORKSPACE_STATE_V1)) continue;
-    try {
-      emitFn(envelope);
-    } catch {
-      /* client may have disconnected */
-    }
-  }
-}
-
-/**
- * Drive the per-session workspace-state timeline and broadcast the resulting
- * event, serialized per session. The producer lives on the session entry, keyed
- * by sessionId (the workspace identity). Modes:
- *   - `snapshot`: read the tree, start a fresh producer, emit the opener
- *     (session start).
- *   - `delta`: read the tree, emit the minimal delta since last state — or
- *     nothing when unchanged (run end).
- *   - `resync`: re-forward the current snapshot without re-reading or
- *     advancing, so a newly attached client anchors (reconnect). Falls back to
- *     a read+snapshot when no producer exists yet.
- *
- * Callers fire-and-forget, and each mode awaits a git read before assigning
- * `entry.workspaceStateProducer` — so without ordering, a slow start-session
- * read could land after a post-run delta, broadcast stale state, and reset the
- * baseline. `entry.workspaceStateEmitChain` serializes all emits per session in
- * call order, closing that race.
- *
- * Emission is unconditional — no subscriber-gated skip. Always reading keeps the
- * producer current, so a resync after a subscriber gap re-anchors on fresh state
- * and the start-session opener still lands (the git read defers its broadcast
- * past the socket's auto-attach registration, which runs after `handleRequest`
- * returns). `broadcastWorkspaceStateEvent` already gates delivery per client on
- * `workspace_state_v1`, so nothing reaches a non-consumer. A skip that
- * short-circuited before the read lived here briefly but dropped the opener and
- * staled the reconnect anchor; reintroduce it only subscriber-aware, and only
- * once a daemon consumer exists to test it (#1349).
- */
 function emitWorkspaceState(sessionId, entry, mode) {
-  const prior = entry.workspaceStateEmitChain ?? Promise.resolve();
-  // runWorkspaceStateEmit never rejects (it catches + logs), so the chain can't
-  // wedge on a failed emit.
-  const next = prior.then(() => runWorkspaceStateEmit(sessionId, entry, mode));
-  entry.workspaceStateEmitChain = next;
-  return next;
+  return sessionRuntime.emitWorkspaceState(sessionId, entry, mode);
 }
 
 export function __emitWorkspaceStateForTesting(sessionId, entry, mode) {
-  return emitWorkspaceState(sessionId, entry, mode);
-}
-
-// Symmetric structured logs (to console.error — CLI stdout is reserved) on the
-// skip and failure branches so a silent no-emit is visible to operators.
-async function runWorkspaceStateEmit(sessionId, entry, mode) {
-  try {
-    if (mode === 'resync' && entry.workspaceStateProducer) {
-      broadcastWorkspaceStateEvent(sessionId, entry, entry.workspaceStateProducer.snapshot());
-      return;
-    }
-    const cwd = entry.state?.cwd || process.cwd();
-    const nextState = await readWorkspaceStateFromGit(
-      cwd,
-      // Protect Main is a per-commit/push gate on the CLI, not ambient session
-      // state; default off (parity with the web adapter's optional arg).
-      { protectMain: false },
-      gitExecForWorkspaceState,
-    );
-    if (!nextState) {
-      console.error(
-        JSON.stringify({
-          level: 'info',
-          event: 'workspace_state_emit_skipped',
-          sessionId,
-          reason: 'no_git_status',
-        }),
-      );
-      return;
-    }
-    const { producer, event } = nextWorkspaceStateEvent(
-      entry.workspaceStateProducer ?? null,
-      sessionId,
-      nextState,
-      mode === 'delta' ? 'delta' : 'snapshot',
-    );
-    entry.workspaceStateProducer = producer;
-    if (!event) return; // delta found nothing changed
-    broadcastWorkspaceStateEvent(sessionId, entry, event);
-  } catch (err) {
-    console.error(
-      JSON.stringify({
-        level: 'warn',
-        event: 'workspace_state_emit_failed',
-        sessionId,
-        error: err instanceof Error ? err.message : String(err),
-      }),
-    );
-  }
+  return sessionRuntime.emitWorkspaceState(sessionId, entry, mode);
 }
 
 function normalizeRecentEventLimit(rawLimit) {
@@ -6221,16 +5528,8 @@ export async function main() {
   const shutdown = async () => {
     process.stdout.write('\nshutting down...\n');
 
-    // Abort all active runs
-    for (const [, entry] of activeSessions) {
-      if (entry.abortController) {
-        entry.abortController.abort();
-      }
-      if (entry.pendingApproval) {
-        clearTimeout(entry.pendingApproval.timer);
-        entry.pendingApproval.resolve('deny');
-      }
-    }
+    // Session runtime owns active-run and approval teardown traversal.
+    sessionRuntime.shutdownSessions();
 
     // Phase 2.e: close the outbound relay first so any in-flight
     // `relay_phone_*` envelope finishes flushing before the daemon
