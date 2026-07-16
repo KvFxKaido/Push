@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–6 implemented; Phase 7 not started.
+Status: **Complete** — Phases 1–7 implemented.
 Owner: Push CLI
 
 ## Why this exists
@@ -270,20 +270,27 @@ decisions, orphaned-delegation reconciliation, recovery turns, and terminal
 cleanup through the shared session runtime. The residual `pushd.ts` is the
 composition/transport facade described above.
 
-### Phase 7 — containment guard and status update
+### Phase 7 — containment guard and status update ✅ (completed 2026-07-16)
 
 After the spine is stable:
 
-- remove `@ts-nocheck` from `pushd.ts`;
-- add a CLI structural test that caps the file near its new baseline with small
+- ✅ remove `@ts-nocheck` from `pushd.ts`;
+- ✅ add a CLI structural test that caps the file near its new baseline with small
   headroom;
-- optionally guard against internal modules importing back through `pushd.ts`;
-- update this runbook's phase status in the same PR.
+- ✅ guard against internal modules importing back through `pushd.ts`;
+- ✅ update this runbook's phase status in the same PR.
 
 The existing ESLint `max-lines` precedent only covers the app. A focused CLI test
 is the narrowest current enforcement mechanism because `pnpm run lint` does not
 lint `cli/`. If CLI linting becomes a first-class repository command later, the
 guard can migrate there.
+
+`cli/pushd.ts` now typechecks under the CLI's strict TypeScript configuration
+without file-wide suppression. `cli/tests/pushd-containment.test.mjs` pins the
+925-line Phase 7 baseline with a 950-line ceiling, prevents `@ts-nocheck` from
+returning, and recursively rejects imports from `cli/pushd/` back through the
+facade. This closes the decomposition arc with the spine responsible only for
+composition, compatibility exports, dispatch, transport, startup, and shutdown.
 
 ## Test coupling that must be handled deliberately
 
