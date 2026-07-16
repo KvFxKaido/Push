@@ -219,7 +219,7 @@ Do not move the approximately 3,000-line delegation block as one PR. Split it
 along its existing internal seams:
 
 1. ✅ Coder/Explorer tool executors and shared run-event emission (2026-07-16).
-2. Event replay, child-session descriptors, and child-session verbs.
+2. ✅ Event replay, child-session descriptors, and child-session verbs (2026-07-16).
 3. Task-graph coordination and the Explorer/Coder/Reviewer delegate verbs.
 
 Shared cancellation, parent-run correlation, persistence, and terminal-event
@@ -230,6 +230,14 @@ approval-bound Coder executor, the capability-gated read-only executor adapter,
 and the persistence-before-broadcast bridge for role-kernel run events. The
 facade keeps the established executor exports while task-graph and direct
 delegation handlers consume the typed adapter factory.
+
+Slice 2 is implemented in `cli/pushd/child-session-handlers.ts`. It owns the
+shared child-event membership predicate, active/completed/event-derived child
+descriptors, delegation-event replay, and the bearer-gated `list_children` and
+`get_child_session` reads. The facade injects its shared session-auth loader
+while the remaining addressable-session verbs still use that seam.
+`cancel_delegation` stays with Slice 3 so task-graph/direct-delegation
+cancellation and terminal-state rules can move under one coordinator owner.
 
 ### Phase 6 — recovery and final spine
 
