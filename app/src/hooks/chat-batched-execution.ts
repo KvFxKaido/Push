@@ -34,6 +34,7 @@ import {
 import { summarizeToolResultPreview } from '@/lib/chat-run-events';
 import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-progress';
 import { createId } from '@push/lib/id-utils';
+import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import { buildToolUseBlock, createToolUseBlockId } from '@push/lib/tool-blocks';
 import { workspaceModeToExecutionMode } from '@push/lib/capabilities';
 import { requestApproval } from '@/lib/approval-bridge';
@@ -512,7 +513,7 @@ export async function executeBatchedToolCalls(
     let mutRawResult: ToolExecRawResult;
 
     if (mutCall.source === 'delegate') {
-      const delegateStart = Date.now();
+      const delegateElapsed = startElapsedMs();
       const mutResult = await executeDelegateCall(
         chatId,
         mutCall,
@@ -533,7 +534,7 @@ export async function executeBatchedToolCalls(
         call: mutCall,
         raw: mutResult,
         cards: mutCards,
-        durationMs: Date.now() - delegateStart,
+        durationMs: delegateElapsed(),
       };
     } else {
       // Live tail for the cloud detached-exec path — same shape as the

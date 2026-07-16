@@ -83,6 +83,7 @@ import {
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
+import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import { retainReducedOutput } from '@push/lib/verbatim-retain';
 import { PROJECT_INSTRUCTION_FILENAMES } from '@push/lib/project-instructions-source';
 import { createSandboxPushGit } from './git-backend';
@@ -925,7 +926,7 @@ async function executeSandboxToolCallInner(
             structuredError: err,
           };
         }
-        const start = Date.now();
+        const elapsed = startElapsedMs();
         const markWorkspaceMutated = isLikelyMutatingSandboxExec(call.args.command);
         const normalizedWorkdir = normalizeSandboxWorkdir(call.args.workdir);
 
@@ -976,7 +977,7 @@ async function executeSandboxToolCallInner(
             // before observing the ref. No structuredError — cancel
             // is a user-initiated state, not an error class.
             if (caught instanceof Error && caught.name === 'AbortError') {
-              const durationMs = Date.now() - start;
+              const durationMs = elapsed();
               const cardData: SandboxCardData = {
                 command: call.args.command,
                 stdout: '',
@@ -991,7 +992,7 @@ async function executeSandboxToolCallInner(
               };
             }
             if (caught instanceof LocalDaemonUnreachableError) {
-              const durationMs = Date.now() - start;
+              const durationMs = elapsed();
               const unreachableErr = classifyError(
                 `Local daemon unreachable: ${caught.reason}`,
                 call.args.command,
@@ -1050,7 +1051,7 @@ async function executeSandboxToolCallInner(
               clearPrefetchedEditFileCache(sandboxId);
               fileLedger.markAllStale();
             }
-            const durationMs = Date.now() - start;
+            const durationMs = elapsed();
             const cardData: SandboxCardData = {
               command: call.args.command,
               stdout: result.stdout,
@@ -1066,7 +1067,7 @@ async function executeSandboxToolCallInner(
             };
           }
         }
-        const durationMs = Date.now() - start;
+        const durationMs = elapsed();
 
         // Exit code -1 historically meant "the command was never dispatched"
         // (buffered path, container unreachable). The detached path adds two

@@ -11,6 +11,7 @@ import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from 
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import type { AgentRole } from '@push/lib/runtime-contract';
+import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import type { ApprovalCallback } from '@push/lib/tool-execution-runtime';
 import type { ExecutionMode } from '@push/lib/capabilities';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
@@ -176,7 +177,7 @@ export async function executeTool(
       },
     },
     async (span) => {
-      const start = Date.now();
+      const elapsed = startElapsedMs();
 
       let result: ToolExecutionResult;
       if (call.source === 'github' && !ctx.repoFullName) {
@@ -204,7 +205,7 @@ export async function executeTool(
         );
       }
 
-      const durationMs = Date.now() - start;
+      const durationMs = elapsed();
       const cards: ChatCard[] = [];
       if (result.card && result.card.type !== 'sandbox-state') {
         cards.push(result.card);

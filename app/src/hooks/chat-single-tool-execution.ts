@@ -43,6 +43,7 @@ import { EXEC_PROGRESS_TAIL_TOOLS, createExecProgressTail } from '@/lib/exec-pro
 import { isReadOnlyToolCall, type AnyToolCall } from '@/lib/tool-dispatch';
 import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verification-runtime';
 import { createId } from '@push/lib/id-utils';
+import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import {
   buildToolResultBlock,
   buildToolUseBlock,
@@ -137,7 +138,10 @@ export async function executeSingleToolCall(
     return { ...prev, [chatId]: { ...conv, messages: msgs } };
   });
 
+  // `toolExecStart` is a wall-clock timestamp for the `startedAt` fields below;
+  // the DURATION is measured monotonically (Date.now can step backward).
   const toolExecStart = Date.now();
+  const toolExecElapsed = startElapsedMs();
   let toolExecDurationMs = 0;
   let singleRawResult: ToolExecRawResult | null = null;
   const statusLabel = getToolStatusLabel(toolCall);
@@ -202,7 +206,7 @@ export async function executeSingleToolCall(
   } else if (toolCall.source === 'scratchpad' || toolCall.source === 'todo') {
     const chatHookResult = executeChatHookToolCall(toolCall, { scratchpadRef, todoRef });
     toolExecResult = chatHookResult ?? { text: '[Tool Error] Chat-hook tool dispatch failed.' };
-    toolExecDurationMs = Date.now() - toolExecStart;
+    toolExecDurationMs = toolExecElapsed();
   } else if (toolCall.source === 'delegate') {
     toolExecResult = await executeDelegateCall(
       chatId,
@@ -211,7 +215,7 @@ export async function executeSingleToolCall(
       lockedProvider,
       resolvedModel || undefined,
     );
-    toolExecDurationMs = Date.now() - toolExecStart;
+    toolExecDurationMs = toolExecElapsed();
     clearRuntimeCoderWorkingMemory(ctx.runtimeContext);
     emitRunEngineEvent({
       type: 'DELEGATION_COMPLETED',

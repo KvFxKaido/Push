@@ -60,6 +60,7 @@ import {
   writeTargetOf,
 } from '@push/lib/loop-detection';
 import { recordLoopVerdict } from '@push/lib/loop-metrics';
+import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import { emitGithubToolTurnUsage } from '@push/lib/prompt-cost-telemetry';
 import { getToolSourceFromName } from '@push/lib/tool-registry';
 import { createToolBudgetBlockIntervention } from '@push/lib/tool-ledger';
@@ -170,11 +171,11 @@ export async function executeToolWithChatHooks(
   },
 ): Promise<ToolExecRawResult> {
   if (isChatHookSource(call.source)) {
-    const start = Date.now();
+    const elapsed = startElapsedMs();
     const result =
       executeChatHookToolCall(call, refs) ??
       ({ text: '[Tool Error] Chat-hook tool dispatch failed.' } as ToolExecutionResult);
-    return { call, raw: result, cards: [], durationMs: Date.now() - start };
+    return { call, raw: result, cards: [], durationMs: elapsed() };
   }
   return executeTool(call, ctx);
 }

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import {
   applyPostExecutionSideEffects,
+  executeToolWithChatHooks,
   recordGithubToolTurnUsage,
   shouldSkipDelegationOutcomeRecording,
 } from './chat-send-helpers';
@@ -16,6 +17,35 @@ import { schedulePostPushCIStatus } from './chat-post-push-ci';
 vi.mock('./chat-post-push-ci', () => ({
   schedulePostPushCIStatus: vi.fn(),
 }));
+
+describe('executeToolWithChatHooks', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('measures chat-hook tool durations with the monotonic clock', async () => {
+    const performanceNow = vi
+      .spyOn(performance, 'now')
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(107);
+    const wallClock = vi.spyOn(Date, 'now').mockReturnValueOnce(1_000).mockReturnValueOnce(500);
+    const call = {
+      source: 'scratchpad',
+      call: { tool: 'read_scratchpad', content: '' },
+    } as unknown as AnyToolCall;
+
+    const result = await executeToolWithChatHooks(call, {} as never, {
+      scratchpadRef: {
+        current: { content: 'remember this', replace: vi.fn(), append: vi.fn() },
+      },
+      todoRef: { current: undefined },
+    });
+
+    expect(result.durationMs).toBe(7);
+    expect(performanceNow).toHaveBeenCalledTimes(2);
+    expect(wallClock).not.toHaveBeenCalled();
+  });
+});
 
 // Pins the Codex P1 contract from PR #603: `plan_tasks` wrapper
 // outcomes carry agent='coder' or 'explorer' but the inner per-task
