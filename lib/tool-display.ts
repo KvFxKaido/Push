@@ -18,6 +18,11 @@ export interface ToolVerbNoun {
   verb: string;
 }
 
+export interface ToolDisplayCall {
+  target?: string | null;
+  toolName: string;
+}
+
 /** Canonical-name → {verb, noun}. `default` covers unknown tools. */
 export const TOOL_VERB_NOUN: Record<string, ToolVerbNoun> = {
   // Read
@@ -143,4 +148,32 @@ export function formatToolTitle(toolName: string, target?: string | null): strin
   if (trimmed) return `${verb} ${trimmed}`;
   const rawName = toolName.trim();
   return display === TOOL_VERB_NOUN.default && rawName ? rawName : `${verb} ${withArticle(noun)}`;
+}
+
+/**
+ * Compact summary for a consecutive group of settled tool calls. A single
+ * call keeps its concrete target; batches aggregate by resolved verb+noun in
+ * first-seen order so aliases combine and mixed work reads
+ * "Read 3 files, Ran 1 command".
+ */
+export function formatToolGroupSummary(calls: readonly ToolDisplayCall[]): string {
+  if (calls.length === 0) return '';
+  if (calls.length === 1) {
+    const call = calls[0];
+    return call ? formatToolTitle(call.toolName, call.target) : '';
+  }
+
+  const counts = new Map<string, ToolVerbNoun & { count: number }>();
+  for (const call of calls) {
+    const { noun, verb } = getToolVerbNoun(call.toolName);
+    const key = JSON.stringify([verb, noun]);
+    const current = counts.get(key);
+    counts.set(key, { count: (current?.count ?? 0) + 1, noun, verb });
+  }
+
+  return [...counts]
+    .map(([, { count, noun, verb }]) => {
+      return `${verb} ${count} ${count === 1 ? noun : pluralNoun(noun)}`;
+    })
+    .join(', ');
 }

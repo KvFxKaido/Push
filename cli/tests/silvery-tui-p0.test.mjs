@@ -1985,6 +1985,96 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await lifecycle;
   });
 
+  it('collapses consecutive settled tools into a semantic mixed-verb summary', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 18);
+    const stdin = new FakeStdin();
+    const snapshot = {
+      rows: [
+        {
+          id: 'read-a',
+          kind: 'tool',
+          role: 'explorer',
+          text: 'read_file complete',
+          toolName: 'read_file',
+          target: 'src/a.ts',
+          pending: false,
+        },
+        {
+          id: 'read-b',
+          kind: 'tool',
+          role: 'explorer',
+          text: 'read_file complete',
+          toolName: 'read_file',
+          target: 'src/b.ts',
+          pending: false,
+        },
+        {
+          id: 'exec',
+          kind: 'tool',
+          role: 'coder',
+          text: 'sandbox_exec complete',
+          toolName: 'sandbox_exec',
+          target: 'pnpm test',
+          pending: false,
+        },
+        {
+          id: 'failed',
+          kind: 'tool',
+          role: 'explorer',
+          text: 'read_file failed',
+          toolName: 'read_file',
+          target: 'broken.ts',
+          pending: false,
+          isError: true,
+        },
+      ],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook: {} }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(120);
+
+    assert.match(stdout.bytes, /Read 2 files, Ran 1 command/);
+    assert.match(stdout.bytes, /Read broken\.ts/);
+    assert.doesNotMatch(stdout.bytes, /src\/a\.ts/);
+    assert.doesNotMatch(stdout.bytes, /src\/b\.ts/);
+    assert.doesNotMatch(stdout.bytes, /pnpm test/);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
   it('renders a typed card alongside a diff instead of the model-facing preview', {
     skip: silverySkip,
   }, async () => {

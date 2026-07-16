@@ -22,7 +22,7 @@ import {
   Download,
 } from 'lucide-react';
 import { resolveToolName } from '@/lib/tool-registry';
-import { getToolVerbNoun, pluralNoun, withArticle } from '@/lib/tool-display';
+import { formatToolGroupSummary, getToolVerbNoun } from '@/lib/tool-display';
 
 /* ------------------------------------------------------------------ */
 /*  ToolCallPair                                                      */
@@ -183,42 +183,12 @@ export function getLabel(toolName: string): ToolLabel {
 /* ------------------------------------------------------------------ */
 
 export function buildSummaryLine(items: ToolCallPair[]): string {
-  // Single call → prefer the concrete target ("Read config.json", "Ran npm
-  // test") over the generic noun ("Read a file") when we captured one. Falls
-  // back to the noun form for tools with no useful target. Only applies to a
-  // lone call — batches keep the aggregated "Read 3 files" form below.
-  if (items.length === 1) {
-    const item = items[0];
-    const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';
-    const target = item.callMsg.toolMeta?.target ?? item.resultMsg.toolMeta?.target;
-    const { verb, noun } = getLabel(name);
-    return target ? `${verb} ${target}` : `${verb} ${withArticle(noun)}`;
-  }
-
-  const counts = new Map<string, number>();
-  for (const item of items) {
-    const name = item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown';
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-
-  const phrases: string[] = [];
-  for (const [name, count] of counts) {
-    const { noun, verb } = getLabel(name);
-    phrases.push(`${verb} ${count} ${count > 1 ? pluralNoun(noun) : noun}`);
-  }
-
-  // Single tool → drop count, e.g. "Ran a command"
-  if (phrases.length === 1) {
-    const raw = phrases[0];
-    const match = raw.match(/^(\w+) (\d+) (.+)$/);
-    if (!match) return raw;
-    const [, verb, cntStr, noun] = match;
-    const cnt = Number(cntStr);
-    if (Number.isNaN(cnt)) return raw;
-    return cnt === 1 ? `${verb} ${withArticle(noun)}` : phrases[0];
-  }
-
-  return phrases.join(', ');
+  return formatToolGroupSummary(
+    items.map((item) => ({
+      toolName: item.resultMsg.toolMeta?.toolName ?? item.callMsg.toolMeta?.toolName ?? 'unknown',
+      target: item.callMsg.toolMeta?.target ?? item.resultMsg.toolMeta?.target,
+    })),
+  );
 }
 
 /* ------------------------------------------------------------------ */

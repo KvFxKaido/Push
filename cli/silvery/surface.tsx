@@ -35,6 +35,10 @@ import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from '
 import { MarkdownBody } from './markdown.js';
 import { PushThemeProvider } from './theme.js';
 import {
+  groupSilveryTranscriptRows,
+  type SilveryTranscriptToolGroup,
+} from './transcript-groups.js';
+import {
   breathingHex,
   countUserTurns,
   densityMeter,
@@ -252,6 +256,30 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   );
 }
 
+function ToolGroup({ group }: { group: SilveryTranscriptToolGroup }) {
+  const [expanded, setExpanded] = useState(false);
+  const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
+  const mark = streamMark('tool_ok', glyphs);
+  return (
+    <Box flexDirection="column">
+      <Box onClick={() => setExpanded((value) => !value)}>
+        <Text bold={mark.bold} color={mark.color}>
+          {mark.glyph} {group.summary}
+          {expanded ? '' : ' …'}
+        </Text>
+      </Box>
+      {expanded ? (
+        <Box flexDirection="column" paddingLeft={2}>
+          {group.items.map((item) => (
+            <ToolCard key={item.id} item={item} />
+          ))}
+          <Text color={VL_COLOR.muted}>click summary to collapse group</Text>
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 function messageMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
   if (item.isError) return 'error';
   if (item.role === 'user') return 'user';
@@ -421,7 +449,7 @@ function Transcript({
   // (`tailReserveRows`/`maintainVisibleContentPosition` were tried and cleared — not
   // the cause.) `tailWindow` stays exported as the measured fallback, pinned by the
   // Phase 1 test; the render test's `real row 13/14/15` window guards this config.
-  const shown = snapshot.rows;
+  const shown = useMemo(() => groupSilveryTranscriptRows(snapshot.rows), [snapshot.rows]);
   if (shown.length === 0) {
     const art = pushBrandArt(detectUnicode());
     return (
@@ -454,9 +482,13 @@ function Transcript({
       virtualization="measured"
       scrollbarVisibility="always"
       getKey={(item) => item.id}
-      renderItem={(item) => (
-        <Message item={item} tinted={item.kind === 'message' && item.role === 'user'} />
-      )}
+      renderItem={(item) =>
+        item.kind === 'tool_group' ? (
+          <ToolGroup group={item} />
+        ) : (
+          <Message item={item} tinted={item.kind === 'message' && item.role === 'user'} />
+        )
+      }
     />
   );
 }
