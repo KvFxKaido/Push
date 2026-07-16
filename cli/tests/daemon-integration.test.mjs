@@ -6396,10 +6396,14 @@ describe('attach token persistence', () => {
 
   it('applies the same persistence across every disk-load handler', async () => {
     // Guard that future handlers added to the family stay consistent.
-    // Scan both the residual facade and the extracted core handlers so nobody
+    // Scan the residual facade and extracted disk-loading handlers so nobody
     // reintroduces the old `attachToken: makeAttachToken()` pattern on a
     // disk-load path — anyone tempted to copy it will fail this test.
-    const sources = ['pushd.ts', 'pushd/core-session-handlers.ts'];
+    const sources = [
+      'pushd.ts',
+      'pushd/core-session-handlers.ts',
+      'pushd/child-session-handlers.ts',
+    ];
     const offenders = [];
     for (const source of sources) {
       const content = await fs.readFile(path.join(import.meta.dirname, '..', source), 'utf8');
