@@ -78,9 +78,11 @@ its ASCII fallback. If the fallback isn't wired, the hexagon doesn't ship.
 ### 5. Hexagon signature, square workhorse
 
 **The hexagon is Push's face.** It is worn only by Push: the header mark, the
-status/liveness indicator, approval chips, and independent-voice attribution (a filled hex
-marks Reviewer/Auditor as a voice distinct from the lead — names still come from
-`lib/role-display.ts`). It stays **rare**, and that is not an aesthetic preference: the
+status/liveness indicator, approval chips, the **lead agent's own turns** (a hollow hex
+`⬡`, no name — see the reversal note below), and independent-voice attribution (a filled
+hex marks Reviewer/Auditor as a voice distinct from the lead — names still come from
+`lib/role-display.ts`). Outside the lead-agent turn it stays **rare**, and that is not an
+aesthetic preference: the
 spine is the highest-frequency glyph in the app, and law 4 already records that hexagon
 font coverage is patchy (the motivating screenshot rendered the mark as `�`). Putting the
 worst-supported glyph in the busiest slot would be the one decision that breaks the
@@ -108,9 +110,24 @@ code names them `markWork` / `markQuiet` for this reason; the earlier `dotActive
 
 The **human turn wears neither Push glyph** — not the hexagon (that would put Push's face
 on the one voice that isn't Push) and not the square spine (that is Push's own activity).
-The user gets a prompt caret `›` (ASCII `>`) in the accent, the single non-Push shape in
-the stream. So the stream reads in three registers:
-`›` you, `▪`/`▫` Push working, `⬢` an independent Push voice.
+The user gets a prompt caret `❯` (ASCII `>`) in the accent, the single non-Push shape in
+the stream. So the stream reads in four registers:
+`❯` you, `⬡` the lead agent (Push's face, hollow — the voice you converse with, no name),
+`⬢` an independent Push voice (Reviewer/Auditor, filled + named), `▪`/`▫` Push's tool
+activity and quiet chrome.
+
+*Reversal (2026-07-15).* The lead agent's own turns previously wore the quiet square
+`▫` and a spelled-out "Assistant" label; the human turn wore `›`. Both are gone. The
+lead agent now wears the **hollow hexagon** `⬡` with no name — it is the single voice
+you converse with, so the hexagon (Push's face) *is* the attribution, and a label is
+redundant. The human caret is now `❯` (heavier than `›`, and already the selection
+cursor in the palette/picker — one caret, unified). This admits a tradeoff against the
+"stays rare" rule above: the lead hex now appears once per exchange rather than never.
+It is accepted because (a) the *highest*-frequency glyph — the per-tool-call spine —
+stays a square, so the busiest slot is unchanged; (b) an agent turn is one-per-exchange,
+not per-tool; and (c) the ASCII fallback `o`/`@` is wired, so patchy hex fonts still
+degrade cleanly. The filled/​hollow axis keeps the lead (`⬡`, routine) distinct from the
+louder independent voices (`⬢`, attention).
 
 ### 6. Idle is allowed to be empty — but it may still have a face
 

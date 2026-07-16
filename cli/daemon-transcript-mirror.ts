@@ -28,6 +28,9 @@ export interface DaemonTranscriptRow {
    *  id-less events, which fall back to the name+pending scan. */
   executionId?: string;
   args?: unknown;
+  /** Compact target label the runtime emits (path, command, query, task
+   *  summary). Feeds the semantic tool title; absent for tools with no target. */
+  target?: string;
   pending?: boolean;
   isError?: boolean;
   durationMs?: number;
@@ -248,11 +251,13 @@ export function applyDaemonTranscriptEvent(
             )
           : undefined) ?? nameScan();
       const resultPreview = stringField(payload, 'text', 'preview').slice(0, 500);
+      const target = stringField(payload, 'target');
       if (row) {
         row.pending = false;
         row.isError = payload.isError === true;
         if (typeof payload.durationMs === 'number') row.durationMs = payload.durationMs;
         if (resultPreview) row.resultPreview = resultPreview;
+        if (target) row.target = target;
         if (isEditDiff(payload.diff)) row.diff = payload.diff;
         if (isToolCardPayload(payload.card)) row.card = payload.card;
       } else {
@@ -266,6 +271,7 @@ export function applyDaemonTranscriptEvent(
           isError: payload.isError === true,
           resultPreview,
           ...(executionId ? { executionId } : {}),
+          ...(target ? { target } : {}),
           ...(typeof payload.durationMs === 'number' ? { durationMs: payload.durationMs } : {}),
           ...(isEditDiff(payload.diff) ? { diff: payload.diff } : {}),
           ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),

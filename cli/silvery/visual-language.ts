@@ -49,7 +49,7 @@ export interface VisualGlyphs {
   markWork: string;
   /** Activity spine — Push is TALKING (prose, status). The quiet register. */
   markQuiet: string;
-  /** The human's turn — a prompt caret, the one voice that is *not* Push. */
+  /** The human's turn — a prompt caret (❯), the one voice that is *not* Push. */
   human: string;
   /** Continuous meter cells, sparse → solid. */
   density: readonly string[];
@@ -62,7 +62,7 @@ export const GLYPHS_UNICODE: VisualGlyphs = {
   // them two cells wide. VS15 keeps the square spine monochrome and one-cell.
   markWork: '▪\uFE0E',
   markQuiet: '▫\uFE0E',
-  human: '›',
+  human: '❯',
   density: ['░', '▒', '▓', '█'],
 };
 
@@ -424,8 +424,12 @@ export interface StreamMark {
 }
 
 /**
- * Stream leading mark + color. Squares own the activity spine; hexagons mark
- * independent voices (Reviewer/Auditor) and chrome elsewhere (law 5).
+ * Stream leading mark + color. The hexagon is Push's face (law 5): the lead
+ * agent wears the HOLLOW hex (`hexIdle`, quiet register — it *is* the voice you
+ * talk to, no name needed), while independent review voices (Reviewer/Auditor)
+ * wear the FILLED hex (`hexActive`) plus their name so attribution stays legible.
+ * The square spine (`markWork`) is Push's tool ACTIVITY and delegated phases; the
+ * caret (`human`, ❯) is the one voice that is not Push.
  * No green/cyan role rainbow — grayscale + one accent + fault (laws 2–3).
  *
  * The spine glyph separates exactly one thing: Push WORKING (`markWork`) from Push
@@ -443,7 +447,9 @@ export function streamMark(
       // Push. Never the square spine either — that is Push's own activity.
       return { glyph: glyphs.human, color: VL_COLOR.accent, bold: true };
     case 'assistant':
-      return { glyph: glyphs.markQuiet, color: undefined, bold: false };
+      // The lead agent — Push's face in its quiet register. Hollow hex, no
+      // name: it is the one voice you converse with, so it needs no label.
+      return { glyph: glyphs.hexIdle, color: undefined, bold: false };
     case 'tool_pending':
       return { glyph: glyphs.markWork, color: VL_COLOR.accent, bold: true };
     case 'tool_ok':
