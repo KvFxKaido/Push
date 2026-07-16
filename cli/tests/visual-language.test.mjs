@@ -89,9 +89,11 @@ describe('visual language v2 glyphs', () => {
     assert.equal(error.glyph, g.markWork);
     assert.notEqual(pending.color, ok.color);
     assert.notEqual(ok.color, error.color);
-    // Prose is the quiet register.
-    assert.equal(streamMark('assistant', g).glyph, g.markQuiet);
-    // The human is neither.
+    // The lead agent is Push's face in its quiet register — the hollow hex,
+    // distinct from the filled hex the independent review voices wear.
+    assert.equal(streamMark('assistant', g).glyph, g.hexIdle);
+    assert.notEqual(streamMark('assistant', g).glyph, streamMark('reviewer', g).glyph);
+    // The human is neither the spine nor the hex — the caret.
     assert.equal(streamMark('user', g).glyph, g.human);
   });
 
@@ -178,12 +180,14 @@ describe('visual language v2 color budget', () => {
 
   it('marks the human turn with the caret, never a Push glyph (law 5, #1438)', () => {
     // The hexagon is Push's face; the user is the one voice that is not Push.
-    assert.equal(GLYPHS_UNICODE.human, '›');
+    assert.equal(GLYPHS_UNICODE.human, '❯');
     assert.equal(GLYPHS_ASCII.human, '>');
+    assert.equal(displayWidth(GLYPHS_UNICODE.human), 1);
     const g = GLYPHS_UNICODE;
     const user = streamMark('user', g);
-    assert.equal(user.glyph, '›');
-    assert.notEqual(user.glyph, g.hexActive); // not Push's face
+    assert.equal(user.glyph, '❯');
+    assert.notEqual(user.glyph, g.hexActive); // not Push's face (independent voices)
+    assert.notEqual(user.glyph, g.hexIdle); // nor the lead agent's hollow hex
     assert.notEqual(user.glyph, g.markWork); // not Push's activity spine
     assert.notEqual(user.glyph, g.markQuiet);
     assert.equal(user.color, VL_COLOR.accent);

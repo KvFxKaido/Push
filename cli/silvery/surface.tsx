@@ -259,6 +259,10 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   if (item.kind === 'tool') return <ToolCard item={item} />;
   const label = getTranscriptRoleLabel(item.role);
+  // The lead agent (hexagon) and the human (❯) are self-evident from their
+  // glyph alone — drop the generic "Assistant"/"You" text. Named voices
+  // (Reviewer/Auditor, delegated phases, status) keep their label.
+  const showLabel = item.role !== 'user' && item.role !== 'assistant';
   const mark = streamMark(messageMarkKind(item), glyphs);
   const bodyColor = item.isError
     ? VL_COLOR.fault
@@ -282,7 +286,8 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
     >
       <Box width="100%">
         <Text bold={mark.bold} color={mark.color}>
-          {mark.glyph} {label}
+          {mark.glyph}
+          {showLabel ? ` ${label}` : ''}
           {item.live ? ' · live' : ''}
         </Text>
         {timestamp ? (
