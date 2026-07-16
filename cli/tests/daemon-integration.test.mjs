@@ -2621,7 +2621,7 @@ describe('daemon version', () => {
     assert.ok(response.payload.capabilities.includes('event_v2'));
     // `multi_agent` now advertised — both Explorer and Coder daemon-side
     // tool executors are real (see `makeDaemonExplorerToolExec` +
-    // `makeDaemonCoderToolExec` in cli/pushd.ts).
+    // `makeDaemonCoderToolExec` in cli/pushd/delegation-execution.ts).
     assert.ok(response.payload.capabilities.includes('multi_agent'));
     // The versioned-suffix form is the canonical name; bare `task_graph`
     // (without `_v1`) is still NOT advertised.
@@ -4971,7 +4971,7 @@ describe('Explorer daemon tool protocol namespace', () => {
 // shape (canonical name, public alias, source, mutating) and the
 // capability grants by role so a future refactor can't silently shift
 // who is allowed to emit artifact tool calls. Coder is now granted
-// (cli/pushd.ts:makeDaemonCoderToolExec plumbs `role: 'coder'` through
+// (cli/pushd/delegation-execution.ts:makeDaemonCoderToolExec plumbs `role: 'coder'` through
 // to the dispatch + the cli/tools.ts case gates with `roleCanUseTool`);
 // explorer / reviewer / auditor remain denied.
 describe('create_artifact tool registry + capability drift', () => {

@@ -236,7 +236,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   ask_user: ['user:ask'],
 
   // Artifacts. Granted to orchestrator and coder. The CLI Coder path
-  // (`makeDaemonCoderToolExec` in cli/pushd.ts) plumbs `role: 'coder'`
+  // (`makeDaemonCoderToolExec` in cli/pushd/delegation-execution.ts) plumbs `role: 'coder'`
   // through to the cli/tools.ts dispatch, which uses `roleCanUseTool`
   // as a defense-in-depth check before persisting. The web Coder
   // (lib/coder-agent-bindings.ts) is still gated on its own kernel
@@ -249,7 +249,7 @@ export const TOOL_CAPABILITIES: Readonly<Record<string, readonly Capability[]>> 
   // are distinct from the sandbox family above because the CLI dispatches
   // against the local workspace via `executeToolCall`, not the sandbox
   // API. Added 2026-04-18 so `roleCanUseTool` is authoritative on both
-  // surfaces — see `cli/pushd.ts:makeDaemonExplorerToolExec` for the
+  // surfaces — see `cli/pushd/delegation-execution.ts:makeDaemonExplorerToolExec` for the
   // enforcement swap that motivated these entries.
   //
   // Omitted deliberately:
