@@ -44,6 +44,7 @@ import {
   resolveOrMintTargetAttachToken,
 } from './pushd/device-admin-handlers.js';
 import { createCoreSessionHandlers, VALID_AGENT_ROLES } from './pushd/core-session-handlers.js';
+import { createDelegationExecutionAdapters } from './pushd/delegation-execution.js';
 import { createSessionRuntime } from './pushd/session-runtime.js';
 
 /**
@@ -186,7 +187,7 @@ import {
   saveConfig,
 } from './config-store.js';
 import { createDaemonProviderStream } from './daemon-provider-stream.js';
-import { executeToolCall, TOOL_PROTOCOL, READ_ONLY_TOOL_PROTOCOL } from './tools.js';
+import { TOOL_PROTOCOL, READ_ONLY_TOOL_PROTOCOL } from './tools.js';
 import {
   makeRunId,
   makeAttachToken,
@@ -234,10 +235,7 @@ import { createFileMemoryStore, getMemoryStoreBaseDir } from './context-memory-f
 import { createFileVerbatimLog, getVerbatimLogBaseDir } from './verbatim-log-file-store.ts';
 import { resolveWorkspaceIdentity } from '../lib/workspace-identity.js';
 import { buildTypedMemoryBlockForNode, writeTaskGraphResultMemory } from './task-graph-memory.ts';
-import { makeCliReadOnlyToolExec } from './lead-explorer.ts';
 import { getBuildStamp, RUNTIME_VERSION } from './build-stamp.js';
-import { isToolCard } from '../lib/tool-cards.ts';
-import { isEditDiff } from '../lib/edit-diff.ts';
 
 const VERSION = RUNTIME_VERSION;
 const DAEMON_STARTED_AT_MS = Date.now();
@@ -317,6 +315,11 @@ const sessionRuntime = createSessionRuntime({
 // Compatibility facade for delegation/recovery slices that move in Phases 5–6.
 // The runtime owns the Map; pushd only retains a temporary reference.
 const activeSessions = sessionRuntime.sessions;
+
+const { makeDaemonCoderToolExec, makeDaemonExplorerToolExec, emitRoleAgentRunEvent } =
+  createDelegationExecutionAdapters(sessionRuntime);
+
+export { makeDaemonCoderToolExec, makeDaemonExplorerToolExec };
 
 export function ensureRuntimeState(entry) {
   return sessionRuntime.ensureRuntimeState(entry);
@@ -514,7 +517,7 @@ function resolveRoleRouting(entry, role) {
   return { provider, model };
 }
 
-// ─── Daemon Coder tool executor (real lib-kernel integration) ──
+// ─── Shared tool-call detector compatibility facade ────────────
 
 /**
  * Wrap a raw CLI tool call (`{ tool, args }`) into the nested shape
@@ -541,163 +544,6 @@ import {
 export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall, wrapCliDetectNativeToolCalls };
 
 /**
- * Build a `CoderToolExecResult`-shaped tool executor bound to a running
- * delegation. The closure runs `executeToolCall` from `cli/tools.ts`
- * (the same production tool executor the CLI lead turn uses via
- * `cli/lead-turn.ts`) against the session's
- * `state.cwd`, with approval gating routed through `buildApprovalFn`
- * so any high-risk exec emits an `approval_required` event on the
- * child `runId` and blocks on a `submit_approval` RPC.
- *
- * The result is translated from CLI's
- * `{ ok, text, meta?, structuredError? }` shape to lib's discriminated
- * union (`{ kind: 'executed', resultText, errorType? } | { kind: 'denied', reason }`).
- * `errorType` feeds the kernel's mutation-failure tracker
- * (`lib/coder-agent.ts` guards against repeated same-tool+file failures).
- *
- * Non-goals: no sandbox layer (runs directly against `state.cwd`, same
- * model as the CLI engine), no OpenTelemetry spans, no
- * `CapabilityLedger` gating, no `TurnPolicyRegistry` (all Web-side).
- * Pushd is an RPC transport + approval gate, nothing more.
- */
-export function makeDaemonCoderToolExec({ sessionId, entry, runId, signal }) {
-  const approvalFn = buildApprovalFn(sessionId, entry, runId);
-  const workspaceRoot = entry.state.cwd;
-  return async (toolCall, _execCtx) => {
-    // The kernel passes the nested wrapper we returned from
-    // `wrapCliDetectAllToolCalls` / `wrapCliDetectAnyToolCall` — a
-    // `{ source, call: { tool, args } }` shape. Unwrap once to get the
-    // flat `{ tool, args }` form `executeToolCall` expects. If a
-    // caller somehow hands us a bare CLI call (e.g. tests that call
-    // the executor directly), fall through and pass it as-is.
-    const rawCall =
-      toolCall && typeof toolCall === 'object' && toolCall.call ? toolCall.call : toolCall;
-    try {
-      const result = await executeToolCall(rawCall, workspaceRoot, {
-        approvalFn,
-        signal,
-        // Daemon delegations are expected to run the full tool surface;
-        // the approval gate above keeps high-risk exec commands behind
-        // an explicit user decision. `execMode: 'auto'` mirrors the
-        // non-delegated CLI engine's default, which gates only the
-        // commands `isHighRiskCommand()` flags.
-        allowExec: true,
-        execMode: 'auto',
-        // Surface the actual role to executor cases that gate by
-        // capability (e.g. `create_artifact`'s defense-in-depth check)
-        // and to author-stamping. Without this, a Coder-emitted
-        // artifact would default to `role: 'orchestrator'` and
-        // misattribute.
-        role: 'coder',
-        // Provider + model for the Auditor commit gate. The gate is
-        // default-on (`lib/auditor-policy.ts`), so a delegated Coder that
-        // emits git_commit needs these to run the verdict — without them the
-        // gate fails closed and blocks the commit. The env var
-        // (`PUSH_AUDITOR_GATE`, forwarded from config by `applyConfigToEnv`)
-        // still governs whether the gate runs at all.
-        providerId: entry.state.provider,
-        model: entry.state.model,
-        runId,
-      });
-      const resultText = typeof result?.text === 'string' ? result.text : '';
-      const meta = result?.meta as Record<string, unknown> | null | undefined;
-      const card = isToolCard(meta?.card) ? meta.card : undefined;
-      const editDiff = isEditDiff(meta?.editDiff) ? meta.editDiff : undefined;
-      if (result && result.ok === true) {
-        return {
-          kind: 'executed',
-          resultText,
-          ...(card ? { card } : {}),
-          ...(editDiff ? { editDiff } : {}),
-        };
-      }
-      // Tool ran to completion but reported failure. Feed the opaque
-      // structured-error code into the kernel's mutation-failure
-      // tracker via `errorType` so repeated same-tool+file failures
-      // trigger the kernel's halt guard (`lib/coder-agent.ts`
-      // ~line 1407).
-      return {
-        kind: 'executed',
-        resultText,
-        errorType: result?.structuredError?.code,
-        ...(card ? { card } : {}),
-        ...(editDiff ? { editDiff } : {}),
-      };
-    } catch (err) {
-      // `executeToolCall` throwing is the rare exception path —
-      // approval-timeout, abort during exec, catastrophic I/O. Surface
-      // as a `denied` result so the kernel doesn't spin on the same
-      // call forever. The kernel injects the `reason` into the next
-      // user message so the model can react to it.
-      const message = err instanceof Error ? err.message : String(err);
-      return { kind: 'denied', reason: `daemon tool executor error: ${message}` };
-    }
-  };
-}
-
-/**
- * Build an Explorer-shaped tool executor bound to a running delegation.
- *
- * Mirrors `makeDaemonCoderToolExec` but returns the simpler Explorer
- * shape `{ resultText, card? }` instead of the Coder kernel's
- * discriminated union. Two other differences:
- *
- *   1. **No approval gating.** Explorer's contract is read-only — it
- *      inspects the workspace but never mutates it. High-risk exec is
- *      moot because the executor refuses mutating tools outright. We
- *      therefore skip `buildApprovalFn` entirely and pass
- *      `approvalFn: null` / `allowExec: false` to `executeToolCall`.
- *
- *   2. **Capability refusal.** Even with a read-only contract, the
- *      Explorer kernel still routes the optional `mutating` slot
- *      (returned by `wrapCliDetectAllToolCalls`) through `toolExec`
- *      when the model emits one — see `lib/explorer-agent.ts:470`.
- *      We call `roleCanUseTool('explorer', toolName)` inside the
- *      executor and return a polite denial `resultText` for any tool
- *      the Explorer role does not grant, so the kernel feeds the
- *      refusal back into the next round and the model can
- *      course-correct. This mirrors the web-side
- *      `ROLE_CAPABILITY_DENIED` check at
- *      `app/src/lib/web-tool-execution-runtime.ts:147` so both
- *      surfaces enforce via one shared capability table
- *      (`lib/capabilities.ts`). Gate swapped 2026-04-18 as part of
- *      the Gap 2 daemon-side role-capability tranche; the previous
- *      `READ_ONLY_TOOLS` allowlist still exists in `cli/tools.ts`
- *      because `lib/deep-reviewer-agent.ts` consumes it for a
- *      different purpose (read/mutation bucketing of detected tool
- *      calls).
- *
- * We skip `card` entirely. The web-side Explorer tool executor attaches
- * rich metadata cards pulled from structured tool output (e.g. a
- * `read_file` card with the file path + first N lines). Daemon-side we
- * don't have that layer yet, so the `card?` field is simply omitted —
- * the kernel handles `undefined` cards fine (see the `if (entry.card)`
- * guard around line 460).
- *
- * Non-goals (same as Coder): no sandbox layer, no OTel spans, no
- * `CapabilityLedger` gating, no `TurnPolicyRegistry`.
- */
-export function makeDaemonExplorerToolExec({ entry, signal, role = 'explorer' }) {
-  // Read-only roles that share this executor (Explorer, Deep Reviewer). The
-  // gate + executor case-dispatch run under this role so capability-gated
-  // cases attribute correctly. Defaults to 'explorer' so the two existing
-  // call sites are unchanged; the deep-reviewer handler passes 'reviewer'.
-  //
-  // The implementation lives in `cli/lead-explorer.ts:makeCliReadOnlyToolExec`
-  // — extracted when the lead's Explorer fan-out became the second consumer,
-  // so the daemon's delegated runs and the lead lane enforce the read-only
-  // contract (three-layer capability gate, `role_capability_denied` log,
-  // approval-free `executeToolCall`) through one implementation. This
-  // wrapper only binds the daemon's session entry shape.
-  return makeCliReadOnlyToolExec({
-    workspaceRoot: entry.state.cwd,
-    sessionId: entry?.sessionId ?? null,
-    signal,
-    role,
-  });
-}
-
-/**
  * Task-graph Explorer node invocation — wires `runExplorerAgent` from
  * `lib/explorer-agent.ts` to the real daemon tool executor
  * (`makeDaemonExplorerToolExec`) so explorer nodes actually read the
@@ -712,69 +558,6 @@ export function makeDaemonExplorerToolExec({ entry, signal, role = 'explorer' })
  * semantics — both call sites share the same `makeDaemonExplorerToolExec`
  * factory.
  */
-
-/**
- * Builds an `onRunEvent` handler for role-agent kernels (Coder /
- * Explorer / Reviewer / Auditor) running on the CLI daemon.
- *
- * Two race-safety properties:
- *
- *   1. Seq capture is synchronous. `appendSessionEvent` increments
- *      `state.eventSeq` before its filesystem await resolves, so we
- *      read the seq immediately after starting the append, BEFORE
- *      awaiting. Reading inside `.then()` would race with concurrent
- *      emits (e.g. task-graph `task_completed`) that bump `eventSeq`
- *      before this promise resolves, causing the live envelope to
- *      reuse a later seq than the persisted record — and break clients
- *      that reconcile/replay by seq. Codex P2 on PR #540.
- *
- *   2. Broadcast is gated on persistence success. If the filesystem
- *      append fails the broadcast is skipped, so the wire stream never
- *      contains an envelope that has no persisted counterpart. Errors
- *      surface via the `error` event channel so an operator sees the
- *      gap rather than silent loss.
- */
-function emitRoleAgentRunEvent(sessionId, entry, runId) {
-  return (event) => {
-    const { type, ...payload } = event;
-    const writePromise = appendSessionEvent(entry.state, type, payload, runId);
-    // Synchronous capture — `state.eventSeq` was bumped by
-    // appendSessionEvent before its first await.
-    const seq = entry.state.eventSeq;
-    writePromise
-      .then(() => {
-        broadcastEvent(sessionId, {
-          v: PROTOCOL_VERSION,
-          kind: 'event',
-          sessionId,
-          ...(runId ? { runId } : {}),
-          seq,
-          ts: Date.now(),
-          type,
-          payload,
-        });
-      })
-      .catch((err) => {
-        // Persistence failed — skip the broadcast (don't ship a wire
-        // envelope without a journal record) and surface a structured
-        // warning so the gap is visible to operators.
-        const message = err instanceof Error ? err.message : String(err);
-        broadcastEvent(sessionId, {
-          v: PROTOCOL_VERSION,
-          kind: 'event',
-          sessionId,
-          ...(runId ? { runId } : {}),
-          seq,
-          ts: Date.now(),
-          type: 'warning',
-          payload: {
-            code: 'PROMPT_SNAPSHOT_PERSIST_FAILED',
-            message: `Failed to persist ${type}: ${message}`,
-          },
-        });
-      });
-  };
-}
 
 async function runExplorerForTaskGraph(sessionId, entry, node, signal, preambleExtras = []) {
   const startedAt = Date.now();

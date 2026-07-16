@@ -18,7 +18,7 @@
  *     the kernel runs fanned-out Explorers in one `Promise.all` batch, so a
  *     throwing sibling would take down the others.
  *   - `makeCliReadOnlyToolExec` — the capability-gated read-only tool
- *     executor shared with the daemon (`cli/pushd.ts` wraps it as
+ *     executor shared with the daemon (`cli/pushd/delegation-execution.ts` wraps it as
  *     `makeDaemonExplorerToolExec` for its delegated Explorer / Deep
  *     Reviewer runs), so the lead's fan-out and the daemon's delegations
  *     enforce the read-only contract through one implementation.
@@ -112,13 +112,12 @@ export interface CliReadOnlyToolExecOptions {
  * exec is moot), and the shared three-layer capability gate in front of
  * `executeToolCall`.
  *
- * Extracted from `cli/pushd.ts:makeDaemonExplorerToolExec` when the lead's
+ * Extracted from the daemon's `makeDaemonExplorerToolExec` when the lead's
  * Explorer fan-out became the second consumer — the daemon factory now wraps
  * this, so both surfaces enforce the read-only contract through one
- * implementation. The full gate rationale (fail-closed `isCapabilityMapped`,
- * the divergence from the web runtime's fail-open check, prototype-key
- * defense) lives on the daemon wrapper's doc comment, which predates the
- * extraction and is pinned by `cli/tests/daemon-integration.test.mjs`.
+ * implementation. The implementation below documents the fail-closed
+ * `isCapabilityMapped` check, role grant, and prototype-key defense; daemon
+ * behavior remains pinned by `cli/tests/daemon-integration.test.mjs`.
  */
 export function makeCliReadOnlyToolExec({
   workspaceRoot,

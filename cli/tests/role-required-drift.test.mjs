@@ -34,7 +34,7 @@ const REPO_ROOT = path.resolve(import.meta.dirname, '..', '..');
  * covered; the runtime fallback test below is the second line of
  * defense.
  */
-const SCAN_TARGETS = ['cli/engine.ts', 'cli/pushd.ts'];
+const SCAN_TARGETS = ['cli/engine.ts', 'cli/pushd.ts', 'cli/pushd/delegation-execution.ts'];
 
 /**
  * Per-line allowlist patterns. A line is exempt if ANY of these

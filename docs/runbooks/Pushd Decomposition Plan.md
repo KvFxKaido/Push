@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–4 implemented; Phases 5–7 not started.
+Status: **In progress** — Phases 1–4 implemented; Phase 5 started; Phases 6–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -213,17 +213,23 @@ consumers until their later phases. The `abort` sugar stays in the facade for no
 because it composes parent-run cancellation with Phase 5 child-delegation
 cancellation.
 
-### Phase 5 — delegation in internal slices
+### Phase 5 — delegation in internal slices 🚧 (started 2026-07-16)
 
 Do not move the approximately 3,000-line delegation block as one PR. Split it
 along its existing internal seams:
 
-1. Coder/Explorer tool executors and shared run-event emission.
+1. ✅ Coder/Explorer tool executors and shared run-event emission (2026-07-16).
 2. Event replay, child-session descriptors, and child-session verbs.
 3. Task-graph coordination and the Explorer/Coder/Reviewer delegate verbs.
 
 Shared cancellation, parent-run correlation, persistence, and terminal-event
 rules should have one owner across all delegate verbs.
+
+Slice 1 is implemented in `cli/pushd/delegation-execution.ts`. It owns the
+approval-bound Coder executor, the capability-gated read-only executor adapter,
+and the persistence-before-broadcast bridge for role-kernel run events. The
+facade keeps the established executor exports while task-graph and direct
+delegation handlers consume the typed adapter factory.
 
 ### Phase 6 — recovery and final spine
 

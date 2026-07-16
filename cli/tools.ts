@@ -2217,7 +2217,8 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   // Kernel-level role capability check. Mirrors the web runtime's
   // `WebToolExecutionRuntime.execute` gate so capability enforcement
   // is binding-independent on both surfaces. The previous arrangement
-  // had the Explorer-side check in `cli/pushd.ts:makeDaemonExplorerToolExec`
+  // had the Explorer-side check in
+  // `cli/pushd/delegation-execution.ts:makeDaemonExplorerToolExec`
   // (binding-side); the engine's main loop had no kernel role check at
   // all, which meant a future binding could silently skip enforcement.
   // Closes audit item #3 from the OpenCode silent-failure inventory.
