@@ -561,6 +561,83 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('settles legacy inline tool rows by name and preserves failure state', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'inline-legacy-tool-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (_state, _provider, _key, _text, _rounds, options) => {
+          options.emit({
+            type: 'tool_call',
+            payload: { toolName: 'sandbox_exec' },
+            runId: 'run-legacy-tool',
+            sessionId: state.sessionId,
+          });
+          options.emit({
+            type: 'tool_result',
+            payload: { toolName: 'sandbox_exec', isError: true, target: 'false' },
+            runId: 'run-legacy-tool',
+            sessionId: state.sessionId,
+          });
+          options.emit({
+            type: 'tool.execution_start',
+            payload: { toolName: 'read_file', executionId: 'stale-start-id' },
+            runId: 'run-legacy-tool',
+            sessionId: state.sessionId,
+          });
+          options.emit({
+            type: 'tool.execution_complete',
+            payload: {
+              toolName: 'read_file',
+              executionId: 'current-completion-id',
+              isError: false,
+              target: 'README.md',
+            },
+            runId: 'run-legacy-tool',
+            sessionId: state.sessionId,
+          });
+          return {
+            outcome: 'success',
+            finalAssistantText: '',
+            rounds: 1,
+            runId: 'run-legacy-tool',
+          };
+        },
+      },
+    );
+
+    await controller.submit('run a failing command');
+    const toolRows = controller.getSnapshot().rows.filter((row) => row.kind === 'tool');
+    assert.equal(toolRows.length, 2);
+    assert.equal(toolRows[0]?.pending, false);
+    assert.equal(toolRows[0]?.isError, true);
+    assert.equal(toolRows[0]?.target, 'false');
+    assert.equal(toolRows[1]?.pending, false);
+    assert.equal(toolRows[1]?.isError, false);
+    assert.equal(toolRows[1]?.target, 'README.md');
+    await controller.dispose();
+  });
+
   it('handles retained slash commands without sending them to the model', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {

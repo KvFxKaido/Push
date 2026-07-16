@@ -30,7 +30,8 @@ describe('tool-display vocabulary', () => {
     assert.equal(formatToolTitle('sandbox_exec', ''), 'Ran a command');
     assert.equal(formatToolTitle('sandbox_exec', '   '), 'Ran a command');
     assert.equal(formatToolTitle('list_issues'), 'Fetched an issue list');
-    assert.equal(formatToolTitle('totally_made_up_tool'), 'Used a tool');
+    assert.equal(formatToolTitle('totally_made_up_tool'), 'totally_made_up_tool');
+    assert.equal(formatToolTitle(''), 'Used a tool');
   });
 
   it('articles and pluralizes the vocabulary nouns correctly', () => {

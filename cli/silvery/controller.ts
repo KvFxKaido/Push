@@ -542,15 +542,28 @@ export async function createSilveryController(
         const settled = {
           text: activityText(event),
           pending: false,
+          isError: payload.isError === true,
           ...(toolName ? { toolName } : {}),
           ...(target ? { target } : {}),
           ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),
         };
-        const idx = executionId
+        let idx = executionId
           ? activityRows.findIndex(
               (row) => row.kind === 'tool' && row.pending && row.executionId === executionId,
             )
           : -1;
+        // Legacy events may not carry executionId, and old persisted starts
+        // may carry an id that does not match the completion. Mirror the
+        // daemon transcript's reverse name scan so those rows still settle.
+        if (idx < 0) {
+          for (let i = activityRows.length - 1; i >= 0; i -= 1) {
+            const row = activityRows[i];
+            if (row?.kind === 'tool' && row.pending && row.toolName === toolName) {
+              idx = i;
+              break;
+            }
+          }
+        }
         activityRows =
           idx >= 0
             ? activityRows.map((row, i) => (i === idx ? { ...row, ...settled } : row))

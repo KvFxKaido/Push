@@ -137,7 +137,10 @@ export function pluralNoun(noun: string): string {
  * + noun ("Read a file") when no target is available.
  */
 export function formatToolTitle(toolName: string, target?: string | null): string {
-  const { verb, noun } = getToolVerbNoun(toolName);
+  const display = getToolVerbNoun(toolName);
+  const { verb, noun } = display;
   const trimmed = typeof target === 'string' ? target.trim() : '';
-  return trimmed ? `${verb} ${trimmed}` : `${verb} ${withArticle(noun)}`;
+  if (trimmed) return `${verb} ${trimmed}`;
+  const rawName = toolName.trim();
+  return display === TOOL_VERB_NOUN.default && rawName ? rawName : `${verb} ${withArticle(noun)}`;
 }
