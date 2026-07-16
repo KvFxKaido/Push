@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phase 1 shipped 2026-07-16; Phases 2–7 not started.
+Status: **In progress** — Phases 1–2 implemented; Phases 3–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -168,12 +168,17 @@ Keep compatibility re-exports in `pushd.ts`. This phase establishes import
 direction, naming, type conventions, and test placement without moving mutable
 daemon ownership.
 
-### Phase 2 — self-contained execution handlers
+### Phase 2 — self-contained execution handlers ✅ (2026-07-16)
 
 Extract file operations and remote `sandbox_exec` handling. These families have
 clear authorization and output-boundary seams and already have focused tests.
 Keep path authorization, truncation limits, cancellation, and error payloads
 with the handlers that enforce them.
+
+The extraction keeps the dispatcher in `pushd.ts` and moves remote execution,
+daemon identity, and file operations behind typed handler boundaries in
+`cli/pushd/`. Shared handler context and audit provenance types live beside the
+handlers; cancellation ownership remains with the daemon WebSocket state.
 
 ### Phase 3 — relay/device administration ownership
 
