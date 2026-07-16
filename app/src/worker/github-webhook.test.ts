@@ -12,7 +12,9 @@ import {
   selectReviewableComment,
   selectReviewablePullRequest,
   verifyWebhookSignature,
+  WEBHOOK_ROUTINES,
 } from './github-webhook';
+import { ALL_ROUTINE_WATCH_EVENTS, matchRoutines } from '@push/lib/routine-activation';
 import type { Env } from './worker-middleware';
 
 const SECRET = 'shhh-webhook-secret';
@@ -185,6 +187,50 @@ describe('selectReviewablePullRequest', () => {
     expect(
       selectReviewablePullRequest('pull_request', prPayload({ repository: {} })),
     ).toMatchObject({ ok: false, reason: 'missing_fields' });
+  });
+});
+
+describe('WEBHOOK_ROUTINES registry', () => {
+  // The receiver dispatches a single routine per delivery — a handler returns
+  // the Response that acks GitHub, and there is only one ack. That makes
+  // "exactly one built-in claims each event" a real invariant, not a
+  // coincidence, and it is what leaves the receiver's no-match and fan-out
+  // guards unreachable today.
+  //
+  // This test is the tripwire for the routine that breaks it. When a second
+  // routine claims an event (or a new event arrives with no claimant), this goes
+  // red at the seam that has to change — the receiver's single-dispatch — rather
+  // than silently dropping a firing in production.
+  it('claims every watch event exactly once (the single-dispatch invariant)', () => {
+    for (const event of ALL_ROUTINE_WATCH_EVENTS) {
+      const matched = matchRoutines(event, WEBHOOK_ROUTINES);
+      expect(
+        matched.map((r) => r.descriptor.name),
+        `event ${event} must be claimed by exactly one built-in routine`,
+      ).toHaveLength(1);
+    }
+  });
+
+  it('expresses the PR reviewer as two routines with disjoint watch sets', () => {
+    expect(WEBHOOK_ROUTINES.map((r) => r.descriptor.name)).toEqual([
+      'pr-review',
+      'pr-review-command',
+    ]);
+    const seen = new Set<string>();
+    for (const routine of WEBHOOK_ROUTINES) {
+      for (const event of routine.descriptor.watch) {
+        expect(seen.has(event), `${event} is watched by more than one routine`).toBe(false);
+        seen.add(event);
+      }
+    }
+  });
+
+  it('never watches an event outside the shared vocabulary', () => {
+    for (const routine of WEBHOOK_ROUTINES) {
+      for (const event of routine.descriptor.watch) {
+        expect(ALL_ROUTINE_WATCH_EVENTS).toContain(event);
+      }
+    }
   });
 });
 

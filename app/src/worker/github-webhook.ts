@@ -1,7 +1,9 @@
 /**
- * GitHub App webhook receiver — autonomous PR-review trigger.
+ * GitHub App webhook receiver — routine activation.
  *
- * Design: docs/decisions/Webhook-Triggered PR Review.md
+ * Design: docs/decisions/Webhook-Triggered PR Review.md (the PR reviewer);
+ * docs/decisions/Watch-Schedule Activation — Proactive Routines Feed the Lead.md
+ * (the activation layer this receiver dispatches through).
  *
  * GitHub can't attach a Push session, so `/api/github/webhook` is exempt from the
  * session gate (the exempt set in `worker-middleware.ts`). The webhook's own auth
@@ -10,10 +12,14 @@
  * structured log so a dropped delivery is visible to ops rather than silent
  * (CLAUDE.md "Symmetric structured logs").
  *
- * The receiver does cheap, synchronous gating only and hands the actual review
- * to the `PrReviewJob` Durable Object, returning 202 well inside GitHub's ~10s
- * delivery budget. Replay dedupe and same-PR coalescing live in the DO (keyed by
- * `repo#prNumber`), so the receiver stays stateless.
+ * The receiver does cheap, synchronous gating only and hands the actual work to a
+ * Durable Object, returning 202 well inside GitHub's ~10s delivery budget. It
+ * gates the delivery, classifies it into the shared watch vocabulary
+ * (`lib/routine-activation.ts`), and hands off to the routine that claims it —
+ * `WEBHOOK_ROUTINES` is the whole dispatch table. Classification and matching are
+ * pure, which is what keeps the hand-off cheap; a routine owns its own selection,
+ * gates, and enqueue. Replay dedupe and same-PR coalescing live in the DO (keyed
+ * by `repo#prNumber`), so the receiver stays stateless.
  */
 
 import { timingSafeEqual, type Env } from './worker-middleware';
@@ -25,21 +31,17 @@ import {
 } from './pr-review-trigger';
 import { GITHUB_APP_SLUG } from './worker-infra';
 import { addCommentReaction, type CommentReactionKind } from '@/lib/github-tools';
+import {
+  classifyPullRequestAction,
+  classifyWebhookEvent,
+  matchRoutines,
+  type RoutineDescriptor,
+  type RoutineLike,
+} from '@push/lib/routine-activation';
 
 // `prReviewJobName` now lives in pr-review-trigger.ts (single owner of DO
 // addressing); re-export it here so existing importers/tests keep their path.
 export { prReviewJobName } from './pr-review-trigger';
-
-/**
- * Actions on a `pull_request` event that warrant a fresh review.
- *
- * Deliberately excludes `synchronize` (a new commit pushed to the head branch):
- * the reviewer fires on a PR's first open — and on reopen / draft-becomes-ready,
- * which are the "first review" moment for those flows — but NOT on every
- * subsequent commit. Re-reviewing each push is noisy and the follow-up bots
- * (and the author) don't reliably re-read follow-up reviews anyway.
- */
-const REVIEWABLE_ACTIONS = new Set(['opened', 'reopened', 'ready_for_review']);
 
 /** A pull_request event we've decided to review, with everything the DO needs. */
 export interface ReviewablePullRequest {
@@ -140,8 +142,11 @@ export function selectReviewablePullRequest(
     };
   };
 
+  // Which actions are reviewable is the shared vocabulary's call (including the
+  // deliberate `synchronize` exclusion) — this gate reads that table rather than
+  // keeping a parallel set that could drift from what the receiver classifies.
   const action = p.action ?? '';
-  if (!REVIEWABLE_ACTIONS.has(action)) return { ok: false, reason: `action:${action}` };
+  if (!classifyPullRequestAction(action)) return { ok: false, reason: `action:${action}` };
 
   const pr = p.pull_request;
   if (!pr) return { ok: false, reason: 'no_pull_request' };
@@ -173,9 +178,6 @@ export function selectReviewablePullRequest(
 }
 
 // --- Comment-triggered review (`@push-agent review`) ---
-
-/** Comment events that can carry an @-mention trigger. */
-const COMMENT_EVENTS = new Set(['issue_comment', 'pull_request_review_comment']);
 
 /**
  * `author_association` values trusted to spend a review. These are the
@@ -266,7 +268,10 @@ export function selectReviewableComment(
   payload: unknown,
   handle: string,
 ): { ok: true; request: CommentReviewRequest } | { ok: false; reason: string } {
-  if (!eventName || !COMMENT_EVENTS.has(eventName)) {
+  // "Is this a comment event" is the shared vocabulary's call, for the same
+  // no-drift reason as the reviewable-action gate above.
+  const classified = classifyWebhookEvent(eventName, payload);
+  if (!classified.ok || classified.event !== 'pr_comment') {
     return { ok: false, reason: `event:${eventName ?? 'none'}` };
   }
   if (!handle) return { ok: false, reason: 'no_handle' };
@@ -354,12 +359,70 @@ export interface WebhookExecutionCtx {
   waitUntil(promise: Promise<unknown>): void;
 }
 
+/** Everything a webhook-activated routine needs to act on one delivery. */
+export interface WebhookRoutineContext {
+  env: Env;
+  ctx: WebhookExecutionCtx | undefined;
+  deps: GitHubWebhookDeps;
+  payload: unknown;
+  eventName: string;
+  deliveryId: string;
+  origin: string;
+}
+
+/** A routine the receiver can activate: its machine contract plus a handler. */
+export interface WebhookRoutine extends RoutineLike {
+  descriptor: RoutineDescriptor;
+  handle(c: WebhookRoutineContext): Promise<Response>;
+}
+
+/**
+ * The built-in routine registry — the receiver's whole dispatch table.
+ *
+ * The autonomous PR reviewer is expressed here as the first two routines rather
+ * than as a hardcoded fork in `handleGitHubWebhook`. It is two entries, not one
+ * with an internal branch, because its two activations are genuinely different
+ * shapes: a fresh PR is a condition the reviewer notices, an `@<bot> review`
+ * comment is a command someone issues. Disjoint `watch:` sets and separate
+ * handlers keep the registry an actual dispatch table instead of a lookup that
+ * hides an `if`.
+ *
+ * Repo-committed `.push/routines/*.md` join this list later. When they do,
+ * matching needs a base-ref fetch and moves behind a DO — the receiver keeps its
+ * cheap-and-synchronous contract, and this table becomes its built-in half.
+ */
+export const WEBHOOK_ROUTINES: readonly WebhookRoutine[] = [
+  {
+    descriptor: {
+      name: 'pr-review',
+      description: 'Review a newly opened, reopened, or ready-for-review pull request',
+      watch: ['pr_opened', 'pr_reopened', 'pr_ready_for_review'],
+    },
+    handle: (c) => handlePullRequestReviewRoutine(c),
+  },
+  {
+    descriptor: {
+      name: 'pr-review-command',
+      description: 'Review a pull request on an @-mention command in a comment',
+      watch: ['pr_comment'],
+    },
+    handle: (c) =>
+      handleCommentReviewTrigger(
+        c.env,
+        c.ctx,
+        c.deps,
+        c.payload,
+        c.eventName,
+        c.deliveryId,
+        c.origin,
+      ),
+  },
+];
+
 /**
  * `/api/github/webhook` handler. Gates the delivery (signature → parse →
- * event-select → allowlist), then enqueues to the `PrReviewJob` DO and acks 202.
- * `pull_request` opens fire a review directly; `issue_comment` /
- * `pull_request_review_comment` carrying `@<bot> review` route through the
- * comment trigger.
+ * classify → match), then hands off to the matching routine, which owns its own
+ * selection, allowlist, and enqueue.
  */
 export async function handleGitHubWebhook(
   request: Request,
@@ -393,29 +456,80 @@ export async function handleGitHubWebhook(
     return json({ error: 'INVALID_BODY' }, 400);
   }
 
-  // Comment events (`@push-agent review`) route through the comment trigger; the
-  // signature + body parse above are shared with the pull_request path.
-  if (eventName && COMMENT_EVENTS.has(eventName)) {
-    return handleCommentReviewTrigger(
-      env,
-      ctx,
-      deps,
-      payload,
-      eventName,
-      deliveryId,
-      new URL(request.url).origin,
-    );
-  }
-
-  const selected = selectReviewablePullRequest(eventName, payload);
-  if (!selected.ok) {
-    log('debug', 'webhook_skipped_event', { deliveryId, eventName, reason: selected.reason });
+  // Classify the delivery into the shared watch vocabulary, then let the
+  // registry say who wants it. Both steps are pure — no I/O joins the gate path,
+  // so the receiver keeps the cheap-and-synchronous contract in the header.
+  const classified = classifyWebhookEvent(eventName, payload);
+  if (!classified.ok) {
+    log('debug', 'webhook_skipped_event', { deliveryId, eventName, reason: classified.reason });
     // 200-with-body, not a bare 204. The reason IS logged above — but this Worker's
     // observability captures HTTP traces, not console.log, so that line is
     // unreadable in practice. GitHub's own delivery log renders the response body,
     // and it is the one sink an operator can actually see; a skip that says nothing
     // there is indistinguishable from a reviewer that is broken. (Cost us an outage:
     // every PR event skipped silently, with a green 2xx on every delivery.)
+    return json({ ok: true, status: 'skipped', event: eventName, reason: classified.reason }, 200);
+  }
+
+  const matched = matchRoutines(classified.event, WEBHOOK_ROUTINES);
+  if (matched.length === 0) {
+    // Unreachable while every event in the vocabulary is watched by a built-in,
+    // but the pairing is the point: an event the App subscribes to and no
+    // routine claims must say so where the classify-miss says so, or it becomes
+    // the same silent-2xx outage in a new place.
+    log('debug', 'webhook_skipped_no_routine', {
+      deliveryId,
+      eventName,
+      watchEvent: classified.event,
+    });
+    return json(
+      { ok: true, status: 'skipped', event: eventName, reason: `no_routine:${classified.event}` },
+      200,
+    );
+  }
+  if (matched.length > 1) {
+    // Single-dispatch is this slice's real limit: a routine handler returns the
+    // Response that acks GitHub, and there is only one ack. Loud rather than
+    // silent — the second routine to claim an event must land with fan-out, and
+    // a dropped firing that logged nothing is exactly what the design doc calls
+    // invisible to ops.
+    log('error', 'webhook_routine_fanout_unsupported', {
+      deliveryId,
+      eventName,
+      watchEvent: classified.event,
+      matched: matched.map((r) => r.descriptor.name),
+      dispatched: matched[0].descriptor.name,
+    });
+  }
+
+  return matched[0].handle({
+    env,
+    ctx,
+    deps,
+    payload,
+    // A falsy event name classifies as `event:none`, so reaching an ok
+    // classification proves this is a non-empty string — an invariant of
+    // `classifyWebhookEvent` the type system can't carry across the call.
+    eventName: eventName as string,
+    deliveryId,
+    origin: new URL(request.url).origin,
+  });
+}
+
+/**
+ * The `pr-review` routine: a fresh PR warrants a review. Owns the selection it
+ * needs off the payload, its allowlist and kill-switch gates, and the enqueue to
+ * the `PrReviewJob` DO.
+ */
+async function handlePullRequestReviewRoutine(c: WebhookRoutineContext): Promise<Response> {
+  const { env, payload, eventName, deliveryId, origin } = c;
+
+  const selected = selectReviewablePullRequest(eventName, payload);
+  if (!selected.ok) {
+    // Classification passed (the action is reviewable) but this PR still isn't —
+    // a draft, or a payload missing fields the DO needs. Same skip shape as a
+    // classify miss: named, in the body, where GitHub's delivery log shows it.
+    log('debug', 'webhook_skipped_event', { deliveryId, eventName, reason: selected.reason });
     return json({ ok: true, status: 'skipped', event: eventName, reason: selected.reason }, 200);
   }
   const pr = selected.pr;
@@ -463,7 +577,7 @@ export async function handleGitHubWebhook(
   try {
     const id = env.PrReviewJob.idFromName(prReviewJobName(pr.repoFullName, pr.prNumber));
     const stub = env.PrReviewJob.get(id);
-    const body = JSON.stringify({ ...pr, deliveryId, origin: new URL(request.url).origin });
+    const body = JSON.stringify({ ...pr, deliveryId, origin });
     const doResponse = await (
       stub as unknown as { fetch: (r: Request) => Promise<Response> }
     ).fetch(
