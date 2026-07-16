@@ -739,206 +739,59 @@ const VALID_AGENT_ROLES = new Set(['orchestrator', 'explorer', 'coder', 'reviewe
 
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
-// ─── Socket path ─────────────────────────────────────────────────
+// ─── Phase 1 extractions (Pushd Decomposition Plan) ──────────────
+// Implementations moved to typed modules under cli/pushd/. This file stays
+// the compatibility facade: existing importers (tests, cli.ts,
+// daemon-admin.ts) keep resolving these helpers through pushd.ts.
+import {
+  cleanPidFile,
+  cleanStaleSocket,
+  ensureSocketDir,
+  getLogPath,
+  getPidPath,
+  getPortPath,
+  getSocketPath,
+  isNamedPipePath,
+  isWsListenerEnabled,
+  writePidFile,
+} from './pushd/paths.js';
+import { makeApprovalId, makeRequestId } from './pushd/ids.js';
+import { makeErrorResponse, makeResponse } from './pushd/envelopes.js';
+import {
+  DEFAULT_RESTART_POLICY,
+  getRestartPolicy,
+  shouldRecover,
+  VALID_RESTART_POLICIES,
+} from './pushd/restart-policy.js';
+import { validateAttachToken } from './pushd/attach-token.js';
+import { normalizeProviderInput } from './pushd/provider-input.js';
+import {
+  collectOrphanedDelegations,
+  formatDelegationInterruptedNote,
+} from './pushd/recovery-reconciliation.js';
 
-function getDefaultWindowsPipePath() {
-  const rawUser = process.env.USERNAME || process.env.USER || 'user';
-  const safeUser = String(rawUser).replace(/[^A-Za-z0-9_.-]/g, '_');
-  return `\\\\.\\pipe\\pushd-${safeUser}`;
-}
-
-export function isNamedPipePath(targetPath) {
-  return typeof targetPath === 'string' && targetPath.startsWith('\\\\.\\pipe\\');
-}
-
-export function getSocketPath() {
-  if (process.env.PUSHD_SOCKET) return process.env.PUSHD_SOCKET;
-  if (process.platform === 'win32') return getDefaultWindowsPipePath();
-  const pushDir = path.join(os.homedir(), '.push', 'run');
-  return path.join(pushDir, 'pushd.sock');
-}
-
-export function getPidPath() {
-  return path.join(os.homedir(), '.push', 'run', 'pushd.pid');
-}
-
-export function getPortPath() {
-  if (process.env.PUSHD_PORT_PATH) return process.env.PUSHD_PORT_PATH;
-  return path.join(os.homedir(), '.push', 'run', 'pushd.port');
-}
-
-export function isWsListenerEnabled() {
-  // PR 1: WS listener is dormant by default. Internal-dogfooding flag —
-  // the listener is loopback-only and token-gated either way, but the
-  // flag lets us harden the auth path before exposing it.
-  const raw = process.env.PUSHD_WS;
-  if (raw === undefined || raw === '') return false;
-  return raw === '1' || raw.toLowerCase() === 'true';
-}
-
-export function getLogPath() {
-  if (process.env.PUSHD_LOG) return process.env.PUSHD_LOG;
-  return path.join(os.homedir(), '.push', 'run', 'pushd.log');
-}
-
-async function writePidFile() {
-  const pidPath = getPidPath();
-  await fs.mkdir(path.dirname(pidPath), { recursive: true });
-  await fs.writeFile(pidPath, String(process.pid), 'utf8');
-}
-
-async function cleanPidFile() {
-  try {
-    await fs.unlink(getPidPath());
-  } catch {
-    /* ignore */
-  }
-}
-
-async function ensureSocketDir(socketPath) {
-  if (isNamedPipePath(socketPath)) return;
-  const dir = path.dirname(socketPath);
-  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
-  await fs.chmod(dir, 0o700);
-}
-
-async function cleanStaleSocket(socketPath) {
-  if (isNamedPipePath(socketPath)) return;
-  try {
-    await fs.unlink(socketPath);
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-  }
-}
-
-// ─── ID generators ──────────────────────────────────────────────
-
-function makeRequestId() {
-  return `req_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
-}
-
-// `makeAttachToken` is now imported from `./session-store` so every session
-// creation path (daemon + TUI + CLI) mints through one helper. Re-exported
-// below so callers/tests that import it from the daemon module keep working.
-
-function makeApprovalId() {
-  return `appr_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
-}
-
-// ─── Envelope helpers ────────────────────────────────────────────
-
-export function makeResponse(requestId, type, sessionId, ok, payload, error = null) {
-  return {
-    v: PROTOCOL_VERSION,
-    kind: 'response',
-    requestId,
-    type,
-    sessionId: sessionId || null,
-    ok,
-    payload,
-    error,
-  };
-}
-
-export function makeErrorResponse(requestId, type, code, message, retryable = false) {
-  return makeResponse(
-    requestId,
-    type,
-    null,
-    false,
-    {},
-    {
-      code,
-      message,
-      retryable,
-    },
-  );
-}
-
-// ─── Restart policies ─────────────────────────────────────────────
-// Each session can have a restart policy that controls crash recovery.
-//   'on-failure' (default) — recover runs that were interrupted by daemon crash
-//   'always'               — always recover (same as on-failure for now; future: timer-based restarts)
-//   'never'                — never auto-recover; user must manually re-send
-const DEFAULT_RESTART_POLICY = 'on-failure';
-const VALID_RESTART_POLICIES = new Set(['on-failure', 'always', 'never']);
-
-function getRestartPolicy(state) {
-  const policy = state?.restartPolicy || DEFAULT_RESTART_POLICY;
-  return VALID_RESTART_POLICIES.has(policy) ? policy : DEFAULT_RESTART_POLICY;
-}
-
-function shouldRecover(policy, marker) {
-  if (policy === 'never') return false;
-  // 'on-failure' and 'always' both recover interrupted runs
-  // Guard: reject missing/non-finite startedAt and stale markers (>1 hour)
-  const startedAt = Number(marker.startedAt);
-  if (!Number.isFinite(startedAt)) return false;
-  const age = Date.now() - startedAt;
-  const ONE_HOUR = 60 * 60 * 1000;
-  if (age < 0 || age > ONE_HOUR) return false;
-  return true;
-}
-
-// ─── Token validation ─────────────────────────────────────────────
-
-export { getRestartPolicy, shouldRecover, DEFAULT_RESTART_POLICY, VALID_AGENT_ROLES };
+export {
+  isNamedPipePath,
+  getSocketPath,
+  getPidPath,
+  getPortPath,
+  isWsListenerEnabled,
+  getLogPath,
+  makeResponse,
+  makeErrorResponse,
+  getRestartPolicy,
+  shouldRecover,
+  DEFAULT_RESTART_POLICY,
+  validateAttachToken,
+  normalizeProviderInput,
+  collectOrphanedDelegations,
+  formatDelegationInterruptedNote,
+  VALID_AGENT_ROLES,
+};
 // Re-export the session-store mint helper from the daemon module so existing
 // importers (and tests) that reach for it here keep resolving after the
 // promotion into `./session-store`.
 export { makeAttachToken };
-
-// Dedup `open_attach_used` to one warn per session entry — the opt-out is a
-// deliberate dev mode, so we want visibility, but not a line per RPC. Keyed by
-// the registry entry object (WeakSet so evicted entries don't leak).
-const openAttachWarnedEntries = new WeakSet();
-
-/**
- * Is this session explicitly opted into open (bearer-less) attach? The escape
- * hatch the Universal Session Bearer leaves for deliberate dev use: a
- * per-session `openAttach: true` flag (on the entry or its persisted state) or
- * the process-wide `PUSHD_OPEN_ATTACH=1`. Anything else requires a matching
- * bearer — there is no longer an implicit "tokenless = open" bypass.
- */
-function isOpenAttach(entry) {
-  return (
-    entry?.openAttach === true ||
-    entry?.state?.openAttach === true ||
-    process.env.PUSHD_OPEN_ATTACH === '1'
-  );
-}
-
-export function validateAttachToken(entry, providedToken) {
-  // No session object = nothing to gate here. Handlers check existence
-  // (SESSION_NOT_FOUND) before they ever reach validation, so a null entry is
-  // never a real auth decision — it can't be reached with a live session.
-  if (!entry) return true;
-  // Explicit opt-out only. The former `!entry.attachToken → true` bypass is
-  // GONE (Universal Session Bearer): a tokenless session is no longer open by
-  // accident. "Open" survives solely as this deliberate, logged choice.
-  if (isOpenAttach(entry)) {
-    if (!openAttachWarnedEntries.has(entry)) {
-      openAttachWarnedEntries.add(entry);
-      // Attribute precisely — both can be on at once, so don't collapse to one.
-      const envOn = process.env.PUSHD_OPEN_ATTACH === '1';
-      const flagOn = entry?.openAttach === true || entry?.state?.openAttach === true;
-      const source = flagOn && envOn ? 'session+env' : flagOn ? 'session' : 'env';
-      process.stderr.write(
-        `${JSON.stringify({ level: 'warn', event: 'open_attach_used', sessionId: entry?.state?.sessionId, source })}\n`,
-      );
-    }
-    return true;
-  }
-  if (typeof providedToken !== 'string' || !providedToken) return false;
-  return entry.attachToken === providedToken;
-}
-
-export function normalizeProviderInput(value) {
-  if (typeof value !== 'string') return '';
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized === 'undefined' || normalized === 'null') return '';
-  return normalized;
-}
 
 // ─── Session registry (in-memory) ────────────────────────────────
 
@@ -7849,107 +7702,6 @@ function handleConnection(socket) {
  * Recovery injects a [SESSION_RECOVERED] reconciliation message so the model
  * knows context was interrupted and can adjust.
  */
-/**
- * Scan a session event log and return delegations/task-graphs that were
- * tied to the given parent run but never reached a terminal event. Used by
- * crash recovery to build the `[DELEGATION_INTERRUPTED]` reconciliation note.
- *
- * A subagent delegation is "orphaned" if there is a `subagent.started` event
- * whose `payload.parentRunId === parentRunId` AND no matching
- * `subagent.completed` / `subagent.failed` for the same `subagentId`.
- *
- * A task graph is "orphaned" if there is any `task_graph.*` event whose
- * envelope `runId === parentRunId` AND no matching `task_graph.graph_completed`
- * for the same `executionId`.
- *
- * We deliberately restrict to events bound to the interrupted parent run —
- * older fire-and-forget failures from prior runs are not this recovery's
- * problem.
- */
-export function collectOrphanedDelegations(events, parentRunId) {
-  const startedSubagents = new Map(); // subagentId -> { agent }
-  const terminatedSubagents = new Set(); // subagentId
-  const seenGraphs = new Map(); // executionId -> true
-  const completedGraphs = new Set(); // executionId
-
-  for (const event of events) {
-    if (!event || typeof event.type !== 'string') continue;
-    const payload = event.payload || {};
-
-    if (event.type === 'subagent.started') {
-      if (payload.parentRunId !== parentRunId) continue;
-      const subagentId = typeof payload.subagentId === 'string' ? payload.subagentId : null;
-      if (!subagentId) continue;
-      startedSubagents.set(subagentId, {
-        agent: typeof payload.agent === 'string' ? payload.agent : 'subagent',
-      });
-      continue;
-    }
-    if (event.type === 'subagent.completed' || event.type === 'subagent.failed') {
-      const subagentId = typeof payload.subagentId === 'string' ? payload.subagentId : null;
-      if (subagentId) terminatedSubagents.add(subagentId);
-      continue;
-    }
-    if (event.type.startsWith('task_graph.')) {
-      if (event.runId !== parentRunId) continue;
-      const executionId = typeof payload.executionId === 'string' ? payload.executionId : null;
-      if (!executionId) continue;
-      if (event.type === 'task_graph.graph_completed') {
-        completedGraphs.add(executionId);
-      } else {
-        seenGraphs.set(executionId, true);
-      }
-      continue;
-    }
-  }
-
-  const orphanedSubagents = [];
-  for (const [subagentId, meta] of startedSubagents) {
-    if (!terminatedSubagents.has(subagentId)) {
-      orphanedSubagents.push({ subagentId, agent: meta.agent });
-    }
-  }
-
-  const orphanedGraphs = [];
-  for (const [executionId] of seenGraphs) {
-    if (!completedGraphs.has(executionId)) {
-      orphanedGraphs.push({ executionId });
-    }
-  }
-
-  return { subagents: orphanedSubagents, graphs: orphanedGraphs };
-}
-
-/**
- * Build the `[DELEGATION_INTERRUPTED]` reconciliation note injected into the
- * message history on recovery. Returns null if nothing was orphaned.
- */
-export function formatDelegationInterruptedNote(orphans) {
-  const { subagents, graphs } = orphans;
-  if (subagents.length === 0 && graphs.length === 0) return null;
-  const lines = ['[DELEGATION_INTERRUPTED]'];
-  lines.push(
-    'One or more sub-agents launched during the interrupted run never reported a terminal result.',
-  );
-  if (subagents.length > 0) {
-    lines.push('Unfinished delegations:');
-    for (const { subagentId, agent } of subagents) {
-      lines.push(`  - ${agent} (${subagentId})`);
-    }
-  }
-  if (graphs.length > 0) {
-    lines.push('Unfinished task graphs:');
-    for (const { executionId } of graphs) {
-      lines.push(`  - ${executionId}`);
-    }
-  }
-  lines.push(
-    'Assume their work is lost. If you still need their results, re-delegate explicitly — do not wait for ghost completions.',
-  );
-  lines.push('[/DELEGATION_INTERRUPTED]');
-  return lines.join('\n');
-}
-
 async function recoverInterruptedRuns() {
   let interrupted;
   try {
