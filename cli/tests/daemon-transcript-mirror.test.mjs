@@ -419,4 +419,31 @@ describe('daemon transcript mirror', () => {
       ['first', 'second'],
     );
   });
+
+  it('falls back to the name scan for legacy sessions with mismatched start/complete ids', () => {
+    // Sessions recorded before start/complete id parity: the start carries the
+    // old synthetic `${runId}_lead_*` id while the complete carries the kernel
+    // id. Id-only matching would strand the pending row and duplicate the
+    // result on resume; the name+pending fallback must update the original row.
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'tool.execution_start',
+      payload: { executionId: 'run123_lead_1', toolName: 'read_file', args: { path: 'a.ts' } },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 2,
+      type: 'tool.execution_complete',
+      payload: {
+        executionId: 'kernel-xyz',
+        toolName: 'read_file',
+        isError: false,
+        preview: 'contents',
+      },
+    });
+    const tools = mirror.rows.filter((row) => row.kind === 'tool');
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].pending, false);
+    assert.equal(tools[0].resultPreview, 'contents');
+  });
 });

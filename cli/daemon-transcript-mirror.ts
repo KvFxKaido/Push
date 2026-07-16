@@ -224,24 +224,29 @@ export function applyDaemonTranscriptEvent(
     case 'tool.execution_complete': {
       const toolName = stringField(payload, 'toolName') || 'work';
       const executionId = stringField(payload, 'executionId');
-      // Pair the result to its call by executionId when both carry one:
-      // parallel calls of the same tool would otherwise mispair under the
-      // legacy name+pending reverse-scan (which matches LIFO), swapping
-      // output/diff/card onto the wrong row. Fall back to the name scan only
-      // for legacy id-less events (older sessions, web-legacy shapes).
-      const row = executionId
-        ? mirror.rows.find(
+      const nameScan = () =>
+        [...mirror.rows]
+          .reverse()
+          .find(
             (candidate) =>
-              candidate.kind === 'tool' &&
-              candidate.pending &&
-              candidate.executionId === executionId,
-          )
-        : [...mirror.rows]
-            .reverse()
-            .find(
+              candidate.kind === 'tool' && candidate.toolName === toolName && candidate.pending,
+          );
+      // Pair the result to its call by executionId (kernel-minted, with
+      // start/complete parity) so parallel calls of the same tool never
+      // cross-attribute output/diff/card onto the wrong row. Fall back to the
+      // name+pending reverse-scan when there is no id — OR when the id matches
+      // no pending row, which covers legacy sessions recorded before id parity
+      // whose start rows still carry a stale `${runId}_lead_*` id (else the
+      // pending row is stranded and the result duplicates). Codex P2, #1493.
+      const row =
+        (executionId
+          ? mirror.rows.find(
               (candidate) =>
-                candidate.kind === 'tool' && candidate.toolName === toolName && candidate.pending,
-            );
+                candidate.kind === 'tool' &&
+                candidate.pending &&
+                candidate.executionId === executionId,
+            )
+          : undefined) ?? nameScan();
       const resultPreview = stringField(payload, 'text', 'preview').slice(0, 500);
       if (row) {
         row.pending = false;
