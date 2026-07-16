@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  formatToolGroupSummary,
   formatToolTitle,
   getToolVerbNoun,
   pluralNoun,
@@ -42,5 +43,31 @@ describe('tool-display vocabulary', () => {
     assert.equal(pluralNoun('branch'), 'branches');
     assert.equal(pluralNoun('memory'), 'memories');
     assert.equal(pluralNoun('push'), 'pushes');
+  });
+
+  it('summarizes homogeneous and mixed tool groups in first-seen order', () => {
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'read_file', target: 'a.ts' },
+        { toolName: 'sandbox_read_file', target: 'b.ts' },
+      ]),
+      'Read 2 files',
+    );
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'read_file' },
+        { toolName: 'sandbox_exec' },
+        { toolName: 'read_file' },
+      ]),
+      'Read 2 files, Ran 1 command',
+    );
+  });
+
+  it('keeps a single grouped call concrete and tolerates an empty group', () => {
+    assert.equal(
+      formatToolGroupSummary([{ toolName: 'read_file', target: 'README.md' }]),
+      'Read README.md',
+    );
+    assert.equal(formatToolGroupSummary([]), '');
   });
 });

@@ -108,6 +108,12 @@ Pending / ok / error ride **color**, not shape — a settled tool call still wea
 code names them `markWork` / `markQuiet` for this reason; the earlier `dotActive` /
 `dotIdle` claimed a live-vs-settled distinction the code never made.)
 
+Consecutive settled, successful tool calls fold into one semantic spine row — for example,
+`Read 3 files, Ran 1 command`. The fold is a render-only projection: expanding it restores
+every original card, while pending calls, failures, prose, and status rows remain visible
+boundaries. A lone call keeps its concrete title instead of paying the interaction cost of
+a one-item group.
+
 The **human turn wears neither Push glyph** — not the hexagon (that would put Push's face
 on the one voice that isn't Push) and not the square spine (that is Push's own activity).
 The user gets a prompt caret `❯` (ASCII `>`) in the accent, the single non-Push shape in
