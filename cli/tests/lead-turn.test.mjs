@@ -198,7 +198,9 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         // engine's local identity, not the delegated implementer prompt.
         const requestText = JSON.stringify(server.requests[0]);
         assert.ok(
-          requestText.includes('You are the lead in this chat'),
+          requestText.includes(
+            'You are `mock-model`, served via Ollama. You are the lead in this chat',
+          ),
           'lead identity missing from provider request',
         );
         assert.ok(
@@ -757,7 +759,9 @@ describe(
           assert.equal(result.outcome, 'success');
           const requestText = JSON.stringify(server.requests[0]);
           assert.ok(
-            requestText.includes('You are the lead in this chat'),
+            requestText.includes(
+              'You are `mock-model`, served via Ollama. You are the lead in this chat',
+            ),
             'kernel lane not engaged',
           );
         } finally {
