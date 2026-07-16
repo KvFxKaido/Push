@@ -514,9 +514,9 @@ export async function createSilveryController(
         ];
         break;
       case 'tool_call':
-      case 'tool.execution_start':
-      case 'tool_result':
-      case 'tool.execution_complete':
+      case 'tool.execution_start': {
+        const toolName = String(payload.toolName ?? '');
+        const executionId = String(payload.executionId ?? '');
         activityRows = [
           ...activityRows,
           {
@@ -524,10 +524,42 @@ export async function createSilveryController(
             kind: 'tool',
             role: activityRole(event),
             text: activityText(event),
-            ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),
+            pending: true,
+            ...(toolName ? { toolName } : {}),
+            ...(executionId ? { executionId } : {}),
           },
         ];
         break;
+      }
+      case 'tool_result':
+      case 'tool.execution_complete': {
+        const toolName = String(payload.toolName ?? '');
+        const target = String(payload.target ?? '');
+        const executionId = String(payload.executionId ?? '');
+        // Settle the matching pending start row (by executionId, like the
+        // daemon mirror) rather than appending a duplicate; fall back to a
+        // fresh row when there was no correlated start.
+        const settled = {
+          text: activityText(event),
+          pending: false,
+          ...(toolName ? { toolName } : {}),
+          ...(target ? { target } : {}),
+          ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),
+        };
+        const idx = executionId
+          ? activityRows.findIndex(
+              (row) => row.kind === 'tool' && row.pending && row.executionId === executionId,
+            )
+          : -1;
+        activityRows =
+          idx >= 0
+            ? activityRows.map((row, i) => (i === idx ? { ...row, ...settled } : row))
+            : [
+                ...activityRows,
+                { id: nextId('activity'), kind: 'tool', role: activityRole(event), ...settled },
+              ];
+        break;
+      }
       case 'warning':
       case 'error':
       case 'status':

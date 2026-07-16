@@ -20,6 +20,7 @@ import {
 } from 'silvery';
 
 import { getTranscriptRoleLabel } from '../../lib/role-display.js';
+import { formatToolTitle } from '../../lib/tool-display.js';
 import { resolveContextWindow } from '../../lib/context-budget.js';
 import { formatToolCard } from '../tool-card-format.js';
 import { getCuratedModels } from '../model-catalog.js';
@@ -186,6 +187,10 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   const [expanded, setExpanded] = useState(false);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   const mark = streamMark(toolMarkKind(item), glyphs);
+  // Semantic compact title ("Read README.md" / "Ran a command") from the shared
+  // vocabulary, using the runtime `target` when present. The raw tool name is
+  // the fallback for anything the vocabulary doesn't cover.
+  const title = formatToolTitle(item.toolName ?? item.text, item.target);
   // File mutations carry both the cross-surface `diff-preview` card and the
   // CLI-native line-numbered EditDiff. Prefer the richer local renderer while
   // still keeping the declared card on the event for other consumers.
@@ -197,11 +202,19 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
         : null;
   const cardBodyLines = card?.bodyLines ?? [];
   const visibleCardBodyLines = expanded ? cardBodyLines : cardBodyLines.slice(0, 8);
+  // A typed card / diff is already a compact representation and stays visible;
+  // only the verbose raw preview (a read's file contents, a command's stdout)
+  // folds to its first line by default, expanding on click. `…` marks a row
+  // that has more behind it.
+  const previewOnly = !card && !item.diff && Boolean(item.resultPreview);
+  const previewLines = item.resultPreview ? item.resultPreview.split('\n') : [];
+  const previewHasMore = previewOnly && previewLines.length > 1;
   return (
     <Box flexDirection="column" onClick={() => setExpanded((value) => !value)}>
       <Text bold={mark.bold} color={mark.color}>
-        {mark.glyph} {item.toolName ?? item.text}
+        {mark.glyph} {title}
         {typeof item.durationMs === 'number' ? ` · ${item.durationMs}ms` : ''}
+        {previewHasMore && !expanded ? ' …' : ''}
       </Text>
       {card ? (
         <Box flexDirection="column">
@@ -232,10 +245,8 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
         </Box>
       ) : null}
       {item.diff ? <DiffCard item={item} /> : null}
-      {!card && !item.diff && item.resultPreview ? (
-        <Text color={VL_COLOR.muted}>
-          {expanded ? item.resultPreview : item.resultPreview.split('\n')[0]}
-        </Text>
+      {previewOnly ? (
+        <Text color={VL_COLOR.muted}>{expanded ? item.resultPreview : previewLines[0]}</Text>
       ) : null}
     </Box>
   );
