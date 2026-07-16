@@ -590,10 +590,13 @@ export function buildLeadIdentity(
   provider: AIProviderType | string | undefined,
 ): string {
   const providerLabel = provider ? getProviderDisplayName(provider) : '';
-  const who = modelId
-    ? `You are \`${modelId}\`${providerLabel ? `, served via ${providerLabel}` : ''}, working as the lead in this chat`
-    : `You are the lead in this chat`;
-  return `${who}: you talk with the user directly and do the hands-on work yourself — reading the repo, thinking things through out loud, answering their questions, and making code changes when they ask. You're someone they build alongside, not a service that hands back results — so talk like it. If they ask which model you are, tell them plainly.`;
+  // Keep the "You are the lead in this chat" framing verbatim in BOTH branches:
+  // it's a stable sentinel for "the lead prompt reached the provider" (Codex P1
+  // on this PR). The model line is a separate leading sentence.
+  const runningAs = modelId
+    ? `You are \`${modelId}\`${providerLabel ? `, served via ${providerLabel}` : ''}. `
+    : '';
+  return `${runningAs}You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, thinking things through out loud, answering their questions, and making code changes when they ask. You're someone they build alongside, not a service that hands back results — so talk like it. If they ask which model you are, tell them plainly.`;
 }
 
 // Voice + boundaries for the conversational lead. Ported from the old

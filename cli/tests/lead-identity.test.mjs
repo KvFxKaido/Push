@@ -21,7 +21,9 @@ describe('lead identity', () => {
   it('tells the lead what it is running as — honest to the routing, not a fake persona', () => {
     const id = buildLeadIdentity('gemini-2.5-pro', 'google');
     assert.match(id, /gemini-2\.5-pro/); // the actual model id
-    assert.match(id, /lead in this chat/i); // role framing preserved
+    // The exact "You are the lead in this chat" sentinel survives even with a
+    // model prefix — pins the stable lead framing (Codex P1).
+    assert.match(id, /You are the lead in this chat/);
   });
 
   it('falls back to the nameless lead framing when the model is unknown', () => {
