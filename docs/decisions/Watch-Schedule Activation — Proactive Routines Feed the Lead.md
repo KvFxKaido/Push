@@ -1,6 +1,14 @@
 # Watch/Schedule Activation — Proactive Routines Feed the Lead
 
-**Status:** Draft — design-in-motion; implementation still needs an owner commitment.
+**Status:** Current (partially implemented) — the activation *seam* landed 2026-07-16 as
+step 1 of the phasing below: the shared watch vocabulary (`lib/routine-activation.ts`),
+and the webhook receiver dispatching through a routine registry instead of a hardcoded
+event fork. The PR reviewer is the first consumer, expressed as two built-in routines
+(`pr-review` on `pr_opened`/`pr_reopened`/`pr_ready_for_review`, `pr-review-command` on
+`pr_comment`). Behavior-neutral: no new firing path, no repo-sourced routines yet.
+**Remaining:** repo-committed `.push/routines/*.md` (the capability ceiling, per-repo
+enable, and base-ref trust rule are specified below but *not enforced by any code yet* —
+see Guardrails); cloud `schedule`; pushd parity. Owner: Push runtime.
 **Date:** 2026-07-09
 Related:
 [`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>)
@@ -101,6 +109,21 @@ depends on the prose being obeyed is a runtime bug, not a prompt bug.
    Checks gating) already exists. The PR-review pipeline becomes the first routine expressed in
    the new vocabulary rather than a parallel special case (see
    [First consumer: the autonomous reviewer](#first-consumer-the-autonomous-reviewer)).
+   **Seam shipped 2026-07-16** — vocabulary + registry + match loop, PR reviewer as
+   `pr-review` / `pr-review-command`. Two constraints learned in the build, both binding on
+   the repo-sourced half:
+   - *Matching moves behind a DO when routines come from files.* The receiver is
+     contractually cheap-and-synchronous, and matching a repo-committed routine needs an
+     installation token plus a base-ref fetch. That is not gate-path work. Built-in routines
+     match purely, so the registry stays in the receiver today; the file-sourced half needs a
+     DO in front of it. No router DO was built for this step — with nothing to fetch, it
+     would have been infrastructure with no job.
+   - *The receiver is single-dispatch.* A routine handler returns the `Response` that acks
+     GitHub, and there is one ack per delivery. The built-ins have disjoint `watch:` sets, so
+     nothing fans out yet; an invariant test (`github-webhook.test.ts`) pins that and goes red
+     on the first routine to claim a taken event. **Fan-out is unimplemented** — the second
+     claimant must build it, and the receiver logs `webhook_routine_fanout_unsupported` and
+     drops the extras rather than failing silently in the meantime.
 2. **Cloud `schedule`** via DO alarms.
 3. **CLI daemon (pushd) parity** — polling watch + local timers. Also the only legitimate home
    for MCP-sourced events, per the CLI-scoped MCP rule in `CLAUDE.md`: an ungoverned event
@@ -118,9 +141,15 @@ next open), and much better with it.
 2. **Coordinator home, named now:** `lib/routine-activation.ts` (shared kernel: frontmatter
    schema, event matching, budget accounting), a worker-side router module beside
    `github-webhook.ts`, a pushd-side scheduler module. Nothing lands in `useChat.ts`.
-3. **One vocabulary:** the `watch` event names are a shared capability table in
-   `lib/capabilities.ts`; the routine frontmatter schema pins in `lib/protocol-schema.ts`
-   strict mode, with drift tests in the same PR.
+3. **One vocabulary:** the `watch` event names are a closed union in
+   `lib/routine-activation.ts` — **corrected 2026-07-16**, this doc originally put them in
+   `lib/capabilities.ts`, which is the *permission* enum (`repo:read`, `git:push`, …). Event
+   names are not permissions, and conflating the two would have made a routine's `watch:`
+   list read like a grant. The frontmatter's `capabilities: read | write` ceiling *is* a
+   real fit for `lib/capabilities.ts` and maps onto its subsets when the enforcing runtime
+   lands. The routine frontmatter schema pins in `lib/protocol-schema.ts` strict mode, with
+   drift tests in the same PR, once routines are parsed from files rather than declared in
+   code.
 
 ## First consumer: the autonomous reviewer
 
