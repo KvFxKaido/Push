@@ -52,6 +52,7 @@ import { executeGitHubCoreTool } from '../lib/github-tool-core.ts';
 import { parseGitHubCoreToolCall } from '../lib/github-tool-parser.ts';
 import { createCliGitHubRuntime, hasEnvGitHubToken, resolveGitHubToken } from './github-runtime.js';
 import { commandRequiresApproval, isSinglePlainCommand } from '../lib/command-policy.ts';
+import { startElapsedMs } from '../lib/monotonic-elapsed.ts';
 import {
   buildCommandToolCard,
   buildCommitToolCard,
@@ -2740,7 +2741,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           return guard.result;
         }
 
-        const startedAt = Date.now();
+        const elapsed = startElapsedMs();
         try {
           const execOpts = {
             cwd: workspaceRoot,
@@ -2779,7 +2780,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
                 stdout,
                 stderr,
                 exitCode: 0,
-                durationMs: Date.now() - startedAt,
+                durationMs: elapsed(),
               }),
             },
           };
@@ -2825,7 +2826,7 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
                 stdout: err.stdout || '',
                 stderr: err.stderr || err.message,
                 exitCode,
-                durationMs: Date.now() - startedAt,
+                durationMs: elapsed(),
               }),
             },
           };

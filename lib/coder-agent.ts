@@ -62,6 +62,7 @@ import type { SessionDigest } from './session-digest.js';
 import { createId } from './id-utils.js';
 import { buildToolResultBlock, buildToolUseBlock, createToolUseBlockId } from './tool-blocks.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
+import { startElapsedMs } from './monotonic-elapsed.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
@@ -2265,7 +2266,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       const parallelResults = await Promise.all(
         parallelCalls.map(async (call) => {
           const pExecId = createId();
-          const pStartMs = Date.now();
+          const pElapsed = startElapsedMs();
           const pToolName = (call as unknown as { call: { tool: string } }).call.tool;
           const entry = await toolExec(call, {
             round,
@@ -2278,7 +2279,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
             executionId: pExecId,
             toolName: pToolName,
             toolSource: 'coder',
-            durationMs: Date.now() - pStartMs,
+            durationMs: pElapsed(),
             isError: entry.kind === 'executed' ? Boolean(entry.errorType) : false,
             preview: entry.kind === 'executed' ? summarizeToolResultPreview(entry.resultText) : '',
             target: getToolTargetDetail(
@@ -2346,7 +2347,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         const isLastInQueue = mqIdx === mutationQueue.length - 1;
 
         const mqExecId = createId();
-        const mqStartMs = Date.now();
+        const mqElapsed = startElapsedMs();
         const mqToolName = (mutationCall as unknown as { call: { tool: string } }).call.tool;
         const mutResult = await toolExec(mutationCall, {
           round,
@@ -2359,7 +2360,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           executionId: mqExecId,
           toolName: mqToolName,
           toolSource: 'coder',
-          durationMs: Date.now() - mqStartMs,
+          durationMs: mqElapsed(),
           isError: mutResult.kind === 'executed' ? Boolean(mutResult.errorType) : false,
           preview:
             mutResult.kind === 'executed' ? summarizeToolResultPreview(mutResult.resultText) : '',
@@ -2822,7 +2823,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     };
     callbacks.onStatus('Coder executing...', singleCall.call.tool);
     const singleExecId = createId();
-    const singleStartMs = Date.now();
+    const singleElapsed = startElapsedMs();
     const result = await toolExec(toolCall, {
       round,
       phase: workingMemory.currentPhase,
@@ -2834,7 +2835,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       executionId: singleExecId,
       toolName: singleCall.call.tool,
       toolSource: 'coder',
-      durationMs: Date.now() - singleStartMs,
+      durationMs: singleElapsed(),
       isError: result.kind === 'executed' ? Boolean(result.errorType) : false,
       preview: result.kind === 'executed' ? summarizeToolResultPreview(result.resultText) : '',
       target: getToolTargetDetail(singleCall.call.tool, singleCall.call.args),
