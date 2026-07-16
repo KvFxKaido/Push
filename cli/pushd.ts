@@ -30,9 +30,7 @@
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';
-import path from 'node:path';
 import process from 'node:process';
-import os from 'node:os';
 
 import { startPushdWs, type PushdWsHandle } from './pushd-ws.js';
 import { appendAuditEvent, shouldLogCommandText, truncateForAudit } from './pushd-audit-log.js';
@@ -44,8 +42,12 @@ import {
 } from './pushd/device-admin-handlers.js';
 import { createCoreSessionHandlers, VALID_AGENT_ROLES } from './pushd/core-session-handlers.js';
 import { createChildSessionHandlers } from './pushd/child-session-handlers.js';
+import { daemonRuntimeHandlers } from './pushd/daemon-runtime-handlers.js';
 import { createDelegationCoordinator } from './pushd/delegation-coordinator.js';
 import { createDelegationExecutionAdapters } from './pushd/delegation-execution.js';
+import { createInterruptedRunRecovery } from './pushd/interrupted-run-recovery.js';
+import { createSessionAuthenticator } from './pushd/session-auth.js';
+import { createSessionMaintenanceHandlers } from './pushd/session-maintenance-handlers.js';
 import { createSessionRuntime } from './pushd/session-runtime.js';
 import {
   wrapCliDetectAllToolCalls,
@@ -184,37 +186,13 @@ function emitDispatcherAudit(req: any, response: any, context: any): void {
 // disconnect and connection-list operations.
 let activeWsHandle: PushdWsHandle | null = null;
 
-import { PROVIDER_CONFIGS, resolveApiKey, getProviderList } from './provider.js';
-import { getCuratedModels } from './model-catalog.js';
 import {
-  getConfigPath,
-  loadConfig,
-  reapplyProviderConfigToEnv,
-  saveConfig,
-} from './config-store.js';
-import {
-  makeRunId,
   makeAttachToken,
   saveSessionState,
-  appendSessionEvent,
   loadSessionState,
-  loadSessionEvents,
-  rewriteMessagesLog,
-  writeRunMarker,
-  clearRunMarker,
-  scanInterruptedSessions,
   PROTOCOL_VERSION,
 } from './session-store.js';
-import { compactContext, isFirstUserMessage } from './context-manager.js';
-import { runAssistantTurn, DEFAULT_MAX_ROUNDS } from './engine.js';
 import { DAEMON_CAPABILITIES } from '../lib/daemon-capabilities.js';
-import {
-  DAEMON_EXEC_MODES,
-  DAEMON_WEB_SEARCH_BACKENDS,
-  daemonExecModeToApprovalMode,
-  normalizeDaemonExecMode,
-  normalizeDaemonWebSearchBackend,
-} from '../lib/daemon-runtime-settings.ts';
 import { setDefaultMemoryStore } from '../lib/context-memory-store.ts';
 import { setDefaultVerbatimLog } from '../lib/verbatim-log.ts';
 import { installCliEmbeddingProvider } from './embedding-provider-cli.ts';
@@ -229,10 +207,9 @@ const DAEMON_STARTED_AT_MS = Date.now();
 // client surfaces that advertise subsets back can't drift from it — see #745.
 const CAPABILITIES = DAEMON_CAPABILITIES;
 
-// ─── Phase 1 extractions (Pushd Decomposition Plan) ──────────────
-// Implementations moved to typed modules under cli/pushd/. This file stays
-// the compatibility facade: existing importers (tests, cli.ts,
-// daemon-admin.ts) keep resolving these helpers through pushd.ts.
+// ─── Compatibility facade exports ───────────────────────────────────
+// Implementations live in typed modules under cli/pushd/. Existing importers
+// (tests, cli.ts, daemon-admin.ts) keep resolving these helpers through pushd.ts.
 import {
   cleanPidFile,
   cleanStaleSocket,
@@ -245,14 +222,9 @@ import {
   isWsListenerEnabled,
   writePidFile,
 } from './pushd/paths.js';
-import { makeApprovalId, makeRequestId } from './pushd/ids.js';
+import { makeRequestId } from './pushd/ids.js';
 import { makeErrorResponse, makeResponse } from './pushd/envelopes.js';
-import {
-  DEFAULT_RESTART_POLICY,
-  getRestartPolicy,
-  shouldRecover,
-  VALID_RESTART_POLICIES,
-} from './pushd/restart-policy.js';
+import { DEFAULT_RESTART_POLICY, getRestartPolicy, shouldRecover } from './pushd/restart-policy.js';
 import { validateAttachToken } from './pushd/attach-token.js';
 import { normalizeProviderInput } from './pushd/provider-input.js';
 import {
@@ -301,8 +273,10 @@ export { wrapCliDetectAllToolCalls, wrapCliDetectAnyToolCall, wrapCliDetectNativ
 const sessionRuntime = createSessionRuntime({
   isRelayRunning: () => relayCoordinator.isRunning(),
 });
+const loadAndAuthSession = createSessionAuthenticator(sessionRuntime);
+const { recoverInterruptedRuns } = createInterruptedRunRecovery(sessionRuntime);
 
-// Compatibility facade for delegation/recovery slices that move in Phases 5–6.
+// Compatibility facade for callers that still inspect active daemon sessions.
 // The runtime owns the Map; pushd only retains a temporary reference.
 const activeSessions = sessionRuntime.sessions;
 
@@ -344,10 +318,6 @@ export function __setDelegateExplorerHooksForTesting(hooks = null) {
   setDelegateExplorerTestHooks(hooks);
 }
 
-function buildApprovalFn(sessionId, entry, runId) {
-  return sessionRuntime.buildApprovalFn(sessionId, entry, runId);
-}
-
 function addSessionClient(sessionId, emitFn, capabilities = []) {
   sessionRuntime.addClient(sessionId, emitFn, capabilities);
 }
@@ -366,14 +336,6 @@ export function __emitWorkspaceStateForTesting(sessionId, entry, mode) {
 
 export function emitEventWithDowngrade(event, emitFn, capabilities) {
   sessionRuntime.emitWithDowngrade(event, emitFn, capabilities);
-}
-
-function transcriptSnapshotForClientCapabilities(mirror, capabilities) {
-  return sessionRuntime.transcriptSnapshotForCapabilities(mirror, capabilities);
-}
-
-function eventForClientCapabilities(event, capabilities) {
-  return sessionRuntime.eventForCapabilities(event, capabilities);
 }
 
 const relayCoordinator = createRelayCoordinator({
@@ -479,10 +441,23 @@ const {
 const { handleFetchDelegationEvents, handleListChildren, handleGetChildSession } =
   createChildSessionHandlers({
     runtime: sessionRuntime,
-    loadAndAuthSession: (request, type) => loadAndAuthSession(request, type),
+    loadAndAuthSession,
   });
 
-// ─── Request handlers ────────────────────────────────────────────
+const { handleSessionSummarize, handleSessionRevert, handleSessionUnrevert } =
+  createSessionMaintenanceHandlers({
+    runtime: sessionRuntime,
+    loadAndAuthSession,
+  });
+
+const {
+  handleGetDaemonRuntimeConfig,
+  handleSetDaemonRuntimeConfig,
+  handleListProviders,
+  handleReloadConfig,
+} = daemonRuntimeHandlers;
+
+// ─── Cross-owner abort composition ───────────────────────────────
 
 async function handleAbort(req, emitEvent, context) {
   const isChild = typeof req.payload?.subagentId === 'string' && req.payload.subagentId.length > 0;
@@ -492,500 +467,6 @@ async function handleAbort(req, emitEvent, context) {
   return underlying && typeof underlying === 'object'
     ? { ...underlying, type: 'abort' }
     : underlying;
-}
-
-/**
- * Lazy-load + bearer-validate a session entry for composed request handlers.
- * Restores the persisted token; a legacy tokenless session is claimed only by
- * `attach_session`, so a tokenless read here is rejected — bypass is gone.
- * Returns `{ entry, sessionId }` on success or `{ error }` ready to return.
- */
-async function loadAndAuthSession(req, type) {
-  const sessionId = req.sessionId || req.payload?.sessionId;
-  const providedToken = req.payload?.attachToken;
-  if (!sessionId) {
-    return {
-      error: makeErrorResponse(req.requestId, type, 'INVALID_REQUEST', 'sessionId is required'),
-    };
-  }
-  let entry = activeSessions.get(sessionId);
-  if (!entry) {
-    try {
-      const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: state.attachToken };
-      activeSessions.set(sessionId, entry);
-    } catch {
-      return {
-        error: makeErrorResponse(
-          req.requestId,
-          type,
-          'SESSION_NOT_FOUND',
-          `Session not found: ${sessionId}`,
-        ),
-      };
-    }
-  }
-  if (!validateAttachToken(entry, providedToken)) {
-    return {
-      error: makeErrorResponse(
-        req.requestId,
-        type,
-        'INVALID_TOKEN',
-        'Invalid or missing attach token',
-      ),
-    };
-  }
-  return { entry, sessionId };
-}
-
-/**
- * `session_summarize` — on-demand context compaction (Addressable Session Verbs
- * phase 4; opencode's `session.summarize`). Replaces the older turns with a
- * digest, keeping the system prompt, first user turn, and the last
- * `preserveTurns` turns — the same `compactContext` the CLI `/compact` command
- * uses, now reachable as a bearer-gated daemon verb. Persists the compacted
- * transcript (`rewriteMessagesLog`, since the length-only fast path can skip a
- * same-length swap) and emits `context_compacted`. Rejected while a run is
- * active (compacting mid-run would corrupt the in-flight context).
- */
-async function handleSessionSummarize(req, _emitEvent) {
-  const auth = await loadAndAuthSession(req, 'session_summarize');
-  if (auth.error) return auth.error;
-  const { entry, sessionId } = auth;
-
-  if (entry.activeRunId) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_summarize',
-      'RUN_IN_PROGRESS',
-      `Cannot summarize while run ${entry.activeRunId} is active`,
-    );
-  }
-
-  // Strict, like the CLI `/compact`: a positive integer (or its exact digit
-  // string), clamped to [1, 64]. Reject malformed input rather than coercing.
-  const preserveTurns = parsePositiveIntField(req.payload?.preserveTurns, 6, 64);
-  if (preserveTurns === null) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_summarize',
-      'INVALID_REQUEST',
-      'preserveTurns must be a positive integer',
-    );
-  }
-
-  const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];
-  const result = compactContext(messages, { preserveTurns });
-
-  // "Nothing to compact" is a valid no-op outcome, not an error.
-  if (!result.compacted) {
-    return makeResponse(req.requestId, 'session_summarize', sessionId, true, {
-      compacted: false,
-      preserveTurns: result.preserveTurns,
-      totalTurns: result.totalTurns,
-      beforeTokens: result.beforeTokens,
-      afterTokens: result.afterTokens,
-      removedCount: 0,
-      compactedCount: 0,
-    });
-  }
-
-  entry.state.messages = result.messages;
-  const compactedPayload = {
-    preserveTurns: result.preserveTurns,
-    totalTurns: result.totalTurns,
-    compactedMessages: result.compactedCount,
-    removedCount: result.removedCount,
-    beforeTokens: result.beforeTokens,
-    afterTokens: result.afterTokens,
-  };
-  await appendSessionEvent(entry.state, 'context_compacted', compactedPayload);
-  // Explicit rewrite: compaction can produce a same-length messages array
-  // (drop one, insert digest), which `saveSessionState`'s length-only fast path
-  // would skip — leaving the on-disk transcript out of sync with memory.
-  await rewriteMessagesLog(entry.state);
-  // Notify live clients so an attached transcript view doesn't go stale.
-  broadcastEvent(sessionId, {
-    v: PROTOCOL_VERSION,
-    kind: 'event',
-    sessionId,
-    seq: entry.state.eventSeq,
-    ts: Date.now(),
-    type: 'context_compacted',
-    payload: compactedPayload,
-  });
-
-  return makeResponse(req.requestId, 'session_summarize', sessionId, true, {
-    compacted: true,
-    preserveTurns: result.preserveTurns,
-    totalTurns: result.totalTurns,
-    compactedCount: result.compactedCount,
-    removedCount: result.removedCount,
-    beforeTokens: result.beforeTokens,
-    afterTokens: result.afterTokens,
-  });
-}
-
-/**
- * Parse a strict positive-integer payload field (a number or its exact digit
- * string), clamped to [1, max]. Returns `null` for anything malformed —
- * matches the CLI `/compact` strictness; the handler turns `null` into an
- * INVALID_REQUEST rather than coercing bad input.
- */
-function parsePositiveIntField(raw: unknown, fallback: number, max: number): number | null {
-  if (raw === undefined) return fallback;
-  let n: number;
-  if (typeof raw === 'number') n = raw;
-  else if (typeof raw === 'string' && /^\d+$/.test(raw.trim())) n = Number.parseInt(raw.trim(), 10);
-  else n = Number.NaN;
-  if (!Number.isInteger(n) || n < 1) return null;
-  return Math.min(max, n);
-}
-
-/**
- * `session_revert` — undo the last N user turns of the conversation
- * (Addressable Session Verbs phase 5; opencode's `session.revert`). Transcript
- * only: it truncates `state.messages` (and persists via `rewriteMessagesLog`)
- * and stashes the removed tail on the entry so `session_unrevert` can restore
- * it. Sandbox / git state is deliberately untouched — code rollback is a
- * separate concern with its own typed branch tools. Turn boundaries use the
- * same `isFirstUserMessage` detector as compaction. The stash accumulates
- * across consecutive reverts and is cleared by the next `send_user_message`
- * (a new message commits the fork). Bearer-gated; rejected mid-run.
- */
-async function handleSessionRevert(req) {
-  const auth = await loadAndAuthSession(req, 'session_revert');
-  if (auth.error) return auth.error;
-  const { entry, sessionId } = auth;
-
-  if (entry.activeRunId) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_revert',
-      'RUN_IN_PROGRESS',
-      `Cannot revert while run ${entry.activeRunId} is active`,
-    );
-  }
-
-  const turns = parsePositiveIntField(req.payload?.turns, 1, 1024);
-  if (turns === null) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_revert',
-      'INVALID_REQUEST',
-      'turns must be a positive integer',
-    );
-  }
-
-  const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];
-  const turnStarts = [];
-  for (let i = 0; i < messages.length; i += 1) {
-    if (isFirstUserMessage(messages[i])) turnStarts.push(i);
-  }
-  const totalTurns = turnStarts.length;
-
-  if (totalTurns === 0) {
-    return makeResponse(req.requestId, 'session_revert', sessionId, true, {
-      reverted: false,
-      removedCount: 0,
-      totalTurns: 0,
-      remainingTurns: 0,
-    });
-  }
-
-  // Critical section: read `messages` → mutate `state.messages` + `revertedTail`
-  // with NO `await` in between, so it runs atomically on Node's single-threaded
-  // loop — a concurrent revert/unrevert can't interleave a read-modify-write
-  // here (the first `await` below is the only yield point). Same concurrency
-  // posture as every other session-mutating handler; no extra lock is taken.
-  const effectiveTurns = Math.min(turns, totalTurns);
-  const cutIndex = turnStarts[totalTurns - effectiveTurns];
-  const removed = messages.slice(cutIndex);
-  entry.state.messages = messages.slice(0, cutIndex);
-  // Accumulate so `unrevert` can undo a run of consecutive reverts in order.
-  entry.revertedTail = [
-    ...removed,
-    ...(Array.isArray(entry.revertedTail) ? entry.revertedTail : []),
-  ];
-
-  const payload = {
-    turns: effectiveTurns,
-    removedCount: removed.length,
-    totalTurns,
-    remainingTurns: totalTurns - effectiveTurns,
-    remainingMessages: entry.state.messages.length,
-  };
-  await appendSessionEvent(entry.state, 'session_reverted', payload);
-  await rewriteMessagesLog(entry.state);
-  broadcastEvent(sessionId, {
-    v: PROTOCOL_VERSION,
-    kind: 'event',
-    sessionId,
-    seq: entry.state.eventSeq,
-    ts: Date.now(),
-    type: 'session_reverted',
-    payload,
-  });
-
-  return makeResponse(req.requestId, 'session_revert', sessionId, true, {
-    reverted: true,
-    ...payload,
-    canUnrevert: true,
-  });
-}
-
-/**
- * `session_unrevert` — restore the messages removed by the most recent run of
- * `session_revert`(s) (opencode's `session.unrevert`). Appends the stashed tail
- * back, persists, and clears the stash. NOTHING_TO_UNREVERT if no revert is
- * pending (e.g. a `send_user_message` already committed the fork). Bearer-gated;
- * rejected mid-run.
- */
-async function handleSessionUnrevert(req) {
-  const auth = await loadAndAuthSession(req, 'session_unrevert');
-  if (auth.error) return auth.error;
-  const { entry, sessionId } = auth;
-
-  if (entry.activeRunId) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_unrevert',
-      'RUN_IN_PROGRESS',
-      `Cannot unrevert while run ${entry.activeRunId} is active`,
-    );
-  }
-
-  const tail = Array.isArray(entry.revertedTail) ? entry.revertedTail : [];
-  if (tail.length === 0) {
-    return makeErrorResponse(
-      req.requestId,
-      'session_unrevert',
-      'NOTHING_TO_UNREVERT',
-      'No reverted messages to restore (a new message may have committed the fork)',
-    );
-  }
-
-  // Await-free critical section (see the note in handleSessionRevert): the
-  // read→restore→clear runs atomically before the first await below.
-  const restoredCount = tail.length;
-  const messages = Array.isArray(entry.state?.messages) ? entry.state.messages : [];
-  entry.state.messages = [...messages, ...tail];
-  entry.revertedTail = null;
-
-  const payload = { restoredCount, totalMessages: entry.state.messages.length };
-  await appendSessionEvent(entry.state, 'session_unreverted', payload);
-  await rewriteMessagesLog(entry.state);
-  broadcastEvent(sessionId, {
-    v: PROTOCOL_VERSION,
-    kind: 'event',
-    sessionId,
-    seq: entry.state.eventSeq,
-    ts: Date.now(),
-    type: 'session_unreverted',
-    payload,
-  });
-
-  return makeResponse(req.requestId, 'session_unrevert', sessionId, true, {
-    unreverted: true,
-    ...payload,
-  });
-}
-
-function resolveDaemonRuntimeConfigPayload(config) {
-  const execMode =
-    normalizeDaemonExecMode(process.env.PUSH_EXEC_MODE) ||
-    normalizeDaemonExecMode(config.execMode) ||
-    'auto';
-  const webSearchBackend =
-    normalizeDaemonWebSearchBackend(process.env.PUSH_WEB_SEARCH_BACKEND) ||
-    normalizeDaemonWebSearchBackend(config.webSearchBackend) ||
-    'auto';
-  return {
-    execMode,
-    approvalMode: daemonExecModeToApprovalMode(execMode),
-    webSearchBackend,
-    configPath: getConfigPath(),
-  };
-}
-
-/**
- * Read daemon-owned runtime controls for paired web clients. Unlike repo-mode
- * controls, these values are resolved from the daemon process itself (env first,
- * then ~/.push/config.json) because Remote turns execute on this machine, not
- * in the browser.
- */
-async function handleGetDaemonRuntimeConfig(req) {
-  let config;
-  try {
-    config = await loadConfig();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
-  }
-  return makeResponse(
-    req.requestId,
-    req.type,
-    null,
-    true,
-    resolveDaemonRuntimeConfigPayload(config),
-  );
-}
-
-/**
- * Persist daemon runtime controls and update the live process env so the next
- * turn sees the new setting immediately. Accepts the Unix-socket admin
- * transport and a direct loopback WS connection — both are the operator, on
- * this machine. Refuses true relay callers: unlike a session-scoped verb, this
- * mutates the daemon's GLOBAL execution safety posture (including `yolo`,
- * which disables approval prompts) for every future turn on this daemon, not
- * just the caller's own session — a stolen/leaked Remote-pairing bearer
- * should not be able to downgrade it from across the internet.
- */
-async function handleSetDaemonRuntimeConfig(req, _emitEvent, context) {
-  if (context?.auth?.boundOrigin === 'relay') {
-    return makeErrorResponse(
-      req.requestId,
-      req.type,
-      'UNSUPPORTED_VIA_TRANSPORT',
-      'set_daemon_runtime_config is not available over the Remote relay — use a direct loopback connection or the Unix-socket admin transport.',
-    );
-  }
-
-  const rawPatch =
-    req.payload?.patch && typeof req.payload.patch === 'object' && !Array.isArray(req.payload.patch)
-      ? req.payload.patch
-      : req.payload && typeof req.payload === 'object' && !Array.isArray(req.payload)
-        ? req.payload
-        : null;
-  if (!rawPatch) {
-    return makeErrorResponse(
-      req.requestId,
-      req.type,
-      'INVALID_REQUEST',
-      'patch must be a non-null object with optional { execMode, webSearchBackend }',
-    );
-  }
-
-  const hasExecMode = Object.prototype.hasOwnProperty.call(rawPatch, 'execMode');
-  const hasWebSearchBackend = Object.prototype.hasOwnProperty.call(rawPatch, 'webSearchBackend');
-  if (!hasExecMode && !hasWebSearchBackend) {
-    return makeErrorResponse(
-      req.requestId,
-      req.type,
-      'INVALID_REQUEST',
-      'patch must include execMode or webSearchBackend',
-    );
-  }
-
-  const execMode = hasExecMode ? normalizeDaemonExecMode(rawPatch.execMode) : null;
-  if (hasExecMode && !execMode) {
-    return makeErrorResponse(
-      req.requestId,
-      req.type,
-      'INVALID_REQUEST',
-      `execMode must be one of: ${DAEMON_EXEC_MODES.join(', ')}`,
-    );
-  }
-
-  const webSearchBackend = hasWebSearchBackend
-    ? normalizeDaemonWebSearchBackend(rawPatch.webSearchBackend)
-    : null;
-  if (hasWebSearchBackend && !webSearchBackend) {
-    return makeErrorResponse(
-      req.requestId,
-      req.type,
-      'INVALID_REQUEST',
-      `webSearchBackend must be one of: ${DAEMON_WEB_SEARCH_BACKENDS.join(', ')}`,
-    );
-  }
-
-  let config;
-  try {
-    config = await loadConfig();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
-  }
-
-  const next = { ...config };
-  if (execMode) {
-    next.execMode = execMode;
-  }
-  if (webSearchBackend) {
-    next.webSearchBackend = webSearchBackend;
-  }
-
-  try {
-    await saveConfig(next);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, req.type, 'CONFIG_WRITE_FAILED', message);
-  }
-
-  if (execMode) process.env.PUSH_EXEC_MODE = execMode;
-  if (webSearchBackend) process.env.PUSH_WEB_SEARCH_BACKEND = webSearchBackend;
-
-  void appendAuditEvent({
-    type: 'daemon.set_runtime_config',
-    ...auditProvenance(context),
-    payload: {
-      boundOrigin: context?.auth?.boundOrigin,
-      ...(execMode ? { execMode } : {}),
-      ...(webSearchBackend ? { webSearchBackend } : {}),
-    },
-  });
-
-  return makeResponse(req.requestId, req.type, null, true, resolveDaemonRuntimeConfigPayload(next));
-}
-
-/**
- * Read-only catalog of providers this daemon can route to, with curated
- * models per provider. Powers Remote's model picker — the web
- * client has no other way to know what's actually configured on THIS
- * machine (which providers have a working key, what models to offer)
- * versus its own browser-local provider config, which is irrelevant to a
- * daemon-executed turn. Safe over relay: `hasKey` is a boolean, never the
- * key itself (mirrors `getProviderList`'s own posture).
- */
-async function handleListProviders(req) {
-  const providers = getProviderList().map((p) => ({
-    ...p,
-    models: getCuratedModels(p.id),
-  }));
-  return makeResponse(req.requestId, req.type, null, true, { providers });
-}
-
-/**
- * Re-read `~/.push/config.json` and force its provider keys/urls/models into
- * the daemon's `process.env`, overwriting stale values. The TUI fires this
- * after a config edit (e.g. rotating a provider API key): the daemon resolves
- * keys live from `process.env` per run (`resolveApiKey`), but inherited its env
- * at spawn, so without this a long-lived daemon keeps serving the old key while
- * `config.json` already shows the new one. No values cross the wire — the verb
- * only triggers a re-read of the local on-disk file, so it's safe over relay.
- */
-async function handleReloadConfig(req) {
-  let config;
-  try {
-    config = await loadConfig();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(
-      `${JSON.stringify({ level: 'error', event: 'pushd_config_reload_failed', message })}\n`,
-    );
-    return makeErrorResponse(req.requestId, req.type, 'CONFIG_READ_FAILED', message);
-  }
-  const refreshed = reapplyProviderConfigToEnv(config);
-  process.stderr.write(
-    `${JSON.stringify({
-      level: 'info',
-      event: 'pushd_config_reloaded',
-      refreshedCount: refreshed.length,
-      // env var NAMES only (e.g. PUSH_ZEN_API_KEY) — never the secret values.
-      refreshed,
-    })}\n`,
-  );
-  return makeResponse(req.requestId, req.type, null, true, { refreshed });
 }
 
 // ─── Request dispatcher ──────────────────────────────────────────
@@ -1193,230 +674,6 @@ function handleConnection(socket) {
 
   socket.on('close', cleanupConnection);
   socket.on('error', cleanupConnection);
-}
-
-// ─── Crash recovery ──────────────────────────────────────────────
-
-/**
- * Scan for sessions with run markers (interrupted by daemon crash).
- * For each, check restart policy and optionally re-enter the assistant loop.
- *
- * Recovery injects a [SESSION_RECOVERED] reconciliation message so the model
- * knows context was interrupted and can adjust.
- */
-async function recoverInterruptedRuns() {
-  let interrupted;
-  try {
-    interrupted = await scanInterruptedSessions();
-  } catch {
-    return; // scan failure is non-fatal
-  }
-
-  if (interrupted.length === 0) return;
-  process.stdout.write(`crash recovery: found ${interrupted.length} interrupted session(s)\n`);
-
-  for (const { sessionId, marker } of interrupted) {
-    let state;
-    try {
-      state = await loadSessionState(sessionId);
-    } catch {
-      // Can't load state — clear stale marker and skip
-      await clearRunMarker(sessionId).catch(() => {});
-      process.stdout.write(`  ${sessionId}: state unreadable, clearing marker\n`);
-      continue;
-    }
-
-    const policy = getRestartPolicy(state);
-    if (!shouldRecover(policy, marker)) {
-      await clearRunMarker(sessionId).catch(() => {});
-      const reason = policy === 'never' ? 'policy=never' : 'marker too old';
-      process.stdout.write(`  ${sessionId}: skipped (${reason})\n`);
-
-      // Log that we skipped recovery
-      await appendSessionEvent(state, 'recovery_skipped', {
-        originalRunId: marker.runId,
-        reason,
-        policy,
-        markerAge: Date.now() - (marker.startedAt || 0),
-      }).catch(() => {});
-      await saveSessionState(state).catch(() => {});
-      continue;
-    }
-
-    // Resolve provider + API key
-    const providerConfig = PROVIDER_CONFIGS[state.provider];
-    if (!providerConfig) {
-      await clearRunMarker(sessionId).catch(() => {});
-      process.stdout.write(
-        `  ${sessionId}: unknown provider "${state.provider}", clearing marker\n`,
-      );
-      continue;
-    }
-
-    let apiKey;
-    try {
-      apiKey = resolveApiKey(providerConfig);
-    } catch {
-      await clearRunMarker(sessionId).catch(() => {});
-      process.stdout.write(`  ${sessionId}: no API key for "${state.provider}", clearing marker\n`);
-      continue;
-    }
-
-    const recoveryRunId = makeRunId();
-    const abortController = new AbortController();
-    // Restore the persisted attach token so a client that had the session
-    // open before the crash can successfully re-attach with the SAME token
-    // they originally received from `start_session`. A legacy session with no
-    // persisted token is claimed on its first `attach_session` (bootstrap
-    // grace); the implicit tokenless bypass is gone (Universal Session Bearer).
-    const attachToken = state.attachToken;
-
-    // Register in-memory
-    const entry = { state, attachToken, activeRunId: recoveryRunId, abortController };
-    activeSessions.set(sessionId, entry);
-
-    // Crash recovery is narrow: we recover the parent only. Any sub-agents or
-    // task graphs that were in-flight when the daemon died are lost. Detect
-    // them from the event log and fold a DELEGATION_INTERRUPTED note into the
-    // recovery turn so the recovered lead re-delegates rather than waiting on
-    // ghost completions that will never arrive.
-    let orphans = { subagents: [], graphs: [] };
-    try {
-      const events = await loadSessionEvents(sessionId);
-      orphans = collectOrphanedDelegations(events, marker.runId);
-    } catch {
-      // Event-log scan is best-effort — if we can't read it, skip the note.
-    }
-    const interruptedNote = formatDelegationInterruptedNote(orphans);
-
-    // Inject reconciliation as a SINGLE recovery turn — the kernel lane runs it
-    // as the lead's `userText`, so the recovery note + the interrupted note must
-    // be one message (a second would render as clipped "prior conversation"
-    // rather than the task).
-    const recoveryUserText = [
-      `[SESSION_RECOVERED]\nThe previous run (${marker.runId}) was interrupted by a daemon crash.\nYou are resuming in a new run (${recoveryRunId}). Review your working memory and continue where you left off.\nDo NOT restart from scratch — pick up from the last completed step.\n[/SESSION_RECOVERED]`,
-      interruptedNote,
-    ]
-      .filter(Boolean)
-      .join('\n\n');
-    state.messages.push({ role: 'user', content: recoveryUserText });
-    if (interruptedNote) {
-      await appendSessionEvent(state, 'delegation_interrupted', {
-        originalRunId: marker.runId,
-        recoveryRunId,
-        subagents: orphans.subagents,
-        graphs: orphans.graphs,
-      }).catch(() => {});
-    }
-
-    await appendSessionEvent(state, 'run_recovered', {
-      originalRunId: marker.runId,
-      recoveryRunId,
-      policy,
-      markerAge: Date.now() - (marker.startedAt || 0),
-    }).catch(() => {});
-
-    process.stdout.write(`  ${sessionId}: recovering run ${marker.runId} → ${recoveryRunId}\n`);
-
-    // Clear old marker and write new one for the recovery run
-    await clearRunMarker(sessionId).catch(() => {});
-    await writeRunMarker(sessionId, recoveryRunId, {
-      provider: state.provider,
-      model: state.model,
-      cwd: state.cwd,
-      recoveredFrom: marker.runId,
-    }).catch(() => {});
-
-    // Build approval gate so recovered runs can request client approvals
-    const approvalFn = buildApprovalFn(sessionId, entry, recoveryRunId);
-
-    // Launch recovery run in background (same pattern as handleSendUserMessage)
-    (async () => {
-      let sawError = false;
-      let sawRunComplete = false;
-      try {
-        await runAssistantTurn(
-          state,
-          providerConfig,
-          apiKey,
-          recoveryUserText,
-          DEFAULT_MAX_ROUNDS,
-          {
-            runId: recoveryRunId,
-            // Fixed cap on daemon turns — see handleSendUserMessage; adaptation
-            // stays off until the client cap is threaded through the daemon.
-            explicitMaxRounds: true,
-            approvalFn,
-            signal: abortController.signal,
-            emit: (event) => {
-              const seq = state.eventSeq;
-              if (event.type === 'error') sawError = true;
-              if (event.type === 'run_complete') sawRunComplete = true;
-
-              broadcastEvent(sessionId, {
-                v: PROTOCOL_VERSION,
-                kind: 'event',
-                sessionId: event.sessionId,
-                runId: event.runId,
-                seq,
-                ts: Date.now(),
-                type: event.type,
-                payload: event.payload,
-              });
-            },
-          },
-        );
-        await saveSessionState(state);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!sawError) {
-          await appendSessionEvent(
-            state,
-            'error',
-            { code: 'RECOVERY_ERROR', message, retryable: false },
-            recoveryRunId,
-          ).catch(() => {});
-          broadcastEvent(sessionId, {
-            v: PROTOCOL_VERSION,
-            kind: 'event',
-            sessionId,
-            runId: recoveryRunId,
-            seq: state.eventSeq,
-            ts: Date.now(),
-            type: 'error',
-            payload: { code: 'RECOVERY_ERROR', message, retryable: false },
-          });
-        }
-        if (!sawRunComplete) {
-          await appendSessionEvent(
-            state,
-            'run_complete',
-            { runId: recoveryRunId, outcome: 'failed', summary: message.slice(0, 500) },
-            recoveryRunId,
-          ).catch(() => {});
-          broadcastEvent(sessionId, {
-            v: PROTOCOL_VERSION,
-            kind: 'event',
-            sessionId,
-            runId: recoveryRunId,
-            seq: state.eventSeq,
-            ts: Date.now(),
-            type: 'run_complete',
-            payload: { outcome: 'failed', summary: message.slice(0, 500) },
-          });
-        }
-        await saveSessionState(state).catch(() => {});
-      } finally {
-        entry.activeRunId = null;
-        entry.abortController = null;
-        if (entry.pendingApproval) {
-          clearTimeout(entry.pendingApproval.timer);
-          entry.pendingApproval = null;
-        }
-        clearRunMarker(sessionId).catch(() => {});
-      }
-    })();
-  }
 }
 
 // ─── Main ────────────────────────────────────────────────────────

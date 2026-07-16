@@ -3,8 +3,8 @@
  * `[DELEGATION_INTERRUPTED]` reconciliation note for crash recovery.
  *
  * Extracted from cli/pushd.ts (Pushd Decomposition Plan, Phase 1). Pure
- * functions over a session event log; the recovery orchestration that calls
- * them stays in `cli/pushd.ts` until the recovery extraction phase.
+ * functions over a session event log; recovery orchestration lives in
+ * `cli/pushd/interrupted-run-recovery.ts`.
  */
 
 export interface OrphanedSubagent {

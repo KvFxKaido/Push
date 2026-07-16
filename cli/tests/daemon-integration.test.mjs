@@ -6404,6 +6404,7 @@ describe('attach token persistence', () => {
       'pushd/core-session-handlers.ts',
       'pushd/child-session-handlers.ts',
       'pushd/delegation-coordinator.ts',
+      'pushd/session-auth.ts',
     ];
     const offenders = [];
     for (const source of sources) {

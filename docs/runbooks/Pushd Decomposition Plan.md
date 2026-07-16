@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–5 implemented; Phases 6–7 not started.
+Status: **In progress** — Phases 1–6 implemented; Phase 7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -246,7 +246,7 @@ outcome persistence, and terminal-event claims. The facade composes the
 coordinator with the Slice 1 execution adapters and retains only the public
 compatibility exports and cross-owner `abort` sugar.
 
-### Phase 6 — recovery and final spine
+### Phase 6 — recovery and final spine ✅ (completed 2026-07-16)
 
 Move semantic interrupted-run recovery behind a recovery module. Leave
 `pushd.ts` responsible for composition:
@@ -260,6 +260,15 @@ Move semantic interrupted-run recovery behind a recovery module. Leave
 - running `main()` when invoked directly.
 
 The final line count follows from that responsibility rather than leading it.
+
+`cli/pushd/session-auth.ts` now owns the shared lazy-load and bearer-validation
+seam used by composed session handlers. `cli/pushd/session-maintenance-handlers.ts`
+owns summarize/revert/unrevert, while `cli/pushd/daemon-runtime-handlers.ts` owns
+daemon-global execution/search configuration plus provider list/reload.
+`cli/pushd/interrupted-run-recovery.ts` owns marker scanning, restart-policy
+decisions, orphaned-delegation reconciliation, recovery turns, and terminal
+cleanup through the shared session runtime. The residual `pushd.ts` is the
+composition/transport facade described above.
 
 ### Phase 7 — containment guard and status update
 
