@@ -350,4 +350,100 @@ describe('daemon transcript mirror', () => {
     );
     assert.equal(mirror.lastSeq, 9);
   });
+
+  it('pairs parallel same-tool results to their call by executionId, not name order', () => {
+    // Two concurrent read_file calls, each with its own executionId. Under the
+    // legacy name+pending reverse-scan a result matched the LAST pending row of
+    // that name, so FIFO completions cross-attributed output onto the wrong
+    // call (a.ts showing b.ts's contents and vice-versa). Correlate by id.
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'tool.execution_start',
+      payload: { executionId: 'exec-A', toolName: 'read_file', args: { path: 'a.ts' } },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 2,
+      type: 'tool.execution_start',
+      payload: { executionId: 'exec-B', toolName: 'read_file', args: { path: 'b.ts' } },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 3,
+      type: 'tool.execution_complete',
+      payload: {
+        executionId: 'exec-A',
+        toolName: 'read_file',
+        isError: false,
+        preview: 'RESULT-A',
+      },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 4,
+      type: 'tool.execution_complete',
+      payload: {
+        executionId: 'exec-B',
+        toolName: 'read_file',
+        isError: false,
+        preview: 'RESULT-B',
+      },
+    });
+
+    const rowFor = (path) =>
+      mirror.rows.find(
+        (row) =>
+          row.kind === 'tool' && row.args && typeof row.args === 'object' && row.args.path === path,
+      );
+    assert.equal(mirror.rows.filter((row) => row.kind === 'tool').length, 2);
+    assert.equal(rowFor('a.ts').resultPreview, 'RESULT-A');
+    assert.equal(rowFor('b.ts').resultPreview, 'RESULT-B');
+    assert.equal(rowFor('a.ts').pending, false);
+    assert.equal(rowFor('b.ts').pending, false);
+  });
+
+  it('keeps each completes-only parallel result on its own row (daemon kernel shape)', () => {
+    // The CLI kernel emits execution_complete without a paired start, so no
+    // pending row exists to match — each completion must land on its own row.
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'tool.execution_complete',
+      payload: { executionId: 'exec-A', toolName: 'read_file', isError: false, preview: 'first' },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 2,
+      type: 'tool.execution_complete',
+      payload: { executionId: 'exec-B', toolName: 'read_file', isError: false, preview: 'second' },
+    });
+    assert.deepEqual(
+      mirror.rows.filter((row) => row.kind === 'tool').map((row) => row.resultPreview),
+      ['first', 'second'],
+    );
+  });
+
+  it('falls back to the name scan for legacy sessions with mismatched start/complete ids', () => {
+    // Sessions recorded before start/complete id parity: the start carries the
+    // old synthetic `${runId}_lead_*` id while the complete carries the kernel
+    // id. Id-only matching would strand the pending row and duplicate the
+    // result on resume; the name+pending fallback must update the original row.
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'tool.execution_start',
+      payload: { executionId: 'run123_lead_1', toolName: 'read_file', args: { path: 'a.ts' } },
+    });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 2,
+      type: 'tool.execution_complete',
+      payload: {
+        executionId: 'kernel-xyz',
+        toolName: 'read_file',
+        isError: false,
+        preview: 'contents',
+      },
+    });
+    const tools = mirror.rows.filter((row) => row.kind === 'tool');
+    assert.equal(tools.length, 1);
+    assert.equal(tools[0].pending, false);
+    assert.equal(tools[0].resultPreview, 'contents');
+  });
 });

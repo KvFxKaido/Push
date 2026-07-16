@@ -29,6 +29,7 @@
 import {
   runCoderAgent,
   type CoderAgentCallbacks,
+  type CoderToolExecContext,
   type CoderToolExecResult,
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
@@ -619,10 +620,9 @@ export async function runLeadKernelTurn(
 
   // Same executor + policy surface as the engine loop, with the actual role.
   const defaultCliHookRegistry = getDefaultCliHookRegistry();
-  let toolExecutionCounter = 0;
   const toolExec = async (
     toolCall: CliKernelCall,
-    execCtx: { round: number; phase?: string },
+    execCtx: CoderToolExecContext,
   ): Promise<CoderToolExecResult> => {
     // Fall through for a bare flat call (tests that drive the executor
     // directly) — production calls always arrive kernel-wrapped.
@@ -670,14 +670,13 @@ export async function runLeadKernelTurn(
     // Synthesize the start event the engine loop emits before each tool run
     // (Codex P2, PR #904): the TUI creates the transcript tool entry and its
     // file-awareness args queue on `tool.execution_start` — the kernel's own
-    // `tool.execution_complete` only *updates* an existing entry, matched by
-    // toolName, so without this the lane's tool calls never appear. The
-    // kernel mints a separate executionId for its complete event; that's
-    // fine — TUI correlation is name-keyed, not id-keyed.
-    toolExecutionCounter += 1;
+    // `tool.execution_complete` only *updates* an existing entry. The kernel
+    // mints the lifecycle id before invoking this host executor and reuses it
+    // on completion, so parallel calls of the same tool remain independently
+    // attributable.
     const startPayload = {
-      round: execCtx?.round ?? 0,
-      executionId: `${runId}_lead_${toolExecutionCounter.toString(36)}`,
+      round: execCtx.round,
+      executionId: execCtx.executionId,
       toolName: rawCall.tool,
       toolSource: 'coder',
       args: rawCall.args,

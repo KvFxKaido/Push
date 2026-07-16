@@ -399,7 +399,7 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         // The synthesized start precedes the kernel's complete (Codex P2,
         // PR #904): the TUI creates the transcript tool entry + its
         // file-awareness args queue on start and only updates it on
-        // complete, name-keyed.
+        // the completion carrying the same stable execution id.
         const startIdx = emitted.findIndex((e) => e.type === 'tool.execution_start');
         const completeIdx = emitted.findIndex((e) => e.type === 'tool.execution_complete');
         assert.ok(startIdx >= 0, 'missing tool.execution_start event');
@@ -419,6 +419,7 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         const toolEvent = emitted[completeIdx];
         assert.equal(toolEvent.payload.toolName, 'read_file');
         assert.equal(toolEvent.payload.isError, false);
+        assert.equal(toolEvent.payload.executionId, startEvent.payload.executionId);
       } finally {
         await server.stop();
       }
