@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–4 implemented; Phase 5 started; Phases 6–7 not started.
+Status: **In progress** — Phases 1–5 implemented; Phases 6–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -213,14 +213,14 @@ consumers until their later phases. The `abort` sugar stays in the facade for no
 because it composes parent-run cancellation with Phase 5 child-delegation
 cancellation.
 
-### Phase 5 — delegation in internal slices 🚧 (started 2026-07-16)
+### Phase 5 — delegation in internal slices ✅ (completed 2026-07-16)
 
 Do not move the approximately 3,000-line delegation block as one PR. Split it
 along its existing internal seams:
 
 1. ✅ Coder/Explorer tool executors and shared run-event emission (2026-07-16).
 2. ✅ Event replay, child-session descriptors, and child-session verbs (2026-07-16).
-3. Task-graph coordination and the Explorer/Coder/Reviewer delegate verbs.
+3. ✅ Task-graph coordination and the Explorer/Coder/Reviewer delegate verbs (2026-07-16).
 
 Shared cancellation, parent-run correlation, persistence, and terminal-event
 rules should have one owner across all delegate verbs.
@@ -236,8 +236,15 @@ shared child-event membership predicate, active/completed/event-derived child
 descriptors, delegation-event replay, and the bearer-gated `list_children` and
 `get_child_session` reads. The facade injects its shared session-auth loader
 while the remaining addressable-session verbs still use that seam.
-`cancel_delegation` stays with Slice 3 so task-graph/direct-delegation
-cancellation and terminal-state rules can move under one coordinator owner.
+`cancel_delegation` moved with Slice 3 so task-graph/direct-delegation
+cancellation and terminal-state rules share one coordinator owner.
+
+Slice 3 is implemented in `cli/pushd/delegation-coordinator.ts`. It owns role
+routing for delegated runs, task-graph execution and progress persistence, the
+Explorer/Coder/Reviewer/Deep Reviewer verbs, child and graph cancellation,
+outcome persistence, and terminal-event claims. The facade composes the
+coordinator with the Slice 1 execution adapters and retains only the public
+compatibility exports and cross-owner `abort` sugar.
 
 ### Phase 6 — recovery and final spine
 
