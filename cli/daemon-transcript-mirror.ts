@@ -22,6 +22,11 @@ export interface DaemonTranscriptRow {
   text: string;
   live?: boolean;
   toolName?: string;
+  /** Stable per-call id minted by the kernel (`tool.execution_start/complete`).
+   *  Used to pair a result to its originating call so parallel calls of the
+   *  same tool don't cross-attribute output/diff/card. Absent on legacy
+   *  id-less events, which fall back to the name+pending scan. */
+  executionId?: string;
   args?: unknown;
   pending?: boolean;
   isError?: boolean;
@@ -202,6 +207,7 @@ export function applyDaemonTranscriptEvent(
     case 'tool_call':
     case 'tool.execution_start': {
       const toolName = stringField(payload, 'toolName') || 'work';
+      const executionId = stringField(payload, 'executionId');
       mirror.rows.push({
         id: eventId(mirror, event, 'tool'),
         kind: 'tool',
@@ -210,18 +216,32 @@ export function applyDaemonTranscriptEvent(
         toolName,
         args: payload.args,
         pending: true,
+        ...(executionId ? { executionId } : {}),
       });
       break;
     }
     case 'tool_result':
     case 'tool.execution_complete': {
       const toolName = stringField(payload, 'toolName') || 'work';
-      const row = [...mirror.rows]
-        .reverse()
-        .find(
-          (candidate) =>
-            candidate.kind === 'tool' && candidate.toolName === toolName && candidate.pending,
-        );
+      const executionId = stringField(payload, 'executionId');
+      // Pair the result to its call by executionId when both carry one:
+      // parallel calls of the same tool would otherwise mispair under the
+      // legacy name+pending reverse-scan (which matches LIFO), swapping
+      // output/diff/card onto the wrong row. Fall back to the name scan only
+      // for legacy id-less events (older sessions, web-legacy shapes).
+      const row = executionId
+        ? mirror.rows.find(
+            (candidate) =>
+              candidate.kind === 'tool' &&
+              candidate.pending &&
+              candidate.executionId === executionId,
+          )
+        : [...mirror.rows]
+            .reverse()
+            .find(
+              (candidate) =>
+                candidate.kind === 'tool' && candidate.toolName === toolName && candidate.pending,
+            );
       const resultPreview = stringField(payload, 'text', 'preview').slice(0, 500);
       if (row) {
         row.pending = false;
@@ -240,6 +260,7 @@ export function applyDaemonTranscriptEvent(
           pending: false,
           isError: payload.isError === true,
           resultPreview,
+          ...(executionId ? { executionId } : {}),
           ...(typeof payload.durationMs === 'number' ? { durationMs: payload.durationMs } : {}),
           ...(isEditDiff(payload.diff) ? { diff: payload.diff } : {}),
           ...(isToolCardPayload(payload.card) ? { card: payload.card } : {}),

@@ -932,6 +932,19 @@ export type CoderToolExecResult<TCard extends ToolCard = ToolCard> =
   | { kind: 'denied'; reason: string };
 
 /**
+ * Per-execution metadata minted by the shared kernel before it invokes the
+ * host executor. The same execution id is emitted on the terminal
+ * `tool.execution_complete` event, so a host that emits the corresponding
+ * start event can produce a genuinely paired lifecycle even when identical
+ * tools run concurrently.
+ */
+export interface CoderToolExecContext {
+  round: number;
+  phase?: string;
+  executionId: string;
+}
+
+/**
  * CoderAgentOptions — lib-side options.
  *
  * `TCall` is the shell's tool-call discriminated union; `TCard` is the
@@ -992,10 +1005,7 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
   symbolSummary: string | null;
 
   /** Execute a detected tool call. See `CoderToolExecResult` for the flattened shape. */
-  toolExec: (
-    call: TCall,
-    execCtx: { round: number; phase?: string },
-  ) => Promise<CoderToolExecResult<TCard>>;
+  toolExec: (call: TCall, execCtx: CoderToolExecContext) => Promise<CoderToolExecResult<TCard>>;
 
   /** Multi-call detector (reads + optional trailing mutation). */
   detectAllToolCalls: (text: string) => DetectedToolCalls<TCall>;
@@ -2257,7 +2267,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           const pExecId = createId();
           const pStartMs = Date.now();
           const pToolName = (call as unknown as { call: { tool: string } }).call.tool;
-          const entry = await toolExec(call, { round, phase: workingMemory.currentPhase });
+          const entry = await toolExec(call, {
+            round,
+            phase: workingMemory.currentPhase,
+            executionId: pExecId,
+          });
           callbacks.onRunEvent?.({
             type: 'tool.execution_complete',
             round,
@@ -2337,6 +2351,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         const mutResult = await toolExec(mutationCall, {
           round,
           phase: workingMemory.currentPhase,
+          executionId: mqExecId,
         });
         callbacks.onRunEvent?.({
           type: 'tool.execution_complete',
@@ -2808,7 +2823,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     callbacks.onStatus('Coder executing...', singleCall.call.tool);
     const singleExecId = createId();
     const singleStartMs = Date.now();
-    const result = await toolExec(toolCall, { round, phase: workingMemory.currentPhase });
+    const result = await toolExec(toolCall, {
+      round,
+      phase: workingMemory.currentPhase,
+      executionId: singleExecId,
+    });
     callbacks.onRunEvent?.({
       type: 'tool.execution_complete',
       round,

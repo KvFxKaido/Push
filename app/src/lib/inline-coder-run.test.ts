@@ -414,7 +414,7 @@ describe('runInPageCoderKernel inline knobs', () => {
         source: 'sandbox',
         call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
       } as AnyToolCall,
-      { round: 1 },
+      { round: 1, executionId: 'exec-switch-branch' },
     );
 
     expect(onBranchSwitchPayload).toHaveBeenCalledWith(payload);
@@ -450,7 +450,7 @@ describe('runInPageCoderKernel inline knobs', () => {
         source: 'sandbox',
         call: { tool: 'sandbox_switch_branch', args: { branch: 'main' } },
       } as AnyToolCall,
-      { round: 1 },
+      { round: 1, executionId: 'exec-switch-branch' },
     );
 
     expect(result).toMatchObject({
@@ -737,7 +737,7 @@ describe('lead tool surface (inline foreground lane)', () => {
         source: 'scratchpad',
         call: { tool: 'append_scratchpad', content: 'new note' },
       } as AnyToolCall,
-      { round: 0 },
+      { round: 0, executionId: 'exec-scratchpad' },
     );
     const todoResult = await options.toolExec(
       {
@@ -754,7 +754,7 @@ describe('lead tool surface (inline foreground lane)', () => {
           ],
         },
       } as AnyToolCall,
-      { round: 0 },
+      { round: 0, executionId: 'exec-todo' },
     );
 
     expect(scratchResult.kind).toBe('executed');
