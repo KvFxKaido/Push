@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **Draft** — direction documented; implementation not started.
+Status: **In progress** — Phase 1 shipped 2026-07-16; Phases 2–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -152,7 +152,7 @@ The following are contracts even where they are not fully expressed by types:
 
 ## Phased plan
 
-### Phase 1 — typed pure leaves and facade pattern
+### Phase 1 — typed pure leaves and facade pattern ✅ (2026-07-16)
 
 Extract the lowest-risk helpers first:
 
@@ -256,6 +256,11 @@ pnpm install
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm run test:cli && pnpm run test:mcp:github
 pnpm run typecheck:all
 ```
+
+Additionally, run `pnpm run format:check` (Biome). It is not part of the
+`AGENTS.md` contract, but it is the only mechanical style gate that covers
+`cli/` — `pnpm run lint` does not lint `cli/` — so extraction PRs, which move
+TypeScript under `cli/`, run it explicitly.
 
 During development, run the focused tests for the moved family first, followed
 by the complete CLI suite. At minimum, the cumulative arc must continue covering:
