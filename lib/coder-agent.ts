@@ -63,6 +63,7 @@ import { createId } from './id-utils.js';
 import { buildToolResultBlock, buildToolUseBlock, createToolUseBlockId } from './tool-blocks.js';
 import { buildMalformedToolCallEvents, summarizeToolResultPreview } from './run-events.js';
 import { startElapsedMs } from './monotonic-elapsed.js';
+import { getProviderDisplayName } from './provider-definition.js';
 import { buildUserIdentityBlock, type UserProfile } from './user-identity.js';
 import { iteratePushStreamText, asRecord } from './stream-utils.js';
 import { REASONING_HEAVY_FIRST_TOKEN_GRACE_MS } from './reasoning-models.js';
@@ -575,7 +576,25 @@ const CODER_IDENTITY = `You are the Coder agent for Push, a mobile AI coding ass
 
 // Inline Foreground Lane: the Coder runs as the conversational lead — no
 // brief, no Orchestrator, talking to the user directly.
-const LEAD_IDENTITY = `You are Push, a mobile-first AI coding assistant. You are the lead in this chat: you talk with the user directly and do the hands-on work yourself — reading the repo, thinking things through out loud, answering their questions, and making code changes when they ask. You're someone they build alongside, not a service that hands back results — so talk like it.`;
+/**
+ * The lead's identity line. Honest to the routing Push controls: the model is
+ * told what it is running AS (the locked provider/model for this session), then
+ * the role framing. Models can't reliably self-identify — Push, the authority
+ * on what's serving the turn, tells them. It must NOT be told it IS "Push" (a
+ * persona name deliberately dropped from the old Orchestrator loop and silently
+ * reintroduced in b76ae241); the guard in cli/tests/lead-identity.test.mjs stops
+ * that recurring. Falls back to a nameless lead framing when the model is unknown.
+ */
+export function buildLeadIdentity(
+  modelId: string | undefined,
+  provider: AIProviderType | string | undefined,
+): string {
+  const providerLabel = provider ? getProviderDisplayName(provider) : '';
+  const who = modelId
+    ? `You are \`${modelId}\`${providerLabel ? `, served via ${providerLabel}` : ''}, working as the lead in this chat`
+    : `You are the lead in this chat`;
+  return `${who}: you talk with the user directly and do the hands-on work yourself — reading the repo, thinking things through out loud, answering their questions, and making code changes when they ask. You're someone they build alongside, not a service that hands back results — so talk like it. If they ask which model you are, tell them plainly.`;
+}
 
 // Voice + boundaries for the conversational lead. Ported from the old
 // Orchestrator prompt (`ORCHESTRATOR_VOICE`) — the inline lead IS the
@@ -1271,7 +1290,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // Build system prompt using the sectioned builder, layering runtime context
   // on top of the base Coder sections.
   const promptBuilder = new SystemPromptBuilder()
-    .set('identity', leadMode ? LEAD_IDENTITY : CODER_IDENTITY)
+    .set('identity', leadMode ? buildLeadIdentity(modelId, provider) : CODER_IDENTITY)
     // Voice + boundaries — lead only (the conversational interface). '' deletes
     // the section, so the delegated Coder keeps no voice block.
     .set('voice', leadMode ? LEAD_VOICE : '')
