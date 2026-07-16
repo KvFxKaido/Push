@@ -22,7 +22,7 @@ import os from 'node:os';
 import { handleRequest } from '../pushd.ts';
 import { mintDeviceToken } from '../pushd-device-tokens.ts';
 import { mintDeviceAttachToken } from '../pushd-attach-tokens.ts';
-import { readAuditEvents } from '../pushd-audit-log.ts';
+import { readAuditEvents, whenAuditQueueIdle } from '../pushd-audit-log.ts';
 import { PROTOCOL_VERSION } from '../../lib/protocol-schema.ts';
 
 const NOOP_EMIT = () => {};
@@ -69,12 +69,15 @@ afterEach(async () => {
   await fs.rm(tmpDir, { recursive: true, force: true });
 });
 
-// Audit appends run through a serialized in-process queue. Awaiting a
-// macrotask ensures every pending append has flushed by the time the
-// test reads the log. Without this, fast assertions can race the
-// queue and observe an empty file.
+// Audit appends run through a serialized in-process queue; the handlers
+// fire-and-forget (`void appendAuditEvent(...)`), so assertions must wait
+// for the queue tail. The previous fixed 30ms sleep raced the queue under
+// full-suite load (observed: aggregate run flaked with 0 events read while
+// the same file passed standalone) — awaiting the exported queue-idle hook
+// is deterministic because the enqueue happens synchronously inside
+// `appendAuditEvent` before the handler returns.
 async function flushAuditQueue() {
-  await new Promise((r) => setTimeout(r, 30));
+  await whenAuditQueueIdle();
 }
 
 describe('tool.sandbox_exec', () => {

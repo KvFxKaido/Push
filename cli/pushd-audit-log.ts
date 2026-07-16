@@ -256,6 +256,22 @@ function serialize<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Resolve once every append enqueued SO FAR has settled. Test hook:
+ * production callers `void appendAuditEvent(...)` and never wait, but a
+ * test that asserts on the log after driving a handler needs a
+ * deterministic flush — a fixed sleep races the queue under load (the
+ * enqueue happens synchronously inside `appendAuditEvent` before its
+ * first await, so by the time a dispatched handler returns, awaiting the
+ * queue tail covers its appends).
+ */
+export function whenAuditQueueIdle(): Promise<void> {
+  return writeQueue.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+/**
  * Append one event to the audit log. Fire-and-forget from the caller's
  * POV — the returned promise is observed only by tests; production
  * callers `void appendAuditEvent(...)`. Failures are swallowed to
