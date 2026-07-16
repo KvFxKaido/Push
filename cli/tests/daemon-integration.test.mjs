@@ -6403,6 +6403,7 @@ describe('attach token persistence', () => {
       'pushd.ts',
       'pushd/core-session-handlers.ts',
       'pushd/child-session-handlers.ts',
+      'pushd/delegation-coordinator.ts',
     ];
     const offenders = [];
     for (const source of sources) {
