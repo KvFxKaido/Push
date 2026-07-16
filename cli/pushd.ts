@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-// @ts-nocheck — gradual typing in progress for this large module
 /**
  * pushd.ts — Push daemon (Track 4)
  *
@@ -43,12 +42,27 @@ import {
 import { createCoreSessionHandlers, VALID_AGENT_ROLES } from './pushd/core-session-handlers.js';
 import { createChildSessionHandlers } from './pushd/child-session-handlers.js';
 import { daemonRuntimeHandlers } from './pushd/daemon-runtime-handlers.js';
-import { createDelegationCoordinator } from './pushd/delegation-coordinator.js';
+import {
+  createDelegationCoordinator,
+  type DelegateExplorerTestHooks,
+} from './pushd/delegation-coordinator.js';
 import { createDelegationExecutionAdapters } from './pushd/delegation-execution.js';
+import type { DaemonResponse } from './pushd/envelopes.js';
+import type {
+  DaemonEmitEvent,
+  DaemonHandler,
+  DaemonHandlerContext,
+  DaemonRequest,
+} from './pushd/handler-types.js';
 import { createInterruptedRunRecovery } from './pushd/interrupted-run-recovery.js';
 import { createSessionAuthenticator } from './pushd/session-auth.js';
 import { createSessionMaintenanceHandlers } from './pushd/session-maintenance-handlers.js';
-import { createSessionRuntime } from './pushd/session-runtime.js';
+import {
+  createSessionRuntime,
+  type SessionEmitEvent,
+  type SessionRuntimeEntry,
+  type WorkspaceStateEmitMode,
+} from './pushd/session-runtime.js';
 import {
   wrapCliDetectAllToolCalls,
   wrapCliDetectAnyToolCall,
@@ -298,43 +312,60 @@ const {
 
 export { makeDaemonCoderToolExec, makeDaemonExplorerToolExec };
 
-export function ensureRuntimeState(entry) {
+export function ensureRuntimeState(entry: SessionRuntimeEntry): SessionRuntimeEntry {
   return sessionRuntime.ensureRuntimeState(entry);
 }
 
-export function __getActiveSessionForTesting(sessionId) {
+export function __getActiveSessionForTesting(sessionId: string): SessionRuntimeEntry | null {
   return sessionRuntime.get(sessionId);
 }
 
-export function __evictActiveSessionForTesting(sessionId) {
+export function __evictActiveSessionForTesting(sessionId: string): boolean {
   return sessionRuntime.evict(sessionId);
 }
 
-export function __setActiveSessionForTesting(sessionId, entry) {
+export function __setActiveSessionForTesting(
+  sessionId: string,
+  entry: SessionRuntimeEntry,
+): SessionRuntimeEntry {
   return sessionRuntime.set(sessionId, entry);
 }
 
-export function __setDelegateExplorerHooksForTesting(hooks = null) {
+export function __setDelegateExplorerHooksForTesting(
+  hooks: DelegateExplorerTestHooks | null = null,
+): void {
   setDelegateExplorerTestHooks(hooks);
 }
 
-function addSessionClient(sessionId, emitFn, capabilities = []) {
+function addSessionClient(
+  sessionId: string,
+  emitFn: SessionEmitEvent,
+  capabilities: unknown = [],
+): void {
   sessionRuntime.addClient(sessionId, emitFn, capabilities);
 }
 
-function removeSessionClient(sessionId, emitFn) {
+function removeSessionClient(sessionId: string, emitFn: SessionEmitEvent): void {
   sessionRuntime.removeClient(sessionId, emitFn);
 }
 
-export function broadcastEvent(sessionId, event) {
+export function broadcastEvent(sessionId: string, event: unknown): void {
   sessionRuntime.broadcast(sessionId, event);
 }
 
-export function __emitWorkspaceStateForTesting(sessionId, entry, mode) {
+export function __emitWorkspaceStateForTesting(
+  sessionId: string,
+  entry: SessionRuntimeEntry,
+  mode: WorkspaceStateEmitMode,
+): Promise<void> {
   return sessionRuntime.emitWorkspaceState(sessionId, entry, mode);
 }
 
-export function emitEventWithDowngrade(event, emitFn, capabilities) {
+export function emitEventWithDowngrade(
+  event: unknown,
+  emitFn: SessionEmitEvent,
+  capabilities: Set<string>,
+): void {
   sessionRuntime.emitWithDowngrade(event, emitFn, capabilities);
 }
 
@@ -367,47 +398,56 @@ const {
 
 export { handleGetSessionMessages };
 
-function isDaemonIdle() {
+function isDaemonIdle(): boolean {
   return sessionRuntime.isIdle();
 }
 
-function noteLifecycleClientConnected() {
+function noteLifecycleClientConnected(): void {
   sessionRuntime.noteClientConnected();
 }
 
-function noteLifecycleClientDisconnected() {
+function noteLifecycleClientDisconnected(): void {
   sessionRuntime.noteClientDisconnected();
 }
 
-function cancelLifecycleExit(reason) {
+function cancelLifecycleExit(reason: string): void {
   sessionRuntime.cancelLifecycleExit(reason);
 }
 
-function maybeScheduleLifecycleExit() {
+function maybeScheduleLifecycleExit(): void {
   sessionRuntime.maybeScheduleLifecycleExit();
 }
 
-function noteRunSettled() {
+function noteRunSettled(): void {
   sessionRuntime.noteRunSettled();
 }
 
-function handleDrain(req, emitEvent, context = null) {
+function handleDrain(
+  req: DaemonRequest,
+  emitEvent: DaemonEmitEvent,
+  context: DaemonHandlerContext | null = null,
+): Promise<DaemonResponse> {
   return sessionRuntime.handleDrain(req, emitEvent, context);
 }
 
-export function __setDrainExitForTesting(fn) {
+export function __setDrainExitForTesting(fn?: (() => void) | null): void {
   sessionRuntime.setDrainExitForTesting(fn);
 }
 
-export function __setLifecycleExitForTesting(fn, opts) {
+export function __setLifecycleExitForTesting(
+  fn?: (() => void) | null,
+  opts?: { graceMs?: number } | null,
+): void {
   sessionRuntime.setLifecycleExitForTesting(fn, opts);
 }
 
-export function __setLiveConnectionsForTesting(n) {
+export function __setLiveConnectionsForTesting(n: number): void {
   sessionRuntime.setLiveConnectionsForTesting(n);
 }
 
-export function __setActiveRelayForTesting(handle) {
+export function __setActiveRelayForTesting(
+  handle?: Parameters<typeof relayCoordinator.setActiveForTesting>[0] | null,
+): void {
   relayCoordinator.setActiveForTesting(handle ?? null);
 }
 
@@ -459,7 +499,7 @@ const {
 
 // ─── Cross-owner abort composition ───────────────────────────────
 
-async function handleAbort(req, emitEvent, context) {
+const handleAbort: DaemonHandler = async (req, emitEvent, context) => {
   const isChild = typeof req.payload?.subagentId === 'string' && req.payload.subagentId.length > 0;
   const underlying = isChild
     ? await handleCancelDelegation(req, emitEvent, context)
@@ -467,11 +507,11 @@ async function handleAbort(req, emitEvent, context) {
   return underlying && typeof underlying === 'object'
     ? { ...underlying, type: 'abort' }
     : underlying;
-}
+};
 
 // ─── Request dispatcher ──────────────────────────────────────────
 
-const HANDLERS = {
+const HANDLERS: Record<string, DaemonHandler> = {
   hello: handleHello,
   ping: handlePing,
   list_sessions: handleListSessions,
@@ -520,36 +560,73 @@ const HANDLERS = {
   reload_config: handleReloadConfig,
 };
 
-export async function handleRequest(req, emitEvent, context = null) {
-  if (!req || req.v !== PROTOCOL_VERSION) {
+interface IncomingDaemonRequest {
+  v?: unknown;
+  kind?: unknown;
+  requestId?: unknown;
+  type?: unknown;
+  sessionId?: unknown;
+  payload?: unknown;
+  [key: string]: unknown;
+}
+
+function asIncomingDaemonRequest(value: unknown): IncomingDaemonRequest | null {
+  return value !== null && typeof value === 'object' ? (value as IncomingDaemonRequest) : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+}
+
+export async function handleRequest(
+  input: unknown,
+  emitEvent: DaemonEmitEvent,
+  context: DaemonHandlerContext | null = null,
+): Promise<DaemonResponse> {
+  const incoming = asIncomingDaemonRequest(input);
+  if (!incoming || incoming.v !== PROTOCOL_VERSION) {
     return makeErrorResponse(
-      req?.requestId || makeRequestId(),
-      req?.type || 'unknown',
+      typeof incoming?.requestId === 'string' && incoming.requestId
+        ? incoming.requestId
+        : makeRequestId(),
+      typeof incoming?.type === 'string' && incoming.type ? incoming.type : 'unknown',
       'UNSUPPORTED_PROTOCOL_VERSION',
-      `Expected ${PROTOCOL_VERSION}, got ${req?.v}`,
+      `Expected ${PROTOCOL_VERSION}, got ${incoming?.v}`,
     );
   }
 
-  if (req.kind !== 'request') {
+  if (incoming.kind !== 'request') {
     return makeErrorResponse(
-      req.requestId || makeRequestId(),
-      req.type || 'unknown',
+      typeof incoming.requestId === 'string' && incoming.requestId
+        ? incoming.requestId
+        : makeRequestId(),
+      typeof incoming.type === 'string' && incoming.type ? incoming.type : 'unknown',
       'INVALID_REQUEST',
-      `Expected kind "request", got "${req.kind}"`,
+      `Expected kind "request", got "${incoming.kind}"`,
     );
   }
 
-  const handler = HANDLERS[req.type];
+  const requestId =
+    typeof incoming.requestId === 'string' && incoming.requestId
+      ? incoming.requestId
+      : makeRequestId();
+  const requestType =
+    typeof incoming.type === 'string' && incoming.type ? incoming.type : 'unknown';
+  const handler = HANDLERS[requestType];
   if (!handler) {
     return makeErrorResponse(
-      req.requestId,
-      req.type,
+      requestId,
+      requestType,
       'UNSUPPORTED_REQUEST_TYPE',
-      `Unknown request type: ${req.type}`,
+      `Unknown request type: ${requestType}`,
     );
   }
 
-  let response;
+  // Known handlers receive the original object unchanged. The dispatcher has
+  // narrowed `type` above; the handler remains responsible for its payload.
+  const req = incoming as DaemonRequest;
+
+  let response: DaemonResponse;
   try {
     response = await handler(req, emitEvent, context);
   } catch (err) {
@@ -573,12 +650,12 @@ export async function handleRequest(req, emitEvent, context = null) {
 
 // ─── Connection handling ─────────────────────────────────────────
 
-function handleConnection(socket) {
+function handleConnection(socket: net.Socket): void {
   // A local client connected — count it and abort any pending lifecycle exit so
   // a transient disconnect / self-heal respawn never kills a daemon back in use.
   noteLifecycleClientConnected();
   let buffer = '';
-  const attachedSessions = new Set(); // track which sessions this socket is observing
+  const attachedSessions = new Set<string>(); // track which sessions this socket is observing
   // Remember the capabilities the client most recently advertised at
   // attach-time so that a later auto-attach (start_session /
   // send_user_message on the same socket) inherits them. Without this
@@ -596,9 +673,9 @@ function handleConnection(socket) {
   // delegation events route for clients attached via auto-attach.
   // `null` sentinel means "not yet observed"; once pinned the value
   // persists until the socket closes.
-  let socketCapabilities = null;
+  let socketCapabilities: unknown = null;
 
-  const emitEvent = (event) => {
+  const emitEvent: SessionEmitEvent = (event) => {
     try {
       socket.write(JSON.stringify(event) + '\n');
     } catch {
@@ -614,7 +691,9 @@ function handleConnection(socket) {
     for (const line of lines) {
       if (!line.trim()) continue;
       try {
-        const req = JSON.parse(line);
+        const req = asIncomingDaemonRequest(JSON.parse(line));
+        if (!req) throw new Error('Request must be a JSON object');
+        const payload = asRecord(req.payload);
         // Pin capabilities on first-observed request of ANY type that
         // carries a `capabilities` array. This covers:
         //   - explicit `attach_session` (the documented path)
@@ -625,26 +704,28 @@ function handleConnection(socket) {
         // first keeps the socket's classification stable for the
         // lifetime of the connection so delegation-event routing can't
         // flip mid-session.
-        if (socketCapabilities === null && Array.isArray(req.payload?.capabilities)) {
-          socketCapabilities = req.payload.capabilities;
+        if (socketCapabilities === null && Array.isArray(payload?.capabilities)) {
+          socketCapabilities = payload.capabilities;
         }
         const response = await handleRequest(req, emitEvent);
         socket.write(JSON.stringify(response) + '\n');
 
         // Track attach for cleanup on disconnect
-        if (req.type === 'attach_session' && response.ok) {
-          attachedSessions.add(req.payload?.sessionId);
+        if (
+          req.type === 'attach_session' &&
+          response.ok &&
+          typeof payload?.sessionId === 'string'
+        ) {
+          attachedSessions.add(payload.sessionId);
         }
         // Auto-attach when starting a session or sending a message
         if ((req.type === 'start_session' || req.type === 'send_user_message') && response.ok) {
-          const sid =
-            response.sessionId ||
-            response.payload?.sessionId ||
-            req.sessionId ||
-            req.payload?.sessionId;
-          if (sid) {
-            addSessionClient(sid, emitEvent, socketCapabilities);
-            attachedSessions.add(sid);
+          const responsePayload = asRecord(response.payload);
+          const sidCandidate =
+            response.sessionId || responsePayload?.sessionId || req.sessionId || payload?.sessionId;
+          if (typeof sidCandidate === 'string' && sidCandidate) {
+            addSessionClient(sidCandidate, emitEvent, socketCapabilities);
+            attachedSessions.add(sidCandidate);
           }
         }
       } catch (err) {
@@ -652,7 +733,7 @@ function handleConnection(socket) {
           makeRequestId(),
           'unknown',
           'INVALID_REQUEST',
-          `Failed to parse request: ${err.message}`,
+          `Failed to parse request: ${err instanceof Error ? err.message : String(err)}`,
         );
         socket.write(JSON.stringify(errResponse) + '\n');
       }
@@ -823,7 +904,7 @@ export async function main() {
   });
 }
 
-export function __handleConnectionForTesting(socket) {
+export function __handleConnectionForTesting(socket: net.Socket): void {
   return handleConnection(socket);
 }
 
