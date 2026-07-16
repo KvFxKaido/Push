@@ -227,7 +227,7 @@ describe('adopt-from-response source guards', () => {
   const read = (rel) => fs.readFile(path.join(import.meta.dirname, '..', rel), 'utf8');
 
   it('the daemon attach_session response returns attachToken for adoption', async () => {
-    const src = await read('pushd.ts');
+    const src = await read('pushd/core-session-handlers.ts');
     // Within handleAttachSession's success response.
     assert.match(
       src,

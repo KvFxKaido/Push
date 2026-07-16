@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–3 implemented; Phase 4 runtime ownership slice implemented; Phases 5–7 not started.
+Status: **In progress** — Phases 1–4 implemented; Phases 5–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -192,7 +192,7 @@ shutdown. Typed device-admin handlers own token mint/revoke, relay administratio
 pairing bundles, session grants, and live-device listing. The spine supplies only
 dispatch, session fan-out, and narrow WS/session registry accessors.
 
-### Phase 4 — session runtime and core handlers 🚧 (started 2026-07-16)
+### Phase 4 — session runtime and core handlers ✅ (2026-07-16)
 
 Extract active-session/client registries and their lifecycle operations before
 moving session/run handlers. Preserve workspace-state serialization, auto-attach,
@@ -201,12 +201,17 @@ runtime contract.
 
 Role-routing handlers can move once their session-state dependency is explicit.
 
-Runtime ownership slice implemented: `cli/pushd/session-runtime.ts` now owns the
-active-session and client registries, capability-aware fan-out, approval waits,
-serialized workspace-state emission, drain/idle lifecycle accounting, and
-shutdown traversal. `pushd.ts` keeps compatibility facades for delegation and
-recovery consumers until their later phases. Core session/run handler extraction
-and role-routing movement remain in Phase 4.
+`cli/pushd/session-runtime.ts` now owns the active-session and client registries,
+capability-aware fan-out, approval waits, serialized workspace-state emission,
+drain/idle lifecycle accounting, and shutdown traversal.
+`cli/pushd/core-session-handlers.ts` owns the hello/ping and core session/run
+verbs, reconnect reads, approval and parent-run cancellation, workspace-state
+reads, and role-routing/session-state mutation. The module consumes the runtime
+and relay coordinator through typed dependencies; it does not import back through
+the facade. `pushd.ts` keeps compatibility facades for delegation and recovery
+consumers until their later phases. The `abort` sugar stays in the facade for now
+because it composes parent-run cancellation with Phase 5 child-delegation
+cancellation.
 
 ### Phase 5 — delegation in internal slices
 

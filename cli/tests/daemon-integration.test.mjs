@@ -6384,19 +6384,25 @@ describe('attach token persistence', () => {
 
   it('applies the same persistence across every disk-load handler', async () => {
     // Guard that future handlers added to the family stay consistent.
-    // This test loads the source of pushd.ts and asserts that nobody
+    // Scan both the residual facade and the extracted core handlers so nobody
     // reintroduces the old `attachToken: makeAttachToken()` pattern on a
     // disk-load path — anyone tempted to copy it will fail this test.
-    const content = await fs.readFile(path.join(import.meta.dirname, '..', 'pushd.ts'), 'utf8');
-    const offenders = content
-      .split('\n')
-      .map((line, idx) => ({ line, n: idx + 1 }))
-      .filter(({ line }) => /attachToken:\s*makeAttachToken\(\)/.test(line));
+    const sources = ['pushd.ts', 'pushd/core-session-handlers.ts'];
+    const offenders = [];
+    for (const source of sources) {
+      const content = await fs.readFile(path.join(import.meta.dirname, '..', source), 'utf8');
+      offenders.push(
+        ...content
+          .split('\n')
+          .map((line, idx) => ({ source, line, n: idx + 1 }))
+          .filter(({ line }) => /attachToken:\s*makeAttachToken\(\)/.test(line)),
+      );
+    }
     assert.equal(
       offenders.length,
       0,
       `Found ${offenders.length} disk-load site(s) still minting fresh attach tokens: ` +
-        offenders.map((o) => `L${o.n}: ${o.line.trim()}`).join(' | '),
+        offenders.map((o) => `${o.source}:L${o.n}: ${o.line.trim()}`).join(' | '),
     );
   });
 });

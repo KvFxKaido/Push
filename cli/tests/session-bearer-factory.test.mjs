@@ -7,7 +7,7 @@
  * token) instead of hand-rolling a session literal + `makeSessionId()`.
  *
  * Creation points after Silvery Phase 3:
- *   1. `handleStartSession` — cli/pushd.ts (daemon)
+ *   1. `handleStartSession` — cli/pushd/core-session-handlers.ts (daemon)
  *   2. `initSession`        — cli/cli.ts (CLI REPL / headless)
  *   3. `initCliSession`     — cli/session-init.ts (Silvery TUI + shared)
  */
@@ -21,7 +21,7 @@ const read = (rel) => fs.readFile(path.join(cliDir, rel), 'utf8');
 
 describe('Universal Session Bearer — creation-point audit', () => {
   it('every creation file imports the factory from session-store', async () => {
-    for (const rel of ['pushd.ts', 'cli.ts', 'session-init.ts']) {
+    for (const rel of ['pushd/core-session-handlers.ts', 'cli.ts', 'session-init.ts']) {
       const src = await read(rel);
       assert.match(
         src,
@@ -32,7 +32,7 @@ describe('Universal Session Bearer — creation-point audit', () => {
   });
 
   it('the daemon creation point (handleStartSession) calls the factory', async () => {
-    const src = await read('pushd.ts');
+    const src = await read('pushd/core-session-handlers.ts');
     const body = sliceFunction(src, 'async function handleStartSession');
     assert.match(
       body,
@@ -63,7 +63,17 @@ describe('Universal Session Bearer — creation-point audit', () => {
   });
 
   it('no creation file mints a session id directly (the inline-creation smell)', async () => {
-    for (const rel of ['pushd.ts', 'cli.ts', 'session-init.ts', 'silvery/controller.ts']) {
+    // `pushd.ts` is no longer a creation point (handleStartSession moved to
+    // core-session-handlers), but it stays in the smell scan as a
+    // reintroduction guard — it is still a large facade where an inline
+    // session literal could land.
+    for (const rel of [
+      'pushd.ts',
+      'pushd/core-session-handlers.ts',
+      'cli.ts',
+      'session-init.ts',
+      'silvery/controller.ts',
+    ]) {
       const src = await read(rel);
       const offenders = src
         .split('\n')
