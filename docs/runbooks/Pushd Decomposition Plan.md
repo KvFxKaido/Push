@@ -1,7 +1,7 @@
 # `pushd` Decomposition Plan — Thin Spine, Typed Modules
 
 Date: 2026-07-15
-Status: **In progress** — Phases 1–2 implemented; Phases 3–7 not started.
+Status: **In progress** — Phases 1–3 implemented; Phases 4–7 not started.
 Owner: Push CLI
 
 ## Why this exists
@@ -180,11 +180,17 @@ daemon identity, and file operations behind typed handler boundaries in
 `cli/pushd/`. Shared handler context and audit provenance types live beside the
 handlers; cancellation ownership remains with the daemon WebSocket state.
 
-### Phase 3 — relay/device administration ownership
+### Phase 3 — relay/device administration ownership ✅ (2026-07-16)
 
 Give relay connection state, allowlist propagation, token administration, and
 pairing flows an explicit coordinator boundary. Then move the associated request
 handlers. Do not leave relay globals in the spine while moving only their verbs.
+
+The relay coordinator now owns the live client, connection status, hashed phone
+allowlist, relay cancellation state, session registrations, startup seeding, and
+shutdown. Typed device-admin handlers own token mint/revoke, relay administration,
+pairing bundles, session grants, and live-device listing. The spine supplies only
+dispatch, session fan-out, and narrow WS/session registry accessors.
 
 ### Phase 4 — session runtime and core handlers
 

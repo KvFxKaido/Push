@@ -39,45 +39,14 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
-import {
-  startPushdWs,
-  type PushdWsConnectionState,
-  type PushdWsAuthRecord,
-  type PushdWsHandle,
-} from './pushd-ws.js';
-import {
-  revokeDeviceToken,
-  listDeviceTokens,
-  mintDeviceToken,
-  type DeviceTokenRecord,
-} from './pushd-device-tokens.js';
-import {
-  mintDeviceAttachToken,
-  revokeDeviceAttachToken,
-  revokeAttachTokensByParent,
-  listDeviceAttachTokens,
-  getAttachTokenTtlMs,
-} from './pushd-attach-tokens.js';
+import { startPushdWs, type PushdWsHandle } from './pushd-ws.js';
 import { appendAuditEvent, shouldLogCommandText, truncateForAudit } from './pushd-audit-log.js';
-import {
-  startPushdRelayClient,
-  type RelayClientHandle,
-  type RelayConnectionStatus,
-} from './pushd-relay-client.js';
-import {
-  readRelayConfig,
-  writeRelayConfig,
-  deleteRelayConfig,
-  isValidRelayToken,
-  type RelayConfig,
-} from './pushd-relay-config.js';
-import {
-  createRelayAllowlistRegistry,
-  seedAllowlistFromAttachTokens,
-  type RelayAllowlistRegistry,
-} from './pushd-relay-allowlist.js';
-import { encodeRemotePairBundle } from './pushd-relay-pair-bundle.js';
 import { auditProvenance } from './pushd/audit-provenance.js';
+import { createRelayCoordinator } from './pushd/relay-coordinator.js';
+import {
+  createDeviceAdminHandlers,
+  resolveOrMintTargetAttachToken,
+} from './pushd/device-admin-handlers.js';
 
 /**
  * Dispatcher-level audit emission for request types whose handlers
@@ -205,399 +174,10 @@ function emitDispatcherAudit(req: any, response: any, context: any): void {
   }
 }
 
-// Module-scoped reference to the running WS handle. Set when startPushdWs
-// completes, nulled on shutdown. Daemon admin handlers (`revoke_device_token`,
-// `list_devices`) read this to invoke `disconnectByTokenId` / `listConnected-
-// Devices`. Plumbing through the dispatcher context was an option but every
-// handler signature would have grown — `wsHandle` is genuinely process-global
-// state and the module slot reflects that.
+// Module-scoped reference to the running WS handle. The spine owns transport
+// startup/shutdown; device-admin handlers receive a narrow accessor for live
+// disconnect and connection-list operations.
 let activeWsHandle: PushdWsHandle | null = null;
-
-// Phase 2.e — outbound relay state. The relay client is sibling to
-// `activeWsHandle`: started after the WS listener when a relay config
-// is persisted, closed before `wsHandle` on shutdown. `activeRelayConfig`
-// is the persisted config the client was started with (deploymentUrl
-// only — the token is NOT stored at module scope, just passed into
-// `startPushdRelayClient` closure once).
-let activeRelayClient: RelayClientHandle | null = null;
-let activeRelayDeploymentUrl: string | null = null;
-let activeRelayLastStatus: RelayConnectionStatus | null = null;
-// In-process registry of attach-token bearers currently valid for the
-// relay path. Populated at mint; cleared at revoke. See
-// `pushd-relay-allowlist.ts` for the lifecycle rationale + the
-// daemon-restart known limitation.
-const relayAllowlist: RelayAllowlistRegistry = createRelayAllowlistRegistry();
-
-/**
- * Build a `relay_phone_allow` envelope for the given tokenHash(es).
- * `tokenHashes` carries `sha256(bearer)` base64url-encoded — the
- * DO hashes the phone's `Sec-WebSocket-Protocol` bearer at upgrade
- * time and compares against the set. The wire never carries bearer
- * plaintext, which is what lets the allowlist survive a daemon
- * restart (the on-disk attach-token store also keeps only the hash).
- */
-function makeRelayPhoneAllowEnvelope(tokenHashes: readonly string[]): string {
-  return `${JSON.stringify({
-    v: PROTOCOL_VERSION,
-    kind: 'relay_phone_allow',
-    tokenHashes,
-    ts: Date.now(),
-  })}\n`;
-}
-
-function makeRelayPhoneRevokeEnvelope(tokenHashes: readonly string[]): string {
-  return `${JSON.stringify({
-    v: PROTOCOL_VERSION,
-    kind: 'relay_phone_revoke',
-    tokenHashes,
-    ts: Date.now(),
-  })}\n`;
-}
-
-/**
- * Emit a `relay_phone_allow` envelope for the new tokenHash(es). If
- * the relay client isn't connected yet, the envelope is queued in
- * the relay client's pre-open send buffer and flushed on next open.
- * No-ops when no relay is configured at all.
- */
-function emitRelayAllowChange(tokenHashes: readonly string[]): void {
-  if (tokenHashes.length === 0) return;
-  if (!activeRelayClient) return;
-  activeRelayClient.send(makeRelayPhoneAllowEnvelope(tokenHashes));
-}
-
-function emitRelayRevokeChange(tokenHashes: readonly string[]): void {
-  if (tokenHashes.length === 0) return;
-  if (!activeRelayClient) return;
-  activeRelayClient.send(makeRelayPhoneRevokeEnvelope(tokenHashes));
-}
-
-/**
- * Re-emit the full allowlist after a relay (re)connect. The DO's
- * per-session allowlist is in-memory and per-DO-instance, so a DO
- * restart in the middle of a session would lose it; pushd's full
- * re-emit is the recovery path.
- */
-function emitRelayFullAllowlist(send: (frame: string) => void): void {
-  const hashes = relayAllowlist.allTokenHashes();
-  if (hashes.length === 0) return;
-  send(makeRelayPhoneAllowEnvelope(hashes));
-}
-
-/**
- * Boot-time rebuild of the relay allowlist registry from the
- * persisted attach-token store. Without this, a daemon restart
- * would emit an empty `relay_phone_allow` on the next relay connect
- * and every paired phone would silently lose forwarding access
- * until it re-paired.
- *
- * The persisted store keeps only hashes (no plaintext bearer ever
- * lands on disk), which is exactly what the hash-keyed allowlist
- * registry stores too — so the seed is a straight 1:1 copy. Expired
- * records are filtered out lazily by `listDeviceAttachTokens()` so
- * a token past its sliding-TTL window doesn't get re-allowlisted.
- */
-async function seedRelayAllowlistFromAttachTokens(): Promise<number> {
-  return seedAllowlistFromAttachTokens(relayAllowlist, listDeviceAttachTokens);
-}
-
-/**
- * Synthetic auth record for inbound relay frames. The DO's pushd-
- * controlled allowlist (2.d.1) is the actual security gate for the
- * relay path — pushd has already authorized every bearer that can
- * forward through. From pushd's side of the WS, we can't tell WHICH
- * phone sent a given frame (the DO forwards bytes without per-frame
- * identity), so we synthesize an `attach`-shaped record with sentinel
- * ids the audit log can filter on.
- *
- * Why `kind: 'attach'`: the loopback `mint_device_attach_token`
- * handler refuses non-device callers, which gates the privilege-
- * escalation surface. Treating relay traffic as attach-kind preserves
- * that refusal — a phone can't ask the relay-routed daemon to mint
- * fresh attach tokens. Unix-socket admin handlers (`revoke_*`,
- * `list_*`, `relay_*`) refuse callers that present any `auth` /
- * `record`, so they're also unreachable from the relay path.
- */
-const RELAY_SYNTHETIC_AUTH: PushdWsAuthRecord = {
-  kind: 'attach',
-  tokenId: 'pdat_relay',
-  parentDeviceTokenId: 'pdt_relay',
-  boundOrigin: 'relay',
-  lastUsedAt: null,
-  deviceRecord: null,
-};
-
-/**
- * Per-relay-client `wsState`. Shared across every inbound request
- * that came through the relay, so a `sandbox_exec` registers its
- * AbortController in this map and the same connection's `cancel_run`
- * can reach it.
- *
- * Because this one map is shared across ALL paired phones (the relay
- * transport has no per-phone connection on the daemon side — the DO
- * forwards frames without sender identity), connection-scoping alone
- * can't keep one phone from cancelling another's run by guessing the
- * runId. Each run is therefore registered with the DO-stamped per-phone
- * sender id (`ownerId`) it arrived with, and the sessionless `cancel_run`
- * path requires a matching sender id before aborting a relay-owned run.
- * See `handleSandboxExec` (registration) and `handleCancelRun`
- * (the sessionless branch). Closes finding #3 of the Remote Control
- * Surface Audit.
- */
-let activeRelayWsState: PushdWsConnectionState | null = null;
-
-/**
- * Active sessionId → emit registrations done via the relay path. We
- * need to call `removeSessionClient` for these on shutdown / disable
- * so a torn-down relay doesn't leave stale emit references in the
- * shared session-client registry.
- */
-const relaySessionRegistrations = new Set<string>();
-
-/**
- * Boot the outbound relay client. Wires status callbacks into the
- * audit log (`relay.connect` / `relay.disconnect`), `onOpen` into
- * the full-allowlist re-emit path, and `onMessage` into the existing
- * `handleRequest` dispatcher so inbound requests from paired phones
- * actually run.
- *
- * Inbound dispatch (Phase 2.f, post-#530 review fix): every NDJSON
- * line that arrives is parsed and forwarded into `handleRequest`
- * with the synthesized auth context above. Responses + streamed
- * session events flow back through the relay client's `send` (which
- * the relay forwards to the connected phones via the DO's allowlist
- * gate). The shape mirrors `pushd-ws.ts`'s `ws.on('message', ...)`
- * handler so a phone client speaking the same NDJSON protocol works
- * over either transport.
- *
- * The bearer token is consumed once into the relay client's closure
- * and is NOT retained at module scope — the only post-startup access
- * path is through the running handle (which doesn't expose the
- * token).
- */
-function startRelayClient(config: RelayConfig): RelayClientHandle {
-  // Forward-ref to the handle so onMessage can call `handle.send(...)`
-  // without a circular construction (onMessage is captured into the
-  // options object before the handle exists). The ref is populated
-  // synchronously below, BEFORE the first dial fires (queueMicrotask
-  // in startPushdRelayClient).
-  let handleRef: RelayClientHandle | null = null;
-  // wsState lives in the closure so cancel_run requests from the
-  // SAME relay connection can find the AbortController. Reset on
-  // every startRelayClient invocation so a `disable → enable` doesn't
-  // leak active-runs across the cycle.
-  const wsState: PushdWsConnectionState = { activeRuns: new Map() };
-  activeRelayWsState = wsState;
-
-  const emitToRelay = (event: unknown): void => {
-    if (!handleRef) return;
-    try {
-      handleRef.send(`${JSON.stringify(event)}\n`);
-    } catch {
-      // Sending while closed is a no-op via the relay-client's
-      // queue logic; nothing actionable here.
-    }
-  };
-
-  const handle = startPushdRelayClient({
-    deploymentUrl: config.deploymentUrl,
-    // Phase 2.d.1 walk-back: sessionId is opaque routing, not
-    // security-load-bearing. A stable per-daemon id is fine — the
-    // allowlist is the actual gate. Derive it from the hostname so
-    // operator inspection ("which DO is this daemon talking to?")
-    // stays human-readable; salting it with a process startup nonce
-    // would force a fresh DO instance on every restart, which is
-    // wasteful for what the field actually does.
-    sessionId: `pushd-${os.hostname()}`,
-    token: config.token,
-    onStatus: (status) => {
-      activeRelayLastStatus = status;
-      if (status.state === 'open') {
-        void appendAuditEvent({
-          type: 'relay.connect',
-          surface: 'unix-socket',
-          payload: { deploymentUrl: config.deploymentUrl },
-        });
-      } else if (status.state === 'closed' || status.state === 'unreachable') {
-        void appendAuditEvent({
-          type: 'relay.disconnect',
-          surface: 'unix-socket',
-          payload: {
-            deploymentUrl: config.deploymentUrl,
-            state: status.state,
-            code: status.code,
-            reason: status.reason,
-            attempt: status.attempt,
-            exhausted: status.exhausted,
-          },
-        });
-      }
-    },
-    onOpen: (send) => {
-      emitRelayFullAllowlist(send);
-    },
-    onMessage: async (text) => {
-      // Each text frame may carry one or more NDJSON envelopes —
-      // mirror pushd-ws.ts's parsing exactly. Malformed lines drop
-      // silently; an attacker can't differentiate parse failures
-      // from anything else and a friendly client would never send
-      // malformed bytes through the relay.
-      for (const line of text.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let parsed: {
-          v?: string;
-          kind?: string;
-          requestId?: string;
-          type?: string;
-          sessionId?: string;
-          payload?: { sessionId?: string; capabilities?: unknown };
-          [RELAY_SENDER_FIELD]?: string;
-        };
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          continue;
-        }
-        // Only `request` envelopes drive dispatch. Other kinds
-        // (responses pushd would itself send, relay-control envelopes
-        // consumed by the DO before reaching pushd, malformed
-        // payloads) drop silently — see pushd-ws.ts for the same
-        // discrimination.
-        if (parsed.kind !== 'request') continue;
-        let response: unknown;
-        try {
-          // The relay DO stamps the per-connection sender id onto every
-          // forwarded phone→pushd frame (`RELAY_SENDER_FIELD`). It's the only
-          // trustworthy phone identity here — the shared `wsState` can't tell
-          // paired phones apart — so it scopes run ownership (Audit #3). A
-          // string-typed value only; anything else (absent, forged non-string)
-          // resolves to undefined and the run registers unowned.
-          const relaySenderId =
-            typeof parsed[RELAY_SENDER_FIELD] === 'string' && parsed[RELAY_SENDER_FIELD]
-              ? parsed[RELAY_SENDER_FIELD]
-              : undefined;
-          response = await handleRequest(parsed, emitToRelay, {
-            auth: RELAY_SYNTHETIC_AUTH,
-            wsState,
-            relaySenderId,
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : 'internal error';
-          response = makeErrorResponse(
-            parsed.requestId ?? makeRequestId(),
-            parsed.type ?? 'unknown',
-            'INTERNAL_ERROR',
-            message,
-          );
-        }
-        emitToRelay(response);
-
-        // Mirror pushd-ws.ts: register the relay's emit as a session
-        // client when the phone attaches or starts a session, so
-        // streamed events flow back through the relay. Cleanup on
-        // shutdown / disable in `stopRelayClient`.
-        const respObj = response as {
-          ok?: boolean;
-          sessionId?: string;
-          payload?: { sessionId?: string };
-        };
-        if (parsed.type === 'attach_session' && respObj?.ok) {
-          const sid = parsed.payload?.sessionId;
-          if (sid) {
-            addSessionClient(sid, emitToRelay, parsed.payload?.capabilities ?? null);
-            relaySessionRegistrations.add(sid);
-          }
-        }
-        if (
-          (parsed.type === 'start_session' || parsed.type === 'send_user_message') &&
-          respObj?.ok
-        ) {
-          const sid =
-            respObj.sessionId ||
-            respObj.payload?.sessionId ||
-            parsed.sessionId ||
-            parsed.payload?.sessionId;
-          if (sid) {
-            addSessionClient(sid, emitToRelay, parsed.payload?.capabilities ?? null);
-            relaySessionRegistrations.add(sid);
-          }
-        }
-      }
-    },
-  });
-  handleRef = handle;
-  return handle;
-}
-
-/**
- * Tear down the running relay client. By default the in-process
- * tokenHash allowlist is PRESERVED — entries are reseeded at boot
- * from the persisted attach-token store and adjusted at mint/revoke,
- * so clearing here would force a full re-emit cycle on the next
- * `relay.connect`. Only the explicit `relay disable` flow passes
- * `clearAllowlist: true` (config gone → no relay → no allowlist
- * needed).
- *
- * PR #529 Codex P1 + Copilot: `handleRelayEnable` calls this in its
- * live-restart path; without the preserve default, a disable/enable
- * cycle (or even a first enable with phones already paired locally
- * before the relay token arrived) would re-emit an empty allowlist
- * on the next connect.
- */
-function stopRelayClient(opts: { clearAllowlist?: boolean } = {}): void {
-  if (activeRelayClient) {
-    try {
-      activeRelayClient.close();
-    } catch {
-      /* ignore */
-    }
-    activeRelayClient = null;
-  }
-  activeRelayDeploymentUrl = null;
-  activeRelayLastStatus = null;
-  // Abort any in-flight sandbox_exec runs registered against the
-  // relay's wsState. Same shape as pushd-ws.ts's cleanup — without
-  // this, a `relay disable` mid-run leaves the daemon child burning
-  // CPU/disk until its own timeout fires.
-  if (activeRelayWsState) {
-    for (const run of activeRelayWsState.activeRuns.values()) {
-      try {
-        run.controller.abort();
-      } catch {
-        /* ignore */
-      }
-    }
-    activeRelayWsState.activeRuns.clear();
-    activeRelayWsState = null;
-  }
-  // Drop the relay's session-client registrations so the
-  // session-event registry doesn't hold dead emit references. The
-  // emit fn closes over the relay handle; calling it after close is
-  // a no-op (the handle's send routes through a closed WS), but
-  // letting it accumulate would leak references across enable/
-  // disable cycles.
-  for (const sid of relaySessionRegistrations) {
-    try {
-      // Removing a session client requires the exact emit fn that
-      // was registered. We don't have it at this scope (it was a
-      // per-invocation closure inside startRelayClient), so the
-      // best we can do is signal the registry via the sessionId
-      // alone. The session manager's removeSessionClient takes an
-      // emit fn though, so a perfect cleanup needs that handle.
-      // For now, leaving the closures to GC after the handle dies
-      // is acceptable — they'll silently drop emits via the
-      // closed-send no-op, and the registry's small.
-      void sid;
-    } catch {
-      /* ignore */
-    }
-  }
-  relaySessionRegistrations.clear();
-  if (opts.clearAllowlist) {
-    relayAllowlist.clear();
-  }
-}
 
 import {
   PROVIDER_CONFIGS,
@@ -654,7 +234,6 @@ import {
   isStrictModeEnabled,
   isProtocolObserveEnabled,
   validateEvent,
-  RELAY_SENDER_FIELD,
 } from '../lib/protocol-schema.js';
 import {
   DAEMON_CAPABILITIES,
@@ -763,6 +342,7 @@ export {
 // importers (and tests) that reach for it here keep resolving after the
 // promotion into `./session-store`.
 export { makeAttachToken };
+export { resolveOrMintTargetAttachToken };
 
 // ─── Session registry (in-memory) ────────────────────────────────
 
@@ -926,6 +506,32 @@ function removeSessionClient(sessionId, emitFn) {
     if (clients.size === 0) sessionClients.delete(sessionId);
   }
 }
+
+// Phase 3 composition: the coordinator owns every relay mutable. The spine
+// supplies only dispatch/fan-out callbacks and narrow WS/session accessors.
+const relayCoordinator = createRelayCoordinator({
+  dispatch: (request, emitEvent, context) => handleRequest(request, emitEvent, context),
+  addSessionClient,
+});
+
+const {
+  handleRevokeDeviceToken,
+  handleMintDeviceAttachToken,
+  handleRevokeDeviceAttachToken,
+  handleRelayEnable,
+  handleRelayDisable,
+  handleRelayStatus,
+  handleMintRemotePairBundle,
+  handleGrantSessionAttach,
+  handleListAttachTokens,
+  handleListDevices,
+} = createDeviceAdminHandlers({
+  relay: relayCoordinator,
+  getWsHandle: () => activeWsHandle,
+  sessions: activeSessions,
+  loadSessionState,
+  saveSessionState,
+});
 
 /**
  * Preserve the pre-Slice-2 event shape for clients that have not advertised
@@ -1290,7 +896,7 @@ function cancelLifecycleExit(reason) {
  */
 function maybeScheduleLifecycleExit() {
   if (draining || drainExitScheduled || lifecycleExitFired) return;
-  if (liveConnections > 0 || activeRelayClient) {
+  if (liveConnections > 0 || relayCoordinator.isRunning()) {
     cancelLifecycleExit('client_or_relay_present');
     return;
   }
@@ -1309,7 +915,7 @@ function maybeScheduleLifecycleExit() {
   lifecycleExitTimer = setTimeout(() => {
     lifecycleExitTimer = null;
     if (draining || drainExitScheduled || lifecycleExitFired) return;
-    if (liveConnections > 0 || activeRelayClient) {
+    if (liveConnections > 0 || relayCoordinator.isRunning()) {
       cancelLifecycleExit('client_or_relay_present');
       return;
     }
@@ -1357,7 +963,7 @@ export function __setLiveConnectionsForTesting(n) {
 }
 
 export function __setActiveRelayForTesting(handle) {
-  activeRelayClient = handle ?? null;
+  relayCoordinator.setActiveForTesting(handle ?? null);
 }
 
 export {
@@ -2328,7 +1934,7 @@ async function handleGetSessionSnapshot(req) {
       rootPath: state.cwd || process.cwd(),
       branch: await readGitBranch(state.cwd || process.cwd()),
     },
-    relay: await buildRelayStatusPayload(),
+    relay: await relayCoordinator.buildStatusPayload(),
     session: {
       sessionId,
       state: isRunning ? 'running' : 'idle',
@@ -2482,7 +2088,7 @@ async function handleCancelRun(req, _emitEvent, context) {
   // where each connection owns its own wsState.
   //
   // The relay transport defeats connection-scoping: every paired phone
-  // shares the one `activeRelayWsState`, so a guessed runId would
+  // shares the coordinator-owned relay wsState, so a guessed runId would
   // otherwise reach across phones. When a run was registered with an
   // `ownerId` (the relay DO's per-phone sender id), require the cancel to
   // arrive from the SAME phone — i.e. its DO-stamped `relaySenderId` must
@@ -5872,715 +5478,6 @@ async function handleDelegateDeepReviewer(req) {
   return ack;
 }
 
-// ─── Phase 3 device-admin handlers ───────────────────────────────
-//
-// These are intended for the Unix-socket-only `push daemon` CLI
-// surface. Exposing them over the WS would let a paired device
-// revoke OTHER paired devices, which the threat model doesn't
-// authorize — the WS is bound to a specific device's tokenId and
-// shouldn't grant cross-device admin authority. The handlers refuse
-// when the request context carries a WS-authenticated `record`.
-
-function refuseFromWs(req, type) {
-  return makeErrorResponse(
-    req.requestId,
-    type,
-    'UNSUPPORTED_VIA_TRANSPORT',
-    `${type} is only available over the Unix-socket admin transport.`,
-  );
-}
-
-/**
- * Live device revoke. Mutates the tokens file AND closes every WS
- * connection currently bearing the revoked tokenId. Closes the
- * "revoke takes effect on next upgrade" gap from open question #6 in
- * the decision doc.
- */
-async function handleRevokeDeviceToken(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'revoke_device_token');
-  const tokenId = typeof req.payload?.tokenId === 'string' ? req.payload.tokenId : '';
-  if (!tokenId) {
-    return makeErrorResponse(
-      req.requestId,
-      'revoke_device_token',
-      'INVALID_REQUEST',
-      'tokenId is required',
-    );
-  }
-  const removed = await revokeDeviceToken(tokenId);
-  if (!removed) {
-    return makeErrorResponse(
-      req.requestId,
-      'revoke_device_token',
-      'TOKEN_NOT_FOUND',
-      `no such token: ${tokenId}`,
-    );
-  }
-  // Cascade: every attach token derived from this device token is
-  // now orphaned and must be invalidated alongside its parent.
-  // Otherwise a stolen attach token would continue to authenticate
-  // even after the user clicked "revoke this device." Phase 3
-  // slice 2 — the load-bearing piece of the cascade contract.
-  const revokedAttachIds = await revokeAttachTokensByParent(tokenId);
-  // disconnectByTokenId is now device-scoped (slice 2): it closes
-  // every WS bearing this parent device, regardless of whether each
-  // individual connection used the device token directly or one of
-  // its attach tokens. So one call handles both the device-direct
-  // connection and every child attach connection.
-  const closedConnections = activeWsHandle
-    ? activeWsHandle.disconnectByTokenId(tokenId, 'device token revoked')
-    : 0;
-  // Phase 2.e cascade: drop every tokenHash derived from the revoked
-  // device from the relay allowlist and emit `relay_phone_revoke`
-  // for those that were actually registered.
-  const revokedHashes = relayAllowlist.removeMany(revokedAttachIds);
-  if (revokedHashes.length > 0) emitRelayRevokeChange(revokedHashes);
-  void appendAuditEvent({
-    type: 'auth.revoke_device',
-    ...auditProvenance(context),
-    payload: {
-      tokenId,
-      closedConnections,
-      revokedAttachTokens: revokedAttachIds,
-    },
-  });
-  return makeResponse(req.requestId, 'revoke_device_token', null, true, {
-    tokenId,
-    closedConnections,
-    revokedAttachTokens: revokedAttachIds,
-  });
-}
-
-/**
- * Mint a fresh device-attach token. Requires a device-token-
- * authenticated WS context: the durable device token is the credential
- * that BOOTSTRAPS attach tokens, so an attach-token-authed caller
- * cannot ask for a new attach token (no privilege escalation /
- * refresh-chaining). Web clients use this once at pairing time, then
- * discard the device token; CLI tooling never calls it.
- *
- * Refusing the call when the caller authed with an attach token
- * preserves the "device token = durable, attach token = short-lived"
- * model. A future slice may add a separate `refresh_attach_token`
- * surface that DOES accept an attach-authed caller and rotates it
- * for a fresh one, but the current minimum-viable shape is "mint
- * via device token only."
- */
-async function handleMintDeviceAttachToken(req, _emitEvent, context) {
-  const auth = context?.auth;
-  if (!auth) {
-    return makeErrorResponse(
-      req.requestId,
-      'mint_device_attach_token',
-      'UNSUPPORTED_VIA_TRANSPORT',
-      'mint_device_attach_token is only available over the WebSocket transport.',
-    );
-  }
-  if (auth.kind !== 'device') {
-    return makeErrorResponse(
-      req.requestId,
-      'mint_device_attach_token',
-      'DEVICE_TOKEN_REQUIRED',
-      'mint_device_attach_token requires a device-token-authenticated connection.',
-    );
-  }
-  const result = await mintDeviceAttachToken({
-    parentTokenId: auth.tokenId,
-    boundOrigin: auth.boundOrigin as 'loopback' | string,
-  });
-  // Phase 2.e + hash-allowlist hardening: register the tokenHash
-  // (already computed by mintDeviceAttachToken) in the relay
-  // allowlist and push a `relay_phone_allow` envelope. We never
-  // capture bearer plaintext — the on-disk store and the relay
-  // wire both speak hashes, which is what makes daemon-restart
-  // recovery work.
-  relayAllowlist.add(result.tokenId, result.record.tokenHash);
-  emitRelayAllowChange([result.record.tokenHash]);
-  void appendAuditEvent({
-    type: 'auth.mint_attach',
-    ...auditProvenance(context),
-    payload: {
-      mintedTokenId: result.tokenId,
-      parentTokenId: auth.tokenId,
-      ttlMs: result.ttlMs,
-    },
-  });
-  return makeResponse(req.requestId, 'mint_device_attach_token', null, true, {
-    token: result.token,
-    tokenId: result.tokenId,
-    ttlMs: result.ttlMs,
-    parentTokenId: auth.tokenId,
-  });
-}
-
-/**
- * Revoke a single attach token by id. Unix-socket admin only (mirrors
- * `revoke_device_token`'s posture). Cascade is unnecessary here —
- * attach tokens have no children — but we DO close the corresponding
- * live WS connection so an attacker who already attached doesn't
- * keep their session alive past the revoke. `disconnectByAttachTokenId`
- * is narrow: it does NOT close the parent device's other connections.
- */
-async function handleRevokeDeviceAttachToken(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'revoke_device_attach_token');
-  const tokenId = typeof req.payload?.tokenId === 'string' ? req.payload.tokenId : '';
-  if (!tokenId) {
-    return makeErrorResponse(
-      req.requestId,
-      'revoke_device_attach_token',
-      'INVALID_REQUEST',
-      'tokenId is required',
-    );
-  }
-  const removed = await revokeDeviceAttachToken(tokenId);
-  if (!removed) {
-    return makeErrorResponse(
-      req.requestId,
-      'revoke_device_attach_token',
-      'TOKEN_NOT_FOUND',
-      `no such attach token: ${tokenId}`,
-    );
-  }
-  const closedConnections = activeWsHandle
-    ? activeWsHandle.disconnectByAttachTokenId(tokenId, 'attach token revoked')
-    : 0;
-  // Phase 2.e: drop the tokenHash from the relay allowlist and push
-  // a `relay_phone_revoke`. The hash-keyed registry is reseeded at
-  // startup from the persisted attach-token store, so an entry that
-  // outlived a daemon restart is still present here.
-  const removedHash = relayAllowlist.remove(tokenId);
-  if (removedHash !== null) emitRelayRevokeChange([removedHash]);
-  void appendAuditEvent({
-    type: 'auth.revoke_attach',
-    ...auditProvenance(context),
-    payload: { tokenId, closedConnections },
-  });
-  return makeResponse(req.requestId, 'revoke_device_attach_token', null, true, {
-    tokenId,
-    closedConnections,
-  });
-}
-
-/**
- * `list_attach_tokens` returns metadata for every non-expired attach
- * token in the file. Token text is never returned. Like
- * `list_devices`, this is a Unix-socket-only admin surface — a paired
- * device can't enumerate other devices' attach tokens.
- */
-/**
- * Phase 2.e admin handlers (`relay_enable` / `relay_disable` /
- * `relay_status`). Unix-socket-only — the relay is per-daemon
- * config and changing it from a paired WS would invert the trust
- * direction (the relay would be reconfiguring the daemon's outbound
- * trust path). `refuseFromWs` enforces the boundary.
- */
-async function handleRelayEnable(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'relay_enable');
-  const deploymentUrl =
-    typeof req.payload?.deploymentUrl === 'string' ? req.payload.deploymentUrl.trim() : '';
-  const token = typeof req.payload?.token === 'string' ? req.payload.token : '';
-  if (!deploymentUrl) {
-    return makeErrorResponse(
-      req.requestId,
-      'relay_enable',
-      'INVALID_REQUEST',
-      'deploymentUrl is required',
-    );
-  }
-  if (!isValidRelayToken(token)) {
-    return makeErrorResponse(
-      req.requestId,
-      'relay_enable',
-      'INVALID_REQUEST',
-      'token must start with pushd_relay_ and include a token body (yours looks truncated)',
-    );
-  }
-  let persisted: RelayConfig;
-  try {
-    persisted = await writeRelayConfig({ deploymentUrl, token });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, 'relay_enable', 'INTERNAL_ERROR', message);
-  }
-  // Live restart: close any existing client, then start a fresh one
-  // with the new config. Doing both inside the handler keeps the
-  // CLI shape honest — `push daemon relay enable` should take effect
-  // immediately, not require a daemon restart.
-  stopRelayClient();
-  try {
-    activeRelayClient = startRelayClient(persisted);
-    activeRelayDeploymentUrl = persisted.deploymentUrl;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, 'relay_enable', 'INTERNAL_ERROR', message);
-  }
-  return makeResponse(req.requestId, 'relay_enable', null, true, {
-    deploymentUrl: persisted.deploymentUrl,
-    enabledAt: persisted.enabledAt,
-  });
-}
-
-async function handleRelayDisable(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'relay_disable');
-  let removed = false;
-  try {
-    removed = await deleteRelayConfig();
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return makeErrorResponse(req.requestId, 'relay_disable', 'INTERNAL_ERROR', message);
-  }
-  const wasActive = activeRelayClient !== null;
-  // Disable is the only path that intentionally drops the in-process
-  // allowlist: no relay means no need to keep bearers around. The
-  // live-restart inside `relay_enable` deliberately keeps them.
-  stopRelayClient({ clearAllowlist: true });
-  return makeResponse(req.requestId, 'relay_disable', null, true, {
-    configRemoved: removed,
-    clientStopped: wasActive,
-  });
-}
-
-async function buildRelayStatusPayload() {
-  let persistedDeploymentUrl: string | null = null;
-  let persistedEnabledAt: number | null = null;
-  try {
-    const cfg = await readRelayConfig();
-    if (cfg) {
-      persistedDeploymentUrl = cfg.deploymentUrl;
-      persistedEnabledAt = cfg.enabledAt;
-    }
-  } catch {
-    // If the file is unreadable the operator/client should still get
-    // live state back; surface the read failure as `null` config rather
-    // than making a read-only status packet fail.
-  }
-  const status = activeRelayLastStatus;
-  const live = activeRelayClient
-    ? {
-        running: true,
-        deploymentUrl: activeRelayDeploymentUrl,
-        state: status?.state ?? 'connecting',
-        attempt: status && 'attempt' in status ? status.attempt : 0,
-        exhausted:
-          status && (status.state === 'closed' || status.state === 'unreachable')
-            ? status.exhausted
-            : false,
-        closeCode:
-          status && (status.state === 'closed' || status.state === 'unreachable')
-            ? status.code
-            : null,
-        closeReason:
-          status && (status.state === 'closed' || status.state === 'unreachable')
-            ? status.reason
-            : null,
-        fatal:
-          status && (status.state === 'closed' || status.state === 'unreachable')
-            ? (status.fatal ?? false)
-            : false,
-        allowlistSize: relayAllowlist.size(),
-      }
-    : { running: false };
-  return {
-    persisted: persistedDeploymentUrl
-      ? { deploymentUrl: persistedDeploymentUrl, enabledAt: persistedEnabledAt }
-      : null,
-    live,
-  };
-}
-
-/**
- * Returns both persisted config (presence + deploymentUrl, never the
- * token) AND live runtime state (connection status, reconnect
- * counter, last-error). Operators reading this need to see both —
- * "config says enabled but daemon hasn't dialled" is a real failure
- * mode worth surfacing distinctly from "no config" and "open and
- * forwarding."
- */
-async function handleRelayStatus(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'relay_status');
-  return makeResponse(req.requestId, 'relay_status', null, true, await buildRelayStatusPayload());
-}
-
-/**
- * Minimal shape of an `activeSessions` entry this helper reads/mutates. The
- * registry Map is untyped (`new Map()`), so this narrow type documents the
- * contract for the exported helper and its isolation tests.
- */
-type MintableSessionEntry = {
-  attachToken?: string | null;
-  state?: { attachToken?: string | null; sessionId?: string } | null;
-};
-
-/**
- * Resolve the attach token for a target daemon session. Under the Universal
- * Session Bearer this is now a plain resolve: every session is tokened at
- * birth (the `createSessionState` factory) or on first attach (the
- * bootstrap-grace legacy claim), so `entry.attachToken` is always present and
- * the `minted: false` branch is the only one real traffic takes.
- *
- * The defensive mint below is RETIRED to a TRIPWIRE — if it ever fires, a
- * session creation path slipped past the factory (a regression), so it logs
- * `attach_token_minted_unexpectedly` (warn) loudly while still minting so
- * remote pairing keeps working rather than hard-failing. Kept I/O-free (random
- * token + entry mutation only) so it's unit-testable without a session dir.
- * The caller persists `entry.state` and surfaces `minted` so a live TUI can
- * adopt the token before its next reconnect.
- *
- * Throws on a missing/non-object entry — the caller (`handleMintRemotePairBundle`)
- * already rejects an absent session with SESSION_NOT_FOUND, but the export must
- * fail loudly rather than throw a cryptic "cannot set property of null".
- */
-export function resolveOrMintTargetAttachToken(entry: MintableSessionEntry) {
-  if (!entry || typeof entry !== 'object') {
-    throw new Error('resolveOrMintTargetAttachToken requires a session entry object');
-  }
-  if (entry.attachToken) return { token: entry.attachToken, minted: false };
-  // TRIPWIRE: reaching here means a session reached remote-pairing without a
-  // bearer — i.e. a creation path bypassed the factory and the bootstrap grace
-  // never claimed it. Mint defensively so pairing still works, but log loudly.
-  const token = makeAttachToken();
-  process.stderr.write(
-    `${JSON.stringify({ level: 'warn', event: 'attach_token_minted_unexpectedly', sessionId: entry.state?.sessionId })}\n`,
-  );
-  entry.attachToken = token;
-  if (entry.state && typeof entry.state === 'object') {
-    entry.state.attachToken = token;
-  }
-  return { token, minted: true };
-}
-
-/**
- * Phase 2.f: mint a one-shot pairing bundle for a remote phone.
- * Reads the relay config (errors if `relay enable` hasn't been run),
- * mints a fresh device token + child attach token, populates the
- * in-process relay allowlist with the new attach bearer (so the
- * relay client's next emit covers it), and returns the bundled
- * string the operator pastes into the phone.
- *
- * Each `pair --remote` invocation mints a NEW device token. That
- * means each remote phone gets its own durable identity, revocable
- * via `push daemon revoke <tokenId>` — and the cascade revoke kills
- * the child attach token + closes any live relay forwarding for
- * that phone in one shot (Phase 3 slice 2 cascade contract).
- *
- * Unix-socket admin only; WS callers are refused. The operator
- * already has filesystem-level admin authority over the daemon
- * config; the pair bundle conveys exactly that authority to one
- * remote phone.
- *
- * NOTE: pairing a *tokenless* target session mints an attach token for it
- * (see `resolveOrMintTargetAttachToken`), which flips that session from "open
- * attach" to "bearer required" for all clients. Intentional and benign — see
- * that helper's doc for the rationale and the one local-client edge case.
- */
-async function handleMintRemotePairBundle(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'mint_remote_pair_bundle');
-  const config = await readRelayConfig();
-  if (!config) {
-    return makeErrorResponse(
-      req.requestId,
-      'mint_remote_pair_bundle',
-      'RELAY_NOT_ENABLED',
-      'Relay is not enabled. Run `push daemon relay enable --url <…> --token <…>` first.',
-    );
-  }
-  const targetSessionId =
-    typeof req.payload?.targetSessionId === 'string' && req.payload.targetSessionId.length > 0
-      ? req.payload.targetSessionId
-      : null;
-  const targetAttachToken =
-    typeof req.payload?.targetAttachToken === 'string' && req.payload.targetAttachToken.length > 0
-      ? req.payload.targetAttachToken
-      : null;
-  if (!targetSessionId && targetAttachToken) {
-    return makeErrorResponse(
-      req.requestId,
-      'mint_remote_pair_bundle',
-      'INVALID_REQUEST',
-      'targetAttachToken requires targetSessionId.',
-    );
-  }
-  let resolvedTargetAttachToken = targetAttachToken;
-  // When set, the session attach token was minted on demand below — surfaced
-  // in the response so the calling TUI can adopt it (see the handler doc).
-  let mintedSessionAttachToken = null;
-  if (targetSessionId && targetAttachToken) {
-    const entry = activeSessions.get(targetSessionId);
-    if (!entry || entry.attachToken !== targetAttachToken) {
-      return makeErrorResponse(
-        req.requestId,
-        'mint_remote_pair_bundle',
-        'INVALID_TOKEN',
-        'Target daemon session is not active or its attach token did not match.',
-      );
-    }
-  }
-  if (targetSessionId && !targetAttachToken) {
-    const entry = activeSessions.get(targetSessionId);
-    if (!entry) {
-      return makeErrorResponse(
-        req.requestId,
-        'mint_remote_pair_bundle',
-        'SESSION_NOT_FOUND',
-        'Target daemon session is not active.',
-      );
-    }
-    // Universal Session Bearer: the target is tokened at birth (factory) or on
-    // first attach (grace), so this resolves to the existing token and
-    // `minted` is false. The mint branch is now a tripwire — if it fires, a
-    // creation path slipped past the factory (see resolveOrMintTargetAttachToken).
-    // The persist + adopt plumbing below is kept for that defensive case.
-    const resolved = resolveOrMintTargetAttachToken(entry);
-    resolvedTargetAttachToken = resolved.token;
-    if (resolved.minted) {
-      mintedSessionAttachToken = resolved.token;
-      if (entry.state && typeof entry.state === 'object') {
-        try {
-          await saveSessionState(entry.state);
-          process.stderr.write(
-            `${JSON.stringify({ level: 'info', event: 'pair_bundle_minted_session_token', targetSessionId })}\n`,
-          );
-        } catch (err) {
-          // Persist failed: the in-memory token still works for this run, but
-          // a daemon restart would lose it. Surface it instead of failing the
-          // pairing — the bundle is already usable for the live session.
-          process.stderr.write(
-            `${JSON.stringify({ level: 'warn', event: 'pair_bundle_mint_persist_failed', targetSessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
-          );
-        }
-      }
-    }
-  }
-  // Mint a fresh device token first (durable identity for this
-  // remote phone), then a child attach token (the actual bearer the
-  // phone carries to the relay). Both writes go through the existing
-  // serialized stores so concurrent pair-remote calls don't collide.
-  // boundOrigin is 'loopback' because the relay phone never connects
-  // to the daemon's loopback WS listener — the relay does the actual
-  // origin enforcement on the phone's WS upgrade.
-  const device = await mintDeviceToken({ boundOrigin: 'loopback' });
-  const attach = await mintDeviceAttachToken({
-    parentTokenId: device.tokenId,
-    boundOrigin: 'loopback',
-  });
-  // Register the new tokenHash in the relay allowlist (same path
-  // mint takes for the LAN-paired case) and emit a `relay_phone_allow`
-  // so the DO updates its per-session allowlist before the phone
-  // even tries to connect.
-  relayAllowlist.add(attach.tokenId, attach.record.tokenHash);
-  emitRelayAllowChange([attach.record.tokenHash]);
-  // sessionId mirrors what `startRelayClient` uses — a stable per-
-  // daemon routing key. The relay sessionId is opaque routing, not
-  // load-bearing for security (see 2.d.1 walk-back); using the
-  // hostname-derived form keeps phone bundles routing to the same
-  // DO instance as the running relay client without coordinating a
-  // separate id.
-  const sessionId = `pushd-${os.hostname()}`;
-  const bundle = encodeRemotePairBundle({
-    deploymentUrl: config.deploymentUrl,
-    sessionId,
-    token: attach.token,
-    // Public ids included so the web pair panel can surface them
-    // in the paired-device row for revocation guidance. Neither
-    // is bearer material; both are already printed to stdout.
-    // PR #530 GH Actions review.
-    attachTokenId: attach.tokenId,
-    deviceTokenId: device.tokenId,
-    ...(targetSessionId && resolvedTargetAttachToken
-      ? { targetSessionId, targetAttachToken: resolvedTargetAttachToken }
-      : {}),
-  });
-  void appendAuditEvent({
-    type: 'auth.mint_attach',
-    surface: 'unix-socket',
-    payload: {
-      mintedTokenId: attach.tokenId,
-      parentTokenId: device.tokenId,
-      ttlMs: attach.ttlMs,
-      remote: true,
-      targetSessionId: targetSessionId ?? undefined,
-    },
-  });
-  // Audit logs the tokenIds but NEVER the bundle (which carries the
-  // bearer in plaintext). The bundle is one-shot: it lives in the
-  // response payload to the CLI and then in the operator's terminal
-  // buffer — it must not land in the audit log too.
-  return makeResponse(req.requestId, 'mint_remote_pair_bundle', null, true, {
-    bundle,
-    deviceTokenId: device.tokenId,
-    attachTokenId: attach.tokenId,
-    sessionId,
-    targetSessionId,
-    deploymentUrl: config.deploymentUrl,
-    ttlMs: attach.ttlMs,
-    // Present only when we minted a fresh attach token for a previously
-    // tokenless target session. The TUI adopts it so its own future
-    // reconnects carry the now-required bearer. Same trust domain (unix
-    // socket → local admin); never written to the audit log.
-    ...(mintedSessionAttachToken ? { mintedTargetAttachToken: mintedSessionAttachToken } : {}),
-  });
-}
-
-/**
- * `grant_session_attach` — hand an already-authenticated client the
- * attach token for one daemon session, so a paired phone can resume a
- * session it discovered via `list_sessions` (tap-to-resume; the
- * Session Continuity north star: "a session created in the TUI is
- * listed and resumable from the phone").
- *
- * Trust analysis (why this does NOT widen the threat surface):
- *   - Callers must already hold transport auth: a device/attach-token
- *     WS connection, the relay path (allowlisted `pushd_da_*` bearers
- *     only — the DO enforces at upgrade), or the local Unix socket
- *     (operator; can read session files directly anyway). An
- *     unauthenticated caller never reaches this handler with a grant.
- *   - The pair-bundle flow already conveys exactly this class of
- *     secret (`targetAttachToken`) to a paired phone; this extends
- *     "one session at pairing time" to "any session while paired,"
- *     which is the documented product direction.
- *   - A granted session token is useless without transport access:
- *     `attach_session` is only reachable over the same authenticated
- *     transports, so device revocation (allowlist cascade + WS
- *     disconnect) still cuts off a revoked phone even if it kept
- *     granted tokens.
- *   - Unlike `mint_device_attach_token` (device-kind only), this
- *     mints no new credential — it reveals the session's existing
- *     bearer, and every grant is audit-logged with provenance.
- */
-async function handleGrantSessionAttach(req, _emitEvent, context) {
-  const sessionId =
-    typeof req.payload?.sessionId === 'string' && req.payload.sessionId.length > 0
-      ? req.payload.sessionId
-      : null;
-  if (!sessionId) {
-    return makeErrorResponse(
-      req.requestId,
-      'grant_session_attach',
-      'INVALID_REQUEST',
-      'sessionId is required',
-    );
-  }
-
-  let entry = activeSessions.get(sessionId);
-  if (!entry) {
-    // Mirror attach_session's lazy load so a session that survived a
-    // daemon restart (on disk, not yet touched) is still resumable.
-    try {
-      const state = await loadSessionState(sessionId);
-      entry = { state, attachToken: state.attachToken };
-      activeSessions.set(sessionId, entry);
-    } catch {
-      return makeErrorResponse(
-        req.requestId,
-        'grant_session_attach',
-        'SESSION_NOT_FOUND',
-        `Session not found: ${sessionId}`,
-      );
-    }
-  }
-
-  // Universal Session Bearer: resolves to the existing token; the mint
-  // branch is a tripwire for creation paths that bypassed the factory
-  // (see resolveOrMintTargetAttachToken).
-  const resolved = resolveOrMintTargetAttachToken(entry);
-  if (resolved.minted && entry.state && typeof entry.state === 'object') {
-    try {
-      await saveSessionState(entry.state);
-    } catch (err) {
-      // In-memory token still authorizes this run; a restart loses it
-      // and the next grant re-mints. Surface rather than fail.
-      process.stderr.write(
-        `${JSON.stringify({ level: 'warn', event: 'grant_attach_mint_persist_failed', sessionId, error: err instanceof Error ? err.message : String(err) })}\n`,
-      );
-    }
-  }
-
-  // Audit the grant (tokenId-free — never the bearer) with transport
-  // provenance so `push daemon audit` can answer "which device was
-  // granted access to which session, when."
-  void appendAuditEvent({
-    type: 'auth.grant_session_attach',
-    ...auditProvenance(context),
-    sessionId,
-    payload: {
-      minted: resolved.minted,
-      relaySenderId: typeof context?.relaySenderId === 'string' ? context.relaySenderId : undefined,
-    },
-  });
-
-  return makeResponse(req.requestId, 'grant_session_attach', null, true, {
-    sessionId,
-    attachToken: resolved.token,
-  });
-}
-
-async function handleListAttachTokens(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'list_attach_tokens');
-  const records = await listDeviceAttachTokens();
-  return makeResponse(req.requestId, 'list_attach_tokens', null, true, {
-    tokens: records.map((r) => ({
-      tokenId: r.tokenId,
-      parentTokenId: r.parentTokenId,
-      boundOrigin: r.boundOrigin,
-      createdAt: r.createdAt,
-      lastUsedAt: r.lastUsedAt,
-    })),
-    ttlMs: getAttachTokenTtlMs(),
-  });
-}
-
-/**
- * `list_devices` returns one row per tokenId that currently has at
- * least one open WS connection. Tokens with zero live connections
- * still appear in `list_tokens` (the file-backed view) but are
- * intentionally absent here — this surface is "who's connected right
- * now," not "who has ever been paired."
- */
-async function handleListDevices(req, _emitEvent, context) {
-  if (context?.record || context?.auth) return refuseFromWs(req, 'list_devices');
-  // If the WS listener never started (PUSHD_WS=0 or startup failure),
-  // surface that explicitly rather than reporting an empty list — an
-  // empty list under a disabled listener would be misleading.
-  if (!activeWsHandle) {
-    return makeResponse(req.requestId, 'list_devices', null, true, {
-      devices: [],
-      wsListenerActive: false,
-    });
-  }
-  const liveRows = activeWsHandle.listConnectedDevices();
-  // Cross-reference with the tokens file so we can render boundOrigin /
-  // lastUsedAt that may have been updated since the WS handshake (the
-  // `lastUsedAt` touch is async and the WS-side `record` is captured
-  // at connection time). This is best-effort; if the file read fails
-  // we fall back to the WS-side values.
-  let fileRecords: DeviceTokenRecord[] = [];
-  try {
-    fileRecords = await listDeviceTokens();
-  } catch {
-    // non-fatal
-  }
-  const fileByTokenId = new Map(fileRecords.map((r) => [r.tokenId, r]));
-  const devices = liveRows.map((row) => {
-    const fileRecord = fileByTokenId.get(row.tokenId);
-    return {
-      tokenId: row.tokenId,
-      boundOrigin: row.boundOrigin,
-      connections: row.connections,
-      // Slice 2: expose the split so CLI/UI consumers can flag
-      // "device token still in use" — that means pairing hasn't yet
-      // upgraded to an attach token and the durable bearer is still
-      // active in the browser.
-      attachConnections: row.attachConnections,
-      deviceConnections: row.deviceConnections,
-      lastUsedAt: fileRecord?.lastUsedAt ?? row.lastUsedAt,
-    };
-  });
-  return makeResponse(req.requestId, 'list_devices', null, true, {
-    devices,
-    wsListenerActive: true,
-  });
-}
-
 function resolveDaemonRuntimeConfigPayload(config) {
   const execMode =
     normalizeDaemonExecMode(process.env.PUSH_EXEC_MODE) ||
@@ -7294,7 +6191,7 @@ export async function main() {
     // seeded yet, that re-emit would be empty and every paired phone
     // would lose forwarding access across the restart.
     try {
-      const seeded = await seedRelayAllowlistFromAttachTokens();
+      const seeded = await relayCoordinator.seedAllowlistFromAttachTokens();
       if (seeded > 0) {
         process.stdout.write(`pushd-relay allowlist seeded from ${seeded} attach token(s)\n`);
       }
@@ -7303,10 +6200,8 @@ export async function main() {
       process.stderr.write(`pushd-relay allowlist seed failed: ${msg}\n`);
     }
     try {
-      const relayConfig = await readRelayConfig();
+      const relayConfig = await relayCoordinator.startPersisted();
       if (relayConfig) {
-        activeRelayClient = startRelayClient(relayConfig);
-        activeRelayDeploymentUrl = relayConfig.deploymentUrl;
         process.stdout.write(`pushd-relay dialing ${relayConfig.deploymentUrl}\n`);
       }
     } catch (err) {
@@ -7340,7 +6235,7 @@ export async function main() {
     // Phase 2.e: close the outbound relay first so any in-flight
     // `relay_phone_*` envelope finishes flushing before the daemon
     // tears down the WS listener that mint/revoke hangs off.
-    stopRelayClient();
+    relayCoordinator.stop();
 
     if (wsHandle) {
       try {
