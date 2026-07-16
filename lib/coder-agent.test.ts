@@ -534,7 +534,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     // Web lead: leadMode + the web tool-guidance opt-in.
     const lead = await promptFor(true, true);
     expect(lead).toContain(
-      'You are `coder-model`, served via OpenRouter, working as the lead in this chat',
+      'You are `coder-model`, served via OpenRouter. You are the lead in this chat',
     );
     expect(lead).toContain('do NOT use that Done/Changed/Verified/Open template');
     expect(lead).not.toContain('Read the delegation brief');
@@ -593,7 +593,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const sandbox = await promptFor('sandbox');
     // Still the lead — conversational framing + the closing template stay.
     expect(sandbox).toContain(
-      'You are `coder-model`, served via OpenRouter, working as the lead in this chat',
+      'You are `coder-model`, served via OpenRouter. You are the lead in this chat',
     );
     expect(sandbox).toContain('do NOT use that Done/Changed/Verified/Open template');
     // …but the surface can't run GitHub PR/CI/merge/promote tools, so the

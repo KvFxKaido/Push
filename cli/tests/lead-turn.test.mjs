@@ -199,7 +199,7 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         const requestText = JSON.stringify(server.requests[0]);
         assert.ok(
           requestText.includes(
-            'You are `mock-model`, served via Ollama, working as the lead in this chat',
+            'You are `mock-model`, served via Ollama. You are the lead in this chat',
           ),
           'lead identity missing from provider request',
         );
@@ -760,7 +760,7 @@ describe(
           const requestText = JSON.stringify(server.requests[0]);
           assert.ok(
             requestText.includes(
-              'You are `mock-model`, served via Ollama, working as the lead in this chat',
+              'You are `mock-model`, served via Ollama. You are the lead in this chat',
             ),
             'kernel lane not engaged',
           );
