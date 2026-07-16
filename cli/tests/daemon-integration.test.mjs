@@ -3595,10 +3595,22 @@ async function waitForDelegationComplete(entry, subagentId, sessionId = null, ti
         // nothing is written to `delegationOutcomes`, so don't poll for a
         // record that will never appear.
         if (terminal.type === 'subagent.failed' && !terminal.payload?.delegationOutcome) return;
-        // Reviewer-family delegations signal completion via a `reviewResult`
-        // on the terminal event and never persist a `delegationOutcomes`
-        // record — the event itself is their completion signal.
-        if (terminal.payload?.reviewResult) return;
+        // Reviewer-family delegations never persist a `delegationOutcomes`
+        // record — but they DO persist a `reviewOutcomes` record, and the
+        // handler appends the terminal event BEFORE the state save flushes.
+        // Returning on the event alone is the same premature-return race the
+        // Coder/Explorer branch below documents (#1481): a caller that then
+        // reads session state can beat `saveSessionState` and see no
+        // `reviewOutcomes`, flaking first on slower runners. Poll the
+        // persisted record — the durable fact the callers assert on.
+        if (terminal.payload?.reviewResult) {
+          const persistedReview = await loadSessionState(sessionId);
+          const hasPersistedReview = persistedReview.reviewOutcomes?.some(
+            (record) => record.subagentId === subagentId,
+          );
+          if (hasPersistedReview) return;
+          // Not yet flushed — fall through to the retry sleep below.
+        }
         // Coder/Explorer delegations persist a `delegationOutcomes` record.
         // The terminal event (and the cleared `activeDelegations` entry) can
         // be observed a beat before that durable session-state write lands —
