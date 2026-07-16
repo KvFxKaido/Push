@@ -255,13 +255,12 @@ Run the repository contract from `AGENTS.md`:
 pnpm install
 TMPDIR=/tmp TEMP=/tmp TMP=/tmp pnpm run test:cli && pnpm run test:mcp:github
 pnpm run typecheck:all
-pnpm run format:check
 ```
 
-`format:check` (Biome) is not part of the `AGENTS.md` contract, but it is the
-only mechanical style gate that covers `cli/` — `pnpm run lint` does not lint
-`cli/` — so extraction PRs, which move TypeScript under `cli/`, run it
-explicitly.
+Additionally, run `pnpm run format:check` (Biome). It is not part of the
+`AGENTS.md` contract, but it is the only mechanical style gate that covers
+`cli/` — `pnpm run lint` does not lint `cli/` — so extraction PRs, which move
+TypeScript under `cli/`, run it explicitly.
 
 During development, run the focused tests for the moved family first, followed
 by the complete CLI suite. At minimum, the cumulative arc must continue covering:
