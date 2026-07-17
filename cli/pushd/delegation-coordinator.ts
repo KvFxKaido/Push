@@ -12,6 +12,8 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { runCoderAgent } from '../../lib/coder-agent.ts';
+import { createCoderPolicyKernelAdapter } from '../../lib/coder-policy-kernel-adapter.ts';
+import { formatCoderPolicyEvent } from '../../lib/coder-policy.ts';
 import { runDeepReviewer } from '../../lib/deep-reviewer-agent.ts';
 import { runExplorerAgent } from '../../lib/explorer-agent.ts';
 import { buildReviewerContextBlock } from '../../lib/role-context.ts';
@@ -88,6 +90,11 @@ export function createDelegationCoordinator(
     dependencies.executionAdapters;
 
   const delegateExplorerTestHooks: DelegateExplorerTestHooks = {};
+  const logDaemonCoderPolicyEvent = (event: Parameters<typeof formatCoderPolicyEvent>[0]) => {
+    // Daemon stdout may carry protocol output; keep structured diagnostics on
+    // stderr, matching the CLI lead lane.
+    console.error(formatCoderPolicyEvent(event, 'cli_daemon'));
+  };
 
   function setDelegateExplorerTestHooks(hooks: DelegateExplorerTestHooks | null = null) {
     delegateExplorerTestHooks.beforeTerminalClaim = hooks?.beforeTerminalClaim || null;
@@ -271,6 +278,7 @@ export function createDelegationCoordinator(
   ): Promise<any> {
     const startedAt = Date.now();
     const { provider, model } = resolveRoleRouting(entry, 'coder');
+    const allowedRepo = (await resolveWorkspaceIdentity(entry.state.cwd)).repoFullName;
     const daemonStream = createDaemonProviderStream(provider, sessionId);
     const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
       ? getCliNativeToolSchemas()
@@ -286,13 +294,22 @@ export function createDelegationCoordinator(
     // for this execution's run.
     const effectiveRunId =
       typeof parentRunId === 'string' && parentRunId.trim().length > 0 ? parentRunId : makeRunId();
-    const toolExec = makeDaemonCoderToolExec({
+    const daemonToolExec = makeDaemonCoderToolExec({
       sessionId,
       entry,
       runId: effectiveRunId,
       signal,
     });
-    const evaluateAfterModel = async () => null;
+    const { toolExec, evaluateAfterModel } = createCoderPolicyKernelAdapter({
+      context: {
+        round: 0,
+        maxRounds: 30,
+        allowedRepo,
+        taskInFlight: true,
+      },
+      execute: daemonToolExec,
+      onEvent: logDaemonCoderPolicyEvent,
+    });
 
     const taskPreamble = [node.task, ...preambleExtras].filter(Boolean).join('\n\n');
 
@@ -304,7 +321,7 @@ export function createDelegationCoordinator(
         // Daemon task-graph node: a delegated implementer, not the lead.
         persona: 'coder',
         sandboxId: '',
-        allowedRepo: '',
+        allowedRepo,
         userProfile: null,
         taskPreamble,
         symbolSummary: null,
@@ -1321,13 +1338,22 @@ export function createDelegationCoordinator(
       // `approval_required` event on `childRunId` and block on a
       // `submit_approval` RPC via `buildApprovalFn` (baked into the
       // executor closure itself).
-      const toolExec = makeDaemonCoderToolExec({
+      const daemonToolExec = makeDaemonCoderToolExec({
         sessionId,
         entry,
         runId: childRunId,
         signal: abortController.signal,
       });
-      const evaluateAfterModel = async () => null;
+      const { toolExec, evaluateAfterModel } = createCoderPolicyKernelAdapter({
+        context: {
+          round: 0,
+          maxRounds: 30,
+          allowedRepo,
+          taskInFlight: true,
+        },
+        execute: daemonToolExec,
+        onEvent: logDaemonCoderPolicyEvent,
+      });
 
       let outcome;
       let runError = null;

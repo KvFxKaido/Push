@@ -51,6 +51,11 @@ import {
   type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
+import {
+  createCoderPolicy,
+  formatCoderPolicyEvent,
+  resolveCoderCompletionGuard,
+} from '@push/lib/coder-policy';
 import type {
   AcceptanceCriterion,
   AgentRole,
@@ -68,6 +73,7 @@ import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { Capability } from '@push/lib/capabilities';
+import { classifyTurnIntent } from '@push/lib/turn-intent';
 import type { AttachmentData, ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
 import {
@@ -812,6 +818,14 @@ export class CoderJob {
     let ownerToken = seed?.ownerToken ?? input.ownerToken;
     let resumeState: CoderCheckpointState<ChatCard> | undefined = seed?.resumeState;
     let resumesUsed = 0;
+    const taskInFlight =
+      input.envelope.leadMode === true ? classifyTurnIntent(input.envelope.task) === 'task' : true;
+    // Policy counters (drift, trailing intent, mutation backpressure) belong to
+    // the logical job, not one sandbox attempt. Services are rebuilt after a
+    // sandbox restore, so keep the shared policy instance outside that loop.
+    const policy = createCoderPolicy({
+      onEvent: (event) => console.log(formatCoderPolicyEvent(event, 'worker_background')),
+    });
 
     // Fail fast on a sandbox that died between session activity and job
     // dispatch. Without this probe the first sign of trouble is the kernel's
@@ -870,6 +884,8 @@ export class CoderJob {
         allowedRepo: input.repoFullName,
         activeProvider: input.provider,
         activeModel: input.model,
+        taskInFlight,
+        completionGuard: resolveCoderCompletionGuard(taskInFlight),
         signal,
       };
       const services = buildCoderJobServices({
@@ -882,6 +898,8 @@ export class CoderJob {
         activeProvider: input.provider,
         activeModel: input.model,
         sandboxId,
+        policy,
+        policyEventHost: 'worker_background',
         // NOTE: memory tools are intentionally NOT wired for background jobs.
         // `getDefaultMemoryStore()` is an in-memory singleton populated within a
         // runtime; the browser session accumulates records and the delegated

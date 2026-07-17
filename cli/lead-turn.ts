@@ -47,6 +47,15 @@ import type {
 } from '../lib/provider-contract.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { decideStreamFailover } from '../lib/provider-failover.ts';
+import {
+  createCoderPolicy,
+  formatCoderPolicyEvent,
+  resolveCoderCompletionGuard,
+  type CoderPolicyContext,
+  type CoderPolicyAfterResult,
+} from '../lib/coder-policy.ts';
+import { classifyTurnIntent } from '../lib/turn-intent.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
 import {
   createProviderStream,
@@ -437,11 +446,12 @@ export async function runLeadKernelTurn(
   // ride the kernel's `projectInstructions` slot while the snapshot and the
   // persisted `[MEMORY]` block (`save_memory` entries) ride the task
   // preamble.
-  const [snapshot, instructions, memory, githubProtocol] = await Promise.all([
+  const [snapshot, instructions, memory, githubProtocol, workspaceIdentity] = await Promise.all([
     buildWorkspaceSnapshot(state.cwd).catch((): string => ''),
     loadProjectInstructions(state.cwd).catch((): null => null),
     loadMemory(state.cwd).catch((): null => null),
     getGitHubToolProtocolAsync().catch((): string => ''),
+    resolveWorkspaceIdentity(state.cwd),
   ]);
 
   // Pre-turn LLM compaction (§14, CLI parity): when the durable history has
@@ -461,6 +471,19 @@ export async function runLeadKernelTurn(
     memory,
   );
   const leadModelId = state.model || providerConfig.defaultModel;
+  const coderPolicy = createCoderPolicy({
+    // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
+    // must stay on stderr so machine-readable streams remain pure.
+    onEvent: (event) => console.error(formatCoderPolicyEvent(event, 'cli_lead')),
+  });
+  const taskInFlight = classifyTurnIntent(userText) === 'task';
+  const coderPolicyContext: CoderPolicyContext = {
+    round: 0,
+    maxRounds,
+    allowedRepo: workspaceIdentity.repoFullName,
+    taskInFlight,
+    completionGuard: resolveCoderCompletionGuard(taskInFlight),
+  };
   // Explorer fan-out honors the disabledTools policy end-to-end (Codex P2 on
   // #1370): when `delegate_explorer` is disabled, the arc is neither
   // advertised (protocol block, native schema, detector bucket) nor
@@ -620,6 +643,31 @@ export async function runLeadKernelTurn(
 
   // Same executor + policy surface as the engine loop, with the actual role.
   const defaultCliHookRegistry = getDefaultCliHookRegistry();
+  function policyPostFrom(
+    result: CoderPolicyAfterResult,
+  ): { kind: 'inject'; content: string } | { kind: 'halt'; summary: string } | undefined {
+    if (!result) return undefined;
+    return result.action === 'inject'
+      ? { kind: 'inject', content: result.content }
+      : { kind: 'halt', summary: result.summary };
+  }
+
+  async function applyAfterToolPolicy(
+    result: CoderToolExecResult,
+    rawCall: CliToolCall,
+  ): Promise<CoderToolExecResult> {
+    if (result.kind !== 'executed') return result;
+    const policyResult = await coderPolicy.evaluateAfterTool(
+      rawCall.tool,
+      rawCall.args ?? {},
+      result.resultText,
+      Boolean(result.errorType),
+      coderPolicyContext,
+    );
+    const policyPost = policyPostFrom(policyResult);
+    return policyPost ? { ...result, policyPost } : result;
+  }
+
   const toolExec = async (
     toolCall: CliKernelCall,
     execCtx: CoderToolExecContext,
@@ -630,6 +678,28 @@ export async function runLeadKernelTurn(
       toolCall && typeof toolCall === 'object' && toolCall.call
         ? toolCall.call
         : (toolCall as unknown as CliToolCall);
+    coderPolicyContext.round = execCtx.round;
+    coderPolicyContext.phase = execCtx.phase;
+    const beforeTool = await coderPolicy.evaluateBeforeTool(
+      rawCall.tool,
+      rawCall.args ?? {},
+      coderPolicyContext,
+    );
+    if (beforeTool) {
+      // The kernel always emits the paired completion event. Synthesize the
+      // start before returning the denial so TUI transcript state never sees a
+      // completion for an entry it was not told to create.
+      const startPayload = {
+        round: execCtx.round,
+        executionId: execCtx.executionId,
+        toolName: rawCall.tool,
+        toolSource: 'coder',
+        args: rawCall.args,
+      };
+      void persistEvent('tool.execution_start', startPayload);
+      dispatchEvent('tool.execution_start', startPayload);
+      return { kind: 'denied', reason: beforeTool.reason };
+    }
     // Explorer-only delegation arc (§10): the lead offloads read-only
     // investigation but does its own coding — `delegate_explorer` is the
     // only delegation tool the lead executes (there is no `delegate_coder`
@@ -665,7 +735,10 @@ export async function runLeadKernelTurn(
           dispatchEvent(type, payload);
         },
       });
-      return { kind: 'executed', resultText, ...(card ? { card } : {}) };
+      return applyAfterToolPolicy(
+        { kind: 'executed', resultText, ...(card ? { card } : {}) },
+        rawCall,
+      );
     }
     // Synthesize the start event the engine loop emits before each tool run
     // (Codex P2, PR #904): the TUI creates the transcript tool entry and its
@@ -739,22 +812,28 @@ export async function runLeadKernelTurn(
         }
       }
       if (result && result.ok === true) {
-        return {
-          kind: 'executed',
-          resultText,
-          ...(editDiff ? { editDiff } : {}),
-          ...(card ? { card } : {}),
-        };
+        return applyAfterToolPolicy(
+          {
+            kind: 'executed',
+            resultText,
+            ...(editDiff ? { editDiff } : {}),
+            ...(card ? { card } : {}),
+          },
+          rawCall,
+        );
       }
       // Tool ran but reported failure — feed the structured-error code into
       // the kernel's mutation-failure tracker via `errorType`.
-      return {
-        kind: 'executed',
-        resultText,
-        errorType: result?.structuredError?.code,
-        ...(editDiff ? { editDiff } : {}),
-        ...(card ? { card } : {}),
-      };
+      return applyAfterToolPolicy(
+        {
+          kind: 'executed',
+          resultText,
+          errorType: result?.structuredError?.code,
+          ...(editDiff ? { editDiff } : {}),
+          ...(card ? { card } : {}),
+        },
+        rawCall,
+      );
     } catch (err) {
       // Approval timeout, abort during exec, catastrophic I/O. Surface as
       // `denied` so the kernel reacts instead of spinning on the same call.
@@ -850,7 +929,23 @@ export async function runLeadKernelTurn(
         instructionFilename: instructions?.file || undefined,
         verificationPolicyBlock: null,
         approvalModeBlock: null,
-        evaluateAfterModel: async () => null,
+        evaluateAfterModel: async (response, round) => {
+          coderPolicyContext.round = round;
+          const policyResult = await coderPolicy.evaluateAfterModel(
+            response,
+            [],
+            coderPolicyContext,
+          );
+          if (!policyResult) return null;
+          if (policyResult.action === 'halt') {
+            return { action: 'halt', summary: policyResult.summary };
+          }
+          return {
+            action: 'inject',
+            content: policyResult.content,
+            forceToolChoiceNextRound: policyResult.code === 'announced_no_action',
+          };
+        },
         harnessMaxRounds: maxRounds,
         // Adaptive harness: re-derive the effective cap each round from
         // in-session health signals (malformed calls, edit errors) — grow on

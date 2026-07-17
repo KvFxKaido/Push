@@ -1771,8 +1771,9 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     // schemas are actually attached (nothing to force otherwise). Cleared
     // immediately so a round whose response doesn't re-trigger the nudge
     // doesn't keep forcing tool_choice forever.
-    const applyForcedToolChoice =
-      forceToolChoiceNextRound && nativeToolSchemas && nativeToolSchemas.length > 0;
+    const applyForcedToolChoice: boolean = Boolean(
+      forceToolChoiceNextRound && nativeToolSchemas && nativeToolSchemas.length > 0,
+    );
     if (applyForcedToolChoice) {
       // Symmetric structured log — greppable confirmation that a prior
       // announced-no-action nudge actually escalated to tool_choice:
@@ -1789,6 +1790,39 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     forceToolChoiceNextRound = false;
 
     // Stream Coder response via the active provider, with a per-round timeout
+    const streamResult: Awaited<ReturnType<typeof iteratePushStreamText>> =
+      await iteratePushStreamText(
+        cancellableStream,
+        {
+          provider,
+          model: coderModelId ?? '',
+          messages,
+          systemPromptOverride: systemPrompt,
+          hasSandbox: true,
+          // Conversational lead turns thread digest inputs so the stream's
+          // `toLLMMessages` runs the single context transform over the raw seed.
+          // Undefined elsewhere (a single task message needs no digest).
+          ...(sessionDigestRecords ? { sessionDigestRecords } : {}),
+          ...(priorSessionDigest ? { priorSessionDigest } : {}),
+          ...(onSessionDigestEmitted ? { onSessionDigestEmitted } : {}),
+          ...(nativeToolSchemas && nativeToolSchemas.length > 0
+            ? { tools: nativeToolSchemas }
+            : {}),
+          ...(applyForcedToolChoice ? { toolChoice: 'required' as const } : {}),
+        },
+        CODER_ROUND_TIMEOUT_MS,
+        `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
+        CODER_ROUND_WALL_CLOCK_MS,
+        `Coder round ${rounds} exceeded ${CODER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
+        // Heavy reasoners (glm-5.x) legitimately stream reasoning for >60s before
+        // the first text token on large-transcript rounds — without this opt-in
+        // the activity timer (which only resets on `text_delta`) kills an
+        // actively-thinking round, surfaced as "model may be unresponsive" even
+        // though it's making progress. Thinking IS progress here; the wall-clock
+        // cap above bounds a model that reasons forever. Mirrors deep-reviewer
+        // (PR #907).
+        { reasoningResetsActivityTimer: true, firstTokenGraceMs: CODER_FIRST_TOKEN_GRACE_MS },
+      );
     const {
       error: streamError,
       text: rawModelText,
@@ -1796,36 +1830,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       reasoningBlocks,
       nativeToolCalls,
       usage: roundUsage,
-    } = await iteratePushStreamText(
-      cancellableStream,
-      {
-        provider,
-        model: coderModelId ?? '',
-        messages,
-        systemPromptOverride: systemPrompt,
-        hasSandbox: true,
-        // Conversational lead turns thread digest inputs so the stream's
-        // `toLLMMessages` runs the single context transform over the raw seed.
-        // Undefined elsewhere (a single task message needs no digest).
-        ...(sessionDigestRecords ? { sessionDigestRecords } : {}),
-        ...(priorSessionDigest ? { priorSessionDigest } : {}),
-        ...(onSessionDigestEmitted ? { onSessionDigestEmitted } : {}),
-        ...(nativeToolSchemas && nativeToolSchemas.length > 0 ? { tools: nativeToolSchemas } : {}),
-        ...(applyForcedToolChoice ? { toolChoice: 'required' as const } : {}),
-      },
-      CODER_ROUND_TIMEOUT_MS,
-      `Coder round ${rounds} timed out after ${CODER_ROUND_TIMEOUT_MS / 1000}s — model may be unresponsive.`,
-      CODER_ROUND_WALL_CLOCK_MS,
-      `Coder round ${rounds} exceeded ${CODER_ROUND_WALL_CLOCK_MS / 1000}s wall-clock cap — model is verbose but unproductive.`,
-      // Heavy reasoners (glm-5.x) legitimately stream reasoning for >60s before
-      // the first text token on large-transcript rounds — without this opt-in
-      // the activity timer (which only resets on `text_delta`) kills an
-      // actively-thinking round, surfaced as "model may be unresponsive" even
-      // though it's making progress. Thinking IS progress here; the wall-clock
-      // cap above bounds a model that reasons forever. Mirrors deep-reviewer
-      // (PR #907).
-      { reasoningResetsActivityTimer: true, firstTokenGraceMs: CODER_FIRST_TOKEN_GRACE_MS },
-    );
+    } = streamResult;
 
     if (streamError) {
       if (callbacks.signal?.aborted) {
@@ -2001,8 +2006,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       continue;
     }
 
-    // --- Turn policy: evaluate on every response ---
-    const policyResult = await evaluateAfterModel(accumulated, round);
+    // --- Turn policy: evaluate text-only responses ---
+    // Native calls are already concrete action. Text policy cannot see their
+    // payload, so evaluating a prose preface in isolation can falsely classify
+    // "I'll read X now" as an announced action with no call and skip the call
+    // that is waiting below. Text-embedded calls remain visible to the policy.
+    const policyResult: CoderAfterModelResult =
+      nativeToolCalls.length > 0 ? null : await evaluateAfterModel(accumulated, round);
     if (policyResult) {
       if (policyResult.action === 'halt') {
         // Explicit early receipt: an after-model policy halt is a defensive stop,

@@ -10,6 +10,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { CoderAgentOptions } from '@push/lib/coder-agent';
 
 const mocks = vi.hoisted(() => ({
   runCoderAgent: vi.fn(),
@@ -250,6 +251,18 @@ describe('runAdoptedLoop', () => {
       expect.objectContaining({ persona: 'lead', leadToolScope: 'sandbox' }),
       expect.anything(),
     );
+  });
+
+  it('keeps completion policy conversational when adopting a conversational lead turn', async () => {
+    const state = makeHostState(makeRecord());
+    mocks.runCoderAgent.mockImplementation(async (options: CoderAgentOptions<never>) => {
+      expect(await options.evaluateAfterModel('Nothing changed.', 5)).toBeNull();
+      return { summary: 'Nothing changed.', cards: [], rounds: 1, checkpoints: 0 };
+    });
+
+    await runAdoptedLoop(loopArgs(state, makeCheckpoint({ userGoal: 'What changed?' })));
+
+    expect(state.record?.state).toBe('ended');
   });
 
   it('stops without writing when ownership was lost (reclaim)', async () => {
