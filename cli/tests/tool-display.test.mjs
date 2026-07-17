@@ -29,20 +29,21 @@ describe('tool-display vocabulary', () => {
     assert.equal(formatToolTitle('search_files', 'TODO'), 'Searched TODO');
   });
 
-  it('never lets a verb swallow its own noun', () => {
-    // "Searched a search" shipped and rendered in the TUI. The noun does double
-    // duty — it must read in the grouped form ("Searched 3 searches", where
-    // 'search' is correct) and in the no-target form, where the same word is
-    // nonsense. Asserted over the WHOLE table, not the entries that happened to
-    // be wrong: this is a property of the verb/noun pair, so a new entry must
-    // not be able to reintroduce it.
+  it('never lets a verb swallow its own noun — on EITHER rendering path', () => {
+    // "Searched a search" shipped, and after it was fixed in `formatToolTitle`
+    // the group summary still rendered "Searched 1 search" — because the first
+    // version of THIS test iterated the whole table and called only one of the
+    // two functions that consume it. Exhaustive over entries, blind to half the
+    // call paths. Both are asserted now, and both go through `formatToolTitle`.
     for (const name of Object.keys(TOOL_VERB_NOUN)) {
-      const title = formatToolTitle(name);
       const { verb, noun } = getToolVerbNoun(name);
-      assert.ok(
-        !new RegExp(`^${verb} an? ${noun}$`, 'i').test(title) ||
-          noun.toLowerCase() !== verb.toLowerCase().replace(/ed$|d$/, ''),
-        `"${title}" pairs the verb with its own noun (${name})`,
+      if (noun.toLowerCase() !== verb.toLowerCase().replace(/ed$|d$/, '')) continue;
+      assert.equal(formatToolTitle(name), verb, `title: ${name}`);
+      // A singleton bucket in a mixed group renders through the same helper.
+      assert.equal(
+        formatToolGroupSummary([{ toolName: name }, { toolName: 'read_file' }]),
+        `${verb}, Read a file`,
+        `group summary: ${name}`,
       );
     }
     assert.equal(formatToolTitle('search_files'), 'Searched');
@@ -72,6 +73,7 @@ describe('tool-display vocabulary', () => {
   });
 
   it('summarizes homogeneous and mixed tool groups in first-seen order', () => {
+    // Aliases fold into one bucket: read_file + sandbox_read_file are one verb.
     assert.equal(
       formatToolGroupSummary([
         { toolName: 'read_file', target: 'a.ts' },
@@ -79,13 +81,17 @@ describe('tool-display vocabulary', () => {
       ]),
       'Read 2 files',
     );
+    // Was 'Read 2 files, Ran 1 command'. A bucket of one now renders through
+    // `formatToolTitle` rather than being counted — "1 command" is a count of
+    // one, which summarizes nothing, and with a target present it actively
+    // discarded it ("Ran 1 command" for a known "pnpm test").
     assert.equal(
       formatToolGroupSummary([
         { toolName: 'read_file' },
         { toolName: 'sandbox_exec' },
         { toolName: 'read_file' },
       ]),
-      'Read 2 files, Ran 1 command',
+      'Read 2 files, Ran a command',
     );
   });
 
@@ -156,5 +162,54 @@ describe('tool targets — the salient argument, not the first one that matches'
     assert.equal(title('read_file', { path: '.kilo/package.json' }), 'Read .kilo/package.json');
     assert.equal(title('write_file', { path: 'src/a.ts' }), 'Wrote src/a.ts');
     assert.equal(title('git_commit', { message: 'feat: thing' }), 'Committed feat: thing');
+  });
+});
+
+describe('tool group summary — a count of one is not a summary', () => {
+  it('renders a singleton bucket concretely instead of counting it', () => {
+    // The row from a real transcript, which read
+    // "Listed 1 directory, Read 1 file, Searched 1 search" — three counts of
+    // one, each discarding a target the group was already holding.
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'list_dir', target: '.kilo' },
+        { toolName: 'read_file', target: '.kilo/package.json' },
+        { toolName: 'search_files', target: 'gateway' },
+      ]),
+      'Listed .kilo, Read .kilo/package.json, Searched gateway',
+    );
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'sandbox_exec', target: 'pnpm test' },
+        { toolName: 'list_dir', target: 'src' },
+      ]),
+      'Ran pnpm test, Listed src',
+    );
+  });
+
+  it('still counts a bucket that actually aggregates, and mixes both forms', () => {
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'read_file', target: 'a.ts' },
+        { toolName: 'read_file', target: 'b.ts' },
+      ]),
+      'Read 2 files',
+    );
+    // Counted where it aggregates, concrete where it doesn't — in one row.
+    assert.equal(
+      formatToolGroupSummary([
+        { toolName: 'read_file', target: 'a.ts' },
+        { toolName: 'read_file', target: 'b.ts' },
+        { toolName: 'sandbox_exec', target: 'pnpm test' },
+      ]),
+      'Read 2 files, Ran pnpm test',
+    );
+  });
+
+  it('falls back to the noun when a singleton bucket has no target', () => {
+    assert.equal(
+      formatToolGroupSummary([{ toolName: 'read_file' }, { toolName: 'sandbox_exec' }]),
+      'Read a file, Ran a command',
+    );
   });
 });

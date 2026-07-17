@@ -2065,11 +2065,15 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const instance = await handle;
     await sleep(120);
 
-    assert.match(stdout.bytes, /Read 2 files, Ran 1 command/);
+    // Rendered row: counted where the bucket aggregates, concrete where it
+    // does not. Was 'Read 2 files, Ran 1 command' — a count of one, hiding the
+    // command the fixture already knew.
+    assert.match(stdout.bytes, /Read 2 files, Ran pnpm test/);
     assert.match(stdout.bytes, /Read broken\.ts/);
+    // Collapsing compresses REPETITION: the two reads aggregate, so their paths
+    // stay folded until expanded.
     assert.doesNotMatch(stdout.bytes, /src\/a\.ts/);
     assert.doesNotMatch(stdout.bytes, /src\/b\.ts/);
-    assert.doesNotMatch(stdout.bytes, /pnpm test/);
 
     instance.unmount();
     await lifecycle;

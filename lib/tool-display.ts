@@ -188,10 +188,22 @@ export function formatToolTitle(toolName: string, target?: string | null): strin
 }
 
 /**
- * Compact summary for a consecutive group of settled tool calls. A single
- * call keeps its concrete target; batches aggregate by resolved verb+noun in
- * first-seen order so aliases combine and mixed work reads
- * "Read 3 files, Ran 1 command".
+ * Compact summary for a consecutive group of settled tool calls. Buckets by
+ * resolved verb+noun in first-seen order, so aliases combine and mixed work
+ * reads "Read 3 files, Ran pnpm test".
+ *
+ * A bucket holding exactly ONE call renders that call's concrete target, via
+ * the same `formatToolTitle` a lone row uses; only a bucket that actually
+ * aggregates falls back to a count. Two reasons, and the second is the one that
+ * bit:
+ *
+ *  1. The target is information already in hand. "Ran 1 command" and
+ *     "Listed 1 directory" spend a row saying less than "Ran pnpm test" and
+ *     "Listed .kilo" — a count of one is not a summary of anything.
+ *  2. `${verb} 1 ${noun}` reintroduced the verb-eating-its-own-noun bug that
+ *     `formatToolTitle` guards: a mixed group rendered "Searched 1 search".
+ *     Routing singletons through the same helper means the guard lives in one
+ *     place instead of being restated (and forgotten) here.
  */
 export function formatToolGroupSummary(calls: readonly ToolDisplayCall[]): string {
   if (calls.length === 0) return '';
@@ -200,17 +212,19 @@ export function formatToolGroupSummary(calls: readonly ToolDisplayCall[]): strin
     return call ? formatToolTitle(call.toolName, call.target) : '';
   }
 
-  const counts = new Map<string, ToolVerbNoun & { count: number }>();
+  const counts = new Map<string, ToolVerbNoun & { calls: ToolDisplayCall[] }>();
   for (const call of calls) {
     const { noun, verb } = getToolVerbNoun(call.toolName);
     const key = JSON.stringify([verb, noun]);
     const current = counts.get(key);
-    counts.set(key, { count: (current?.count ?? 0) + 1, noun, verb });
+    counts.set(key, { calls: [...(current?.calls ?? []), call], noun, verb });
   }
 
   return [...counts]
-    .map(([, { count, noun, verb }]) => {
-      return `${verb} ${count} ${count === 1 ? noun : pluralNoun(noun)}`;
+    .map(([, { calls: bucket, noun, verb }]) => {
+      const only = bucket.length === 1 ? bucket[0] : undefined;
+      if (only) return formatToolTitle(only.toolName, only.target);
+      return `${verb} ${bucket.length} ${pluralNoun(noun)}`;
     })
     .join(', ');
 }

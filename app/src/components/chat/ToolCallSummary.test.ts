@@ -173,9 +173,29 @@ describe('buildSummaryLine', () => {
       { callMsg: toolCallMsg('3'), resultMsg: toolResultMsg('3', 'read') },
     ];
     const line = buildSummaryLine(items);
-    expect(line).toContain('Ran 1 command');
+    // Was 'Ran 1 command'. A bucket holding one call renders through
+    // `formatToolTitle` rather than being counted: collapsing exists to compress
+    // REPETITION, and a count of one compresses nothing. This fixture sets no
+    // target, so the exec falls back to the article form; with a target it reads
+    // concretely — see the next case, which is the shape production actually
+    // hits (`buildSummaryLine` passes `toolMeta.target`).
+    expect(line).toContain('Ran a command');
     expect(line).toContain('Read 2 files');
     expect(line).toContain(',');
+  });
+
+  it('names a lone tool in a mixed group instead of counting it', () => {
+    // The web reaches the same shared formatter as the TUI (lib/tool-display),
+    // and passes real targets — so the summary should say what ran, not that
+    // one thing ran.
+    const exec = toolCallMsg('1');
+    exec.toolMeta = { ...exec.toolMeta!, target: 'pnpm test' };
+    const items: ToolCallPair[] = [
+      { callMsg: exec, resultMsg: toolResultMsg('1', 'exec') },
+      { callMsg: toolCallMsg('2'), resultMsg: toolResultMsg('2', 'read') },
+      { callMsg: toolCallMsg('3'), resultMsg: toolResultMsg('3', 'read') },
+    ];
+    expect(buildSummaryLine(items)).toBe('Ran pnpm test, Read 2 files');
   });
 });
 
