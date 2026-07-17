@@ -178,6 +178,8 @@ export interface AuditorEvaluationOptions {
    * lead "the Coder". Defaults off (delegated framing).
    */
   leadMode?: boolean;
+  /** Compact execution-ledger context produced by the runtime, not model prose. */
+  toolLedgerContext?: string;
   /** See `AuditorRunOptions.supportsStructuredOutput`. */
   supportsStructuredOutput?: boolean;
 }
@@ -566,6 +568,7 @@ You receive:
 2. ${Subject}'s final summary of what it did
 3. ${Subject}'s working memory (plan, completed phases, errors, files touched)
 4. A diff of sandbox changes (if available)
+5. The runtime tool ledger (accepted/rejected calls and recorded outcomes)
 
 You MUST respond with ONLY a valid JSON object. No other text.
 
@@ -649,6 +652,10 @@ export async function runAuditorEvaluation(
     sections.push(
       `[WORKING MEMORY]\n${formatCoderState(workingMemory, options?.coderRounds || 0)}\n[/WORKING MEMORY]`,
     );
+  }
+
+  if (options.toolLedgerContext) {
+    sections.push(`[TOOL LEDGER]\n${options.toolLedgerContext}\n[/TOOL LEDGER]`);
   }
 
   if (options?.coderRounds !== undefined && options?.coderMaxRounds !== undefined) {

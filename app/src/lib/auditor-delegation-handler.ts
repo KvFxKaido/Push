@@ -71,6 +71,9 @@ import { createId } from '@/hooks/chat-persistence';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { VerificationPolicy } from '@/lib/verification-policy';
 import type { CoderAuditorInput } from '@/lib/coder-delegation-handler';
+import { formatToolLedgerContext } from '@push/lib/tool-ledger';
+import { createAuditorEvaluationIntervention } from '@push/lib/auditor-intervention';
+import type { RuntimeIntervention } from '@push/lib/runtime-intervention';
 import type {
   AgentStatus,
   AgentStatusSource,
@@ -125,6 +128,7 @@ export interface HandleCoderAuditorInput {
 
 export interface AuditorHandlerResult {
   evalResult: EvaluationResult | null;
+  runtimeIntervention: RuntimeIntervention | null;
   /**
    * Pre-formatted Auditor-summary line to push onto the hook's
    * `summaries` array. Null when `evalResult` is null (the hook
@@ -290,6 +294,7 @@ export async function handleCoderAuditor(
       });
       return {
         evalResult: deterministicResult,
+        runtimeIntervention: createAuditorEvaluationIntervention(deterministicResult),
         auditorSummaryLine: formatAuditorSummaryLine(deterministicResult),
       };
     }
@@ -345,6 +350,7 @@ export async function handleCoderAuditor(
               ctx.branchInfoRef.current?.currentBranch,
             ),
             leadMode: auditorInput.leadMode,
+            toolLedgerContext: formatToolLedgerContext(auditorInput.toolLedger),
           },
         );
         if (result) {
@@ -376,6 +382,7 @@ export async function handleCoderAuditor(
       });
       return {
         evalResult,
+        runtimeIntervention: createAuditorEvaluationIntervention(evalResult),
         auditorSummaryLine: formatAuditorSummaryLine(evalResult),
       };
     }
@@ -394,7 +401,7 @@ export async function handleCoderAuditor(
       agent: 'auditor',
       error: 'Auditor returned no evaluation.',
     });
-    return { evalResult: null, auditorSummaryLine: null };
+    return { evalResult: null, runtimeIntervention: null, auditorSummaryLine: null };
   } catch {
     ctx.updateVerificationStateForChat(chatId, (state) =>
       recordVerificationGateResult(state, 'auditor', 'inconclusive', 'Auditor evaluation failed.'),
@@ -406,7 +413,7 @@ export async function handleCoderAuditor(
       error: 'Evaluation failed.',
     });
     // Fail-open: if evaluation fails, Coder result stands as-is.
-    return { evalResult: null, auditorSummaryLine: null };
+    return { evalResult: null, runtimeIntervention: null, auditorSummaryLine: null };
   }
 }
 

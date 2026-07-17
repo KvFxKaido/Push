@@ -50,6 +50,7 @@ import { createProviderStream } from './provider.js';
 import type { ProviderConfig } from './provider.js';
 import { rewriteMessagesLog } from './session-store.js';
 import type { SessionState } from './session-store.js';
+import { seedUserGoalFile, type SeedUserGoalInputs } from './user-goal-file.js';
 
 function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, event, ...ctx }));
@@ -81,6 +82,11 @@ export interface MaybeCompactLeadDeps {
   /** Injectable workspace-scope resolver for span retention (tests pass a
    *  fake). Defaults to `resolveWorkspaceIdentity` over the session cwd. */
   resolveScope?: (cwd: string) => Promise<{ repoFullName?: string; branch?: string }>;
+  /** Injectable one-time goal-file seed. The real writer never overwrites. */
+  seedGoalFile?: (
+    cwd: string,
+    inputs: SeedUserGoalInputs,
+  ) => Promise<{ wrote: boolean; path: string }>;
 }
 
 /**
@@ -153,6 +159,19 @@ export async function maybeCompactLeadHistory(
       spanMessages: spanMsgs.length,
     });
     return false;
+  }
+
+  const firstUserTurn = messages.find(
+    (message) =>
+      message.role === 'user' &&
+      typeof message.content === 'string' &&
+      message.content.trim().length > 0 &&
+      !isToolResultMessage(message) &&
+      !isHandoffBlock(message.content),
+  )?.content;
+  if (typeof firstUserTurn === 'string') {
+    const seedGoal = deps.seedGoalFile ?? seedUserGoalFile;
+    await seedGoal(state.cwd, { firstUserTurn, workingGoalSeed: summary });
   }
 
   // Retain the raw span in the verbatim log BEFORE the destructive collapse —

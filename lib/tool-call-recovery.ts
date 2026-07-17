@@ -59,6 +59,24 @@ export interface ToolCallRecoveryState {
  */
 export const MAX_REASONING_TOOL_CALL_NUDGES = 2;
 
+export function createReasoningToolCallIntervention(
+  toolName?: string,
+): RuntimeIntervention<{ readonly toolName?: string }> {
+  return createSteerIntervention({
+    point: 'after_model',
+    source: 'tool_call_recovery',
+    reason: 'tool_call_in_reasoning',
+    message: 'A reasoning-channel tool call was rejected because that channel is not executable.',
+    guidance: [
+      '[POLICY: TOOL_CALL_IN_REASONING]',
+      'You emitted a tool call inside your reasoning/thinking channel. The runtime only executes tool calls placed in your response content, so nothing ran and no results came back — any answer you give now is ungrounded.',
+      'Re-emit the tool call as a JSON block in your response content now. If you did not actually intend to call a tool, answer directly from information you already have.',
+      '[/POLICY]',
+    ].join('\n'),
+    context: { ...(toolName ? { toolName } : {}) },
+  });
+}
+
 /**
  * Salvage for a final answer stranded in the reasoning channel.
  *

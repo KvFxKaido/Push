@@ -20,6 +20,7 @@
 
 import type { GitBackend, GitWriteResult } from './backend.js';
 import type { GitStatusInfo } from './status.js';
+import type { RuntimeIntervention } from '../runtime-intervention.js';
 
 export interface PreCommitVerdict {
   ok: boolean;
@@ -43,6 +44,7 @@ export interface PrePushVerdict {
    * into the verdict bucket).
    */
   retryable?: boolean;
+  runtimeIntervention?: RuntimeIntervention;
 }
 
 /** Options accepted by a push — shared by `PushGit.push` and the pre-push gates. */
@@ -195,6 +197,9 @@ export class PushGit {
             // retryable failure (e.g. Auditor unreachable) apart from a terminal
             // policy block (secret found, protected branch).
             ...(verdict.retryable ? { retryable: true } : {}),
+            ...(verdict.runtimeIntervention
+              ? { runtimeIntervention: verdict.runtimeIntervention }
+              : {}),
           };
         }
       }

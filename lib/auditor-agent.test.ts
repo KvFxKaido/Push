@@ -423,14 +423,20 @@ describe('runAuditorEvaluation (PushStream consumer)', () => {
         provider: 'openrouter',
         modelId: 'test-model',
         stream,
+        toolLedgerContext: 'Calls: 1 total; 1 completed.\n- read_file completed',
       },
       () => {},
     );
 
     expect(result.verdict).toBe('complete');
     expect(result.confidence).toBe('high');
-    const req = capturedRequest.current as { systemPromptOverride?: string };
+    const req = capturedRequest.current as {
+      systemPromptOverride?: string;
+      messages?: Array<{ content?: string }>;
+    };
     expect(req.systemPromptOverride).toContain('Evaluator');
+    expect(req.messages?.[0]?.content).toContain('[TOOL LEDGER]');
+    expect(req.messages?.[0]?.content).toContain('read_file completed');
   });
 
   it('attaches the evaluation response_format when supportsStructuredOutput is set', async () => {

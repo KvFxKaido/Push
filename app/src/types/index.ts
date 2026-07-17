@@ -1054,6 +1054,7 @@ export interface CoderResult {
   cards: ChatCard[];
   rounds: number;
   checkpoints: number;
+  toolLedger: import('@push/lib/tool-ledger').ToolLedgerSnapshot;
   criteriaResults?: CriterionResult[];
   /** Post-run capability audit: declared vs actually-used capabilities. */
   capabilitySnapshot?: import('../lib/capabilities').CapabilityLedgerSnapshot;

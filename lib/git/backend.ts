@@ -23,6 +23,7 @@
 
 import { withRepoLock } from './repo-lock.js';
 import { parseGitStatusInfo, type GitStatusInfo } from './status.js';
+import type { RuntimeIntervention } from '../runtime-intervention.js';
 
 export interface GitExecResult {
   stdout: string;
@@ -71,6 +72,8 @@ export interface GitWriteResult extends GitExecResult {
    * verdict bucket (CLAUDE.md).
    */
   retryable?: boolean;
+  /** Typed runtime decision that denied the write, when the gate supplies one. */
+  runtimeIntervention?: RuntimeIntervention;
 }
 
 /**

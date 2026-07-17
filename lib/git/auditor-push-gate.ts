@@ -35,6 +35,7 @@
  */
 
 import type { PrePushGate, PushOptions } from './push-git.js';
+import { createAuditorDeliveryBlock } from '../auditor-intervention.js';
 
 type LogLevel = 'info' | 'warn' | 'error';
 type LogFn = (level: LogLevel, event: string, ctx: Record<string, unknown>) => void;
@@ -111,12 +112,24 @@ export function makeAuditorPrePushGate(opts: AuditorPrePushGateOptions): PrePush
         ok: false,
         retryable: true,
         reason: `Auditor unavailable — could not review this push; retry. (${message})`,
+        runtimeIntervention: createAuditorDeliveryBlock({
+          reason: 'auditor_unavailable',
+          message: `Auditor unavailable — could not review this push; retry. (${message})`,
+          retryable: true,
+        }),
       };
     }
 
     if (result.verdict === 'unsafe') {
       log('warn', 'auditor_push_blocked', { summary: result.summary });
-      return { ok: false, reason: result.summary };
+      return {
+        ok: false,
+        reason: result.summary,
+        runtimeIntervention: createAuditorDeliveryBlock({
+          reason: 'auditor_unsafe',
+          message: result.summary,
+        }),
+      };
     }
 
     log('info', 'auditor_push_clean', {});

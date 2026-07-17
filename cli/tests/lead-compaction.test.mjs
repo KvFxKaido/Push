@@ -22,6 +22,7 @@ const summaryEvents = [
   { type: 'text_delta', text: 'Did A and B. Next: C.' },
   { type: 'done' },
 ];
+const noSeedGoal = async () => ({ wrote: false, path: '/tmp/goal.md' });
 
 // Build an over-budget history: a goal turn, a long middle span, and a tail.
 function bigHistory() {
@@ -50,9 +51,14 @@ describe('maybeCompactLeadHistory', () => {
     const beforeTokens = estimateContextTokens(state.messages);
     const events = [];
     const statuses = [];
+    const seeds = [];
 
     const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
       streamFactory: fakeStreamFactory(summaryEvents),
+      seedGoalFile: async (cwd, inputs) => {
+        seeds.push({ cwd, inputs });
+        return { wrote: true, path: `${cwd}/.push/goal.md` };
+      },
       onStatus: (phase) => statuses.push(phase),
       persistEvent: (type, payload) => events.push({ type, payload }),
     });
@@ -77,6 +83,9 @@ describe('maybeCompactLeadHistory', () => {
     assert.ok(evt);
     assert.equal(evt.payload.mode, 'llm_handoff');
     assert.ok(evt.payload.afterTokens < evt.payload.beforeTokens);
+    assert.equal(seeds.length, 1);
+    assert.equal(seeds[0].inputs.firstUserTurn, 'GOAL: build the thing');
+    assert.match(seeds[0].inputs.workingGoalSeed, /Did A and B/);
   });
 
   it('triggers on the eager summarizeTokens, not the patient handoffTokens (bounded-preamble guard)', async () => {
@@ -99,6 +108,7 @@ describe('maybeCompactLeadHistory', () => {
     );
     const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
       streamFactory: fakeStreamFactory(summaryEvents),
+      seedGoalFile: noSeedGoal,
       persistEvent: () => {},
     });
     assert.equal(compacted, true);
@@ -113,6 +123,7 @@ describe('maybeCompactLeadHistory', () => {
     const events = [];
     const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
       streamFactory: fakeStreamFactory(summaryEvents),
+      seedGoalFile: noSeedGoal,
       persistEvent: (type, payload) => events.push({ type, payload }),
     });
     assert.equal(compacted, false);
@@ -126,6 +137,7 @@ describe('maybeCompactLeadHistory', () => {
     const events = [];
     const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
       streamFactory: fakeStreamFactory([{ type: 'done' }]), // empty → failure
+      seedGoalFile: noSeedGoal,
       persistEvent: (type, payload) => events.push({ type, payload }),
     });
     assert.equal(compacted, false);
@@ -142,6 +154,7 @@ describe('maybeCompactLeadHistory', () => {
       const state = makeState(bigHistory());
       const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
         streamFactory: fakeStreamFactory(summaryEvents),
+        seedGoalFile: noSeedGoal,
         persistEvent: () => {},
         resolveScope: async () => ({ repoFullName: 'owner/repo', branch: 'main' }),
       });
@@ -174,6 +187,7 @@ describe('maybeCompactLeadHistory', () => {
       const state = makeState(bigHistory());
       const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
         streamFactory: fakeStreamFactory(summaryEvents),
+        seedGoalFile: noSeedGoal,
         persistEvent: () => {},
         resolveScope: async () => ({}), // injected no-scope resolver (see NOTE)
       });
