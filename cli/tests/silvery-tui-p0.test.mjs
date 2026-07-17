@@ -2745,6 +2745,97 @@ describe('silvery status verb — snapshot.activity', () => {
     await controller.dispose();
   });
 
+  // Daemon-backed turns render from the daemon mirror, not `activityRows`, so
+  // the verb must derive from the mirror too (Codex P2). Drives the REAL
+  // daemon path: `ensureReady` true → send_user_message → engine events.
+  const daemonHarness = async ({ priorRows = [] } = {}) => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = baseState();
+    let hooks;
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client: {
+              request: async (type) => {
+                if (type === 'get_session_snapshot') {
+                  return {
+                    payload: {
+                      transcript: { mirror: { rows: priorRows, liveText: '', lastSeq: 0 } },
+                    },
+                  };
+                }
+                if (type === 'send_user_message') return { payload: { runId: 'daemon-run' } };
+                return { payload: {} };
+              },
+            },
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+    return { controller, emitEngine: (event) => hooks.onEngineEvent(event) };
+  };
+
+  it('derives the tool verb from the daemon mirror on a daemon-backed turn', async () => {
+    const { controller, emitEngine } = await daemonHarness();
+    const turn = controller.submit('edit something');
+    while (!controller.getSnapshot().running) await sleep(0);
+    emitEngine({ type: 'user_message', payload: { text: 'edit something' }, seq: 1 });
+    emitEngine({
+      type: 'tool.execution_start',
+      payload: { toolName: 'edit_file', executionId: 'd1' },
+      seq: 2,
+    });
+    assert.deepEqual(
+      controller.getSnapshot().activity,
+      { kind: 'tool', toolName: 'edit_file' },
+      'daemon pending tool must drive the verb, not the mood fallback',
+    );
+    emitEngine({ type: 'run_complete', payload: {}, seq: 3 });
+    await turn;
+    assert.equal(controller.getSnapshot().activity, null, 'idle after the daemon turn');
+    await controller.dispose();
+  });
+
+  it('a pending call stranded by an earlier daemon turn cannot pin the verb', async () => {
+    // Mirror rows persist across turns (they are the transcript), and before
+    // the daemon echoes this turn's user_message there is no user row to stop
+    // the scan at — only the row floor taken at send time excludes the debris.
+    const { controller, emitEngine } = await daemonHarness({
+      priorRows: [
+        { id: 'u0', kind: 'message', role: 'user', text: 'old ask' },
+        { id: 't0', kind: 'tool', toolName: 'sandbox_exec', pending: true, text: 'sandbox_exec' },
+      ],
+    });
+    const turn = controller.submit('new ask');
+    while (!controller.getSnapshot().running) await sleep(0);
+    assert.deepEqual(
+      controller.getSnapshot().activity,
+      { kind: 'thinking' },
+      'a stranded pending row from a prior turn pinned the verb',
+    );
+    emitEngine({ type: 'run_complete', payload: {}, seq: 1 });
+    await turn;
+    await controller.dispose();
+  });
+
   it('an unsettled call from a failed turn cannot pin the verb', async () => {
     // The reason `running` gates the derivation. A turn that throws mid-call
     // leaves a pending row behind forever; the header must still go idle.

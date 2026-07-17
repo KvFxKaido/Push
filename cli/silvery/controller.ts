@@ -263,6 +263,11 @@ export async function createSilveryController(
   let activityRows: SilveryTranscriptItem[] = [];
   let optimisticUserRow: SilveryTranscriptItem | null = null;
   let optimisticDaemonInsertIndex: number | null = null;
+  /** Mirror row count at daemon-turn send time. The activity scan never looks
+   *  below it: mirror rows persist across turns, and before the daemon echoes
+   *  this turn's `user_message` there is no user row to stop at — without the
+   *  floor, a pending call stranded by an earlier failed turn pins the verb. */
+  let daemonTurnRowFloor = 0;
   let daemonMirror = createDaemonTranscriptMirror();
   let daemonHiddenBefore = 0;
   let running = false;
@@ -310,7 +315,25 @@ export async function createSilveryController(
    */
   const currentActivity = (): StatusActivity => {
     if (!running) return null;
-    for (let i = activityRows.length - 1; i >= 0; i -= 1) {
+    if (daemonStateStale) {
+      // Daemon-backed turns render from the mirror, so the verb must derive
+      // from the same rows the surface paints (Codex P2 on #1519). Unlike
+      // `activityRows`, the mirror is the whole transcript — rows persist
+      // across turns — so the scan is bounded twice: it never descends below
+      // `daemonTurnRowFloor` (rows that predate this turn's send), and it
+      // stops at a user row (the echo marks the turn start once it lands). A
+      // pending call stranded by an earlier failed turn can satisfy neither.
+      // `submit()`-cleared local rows never need this.
+      for (let i = daemonMirror.rows.length - 1; i >= daemonTurnRowFloor; i -= 1) {
+        const row = daemonMirror.rows[i];
+        if (row?.kind === 'message' && row.role === 'user') break;
+        if (row?.kind === 'tool' && row.pending && row.toolName) {
+          return { kind: 'tool', toolName: row.toolName };
+        }
+      }
+      return daemonMirror.liveText ? { kind: 'streaming' } : { kind: 'thinking' };
+    }
+    for (let i = activityRows.length - 1; i >= daemonTurnRowFloor; i -= 1) {
       const row = activityRows[i];
       if (row?.kind === 'tool' && row.pending && row.toolName) {
         return { kind: 'tool', toolName: row.toolName };
@@ -597,7 +620,7 @@ export async function createSilveryController(
         // may carry an id that does not match the completion. Mirror the
         // daemon transcript's reverse name scan so those rows still settle.
         if (idx < 0) {
-          for (let i = activityRows.length - 1; i >= 0; i -= 1) {
+          for (let i = activityRows.length - 1; i >= daemonTurnRowFloor; i -= 1) {
             const row = activityRows[i];
             if (row?.kind === 'tool' && row.pending && row.toolName === toolName) {
               idx = i;
@@ -1738,6 +1761,7 @@ export async function createSilveryController(
           daemonStateStale = true;
           await resyncDaemonTranscript('before_send');
           optimisticDaemonInsertIndex = daemonMirror.rows.length;
+          daemonTurnRowFloor = daemonMirror.rows.length;
           notify();
           const completion = new Promise<void>((resolve) => {
             resolveDaemonTurn = resolve;
