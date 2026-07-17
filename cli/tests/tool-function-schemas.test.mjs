@@ -4,7 +4,10 @@ import {
   getCliNativeToolSchemas,
   getCliReadOnlyNativeToolSchemas,
 } from '../tool-function-schemas.ts';
-import { cliProviderModelSupportsNativeToolCalling } from '../native-tool-gate.ts';
+import {
+  cliProviderModelSupportsNativeToolCalling,
+  resolveCliPushCapabilityProfile,
+} from '../native-tool-gate.ts';
 
 function byName(schemas) {
   return new Map(schemas.map((schema) => [schema.name, schema]));
@@ -79,5 +82,22 @@ describe('CLI native tool calling gate', () => {
     assert.equal(cliProviderModelSupportsNativeToolCalling('openai', 'custom-deployment'), false);
     assert.equal(cliProviderModelSupportsNativeToolCalling('openrouter', 'unknown/model'), false);
     assert.equal(cliProviderModelSupportsNativeToolCalling('google', undefined), false);
+  });
+
+  it('routes curated CLI evidence through the shared complete profile resolver', () => {
+    assert.deepEqual(resolveCliPushCapabilityProfile('anthropic', 'claude-sonnet-4-6'), {
+      toolCalling: 'native',
+      streamingTools: true,
+      multimodal: true,
+      structuredOutput: 'strict',
+      contentBlocks: true,
+      reasoningBlocks: true,
+      context: 'medium',
+    });
+    assert.equal(
+      resolveCliPushCapabilityProfile('cloudflare', '@cf/moonshotai/kimi-k2.7-code').toolCalling,
+      'json-text',
+      'an absent CLI provider allowlist is a known denial, not a web cold-cache fallback',
+    );
   });
 });

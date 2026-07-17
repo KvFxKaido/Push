@@ -1355,12 +1355,12 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsNativeToolCalling('anthropic', undefined)).toBe(false);
   });
 
-  it('web and CLI native-tool gates agree on every name-based provider (drift guard)', () => {
+  it('web and CLI metadata adapters agree on every name-based provider (drift guard)', () => {
     stubWindow();
-    // Name-based providers must decide identically across surfaces (single source
-    // of truth via `lib/native-tool-gate` + `lib/provider-models`). Capability-based
-    // providers (openrouter / ollama / nvidia) are intentionally
-    // surface-specific — models.dev on web, curated fallback on CLI — and excluded.
+    // Both surfaces now execute `lib/capability-profile.ts`; this matrix pins the
+    // remaining input-adapter contract. Capability-backed providers
+    // (openrouter / ollama / nvidia) intentionally supply different evidence —
+    // models.dev on web, curated fallback on CLI — and are excluded.
     const nameBasedCases: Array<[string, string[]]> = [
       ['anthropic', ANTHROPIC_MODELS],
       ['fireworks', FIREWORKS_MODELS],

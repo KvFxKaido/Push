@@ -232,7 +232,7 @@ export const CLOUDFLARE_MODELS: string[] = [
 
 // Full live OpenCode Zen (standard tier) catalog. Free-text entry still covers
 // anything not seeded here. Refreshed 2026-06-17 against the Zen dashboard model
-// list. Excludes the `Go`-tier models (defined in app/src/lib/zen-go.ts, not in
+// list. Excludes the `Go`-tier models (defined in lib/zen-go.ts, not in
 // this shared module) and Claude Fable 5 (intentionally not seeded).
 //
 // Ids are BARE (`gpt-5.4`, not `openai/gpt-5.4`): the Zen chat API and its

@@ -26,24 +26,17 @@ import {
   ZEN_GO_MODELS,
   ZEN_MODELS,
 } from './providers';
-import { getZenGoTransport } from './zen-go';
 import { asRecord } from './utils';
 import {
-  DEFAULT_PUSH_CAPABILITY_PROFILE,
-  type PushCapabilityProfile,
-  type PushContextTier,
-  type PushStructuredOutputMode,
-} from './capabilities';
-import { anthropicModelSupportsNativeStructuredOutput } from '@push/lib/anthropic-structured-output';
-import {
-  looksLikeOpenAIToolCallingModel,
-  OLLAMA_NATIVE_TOOL_CALLING_DENYLIST,
-} from '@push/lib/native-tool-gate';
-import {
-  providerCarriesReasoningBlocksByDefault,
-  providerConsumesContentBlocksByDefault,
-} from '@push/lib/provider-definition';
+  MIN_PUSH_CONTEXT_TOKENS,
+  resolvePushCapabilityProfile as resolveSharedPushCapabilityProfile,
+  type PushCapabilityProfileOptions,
+  type PushModelCapabilityMetadata,
+} from '@push/lib/capability-profile';
+import type { PushCapabilityProfile } from './capabilities';
 import { lookupDeclaredModelMetadata, type DeclaredModelMetadata } from '@push/lib/model-metadata';
+
+export type { PushCapabilityProfileOptions } from '@push/lib/capability-profile';
 
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
@@ -64,7 +57,7 @@ const CLOUDFLARE_CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
-export const MIN_CONTEXT_TOKENS = 64000;
+export const MIN_CONTEXT_TOKENS = MIN_PUSH_CONTEXT_TOKENS;
 // Use the shared curated list as the single source of truth for priority ordering.
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
@@ -341,11 +334,6 @@ export interface ResolvedModelCapabilities {
   contextLimit: number;
 }
 
-export interface PushCapabilityProfileOptions {
-  /** Request body contract for this route. `neutral` routes consume contentBlocks. */
-  requestWire?: 'neutral' | 'openai';
-}
-
 const EMPTY_CAPABILITIES: ResolvedModelCapabilities = {
   reasoning: false,
   toolCall: false,
@@ -452,141 +440,59 @@ export function openRouterModelSupportsReasoning(modelId: string): boolean {
   return getModelCapabilities('openrouter', modelId).reasoning;
 }
 
-/**
- * Providers whose web adapter can honor Push's neutral `ResponseFormatSpec`.
- * OpenAI-compatible endpoints serialize it as `response_format`; Anthropic
- * Messages routes serialize it as native `output_config.format` when supported
- * and fall back to the forced-tool bridge otherwise. Gemini native serializers
- * and Ollama are omitted because their structured-output support is
- * either absent or unconfirmed, so attaching one would route around the
- * prompt-only `parseStructured` fallback. `cloudflare` IS included: the
- * Workers AI binding accepts the OpenAI `response_format` shape for the models
- * whose model cards advertise structured outputs (Kimi K2.x, GLM) — but it has
- * no models.dev metadata, so its per-model gate is name-based (see
- * `cloudflareModelSupportsStructuredOutput`). Membership here only governs
- * *whether the wire can honor the constraint* — actual attachment is still
- * gated on per-model capability below, so a provider never attaches a
- * constraint its routed endpoint would silently drop.
- */
-const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
-  'openrouter',
-  'openai',
-  'xai',
-  'nvidia',
-  'fireworks',
-  'sakana',
-  'zen',
-  'cloudflare',
-  'anthropic',
-  'google',
-]);
+// These providers intentionally use their surface catalog as native-tool
+// evidence rather than trusting incomplete/free-text models.dev metadata.
+// Zen is the cautionary case for why: its default `big-pickle` is a
+// Zen-proprietary id that isn't in models.dev at all, and the `opencode`
+// block can't be verified to populate `tool_call` for the bare ids — a
+// capability gate would silently leave native FC off for the default and any
+// uncovered model. The curated catalog IS the allowlist; adding a model to
+// `lib/provider-models.ts` opts it in, keeping the gate in lockstep with
+// catalog refreshes.
+const WEB_CURATED_NATIVE_TOOL_MODELS: Readonly<Record<string, ReadonlySet<string>>> = {
+  anthropic: new Set(ANTHROPIC_MODELS),
+  fireworks: new Set(FIREWORKS_MODELS),
+  google: new Set(GOOGLE_MODELS),
+  sakana: new Set(SAKANA_MODELS),
+  xai: new Set(XAI_MODELS),
+  zen: new Set([...ZEN_MODELS, ...ZEN_GO_MODELS]),
+};
 
-/**
- * Structured-output gate for Cloudflare Workers AI. Resolves from the binding
- * catalog's `function_calling` flag (Workers AI ships function calling and JSON
- * mode together, so the same flag governs both) and falls back to the Kimi/GLM
- * name heuristic on a cold cache — see {@link cloudflareFunctionCallingGate}.
- * Models we under-claim simply fall back to `parseStructured`.
- */
-function cloudflareModelSupportsStructuredOutput(modelId: string): boolean {
-  return cloudflareFunctionCallingGate(modelId);
-}
-
-/**
- * Resolve Workers AI capability for `modelId`, preferring the binding catalog's
- * `function_calling` flag (cached from `/api/cloudflare/models`) and falling
- * back to the name-based Kimi/GLM heuristic only when the catalog hasn't been
- * fetched yet or doesn't list the model. Both the native-tool and
- * structured-output gates route through here: Workers AI ships function calling
- * and JSON mode together, so a single catalog flag drives both, and the
- * name-based fallback preserves the prior behavior on a cold cache.
- */
-function cloudflareFunctionCallingGate(modelId: string): boolean {
-  const caps = getCloudflareModelCapabilities(modelId);
-  if (caps) return caps.functionCalling;
-  return isCloudflareKimiOrGlm(modelId);
-}
-
-/**
- * Cold-cache fallback for the Workers AI capability gates: the families whose
- * model cards advertise native JSON capabilities (both `response_format`
- * structured outputs and function calling), Kimi K2.x and GLM. Used only until
- * the binding catalog loads its `function_calling` flags (see
- * {@link cloudflareFunctionCallingGate}); once it does, the catalog is
- * authoritative and this name match no longer runs. Substring `.includes()`
- * (not anchored) is intentional: the family token can appear anywhere in the id,
- * notably behind the `@cf/<org>/` prefix (`@cf/moonshotai/kimi-k2.7-code`,
- * `@cf/zai-org/glm-5.2`).
- */
-function isCloudflareKimiOrGlm(modelId: string): boolean {
-  const m = modelId.toLowerCase();
-  return m.includes('kimi') || m.includes('moonshot') || m.includes('glm');
-}
-
-function resolveContextTier(contextLimit: number): PushContextTier {
-  if (contextLimit >= 200_000) return 'large';
-  if (contextLimit >= MIN_CONTEXT_TOKENS || contextLimit === 0) return 'medium';
-  return 'small';
-}
-
-function routeConsumesContentBlocks(
-  provider: string,
-  options: PushCapabilityProfileOptions | undefined,
-): boolean {
-  if (options?.requestWire === 'neutral') return true;
-  if (options?.requestWire === 'openai') return false;
-  return providerConsumesContentBlocksByDefault(provider);
-}
-
-function routeCarriesReasoningBlocks(provider: string, modelId: string | undefined): boolean {
-  if (!modelId) return false;
-  if (providerCarriesReasoningBlocksByDefault(provider)) return true;
-  if (provider === 'zen') return getZenGoTransport(modelId) === 'anthropic';
-  return false;
-}
-
-function modelSupportsMultimodal(
+function lookupWebPushCapabilityMetadata(
   provider: string,
   modelId: string,
-  capabilities: ResolvedModelCapabilities,
-): boolean {
-  if (capabilities.vision) return true;
-  if (provider === 'anthropic' || provider === 'google') return true;
-  return /(?:gpt-4o|gpt-4\.1|gpt-5|claude|gemini|vision|vl\b|llava|bakllava)/i.test(modelId);
+): PushModelCapabilityMetadata {
+  if (provider === 'cloudflare') {
+    const cloudflare = getCloudflareModelCapabilities(modelId);
+    return cloudflare
+      ? {
+          toolCall: cloudflare.functionCalling,
+          structuredOutput: cloudflare.functionCalling,
+        }
+      : {};
+  }
+
+  const capabilities = getModelCapabilities(provider, modelId);
+  const curatedNativeTools = WEB_CURATED_NATIVE_TOOL_MODELS[provider];
+  return {
+    toolCall: curatedNativeTools?.has(modelId) ?? capabilities.toolCall,
+    vision: capabilities.vision,
+    structuredOutput: capabilities.structuredOutput,
+    contextLimit: capabilities.contextLimit,
+  };
 }
 
-function resolveStructuredOutputMode(
+export function resolvePushCapabilityProfile(
   provider: string,
   modelId: string | undefined,
-): PushStructuredOutputMode {
-  if (!modelId || !STRUCTURED_OUTPUT_PROVIDERS.has(provider)) return 'none';
-  // Workers AI has no models.dev metadata, so resolve by name instead of the
-  // catalog probe (which would always report `structuredOutput: false`).
-  if (provider === 'cloudflare') {
-    return cloudflareModelSupportsStructuredOutput(modelId) ? 'strict' : 'none';
-  }
-  // Direct Anthropic gets native `output_config.format` on supported Claude
-  // models and keeps the forced-tool bridge on older/unknown Claude ids.
-  if (provider === 'anthropic') {
-    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
-  }
-  // Anthropic-transport routes share the Messages serializer. Zen-Go MiniMax/Qwen
-  // routes keep the forced-tool fallback.
-  if (provider === 'zen' && getZenGoTransport(modelId) === 'anthropic') {
-    return anthropicModelSupportsNativeStructuredOutput(modelId) ? 'strict' : 'best-effort';
-  }
-  // Gemini constrains generation natively via `responseSchema` + JSON mime type
-  // (`toGeminiGenerateContent`). Gated on the same curated set as native tool
-  // calling so the two `google` gates stay consistent (no cross-column drift, the
-  // failure mode the #1169 harness flagged for opus-4-8). `strict` because Gemini
-  // enforces the schema structurally, not as a hint.
-  if (provider === 'google') {
-    return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId) ? 'strict' : 'none';
-  }
-  if (provider === 'xai') {
-    return XAI_NATIVE_TOOL_CALLING_MODELS.has(modelId) ? 'strict' : 'none';
-  }
-  return getModelCapabilities(provider, modelId).structuredOutput ? 'strict' : 'none';
+  options?: PushCapabilityProfileOptions,
+): PushCapabilityProfile {
+  return resolveSharedPushCapabilityProfile(
+    provider,
+    modelId,
+    lookupWebPushCapabilityMetadata,
+    options,
+  );
 }
 
 /**
@@ -603,147 +509,6 @@ export function providerModelSupportsStructuredOutput(
   modelId: string | undefined,
 ): boolean {
   return resolvePushCapabilityProfile(provider, modelId).structuredOutput !== 'none';
-}
-
-/**
- * OpenCode Zen models cleared for native function calling. Name-based (like
- * Cloudflare, unlike OpenRouter's capability gate) because Zen can't be
- * capability-gated reliably: its default `big-pickle` is a Zen-proprietary id
- * that isn't in models.dev at all, and we can't verify the `opencode` block
- * populates `tool_call` for the bare ids — a capability gate would silently
- * leave native FC off for the default and any uncovered model. The curated
- * catalog (`ZEN_MODELS` standard tier + `ZEN_GO_MODELS`) *is* the allowlist:
- * every entry is a current frontier coding model that supports function calling,
- * and deriving the set keeps it in lockstep with catalog refreshes.
- *
- * The Anthropic-transport Go models (`minimax-m3`, `qwen3.7-max`, `qwen3.7-plus`,
- * and the Go routing of `minimax-m2.7` / `qwen3.6-plus`) are also covered: their
- * Go requests serialize through `toAnthropicMessages`, which translates the OpenAI
- * tool schemas to Anthropic's custom-tool shape, and the model's `tool_use` blocks
- * are parsed natively into `native_tool_call` events by `anthropicEventStream` —
- * the foreground `zenStream` and the background coder-job adapter both parse the
- * raw Anthropic SSE directly, no OpenAI-SSE translator in between.
- */
-const ZEN_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set([
-  ...ZEN_MODELS,
-  ...ZEN_GO_MODELS,
-]);
-
-/**
- * Fireworks AI models cleared for native function calling. Like Zen, name-based
- * against the curated catalog (`FIREWORKS_MODELS`) rather than capability-gated:
- * the list is hand-maintained and every entry is a current frontier coding /
- * instruct model that supports function calling (DeepSeek V4, GLM 5.x, Kimi K2.x,
- * Qwen3.x, MiniMax, GPT-OSS, Nemotron). Deriving the set keeps native FC in
- * lockstep with manual catalog edits — adding a model to `FIREWORKS_MODELS` opts
- * it in. Fireworks is a single OpenAI-compatible endpoint (no transport split),
- * so `fireworks-stream.ts` serializes `tools` straight through and `openai-sse-pump`
- * normalizes the native `tool_calls`.
- */
-const FIREWORKS_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(FIREWORKS_MODELS);
-const SAKANA_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(SAKANA_MODELS);
-const XAI_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(XAI_MODELS);
-const GOOGLE_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(GOOGLE_MODELS);
-const ANTHROPIC_NATIVE_TOOL_CALLING_MODELS: ReadonlySet<string> = new Set(ANTHROPIC_MODELS);
-// `looksLikeOpenAIToolCallingModel` is shared with the CLI gate via
-// `@push/lib/native-tool-gate` (single definition; pinned by the web↔CLI drift
-// test below). Capability-based providers stay resolved here (models.dev).
-
-/**
- * Whether to attach native function-calling `tools` for the given
- * provider/model. Provider paths today:
- *   - **Cloudflare Workers AI** — catalog-based: the binding catalog's
- *     `function_calling` flag (cached from `/api/cloudflare/models`), falling
- *     back to the Kimi/GLM name heuristic only on a cold cache.
- *   - **OpenRouter** — capability-based: the model's models.dev metadata must
- *     advertise tool support (`toolCall`). Mirrors the structured-output gate
- *     (`providerModelSupportsStructuredOutput`) so the two can't drift, and
- *     auto-tracks the catalog rather than a hardcoded allowlist.
- *     `getModelCapabilities` is routing-suffix-insensitive (see its
- *     `openRouterBaseId` fallback), so `:nitro` / `:free` variants resolve to
- *     their base model's capability; a cold metadata cache resolves to
- *     `toolCall: false` and safely falls back to text-dispatch.
- *   - **OpenCode Zen** — name-based against the curated catalog
- *     (`ZEN_NATIVE_TOOL_CALLING_MODELS`); see the note there for why capability
- *     gating isn't viable for Zen.
- *   - **Z.ai** - capability-based from declared/live metadata; its Chat
- *     Completions API documents OpenAI-shaped `tools` / `tool_calls`.
- *   - **Kimi** - capability-based from declared/live metadata; its Chat
- *     Completions API documents OpenAI-shaped `tools` / `tool_calls`.
- *   - **Hugging Face** - capability-based: models.dev `huggingface` metadata
- *     (warmed by `fetchHuggingFaceModels`) first, declared curated set as
- *     fallback; ids in neither fail closed to the prompt-engineered protocol.
- *   - **Fireworks AI** — name-based against the curated catalog
- *     (`FIREWORKS_NATIVE_TOOL_CALLING_MODELS`).
- *   - **Google Gemini** — name-based against the curated Gemini catalog; the
- *     direct serializer translates OpenAI-shaped tools into Gemini
- *     `functionDeclarations` and the bridge normalizes `functionCall` parts
- *     back into dispatcher JSON.
- *   - **Ollama Cloud / Nvidia NIM** — capability-based, using the
- *     existing models.dev metadata caches.
- *   - **OpenAI / Kilo Code** — name-based against curated OpenAI-compatible
- *     catalogs or OpenAI-family model ids. Free-text unknowns stay
- *     text-dispatch.
- *   - **Direct Anthropic** — name-based against the curated direct-provider
- *     catalog; the neutral Worker path translates schemas to Anthropic custom
- *     tools and surfaces `tool_use` as structured native tool-call events.
- * Other providers stay on the text-dispatch tool protocol until native tool
- * calling is wired and validated for them. Additive regardless: non-gated
- * models simply never receive a `tools` array.
- */
-function modelSupportsNativeToolCalling(provider: string, modelId: string | undefined): boolean {
-  if (!modelId) return false;
-  if (provider === 'cloudflare') return cloudflareFunctionCallingGate(modelId);
-  if (provider === 'openrouter') return getModelCapabilities('openrouter', modelId).toolCall;
-  if (provider === 'zai') return getModelCapabilities('zai', modelId).toolCall;
-  if (provider === 'kimi') return getModelCapabilities('kimi', modelId).toolCall;
-  if (provider === 'huggingface') return getModelCapabilities('huggingface', modelId).toolCall;
-  if (provider === 'zen') return ZEN_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'fireworks') return FIREWORKS_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'sakana') return SAKANA_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'xai') return XAI_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'google') return GOOGLE_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  if (provider === 'ollama') {
-    return (
-      !OLLAMA_NATIVE_TOOL_CALLING_DENYLIST.has(modelId) &&
-      getModelCapabilities('ollama', modelId).toolCall
-    );
-  }
-  if (provider === 'nvidia') return getModelCapabilities('nvidia', modelId).toolCall;
-  if (provider === 'openai') return looksLikeOpenAIToolCallingModel(modelId);
-  if (provider === 'anthropic') return ANTHROPIC_NATIVE_TOOL_CALLING_MODELS.has(modelId);
-  return false;
-}
-
-export function resolvePushCapabilityProfile(
-  provider: string,
-  modelId: string | undefined,
-  options?: PushCapabilityProfileOptions,
-): PushCapabilityProfile {
-  const model = modelId?.trim();
-  const contentBlocks = routeConsumesContentBlocks(provider, options);
-  const reasoningBlocks = routeCarriesReasoningBlocks(provider, model);
-  if (!model) {
-    return {
-      ...DEFAULT_PUSH_CAPABILITY_PROFILE,
-      toolCalling: 'none',
-      contentBlocks,
-      reasoningBlocks,
-      context: 'small',
-    };
-  }
-
-  const capabilities = getModelCapabilities(provider, model);
-  const nativeToolCalling = modelSupportsNativeToolCalling(provider, model);
-  return {
-    toolCalling: nativeToolCalling ? 'native' : 'json-text',
-    streamingTools: nativeToolCalling,
-    multimodal: modelSupportsMultimodal(provider, model, capabilities),
-    structuredOutput: resolveStructuredOutputMode(provider, model),
-    contentBlocks,
-    reasoningBlocks,
-    context: resolveContextTier(capabilities.contextLimit),
-  };
 }
 
 export function providerModelSupportsNativeToolCalling(

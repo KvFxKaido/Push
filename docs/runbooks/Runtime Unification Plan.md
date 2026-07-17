@@ -1,6 +1,6 @@
 # Runtime Unification Plan
 
-Status: **Current** — Phase 2 complete (2026-07-17)
+Status: **Current** — Phase 3 complete (2026-07-17)
 
 ## Goal
 
@@ -46,9 +46,11 @@ shared implementation.
 
 ### 3. Capability resolution
 
-Web resolves a full `PushCapabilityProfile`; CLI separately applies curated
-native-tool allowlists. The metadata sources may differ, but the decision
-algorithm should be shared and accept a surface-provided metadata lookup.
+At the start of this plan, web resolved a full `PushCapabilityProfile` while
+CLI separately applied curated native-tool allowlists. Phase 3 replaced that
+split with one shared decision algorithm. Metadata sources still differ by
+design: web supplies live/cached catalog evidence; CLI supplies its curated
+fallback.
 
 ### 4. Smaller follow-ups
 
@@ -151,9 +153,21 @@ erase a real wire-family boundary rather than remove duplication.
 
 ### Phase 3 — capability resolver
 
-Move the pure profile decision into `lib/`; inject dynamic web metadata or the
-CLI/native curated fallback. Keep credential discovery and catalog caching
-surface-local.
+1. [x] Move the pure profile decision into `lib/capability-profile.ts`.
+2. [x] Inject dynamic web metadata or the CLI/native curated fallback through
+   the same synchronous lookup contract.
+3. [x] Keep credential discovery and catalog caching surface-local.
+4. [x] Pin profile coherence and source-specific fallbacks with shared, web,
+   and CLI tests.
+
+The shared resolver owns provider eligibility, tool/streaming coherence,
+structured-output mode, content/reasoning block routing, multimodal fallback,
+and context tiers. `app/src/lib/model-catalog.ts` remains the web metadata and
+cache adapter; `cli/native-tool-gate.ts` projects curated catalogs into the same
+raw evidence shape. An explicit `false` is distinct from missing evidence, so
+the web-only Cloudflare cold-cache name fallback does not accidentally enable a
+provider absent from the CLI catalog. Zen Go catalog/transport metadata moved to
+`lib/zen-go.ts` because both routing and profile resolution consume it.
 
 ### Phase 4 — ledger completion and secondary convergence
 
