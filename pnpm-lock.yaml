@@ -84,6 +84,9 @@ importers:
       '@capacitor/status-bar':
         specifier: ^8.0.2
         version: 8.0.2(@capacitor/core@8.4.1)
+      '@capawesome/capacitor-electron':
+        specifier: ^0.1.0
+        version: 0.1.0(@capacitor/core@8.4.1)
       '@cloudflare/sandbox':
         specifier: 0.12.3
         version: 0.12.3
@@ -517,6 +520,16 @@ packages:
     resolution: {integrity: sha512-WXs8YB8B9eEaPZz+bcdY6t2nForF1FLoj/JU0Dl9RRgQnddnS98FEEyDooQhaY7wivr000j4+SC1FyeJkrFO7A==}
     peerDependencies:
       '@capacitor/core': '>=8.0.0'
+
+  '@capawesome/capacitor-electron@0.1.0':
+    resolution: {integrity: sha512-l4vAithAM8sPUVru0fJKQok+OrbZik3r8O7/OPR80ioEbJ4ukD9436O19wxDvE9L33IxzL52JxRYKmfSQOpe5w==}
+    hasBin: true
+    peerDependencies:
+      '@capacitor/core': '>=6.0.0'
+      electron: '>=28.0.0'
+    peerDependenciesMeta:
+      electron:
+        optional: true
 
   '@chenglou/pretext@0.0.7':
     resolution: {integrity: sha512-FV5hj3fGqpBlzbANUbR+s+6XuNRrghVVyuNs33zdH2SzU7MvK+7GlW6xREjDCreixKbexEn7OEkDgAFeWuu5Hg==}
@@ -4971,6 +4984,10 @@ snapshots:
       '@capacitor/core': 8.4.1
 
   '@capacitor/status-bar@8.0.2(@capacitor/core@8.4.1)':
+    dependencies:
+      '@capacitor/core': 8.4.1
+
+  '@capawesome/capacitor-electron@0.1.0(@capacitor/core@8.4.1)':
     dependencies:
       '@capacitor/core': 8.4.1
 
