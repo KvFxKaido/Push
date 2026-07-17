@@ -310,9 +310,20 @@ export function mergeToolLedgerSnapshots<TCall>(
   return snapshotEntries(entries);
 }
 
+/**
+ * Detail-line budget for {@link formatToolLedgerContext}. A lead run can reach
+ * 150 rounds and accumulate hundreds of entries; dumping every one into the
+ * Auditor prompt bloats exactly the evaluation the ledger is meant to sharpen.
+ * Anomalies (rejected, failed, still-started) are always shown even past the
+ * budget — an elided failure would be a false "clean run" — with the remaining
+ * budget split between the run's head and tail.
+ */
+export const MAX_TOOL_LEDGER_CONTEXT_DETAIL_LINES = 40;
+
 /** Compact, transcript-free execution context for Auditor prompts and logs. */
 export function formatToolLedgerContext(
   snapshot: ToolLedgerSnapshot<unknown> | null | undefined,
+  options?: { maxDetailLines?: number },
 ): string {
   if (!snapshot || snapshot.entries.length === 0) return 'No tool calls were recorded.';
   const completed = snapshot.accepted.filter((entry) => entry.execution?.status === 'completed');
@@ -321,7 +332,52 @@ export function formatToolLedgerContext(
   const lines = [
     `Calls: ${snapshot.counts.total} total; ${snapshot.counts.accepted} accepted; ${snapshot.counts.rejected} rejected; ${completed.length} completed; ${failed.length} failed; ${started.length} still started.`,
   ];
-  for (const entry of snapshot.entries) {
+
+  const maxDetailLines = options?.maxDetailLines ?? MAX_TOOL_LEDGER_CONTEXT_DETAIL_LINES;
+  const entries = snapshot.entries;
+  const shown = new Set<number>();
+  if (entries.length <= maxDetailLines) {
+    for (let i = 0; i < entries.length; i += 1) shown.add(i);
+  } else {
+    // Everything except a clean completion is an anomaly: rejections, failures,
+    // still-running calls, and accepted calls that never executed (a batch the
+    // loop policy skipped). Only clean completions are ever elided, which also
+    // keeps the elision marker's label exact.
+    const isAnomaly = (entry: ToolLedgerEntry<unknown>): boolean =>
+      entry.disposition === 'rejected' || entry.execution?.status !== 'completed';
+    for (let i = 0; i < entries.length; i += 1) {
+      if (isAnomaly(entries[i])) shown.add(i);
+    }
+    const fillBudget = Math.max(0, maxDetailLines - shown.size);
+    const headBudget = Math.ceil(fillBudget / 2);
+    let taken = 0;
+    for (let i = 0; i < entries.length && taken < headBudget; i += 1) {
+      if (!shown.has(i)) {
+        shown.add(i);
+        taken += 1;
+      }
+    }
+    taken = 0;
+    for (let i = entries.length - 1; i >= 0 && taken < fillBudget - headBudget; i -= 1) {
+      if (!shown.has(i)) {
+        shown.add(i);
+        taken += 1;
+      }
+    }
+  }
+
+  let elided = 0;
+  const flushElision = (): void => {
+    if (elided > 0) lines.push(`- (… ${elided} completed call(s) elided …)`);
+    elided = 0;
+  };
+  for (let i = 0; i < entries.length; i += 1) {
+    if (!shown.has(i)) {
+      elided += 1;
+      continue;
+    }
+    flushElision();
+    const entry = entries[i];
     const outcome =
       entry.disposition === 'rejected'
         ? `rejected:${entry.rejectionReason ?? 'unknown'}`
@@ -338,6 +394,7 @@ export function formatToolLedgerContext(
       `- #${entry.sequence}${entry.round === undefined ? '' : ` round=${entry.round}`} ${entry.toolName} ${outcome}${duration}${detail}${postconditions}`,
     );
   }
+  flushElision();
   return lines.join('\n');
 }
 

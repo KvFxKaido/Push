@@ -184,4 +184,51 @@ describe('tool ledger', () => {
     expect(formatToolLedgerContext(merged)).toContain('post=read src/a.ts');
     expect(formatToolLedgerContext(merged)).toContain('rejected:tool_order_violation');
   });
+
+  it('caps Auditor context on long runs while never eliding anomalies', () => {
+    const ledger = createToolExecutionLedger({ describeCall });
+    for (let i = 0; i < 120; i += 1) {
+      const read = call(String(i), 'sandbox_read_file');
+      ledger.recordGroupedCalls(
+        {
+          readOnly: [read],
+          parallelDelegations: [],
+          fileMutations: [],
+          mutating: null,
+          extraMutations: [],
+        },
+        i,
+      );
+      ledger.start(read, { executionId: `exec-${i}` });
+      // One mid-run failure buried deep in what the head/tail fill would skip.
+      if (i === 60) {
+        ledger.fail(read, { structuredErrorType: 'MID_RUN_FAILURE', durationMs: 5 });
+      } else {
+        ledger.complete(read, { durationMs: 1 });
+      }
+    }
+
+    const context = formatToolLedgerContext(ledger.snapshot());
+    const detailLines = context.split('\n').filter((line) => line.startsWith('- #'));
+    expect(detailLines.length).toBeLessThanOrEqual(41);
+    expect(context).toContain('error=MID_RUN_FAILURE');
+    expect(context).toContain('elided');
+    // The summary counts stay exact regardless of elision.
+    expect(context).toContain('120 total; 120 accepted; 0 rejected; 119 completed; 1 failed');
+  });
+
+  it('emits every line when the run fits the detail budget', () => {
+    const ledger = createToolExecutionLedger({ describeCall });
+    const read = call('1', 'sandbox_read_file');
+    ledger.recordGroupedCalls({
+      readOnly: [read],
+      parallelDelegations: [],
+      fileMutations: [],
+      mutating: null,
+      extraMutations: [],
+    });
+    ledger.start(read, { executionId: 'x' });
+    ledger.complete(read, { durationMs: 1 });
+    expect(formatToolLedgerContext(ledger.snapshot())).not.toContain('elided');
+  });
 });
