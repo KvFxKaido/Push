@@ -224,6 +224,7 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     allowedRepo: record.scope.repoFullName,
     activeProvider: checkpoint.provider as AIProviderType,
     activeModel: checkpoint.model,
+    taskInFlight: true,
     signal: abort.signal,
   };
   const services = buildCoderJobServices({

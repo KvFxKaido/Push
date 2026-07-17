@@ -19,6 +19,7 @@
  */
 
 import type { ChatMessage, ToolExecutionResult, PostToolUseResult } from '@/types';
+import { isVerificationPhase } from '@push/lib/coder-policy';
 import type { ToolHookRegistry } from './tool-hooks';
 
 // ---------------------------------------------------------------------------
@@ -48,10 +49,7 @@ export const KNOWN_PHASES = {
  * Agents may use variations like "testing", "verification", "running tests" —
  * this matcher catches common patterns.
  */
-export function isVerificationPhase(phase: string | undefined): boolean {
-  if (!phase) return false;
-  return /\b(verif|test|validat|check|typecheck|lint)/i.test(phase);
-}
+export { isVerificationPhase };
 
 // ---------------------------------------------------------------------------
 // Turn context — shared state visible to all policy hooks within a turn

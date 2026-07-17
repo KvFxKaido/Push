@@ -667,7 +667,7 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
       const server = await startSequencedProviderServer([
         { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
         { tokens: ['Findings: alpha beta'] },
-        { tokens: ['All done.'] },
+        { tokens: ['Investigated the flow and summarized the findings.'] },
       ]);
 
       try {
@@ -694,7 +694,7 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
         );
 
         assert.equal(result.outcome, 'success');
-        assert.ok(result.finalAssistantText.includes('All done.'));
+        assert.ok(result.finalAssistantText.includes('summarized the findings'));
         // The Explorer still ran and its report still reached the lead.
         assert.equal(server.requests.length, 3);
         assert.ok(JSON.stringify(server.requests[2]).includes('Findings: alpha beta'));

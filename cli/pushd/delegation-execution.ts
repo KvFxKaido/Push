@@ -63,9 +63,9 @@ export function createDelegationExecutionAdapters(
    * (`lib/coder-agent.ts` guards against repeated same-tool+file failures).
    *
    * Non-goals: no sandbox layer (runs directly against `state.cwd`, same model
-   * as the CLI engine), no OTel spans, no `CapabilityLedger` gating, no
-   * `TurnPolicyRegistry` (all Web-side). Pushd is an RPC transport + approval
-   * gate, nothing more.
+   * as the CLI engine), no OTel spans, and no `CapabilityLedger` gating. This
+   * executor stays an RPC transport + approval gate; the coordinator wraps it
+   * with the shared Coder policy's direct-kernel adapter.
    */
   function makeDaemonCoderToolExec({
     sessionId,

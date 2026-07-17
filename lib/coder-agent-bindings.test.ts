@@ -243,7 +243,7 @@ describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation',
     const evaluateAfterModel = buildCoderEvaluateAfterModel(
       makeEvalServices({
         action: 'inject',
-        message: { content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.` },
+        content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
       }),
     );
     const result = await evaluateAfterModel('let me actually run the tools now', 0);
@@ -258,7 +258,7 @@ describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation',
     const evaluateAfterModel = buildCoderEvaluateAfterModel(
       makeEvalServices({
         action: 'inject',
-        message: { content: `  \n${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.` },
+        content: `  \n${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
       }),
     );
     const result = await evaluateAfterModel('let me actually run the tools now', 0);
@@ -269,7 +269,7 @@ describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation',
     const evaluateAfterModel = buildCoderEvaluateAfterModel(
       makeEvalServices({
         action: 'inject',
-        message: { content: '[POLICY: DRIFT_DETECTED]\nRe-read your task.' },
+        content: '[POLICY: DRIFT_DETECTED]\nRe-read your task.',
       }),
     );
     const result = await evaluateAfterModel('unrelated drifting response', 0);

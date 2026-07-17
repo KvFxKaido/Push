@@ -15,9 +15,8 @@
  * This module exposes the three closure builders against a small
  * structural services interface. Types are duck-typed deliberately to
  * avoid dragging Web-side definitions (`ChatMessage`, OTel `SpanKind`)
- * into `lib/`. The Web shim's concrete `TurnPolicyRegistry`,
- * `TurnContext`, and OTel primitives satisfy these interfaces
- * structurally; the DO side will assemble its own stubs from scratch.
+ * into `lib/`. The shared Coder policy and each shell's OTel/tool primitives
+ * satisfy these interfaces structurally.
  *
  * No behavior change from the pre-extraction inline closures — this is
  * a mechanical lift of the same logic with the call boundary named.
@@ -44,11 +43,7 @@ import type {
 import { isAnnouncedNoActionPolicyMessage } from './tool-call-recovery.js';
 
 // ---------------------------------------------------------------------------
-// Structural duck-types — match the Web shim's concrete types without
-// importing them. `TurnContext` and `TurnPolicyRegistry` live in
-// `app/src/lib/turn-policy.ts` and pull in `ChatMessage` (a Web type) via
-// `AfterModelResult.message`. The Web concrete types satisfy these
-// interfaces by return-type covariance.
+// Structural duck-types keep shell message and tracing types out of `lib/`.
 // ---------------------------------------------------------------------------
 
 /** Mutable per-turn context threaded into every policy check.
@@ -65,14 +60,14 @@ export interface CoderTurnContext {
   allowedRepo: string;
   activeProvider?: string;
   activeModel?: string;
+  /** False for conversational lead turns; task-only policy guards stay quiet. */
+  taskInFlight?: boolean;
   signal?: AbortSignal;
 }
 
-/** Minimal after-tool / after-model directive — Web's policy registry
- * returns a richer `ChatMessage`, which structurally satisfies the
- * narrower `{ content: string }` shape this builder actually reads. */
+/** Surface-neutral after-tool / after-model directive. */
 export type CoderPolicyInjectOrHalt =
-  | { action: 'inject'; message: { content: string } }
+  | { action: 'inject'; content: string }
   | { action: 'halt'; summary: string }
   | null;
 
@@ -389,8 +384,8 @@ export function buildCoderEvaluateAfterModel<
     }
     return {
       action: 'inject',
-      content: result.message.content,
-      forceToolChoiceNextRound: isAnnouncedNoActionPolicyMessage(result.message.content),
+      content: result.content,
+      forceToolChoiceNextRound: isAnnouncedNoActionPolicyMessage(result.content),
     };
   };
 }
@@ -594,7 +589,7 @@ export function buildCoderToolExec<
       );
       const policyPost =
         afterToolResult?.action === 'inject'
-          ? { kind: 'inject' as const, content: afterToolResult.message.content }
+          ? { kind: 'inject' as const, content: afterToolResult.content }
           : afterToolResult?.action === 'halt'
             ? { kind: 'halt' as const, summary: afterToolResult.summary }
             : undefined;
@@ -665,7 +660,7 @@ export function buildCoderToolExec<
       );
       const policyPost =
         afterToolResult?.action === 'inject'
-          ? { kind: 'inject' as const, content: afterToolResult.message.content }
+          ? { kind: 'inject' as const, content: afterToolResult.content }
           : afterToolResult?.action === 'halt'
             ? { kind: 'halt' as const, summary: afterToolResult.summary }
             : undefined;
@@ -739,7 +734,7 @@ export function buildCoderToolExec<
       );
       const policyPost =
         afterToolResult?.action === 'inject'
-          ? { kind: 'inject' as const, content: afterToolResult.message.content }
+          ? { kind: 'inject' as const, content: afterToolResult.content }
           : afterToolResult?.action === 'halt'
             ? { kind: 'halt' as const, summary: afterToolResult.summary }
             : undefined;
@@ -841,7 +836,7 @@ export function buildCoderToolExec<
     );
     const policyFromAfter =
       afterToolResult?.action === 'inject'
-        ? { kind: 'inject' as const, content: afterToolResult.message.content }
+        ? { kind: 'inject' as const, content: afterToolResult.content }
         : afterToolResult?.action === 'halt'
           ? { kind: 'halt' as const, summary: afterToolResult.summary }
           : undefined;

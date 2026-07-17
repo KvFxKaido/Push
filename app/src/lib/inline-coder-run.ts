@@ -74,6 +74,7 @@ import {
   buildCoderEvaluateAfterModel,
   buildCoderToolExec,
   type CoderBindingServices,
+  type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import type {
   LlmContentPart,
@@ -135,8 +136,7 @@ import { symbolLedger } from './symbol-persistence-ledger';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { parseDiffStats } from './diff-utils';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
-import { TurnPolicyRegistry, type TurnContext } from './turn-policy';
-import { createCoderPolicy } from './turn-policies/coder-policy';
+import { createCoderPolicy } from '@push/lib/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 import { buildVerificationAcceptanceCriteria } from './verification-runtime';
@@ -851,10 +851,15 @@ export async function runInPageCoderKernel(
   let scratchpadContent = spec.scratchpad?.content ?? '';
   let todos = [...(spec.todo?.todos ?? [])];
 
-  // --- Turn policy registry (Coder-only) ---
-  const policyRegistry = new TurnPolicyRegistry();
-  policyRegistry.register(createCoderPolicy());
-  const turnCtx: TurnContext = {
+  // --- Shared Coder policy ---
+  const policy = createCoderPolicy({
+    onEvent: (event) => {
+      console.log(
+        JSON.stringify({ level: event.event.endsWith('exhausted') ? 'warn' : 'info', ...event }),
+      );
+    },
+  });
+  const turnCtx: CoderTurnContext = {
     role: 'coder',
     round: 0,
     maxRounds: spec.harnessSettings?.maxCoderRounds ?? 30,
@@ -879,7 +884,7 @@ export async function runInPageCoderKernel(
     WebSearchToolCall,
     ChatCard
   > = {
-    policy: policyRegistry,
+    policy,
     capabilityLedger,
     turnCtx,
     onStatus: callbacks.onStatus,

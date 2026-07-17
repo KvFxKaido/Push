@@ -51,6 +51,7 @@ import {
   type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
+import { createCoderPolicy } from '@push/lib/coder-policy';
 import type {
   AcceptanceCriterion,
   AgentRole,
@@ -812,6 +813,10 @@ export class CoderJob {
     let ownerToken = seed?.ownerToken ?? input.ownerToken;
     let resumeState: CoderCheckpointState<ChatCard> | undefined = seed?.resumeState;
     let resumesUsed = 0;
+    // Policy counters (drift, trailing intent, mutation backpressure) belong to
+    // the logical job, not one sandbox attempt. Services are rebuilt after a
+    // sandbox restore, so keep the shared policy instance outside that loop.
+    const policy = createCoderPolicy();
 
     // Fail fast on a sandbox that died between session activity and job
     // dispatch. Without this probe the first sign of trouble is the kernel's
@@ -870,6 +875,7 @@ export class CoderJob {
         allowedRepo: input.repoFullName,
         activeProvider: input.provider,
         activeModel: input.model,
+        taskInFlight: true,
         signal,
       };
       const services = buildCoderJobServices({
@@ -882,6 +888,7 @@ export class CoderJob {
         activeProvider: input.provider,
         activeModel: input.model,
         sandboxId,
+        policy,
         // NOTE: memory tools are intentionally NOT wired for background jobs.
         // `getDefaultMemoryStore()` is an in-memory singleton populated within a
         // runtime; the browser session accumulates records and the delegated

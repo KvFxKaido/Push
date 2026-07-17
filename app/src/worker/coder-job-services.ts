@@ -4,12 +4,13 @@
  * per-run control-plane state and returns the shape
  * `lib/coder-agent-bindings.ts` expects.
  *
- * Intentional no-ops specific to the DO runtime:
+ * Intentional no-op specific to the DO runtime:
  *  - Tracing adapter is a no-op (DO has no OTel wiring in PR #2).
- *  - Policy adapter is a permissive no-op — the DO runs with a
- *    pre-approved tool allowlist in Phase 1 per the runbook, so no
- *    per-turn gating is needed. `approvalModeBlock` is fixed to
- *    `full-auto` by the caller.
+ *
+ * Policy is the shared stateful Coder policy. Tool approval remains a host
+ * concern (`approvalModeBlock` is fixed to `full-auto` by the caller), while
+ * verification gating, recovery, and completion rules stay identical to the
+ * foreground Coder lanes.
  *
  * The `CapabilityLedger` is constructed per-run in the DO's runLoop;
  * the Web shim's post-run `.snapshot()` call does not apply to
@@ -25,6 +26,7 @@ import type {
   CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger } from '@push/lib/capabilities';
+import { createCoderPolicy } from '@push/lib/coder-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { ChatCard } from '@/types';
 import type {
@@ -46,13 +48,15 @@ export interface BuildCoderJobServicesArgs {
   activeProvider: string;
   activeModel: string | undefined;
   sandboxId: string;
+  /** Reuse one stateful policy when a host rebuilds sandbox-bound services. */
+  policy?: CoderPolicyAdapter;
 }
 
 export function buildCoderJobServices(
   args: BuildCoderJobServicesArgs,
 ): CoderBindingServices<AnyToolCall, SandboxToolCall, WebSearchToolCall, ChatCard> {
   return {
-    policy: createNoOpPolicyAdapter(),
+    policy: args.policy ?? createCoderPolicy(),
     capabilityLedger: args.capabilityLedger,
     turnCtx: args.turnCtx,
     onStatus: args.onStatus,
@@ -74,16 +78,8 @@ export function buildCoderJobServices(
 }
 
 // ---------------------------------------------------------------------------
-// No-op adapters
+// Host adapters
 // ---------------------------------------------------------------------------
-
-function createNoOpPolicyAdapter(): CoderPolicyAdapter {
-  return {
-    evaluateBeforeTool: async () => null,
-    evaluateAfterTool: async () => null,
-    evaluateAfterModel: async () => null,
-  };
-}
 
 function createNoOpTracingAdapter(): CoderTracingAdapter {
   const noOpSpan: CoderSpan = { setStatus: () => {} };

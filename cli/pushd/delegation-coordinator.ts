@@ -12,6 +12,7 @@ import path from 'node:path';
 import process from 'node:process';
 
 import { runCoderAgent } from '../../lib/coder-agent.ts';
+import { createCoderPolicyKernelAdapter } from '../../lib/coder-policy-kernel-adapter.ts';
 import { runDeepReviewer } from '../../lib/deep-reviewer-agent.ts';
 import { runExplorerAgent } from '../../lib/explorer-agent.ts';
 import { buildReviewerContextBlock } from '../../lib/role-context.ts';
@@ -286,13 +287,21 @@ export function createDelegationCoordinator(
     // for this execution's run.
     const effectiveRunId =
       typeof parentRunId === 'string' && parentRunId.trim().length > 0 ? parentRunId : makeRunId();
-    const toolExec = makeDaemonCoderToolExec({
+    const daemonToolExec = makeDaemonCoderToolExec({
       sessionId,
       entry,
       runId: effectiveRunId,
       signal,
     });
-    const evaluateAfterModel = async () => null;
+    const { toolExec, evaluateAfterModel } = createCoderPolicyKernelAdapter({
+      context: {
+        round: 0,
+        maxRounds: 30,
+        allowedRepo: entry.state.cwd,
+        taskInFlight: true,
+      },
+      execute: daemonToolExec,
+    });
 
     const taskPreamble = [node.task, ...preambleExtras].filter(Boolean).join('\n\n');
 
@@ -1321,13 +1330,21 @@ export function createDelegationCoordinator(
       // `approval_required` event on `childRunId` and block on a
       // `submit_approval` RPC via `buildApprovalFn` (baked into the
       // executor closure itself).
-      const toolExec = makeDaemonCoderToolExec({
+      const daemonToolExec = makeDaemonCoderToolExec({
         sessionId,
         entry,
         runId: childRunId,
         signal: abortController.signal,
       });
-      const evaluateAfterModel = async () => null;
+      const { toolExec, evaluateAfterModel } = createCoderPolicyKernelAdapter({
+        context: {
+          round: 0,
+          maxRounds: 30,
+          allowedRepo,
+          taskInFlight: true,
+        },
+        execute: daemonToolExec,
+      });
 
       let outcome;
       let runError = null;

@@ -1,762 +1,129 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  createCoderPolicy,
-  detectCognitiveDrift,
   BACKPRESSURE_MUTATION_THRESHOLD,
-  VERIFICATION_COMMAND_PATTERN,
-} from './coder-policy';
-import { isVerificationPhase, TurnPolicyRegistry } from '../turn-policy';
-import type { TurnContext } from '../turn-policy';
+  createCoderPolicy as createSharedCoderPolicy,
+  detectCognitiveDrift,
+} from '@push/lib/coder-policy';
+import { createCoderPolicy } from './coder-policy';
+import { TurnPolicyRegistry, type TurnContext } from '../turn-policy';
 
-function makeCtx(round = 0, phase?: string): TurnContext {
+function makeCtx(overrides: Partial<TurnContext> = {}): TurnContext {
   return {
     role: 'coder',
-    round,
+    round: 0,
     maxRounds: 30,
     sandboxId: 'test',
     allowedRepo: 'test/repo',
-    phase,
+    ...overrides,
   };
 }
 
-// ---------------------------------------------------------------------------
-// Drift detection (unit)
-// ---------------------------------------------------------------------------
-
-describe('detectCognitiveDrift', () => {
-  it('returns null for normal code output', () => {
-    const normal = '```json\n{"tool": "sandbox_exec", "args": {"command": "npm test"}}\n```';
-    expect(detectCognitiveDrift(normal)).toBeNull();
+describe('shared Coder policy', () => {
+  it('detects drift while preserving code-shaped output', () => {
+    expect(detectCognitiveDrift('```json\n{"tool":"sandbox_exec"}\n```')).toBeNull();
+    const drifted = '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated.'.repeat(30);
+    expect(detectCognitiveDrift(drifted)).toContain('Repeated token pattern');
   });
 
-  it('returns null for short responses', () => {
-    expect(detectCognitiveDrift('ok')).toBeNull();
-    expect(detectCognitiveDrift('')).toBeNull();
+  it('emits steer then block interventions for consecutive drift', async () => {
+    const policy = createSharedCoderPolicy();
+    const drifted = '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated.'.repeat(30);
+    const first = await policy.evaluateAfterModel(drifted, [], makeCtx());
+    expect(first?.action).toBe('inject');
+    expect(first?.runtimeIntervention.mode).toBe('steer');
+    const second = await policy.evaluateAfterModel(drifted, [], makeCtx({ round: 1 }));
+    expect(second?.action).toBe('halt');
+    expect(second?.runtimeIntervention.mode).toBe('block');
   });
 
-  it('detects repeated token patterns (20+ repeats)', () => {
-    // Must exceed 200 chars minimum — pad with enough repeats
-    const drift = '太平'.repeat(120);
-    const result = detectCognitiveDrift(drift);
-    expect(result).not.toBeNull();
-    expect(result).toContain('Repeated token pattern');
-  });
-
-  it('requires 2+ signals for moderate drift', () => {
-    // High non-ASCII alone is NOT drift (could be legit CJK code)
-    const cjkWithCode =
-      '这是一个测试 ```json {"tool": "sandbox_read_file"} ``` 更多中文内容'.repeat(5);
-    expect(detectCognitiveDrift(cjkWithCode)).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — drift guard (integration)
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — drift guard', () => {
-  it('injects correction on first drift round', async () => {
-    const policy = createCoderPolicy();
-    const driftHook = policy.afterModelCall![0];
-    const ctx = makeCtx(5);
-
-    // Generate drifted content: repeated pattern + extended prose + no code signals
-    const drifted =
-      '太平'.repeat(25) +
-      '\n'.repeat(25) +
-      'This is unrelated content about history and philosophy.'.repeat(5);
-
-    const result = await driftHook(drifted, [], ctx);
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-  });
-
-  it('halts after consecutive drift rounds', async () => {
-    const policy = createCoderPolicy();
-    const driftHook = policy.afterModelCall![0];
-
-    const drifted =
-      '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated rambling about nothing.'.repeat(10);
-
-    // First drift → inject
-    const r1 = await driftHook(drifted, [], makeCtx(0));
-    expect(r1?.action).toBe('inject');
-
-    // Second drift → halt
-    const r2 = await driftHook(drifted, [], makeCtx(1));
-    expect(r2?.action).toBe('halt');
-  });
-
-  it('skips drift correction on conversational lead turns (taskInFlight === false)', async () => {
-    const policy = createCoderPolicy();
-    const driftHook = policy.afterModelCall![0];
-    const drifted =
-      '太平'.repeat(25) +
-      '\n'.repeat(25) +
-      'This is unrelated content about history and philosophy.'.repeat(5);
-    // A conversational turn has no task to drift from, and the correction is
-    // task-shaped — it must stay quiet even on content that would fire on a task.
-    const conversational: TurnContext = { ...makeCtx(5), taskInFlight: false };
-    expect(await driftHook(drifted, [], conversational)).toBeNull();
-    // Sanity: the same content still fires on a task turn (taskInFlight unset).
-    expect((await driftHook(drifted, [], makeCtx(5)))?.action).toBe('inject');
-  });
-
-  it('resets drift counter on valid tool call', async () => {
-    const policy = createCoderPolicy();
-    const driftHook = policy.afterModelCall![0];
-
-    const drifted = '太平'.repeat(25) + '\n'.repeat(25) + 'Unrelated.'.repeat(20);
-    const toolCall = '{"tool": "sandbox_exec", "args": {"command": "ls"}}';
-
-    // First drift
-    await driftHook(drifted, [], makeCtx(0));
-    // Tool call resets
-    await driftHook(toolCall, [], makeCtx(1));
-    // Next drift is again "first" → inject, not halt
-    const result = await driftHook(drifted, [], makeCtx(2));
-    expect(result?.action).toBe('inject');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — no-fake-completion
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — no-fake-completion', () => {
-  it('passes through responses with file change evidence', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    const ctx = makeCtx();
-
-    const withEvidence = 'I modified the auth.ts file to fix the token refresh logic.';
-    expect(await completionHook(withEvidence, [], ctx)).toBeNull();
-  });
-
-  it('passes through blocked reports', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    const ctx = makeCtx();
-
-    const blocked =
-      'I cannot complete this task because the sandbox is missing the required Python dependencies.';
-    expect(await completionHook(blocked, [], ctx)).toBeNull();
-  });
-
-  it('passes through tool call responses', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    const ctx = makeCtx();
-
-    const toolCall = '{"tool": "sandbox_exec", "args": {"command": "npm test"}}';
-    expect(await completionHook(toolCall, [], ctx)).toBeNull();
-  });
-
-  it('nudges on vague short completion', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    const ctx = makeCtx();
-
-    const vague = 'Task is done. Everything looks good.';
-    const result = await completionHook(vague, [], ctx);
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-  });
-
-  it('stays quiet on a conversational turn (taskInFlight === false)', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    // Same vague short reply that nudges under a task — but this turn carries
-    // no coding task, so the guard must not fire (the inline-lane misfire fix).
-    const ctx: TurnContext = { ...makeCtx(), taskInFlight: false };
-
-    const conversational = "I wasn't looping — want me to continue the explanation?";
-    expect(await completionHook(conversational, [], ctx)).toBeNull();
-  });
-
-  it('still nudges when taskInFlight is true (explicit task)', async () => {
-    const policy = createCoderPolicy();
-    const completionHook = policy.afterModelCall![1];
-    const ctx: TurnContext = { ...makeCtx(), taskInFlight: true };
-
-    const result = await completionHook('Task is done. Everything looks good.', [], ctx);
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — announced action without a tool call
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — announced-action guard', () => {
-  it('nudges task turns that end by announcing a tool action', async () => {
-    const policy = createCoderPolicy();
-    const trailingHook = policy.afterModelCall![2];
-
-    const result = await trailingHook("I'll read docs/runbooks/foo.md next.", [], {
-      ...makeCtx(),
-      taskInFlight: true,
-    });
-
-    expect(result?.action).toBe('inject');
-    if (result?.action === 'inject') {
-      expect(result.message.content).toContain('ANNOUNCED_NO_ACTION');
-    }
-  });
-
-  it('also nudges conversational lead turns', async () => {
-    const policy = createCoderPolicy();
-    const trailingHook = policy.afterModelCall![2];
-
-    const result = await trailingHook("Let's search the runbook for Phase 2.", [], {
-      ...makeCtx(),
-      taskInFlight: false,
-    });
-
-    expect(result?.action).toBe('inject');
-  });
-
-  it('does not nudge when a tool call is present or the text is a question', async () => {
-    const policy = createCoderPolicy();
-    const trailingHook = policy.afterModelCall![2];
-
-    expect(
-      await trailingHook(
-        '{"tool": "sandbox_read_file", "args": {"path": "README.md"}}',
-        [],
-        makeCtx(),
-      ),
-    ).toBeNull();
-    expect(await trailingHook('Should I read README.md next?', [], makeCtx())).toBeNull();
-  });
-
-  it('stops nudging after the per-run cap', async () => {
-    const policy = createCoderPolicy();
-    const trailingHook = policy.afterModelCall![2];
-
-    for (let i = 0; i < 3; i++) {
-      expect(await trailingHook("I'll read README.md next.", [], makeCtx(i))).not.toBeNull();
-    }
-
-    expect(await trailingHook("I'll read README.md next.", [], makeCtx(4))).toBeNull();
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — mutation failure tracking
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — mutation failure tracking', () => {
-  it('clears failure tracking on success', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Fail once
-    await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'error', true, ctx);
-    // Succeed — should clear
-    const result = await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'ok', false, ctx);
+  it('does not apply task-only drift/completion guards to conversation', async () => {
+    const policy = createSharedCoderPolicy();
+    const result = await policy.evaluateAfterModel(
+      "I wasn't looping — want me to continue the explanation?",
+      [],
+      makeCtx({ taskInFlight: false }),
+    );
     expect(result).toBeNull();
   });
 
-  it('injects warning after 3 consecutive failures on same tool+file', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-    const args = { path: '/workspace/broken.ts' };
+  it('accepts grounded read-only completion reports from the conversational lead', async () => {
+    const policy = createSharedCoderPolicy();
+    expect(await policy.evaluateAfterModel('Finished reading the file.', [], makeCtx())).toBeNull();
+  });
 
-    // First two failures → no action
-    expect(await hook('sandbox_edit_file', args, 'err', true, ctx)).toBeNull();
-    expect(await hook('sandbox_edit_file', args, 'err', true, ctx)).toBeNull();
-
-    // Third failure → inject hard failure warning
-    const result = await hook('sandbox_edit_file', args, 'err', true, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-    if (result!.action === 'inject') {
-      expect(result!.message.content).toContain('MUTATION_HARD_FAILURE');
+  it('nudges announced actions on both task and conversational turns', async () => {
+    for (const taskInFlight of [true, false]) {
+      const policy = createSharedCoderPolicy();
+      const result = await policy.evaluateAfterModel("I'll read README.md next.", [], {
+        ...makeCtx(),
+        taskInFlight,
+      });
+      expect(result?.action).toBe('inject');
+      expect(result?.code).toBe('announced_no_action');
     }
   });
 
-  it('tracks failures per tool+file independently', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // 2 failures on file A
-    await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-    await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-
-    // 1 failure on file B — should NOT trigger hard failure
-    const resultB = await hook('sandbox_write_file', { path: '/workspace/b.ts' }, 'err', true, ctx);
-    expect(resultB).toBeNull();
-
-    // 3rd failure on file A — should trigger
-    const resultA = await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-    expect(resultA).not.toBeNull();
-  });
-
-  it('failure cleanup runs even when backpressure would inject', async () => {
-    // Regression test: with separate hooks, evaluateAfterTool short-circuits
-    // on backpressure inject and never clears stale failure state.
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Accumulate 2 failures on a file
-    await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-    await hook('sandbox_write_file', { path: '/workspace/a.ts' }, 'err', true, ctx);
-
-    // Now make (threshold) successful mutations to trigger backpressure
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
-      await hook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
-    }
-
-    // The success on f0..fN should not have left stale failure state.
-    // A single failure on a.ts should NOT trigger hard failure (was cleared on success path).
-    // First we need a fresh policy to test this properly — use registry integration test below.
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — mechanical backpressure
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — mechanical backpressure', () => {
-  it('does not trigger below the mutation threshold', async () => {
-    const policy = createCoderPolicy();
-    const backpressureHook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Mutate (threshold - 1) times — should all pass through
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await backpressureHook(
-        'sandbox_write_file',
-        { path: `/workspace/file${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
+  it('blocks both web and CLI mutation names during verification', async () => {
+    const policy = createSharedCoderPolicy();
+    for (const tool of ['sandbox_write_file', 'sandbox_edit_file', 'write_file', 'edit_file']) {
+      const result = await policy.evaluateBeforeTool(tool, {}, makeCtx({ phase: 'verifying' }));
+      expect(result?.action).toBe('deny');
+      expect(result?.runtimeIntervention.mode).toBe('block');
     }
   });
 
-  it('injects verification nudge at the mutation threshold', async () => {
-    const policy = createCoderPolicy();
-    const backpressureHook = policy.afterToolExec![0];
+  it('tracks mutation failures and verification backpressure', async () => {
+    const policy = createSharedCoderPolicy();
     const ctx = makeCtx();
-
-    // Mutate exactly threshold times
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await backpressureHook(
-        'sandbox_edit_file',
-        { path: `/workspace/f${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
+    for (let i = 0; i < 2; i += 1) {
+      expect(
+        await policy.evaluateAfterTool(
+          'sandbox_edit_file',
+          { path: 'broken.ts' },
+          'error',
+          true,
+          ctx,
+        ),
+      ).toBeNull();
     }
-
-    const result = await backpressureHook(
+    const failed = await policy.evaluateAfterTool(
       'sandbox_edit_file',
-      { path: '/workspace/last.ts' },
+      { path: 'broken.ts' },
+      'error',
+      true,
+      ctx,
+    );
+    expect(failed?.code).toBe('mutation_hard_failure');
+
+    const fresh = createSharedCoderPolicy();
+    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i += 1) {
+      expect(
+        await fresh.evaluateAfterTool('sandbox_write_file', { path: `f${i}.ts` }, 'ok', false, ctx),
+      ).toBeNull();
+    }
+    const backpressure = await fresh.evaluateAfterTool(
+      'sandbox_write_file',
+      { path: 'last.ts' },
       'ok',
       false,
       ctx,
     );
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-    if (result!.action === 'inject') {
-      expect(result!.message.content).toContain('VERIFY_BEFORE_CONTINUING');
-      expect(result!.message.content).toContain(
-        `${BACKPRESSURE_MUTATION_THRESHOLD} file mutations`,
-      );
-    }
-  });
-
-  it('resets counter when a verification command runs', async () => {
-    const policy = createCoderPolicy();
-    const backpressureHook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Mutate up to threshold - 1
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await backpressureHook(
-        'sandbox_write_file',
-        { path: `/workspace/f${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-    }
-
-    // Run typecheck → resets counter
-    await backpressureHook('sandbox_exec', { command: 'npx tsc --noEmit' }, 'ok', false, ctx);
-
-    // Now another (threshold - 1) mutations should be fine
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await backpressureHook(
-        'sandbox_write_file',
-        { path: `/workspace/new${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('does not count failed mutations toward backpressure', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Failed mutations on different files — should not trigger backpressure
-    // (each file only fails once, so no hard-failure either)
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
-      const result = await hook(
-        'sandbox_write_file',
-        { path: `/workspace/fail${i}.ts` },
-        'err',
-        true,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('does not count non-mutation tools', async () => {
-    const policy = createCoderPolicy();
-    const backpressureHook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Read tools should not affect the counter
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD + 2; i++) {
-      const result = await backpressureHook(
-        'sandbox_read_file',
-        { path: '/workspace/a.ts' },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('repeats nudge if Coder ignores it', async () => {
-    const policy = createCoderPolicy();
-    const backpressureHook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Mutate past threshold
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
-      await backpressureHook(
-        'sandbox_write_file',
-        { path: `/workspace/f${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-    }
-
-    // Next mutation still triggers (counter not reset because no verification ran)
-    const result = await backpressureHook(
-      'sandbox_edit_file',
-      { path: '/workspace/extra.ts' },
-      'ok',
-      false,
-      ctx,
-    );
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-  });
-
-  it('recognizes various verification commands', async () => {
-    const verificationCommands = [
-      'npx tsc --noEmit',
-      'npm test',
-      'npx vitest',
-      'npm run lint',
-      'npm run test',
-      'npm run typecheck',
-      'npm run build',
-      'eslint src/',
-      'pytest tests/',
-      'cargo test',
-      'go test ./...',
-      'ruff check .',
-      'pyright',
-      'mypy src/',
-    ];
-
-    for (const cmd of verificationCommands) {
-      expect(VERIFICATION_COMMAND_PATTERN.test(cmd)).toBe(true);
-    }
-  });
-
-  it('does not treat arbitrary sandbox_exec as verification', async () => {
-    const nonVerificationCommands = [
-      'cat /workspace/src/index.ts',
-      'ls -la',
-      'git status',
-      'echo "hello"',
-      'mkdir -p src/lib',
-    ];
-
-    for (const cmd of nonVerificationCommands) {
-      expect(VERIFICATION_COMMAND_PATTERN.test(cmd)).toBe(false);
-    }
-  });
-
-  it('resets counter on sandbox_run_tests', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Mutate up to threshold - 1
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await hook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
-    }
-
-    // Built-in test tool resets counter
-    await hook('sandbox_run_tests', { framework: 'vitest' }, 'ok', false, ctx);
-
-    // Another (threshold - 1) mutations should be fine
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook(
-        'sandbox_write_file',
-        { path: `/workspace/new${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('resets counter on sandbox_check_types', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    // Mutate up to threshold - 1
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await hook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
-    }
-
-    // Built-in typecheck tool resets counter
-    await hook('sandbox_check_types', {}, 'ok', false, ctx);
-
-    // Another (threshold - 1) mutations should be fine
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook(
-        'sandbox_write_file',
-        { path: `/workspace/new${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
-  });
-
-  it('resets counter on sandbox_verify_workspace', async () => {
-    const policy = createCoderPolicy();
-    const hook = policy.afterToolExec![0];
-    const ctx = makeCtx();
-
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      await hook('sandbox_write_file', { path: `/workspace/f${i}.ts` }, 'ok', false, ctx);
-    }
-
-    await hook('sandbox_verify_workspace', {}, 'ok', false, ctx);
-
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD - 1; i++) {
-      const result = await hook(
-        'sandbox_write_file',
-        { path: `/workspace/new${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-      expect(result).toBeNull();
-    }
+    expect(backpressure?.code).toBe('verification_backpressure');
   });
 });
 
-// ---------------------------------------------------------------------------
-// Registry integration — verifies hooks work through evaluateAfterTool
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — registry integration', () => {
-  it('backpressure triggers through evaluateAfterTool', async () => {
+describe('web Coder policy adapter', () => {
+  it('converts shared content into ChatMessage results', async () => {
     const registry = new TurnPolicyRegistry();
     registry.register(createCoderPolicy());
-    const ctx = makeCtx();
-
-    for (let i = 0; i < BACKPRESSURE_MUTATION_THRESHOLD; i++) {
-      await registry.evaluateAfterTool(
-        'sandbox_write_file',
-        { path: `/workspace/f${i}.ts` },
-        'ok',
-        false,
-        ctx,
-      );
-    }
-
-    const result = await registry.evaluateAfterTool(
-      'sandbox_write_file',
-      { path: '/workspace/extra.ts' },
-      'ok',
-      false,
-      ctx,
+    const result = await registry.evaluateAfterModel(
+      'Task is done. Everything looks good.',
+      [],
+      makeCtx({ taskInFlight: true }),
     );
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-    if (result!.action === 'inject') {
-      expect(result!.message.content).toContain('VERIFY_BEFORE_CONTINUING');
-    }
-  });
-
-  it('failure tracking works alongside backpressure in single hook', async () => {
-    const registry = new TurnPolicyRegistry();
-    registry.register(createCoderPolicy());
-    const ctx = makeCtx();
-
-    // 3 consecutive failures → hard failure
-    await registry.evaluateAfterTool(
-      'sandbox_edit_file',
-      { path: '/workspace/a.ts' },
-      'err',
-      true,
-      ctx,
-    );
-    await registry.evaluateAfterTool(
-      'sandbox_edit_file',
-      { path: '/workspace/a.ts' },
-      'err',
-      true,
-      ctx,
-    );
-    const result = await registry.evaluateAfterTool(
-      'sandbox_edit_file',
-      { path: '/workspace/a.ts' },
-      'err',
-      true,
-      ctx,
-    );
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('inject');
-    if (result!.action === 'inject') {
-      expect(result!.message.content).toContain('MUTATION_HARD_FAILURE');
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// isVerificationPhase helper
-// ---------------------------------------------------------------------------
-
-describe('isVerificationPhase', () => {
-  it('returns false for undefined/empty', () => {
-    expect(isVerificationPhase(undefined)).toBe(false);
-    expect(isVerificationPhase('')).toBe(false);
-  });
-
-  it('matches common verification phase names', () => {
-    expect(isVerificationPhase('verifying')).toBe(true);
-    expect(isVerificationPhase('verification')).toBe(true);
-    expect(isVerificationPhase('testing')).toBe(true);
-    expect(isVerificationPhase('running tests')).toBe(true);
-    expect(isVerificationPhase('validation')).toBe(true);
-    expect(isVerificationPhase('typecheck')).toBe(true);
-    expect(isVerificationPhase('linting')).toBe(true);
-  });
-
-  it('does not match non-verification phases', () => {
-    expect(isVerificationPhase('implementing')).toBe(false);
-    expect(isVerificationPhase('planning')).toBe(false);
-    expect(isVerificationPhase('exploring')).toBe(false);
-    expect(isVerificationPhase('reporting')).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Coder policy — phase-aware mutation gating
-// ---------------------------------------------------------------------------
-
-describe('Coder Policy — phase-aware mutation gating', () => {
-  it('allows mutation tools when phase is not verification', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-
-    expect(
-      await gate('sandbox_write_file', { path: '/workspace/a.ts' }, makeCtx(0, 'implementing')),
-    ).toBeNull();
-    expect(
-      await gate('sandbox_edit_file', { path: '/workspace/a.ts' }, makeCtx(0, 'planning')),
-    ).toBeNull();
-    expect(await gate('sandbox_edit_range', { path: '/workspace/a.ts' }, makeCtx(0))).toBeNull();
-  });
-
-  it('denies mutation tools during verification phase', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-    const ctx = makeCtx(5, 'verifying');
-
-    const result = await gate('sandbox_write_file', { path: '/workspace/a.ts' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.action).toBe('deny');
-    expect(result!.reason).toContain('verification-only');
-  });
-
-  it('denies all file-mutation tools during verification', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-    const ctx = makeCtx(5, 'testing');
-
-    for (const tool of [
-      'sandbox_write_file',
-      'sandbox_edit_file',
-      'sandbox_edit_range',
-      'sandbox_apply_patchset',
-    ]) {
-      const result = await gate(tool, {}, ctx);
-      expect(result?.action).toBe('deny');
-    }
-  });
-
-  it('allows sandbox_exec during verification (needed for running tests)', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-    const ctx = makeCtx(5, 'verifying');
-
-    expect(await gate('sandbox_exec', { command: 'npm test' }, ctx)).toBeNull();
-  });
-
-  it('allows sandbox_read_file during verification', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-    const ctx = makeCtx(5, 'verifying');
-
-    expect(await gate('sandbox_read_file', { path: '/workspace/a.ts' }, ctx)).toBeNull();
-  });
-
-  it('matches various verification phase names', async () => {
-    const policy = createCoderPolicy();
-    const gate = policy.beforeToolExec![0];
-
-    for (const phase of [
-      'verifying',
-      'testing',
-      'validation',
-      'running tests',
-      'typecheck',
-      'linting',
-    ]) {
-      const result = await gate('sandbox_write_file', {}, makeCtx(0, phase));
-      expect(result?.action).toBe('deny');
+    expect(result?.action).toBe('inject');
+    if (result?.action === 'inject') {
+      expect(result.message.content).toContain('INCOMPLETE_COMPLETION');
     }
   });
 });
