@@ -8,8 +8,8 @@
  * silvery components consume the return values.
  */
 
-import { isReducedMotion } from '../tui-spinner.js';
-import { detectUnicode } from '../tui-theme.js';
+import { isReducedMotion } from '../tui-verbs.js';
+import { detectUnicode, VARIANTS } from '../tui-theme.js';
 
 // ── Color budget (laws 2–3) ─────────────────────────────────────────
 //
@@ -30,6 +30,21 @@ export const VL_COLOR = {
 } as const;
 
 export type VlColor = (typeof VL_COLOR)[keyof typeof VL_COLOR];
+
+/**
+ * Shimmer endpoints — raw hex, not `$` tokens, because the sweep interpolates
+ * BETWEEN them per character and silvery resolves a token to a single color.
+ * (`resolveThemeColor` passes any non-`$` string straight through, so a mixed
+ * hex is a legal `<Text color>`.)
+ *
+ * Read off the mono canvas, which is the same source `theme.tsx` builds
+ * `$fg-muted` / `$fg-default` from — so the shimmer's trough lands exactly on
+ * `VL_COLOR.muted`, and a static (reduced-motion) verb is indistinguishable
+ * from any other muted chrome. Theme-independent by construction: themes move
+ * the accent hue, never the grayscale posture.
+ */
+const SHIMMER_BASE = VARIANTS.mono.tokens['fg.muted'];
+const SHIMMER_HIGHLIGHT = VARIANTS.mono.tokens['fg.primary'];
 
 // ── Glyphs (laws 4–5, tier 3 ASCII) ──────────────────────────────────
 
@@ -162,8 +177,14 @@ export const PUSH_BRAND_ART_COLS = BRAND_ART_COLS;
 export const MOTION_TICKS = {
   /** Modal backdrop fade enter/exit (law 9: 2–3 ticks). */
   modalFade: 3,
-  /** Full breathe cycle length (dim→bright→dim). */
-  breathePeriod: 8,
+  /**
+   * Verb-shimmer sweep period, in ticks. 16 × 150ms = 2400ms — the same
+   * cadence as the web's `--verb-shimmer-dur: 2.4s`, reached through the
+   * shared tick counter rather than a private wall-clock timer. Law 8 is the
+   * reason for the indirection: a second clock would beat against the modal
+   * fade and read as flicker, which is exactly the failure the law names.
+   */
+  verbShimmerPeriod: 16,
   /** Interval for the shared UI clock while working (≈ motion-fast 150ms). */
   clockMs: 150,
   /** Elapsed-seconds refresh while the turn runs (composer/status). */
@@ -248,34 +269,126 @@ export function reduceModalMotion(
 }
 
 /**
- * Breathing hex for the header liveness mark (law 8: one live animation).
- * Reduced motion freezes on the filled glyph (static equivalent, law 10).
+ * Header liveness mark — a STATIC anchor, not an animation.
+ *
+ * Was `breathingHex`, and it did breathe: law 8 originally spent the
+ * working-state animation budget on this glyph. The verb shimmer now holds
+ * that budget (one live animation, and it belongs on the label the eye is
+ * already reading — the hex can only say "alive", the verb says "alive AND
+ * what"). So this went static, and the name went with it, per the same rule
+ * `markWork` above states: a helper is named for what it does, not for a
+ * behavior it used to have.
+ *
+ * Three states, distinguished by glyph and the one-accent budget rather than
+ * by motion:
+ *   idle      ⬡ hollow, muted
+ *   working   ⬢ filled, muted   — filled IS the working signal
+ *   attention ⬢ filled, accent  — the accent is "where the action is" (law 2)
+ *
+ * `bright` is the accent lever, so working and attention stay distinct without
+ * either one moving. Takes no tick and no reduced-motion flag: there is nothing
+ * left to freeze, which is what makes law 10's static equivalent trivially true
+ * here — the static rendering IS the rendering.
  */
-export function breathingHex(
-  tick: number,
+export function livenessHex(
   phase: LivenessPhase,
   glyphs: VisualGlyphs = resolveGlyphs(),
-  reducedMotion: boolean = isReducedMotion(),
 ): { glyph: string; bright: boolean } {
-  if (phase === 'idle') {
-    return { glyph: glyphs.hexIdle, bright: false };
-  }
-  if (phase === 'attention') {
-    // One-shot pulse: filled + bright. Caller owns "once"; we just paint filled.
-    return { glyph: glyphs.hexActive, bright: true };
-  }
-  // working
-  if (reducedMotion) {
-    return { glyph: glyphs.hexActive, bright: true };
-  }
-  const period = MOTION_TICKS.breathePeriod;
-  const step = ((tick % period) + period) % period;
-  // First half filled+bright, second half hollow+dim.
-  const filled = step < period / 2;
-  return {
-    glyph: filled ? glyphs.hexActive : glyphs.hexIdle,
-    bright: filled,
-  };
+  if (phase === 'idle') return { glyph: glyphs.hexIdle, bright: false };
+  if (phase === 'attention') return { glyph: glyphs.hexActive, bright: true };
+  return { glyph: glyphs.hexActive, bright: false };
+}
+
+// ── Verb shimmer (laws 8–10) ────────────────────────────────────────
+//
+// A brightness band sweeps left→right across the live status verb. The label
+// IS the loader, so no cell is spent on a separate spinner glyph.
+//
+// Ported from the pre-Silvery `cli/tui-shimmer.ts` (#1373), which the ANSI
+// printer's deletion took with it. Two things changed in the port, both
+// forced:
+//
+//  1. It returns COLORS, not escape sequences. Silvery's compositor owns
+//     painting; the old module wrote `\x1b[38;2;…m` per character directly to
+//     the buffer, which is precisely the layer that no longer exists. Handing
+//     back a color per character keeps the math pure and lets `<Text>` paint.
+//  2. Phase comes from the shared tick, not wall-clock ms. The old module used
+//     `Date.now()` on purpose (continuous across dropped frames); law 8's
+//     phase-lock outranks that, and at a 150ms clock the difference is a frame.
+//
+// NOT silvery's `TextShimmer` — see the component note in `theme.tsx`. It is a
+// whole-word binary flip on a private timer, which is neither this effect nor
+// law 8-compatible.
+
+/**
+ * Band half-width as a fraction of the label length, with a floor.
+ *
+ * Proportional, not fixed: a fixed band swamps a word shorter than itself, and
+ * these verbs run 7–10 chars ("thinking", "committing"). The web's gradient
+ * shows a ~0.6-label-width highlight window; half of that is the 0.3 here.
+ */
+const BAND_HALF_FRACTION = 0.3;
+const BAND_HALF_MIN = 1.5;
+
+/**
+ * Triangular highlight intensity in [0, 1] for the character at `index` of a
+ * `len`-char label, at sweep `progress` in [0, 1).
+ *
+ * The band center travels from just off the left edge to just off the right
+ * (the web's off-canvas 320% lead-in/out), so the highlight enters and exits
+ * smoothly instead of popping in at full strength on character 0.
+ */
+export function shimmerIntensity(index: number, len: number, progress: number): number {
+  if (len <= 0) return 0;
+  const half = Math.max(BAND_HALF_MIN, len * BAND_HALF_FRACTION);
+  const center = -half + progress * (len - 1 + 2 * half);
+  const distance = Math.abs(index - center);
+  if (distance >= half) return 0;
+  return 1 - distance / half;
+}
+
+function hexToRgb(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+function mixHex(base: string, highlight: string, t: number): string {
+  const [r1, g1, b1] = hexToRgb(base);
+  const [r2, g2, b2] = hexToRgb(highlight);
+  const channel = (a: number, b: number) =>
+    Math.round(a + (b - a) * t)
+      .toString(16)
+      .padStart(2, '0');
+  return `#${channel(r1, r2)}${channel(g1, g2)}${channel(b1, b2)}`;
+}
+
+/**
+ * Per-character colors for `text` at `tick`. One entry per character, always —
+ * the array length is the string length, so a caller can zip the two without
+ * a bounds check.
+ *
+ * Color only: nothing here changes width, so the shimmer can never reflow the
+ * header. Reduced motion returns the flat base (law 10's static equivalent —
+ * the verb still says what it says).
+ *
+ * Base/highlight default to the mono canvas rather than the active theme's
+ * accent on purpose: per `theme.tsx`, themes pick the accent hue but never
+ * replace the grayscale posture, and the accent is reserved for "where the
+ * action is" (law 2). A shimmer is a brightness lift, not a hue tint — same
+ * call the web makes.
+ */
+export function verbShimmerColors(
+  text: string,
+  tick: number,
+  reducedMotion: boolean = isReducedMotion(),
+  base: string = SHIMMER_BASE,
+  highlight: string = SHIMMER_HIGHLIGHT,
+): string[] {
+  const chars = [...text];
+  if (reducedMotion) return chars.map(() => base);
+  const period = MOTION_TICKS.verbShimmerPeriod;
+  const progress = (((tick % period) + period) % period) / period;
+  return chars.map((_, i) => mixHex(base, highlight, shimmerIntensity(i, chars.length, progress)));
 }
 
 // ── Density meter (law 9) ───────────────────────────────────────────
@@ -338,7 +451,6 @@ export function footerKeybinds(scope: FooterScope): string {
 }
 
 export interface HeaderFacts {
-  brandMark: string;
   branch: string;
   path: string;
   /** Compact context readout (e.g. "12k" or a density bar + label). */
@@ -349,10 +461,19 @@ export interface HeaderFacts {
 
 /**
  * Dot-separated fact strip for the header. Facts only — no controls (law 1).
- * Returns the joined segments; the surface styles brand vs muted separately.
+ *
+ * Deliberately carries neither the brand mark nor the status verb, though it
+ * used to take a `brandMark`. That was why it sat unwired while `HeaderBar`
+ * hand-built the same string: the header has three independently styled zones
+ * (accent/muted hex, per-character shimmering verb, muted facts), and a zone
+ * cannot be styled from inside a joined string it shares with the others. The
+ * old signature's own doc comment said "the surface styles brand vs muted
+ * separately" while putting the brand mark in the array — the contradiction
+ * that kept every caller away. Facts are the part that IS uniformly muted;
+ * that is the part this owns.
  */
 export function headerSegments(facts: HeaderFacts): string[] {
-  const segs: string[] = [facts.brandMark];
+  const segs: string[] = [];
   if (facts.branch) segs.push(facts.branch);
   if (facts.path) segs.push(facts.path);
   if (facts.context) segs.push(facts.context);

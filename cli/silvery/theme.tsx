@@ -26,6 +26,23 @@
  *    refuses. DO NOT ADOPT THEM, and do not "fix" our hand-rolled equivalents
  *    by swapping them in.
  *
+ * A third category worth naming, because it is neither of the above:
+ *
+ *  - RIGHT NAME, WRONG BEHAVIOR — `TextShimmer`. Our header verb shimmers, so
+ *    this looks like the component we obviously want. It is not. Two reasons,
+ *    each disqualifying on its own:
+ *      1. It is a whole-word BINARY FLIP, not a sweep: the body is literally
+ *         `color: value > .5 ? highColor : lowColor`. Every character changes
+ *         together. That is a blink; ours is a band travelling across the
+ *         label, which is the whole effect.
+ *      2. It runs its OWN `useAnimation` timer at its own period. Law 8 is one
+ *         shared clock precisely so concurrent effects stay phase-locked — a
+ *         private 1200ms timer beating against our 150ms tick is the "two
+ *         animations at different periods read as flicker" failure the law
+ *         exists to prevent.
+ *    Use `verbShimmerColors()` from `visual-language.ts`, which is pure, takes
+ *    the shared tick, and returns one color per character.
+ *
  * `Diff` is the trap, because our `EditDiff` fits its props almost exactly and
  * a swap looks like free line-numbers + side-by-side. It is not: `Diff`
  * hardcodes `{context: '$muted', add: '$success', remove: '$error'}` at module

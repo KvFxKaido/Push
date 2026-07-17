@@ -188,8 +188,6 @@ const KNOWN_SUBCOMMANDS = new Set([
   'attach',
   'tui',
   'theme',
-  'animate',
-  'spinner',
   'memory',
   'init-deep',
   'audit-evals',
@@ -297,10 +295,6 @@ Usage:
   push theme list               List available TUI themes
   push theme preview [<name>]   Preview swatches for a theme (all themes if omitted)
   push theme set <name>         Set TUI theme (mono|default|neon|metallic|solarized|forest)
-  push spinner                  Show pinned Braille spinner
-  push spinner list             List spinners (with frame previews)
-  push spinner set <name>       Pin spinner (off|braille|orbit|breathe|pulse|helix)
-  push spinner unpin            Unpin: revert to static status dot
   push memory backfill          Embed stored memory records that lack an embedding (semantic recall)
 
 Options:
@@ -1820,7 +1814,6 @@ function sanitizeConfig(config) {
     webSearchBackend: config.webSearchBackend || null,
     execMode: config.execMode || null,
     theme: config.theme || null,
-    spinner: config.spinner || null,
     tuiMouseMode: config.tuiMouseMode || null,
     tuiDaemonAutoStart: config.tuiDaemonAutoStart ?? null,
     safeExecPatterns: Array.isArray(config.safeExecPatterns) ? config.safeExecPatterns : [],
@@ -2320,67 +2313,6 @@ async function runSessionsPrune(values: Record<string, unknown>): Promise<number
       `(${formatPruneBytes(report.bytesSelected)} selected).\n`,
   );
   return report.failed.length > 0 ? 1 : 0;
-}
-
-async function runSpinnerSubcommand(positionals) {
-  const { SPINNER_NAMES, SPINNERS, isSpinnerName, isReducedMotion } = await import(
-    './tui-spinner.js'
-  );
-  const config = await loadConfig();
-  const action = (positionals[1] || 'show').toLowerCase();
-
-  // `isSpinnerName` rather than `typeof === 'string'` so a stale or hand-
-  // edited config with an unknown spinner cleanly reports as unpinned
-  // instead of pretending to be pinned to something the TUI will ignore.
-  const pinned = isSpinnerName(config.spinner) ? config.spinner : null;
-
-  if (action === 'show') {
-    const shown = pinned ?? 'off';
-    const suffix = isReducedMotion() ? ' (reduced-motion active — forced off)' : '';
-    process.stdout.write(`${shown}${suffix}\n`);
-    return 0;
-  }
-
-  if (action === 'list') {
-    for (const name of SPINNER_NAMES) {
-      const marker = name === pinned ? '*' : ' ';
-      const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
-      process.stdout.write(
-        `${marker} ${preview}  ${fmt.bold(name.padEnd(10))} ${fmt.dim(SPINNERS[name].description)}\n`,
-      );
-    }
-    return 0;
-  }
-
-  // `push spinner <name>` and `push spinner set <name>` both pin.
-  // `push spinner unpin` clears the pin.
-  const rawValue = action === 'set' ? positionals[2] : action;
-  const value = (rawValue || '').toLowerCase().trim();
-  if (value === 'unpin') {
-    const next = { ...config };
-    delete next.spinner;
-    const configPath = await saveConfig(next);
-    process.stdout.write(`Saved: spinner unpinned → ${fmt.dim(configPath)}\n`);
-    return 0;
-  }
-  if (!value || !isSpinnerName(value)) {
-    throw new Error(
-      `Unknown spinner: ${value || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
-    );
-  }
-  // Reduced-motion is a hard guard: refuse to persist a non-'off' spinner
-  // when PUSH_REDUCED_MOTION / REDUCED_MOTION is set, matching the TUI
-  // path (`handleSpinnerCommand` in tui.ts). Saving 'off' is still allowed
-  // — that's the intended behaviour under reduced-motion anyway.
-  if (isReducedMotion() && value !== 'off') {
-    throw new Error(
-      "Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to save a non-'off' spinner.",
-    );
-  }
-  const next = { ...config, spinner: value };
-  const configPath = await saveConfig(next);
-  process.stdout.write(`Saved spinner: ${fmt.bold(value)} → ${fmt.dim(configPath)}\n`);
-  return 0;
 }
 
 async function readPidFile() {
@@ -3970,10 +3902,6 @@ export async function main() {
 
   if (subcommand === 'theme') {
     return runThemeSubcommand(positionals);
-  }
-
-  if (subcommand === 'spinner') {
-    return runSpinnerSubcommand(positionals);
   }
 
   if (subcommand === 'memory') {

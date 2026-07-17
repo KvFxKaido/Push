@@ -452,8 +452,11 @@ mobile in priority — the plan is committed, the calendar is not.
   terminal/browser adapters); `PUSH_TUI_SILVERY` is removed. The ANSI product printer (`cli/tui.ts`)
   and its renderer-only modules/tests are deleted. Shared pure helpers (`tui-history`,
   `tui-daemon-session`, `tui-status`, completer/focus/modal-input, framers/renderer used by status)
-  remain as libraries the retained controller still consumes. Remote/rc/daemon/checkpoint/theme/
-  spinner control plane lives on Silvery via `cli/daemon-admin.ts` + controller slash commands.
+  remain as libraries the retained controller still consumes. Remote/rc/daemon/checkpoint/theme
+  control plane lives on Silvery via `cli/daemon-admin.ts` + controller slash commands. (The
+  spinner control plane was ported here too, then removed: nothing on Silvery ever painted a
+  frame from it, so `/spinner` saved a preference and changed nothing. Its slot is now the verb
+  shimmer — see `TUI Visual Language v2.md` law 8.)
   Confirm the shared `lib/` runtime contracts are untouched (silvery is view-only) and the shared
   kernel round loop still drives cleanly.
 

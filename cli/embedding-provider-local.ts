@@ -29,7 +29,7 @@
  * the first op or two. The cost of non-blocking is that records written during
  * the warmup window are lexical-only until rewritten (the backfill follow-up).
  *
- * Commands that never touch memory (e.g. `push spinner show`) never trigger a
+ * Commands that never touch memory (e.g. `push theme show`) never trigger a
  * load, and the common no-dependency case stays silent. Diagnostics go to
  * stderr (never stdout — the CLI's user-output / `--json` channel; see
  * [[push-stdout-is-user-channel-on-cli]]).
