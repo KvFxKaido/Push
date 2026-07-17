@@ -40,6 +40,7 @@ import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { openRouterModelUsesResponses } from '@push/lib/provider-models';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
+import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
 import { getZenGoTransport } from '../lib/zen-go';
 import { getUserProviderKey } from './user-secrets';
@@ -369,13 +370,7 @@ async function* zenGoAnthropicEvents(
   upstream: Response,
   signal?: AbortSignal,
 ): AsyncIterable<PushStreamEvent> {
-  let sawDone = false;
-  for await (const event of anthropicEventStream(upstream, signal)) {
-    if (event.type === 'pause_turn') continue;
-    if (event.type === 'done') sawDone = true;
-    yield event;
-  }
-  if (!sawDone) yield { type: 'done', finishReason: 'stop' };
+  yield* completeAnthropicStreamWithoutPause(anthropicEventStream(upstream, signal));
 }
 
 // ---------------------------------------------------------------------------

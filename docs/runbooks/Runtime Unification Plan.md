@@ -1,6 +1,6 @@
 # Runtime Unification Plan
 
-Status: **Current** — Phase 1 complete (2026-07-17)
+Status: **Current** — Phase 2 complete (2026-07-17)
 
 ## Goal
 
@@ -108,8 +108,46 @@ Review-pinned behavior:
 ### Phase 2 — provider-family adapters
 
 Create small transport-family builders and migrate the copy-shaped providers
-incrementally. Do not create one provider mega-adapter. Extract Anthropic pause
-continuation separately and pin behavior with shared fixtures.
+incrementally. Do not create one provider mega-adapter.
+
+1. [x] Extract the OpenAI Responses client family and migrate direct OpenAI,
+   xAI, Sakana, and Fireworks while keeping endpoint, credential lookup, and
+   provider identity explicit in their leaf modules.
+2. [x] Extract the copy-shaped OpenAI Chat Completions family for Z.ai, Nvidia
+   NIM, Hugging Face, and Cloudflare Workers AI without folding
+   provider-specific request fields into opaque generic hooks.
+3. [x] Converge direct Anthropic and DeepSeek's Anthropic-compatible transport,
+   extract the cross-shell `pause_turn` continuation state machine separately,
+   and share the defensive no-pause completion policy with Zen/background
+   routes.
+4. [x] Audit Gemini request/stream mechanics and preserve the current boundary:
+   direct web and CLI already share `toGeminiGenerateContent` and
+   `geminiEventStream`; Vertex is no longer a provider surface, and its former
+   OpenAI-compatible wire is not interchangeable with direct Gemini.
+
+The OpenAI Responses slice owns prompt composition, neutral-message conversion,
+request serialization, and SSE pumping. The traced fetch, error-prefix
+normalization, and response-body validation common to all three families live
+in one `provider-stream-fetch` helper — transport plumbing only, so it cannot
+drift into the mega-adapter this plan rules out. OpenRouter remains outside that builder: its session trace,
+provider routing controls, and dual Chat/Responses paths are real product
+behavior rather than copy-shaped transport boilerplate.
+
+The Chat Completions slice uses declarative credential and error-prefix modes.
+Kimi remains separate for its model-specific fixed sampling, Ollama remains
+separate for reasoning effort and native tool-history replay, and OpenRouter
+remains separate for routing/trace metadata and its dual wire modes.
+
+The Anthropic slice keeps web transport construction in a small family adapter
+while moving replay ordering, the three-continuation cap, empty-block handling,
+and terminal synthesis into shared `lib/` code used by web and CLI. DeepSeek,
+Zen Go, and background Zen routes cannot legitimately continue `pause_turn`, so
+they share the complementary drain-and-guarantee-done policy instead.
+
+The Gemini audit deliberately produced no new family adapter. Direct Google is
+the only native Gemini provider leaf; both shells already converge at the
+serializer and native SSE pump. Reintroducing Vertex into that adapter would
+erase a real wire-family boundary rather than remove duplication.
 
 ### Phase 3 — capability resolver
 
