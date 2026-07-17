@@ -210,6 +210,25 @@ function activityText(event: EngineEvent): string {
   return tool;
 }
 
+/**
+ * One line for a status / warning / error row.
+ *
+ * `phase` and `detail` COMPOSE; they are not alternatives. The old chain
+ * (`message ?? detail ?? phase ?? type`) picked exactly one and put `detail`
+ * ahead of `phase`, so a halt rendered as a bare "Hit 50 round limit" — the
+ * consequence with the cause discarded — and a round tick rendered "Round 1"
+ * rather than the phase it belonged to. Cause then action, per Visual Language
+ * v2 law 11.
+ */
+function statusText(payload: Record<string, unknown>, eventType: string): string {
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  if (message) return message;
+  const phase = typeof payload.phase === 'string' ? payload.phase.trim() : '';
+  const detail = typeof payload.detail === 'string' ? payload.detail.trim() : '';
+  if (phase && detail) return `${phase} · ${detail}`;
+  return phase || detail || eventType;
+}
+
 /** Approval detail is `unknown` on EngineEvent; InteractionModal needs a string. */
 function formatApprovalDetail(detail: unknown): string {
   if (typeof detail === 'string') return detail;
@@ -646,7 +665,7 @@ export async function createSilveryController(
             id: nextId('status'),
             kind: 'status',
             role: 'status',
-            text: String(payload.message ?? payload.detail ?? payload.phase ?? event.type),
+            text: statusText(payload, event.type),
           },
         ];
         break;

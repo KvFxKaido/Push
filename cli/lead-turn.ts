@@ -843,14 +843,25 @@ export async function runLeadKernelTurn(
   };
 
   const callbacks: CoderAgentCallbacks = {
-    onStatus: (phase, detail) => {
-      // The kernel's "Reasoning Sync" status mirrors the first ~150 chars of
-      // each round's text — built for the web's transient status bar. The
-      // TUI renders every status event as a transcript entry, and the lane
-      // already streams the same text live (`assistant_token`), so here the
-      // snippet is a truncated duplicate of the answer. Drop it; all other
-      // statuses (rounds, checkpoints, halts) pass through.
-      if (phase === 'Coder reasoning') return;
+    onStatus: (phase, detail, kind) => {
+      // The kernel's statuses were built for the web's TRANSIENT bar, where each
+      // replaces the last. This lane appends them to a PERMANENT transcript, so
+      // only the durable half belongs here (`StatusKind` in lib/coder-agent.ts
+      // carries the distinction).
+      //
+      // What this drops, and why it is not cosmetic: every round emitted
+      // 'Coder working...' (Round N) and 'Coder executing...' (the raw tool
+      // name) — the first pure loop bookkeeping, the second a strictly worse
+      // duplicate of the tool card rendered directly beneath it. They also sat
+      // BETWEEN every pair of tool rows, and `groupSilveryTranscriptRows` folds
+      // only CONSECUTIVE tool calls: run length was always 1, so the fold could
+      // never fire and the projection was dead in production despite passing its
+      // own tests. Measured on a real 3-tool turn: 9 rows → 1.
+      //
+      // Filtering on `kind`, not on the phase string, is the point. This used to
+      // read `if (phase === 'Coder reasoning') return` — a label rename in the
+      // kernel would have silently restored the noise with nothing going red.
+      if (kind === 'progress') return;
       dispatchEvent('status', { source: 'lead', phase, detail });
     },
     signal,
