@@ -109,10 +109,16 @@ code names them `markWork` / `markQuiet` for this reason; the earlier `dotActive
 `dotIdle` claimed a live-vs-settled distinction the code never made.)
 
 Consecutive settled, successful tool calls fold into one semantic spine row — for example,
-`Read 3 files, Ran 1 command`. The fold is a render-only projection: expanding it restores
+`Read 3 files, Ran pnpm test`. The fold is a render-only projection: expanding it restores
 every original card, while pending calls, failures, prose, and status rows remain visible
-boundaries. A lone call keeps its concrete title instead of paying the interaction cost of
-a one-item group.
+boundaries.
+
+**The fold compresses repetition, and nothing else.** A verb that occurs once is named, not
+counted: three reads earn `Read 3 files` because their paths are noise, but a lone `exec`
+reads `Ran pnpm test` — never `Ran 1 command`, which is longer than the truth it replaced
+and says less. This applies per verb *within* a mixed row, not just to a group of one; the
+example above was `Read 3 files, Ran 1 command` until the code stopped throwing away a
+target it was already holding.
 
 The **human turn wears neither Push glyph** — not the hexagon (that would put Push's face
 on the one voice that isn't Push) and not the square spine (that is Push's own activity).
