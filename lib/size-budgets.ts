@@ -94,8 +94,16 @@ export const SIZE_BUDGETS = Object.freeze({
    * the file. What must never happen again is the cap eating the guidance in
    * silence. (Found when adding two defect classes to REVIEW.md evicted three
    * other sections; Codex caught it on #1477.)
+   *
+   * Raised 16k → 18k on 2026-07-17: the await-breaks-a-reservation class put
+   * REVIEW.md at 90% and the headroom test went red, which is the test doing its
+   * job. Taking the raise rather than shaving the entry is the instruction
+   * above — the alternative is trimming the rulebook to fit a number we chose,
+   * which is backwards. Unlike `projectInstructions` (pinned to Codex's real
+   * 32 KiB ceiling), this one is ours to set, and ~500 extra tokens on a deep
+   * review is not a cost worth a worse rulebook.
    */
-  reviewGuidance: 16_000,
+  reviewGuidance: 18_000,
   /** Prior-review findings block fed to a re-review (cross-review memory) —
    *  supporting context for diffing against the previous pass, so it gets
    *  less room than the primary REVIEW.md guidance. */

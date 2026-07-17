@@ -72,6 +72,13 @@ Kept first so it survives the reviewer-context size cap.
   exit on terminal conditions (deadlines, abort signals, event-completion races),
   not just the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a
   hang waiting to happen.
+- **An `await` that breaks a reservation.** A check-then-write (dedupe, liveness,
+  uniqueness) is only a reservation if nothing is awaited between check and
+  write. Flag any new insert/claim path whose guard sits above an `await` — an
+  invariant documented at one call site does not bind a new path. A Durable
+  Object's input gate closes for *storage* ops, not network ones: a concurrent
+  request can land across `await fetch(...)`, so "single-threaded" is not the
+  guarantee it sounds like. Twice in `pr-review-job-do.ts` (#910, #1515).
 - **Fire-and-forget promises.** `(async () => { … })()` and `fn().catch(() => {})`
   swallow errors silently. The returned promise must be awaited somewhere, or the
   failure surfaced via `warn()` / a structured log — not dropped.
