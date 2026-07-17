@@ -136,7 +136,7 @@ import { symbolLedger } from './symbol-persistence-ledger';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { parseDiffStats } from './diff-utils';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
-import { createCoderPolicy } from '@push/lib/coder-policy';
+import { createCoderPolicy, formatCoderPolicyEvent } from '@push/lib/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 import { buildVerificationAcceptanceCriteria } from './verification-runtime';
@@ -854,9 +854,7 @@ export async function runInPageCoderKernel(
   // --- Shared Coder policy ---
   const policy = createCoderPolicy({
     onEvent: (event) => {
-      console.log(
-        JSON.stringify({ level: event.event.endsWith('exhausted') ? 'warn' : 'info', ...event }),
-      );
+      console.log(formatCoderPolicyEvent(event, 'web_inline'));
     },
   });
   const turnCtx: CoderTurnContext = {
@@ -864,12 +862,15 @@ export async function runInPageCoderKernel(
     round: 0,
     maxRounds: spec.harnessSettings?.maxCoderRounds ?? 30,
     sandboxId: spec.sandboxId,
-    allowedRepo: '',
+    allowedRepo: spec.memoryScope?.repoFullName ?? '',
     activeProvider: spec.provider,
     activeModel: spec.modelId,
     // Undefined (delegated arc / engine) → task; the inline lane passes false
     // for conversational turns so the no-fake-completion guard stays quiet.
     taskInFlight: spec.taskInFlight,
+    // The foreground lead gives direct answers as well as coding summaries;
+    // delegated Coders retain the original strict short-response guard.
+    completionGuard: spec.leadToolSurface ? 'claims_only' : 'strict',
     signal: callbacks.signal,
   };
 

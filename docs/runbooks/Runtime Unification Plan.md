@@ -65,7 +65,8 @@ algorithm should be shared and accept a surface-provided metadata lookup.
 
 1. [x] Extract the surface-neutral Coder policy engine and turn-intent
    classifier into `lib/`.
-2. [x] Keep the web turn-policy registry as a thin `ChatMessage` adapter.
+2. [x] Delete the web-only registry and `ChatMessage` adapter after moving its
+   only production caller to the shared factory.
 3. [x] Wire the web inline lane and CLI lead to the same policy instance
    contract.
 4. [x] Remove the standalone CLI policy implementation and move its tests to
@@ -83,7 +84,22 @@ Acceptance:
   rules;
 - policy outputs carry shared steer/block metadata without changing agent
   capability;
+- each shell emits the same structured policy events with a runtime-host field;
 - focused web, CLI, and shared-kernel tests pass.
+
+Review-pinned behavior:
+
+- delegated Coder hosts keep the strict short-response grounding guard; web
+  and CLI conversational leads use `claims_only`, which permits ordinary
+  direct answers but still challenges explicit completion claims;
+- a trailing announced action is evaluated before generic completion
+  grounding so the next round can force the promised tool call;
+- only successful repo-level verification tools or commands reset mutation
+  backpressure; a file-scoped `lsp_diagnostics` result does not;
+- CLI policy events use stderr because stdout is reserved for user and JSONL
+  output, while web and Worker hosts use their local structured-log sink;
+- Worker adoption builds one services/policy instance per adoption attempt;
+  a relaunched attempt intentionally receives fresh policy state.
 
 ### Phase 2 — provider-family adapters
 

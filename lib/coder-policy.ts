@@ -23,6 +23,13 @@ export interface CoderPolicyContext {
   phase?: string;
   allowedRepo?: string;
   taskInFlight?: boolean;
+  /**
+   * Delegated Coders preserve the original strict short-response guard.
+   * Conversational lead hosts use claims_only so ordinary direct answers are
+   * not mistaken for fake completion; explicit completion claims are still
+   * grounded.
+   */
+  completionGuard?: 'strict' | 'claims_only';
 }
 
 export type CoderPolicyReason =
@@ -88,6 +95,14 @@ export interface CreateCoderPolicyOptions {
   onEvent?: (event: CoderPolicyEvent) => void;
 }
 
+export function formatCoderPolicyEvent(event: CoderPolicyEvent, runtimeHost: string): string {
+  return JSON.stringify({
+    level: event.event.endsWith('exhausted') ? 'warn' : 'info',
+    ...event,
+    runtimeHost,
+  });
+}
+
 interface MutationFailureEntry {
   tool: string;
   file: string;
@@ -101,13 +116,12 @@ const DRIFT_NON_ASCII_RATIO_THRESHOLD = 0.3;
 export const BACKPRESSURE_MUTATION_THRESHOLD = 4;
 
 export const VERIFICATION_COMMAND_PATTERN =
-  /\b(tsc|typecheck|type-check|npx tsc|pyright|mypy|eslint|biome|prettier.*--check|ruff check|npm test|npx vitest|pytest|cargo test|go test|npm run lint|npm run test|npm run typecheck|npm run build)\b/i;
+  /\b(tsc|typecheck|type-check|npx tsc|pyright|mypy|eslint|biome|prettier.*--check|ruff check|npm test|npx vitest|pytest|cargo test|go test|npm run lint|npm run test|npm run typecheck|npm run build|pnpm test|pnpm run lint|pnpm run test|pnpm run typecheck(?::\w+)?|pnpm run build)\b/i;
 
 const VERIFICATION_TOOLS = new Set([
   'sandbox_run_tests',
   'sandbox_check_types',
   'sandbox_verify_workspace',
-  'lsp_diagnostics',
 ]);
 
 const MUTATION_TOOLS = new Set([
@@ -305,18 +319,42 @@ export function createCoderPolicy(options: CreateCoderPolicyOptions = {}): Coder
         !hasToolCall &&
         !/coder_checkpoint/.test(trimmed) &&
         !/coder_update_state/.test(trimmed) &&
-        responseClaimsCompletion(trimmed)
+        (ctx.completionGuard !== 'claims_only' || responseClaimsCompletion(trimmed))
       ) {
+        // Preserve the original web guard's deliberately strict task
+        // semantics: any short terminal-looking response must carry concrete
+        // evidence, not only responses that happen to match a completion-claim
+        // phrase. Conversational turns opt out via taskInFlight above.
+        const hasConcreteReference =
+          /(?:\b(?:file|path|command|test suite|typecheck|lint)\b|(?:^|[\s`'"(])(?:[\w.-]+\/)+[\w.-]+|\b[\w.-]+\.(?:[cm]?[jt]sx?|py|json|css|md)\b|`[^`]+`)/i.test(
+            trimmed,
+          );
+        const hasGroundedInvestigation =
+          /\b(findings?|traced|investigated|reviewed|verified|validated|tested|inspected)\b/i.test(
+            trimmed,
+          ) && hasConcreteReference;
+        const hasSuccessfulVerificationResult =
+          VERIFICATION_COMMAND_PATTERN.test(trimmed) &&
+          /\b(passed|passing|succeeded|successful|green|clean|no errors?)\b/i.test(trimmed);
+        const hasGroundedRead =
+          /\b(read|reading|inspected|reviewed)\b.*\b(file|path|\.[cm]?[jt]sx?|\.py|\.json|\.css|\.md)\b/i.test(
+            trimmed,
+          );
+        const hasLeadSummaryEvidence =
+          ctx.completionGuard === 'claims_only' &&
+          /\b(findings?|traced|investigated|reviewed|verified|validated|tested|inspected|summarized)\b/i.test(
+            trimmed,
+          );
         const hasArtifactEvidence =
           /\b(modified|created|updated|deleted|wrote|edited|changed)\b.*\b(file|\.[tj]sx?|\.py|\.json|\.css)\b/i.test(
             trimmed,
           ) ||
           /sandbox_diff|sandbox_commit|prepare_push|git_diff|git_commit/.test(trimmed) ||
           /acceptance\s+criteria|\[Acceptance Criteria\]/i.test(trimmed) ||
-          /\b(findings?|traced|investigated|reviewed|verified|validated|tested)\b/i.test(trimmed) ||
-          /\b(read|reading|inspected|reviewed)\b.*\b(file|\.[tj]sx?|\.py|\.json|\.css)\b/i.test(
-            trimmed,
-          );
+          hasGroundedInvestigation ||
+          hasSuccessfulVerificationResult ||
+          hasLeadSummaryEvidence ||
+          hasGroundedRead;
         const hasBlockedReport =
           /\b(blocked|cannot|unable|impossible|not possible|stuck)\b/i.test(trimmed) &&
           trimmed.length > 50;

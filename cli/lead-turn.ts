@@ -49,10 +49,12 @@ import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { decideStreamFailover } from '../lib/provider-failover.ts';
 import {
   createCoderPolicy,
+  formatCoderPolicyEvent,
   type CoderPolicyContext,
   type CoderPolicyAfterResult,
 } from '../lib/coder-policy.ts';
 import { classifyTurnIntent } from '../lib/turn-intent.ts';
+import { resolveWorkspaceIdentity } from '../lib/workspace-identity.ts';
 import { cliProviderModelSupportsNativeToolCalling } from './native-tool-gate.js';
 import {
   createProviderStream,
@@ -443,11 +445,12 @@ export async function runLeadKernelTurn(
   // ride the kernel's `projectInstructions` slot while the snapshot and the
   // persisted `[MEMORY]` block (`save_memory` entries) ride the task
   // preamble.
-  const [snapshot, instructions, memory, githubProtocol] = await Promise.all([
+  const [snapshot, instructions, memory, githubProtocol, workspaceIdentity] = await Promise.all([
     buildWorkspaceSnapshot(state.cwd).catch((): string => ''),
     loadProjectInstructions(state.cwd).catch((): null => null),
     loadMemory(state.cwd).catch((): null => null),
     getGitHubToolProtocolAsync().catch((): string => ''),
+    resolveWorkspaceIdentity(state.cwd),
   ]);
 
   // Pre-turn LLM compaction (§14, CLI parity): when the durable history has
@@ -467,12 +470,17 @@ export async function runLeadKernelTurn(
     memory,
   );
   const leadModelId = state.model || providerConfig.defaultModel;
-  const coderPolicy = createCoderPolicy();
+  const coderPolicy = createCoderPolicy({
+    // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
+    // must stay on stderr so machine-readable streams remain pure.
+    onEvent: (event) => console.error(formatCoderPolicyEvent(event, 'cli_lead')),
+  });
   const coderPolicyContext: CoderPolicyContext = {
     round: 0,
     maxRounds,
-    allowedRepo: '',
+    allowedRepo: workspaceIdentity.repoFullName,
     taskInFlight: classifyTurnIntent(userText) === 'task',
+    completionGuard: 'claims_only',
   };
   // Explorer fan-out honors the disabledTools policy end-to-end (Codex P2 on
   // #1370): when `delegate_explorer` is disabled, the arc is neither
@@ -675,7 +683,21 @@ export async function runLeadKernelTurn(
       rawCall.args ?? {},
       coderPolicyContext,
     );
-    if (beforeTool) return { kind: 'denied', reason: beforeTool.reason };
+    if (beforeTool) {
+      // The kernel always emits the paired completion event. Synthesize the
+      // start before returning the denial so TUI transcript state never sees a
+      // completion for an entry it was not told to create.
+      const startPayload = {
+        round: execCtx.round,
+        executionId: execCtx.executionId,
+        toolName: rawCall.tool,
+        toolSource: 'coder',
+        args: rawCall.args,
+      };
+      void persistEvent('tool.execution_start', startPayload);
+      dispatchEvent('tool.execution_start', startPayload);
+      return { kind: 'denied', reason: beforeTool.reason };
+    }
     // Explorer-only delegation arc (§10): the lead offloads read-only
     // investigation but does its own coding — `delegate_explorer` is the
     // only delegation tool the lead executes (there is no `delegate_coder`

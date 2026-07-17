@@ -61,4 +61,20 @@ describe('createCoderPolicyKernelAdapter', () => {
       forceToolChoiceNextRound: true,
     });
   });
+
+  it('forwards shared policy events to the host', async () => {
+    const onEvent = vi.fn();
+    const execute = vi.fn(async () => ({ kind: 'executed' as const, resultText: 'ok' }));
+    const adapter = createCoderPolicyKernelAdapter({
+      context: makeAdapter().adapter.context,
+      execute,
+      onEvent,
+    });
+
+    await adapter.evaluateAfterModel("I'll inspect README.md now.", 1);
+
+    expect(onEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ event: 'coder_trailing_intent_nudged', round: 1 }),
+    );
+  });
 });

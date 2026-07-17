@@ -236,6 +236,11 @@ export async function runAdoptedLoop(args: RunAdoptedLoopArgs): Promise<void> {
     activeProvider: checkpoint.provider,
     activeModel: checkpoint.model,
     sandboxId,
+    policyEventHost: 'worker_adoption',
+    // One services/policy instance lives for this adoption invocation. A host
+    // relaunch is a new adopted attempt seeded from its durable checkpoint;
+    // unlike CoderJob's sandbox-restore loop, this runner does not rebuild
+    // services inside one live attempt.
     // Memory tools deliberately unwired — the in-memory store is empty in a
     // Worker isolate (the CoderJob precedent); the bindings deny memory calls
     // with a model-readable reason.

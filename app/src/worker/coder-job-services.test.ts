@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { CoderTurnContext } from '@push/lib/coder-agent-bindings';
 import { buildCoderJobServices } from './coder-job-services';
 
@@ -23,6 +23,7 @@ function makeServices() {
       activeProvider: 'openrouter',
       activeModel: 'model-1',
       sandboxId: 'sandbox-1',
+      policyEventHost: 'worker_background',
     }),
   };
 }
@@ -37,6 +38,28 @@ describe('buildCoderJobServices policy', () => {
     );
 
     expect(result).toMatchObject({ action: 'inject', code: 'announced_no_action' });
+  });
+
+  it('emits structured policy events with the Worker host identity', async () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    try {
+      const { services, turnCtx } = makeServices();
+      await services.policy.evaluateAfterModel(
+        'I will inspect the runtime implementation now.',
+        [],
+        turnCtx,
+      );
+
+      expect(log).toHaveBeenCalledOnce();
+      expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+        event: 'coder_trailing_intent_nudged',
+        level: 'info',
+        runtimeHost: 'worker_background',
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('enforces verification-phase mutation denial', async () => {

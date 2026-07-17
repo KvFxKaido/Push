@@ -62,6 +62,8 @@ export interface CoderTurnContext {
   activeModel?: string;
   /** False for conversational lead turns; task-only policy guards stay quiet. */
   taskInFlight?: boolean;
+  /** Leads challenge explicit completion claims; delegated Coders stay strict. */
+  completionGuard?: 'strict' | 'claims_only';
   signal?: AbortSignal;
 }
 

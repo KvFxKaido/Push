@@ -4358,9 +4358,11 @@ describe('delegate_coder', needsLoopback, () => {
     const SESSION_ONLY_TOKEN = 'SESSION_PROVIDER_SHOULD_NOT_APPEAR';
     const ROUTED_ONLY_TOKEN = 'ROUTED_CODER_PROVIDER_DID_APPEAR';
 
-    const sessionMock = await startMockProviderServer({ tokens: [SESSION_ONLY_TOKEN] });
+    const sessionMock = await startMockProviderServer({
+      tokens: [SESSION_ONLY_TOKEN, ' I modified the session-fixture.ts file.'],
+    });
     const routedMock = await startMockProviderServer({
-      tokens: [ROUTED_ONLY_TOKEN],
+      tokens: [ROUTED_ONLY_TOKEN, ' I modified the routed-fixture.ts file.'],
       streamShape: 'responses',
     });
     const restoreSession = patchProviderConfig('ollama', {

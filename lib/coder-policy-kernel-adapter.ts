@@ -16,6 +16,7 @@ import {
   createCoderPolicy,
   type CoderPolicyContext,
   type CoderRuntimePolicy,
+  type CreateCoderPolicyOptions,
 } from './coder-policy.js';
 import type { ToolCard } from './tool-cards.js';
 
@@ -31,6 +32,7 @@ export interface CoderPolicyKernelAdapterOptions<TCard extends ToolCard = ToolCa
     execContext: CoderToolExecContext,
   ) => Promise<CoderToolExecResult<TCard>>;
   policy?: CoderRuntimePolicy;
+  onEvent?: CreateCoderPolicyOptions['onEvent'];
 }
 
 export interface CoderPolicyKernelAdapter<TCard extends ToolCard = ToolCard> {
@@ -65,7 +67,7 @@ function toPolicyPost(
 export function createCoderPolicyKernelAdapter<TCard extends ToolCard = ToolCard>(
   options: CoderPolicyKernelAdapterOptions<TCard>,
 ): CoderPolicyKernelAdapter<TCard> {
-  const policy = options.policy ?? createCoderPolicy();
+  const policy = options.policy ?? createCoderPolicy({ onEvent: options.onEvent });
   const context = options.context;
 
   return {

@@ -430,13 +430,13 @@ const stubExecutor: CoderJobExecutorAdapter = {
   sandboxStatus: async () => ({ head: 'HEAD', changedFiles: [] }),
 };
 
-/** Stream fn that immediately produces a short text response with no
- * tool calls — the kernel's first round completes, detector returns
- * null, loop exits. */
+/** Stream fn that immediately produces a grounded terminal response with no
+ * tool calls — the kernel's first round completes, detector returns null, and
+ * the strict delegated-Coder completion guard has concrete file evidence. */
 function makeNoToolStreamFn(summary: string): PushStream<ChatMessage> {
   return () =>
     (async function* () {
-      yield { type: 'text_delta', text: summary };
+      yield { type: 'text_delta', text: `${summary} I modified the fixture.ts file.` };
       yield {
         type: 'done',
         finishReason: 'stop',
@@ -1116,7 +1116,10 @@ describe('CoderJob DO — end-to-end', () => {
         await new Promise<void>((resolve) => {
           releaseStream = resolve;
         });
-        yield { type: 'text_delta', text: 'ignored by alarm' };
+        yield {
+          type: 'text_delta',
+          text: 'ignored by alarm; I modified the fixture.ts file.',
+        };
         yield {
           type: 'done',
           finishReason: 'stop',

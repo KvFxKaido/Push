@@ -340,9 +340,3 @@ export class TurnPolicyRegistry {
     };
   }
 }
-
-// ---------------------------------------------------------------------------
-// Factory — convenience constructors live in turn-policy-factory.ts to avoid
-// circular imports (explorer-policy.ts → explorer-agent.ts → tool-dispatch.ts).
-// Import createTurnPolicyRegistry / resetCoderPolicy from there instead.
-// ---------------------------------------------------------------------------

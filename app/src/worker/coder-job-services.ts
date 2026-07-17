@@ -26,7 +26,7 @@ import type {
   CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger } from '@push/lib/capabilities';
-import { createCoderPolicy } from '@push/lib/coder-policy';
+import { createCoderPolicy, formatCoderPolicyEvent } from '@push/lib/coder-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { ChatCard } from '@/types';
 import type {
@@ -50,13 +50,18 @@ export interface BuildCoderJobServicesArgs {
   sandboxId: string;
   /** Reuse one stateful policy when a host rebuilds sandbox-bound services. */
   policy?: CoderPolicyAdapter;
+  policyEventHost: 'worker_background' | 'worker_adoption';
 }
 
 export function buildCoderJobServices(
   args: BuildCoderJobServicesArgs,
 ): CoderBindingServices<AnyToolCall, SandboxToolCall, WebSearchToolCall, ChatCard> {
   return {
-    policy: args.policy ?? createCoderPolicy(),
+    policy:
+      args.policy ??
+      createCoderPolicy({
+        onEvent: (event) => console.log(formatCoderPolicyEvent(event, args.policyEventHost)),
+      }),
     capabilityLedger: args.capabilityLedger,
     turnCtx: args.turnCtx,
     onStatus: args.onStatus,
