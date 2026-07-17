@@ -1299,6 +1299,7 @@ export async function runInPageCoderKernel(
     cards: result.cards,
     rounds: result.rounds,
     checkpoints: result.checkpoints,
+    toolLedger: result.toolLedger,
     criteriaResults,
     capabilitySnapshot: capabilityLedger.snapshot(),
   };

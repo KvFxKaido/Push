@@ -933,17 +933,88 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const evaluateAfterModel = async (_response: string, round: number) =>
       round >= 6 ? ({ action: 'halt', summary: 'done' } as const) : null;
 
-    const checkpoints: Array<{ round: number; messageCount: number }> = [];
+    const checkpoints: Array<{ round: number; messageCount: number; ledgerEntries: number }> = [];
     await runCoderAgent(baseCoderOptions({ stream, detectAllToolCalls, evaluateAfterModel }), {
       onStatus: () => {},
       onCheckpoint: async (state) => {
-        checkpoints.push({ round: state.round, messageCount: state.messages.length });
+        checkpoints.push({
+          round: state.round,
+          messageCount: state.messages.length,
+          ledgerEntries: state.toolLedger?.entries.length ?? 0,
+        });
       },
     });
 
     // Cadence is 5, skipping round 0 → exactly one checkpoint at round index 5.
     expect(checkpoints.map((c) => c.round)).toEqual([5]);
     expect(checkpoints[0]?.messageCount).toBeGreaterThan(0);
+    // The checkpoint carries the execution ledger (2 reads × 5 prior rounds),
+    // so a resumed run does not lose pre-restore history (Codex P2 on #1521).
+    expect(checkpoints[0]?.ledgerEntries).toBe(10);
+  });
+
+  it('seeds the execution ledger from resumeState so resumed runs keep pre-restore history', async () => {
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'all done, nothing left to do' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const preRestoreLedgerEntry = {
+      sequence: 0,
+      round: 2,
+      call: { call: { tool: 'sandbox_write_file', args: { path: 'a.ts' } } },
+      phase: 'file_mutation' as const,
+      disposition: 'accepted' as const,
+      toolName: 'sandbox_write_file',
+      source: 'coder',
+      argsKey: 'sandbox_write_file::a.ts',
+      sideEffect: 'file_mutation' as const,
+      execution: {
+        status: 'failed' as const,
+        structuredErrorType: 'PRE_RESTORE_FAILURE',
+        isError: true,
+      },
+    };
+
+    const result = await runCoderAgent(
+      baseCoderOptions({
+        stream,
+        resumeState: {
+          round: 3,
+          messages: [
+            { id: 'seed', role: 'user' as const, content: 'continue the task', timestamp: 0 },
+          ],
+          workingMemory: {},
+          cards: [],
+          toolLedger: {
+            entries: [preRestoreLedgerEntry],
+            accepted: [preRestoreLedgerEntry],
+            rejected: [],
+            counts: {
+              total: 1,
+              accepted: 1,
+              rejected: 0,
+              byPhase: {
+                read: 0,
+                parallel_delegation: 0,
+                file_mutation: 1,
+                trailing_side_effect: 0,
+                file_mutation_batch_overflow: 0,
+                ordering_violation: 0,
+              },
+            },
+          },
+        },
+      }),
+      { onStatus: () => {} },
+    );
+
+    expect(result.toolLedger.entries).toHaveLength(1);
+    expect(result.toolLedger.entries[0].execution).toMatchObject({
+      status: 'failed',
+      structuredErrorType: 'PRE_RESTORE_FAILURE',
+    });
   });
 
   it('writes linked tool_use/tool_result sidecars for handled batched calls', async () => {

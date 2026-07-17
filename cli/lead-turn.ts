@@ -106,6 +106,12 @@ import { computeAdaptation, resetAdaptationState } from './harness-adaptation.js
 import { recordMalformedToolCall, resetToolCallMetrics } from './tool-call-metrics.js';
 import { recordWriteFile, resetWriteFileMetrics } from './edit-metrics.js';
 import { resetContextMetrics } from './context-metrics.js';
+import { loadUserGoalFile } from './user-goal-file.js';
+import {
+  deriveUserGoalAnchor,
+  formatUserGoalBlock,
+  type UserGoalAnchor,
+} from '../lib/user-goal-anchor.js';
 
 // ─── CLI call shapes ─────────────────────────────────────────────
 
@@ -280,6 +286,7 @@ export function buildLeadTurnPreamble(
   messages: ReadonlyArray<Message>,
   workspaceSnapshot: string,
   memory?: string | null,
+  userGoalAnchor?: UserGoalAnchor | null,
 ): string {
   const conversational = messages.filter((m) => {
     if (m.role !== 'user' && m.role !== 'assistant') return false;
@@ -349,6 +356,10 @@ export function buildLeadTurnPreamble(
           : text;
       lines.push(`[${msg.role}] ${clipped}`);
     }
+    lines.push('');
+  }
+  if (userGoalAnchor) {
+    lines.push(formatUserGoalBlock(userGoalAnchor));
     lines.push('');
   }
   lines.push(`Task: ${userText}`);
@@ -464,11 +475,52 @@ export async function runLeadKernelTurn(
     persistEvent,
   });
 
+  const hasCompactedHistory = (state.messages as Message[]).some(
+    (message) => typeof message.content === 'string' && isHandoffBlock(message.content),
+  );
+  let userGoalAnchor: UserGoalAnchor | null = null;
+  if (hasCompactedHistory) {
+    userGoalAnchor = await loadUserGoalFile(state.cwd);
+    if (!userGoalAnchor) {
+      const userTurns = (state.messages as Message[])
+        .filter(
+          (message) =>
+            message.role === 'user' &&
+            typeof message.content === 'string' &&
+            message.content.trim().length > 0 &&
+            !isToolResultMessage(message) &&
+            !isHandoffBlock(message.content),
+        )
+        .map((message) => message.content.trim());
+      userGoalAnchor = deriveUserGoalAnchor({
+        firstUserTurn: userTurns[0],
+        recentUserTurns: userTurns,
+        branch: {
+          repoFullName: workspaceIdentity.repoFullName,
+          name: workspaceIdentity.branch,
+        },
+      });
+    } else if (!userGoalAnchor.branchLabel && workspaceIdentity.branch) {
+      const branchLabel = deriveUserGoalAnchor({
+        firstUserTurn: userGoalAnchor.initialAsk,
+        branch: {
+          repoFullName: workspaceIdentity.repoFullName,
+          name: workspaceIdentity.branch,
+        },
+      })?.branchLabel;
+      userGoalAnchor = {
+        ...userGoalAnchor,
+        ...(branchLabel ? { branchLabel } : {}),
+      };
+    }
+  }
+
   const taskPreamble = buildLeadTurnPreamble(
     userText,
     state.messages as Message[],
     snapshot,
     memory,
+    userGoalAnchor,
   );
   const leadModelId = state.model || providerConfig.defaultModel;
   const coderPolicy = createCoderPolicy({

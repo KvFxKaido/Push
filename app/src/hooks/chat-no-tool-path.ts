@@ -25,6 +25,7 @@
 import {
   MAX_REASONING_TOOL_CALL_NUDGES,
   MAX_TRAILING_INTENT_NUDGES,
+  createReasoningToolCallIntervention,
   resolveToolCallRecovery,
   type ToolCallRecoveryState,
 } from '@/lib/tool-call-recovery';
@@ -181,6 +182,7 @@ export async function processNoToolPath(
       : null;
   if (buriedCall) {
     const buriedToolName = buriedCall.call.tool;
+    const reasoningIntervention = createReasoningToolCallIntervention(buriedToolName);
     // Structured log: the symptom is otherwise invisible to ops — no tool ran,
     // no malformed event fired, the turn just ended. Pair with the run event
     // below so both the operator and the transcript see the dropped call.
@@ -222,12 +224,7 @@ export async function processNoToolPath(
         {
           id: createId(),
           role: 'user',
-          content: [
-            '[POLICY: TOOL_CALL_IN_REASONING]',
-            'You emitted a tool call inside your reasoning/thinking channel. The runtime only executes tool calls placed in your response content, so nothing ran and no results came back — any answer you give now is ungrounded.',
-            'Re-emit the tool call as a JSON block in your response content now. If you did not actually intend to call a tool, answer directly from information you already have.',
-            '[/POLICY]',
-          ].join('\n'),
+          content: reasoningIntervention.guidance ?? reasoningIntervention.message ?? '',
           timestamp: Date.now(),
           ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
         },

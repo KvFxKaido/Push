@@ -1,9 +1,12 @@
-/**
- * Lightweight in-memory observability for malformed tool-call attempts.
- *
- * Captures failure reasons by provider/model so we can compare
- * tool-call compliance across backends without external telemetry.
- */
+/** Web-shell storage for the shared malformed-tool metric reducer. */
+
+import {
+  cloneMalformedToolCallMetrics,
+  createMalformedToolCallMetrics,
+  reduceMalformedToolCallMetric,
+  type MalformedToolCallMetrics as SharedMalformedToolCallMetrics,
+  type MalformedToolMetricRecord,
+} from '@push/lib/malformed-tool-metrics';
 
 export type MalformedToolCallReason =
   | 'truncated'
@@ -11,132 +14,32 @@ export type MalformedToolCallReason =
   | 'malformed_json'
   | 'natural_language_intent';
 
-export interface MalformedToolCallMetricInput {
-  provider?: string;
-  model?: string;
-  reason: MalformedToolCallReason;
-  toolName?: string | null;
-}
+export type MalformedToolCallMetricInput = MalformedToolMetricRecord<MalformedToolCallReason>;
+export type MalformedToolCallMetrics = SharedMalformedToolCallMetrics<MalformedToolCallReason>;
 
-interface ReasonCounts {
-  truncated: number;
-  validation_failed: number;
-  malformed_json: number;
-  natural_language_intent: number;
-}
+const REASONS: readonly MalformedToolCallReason[] = [
+  'truncated',
+  'validation_failed',
+  'malformed_json',
+  'natural_language_intent',
+];
 
-interface ModelMalformedMetrics {
-  count: number;
-  reasons: ReasonCounts;
-  byTool: Record<string, number>;
-}
-
-interface ProviderMalformedMetrics {
-  count: number;
-  reasons: ReasonCounts;
-  byModel: Record<string, ModelMalformedMetrics>;
-}
-
-export interface MalformedToolCallMetrics {
-  count: number;
-  reasons: ReasonCounts;
-  byProvider: Record<string, ProviderMalformedMetrics>;
-}
-
-function emptyReasonCounts(): ReasonCounts {
-  return {
-    truncated: 0,
-    validation_failed: 0,
-    malformed_json: 0,
-    natural_language_intent: 0,
-  };
-}
-
-function emptyModelMetrics(): ModelMalformedMetrics {
-  return {
-    count: 0,
-    reasons: emptyReasonCounts(),
-    byTool: {},
-  };
-}
-
-function emptyProviderMetrics(): ProviderMalformedMetrics {
-  return {
-    count: 0,
-    reasons: emptyReasonCounts(),
-    byModel: {},
-  };
-}
-
-let metrics: MalformedToolCallMetrics = {
-  count: 0,
-  reasons: emptyReasonCounts(),
-  byProvider: {},
-};
-
-function normalizeLabel(value: string | undefined | null, fallback: string): string {
-  const normalized = typeof value === 'string' ? value.trim() : '';
-  return normalized || fallback;
-}
+let metrics = createMalformedToolCallMetrics(REASONS);
 
 export function recordMalformedToolCallMetric(input: MalformedToolCallMetricInput): void {
-  const provider = normalizeLabel(input.provider, 'unknown-provider');
-  const model = normalizeLabel(input.model, 'unknown-model');
-  const tool = normalizeLabel(input.toolName ?? undefined, 'unknown-tool');
-
-  metrics.count++;
-  metrics.reasons[input.reason]++;
-
-  if (!metrics.byProvider[provider]) {
-    metrics.byProvider[provider] = emptyProviderMetrics();
-  }
-  const providerMetrics = metrics.byProvider[provider];
-  providerMetrics.count++;
-  providerMetrics.reasons[input.reason]++;
-
-  if (!providerMetrics.byModel[model]) {
-    providerMetrics.byModel[model] = emptyModelMetrics();
-  }
-  const modelMetrics = providerMetrics.byModel[model];
-  modelMetrics.count++;
-  modelMetrics.reasons[input.reason]++;
-  modelMetrics.byTool[tool] = (modelMetrics.byTool[tool] || 0) + 1;
-
+  metrics = reduceMalformedToolCallMetric(metrics, input);
+  const provider = input.provider?.trim() || 'unknown-provider';
+  const model = input.model?.trim() || 'unknown-model';
+  const tool = input.toolName?.trim() || 'unknown-tool';
   console.debug(
     `[tool-call] malformed provider=${provider} model=${model} reason=${input.reason} tool=${tool}`,
   );
 }
 
 export function getMalformedToolCallMetrics(): MalformedToolCallMetrics {
-  const byProvider: Record<string, ProviderMalformedMetrics> = {};
-  for (const [provider, providerMetrics] of Object.entries(metrics.byProvider)) {
-    const byModel: Record<string, ModelMalformedMetrics> = {};
-    for (const [model, modelMetrics] of Object.entries(providerMetrics.byModel)) {
-      byModel[model] = {
-        count: modelMetrics.count,
-        reasons: { ...modelMetrics.reasons },
-        byTool: { ...modelMetrics.byTool },
-      };
-    }
-
-    byProvider[provider] = {
-      count: providerMetrics.count,
-      reasons: { ...providerMetrics.reasons },
-      byModel,
-    };
-  }
-
-  return {
-    count: metrics.count,
-    reasons: { ...metrics.reasons },
-    byProvider,
-  };
+  return cloneMalformedToolCallMetrics(metrics);
 }
 
 export function resetMalformedToolCallMetrics(): void {
-  metrics = {
-    count: 0,
-    reasons: emptyReasonCounts(),
-    byProvider: {},
-  };
+  metrics = createMalformedToolCallMetrics(REASONS);
 }

@@ -1210,6 +1210,7 @@ export async function startInlineCoderTurn(
             taskList: [args.trimmedText],
             allCards: result.cards,
             summaries: [result.summary],
+            toolLedger: result.toolLedger,
             // This is the inline conversational lead, not a delegated Coder —
             // so the Evaluator's user-facing verdict says "the assistant".
             leadMode: true,
@@ -1271,7 +1272,9 @@ export async function startInlineCoderTurn(
   // by the user reading the card — so we deliberately don't replay the verdict
   // into model context.
   const evaluationCard: ChatCard | null =
-    auditorGate?.evalResult && auditorGate.evalResult.verdict === 'incomplete'
+    auditorGate?.evalResult &&
+    (auditorGate.runtimeIntervention?.reason === 'work_incomplete' ||
+      auditorGate.evalResult.verdict === 'incomplete')
       ? {
           type: 'evaluation',
           data: {

@@ -12,7 +12,7 @@ import {
 
 // The web round loop spans two modules: chat-send.ts (calls handleLoopVerdict)
 // and chat-send-helpers.ts (which owns checkLoopBreaker + handleLoopVerdict and
-// consumes buildLoopSteeringText). Treat both as the "web surface" so the
+// consumes createLoopIntervention). Treat both as the "web surface" so the
 // drift check tracks the implementation wherever the max-lines extraction puts
 // it.
 const webSendSource =
@@ -71,17 +71,17 @@ describe('CLI loop-detection drift — preserved abort semantics', () => {
 });
 
 // Graded enforcement drift: all three surfaces must route the warn/block/compact
-// steering through the shared `buildLoopSteeringText` builder and must NOT
+// steering through the shared `createLoopIntervention` builder and must NOT
 // re-inline the [LOOP_*] copy. The tags live in exactly one place (the oracle).
 describe('graded loop enforcement — shared steering vocabulary', () => {
   for (const [name, source] of [
     ['app/src/hooks/chat-send{,-helpers}.ts', webSendSource],
     ['lib/coder-agent.ts', coderSource],
   ]) {
-    it(`${name} consumes the shared buildLoopSteeringText builder`, () => {
+    it(`${name} consumes the shared createLoopIntervention builder`, () => {
       assert.ok(
-        source.includes('buildLoopSteeringText'),
-        `${name} must build steering copy via buildLoopSteeringText`,
+        source.includes('createLoopIntervention'),
+        `${name} must route loop decisions through createLoopIntervention`,
       );
     });
 

@@ -26,7 +26,7 @@ This folder contains active plans, draft spikes, deferred designs, and a few shi
 | `Private Cloudflare Deployment.md` | Current runbook | Cloudflare Access plus `PUSH_DEPLOYMENT_TOKEN` fallback for private app/phone testing. |
 | `Provider Stats Endpoint.md` | Active, shipped 2026-04-29 | Operating notes for the Workers Analytics Engine-backed provider stats endpoint. |
 | `Pushd Decomposition Plan.md` | Draft, added 2026-07-15 | Behavior-preserving arc to turn `cli/pushd.ts` into a typed composition root with explicit session, relay, delegation, recovery, and handler ownership. |
-| `Runtime Unification Plan.md` | Current, Phase 3 complete, added 2026-07-17 | Converges shared Coder policy/interventions first, then provider-family adapters, capability resolution, and execution-ledger consumers without collapsing shell-specific boundaries. |
+| `Runtime Unification Plan.md` | Current, complete through Phase 4, added 2026-07-17 | Converges shared Coder policy/interventions, provider-family adapters, capability resolution, execution-ledger consumers, metrics, and goal anchoring without collapsing shell-specific boundaries. |
 | `Test Coverage Plan.md` | Current, Phases 1–5 shipped 2026-04-17 | Post-audit coverage push. Phase 6 remains outlined with target files and acceptance bars. |
 | `Tiered Orchestrator Routing Spike.md` | Draft spike, added 2026-04-14 | Rule-engine router in front of Orchestrator to resolve trivial intents without a frontier-model call. No code yet. |
 | `Workspace Publish to GitHub Plan.md` | Current, Phase 1 shipped 2026-04-05 | Initial publish flow landed; remaining work is follow-through and optional empty-repo creation. |

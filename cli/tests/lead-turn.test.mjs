@@ -387,6 +387,42 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('loads the user-owned goal file after compaction and injects it near the task', async () => {
+    await withTempWorkspace(async (cwd) => {
+      await fs.mkdir(path.join(cwd, '.push'), { recursive: true });
+      await fs.writeFile(
+        path.join(cwd, '.push', 'goal.md'),
+        '# Goal\n\n## Initial ask\n\nUnify the runtime.\n\n## Current working goal\n\nFinish phase 4.\n\n## Constraints\n\n- Keep shell storage local.\n\n## Do not\n\n- Add a hook framework.\n\n## Last refreshed\n\n2026-07-17T00:00:00.000Z\n',
+      );
+      const server = await startSequencedProviderServer([
+        { tokens: ['The current working goal is to finish phase 4.'] },
+      ]);
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd, {
+          messages: [
+            { role: 'user', content: 'Unify the runtime.' },
+            { role: 'user', content: buildHandoffBlock('Phases 1 through 3 are complete.') },
+            { role: 'user', content: 'What is the current goal?' },
+          ],
+        });
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'What is the current goal?', 5, {
+          emit: () => {},
+        });
+        const requestText = JSON.stringify(server.requests[0]);
+        assert.ok(requestText.includes('[USER_GOAL]'));
+        assert.ok(requestText.includes('Current working goal: Finish phase 4.'));
+        assert.ok(requestText.includes('Do not: Add a hook framework.'));
+        assert.ok(
+          requestText.indexOf('[/USER_GOAL]') <
+            requestText.indexOf('Task: What is the current goal?'),
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('round-trips a read_file tool call through executeToolCall', async () => {
     await withTempWorkspace(async (cwd) => {
       await fs.writeFile(path.join(cwd, 'notes.txt'), 'hello from notes\n');
@@ -808,6 +844,23 @@ describe(
 );
 
 describe('buildLeadTurnPreamble', () => {
+  it('places the user-goal anchor immediately before the current task', () => {
+    const preamble = buildLeadTurnPreamble(
+      'finish phase 4',
+      [{ role: 'user', content: 'finish phase 4' }],
+      '',
+      null,
+      {
+        initialAsk: 'complete runtime unification',
+        currentWorkingGoal: 'finish phase 4',
+        branchLabel: 'owner/repo@feature',
+      },
+    );
+    assert.match(preamble, /\[USER_GOAL\]/);
+    assert.match(preamble, /Current working goal: finish phase 4/);
+    assert.ok(preamble.indexOf('[/USER_GOAL]') < preamble.indexOf('Task: finish phase 4'));
+  });
+
   it('bounds prior turns, drops the trailing user turn, and carries the snapshot', () => {
     const messages = [
       { role: 'system', content: 'sys' },

@@ -99,6 +99,7 @@ import {
 } from '@push/lib/correlation-context';
 import { createId } from '@/hooks/chat-persistence';
 import { formatElapsedTime } from '@/lib/utils';
+import { mergeToolLedgerSnapshots, type ToolLedgerSnapshot } from '@push/lib/tool-ledger';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { VerificationPolicy } from '@/lib/verification-policy';
@@ -195,6 +196,8 @@ export interface CoderAuditorInput {
   taskList: string[];
   allCards: ChatCard[];
   summaries: string[];
+  /** Recorded call decisions and outcomes; Auditor does not reconstruct these from prose. */
+  toolLedger: ToolLedgerSnapshot;
   /**
    * Evaluating the inline lead's own turn (not a delegated Coder). Threads to
    * the Evaluator so its user-facing verdict says "the assistant", not "the
@@ -471,6 +474,7 @@ export async function handleCoderDelegation(
 
     const allCards: ChatCard[] = [];
     const summaries: string[] = [];
+    const toolLedgers: ToolLedgerSnapshot[] = [];
     let totalRounds = 0;
     let totalCheckpoints = 0;
     const allCriteriaResults: CriterionResult[] = [];
@@ -591,6 +595,10 @@ export async function handleCoderDelegation(
       const seqStatus = getTaskStatusLabel(coderResult.criteriaResults);
       totalRounds += coderResult.rounds;
       totalCheckpoints += coderResult.checkpoints;
+      // Mixed-version background results and older test fixtures may not carry
+      // the Phase-4 ledger yet. Preserve the arc with an empty merged ledger;
+      // new shared-kernel runs always populate it.
+      if (coderResult.toolLedger) toolLedgers.push(coderResult.toolLedger);
       let taskDiff: string | null = null;
       try {
         const diffResult = await getSandboxDiff(currentSandboxId);
@@ -656,6 +664,7 @@ export async function handleCoderDelegation(
         taskList,
         allCards,
         summaries,
+        toolLedger: mergeToolLedgerSnapshots(toolLedgers),
         allCriteriaResults,
         totalRounds,
         totalCheckpoints,

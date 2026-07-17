@@ -79,10 +79,11 @@ import {
   composeToolResultBody,
   formatToolResultEnvelope,
   MAX_REASONING_TOOL_CALL_NUDGES,
+  createReasoningToolCallIntervention,
   promoteReasoningAnswer,
 } from './tool-call-recovery.js';
 import {
-  buildLoopSteeringText,
+  createLoopIntervention,
   createSimilarityLoopDetector,
   evaluateLoopState,
   EXACT_REPEAT_LIMIT,
@@ -90,6 +91,12 @@ import {
   writeTargetOf,
 } from './loop-detection.js';
 import { createMutationFailureTracker, getToolInvocationKey } from './agent-loop-utils.js';
+import {
+  createToolBudgetBlockIntervention,
+  createToolExecutionLedger,
+  type ToolLedgerEntry,
+  type ToolLedgerSnapshot,
+} from './tool-ledger.js';
 import { recordLoopVerdict } from './loop-metrics.js';
 import { SystemPromptBuilder } from './system-prompt-builder.js';
 import {
@@ -851,6 +858,11 @@ export interface CoderCheckpointState<TCard extends ToolCard = ToolCard> {
   workingMemory: CoderWorkingMemory;
   /** UI cards emitted so far, so a resumed run doesn't re-emit them. */
   cards: TCard[];
+  /** Execution ledger through the prior round, so a resumed run's final
+   *  `toolLedger` spans the whole logical run — without it the post-Coder
+   *  Auditor loses every call (including failures) from before the restore.
+   *  Optional: checkpoints persisted before Phase 4 don't carry it. */
+  toolLedger?: ToolLedgerSnapshot;
 }
 
 /**
@@ -1237,6 +1249,8 @@ export interface CoderAgentResult<TCard extends ToolCard = ToolCard> {
   cards: TCard[];
   rounds: number;
   checkpoints: number;
+  /** Run-scoped source of truth for accepted, rejected, and executed calls. */
+  toolLedger: ToolLedgerSnapshot;
   /** Why the run stopped *abnormally* (vs. completing the task): the round
    *  cap (`max_rounds`) or a repeated-tool-call loop (`loop`). Unset on a
    *  normal completion. Lets a caller surface a non-success outcome instead
@@ -1462,6 +1476,21 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   const resumeState = options.resumeState;
 
   const allCards: TCard[] = resumeState ? [...resumeState.cards] : [];
+  const executionLedger = createToolExecutionLedger<TCall>({
+    initialEntries: resumeState?.toolLedger?.entries as
+      | readonly ToolLedgerEntry<TCall>[]
+      | undefined,
+    describeCall(call) {
+      const fields = getKernelToolCallFields(call);
+      const source = call as { source?: unknown } | null;
+      return {
+        toolName: fields.tool,
+        source: typeof source?.source === 'string' ? source.source : 'coder',
+        argsKey: getToolInvocationKey(fields.tool, fields.args),
+        target: getToolTargetDetail(fields.tool, fields.args),
+      };
+    },
+  });
   let rounds = 0;
   let checkpointCount = 0;
 
@@ -1601,19 +1630,53 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // failing call the counter needs, so the resume path silently doesn't fire.
   let consecutiveSandboxLoss = 0;
   const toolExec: typeof rawToolExec = async (call, execCtx) => {
-    const result = await rawToolExec(call, execCtx);
-    if (result.kind === 'executed' && result.errorType === 'SANDBOX_UNREACHABLE') {
-      if (result.fatal) {
-        throw new SandboxUnreachableError();
+    const elapsed = startElapsedMs();
+    executionLedger.start(call, { executionId: execCtx.executionId });
+    try {
+      const result = await rawToolExec(call, execCtx);
+      if (result.kind === 'denied') {
+        executionLedger.fail(call, {
+          durationMs: elapsed(),
+          structuredErrorType: 'TOOL_DENIED',
+          retryable: false,
+          postconditions: ['tool was not executed'],
+        });
+      } else if (result.errorType) {
+        executionLedger.fail(call, {
+          durationMs: elapsed(),
+          structuredErrorType: result.errorType,
+          retryable: result.fatal ? false : undefined,
+          postconditions: ['tool returned an error'],
+        });
+      } else {
+        const fields = getKernelToolCallFields(call);
+        const target = getToolTargetDetail(fields.tool, fields.args);
+        executionLedger.complete(call, {
+          durationMs: elapsed(),
+          postconditions: [target ? `completed for ${target}` : 'tool completed'],
+        });
       }
-      consecutiveSandboxLoss += 1;
-      if (consecutiveSandboxLoss >= SANDBOX_LOSS_THRESHOLD) {
-        throw new SandboxUnreachableError();
+      if (result.kind === 'executed' && result.errorType === 'SANDBOX_UNREACHABLE') {
+        if (result.fatal) {
+          throw new SandboxUnreachableError();
+        }
+        consecutiveSandboxLoss += 1;
+        if (consecutiveSandboxLoss >= SANDBOX_LOSS_THRESHOLD) {
+          throw new SandboxUnreachableError();
+        }
+      } else if (result.kind === 'executed') {
+        consecutiveSandboxLoss = 0;
       }
-    } else if (result.kind === 'executed') {
-      consecutiveSandboxLoss = 0;
+      return result;
+    } catch (error) {
+      executionLedger.fail(call, {
+        durationMs: elapsed(),
+        structuredErrorType: error instanceof Error ? error.name : 'TOOL_EXECUTION_THROW',
+        retryable: error instanceof SandboxUnreachableError,
+        postconditions: ['execution did not complete'],
+      });
+      throw error;
     }
-    return result;
   };
 
   // Build initial messages (or restore them from the resume seed).
@@ -1693,6 +1756,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         cards: allCards,
         rounds: round,
         checkpoints: checkpointCount,
+        toolLedger: executionLedger.snapshot(),
         stopReason: 'max_rounds',
       };
     }
@@ -1740,6 +1804,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           cards: allCards,
           rounds: round,
           checkpoints: checkpointCount,
+          toolLedger: executionLedger.snapshot(),
           stopReason: 'budget_exceeded',
         };
       }
@@ -1792,7 +1857,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     // checkpoint failure never aborts the run.
     if (callbacks.onCheckpoint && round > 0 && round % checkpointCadenceRounds === 0) {
       try {
-        await callbacks.onCheckpoint({ round, messages, workingMemory, cards: allCards });
+        await callbacks.onCheckpoint({
+          round,
+          messages,
+          workingMemory,
+          cards: allCards,
+          toolLedger: executionLedger.snapshot(),
+        });
       } catch (err) {
         callbacks.onStatus(
           'Checkpoint skipped',
@@ -2017,6 +2088,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       }
       const buriedToolName = (buriedReasoningCall as unknown as { call?: { tool?: string } }).call
         ?.tool;
+      const reasoningIntervention = createReasoningToolCallIntervention(buriedToolName);
       callbacks.onRunEvent?.({
         type: 'tool.call_malformed',
         round,
@@ -2029,12 +2101,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       messages.push({
         id: `coder-reasoning-tool-nudge-${round}`,
         role: 'user',
-        content: [
-          '[POLICY: TOOL_CALL_IN_REASONING]',
-          'You emitted a tool call inside your reasoning/thinking channel. The runtime only executes tool calls placed in your response content, so nothing ran and no results came back — any answer you give now is ungrounded.',
-          'Re-emit the tool call as a JSON block in your response content now. If you did not actually intend to call a tool, answer directly from information you already have.',
-          '[/POLICY]',
-        ].join('\n'),
+        content: reasoningIntervention.guidance ?? reasoningIntervention.message ?? '',
         timestamp: Date.now(),
       });
       reasoningToolCallNudges += 1;
@@ -2064,6 +2131,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           cards: allCards,
           rounds,
           checkpoints: checkpointCount,
+          toolLedger: executionLedger.snapshot(),
         };
       }
       if (policyResult.action === 'inject') {
@@ -2141,6 +2209,30 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       continue;
     }
 
+    const roundLedger = executionLedger.recordGroupedCalls(
+      {
+        readOnly: detected.readOnly,
+        parallelDelegations: detected.parallelDelegations ?? [],
+        fileMutations: detected.fileMutations,
+        mutating: detected.mutating,
+        // Batch-overflowed file mutations are skipped by execution (grouping
+        // already removed them from `fileMutations`), so they must be recorded
+        // as rejected — otherwise the Auditor reads a clean accepted batch and
+        // no correction notice fires (Codex P2 on #1521). CLI folds these into
+        // `extraMutations` at the detector; web keeps them distinct.
+        batchOverflow: detected.batchOverflow ?? [],
+        extraMutations: detected.extraMutations,
+      },
+      round,
+    );
+    const toolBudgetIntervention = createToolBudgetBlockIntervention(roundLedger, {
+      source: 'coder_tool_budget',
+      reason: 'turn_tool_budget_exceeded',
+      message: 'Some emitted tool calls were rejected by the turn execution budget.',
+      guidance:
+        'The rejected calls did not run. Re-issue only the calls you still need on the next turn.',
+    });
+
     // --- Loop detection: near-duplicate (similarity) ladder from the shared
     // oracle. The write calls are read via the same `call.call.{tool,args}`
     // structural cast the mutation path uses below; non-write calls have no
@@ -2149,11 +2241,10 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     // warn/block/compact inject a steering note and skip this round's tool
     // batch so the model retries differently. With PUSH_LOOP_DETECTION unset
     // every verdict is `none` — purely dark.
-    const loopCalls = [
-      ...detected.readOnly,
-      ...detected.fileMutations,
-      ...(detected.mutating ? [detected.mutating] : []),
-    ].map((c) => (c as unknown as { call: { tool: string; args: Record<string, unknown> } }).call);
+    const loopCalls = roundLedger.accepted
+      .filter((entry) => entry.phase !== 'parallel_delegation')
+      .map((entry) => getKernelToolCallFields(entry.call))
+      .map((call) => ({ tool: call.tool, args: call.args as Record<string, unknown> }));
     if (loopCalls.length > 0) {
       let worstSimilarity: { value: number; streak: number } | undefined;
       for (const call of loopCalls) {
@@ -2206,6 +2297,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         // enforcement-split note on the loop-detection state above.
         similarityEnforced: leadMode || isSimilarityLoopDetectionEnabled(),
       });
+      const loopIntervention = createLoopIntervention(loopVerdict, roundLedger);
       recordLoopVerdict({
         surface: 'coder',
         round,
@@ -2237,7 +2329,9 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         callbacks.onStatus('Coder stopped', 'Repeated tool-call loop — halted', 'notable');
         const loopText = `Detected repeated tool call loop (${loopCalls
           .map((c) => c.tool)
-          .join(', ')}). Stopping run.`;
+          .join(
+            ', ',
+          )}). Stopping run.${loopIntervention?.guidance ? ` ${loopIntervention.guidance}` : ''}`;
         messages.push({
           id: `coder-loop-abort-${round}`,
           role: 'user',
@@ -2252,12 +2346,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           cards: allCards,
           rounds,
           checkpoints: checkpointCount,
+          toolLedger: executionLedger.snapshot(),
           stopReason: 'loop',
         };
       }
 
       if (loopVerdict.action !== 'none') {
-        const steeringText = buildLoopSteeringText(loopVerdict);
+        const steeringText = loopIntervention?.guidance;
         if (steeringText) {
           callbacks.onStatus('Coder loop', loopVerdict.action, 'notable');
           messages.push({
@@ -2600,16 +2695,18 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       // fanned out three Explorers would get two results with no signal the
       // third was dropped (silent path; CLAUDE.md "silent return paths"). Purely
       // additive: the accepted batch already ran, this only appends the notice.
-      if (detected.extraMutations.length > 0) {
-        const droppedTools = detected.extraMutations
-          .map((c) => (c as unknown as { call: { tool: string } }).call.tool)
-          .join(', ');
+      if (toolBudgetIntervention) {
+        // Name every rejected call from the ledger — ordering violations
+        // (`extraMutations`) AND file-mutation batch overflow — so neither
+        // class is dropped without a signal (Codex P2 on #1521: the overflow
+        // half previously never reached this notice on the web path).
+        const droppedTools = roundLedger.rejected.map((entry) => entry.toolName).join(', ');
         console.log(
           JSON.stringify({
             level: 'warn',
             event: 'coder_turn_overflow_dropped',
             round,
-            count: detected.extraMutations.length,
+            count: roundLedger.rejected.length,
             tools: droppedTools,
           }),
         );
@@ -2617,7 +2714,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           id: `coder-overflow-${round}`,
           role: 'user',
           content: formatToolResultEnvelope(
-            `[TOOL_CALLS_NOT_RUN] ${detected.extraMutations.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. Re-issue the ones you still need next turn.[/TOOL_CALLS_NOT_RUN]`,
+            `[RUNTIME_INTERVENTION mode="${toolBudgetIntervention.mode}" source="${toolBudgetIntervention.source}" reason="${toolBudgetIntervention.reason}"]\n[TOOL_CALLS_NOT_RUN] ${roundLedger.rejected.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. ${toolBudgetIntervention.guidance ?? ''}[/TOOL_CALLS_NOT_RUN]\n[/RUNTIME_INTERVENTION]`,
           ),
           timestamp: Date.now(),
           isToolResult: true,
@@ -2738,11 +2835,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       ...(detected.mutating ? [detected.mutating] : []),
     ];
     const toolCall =
-      nativeToolCalls.length > 0 && detectNativeToolCalls
-        ? singleDetectedCalls.length === 1
-          ? singleDetectedCalls[0]
-          : null
-        : detectAnyToolCall(accumulated);
+      singleDetectedCalls.length === 1
+        ? singleDetectedCalls[0]
+        : nativeToolCalls.length > 0 && detectNativeToolCalls
+          ? null
+          : detectAnyToolCall(accumulated);
 
     if (!toolCall) {
       // Check for interactive checkpoint (Coder asking Orchestrator for guidance)
@@ -2770,7 +2867,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
               context: checkpoint.args.context || '',
               resumeSchema: DEFAULT_CODER_RESUME_SCHEMA,
             },
-            { round: round + 1, messages, workingMemory, cards: allCards },
+            {
+              round: round + 1,
+              messages,
+              workingMemory,
+              cards: allCards,
+              toolLedger: executionLedger.snapshot(),
+            },
           );
         }
 
@@ -2880,6 +2983,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         cards: allCards,
         rounds,
         checkpoints: checkpointCount,
+        toolLedger: executionLedger.snapshot(),
         criteriaResults,
       };
     }

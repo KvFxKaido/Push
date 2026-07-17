@@ -1,6 +1,6 @@
 # Runtime Unification Plan
 
-Status: **Current** — Phase 3 complete (2026-07-17)
+Status: **Current** — complete through Phase 4 (2026-07-17)
 
 ## Goal
 
@@ -11,8 +11,10 @@ credentials, persistence, presentation, and native execution local.
 
 This plan extends §15 of
 [`Agent Runtime Decisions.md`](../decisions/Agent%20Runtime%20Decisions.md). The
-steer/block contract and initial tool-ledger snapshot have landed, but several
-runtime decisions are still implemented or bypassed per surface.
+four phases are complete: the shared Coder hosts now use one policy, transport
+families, capability resolver, execution ledger, intervention contract,
+malformed-call reducer, and post-compaction goal anchor while shell-local
+storage and transport boundaries remain explicit.
 
 ## Current Findings
 
@@ -52,12 +54,12 @@ split with one shared decision algorithm. Metadata sources still differ by
 design: web supplies live/cached catalog evidence; CLI supplies its curated
 fallback.
 
-### 4. Smaller follow-ups
+### 4. Secondary convergence (complete)
 
-- Share malformed-tool metric records/reducers while preserving shell-local
+- Shared malformed-tool metric records/reducers while preserving shell-local
   storage scope.
-- Close or explicitly preserve the CLI user-goal-anchor parity gap.
-- Finish the execution half of the shared tool ledger so policy, recovery,
+- Closed the CLI user-goal-anchor parity gap with the user-owned goal file.
+- Finished the execution half of the shared tool ledger so policy, recovery,
   budgets, loops, and Auditor context query recorded outcomes rather than local
   arrays or transcript text.
 
@@ -171,9 +173,43 @@ provider absent from the CLI catalog. Zen Go catalog/transport metadata moved to
 
 ### Phase 4 — ledger completion and secondary convergence
 
-Record tool execution start/completion/failure in the shared ledger, route the
-remaining recovery/loop/Auditor decisions through runtime interventions, then
-converge metric reducers and resolve goal-anchor parity.
+1. [x] Turn the grouping snapshot into a run-scoped execution ledger. The
+   shared Coder kernel records every classified emitted call's accepted/rejected decision,
+   then updates accepted entries through start, completion, denial, structured
+   failure, or thrown execution with duration, retryability, target, and
+   postcondition evidence. Web inline, CLI lead, daemon delegation, and Worker
+   background/adoption hosts inherit it from the kernel.
+2. [x] Make ledger snapshots the input to loop evaluation and post-Coder
+   auditing. Loop policy no longer reconstructs the executable batch from
+   detector arrays in the shared kernel; the Auditor receives a compact
+   transcript-independent record of accepted, rejected, completed, and failed
+   calls. Multi-task Coder arcs merge their per-task ledgers without merging
+   shell state.
+3. [x] Route the remaining recovery, loop, and Auditor decisions through the
+   shared runtime-intervention contract. Reasoning-channel call recovery and
+   graded loop handling emit typed steers/blocks; incomplete evaluations steer
+   at the delivery gate; unsafe or unavailable pre-push audits block there and
+   preserve retryability through the git result.
+4. [x] Share the malformed-tool metric record/reducer while preserving web
+   process storage and CLI per-session storage. The reducer owns provider,
+   model, reason, and tool dimensions; each shell owns lifecycle and exposure.
+5. [x] Close CLI goal-anchor parity. The first successful lead compaction
+   atomically seeds `.push/goal.md` without overwriting user edits, and every
+   later compacted turn loads that file (or derives a fallback) and places the
+   canonical `[USER_GOAL]` block immediately before the current task.
+
+Acceptance:
+
+- the shared execution ledger is returned with every normal and guarded Coder
+  termination and is detached from retained turn snapshots;
+- rejected calls never acquire an execution state, while all executed calls
+  finish as completed or failed;
+- loop and Auditor consumers use runtime records rather than transcript claims;
+- intervention reason codes remain stable across web, CLI, daemon, and Worker
+  hosts without adding a hook framework;
+- user-owned goal files and shell-local metric scopes do not cross runtime
+  boundaries;
+- focused shared, web, CLI, Auditor-gate, reducer, and goal-anchor tests pass.
 
 ## Non-goals
 

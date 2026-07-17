@@ -554,7 +554,11 @@ export function useAgentDelegation({
           const coderOutcome: DelegationOutcome = (() => {
             let status: DelegationStatus;
             if (coderEvalResult) {
-              status = coderEvalResult.verdict === 'complete' ? 'complete' : 'incomplete';
+              status =
+                auditorGate?.runtimeIntervention?.reason === 'work_incomplete' ||
+                coderEvalResult.verdict === 'incomplete'
+                  ? 'incomplete'
+                  : 'complete';
             } else if (allCriteriaResults.length > 0) {
               status = allCriteriaResults.every((r) => r.passed) ? 'complete' : 'incomplete';
             } else {
@@ -588,7 +592,10 @@ export function useAgentDelegation({
             if (coderEvalResult) {
               gateVerdicts.push({
                 gate: 'auditor',
-                outcome: coderEvalResult.verdict === 'complete' ? 'passed' : 'failed',
+                outcome:
+                  auditorGate?.runtimeIntervention || coderEvalResult.verdict === 'incomplete'
+                    ? 'failed'
+                    : 'passed',
                 summary: coderEvalResult.summary,
               });
             }

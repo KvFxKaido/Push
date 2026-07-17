@@ -52,7 +52,7 @@ import {
 } from '@/lib/verification-runtime';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import {
-  buildLoopSteeringText,
+  createLoopIntervention,
   evaluateLoopState,
   isSimilarityLoopDetectionEnabled,
   type LoopVerdict,
@@ -1101,7 +1101,7 @@ export function handleLoopVerdict(
   // write; the run-level counters (advanced inside `checkLoopBreaker`) drive
   // escalation toward abort.
   if (loopVerdict.action === 'none') return null;
-  const steeringText = buildLoopSteeringText(loopVerdict);
+  const steeringText = createLoopIntervention(loopVerdict)?.guidance;
   if (!steeringText) return null;
 
   const steerAction = buildLoopSteerInjection(

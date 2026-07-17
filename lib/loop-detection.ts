@@ -21,6 +21,12 @@
  * existing behavior being relocated, so it always contributes to `action`.
  */
 
+import {
+  createBlockIntervention,
+  createSteerIntervention,
+  type RuntimeIntervention,
+} from './runtime-intervention.js';
+
 // ---------------------------------------------------------------------------
 // Tunables. These numbers are load-bearing and unvalidated for frontier
 // models (Pi-forge tuned them for 35B-at-Q2). Keep them here, co-located,
@@ -312,6 +318,35 @@ export function buildLoopSteeringText(
     default:
       return null;
   }
+}
+
+export interface LoopInterventionContext<TLedger = unknown> {
+  readonly verdict: LoopVerdict;
+  readonly ledger?: TLedger;
+}
+
+/** Map the shared loop verdict onto the shared steer/block control contract. */
+export function createLoopIntervention<TLedger = unknown>(
+  verdict: LoopVerdict,
+  ledger?: TLedger,
+): RuntimeIntervention<LoopInterventionContext<TLedger>> | null {
+  if (verdict.action === 'none') return null;
+  const detail = verdict.reasons.join('; ') || 'repeated tool activity';
+  const guidance =
+    verdict.action === 'abort'
+      ? `[LOOP_ABORTED] Repeated tool activity is not making progress (${detail}). Stop and report the blocker instead of retrying.`
+      : (buildLoopSteeringText(verdict) ?? undefined);
+  const input = {
+    point: 'before_tool' as const,
+    source: 'loop_detection',
+    reason: `loop_${verdict.action}`,
+    message: `Loop policy selected ${verdict.action}: ${detail}`,
+    guidance,
+    context: { verdict, ...(ledger === undefined ? {} : { ledger }) },
+  };
+  return verdict.action === 'warn'
+    ? createSteerIntervention(input)
+    : createBlockIntervention(input);
 }
 
 // ---------------------------------------------------------------------------
