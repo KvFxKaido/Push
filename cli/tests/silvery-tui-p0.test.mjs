@@ -2834,19 +2834,32 @@ describe('silvery header — one row at any width', () => {
     const Silvery = await import('silvery');
     const { PushSurface } = await import('../silvery/surface.tsx');
     const stdout = new FakeStdout(columns, 14);
-    const instance = Silvery.render(
-      React.createElement(PushSurface, { controller }),
-      { stdout, stdin: new FakeStdin() },
-      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: false },
-    );
-    instance.run?.();
-    await instance;
-    await sleep(200);
-    const rows = stdout.bytes
-      .replace(/\x1b\[[0-9;]*m/g, '')
-      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '\n')
-      .split('\n');
-    instance.unmount?.();
+    // Pin the glyph tier: `detectUnicode()` reads LANG / TERM_PROGRAM /
+    // WT_SESSION at render time, so Ubuntu CI (LANG=C.UTF-8) paints ⬢ while
+    // Windows CI (no signal) correctly falls back to the ASCII glyphs and the
+    // anchors below never match. The fallback is product behavior with its own
+    // coverage; these row-layout assertions want one deterministic rendering.
+    const previousLang = process.env.LANG;
+    process.env.LANG = 'C.UTF-8';
+    let rows;
+    try {
+      const instance = Silvery.render(
+        React.createElement(PushSurface, { controller }),
+        { stdout, stdin: new FakeStdin() },
+        { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: false },
+      );
+      instance.run?.();
+      await instance;
+      await sleep(200);
+      rows = stdout.bytes
+        .replace(/\x1b\[[0-9;]*m/g, '')
+        .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '\n')
+        .split('\n');
+      instance.unmount?.();
+    } finally {
+      if (previousLang === undefined) delete process.env.LANG;
+      else process.env.LANG = previousLang;
+    }
     // Anchor on the verb, never on the facts: the facts truncate BY DESIGN (at
     // 44 columns the branch name and meter are both gone), so matching them
     // would report a correctly-truncated header as a missing one.
