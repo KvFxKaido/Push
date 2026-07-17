@@ -18,7 +18,11 @@
     "android:setup": "node scripts/ensure-capacitor-android.mjs",
     "android:sync": "pnpm run build && pnpm run android:setup && cap sync android",
     "android:open": "npm run android:sync && cap open android",
-    "android:icons": "npx --yes --package @capacitor/assets capacitor-assets generate --android"
+    "android:icons": "npx --yes --package @capacitor/assets capacitor-assets generate --android",
+    "electron:setup": "node scripts/ensure-capacitor-electron.mjs",
+    "electron:sync": "pnpm run build && pnpm run electron:setup && cap sync @capawesome/capacitor-electron",
+    "electron:open": "pnpm run electron:sync && cap open @capawesome/capacitor-electron",
+    "electron:run": "pnpm run electron:sync && cap run @capawesome/capacitor-electron"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -29,6 +33,7 @@
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/keyboard": "^8.0.5",
     "@capacitor/status-bar": "^8.0.2",
+    "@capawesome/capacitor-electron": "^0.1.0",
     "@cloudflare/sandbox": "0.12.3",
     "@codemirror/commands": "^6.10.4",
     "@codemirror/lang-cpp": "^6.0.3",

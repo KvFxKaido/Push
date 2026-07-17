@@ -4,6 +4,12 @@ Date: 2026-06-21
 Status: **Draft** — design agreed (Option B; "WSL required" accepted). Validating
 with B-WSLg before building the native shell; implementation still needs an owner
 commitment. Owner: Push CLI/desktop.
+Progress: the Electron shell's Capacitor wiring has landed as the scaffolding path
+for Phase 2's "Electron Windows shell" — `@capawesome/capacitor-electron` dep +
+`electron:setup`/`sync`/`open`/`run` scripts + `ensure-capacitor-electron.mjs` guard
++ docs, remote-hosted (follows `server.url`, matching Android). Config-and-docs
+stage only: the generated `app/electron/` platform is not committed, and the
+WSL direct-loopback daemon client (below) is untouched.
 
 ## Problem
 

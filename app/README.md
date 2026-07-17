@@ -12,6 +12,7 @@ pnpm run build     # Production build → dist/
 pnpm run preview   # Preview production build locally
 pnpm run lint      # Run ESLint
 pnpm run android:sync   # Build the SPA and sync it into Android
+pnpm run electron:sync  # Build the SPA and sync it into the Electron desktop shell
 ```
 
 ## Environment Variables
@@ -104,3 +105,41 @@ cd android
 ```
 
 On Windows, use `.\gradlew installDebug` from `app\android`.
+
+## Desktop app (Electron, experimental)
+
+The desktop shell wraps the same PWA for Windows/macOS/Linux via
+[`@capawesome/capacitor-electron`](https://github.com/capawesome-team/capacitor-electron)
+— a Capacitor platform, so it shares the Android wiring model. It is the
+scaffolding path for the "native Windows Electron shell" in
+[`Windows Desktop — WSL-Hosted Daemon.md`](../docs/decisions/Windows%20Desktop%20—%20WSL-Hosted%20Daemon.md);
+treat it as experimental until the platform scaffold is committed and a build is
+walked end-to-end.
+
+**Load mode is remote-hosted**, matching Android: the window follows `server.url`
+in `capacitor.config.ts` (the hosted Worker), so there's no local `dist/` to ship
+on each web deploy. The Worker `/api` backend is remote regardless.
+
+This surface is wired at the **config + docs** stage — the deps, scripts, and this
+doc are in place, but `app/electron/` (the generated Capacitor platform) is **not
+committed yet**. Scaffold it where the Electron toolchain lives (the local/Windows
+box), then sync:
+
+```bash
+# one-time, from app/ — generates app/electron/
+npx cap add @capawesome/capacitor-electron
+cd electron && pnpm install && cd ..
+
+# thereafter: build the SPA + sync + launch
+pnpm run electron:run
+```
+
+`pnpm run electron:sync` builds the SPA and copies it into the shell;
+`electron:open` / `electron:run` open or launch it. `scripts/ensure-capacitor-electron.mjs`
+guards that the platform exists and prints the bootstrap command when it doesn't.
+
+Once `app/electron/` carries real customization, commit it as source (mirroring
+`app/android/`) and gitignore its build outputs + `node_modules`. `server.url` is
+loaded remotely; if the Electron platform ignores it and loads the bundled
+`webDir` instead, set the load URL in the generated
+`electron/capacitor.electron.config.ts`.

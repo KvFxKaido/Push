@@ -35,6 +35,15 @@ cd app && pnpm run android:sync && cd android && ./gradlew installDebug
 
 `app/android/` is **committed source** (it carries native customization — the `capacitor-native-git` JGit plugin wiring, core-library desugaring, the proguard fix). Build outputs and the regenerated web bundle are ignored by `app/android/.gitignore`. `cap sync` updates web assets + plugin registration; don't regenerate via `cap add android`.
 
+### Desktop (Electron, experimental)
+
+```bash
+cd app && npx cap add @capawesome/capacitor-electron   # one-time scaffold (local/Windows box)
+cd app && pnpm run electron:run                        # thereafter: build SPA + sync + launch
+```
+
+Desktop wraps the same PWA via `@capawesome/capacitor-electron` (a Capacitor platform, same wiring model as Android), remote-hosted like Android — the window follows `server.url`, no local `dist/` ship. This is the scaffolding path for the "native Windows Electron shell" in [`docs/decisions/Windows Desktop — WSL-Hosted Daemon.md`](docs/decisions/Windows%20Desktop%20—%20WSL-Hosted%20Daemon.md). Wired at **config + docs** stage: deps + `electron:*` scripts + `ensure-capacitor-electron.mjs` guard exist, but `app/electron/` is **not committed yet** (scaffold it locally, then commit as source mirroring `app/android/`).
+
 ## Validation commands
 
 `AGENTS.md` declares the canonical commands; mirror them when wiring scripts:
