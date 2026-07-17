@@ -20,6 +20,7 @@ import type { Env } from './worker-middleware';
 import {
   createInProgressReviewCheckRun,
   createReviewCheckRun,
+  fetchPullRequestHeadSha,
   finalizeReviewCheckRun,
 } from '@/lib/github-tools';
 
@@ -44,6 +45,9 @@ vi.mock('@/lib/github-tools', async () => {
     createInProgressReviewCheckRun: vi.fn(async () => checkRunIdRef.current++),
     finalizeReviewCheckRun: vi.fn(async () => {}),
     createReviewCheckRun: vi.fn(async () => {}),
+    // The head-advance sweep resolves the PR's current head from inside the
+    // alarm. Spied so the sweep's decision is testable without a network leaf.
+    fetchPullRequestHeadSha: vi.fn(async () => null),
   };
 });
 
@@ -69,6 +73,7 @@ interface ReviewRow {
   relaunch_count: number;
   pinned_provider: string | null;
   pinned_model: string | null;
+  head_advanced_to?: string | null;
 }
 
 function createMockCtx() {
@@ -92,6 +97,7 @@ function createMockCtx() {
         { name: 'relaunch_count' },
         { name: 'pinned_provider' },
         { name: 'pinned_model' },
+        { name: 'head_advanced_to' },
       ];
     if (/^INSERT INTO review_checkpoint/i.test(sql)) {
       checkpoints.set(p[0] as string, {
@@ -241,12 +247,13 @@ function createMockCtx() {
       return [];
     }
     if (/^UPDATE review SET status = 'completed'/i.test(sql)) {
-      setStatus(p[4] as string, {
+      setStatus(p[5] as string, {
         status: 'completed',
         comments_posted: p[0] as number,
         posted: p[1] as number,
         result_json: p[2] as string,
         finished_at: p[3] as number,
+        head_advanced_to: p[4] as string | null,
       });
       return [];
     }
@@ -283,6 +290,21 @@ function createMockCtx() {
       return [...reviews.values()]
         .filter((r) => r.status === 'queued' || r.status === 'running')
         .map((r) => ({ delivery_id: r.delivery_id }));
+    }
+    // --- head-advance sweep ---
+    if (
+      /^SELECT \* FROM review WHERE status = 'completed' AND posted = 0 AND head_advanced_to IS NOT NULL/i.test(
+        sql,
+      )
+    ) {
+      return [...reviews.values()]
+        .filter((r) => r.status === 'completed' && r.posted === 0 && r.head_advanced_to != null)
+        .sort((a, b) => (b.finished_at ?? 0) - (a.finished_at ?? 0))
+        .slice(0, 1)
+        .map((r) => ({ ...r }));
+    }
+    if (/^SELECT COUNT\(\*\) AS n FROM review WHERE delivery_id LIKE 'sweep-%'/i.test(sql)) {
+      return [{ n: [...reviews.keys()].filter((k) => k.startsWith('sweep-')).length }];
     }
     throw new Error(`unhandled sql: ${sql}`);
   }
@@ -1796,5 +1818,302 @@ describe('PrReviewJob auto-retry', () => {
     // outside that charset makes running retries uncancellable from the UI
     // (the route 400s before reaching the DO).
     expect('f8412450-6486-11f1-93e3-ca04881784b9.auto-retry').toMatch(/^[A-Za-z0-9._-]{1,200}$/);
+  });
+});
+
+/**
+ * The head-advance sweep — the `schedule` mechanism's first consumer.
+ *
+ * The hole it closes: a review that races a push skips posting (the executor's
+ * head-advanced guard), and NOTHING reviews the new head. `synchronize` is not a
+ * reviewable action, so no second delivery arrives — the guard's own comment
+ * ("the newer push has its own delivery") contradicts `TERMINAL_RETRY_ADVICE`
+ * ("New commits do not trigger reviews"), and the advice is the true one. The PR
+ * ends up with zero reviews and a "Skipped — newer commit" check.
+ *
+ * The sweep re-reviews the current head once the head stops moving. It is not
+ * the reviewer becoming persistent: it fires only while NOTHING has posted, so
+ * it can at most deliver the one review the PR was already promised.
+ */
+describe('PrReviewJob head-advance sweep', () => {
+  const APP_ENV = { GITHUB_APP_ID: 'app', GITHUB_APP_PRIVATE_KEY: 'key' } as unknown as Env;
+
+  async function settle(pending: Promise<unknown>[]): Promise<void> {
+    for (let i = 0; i < 3; i++) await Promise.allSettled(pending);
+  }
+
+  /** Age the stranded row past the debounce so the next alarm acts on it. */
+  function makeDue(mock: ReturnType<typeof createMockCtx>, deliveryId: string): void {
+    mock.reviews.get(deliveryId)!.finished_at = Date.now() - 10 * 60_000;
+  }
+
+  /** A fresh queued row, seeded directly — no executor, nothing to settle. */
+  function queuedRow(overrides: Partial<ReviewRow> & { delivery_id: string }): ReviewRow {
+    return {
+      repo: 'octo/repo',
+      pr_number: 7,
+      head_sha: 'shaX',
+      base_ref: 'main',
+      head_ref: 'feature/x',
+      installation_id: '42',
+      is_cross_fork: 0,
+      origin: 'https://push.example',
+      status: 'queued',
+      comments_posted: null,
+      posted: null,
+      result_json: null,
+      error_text: null,
+      created_at: Date.now(),
+      started_at: null,
+      finished_at: null,
+      check_run_id: null,
+      relaunch_count: 0,
+      pinned_provider: null,
+      pinned_model: null,
+      ...overrides,
+    };
+  }
+
+  const headAdvanced =
+    (to: string): PrReviewExecutor =>
+    async () => ({
+      result: RESULT,
+      commentsPosted: 0,
+      posted: false,
+      headAdvancedTo: to,
+    });
+
+  beforeEach(() => {
+    vi.mocked(fetchPullRequestHeadSha).mockReset();
+  });
+
+  it('re-reviews the new head after a head-advanced skip strands the PR', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    // d1 reviews shaA; the author pushes shaB mid-review, so d1 skips posting.
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+    expect(mock.reviews.get('d1')!.posted).toBe(0);
+
+    // The head has settled on shaB, and the sweep's review of it posts.
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    __setPrReviewExecutorOverride('sweep-shaB', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    const sweep = mock.reviews.get('sweep-shaB');
+    expect(sweep, 'the stranded new head must get its review').toBeDefined();
+    expect(sweep!.head_sha).toBe('shaB');
+    expect(sweep!.status).toBe('completed');
+    expect(sweep!.posted).toBe(1);
+  });
+
+  it('waits out the debounce rather than chasing a moving head', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+
+    // finished_at is ~now, so the debounce has NOT elapsed.
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'no sweep may fire inside the debounce window',
+    ).toEqual([]);
+    // ...and it must re-arm to come back when the window closes, or the intent
+    // is lost forever (the alarm goes quiet with nothing queued or running).
+    expect(mock.alarms.at(-1)!).toBeGreaterThan(Date.now());
+  });
+
+  it('stands down once any review has posted — it delivers one review, not persistence', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    // d0 posted a real review. d1 then raced a push and skipped.
+    __setPrReviewExecutorOverride('d0', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd0', headSha: 'sha0' })));
+    await settle(mock.pending);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'a posted review means the PR got what it was owed — no sweep',
+    ).toEqual([]);
+    expect(vi.mocked(fetchPullRequestHeadSha)).not.toHaveBeenCalled();
+  });
+
+  it('is idempotent across repeated alarm firings', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    __setPrReviewExecutorOverride('sweep-shaB', headAdvanced('shaB'));
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'the deterministic sweep-<sha> id must dedupe a second firing',
+    ).toEqual(['sweep-shaB']);
+  });
+
+  it('does not race a live review', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    // A second delivery is already queued for the new head; it will resolve the
+    // head itself, so the sweep has nothing to add. Seeded rather than run — a
+    // never-resolving executor would hang `settle`, not exercise the guard.
+    mock.reviews.set('d2', queuedRow({ delivery_id: 'd2', head_sha: 'shaB' }));
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'a queued/running review already owns the head — no sweep',
+    ).toEqual([]);
+  });
+
+  it('caps the sweep chain when every attempt keeps racing a push', async () => {
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('sha1'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    // Every sweep's own review also races a push, so the chain never converges.
+    for (let i = 1; i <= 6; i++) {
+      const next = `sha${i + 1}`;
+      __setPrReviewExecutorOverride(`sweep-sha${i}`, headAdvanced(next));
+      vi.mocked(fetchPullRequestHeadSha).mockResolvedValue(`sha${i}`);
+      for (const row of mock.reviews.values()) {
+        if (row.posted === 0) row.finished_at = Date.now() - 10 * 60_000;
+      }
+      await do_.alarm();
+      await settle(mock.pending);
+    }
+
+    const sweeps = [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-'));
+    expect(sweeps.length, 'the chain must be bounded').toBeLessThanOrEqual(3);
+  });
+
+  it('stands down when a review reserves the head DURING the token/head awaits', async () => {
+    // Codex P2 on #1515. The liveness check happens before two network awaits
+    // (token mint, head fetch), and a DO's input gate is open across those — so
+    // a manual/comment start can land mid-await and reserve the head. Shipping
+    // the check only above the awaits is the exact race handleStart's #910
+    // invariant already documents. Simulated by inserting a competing row from
+    // inside the head fetch.
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockImplementation(async () => {
+      mock.reviews.set('manual-1', queuedRow({ delivery_id: 'manual-1', head_sha: 'shaB' }));
+      return 'shaB';
+    });
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'a review that reserved the head mid-await must win — no double review',
+    ).toEqual([]);
+  });
+
+  it('records the sweep in the cross-PR in-flight index', async () => {
+    // Codex P2 on #1515. The active-reviews surface discovers candidates ONLY
+    // from this KV index, so a sweep missing from it is neither visible nor
+    // cancellable there — the same reason retryDeadReview records its retry.
+    const mock = createMockCtx();
+    const store = new Map<string, string>();
+    const env = {
+      GITHUB_APP_ID: 'app',
+      GITHUB_APP_PRIVATE_KEY: 'key',
+      SNAPSHOT_INDEX: {
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+        get: async (k: string) => store.get(k) ?? null,
+        delete: async (k: string) => {
+          store.delete(k);
+        },
+        list: async ({ prefix }: { prefix: string }) => ({
+          keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+        }),
+      },
+    } as unknown as Env;
+    const do_ = new PrReviewJob(mock.ctx as never, env);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    __setPrReviewExecutorOverride('sweep-shaB', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(store.has('inflight:pr-review:octo/repo#7#sweep-shaB')).toBe(true);
+  });
+
+  it('sweep ids stay within the cancel route delivery-id charset', () => {
+    // Same drift pin as the auto-retry suffix: an id outside this charset makes
+    // a running sweep uncancellable from the UI (the route 400s before the DO).
+    expect(`sweep-${'a1b2c3d4'.repeat(5)}`).toMatch(/^[A-Za-z0-9._-]{1,200}$/);
   });
 });

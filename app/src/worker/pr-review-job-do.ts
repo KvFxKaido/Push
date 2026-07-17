@@ -99,6 +99,33 @@ const REVIEW_TIMEOUT_MS = 15 * 60_000;
 // model work, so the cap is a runaway backstop, not a progress budget.
 const REVIEW_WATCHDOG_MS = 90_000;
 const MAX_REVIEW_RELAUNCHES = 10;
+// --- Head-advance sweep ---
+// A review that races a push skips posting (the executor's head-advanced guard)
+// and nothing else ever reviews the new head: `synchronize` is deliberately not
+// a reviewable action, so a push delivers no event. Left alone the PR ends with
+// ZERO reviews and a "Skipped — newer commit" check, which is what
+// TERMINAL_RETRY_ADVICE's "close and reopen the PR" exists to work around.
+//
+// The sweep re-reviews the current head once it stops moving. DEBOUNCE is the
+// quiet period a head must hold before it is worth reviewing — a push burst
+// coalesces into one review instead of one per commit, which is the whole reason
+// `synchronize` was excluded in the first place.
+//
+// This is NOT the reviewer becoming persistent. The sweep stands down the moment
+// ANY review has posted (see `sweepHeadAdvance`), so it can only ever deliver
+// the one review the PR was already promised — never a re-review of work that
+// already got one.
+const HEAD_ADVANCE_DEBOUNCE_MS = 3 * 60_000;
+// Backstop for a head that never settles (someone pushing through every review).
+// Each sweep costs a full deep pass, so the chain is bounded rather than trusting
+// the author to stop typing. Counted per PR across the DO's whole life.
+const MAX_HEAD_ADVANCE_SWEEPS = 3;
+// Sweep delivery ids are `sweep-<sha>` — deterministic per head, so a repeated
+// alarm firing dedupes on the primary key instead of queueing a second review of
+// the same commit. Charset constraint is the same as AUTO_RETRY_SUFFIX's: it must
+// stay inside the cancel route's `[A-Za-z0-9._-]` pattern or a running sweep is
+// uncancellable from the UI. A hex SHA satisfies that.
+const SWEEP_ID_PREFIX = 'sweep-';
 // A review attempt that dies without a result (DO evicted by a deploy, or a
 // stalled provider stream hitting the wall-clock) is re-enqueued ONCE with this
 // suffix on its delivery id. The suffix doubles as the attempt counter: a dead
@@ -200,6 +227,17 @@ export interface PrReviewOutcome {
   posted: boolean;
   /** True when a failing gating check was posted (critical finding on a gated repo). */
   gated?: boolean;
+  /**
+   * The SHA the PR head moved to, set ONLY on the head-advanced skip path.
+   * `posted:false` has two causes and the lifecycle has to tell them apart to
+   * know whether anything is owed: the degraded path leaves this undefined (the
+   * review didn't happen — a retry is the answer, not a new SHA), while this
+   * path means the review ran fine and its target simply moved. Carrying the
+   * SHA is what lets the head-advance sweep re-review it instead of stranding
+   * the PR with no review at all — nothing else ever will, because
+   * `synchronize` is not a reviewable action.
+   */
+  headAdvancedTo?: string;
 }
 
 /**
@@ -392,7 +430,12 @@ CREATE TABLE IF NOT EXISTS review (
   finished_at INTEGER,
   check_run_id INTEGER,
   pinned_provider TEXT,
-  pinned_model TEXT
+  pinned_model TEXT,
+  -- The SHA this attempt's head moved to, when it skipped posting because the
+  -- head advanced. Non-null marks a PR that is OWED a review nothing else will
+  -- deliver; the head-advance sweep reads it (with finished_at as the debounce
+  -- anchor) and stands down once any review posts.
+  head_advanced_to TEXT
 );
 CREATE INDEX IF NOT EXISTS review_status_idx ON review (status);
 
@@ -439,6 +482,8 @@ interface ReviewRow {
   relaunch_count: number;
   pinned_provider: string | null;
   pinned_model: string | null;
+  /** Set only on the head-advanced skip path — see SCHEMA_SQL. */
+  head_advanced_to: string | null;
 }
 
 export class PrReviewJob {
@@ -490,6 +535,9 @@ export class PrReviewJob {
       this.ctx.storage.sql.exec(
         'ALTER TABLE review ADD COLUMN relaunch_count INTEGER NOT NULL DEFAULT 0',
       );
+    }
+    if (!have.has('head_advanced_to')) {
+      this.ctx.storage.sql.exec('ALTER TABLE review ADD COLUMN head_advanced_to TEXT');
     }
     // `review_checkpoint.verification_json` is deliberately NOT migrated away.
     // DOs created before §9a still have the column; it is nullable, nothing reads
@@ -582,6 +630,16 @@ export class PrReviewJob {
     );
   }
 
+  /** Arm the head-advance debounce without pushing out a sooner pending alarm
+   *  (same single-alarm merge rule as the watchdog). Safe to lose: `alarm()`
+   *  re-derives this target from the stranded row on every firing. */
+  private async armSweepMergeSooner(target: number): Promise<void> {
+    const pending = await this.ctx.storage.getAlarm();
+    await this.ctx.storage.setAlarm(
+      pending != null && pending > Date.now() && pending < target ? pending : target,
+    );
+  }
+
   /**
    * Alarm backstop: fires (even after an eviction — the alarm is persistent) at
    * a review's deadline and finalizes anything left orphaned or live-but-stuck.
@@ -598,11 +656,21 @@ export class PrReviewJob {
     const now = Date.now();
     await this.failTimedOutReviews(now);
     const graceAlarm = await this.sweepOrphans(false);
+    // Runs after the orphan sweep so a relaunched review counts as live work and
+    // the head-advance sweep stands down for it rather than racing it.
+    const sweepAlarm = await this.sweepHeadAdvance(now);
 
     const pending = this.ctx.storage.sql
       .exec("SELECT * FROM review WHERE status IN ('queued','running')")
       .toArray() as unknown as ReviewRow[];
     let nextAlarm = graceAlarm;
+    // The debounce target must join the earliest-of below, not be armed on its
+    // own: every other writer only ever pulls the alarm SOONER, so a target
+    // further out than the watchdog would be silently dropped and the stranded
+    // PR never swept.
+    if (sweepAlarm != null) {
+      nextAlarm = nextAlarm == null ? sweepAlarm : Math.min(nextAlarm, sweepAlarm);
+    }
     for (const row of pending) {
       if (row.status !== 'running' || row.started_at == null) continue;
       if (!this.abortControllers.has(row.delivery_id)) continue;
@@ -1073,12 +1141,14 @@ export class PrReviewJob {
         }
         return;
       }
+      const finishedAt = Date.now();
       this.ctx.storage.sql.exec(
-        "UPDATE review SET status = 'completed', comments_posted = ?, posted = ?, result_json = ?, finished_at = ? WHERE delivery_id = ?",
+        "UPDATE review SET status = 'completed', comments_posted = ?, posted = ?, result_json = ?, finished_at = ?, head_advanced_to = ? WHERE delivery_id = ?",
         outcome.commentsPosted,
         outcome.posted ? 1 : 0,
         JSON.stringify(outcome.result),
-        Date.now(),
+        finishedAt,
+        outcome.headAdvancedTo ?? null,
         input.deliveryId,
       );
       this.emit(input.deliveryId, 'review.completed', {
@@ -1090,7 +1160,15 @@ export class PrReviewJob {
         usage: outcome.result.usage ?? null,
         gated: outcome.gated ?? false,
         verification: outcome.result.verification ?? null,
+        headAdvancedTo: outcome.headAdvancedTo ?? null,
       });
+      if (outcome.headAdvancedTo) {
+        // The PR is now owed a review nothing else will deliver. Arm the alarm
+        // for the debounce so a still-moving head coalesces into one sweep.
+        // Merge-sooner: a live review's watchdog must keep its earlier slot, and
+        // `alarm()` re-derives this target from the row each firing anyway.
+        await this.armSweepMergeSooner(finishedAt + HEAD_ADVANCE_DEBOUNCE_MS);
+      }
       log('info', 'pr_review_completed', {
         deliveryId: input.deliveryId,
         repo: input.repoFullName,
@@ -1385,6 +1463,15 @@ export class PrReviewJob {
     return rows[0] ?? null;
   }
 
+  /** How many reviews are queued or running. Synchronous on purpose: the
+   *  head-advance sweep re-reads it as a reservation check with no await
+   *  between it and the insert. */
+  private liveReviewCount(): number {
+    return this.ctx.storage.sql
+      .exec("SELECT delivery_id FROM review WHERE status IN ('queued','running')")
+      .toArray().length;
+  }
+
   private emit(deliveryId: string, type: string, payload: Record<string, unknown>): void {
     this.ctx.storage.sql.exec(
       'INSERT INTO event (delivery_id, ts, type, payload_json) VALUES (?, ?, ?, ?)',
@@ -1534,6 +1621,148 @@ export class PrReviewJob {
         summary: 'This review was cancelled.',
       },
     );
+  }
+
+  /**
+   * Make good on a review the head-advanced skip stranded.
+   *
+   * The hole: an attempt whose target SHA moved before it could post returns
+   * `posted:false`, and nothing else ever reviews the new head — `synchronize`
+   * is not a reviewable action, so the push that moved it delivered no event.
+   * The PR ends with zero reviews. This is the sweep that notices.
+   *
+   * Fires only while NOTHING has posted. That single condition is what keeps it
+   * a bug fix rather than the reviewer turning persistent: it can deliver the
+   * one review the PR was promised, and the moment any review lands it stands
+   * down for good.
+   *
+   * Returns the debounce target when a stranded row exists but hasn't settled
+   * yet — the caller folds it into the alarm's earliest-of. Returns null when
+   * there is nothing to wait for. Best-effort throughout: never throws into the
+   * alarm handler, which the runtime would retry.
+   */
+  private async sweepHeadAdvance(now: number): Promise<number | null> {
+    try {
+      const stranded = (
+        this.ctx.storage.sql
+          .exec(
+            "SELECT * FROM review WHERE status = 'completed' AND posted = 0 AND head_advanced_to IS NOT NULL ORDER BY finished_at DESC LIMIT 1",
+          )
+          .toArray() as unknown as ReviewRow[]
+      )[0];
+      if (!stranded?.head_advanced_to || stranded.finished_at == null) return null;
+
+      // Anything posted? Then the PR got what it was owed and the sweep's job is
+      // done forever. Checked before the debounce so a settled PR stops arming.
+      if (this.latestPostedReview('')) return null;
+
+      const dueAt = stranded.finished_at + HEAD_ADVANCE_DEBOUNCE_MS;
+      if (now < dueAt) return dueAt;
+
+      // A live review already owns the head; it will post or strand on its own.
+      // Racing it would double-review the same commit.
+      // Cheap early-out so a live review costs no token mint. NOT the real
+      // guard — the awaits below invalidate it; see the re-check before insert.
+      if (this.liveReviewCount()) return null;
+
+      const swept = (
+        this.ctx.storage.sql
+          .exec("SELECT COUNT(*) AS n FROM review WHERE delivery_id LIKE 'sweep-%'")
+          .toArray() as Array<{ n: number }>
+      )[0]?.n;
+      if ((swept ?? 0) >= MAX_HEAD_ADVANCE_SWEEPS) {
+        log('warn', 'pr_review_head_advance_cap_exhausted', {
+          repo: stranded.repo,
+          pr: stranded.pr_number,
+          swept,
+        });
+        return null;
+      }
+
+      const token = await this.mintInstallationToken(stranded.installation_id);
+      if (!token) {
+        // Paired with the enqueue log below: without this line a mint failure is
+        // indistinguishable from "no sweep was ever needed". Come back and retry.
+        log('warn', 'pr_review_head_advance_token_failed', {
+          repo: stranded.repo,
+          pr: stranded.pr_number,
+        });
+        return now + HEAD_ADVANCE_DEBOUNCE_MS;
+      }
+
+      const head = await fetchPullRequestHeadSha(stranded.repo, stranded.pr_number, {
+        token,
+      });
+      if (!head) {
+        log('warn', 'pr_review_head_advance_head_unresolved', {
+          repo: stranded.repo,
+          pr: stranded.pr_number,
+        });
+        return now + HEAD_ADVANCE_DEBOUNCE_MS;
+      }
+
+      const sweepId = SWEEP_ID_PREFIX + head;
+      const input: PrReviewStartInput = {
+        deliveryId: sweepId,
+        repoFullName: stranded.repo,
+        prNumber: stranded.pr_number,
+        headSha: head,
+        baseRef: stranded.base_ref,
+        headRef: stranded.head_ref,
+        installationId: stranded.installation_id,
+        isCrossFork: stranded.is_cross_fork === 1,
+        origin: stranded.origin ?? RETRY_FALLBACK_ORIGIN,
+        pinnedProvider: stranded.pinned_provider ?? undefined,
+        pinnedModel: stranded.pinned_model ?? undefined,
+      };
+
+      // ⚠️ INVARIANT: from here to insertQueuedReview() MUST stay synchronous —
+      // the same reservation rule handleStart documents, and for the same reason
+      // (Codex P1, PR #910). The token mint and head fetch above are network
+      // awaits, and a DO's input gate is open across those: a manual or
+      // comment-triggered start can land mid-await and reserve this very head.
+      // The early-out before the awaits is therefore stale by construction, and
+      // these three re-checks are the real guard. Anything async belongs after
+      // the insert. (Codex P2 on PR #1515 — this shipped with the checks above
+      // the awaits, which is exactly the race #910 already paid for.)
+      if (this.reviewRow(sweepId)) return null;
+      if (this.liveReviewCount()) return null;
+      if (this.latestPostedReview('')) return null;
+      this.insertQueuedReview(input);
+
+      this.emit(sweepId, 'review.queued', {
+        sweepOf: stranded.delivery_id,
+        strandedSha: stranded.head_sha,
+        headSha: head,
+      });
+      log('info', 'pr_review_head_advance_swept', {
+        repo: stranded.repo,
+        pr: stranded.pr_number,
+        sweepOf: stranded.delivery_id,
+        strandedSha: stranded.head_sha,
+        headSha: head,
+      });
+      // Same as the auto-retry path: without this the sweep is invisible to the
+      // cross-PR active-review surface, which discovers candidates only from this
+      // index — so a running sweep on another PR could be neither seen nor
+      // cancelled. (Codex P2 on PR #1515.)
+      this.ctx.waitUntil(
+        recordInflightReview(this.env, {
+          repo: input.repoFullName,
+          prNumber: input.prNumber,
+          deliveryId: sweepId,
+          headSha: head,
+          createdAt: Date.now(),
+        }),
+      );
+      this.ctx.waitUntil(this.runReview(input));
+      return null;
+    } catch (err) {
+      log('error', 'pr_review_head_advance_sweep_failed', {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      return null;
+    }
   }
 
   /**
@@ -1916,12 +2145,19 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
   // *current* diff; if the head advanced between the webhook delivery and now
   // (a push whose own delivery hasn't reached this DO yet), posting against the
   // stale `input.headSha` would attach the review to the wrong commit and risk
-  // 422s on anchors that no longer match. Skip — the newer push has its own
-  // delivery that will review the new head and coalesce this one out.
+  // 422s on anchors that no longer match. So skip the post — but report the new
+  // SHA, because nothing else is coming for it.
+  //
+  // This comment used to claim "the newer push has its own delivery that will
+  // review the new head and coalesce this one out." That was false, and
+  // TERMINAL_RETRY_ADVICE in this same file says so: `synchronize` is not a
+  // reviewable action, so a push delivers nothing. The skip stranded the PR with
+  // zero reviews. `headAdvancedTo` hands the lifecycle's head-advance sweep the
+  // SHA it needs to make good on the review.
   //
   // Checked BEFORE verification on purpose: a superseded review would otherwise
   // sit in the CI poll (up to REVIEW_CI_DEADLINE_MS) waiting on checks for a SHA
-  // it is about to discard, and the newer delivery verifies the new head anyway.
+  // it is about to discard, and the sweep verifies the new head anyway.
   const currentHead = await fetchPullRequestHeadSha(input.repoFullName, input.prNumber, auth);
   if (currentHead && currentHead !== input.headSha) {
     log('info', 'pr_review_head_advanced', {
@@ -1929,7 +2165,7 @@ export const defaultPrReviewExecutor: PrReviewExecutor = async (input, env, sign
       reviewedSha: input.headSha,
       currentSha: currentHead,
     });
-    return { result, commentsPosted: 0, posted: false };
+    return { result, commentsPosted: 0, posted: false, headAdvancedTo: currentHead };
   }
 
   // Verification (§9a): read the verdict CI already produced for the head SHA

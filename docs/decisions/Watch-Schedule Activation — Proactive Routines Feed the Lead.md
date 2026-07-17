@@ -6,9 +6,14 @@ and the webhook receiver dispatching through a routine registry instead of a har
 event fork. The PR reviewer is the first consumer, expressed as two built-in routines
 (`pr-review` on `pr_opened`/`pr_reopened`/`pr_ready_for_review`, `pr-review-command` on
 `pr_comment`). Behavior-neutral: no new firing path, no repo-sourced routines yet.
+The `schedule` mechanism's first consumer landed 2026-07-16 too: the reviewer's
+head-advance sweep (`sweepHeadAdvance`), which closed a bug where a review racing a push
+was silently dropped and the new head never reviewed — see
+[First consumer](#first-consumer-the-autonomous-reviewer).
 **Remaining:** repo-committed `.push/routines/*.md` (the capability ceiling, per-repo
 enable, and base-ref trust rule are specified below but *not enforced by any code yet* —
-see Guardrails); cloud `schedule`; pushd parity. Owner: Push runtime.
+see Guardrails); `schedule` as a general mechanism (today it is one hardcoded sweep, not a
+`schedule:` frontmatter field); pushd parity. Owner: Push runtime.
 **Date:** 2026-07-09
 Related:
 [`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>)
@@ -184,6 +189,38 @@ gap below is a daemon-shaped idea expressed in this doc's vocabulary:
   holds an alarm used only as a 90-second crash watchdog; a condition sweep is the same
   primitive pointed at product behavior. It also retires the current terminal advice ("close
   and reopen the PR"), which exists only because nothing ever fires twice.
+
+  **First sweep shipped 2026-07-16 — and it closed a bug this doc didn't know about.** Scoping
+  the sweep surfaced that `pr-review-job-do.ts` contradicted itself: the executor's
+  head-advanced guard justified skipping the post with "the newer push has its own delivery
+  that will review the new head", while `TERMINAL_RETRY_ADVICE` in the same file said "New
+  commits do not trigger reviews". The advice was the true one — `synchronize` is not a
+  reviewable action — so a review that raced a push was **silently dropped and the new head
+  never reviewed at all**. The PR got zero reviews behind a "Skipped — newer commit" check.
+
+  `sweepHeadAdvance` closes it: the executor now reports `headAdvancedTo`, the row persists it
+  (`head_advanced_to`), and the alarm re-reviews the current head once it has held still for
+  `HEAD_ADVANCE_DEBOUNCE_MS` (3 min — a push burst coalesces into one review, which is the
+  noise objection that excluded `synchronize` in the first place). Bounded by
+  `MAX_HEAD_ADVANCE_SWEEPS`; idempotent via a deterministic `sweep-<sha>` delivery id riding
+  the existing primary-key dedupe.
+
+  **This is deliberately not the reviewer becoming persistent.** The sweep stands down the
+  moment *any* review has posted, so it can only ever deliver the one review the PR was already
+  promised. The "fires on first open only" decision is untouched.
+
+  **Remaining (the doc's original condition, still unbuilt):** "unaddressed critical finding
+  *and* new commits" → coalesced re-review, and "review died past terminal retry" → re-arm.
+  Both make the reviewer genuinely persistent and reverse that settled decision, so they want a
+  deliberate call rather than a rider on a bug fix. They inherit the substrate the head-advance
+  sweep built: the alarm's earliest-of now carries a non-watchdog target, and the deterministic
+  sweep-id pattern generalizes. `TERMINAL_RETRY_ADVICE` still says "close and reopen the PR"
+  because it is still true for the died-past-retry case this sweep does not cover.
+
+  One constraint worth carrying forward: the alarm's merge rule is one-directional. Every other
+  writer only pulls the alarm *sooner*, so any sweep target further out than the 90s watchdog
+  must be re-derived inside `alarm()`'s earliest-of on each firing — arming it out-of-band gets
+  it silently overwritten while a review is live.
 - **Risk-scaled depth.** *(Rejected 2026-07-09 — the uniform deep pass (16 rounds, raised from
   12 to make room for the verification rounds below) is a trusted
   floor, not a cost to optimize; for a solo repo the review's job is catching what the author
