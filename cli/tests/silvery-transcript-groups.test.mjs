@@ -29,7 +29,10 @@ describe('groupSilveryTranscriptRows', () => {
     const group = display[0];
     assert.equal(group?.kind, 'tool_group');
     assert.equal(group?.id, 'tool-group-read-a');
-    assert.equal(group?.summary, 'Read 2 files, Ran 1 command');
+    // The exec bucket holds one call, so it renders its concrete target rather
+    // than a count of one — which was discarding the `pnpm test` this very
+    // fixture supplies. Was 'Read 2 files, Ran 1 command'.
+    assert.equal(group?.summary, 'Read 2 files, Ran pnpm test');
     assert.deepEqual(
       group?.items.map((item) => item.id),
       ['read-a', 'read-b', 'exec'],
