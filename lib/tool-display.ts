@@ -28,26 +28,55 @@ export const TOOL_VERB_NOUN: Record<string, ToolVerbNoun> = {
   // Read
   read_file: { noun: 'file', verb: 'Read' },
   sandbox_read_file: { noun: 'file', verb: 'Read' },
+  read_symbol: { noun: 'symbol map', verb: 'Read' },
+  read_symbols: { noun: 'symbol map', verb: 'Read' },
+  read_symbols_outline: { noun: 'symbol map', verb: 'Read' },
   // Search
   search_files: { noun: 'search', verb: 'Searched' },
+  grep: { noun: 'search', verb: 'Searched' },
   grep_file: { noun: 'search', verb: 'Searched' },
   sandbox_search: { noun: 'search', verb: 'Searched' },
   sandbox_find_references: { noun: 'search', verb: 'Searched' },
   web_search: { noun: 'search', verb: 'Searched' },
-  // List
-  list_directory: { noun: 'list', verb: 'Listed' },
-  sandbox_list_dir: { noun: 'list', verb: 'Listed' },
+  fetch_url: { noun: 'page', verb: 'Fetched' },
+  // List. Noun is 'directory', not 'list': the noun has to survive BOTH the
+  // grouped form ("Listed 3 directories") and the no-target form ("Listed a
+  // directory"). 'list' passed the first and produced "Listed a list" in the
+  // second — the same verb-eats-its-own-noun shape as "Searched a search".
+  list_dir: { noun: 'directory', verb: 'Listed' },
+  list_directory: { noun: 'directory', verb: 'Listed' },
+  sandbox_list_dir: { noun: 'directory', verb: 'Listed' },
   // Exec
   sandbox_exec: { noun: 'command', verb: 'Ran' },
+  exec_start: { noun: 'command', verb: 'Started' },
+  exec_poll: { noun: 'command', verb: 'Polled' },
+  exec_wait: { noun: 'command', verb: 'Awaited' },
+  exec_write: { noun: 'input', verb: 'Sent' },
+  exec_stop: { noun: 'command', verb: 'Stopped' },
+  exec_list_sessions: { noun: 'session list', verb: 'Fetched' },
   // Write / edit
+  write_file: { noun: 'file', verb: 'Wrote' },
+  edit_file: { noun: 'file', verb: 'Edited' },
+  undo_edit: { noun: 'edit', verb: 'Reverted' },
   sandbox_write_file: { noun: 'file', verb: 'Wrote' },
   sandbox_edit_file: { noun: 'file', verb: 'Edited' },
   sandbox_edit_range: { noun: 'file', verb: 'Edited' },
   sandbox_search_replace: { noun: 'file', verb: 'Edited' },
   sandbox_apply_patchset: { noun: 'file', verb: 'Edited' },
+  // Local git (the CLI executor's own verbs — `git_*` are CLI-native and not
+  // in TOOL_SPECS, so they never resolve to a `sandbox_*` canonical name).
+  git_status: { noun: 'git status', verb: 'Read' },
+  git_diff: { noun: 'diff', verb: 'Read' },
+  git_commit: { noun: 'change', verb: 'Committed' },
+  git_create_branch: { noun: 'branch', verb: 'Created' },
+  // Diagnostics / memory
+  lsp_diagnostics: { noun: 'diagnostic report', verb: 'Read' },
+  save_memory: { noun: 'memory', verb: 'Saved' },
   // Delegate
   delegate_coder: { noun: 'task', verb: 'Delegated' },
   delegate_explorer: { noun: 'task', verb: 'Delegated' },
+  delegate_reviewer: { noun: 'review', verb: 'Requested' },
+  delegate_auditor: { noun: 'audit', verb: 'Requested' },
   plan_tasks: { noun: 'task', verb: 'Planned' },
   // GitHub — PRs
   fetch_pr: { noun: 'PR', verb: 'Fetched' },
@@ -147,7 +176,15 @@ export function formatToolTitle(toolName: string, target?: string | null): strin
   const trimmed = typeof target === 'string' ? target.trim() : '';
   if (trimmed) return `${verb} ${trimmed}`;
   const rawName = toolName.trim();
-  return display === TOOL_VERB_NOUN.default && rawName ? rawName : `${verb} ${withArticle(noun)}`;
+  if (display === TOOL_VERB_NOUN.default && rawName) return rawName;
+  // A verb must not swallow its own noun. "Searched a search" shipped because
+  // the noun does double duty: it has to read in the grouped form ("Searched 3
+  // searches", where 'search' is right) AND here. The nouns are fixed where
+  // they were wrong, but the collision is a property of the pair, not of any
+  // one entry — so guard it here too, where the two words actually meet, and a
+  // future entry cannot reintroduce the nonsense.
+  if (noun.toLowerCase() === verb.toLowerCase().replace(/ed$|d$/, '')) return verb;
+  return `${verb} ${withArticle(noun)}`;
 }
 
 /**

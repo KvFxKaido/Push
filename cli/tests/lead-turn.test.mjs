@@ -914,3 +914,105 @@ describe('resolveDefaultExecMode', () => {
     });
   });
 });
+
+describe('runLeadKernelTurn — transcript noise (status durability)', needsLoopback, () => {
+  it('keeps loop mechanics out of the permanent transcript, and lets tool rows group', async () => {
+    await withTempWorkspace(async (cwd) => {
+      await fs.writeFile(path.join(cwd, 'a.txt'), 'alpha\n', 'utf8');
+      await fs.writeFile(path.join(cwd, 'b.txt'), 'beta\n', 'utf8');
+      // Three rounds: read, read, then a plain answer.
+      const server = await startSequencedProviderServer([
+        { tokens: ['{"tool":"read_file","args":{"path":"a.txt"}}'] },
+        { tokens: ['{"tool":"read_file","args":{"path":"b.txt"}}'] },
+        { tokens: ['Both files read.'] },
+      ]);
+
+      try {
+        const state = makeState(cwd);
+        const emitted = [];
+        const result = await runLeadKernelTurn(
+          state,
+          makeProviderConfig(server.url),
+          'mock-key',
+          'Read both files',
+          5,
+          { emit: (event) => emitted.push(event) },
+        );
+        assert.equal(result.outcome, 'success');
+
+        const statuses = emitted.filter((e) => e.type === 'status');
+        const texts = statuses.map((e) => `${e.payload?.phase} · ${e.payload?.detail}`);
+
+        // The two that flooded every real transcript. 'Coder working...' is pure
+        // round bookkeeping; 'Coder executing...' duplicates the tool card
+        // rendered directly beneath it.
+        assert.deepEqual(
+          texts.filter((t) => /^Coder (working|executing|reasoning|resuming)/.test(t)),
+          [],
+          `loop mechanics reached the transcript: ${texts.join(' | ')}`,
+        );
+
+        // The real point: with the noise gone, consecutive tool rows are
+        // ACTUALLY consecutive, so the grouping projection can fire. It never
+        // could before — a status row sat between every pair, so the run length
+        // was always 1 and `groupSilveryTranscriptRows` folded nothing.
+        const { groupSilveryTranscriptRows } = await import('../silvery/transcript-groups.ts');
+        const rows = emitted
+          .filter((e) => e.type === 'tool.execution_complete')
+          .map((e, i) => ({
+            id: `t${i}`,
+            kind: 'tool',
+            role: 'assistant',
+            text: '',
+            pending: false,
+            toolName: e.payload?.toolName,
+            target: e.payload?.target,
+          }));
+        assert.equal(rows.length, 2, 'precondition: two settled tool calls');
+        const display = groupSilveryTranscriptRows(rows);
+        assert.equal(display.length, 1, 'two consecutive reads did not fold into one row');
+        assert.equal(display[0].kind, 'tool_group');
+        assert.equal(display[0].summary, 'Read 2 files');
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('still surfaces a status that outlives the moment it describes', async () => {
+    await withTempWorkspace(async (cwd) => {
+      // maxRounds=1 with an unfinished plan → the kernel halts on the cap and
+      // emits 'Coder stopped'. That is a fact about the run, not a heartbeat:
+      // dropping it would make a silent halt look like a normal end.
+      const server = await startSequencedProviderServer([
+        {
+          tokens: [
+            '{"tool":"coder_update_state","args":{"plan":"keep going","currentPhase":"investigation"}}',
+          ],
+        },
+      ]);
+      try {
+        const state = makeState(cwd);
+        const emitted = [];
+        await runLeadKernelTurn(
+          state,
+          makeProviderConfig(server.url),
+          'mock-key',
+          'Do the thing',
+          1,
+          { emit: (event) => emitted.push(event), explicitMaxRounds: true },
+        );
+        const stops = emitted.filter(
+          (e) => e.type === 'status' && /stopped/i.test(String(e.payload?.phase)),
+        );
+        assert.ok(
+          stops.length > 0,
+          'the round-limit halt was filtered out with the loop noise — a silent stop',
+        );
+        assert.match(String(stops[0].payload?.detail), /round limit/i);
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+});

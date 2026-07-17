@@ -6,8 +6,11 @@ import {
   formatToolTitle,
   getToolVerbNoun,
   pluralNoun,
+  TOOL_VERB_NOUN,
   withArticle,
 } from '../../lib/tool-display.ts';
+import { getToolTargetDetail } from '../../lib/tool-target-detail.ts';
+import { VERB_BY_TOOL } from '../tui-verbs.ts';
 
 describe('tool-display vocabulary', () => {
   it('maps canonical tool names to a verb + noun', () => {
@@ -24,6 +27,29 @@ describe('tool-display vocabulary', () => {
     assert.equal(formatToolTitle('read_file', 'README.md'), 'Read README.md');
     assert.equal(formatToolTitle('sandbox_exec', 'pnpm test'), 'Ran pnpm test');
     assert.equal(formatToolTitle('search_files', 'TODO'), 'Searched TODO');
+  });
+
+  it('never lets a verb swallow its own noun', () => {
+    // "Searched a search" shipped and rendered in the TUI. The noun does double
+    // duty — it must read in the grouped form ("Searched 3 searches", where
+    // 'search' is correct) and in the no-target form, where the same word is
+    // nonsense. Asserted over the WHOLE table, not the entries that happened to
+    // be wrong: this is a property of the verb/noun pair, so a new entry must
+    // not be able to reintroduce it.
+    for (const name of Object.keys(TOOL_VERB_NOUN)) {
+      const title = formatToolTitle(name);
+      const { verb, noun } = getToolVerbNoun(name);
+      assert.ok(
+        !new RegExp(`^${verb} an? ${noun}$`, 'i').test(title) ||
+          noun.toLowerCase() !== verb.toLowerCase().replace(/ed$|d$/, ''),
+        `"${title}" pairs the verb with its own noun (${name})`,
+      );
+    }
+    assert.equal(formatToolTitle('search_files'), 'Searched');
+    assert.equal(formatToolTitle('web_search'), 'Searched');
+    // The fix is the noun, not a special case: 'list' became 'directory', so
+    // the ordinary article form is available again.
+    assert.equal(formatToolTitle('list_dir'), 'Listed a directory');
   });
 
   it('falls back to the article + noun when no target is present', () => {
@@ -69,5 +95,66 @@ describe('tool-display vocabulary', () => {
       'Read README.md',
     );
     assert.equal(formatToolGroupSummary([]), '');
+  });
+});
+
+describe('tool-display covers every tool the CLI will name', () => {
+  // The guard that did not exist. `VERB_BY_TOOL` (cli/tui-verbs.ts) and
+  // `TOOL_VERB_NOUN` (lib/tool-display.ts) are ONE vocabulary in two tenses:
+  // the first names a tool while it runs ("reading"), the second once it has
+  // settled ("Read a file"). A tool in one and not the other is a tool the UI
+  // has an opinion about in the present and none in the past.
+  //
+  // It had drifted to 23 of 78 — `write_file`, `edit_file`, `git_commit`,
+  // `git_diff`, `list_dir`, `grep` and more all rendered "Used <target>",
+  // because the display table was built from the sandbox/web tool names and the
+  // CLI-native ones were never added (they are deliberately absent from
+  // TOOL_SPECS, so `resolveToolName` returns null and the lookup falls to the
+  // `default` entry). Every existing test passed: they spot-checked names that
+  // happened to be present.
+  it('has a display entry for every tool with a live verb', () => {
+    const missing = Object.keys(VERB_BY_TOOL).filter(
+      (name) => getToolVerbNoun(name) === TOOL_VERB_NOUN.default,
+    );
+    assert.deepEqual(
+      missing,
+      [],
+      `${missing.length} tool(s) have a live verb but no settled display entry, so they ` +
+        `render as "Used …": ${missing.join(', ')}. Add them to TOOL_VERB_NOUN.`,
+    );
+  });
+});
+
+describe('tool targets — the salient argument, not the first one that matches', () => {
+  it('names what a search looked FOR, not where it looked', () => {
+    // `search_files` takes {pattern, path?}. The path is the haystack; reporting
+    // it drops the term and answers a question nobody asked. This is the actual
+    // cause of "Searched a search": the pattern was never extracted, so the
+    // title had no target and fell through to the article form.
+    assert.equal(getToolTargetDetail('search_files', { pattern: 'gateway' }), 'gateway');
+    assert.equal(
+      getToolTargetDetail('search_files', { pattern: 'gateway', path: 'src/' }),
+      'gateway',
+      'the optional path outranked the pattern',
+    );
+    assert.equal(getToolTargetDetail('grep', { pattern: 'foo' }), 'foo');
+    assert.equal(getToolTargetDetail('web_search', { query: 'silvery' }), 'silvery');
+  });
+
+  it('extracts the CLI-native tools the web-shaped extractor never knew about', () => {
+    assert.equal(getToolTargetDetail('exec_start', { command: 'pnpm dev' }), 'pnpm dev');
+    assert.equal(getToolTargetDetail('git_commit', { message: 'feat: thing' }), 'feat: thing');
+    assert.equal(getToolTargetDetail('git_create_branch', { name: 'feat/x' }), 'feat/x');
+    assert.equal(getToolTargetDetail('fetch_url', { url: 'https://x.dev' }), 'https://x.dev');
+  });
+
+  it('renders the screenshot regressions correctly end to end', () => {
+    // Each of these was observed in a real TUI transcript.
+    const title = (tool, args) => formatToolTitle(tool, getToolTargetDetail(tool, args));
+    assert.equal(title('list_dir', { path: '.kilo' }), 'Listed .kilo');
+    assert.equal(title('search_files', { pattern: 'gateway' }), 'Searched gateway');
+    assert.equal(title('read_file', { path: '.kilo/package.json' }), 'Read .kilo/package.json');
+    assert.equal(title('write_file', { path: 'src/a.ts' }), 'Wrote src/a.ts');
+    assert.equal(title('git_commit', { message: 'feat: thing' }), 'Committed feat: thing');
   });
 });

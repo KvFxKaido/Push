@@ -853,8 +853,38 @@ export interface CoderCheckpointState<TCard extends ToolCard = ToolCard> {
   cards: TCard[];
 }
 
+/**
+ * Whether a status is worth keeping after the moment it describes.
+ *
+ * The kernel's statuses serve two surfaces with opposite economics, and until
+ * this existed they could not tell them apart. The web renders them in a
+ * TRANSIENT bar where each replaces the last, so a round counter costs nothing.
+ * The CLI/TUI appends each one to a PERMANENT transcript, where the same
+ * counter is noise that accumulates — and worse, sits between every pair of
+ * tool rows, which is what silently defeated `groupSilveryTranscriptRows`
+ * (it folds only CONSECUTIVE tool calls, so a status between them made the
+ * run length 1 and the fold could never fire).
+ *
+ * The split is *durability*, not severity:
+ *
+ *  - `progress` — "still working, here's where". Superseded by the next status
+ *    and carries no information once stale. A transient bar shows it; a
+ *    permanent record must not.
+ *  - `notable` — "this happened". A fact about the run that stays true after
+ *    the run ends: a halt, a policy intervention, a parse error, a context
+ *    reset, a checkpoint. Belongs in a permanent record.
+ *
+ * Required, not optional-with-a-default. A default would pick a failure mode:
+ * defaulting to `progress` loses a new halt silently, and defaulting to
+ * `notable` re-adds noise silently. Requiring it makes a new call site a type
+ * error until someone decides — which is the only moment the answer is known.
+ * (Consumers are unaffected: a `(phase, detail) => void` implementation still
+ * satisfies this type, so reading `kind` is opt-in per surface.)
+ */
+export type StatusKind = 'progress' | 'notable';
+
 export interface CoderAgentCallbacks<TCard extends ToolCard = ToolCard> {
-  onStatus: (phase: string, detail?: string) => void;
+  onStatus: (phase: string, detail: string | undefined, kind: StatusKind) => void;
   signal?: AbortSignal;
   onCheckpointRequest?: (question: string, context: string) => Promise<string>;
   /**
@@ -1642,7 +1672,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       // callback must not swallow it) and before `finishRound` is even defined
       // this iteration — this top-of-loop guard returns directly.
       emitRunCostReceipt('max_rounds', round);
-      callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`);
+      callbacks.onStatus('Coder stopped', `Hit ${maxRounds} round limit`, 'notable');
       // Append a compact summary of what changed (for the reader / next turn).
       const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
       // The lead is user-facing: close gracefully in its own voice, with no
@@ -1696,6 +1726,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         callbacks.onStatus(
           'Coder stopped',
           `Hit ${tokenBudget.toLocaleString()}-token budget (used ~${verdict.usedTokens.toLocaleString()})`,
+          'notable',
         );
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
         const leadClose =
@@ -1730,7 +1761,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
 
     rounds = round + 1;
     callbacks.onAdvanceRound?.();
-    callbacks.onStatus('Coder working...', `Round ${rounds}`);
+    callbacks.onStatus('Coder working...', `Round ${rounds}`, 'progress');
     let roundEnded = false;
     const finishRound = (outcome: 'completed' | 'continued' | 'error' | 'aborted' | 'steered') => {
       if (roundEnded) return;
@@ -1763,7 +1794,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       try {
         await callbacks.onCheckpoint({ round, messages, workingMemory, cards: allCards });
       } catch (err) {
-        callbacks.onStatus('Checkpoint skipped', err instanceof Error ? err.message : String(err));
+        callbacks.onStatus(
+          'Checkpoint skipped',
+          err instanceof Error ? err.message : String(err),
+          'notable',
+        );
       }
     }
 
@@ -1912,6 +1947,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       callbacks.onStatus(
         'Recovered answer',
         'Model placed its reply in the reasoning channel — promoted to the response.',
+        'notable',
       );
     }
 
@@ -1951,7 +1987,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     });
     const reasoningSnippet = reasoningLines.slice(0, 2).join(' ').slice(0, 150).trim();
     if (reasoningSnippet) {
-      callbacks.onStatus('Coder reasoning', reasoningSnippet);
+      callbacks.onStatus('Coder reasoning', reasoningSnippet, 'progress');
     }
 
     const buriedReasoningCall =
@@ -2020,7 +2056,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         // `finishRound`. Emit first (idempotent) so the reason is labeled
         // `policy_halt` and a throwing callback can't swallow the receipt.
         emitRunCostReceipt('policy_halt', round);
-        callbacks.onStatus('Coder stopped', 'Cognitive drift — halted');
+        callbacks.onStatus('Coder stopped', 'Cognitive drift — halted', 'notable');
         const sandboxState = (await callbacks.fetchSandboxStateSummary?.()) ?? '';
         finishRound('completed');
         return {
@@ -2037,7 +2073,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           : /INCOMPLETE_COMPLETION/.test(content)
             ? 'Needs more detail'
             : 'Policy intervention';
-        callbacks.onStatus(statusLabel, content.replace(/\[POLICY:.*?\]\n?/g, '').slice(0, 80));
+        callbacks.onStatus(
+          statusLabel,
+          content.replace(/\[POLICY:.*?\]\n?/g, '').slice(0, 80),
+          'notable',
+        );
         messages.push({
           id: `coder-policy-inject-${round}`,
           role: 'user',
@@ -2073,7 +2113,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
             : `${d.rawToolName} (unknown)`,
         )
         .join(', ');
-      callbacks.onStatus('Coder parse error', summary);
+      callbacks.onStatus('Coder parse error', summary, 'notable');
       for (const event of buildMalformedToolCallEvents(
         dropped.map((candidate) => ({
           reason: 'validation_failed',
@@ -2194,7 +2234,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         // host callbacks before `finishRound`. Emit first (idempotent) so the
         // reason is labeled `loop` and a throwing callback can't swallow it.
         emitRunCostReceipt('loop', round);
-        callbacks.onStatus('Coder stopped', 'Repeated tool-call loop — halted');
+        callbacks.onStatus('Coder stopped', 'Repeated tool-call loop — halted', 'notable');
         const loopText = `Detected repeated tool call loop (${loopCalls
           .map((c) => c.tool)
           .join(', ')}). Stopping run.`;
@@ -2219,7 +2259,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       if (loopVerdict.action !== 'none') {
         const steeringText = buildLoopSteeringText(loopVerdict);
         if (steeringText) {
-          callbacks.onStatus('Coder loop', loopVerdict.action);
+          callbacks.onStatus('Coder loop', loopVerdict.action, 'notable');
           messages.push({
             id: `coder-loop-${loopVerdict.action}-${round}`,
             role: 'user',
@@ -2292,7 +2332,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           ? ` + ${mutationQueue.length} mutation${mutationQueue.length === 1 ? '' : 's'}`
           : '';
       const statusLabel = `${parallelCalls.length} parallel reads${mutationLabel}`;
-      callbacks.onStatus('Coder executing...', statusLabel);
+      callbacks.onStatus('Coder executing...', statusLabel, 'progress');
 
       // Execute read-only calls in parallel
       const parallelResults = await Promise.all(
@@ -2509,6 +2549,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
             callbacks.onStatus(
               'Coder stopped',
               `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`,
+              'notable',
             );
             messages.push({
               id: `coder-hard-failure-${round}`,
@@ -2537,7 +2578,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
               timestamp: Date.now(),
             });
           } else if (mutResult.policyPost.kind === 'halt') {
-            callbacks.onStatus('Coder stopped', 'Policy halt — afterToolExec');
+            callbacks.onStatus('Coder stopped', 'Policy halt — afterToolExec', 'notable');
             messages.push({
               id: `coder-policy-halt-${round}`,
               role: 'user',
@@ -2628,7 +2669,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       ) {
         const previousPhase = lastPhaseForReset;
         lastPhaseForReset = stateUpdate.currentPhase;
-        callbacks.onStatus('Context reset', `Phase: ${stateUpdate.currentPhase}`);
+        callbacks.onStatus('Context reset', `Phase: ${stateUpdate.currentPhase}`, 'notable');
 
         // Build a fresh task message with working memory as handoff context
         const resetPreamble = [
@@ -2735,7 +2776,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
 
         if (callbacks.onCheckpointRequest && checkpointCount < MAX_CHECKPOINTS) {
           checkpointCount++;
-          callbacks.onStatus('Coder checkpoint', checkpoint.args.question);
+          callbacks.onStatus('Coder checkpoint', checkpoint.args.question, 'notable');
 
           try {
             const answer = await callbacks.onCheckpointRequest(
@@ -2752,7 +2793,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
               timestamp: Date.now(),
             });
 
-            callbacks.onStatus('Coder resuming...', `After checkpoint ${checkpointCount}`);
+            callbacks.onStatus(
+              'Coder resuming...',
+              `After checkpoint ${checkpointCount}`,
+              'progress',
+            );
             finishRound('continued');
             continue;
           } catch (cpErr) {
@@ -2792,11 +2837,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         | Array<{ id: string; passed: boolean; exitCode: number; output: string }>
         | undefined;
       if (acceptanceCriteria && acceptanceCriteria.length > 0 && callbacks.runAcceptanceCriterion) {
-        callbacks.onStatus('Running acceptance checks...');
+        callbacks.onStatus('Running acceptance checks...', undefined, 'progress');
         criteriaResults = [];
         for (const criterion of acceptanceCriteria) {
           if (callbacks.signal?.aborted) break;
-          callbacks.onStatus('Checking...', criterion.description || criterion.id);
+          callbacks.onStatus('Checking...', criterion.description || criterion.id, 'progress');
           try {
             const checkResult = await callbacks.runAcceptanceCriterion(criterion);
             const expectedExit = criterion.exitCode ?? 0;
@@ -2853,7 +2898,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     const attachToolUsesBeforeResult = (): void => {
       markLatestAssistantToolUse(messages, round, toolUses);
     };
-    callbacks.onStatus('Coder executing...', singleCall.call.tool);
+    callbacks.onStatus('Coder executing...', singleCall.call.tool, 'progress');
     const singleExecId = createId();
     const singleElapsed = startElapsedMs();
     const result = await toolExec(toolCall, {
@@ -2966,6 +3011,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         callbacks.onStatus(
           'Coder stopped',
           `${entry.tool} failed ${entry.count}x on ${entry.file || 'unknown'}`,
+          'notable',
         );
         messages.push({
           id: `coder-hard-failure-${round}`,
@@ -2992,7 +3038,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           timestamp: Date.now(),
         });
       } else if (result.policyPost.kind === 'halt') {
-        callbacks.onStatus('Coder stopped', 'Policy halt — afterToolExec');
+        callbacks.onStatus('Coder stopped', 'Policy halt — afterToolExec', 'notable');
         messages.push({
           id: `coder-policy-halt-${round}`,
           role: 'user',
