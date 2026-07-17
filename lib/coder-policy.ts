@@ -95,6 +95,17 @@ export interface CreateCoderPolicyOptions {
   onEvent?: (event: CoderPolicyEvent) => void;
 }
 
+/**
+ * Select completion grounding from turn intent, never from the host surface.
+ * Task-shaped turns stay strict even when they run through a conversational
+ * lead; only explicitly conversational turns use claim-only grounding.
+ */
+export function resolveCoderCompletionGuard(
+  taskInFlight: boolean | undefined,
+): NonNullable<CoderPolicyContext['completionGuard']> {
+  return taskInFlight === false ? 'claims_only' : 'strict';
+}
+
 export function formatCoderPolicyEvent(event: CoderPolicyEvent, runtimeHost: string): string {
   return JSON.stringify({
     level: event.event.endsWith('exhausted') ? 'warn' : 'info',

@@ -136,7 +136,11 @@ import { symbolLedger } from './symbol-persistence-ledger';
 import { getSandboxDiff, execInSandbox, sandboxStatus } from './sandbox-client';
 import { parseDiffStats } from './diff-utils';
 import { getApprovalMode, buildApprovalModeBlock } from './approval-mode';
-import { createCoderPolicy, formatCoderPolicyEvent } from '@push/lib/coder-policy';
+import {
+  createCoderPolicy,
+  formatCoderPolicyEvent,
+  resolveCoderCompletionGuard,
+} from '@push/lib/coder-policy';
 import { setSpanAttributes, withActiveSpan, SpanKind, SpanStatusCode } from './tracing';
 import { formatVerificationPolicyBlock, type VerificationPolicy } from './verification-policy';
 import { buildVerificationAcceptanceCriteria } from './verification-runtime';
@@ -868,9 +872,9 @@ export async function runInPageCoderKernel(
     // Undefined (delegated arc / engine) → task; the inline lane passes false
     // for conversational turns so the no-fake-completion guard stays quiet.
     taskInFlight: spec.taskInFlight,
-    // The foreground lead gives direct answers as well as coding summaries;
-    // delegated Coders retain the original strict short-response guard.
-    completionGuard: spec.leadToolSurface ? 'claims_only' : 'strict',
+    // The foreground lane handles both task and conversational turns. Select
+    // grounding from turn intent, not from the fact that lead tools exist.
+    completionGuard: resolveCoderCompletionGuard(spec.taskInFlight),
     signal: callbacks.signal,
   };
 

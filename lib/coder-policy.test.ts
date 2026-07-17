@@ -5,6 +5,7 @@ import {
   detectCognitiveDrift,
   formatCoderPolicyEvent,
   isVerificationPhase,
+  resolveCoderCompletionGuard,
   VERIFICATION_COMMAND_PATTERN,
   type CoderPolicyContext,
   type CoderRuntimePolicy,
@@ -104,6 +105,12 @@ describe('Coder policy drift guard', () => {
 });
 
 describe('Coder policy completion grounding', () => {
+  it('selects completion grounding from turn intent', () => {
+    expect(resolveCoderCompletionGuard(undefined)).toBe('strict');
+    expect(resolveCoderCompletionGuard(true)).toBe('strict');
+    expect(resolveCoderCompletionGuard(false)).toBe('claims_only');
+  });
+
   it.each([
     'I modified the auth.ts file to fix token refresh.',
     'Finished reading the file.',

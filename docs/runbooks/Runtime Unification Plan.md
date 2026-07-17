@@ -89,11 +89,15 @@ Acceptance:
 
 Review-pinned behavior:
 
-- delegated Coder hosts keep the strict short-response grounding guard; web
-  and CLI conversational leads use `claims_only`, which permits ordinary
-  direct answers but still challenges explicit completion claims;
+- task-shaped turns keep the strict short-response grounding guard on every
+  host; only explicitly conversational web, CLI, background, or adopted lead
+  turns use `claims_only`, which permits ordinary direct answers but still
+  challenges explicit completion claims;
 - a trailing announced action is evaluated before generic completion
   grounding so the next round can force the promised tool call;
+- native tool-call presence bypasses text-only after-model policy for that
+  round, because the structured call is already concrete action even when its
+  prose preface sounds like an unfulfilled announcement;
 - only successful repo-level verification tools or commands reset mutation
   backpressure; a file-scoped `lsp_diagnostics` result does not;
 - CLI policy events use stderr because stdout is reserved for user and JSONL

@@ -50,6 +50,7 @@ import { decideStreamFailover } from '../lib/provider-failover.ts';
 import {
   createCoderPolicy,
   formatCoderPolicyEvent,
+  resolveCoderCompletionGuard,
   type CoderPolicyContext,
   type CoderPolicyAfterResult,
 } from '../lib/coder-policy.ts';
@@ -475,12 +476,13 @@ export async function runLeadKernelTurn(
     // must stay on stderr so machine-readable streams remain pure.
     onEvent: (event) => console.error(formatCoderPolicyEvent(event, 'cli_lead')),
   });
+  const taskInFlight = classifyTurnIntent(userText) === 'task';
   const coderPolicyContext: CoderPolicyContext = {
     round: 0,
     maxRounds,
     allowedRepo: workspaceIdentity.repoFullName,
-    taskInFlight: classifyTurnIntent(userText) === 'task',
-    completionGuard: 'claims_only',
+    taskInFlight,
+    completionGuard: resolveCoderCompletionGuard(taskInFlight),
   };
   // Explorer fan-out honors the disabledTools policy end-to-end (Codex P2 on
   // #1370): when `delegate_explorer` is disabled, the arc is neither

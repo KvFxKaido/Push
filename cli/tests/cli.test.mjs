@@ -765,7 +765,9 @@ describe('push run --jsonl stream', needsHeadlessJsonl, () => {
   });
 
   it('persists one terminal event after failed acceptance checks', async () => {
-    const mock = await startMockProviderServer({ tokens: ['Implementation complete.'] });
+    const mock = await startMockProviderServer({
+      tokens: ['I modified the fixture file. Implementation complete.'],
+    });
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-jsonl-acceptance-'));
     const sessionRoot = path.join(root, 'sessions');
     try {

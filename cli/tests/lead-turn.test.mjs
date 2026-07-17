@@ -237,6 +237,33 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('keeps task-shaped lead turns on strict completion grounding', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: ['Recovered after adaptation.'] },
+        { tokens: ['I modified the notes.txt file and verified the requested fix.'] },
+      ]);
+
+      try {
+        const result = await runLeadKernelTurn(
+          makeState(cwd),
+          makeProviderConfig(server.url),
+          'mock-key',
+          'Fix notes.txt',
+          5,
+          { emit: () => {} },
+        );
+
+        assert.equal(result.outcome, 'success');
+        assert.equal(server.requests.length, 2);
+        assert.ok(JSON.stringify(server.requests[1]).includes('INCOMPLETE_COMPLETION'));
+        assert.ok(result.finalAssistantText.includes('I modified the notes.txt'));
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('surfaces a max_rounds outcome when the round cap is hit (headless parity, #942)', async () => {
     await withTempWorkspace(async (cwd) => {
       // Round 0 emits a non-terminal state-update tool call so the kernel does
@@ -281,7 +308,7 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         { tokens: [malformedCall] },
         { tokens: [malformedCall] },
         { tokens: [malformedCall] },
-        { tokens: ['Recovered after adaptation.'] },
+        { tokens: ['I read the notes.txt file after recovery.'] },
       ]);
 
       try {
@@ -544,7 +571,7 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
         { tokens: [fanOut] },
         { tokens: ['Findings: alpha beta'] },
         { tokens: ['Findings: alpha beta'] },
-        { tokens: ['Both flows traced. All done.'] },
+        { tokens: ['Both flows traced in the notes.txt file. All done.'] },
       ]);
 
       try {
@@ -628,7 +655,11 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
     await withTempWorkspace(async (cwd) => {
       const server = await startSequencedProviderServer([
         { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
-        { tokens: ['Understood, answering directly.'] },
+        {
+          tokens: [
+            'I cannot delegate because it is disabled by user config; no Explorer was spawned.',
+          ],
+        },
       ]);
 
       try {
@@ -667,7 +698,7 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
       const server = await startSequencedProviderServer([
         { tokens: [fencedCall('delegate_explorer', { task: 'Trace flow A' })] },
         { tokens: ['Findings: alpha beta'] },
-        { tokens: ['Investigated the flow and summarized the findings.'] },
+        { tokens: ['Investigated the notes.txt file and summarized the findings.'] },
       ]);
 
       try {
@@ -708,7 +739,11 @@ describe('runLeadKernelTurn — Explorer fan-out (§10 lead delegation arc)', ne
     await withTempWorkspace(async (cwd) => {
       const server = await startSequencedProviderServer([
         { tokens: [fencedCall('delegate_explorer', {})] },
-        { tokens: ['Understood, giving a direct answer.'] },
+        {
+          tokens: [
+            'I was unable to delegate because the required task argument was empty, so no Explorer was spawned.',
+          ],
+        },
       ]);
 
       try {

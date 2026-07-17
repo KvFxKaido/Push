@@ -445,6 +445,19 @@ function makeNoToolStreamFn(summary: string): PushStream<ChatMessage> {
     })();
 }
 
+/** Raw terminal text used when a test needs to exercise completion policy. */
+function makeRawTextStreamFn(summary: string): PushStream<ChatMessage> {
+  return () =>
+    (async function* () {
+      yield { type: 'text_delta', text: summary };
+      yield {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      };
+    })();
+}
+
 /** Stream fn that emits a single `coder_checkpoint` guidance call as fenced
  * JSON. Under `durableSuspension` (leadMode jobs) the kernel throws
  * `CoderSuspendedError` on seeing this, parking the run. */
@@ -588,6 +601,33 @@ describe('CoderJob DO — end-to-end', () => {
     const jobRow = storage.jobs.get(input.jobId)!;
     expect(jobRow.status).toBe('completed');
     expect(jobRow.finished_at).toBeTypeOf('number');
+  });
+
+  it('lets a conversational background lead return an ordinary short answer', async () => {
+    const { ctx, storage, waitUntilPromises } = makeCtx();
+    const input = makeLeadStartInput({ jobId: 'job-lead-conversation' });
+    input.envelope.task = 'What changed?';
+
+    __setCoderJobServiceOverrides(input.jobId, {
+      detectors: stubDetectors,
+      executor: stubExecutor,
+      stream: makeRawTextStreamFn('Nothing changed.'),
+    });
+
+    const job = new CoderJob(ctx, makeEnv());
+    await job.fetch(
+      new Request('https://do/start', {
+        method: 'POST',
+        body: JSON.stringify(input),
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await Promise.all(waitUntilPromises);
+
+    const row = storage.jobs.get(input.jobId)!;
+    expect(row.status).toBe('completed');
+    expect(JSON.parse(row.result_json ?? '{}').summary).toContain('Nothing changed.');
+    expect(storage.events.filter((event) => event.type === 'assistant.turn_start')).toHaveLength(1);
   });
 
   it('converts envelope attachments into the initial coder-task content parts', async () => {

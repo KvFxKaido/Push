@@ -74,6 +74,19 @@ describe('classifyTurnIntent', () => {
     expect(classifyTurnIntent('look over the diff then address the comments')).toBe('task');
   });
 
+  it('treats response-only and read-only imperatives as conversational', () => {
+    for (const text of [
+      'say hello',
+      'return the result',
+      'answer with JSON',
+      'read target.txt',
+      'please report the current status',
+    ]) {
+      expect(classifyTurnIntent(text)).toBe('conversational');
+    }
+    expect(classifyTurnIntent('read target.txt and update the parser')).toBe('task');
+  });
+
   it('treats advice-seeking framing as conversational despite a coding keyword', () => {
     expect(classifyTurnIntent('should I refactor this?')).toBe('conversational');
     expect(classifyTurnIntent('do you think we should add a cache here?')).toBe('conversational');

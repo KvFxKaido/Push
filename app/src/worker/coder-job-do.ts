@@ -51,7 +51,11 @@ import {
   type CoderTurnContext,
 } from '@push/lib/coder-agent-bindings';
 import { CapabilityLedger, ROLE_CAPABILITIES } from '@push/lib/capabilities';
-import { createCoderPolicy, formatCoderPolicyEvent } from '@push/lib/coder-policy';
+import {
+  createCoderPolicy,
+  formatCoderPolicyEvent,
+  resolveCoderCompletionGuard,
+} from '@push/lib/coder-policy';
 import type {
   AcceptanceCriterion,
   AgentRole,
@@ -69,6 +73,7 @@ import type { VerificationPolicy } from '@push/lib/verification-policy';
 import { formatVerificationPolicyBlock } from '@push/lib/verification-policy';
 import type { CorrelationContext } from '@push/lib/correlation-context';
 import type { Capability } from '@push/lib/capabilities';
+import { classifyTurnIntent } from '@push/lib/turn-intent';
 import type { AttachmentData, ChatCard, ChatMessage, DelegationEnvelope } from '@/types';
 import { buildApprovalModeBlock } from '@/lib/approval-mode';
 import {
@@ -813,6 +818,8 @@ export class CoderJob {
     let ownerToken = seed?.ownerToken ?? input.ownerToken;
     let resumeState: CoderCheckpointState<ChatCard> | undefined = seed?.resumeState;
     let resumesUsed = 0;
+    const taskInFlight =
+      input.envelope.leadMode === true ? classifyTurnIntent(input.envelope.task) === 'task' : true;
     // Policy counters (drift, trailing intent, mutation backpressure) belong to
     // the logical job, not one sandbox attempt. Services are rebuilt after a
     // sandbox restore, so keep the shared policy instance outside that loop.
@@ -877,7 +884,8 @@ export class CoderJob {
         allowedRepo: input.repoFullName,
         activeProvider: input.provider,
         activeModel: input.model,
-        taskInFlight: true,
+        taskInFlight,
+        completionGuard: resolveCoderCompletionGuard(taskInFlight),
         signal,
       };
       const services = buildCoderJobServices({

@@ -284,6 +284,60 @@ describe('runCoderAgent (PushStream consumer) — forceToolChoiceNextRound escal
     { name: 'sandbox_read_file', description: 'Read a file', input_schema: { type: 'object' } },
   ];
 
+  it('executes a native call instead of applying text-only policy to its prose preface', async () => {
+    const nativeCall = {
+      id: 'call-1',
+      name: 'sandbox_read_file',
+      args: { path: 'README.md' },
+    };
+    const taggedCall = {
+      call: { tool: nativeCall.name, args: nativeCall.args },
+    } as Call;
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: "I'll read README.md now." },
+        { type: 'native_tool_call', call: nativeCall },
+        { type: 'done', finishReason: 'tool_calls' },
+      ],
+      [
+        { type: 'text_delta', text: 'I reviewed README.md and found the setup instructions.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+    const evaluateAfterModel = vi.fn(async (_response: string, round: number) =>
+      round === 0
+        ? ({
+            action: 'inject' as const,
+            content: `${ANNOUNCED_NO_ACTION_POLICY_MARKER}\nEmit the tool call now.`,
+            forceToolChoiceNextRound: true,
+          } as const)
+        : ({ action: 'halt' as const, summary: 'done' } as const),
+    );
+    const toolExec = vi.fn(async () => ({ kind: 'executed' as const, resultText: 'contents' }));
+
+    await runCoderAgent(
+      {
+        ...baseCoderOptions({ stream, evaluateAfterModel, toolExec }),
+        nativeToolSchemas: NATIVE_TOOLS,
+        detectNativeToolCalls: () => ({
+          readOnly: [taggedCall],
+          mutating: null,
+          fileMutations: [],
+          extraMutations: [],
+          droppedCandidates: [],
+        }),
+      },
+      { onStatus: () => {} },
+    );
+
+    expect(toolExec).toHaveBeenCalledWith(taggedCall, expect.anything());
+    expect(evaluateAfterModel).toHaveBeenCalledTimes(1);
+    expect(evaluateAfterModel).toHaveBeenCalledWith(
+      'I reviewed README.md and found the setup instructions.',
+      1,
+    );
+  });
+
   it('forces tool_choice: required on the round after the announced-no-action nudge, then clears it', async () => {
     const { stream, capturedRequests } = makePushStream([
       [

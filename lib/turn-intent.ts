@@ -41,6 +41,10 @@ const READ_ONLY_REVIEW =
   /^(?:can you|could you|would you|please|pls|plz)?\s*(?:take a look at|look over|review|inspect|check out)\b.*\b(diff|pr|pull request|change|changes)\b/;
 const MUTATING_FOLLOWUP =
   /\b(?:and|then)\s+(?:fix|address|update|change|edit|modify|implement|add|remove|delete|commit|push)\b/;
+/** Direct response/read requests have no coding completion to ground. */
+const RESPONSE_ONLY_IMPERATIVE = new RegExp(
+  `^(?:${LEAD_IN}\\s+)*(?:say|answer|respond|report|read|return)\\b`,
+);
 /** Interrogatives, control phrases, acknowledgements, and greetings. */
 const CONVERSATIONAL_SIGNAL =
   /^(what|why|how|when|who|where|which|explain|eli5|tell me|summari[sz]e|describe|walk me through|can you explain|could you explain|is (it|that|this|there)|are (you|there|we)|did you|do you|does (it|this|that)|just (making sure|checking)|are you (looping|stuck)|you (looping|stuck)|what('?s| is| are) (you|going)|stop|wait|hold on|nvm|never ?mind|thanks|thank you|ty\b|cool|ok|okay|got it|nice|great|hi|hey|hello|yo|gm|good (morning|evening))\b/;
@@ -58,6 +62,9 @@ export function classifyTurnIntent(text: string): TurnIntent {
     return 'conversational';
   }
   if (READ_ONLY_REVIEW.test(normalized) && !MUTATING_FOLLOWUP.test(normalized)) {
+    return 'conversational';
+  }
+  if (RESPONSE_ONLY_IMPERATIVE.test(normalized) && !MUTATING_FOLLOWUP.test(normalized)) {
     return 'conversational';
   }
   if (CODING_OBJECT.test(normalized)) return 'task';
