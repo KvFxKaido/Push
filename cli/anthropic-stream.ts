@@ -41,6 +41,7 @@ import type {
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
 import { anthropicEventStream, toAnthropicMessages } from '../lib/anthropic-bridge.ts';
+import { continueAnthropicPauseTurns } from '../lib/anthropic-pause-continuation.ts';
 import { CliProviderError } from './openai-stream.ts';
 import type { ProviderConfig } from './provider.ts';
 
@@ -87,66 +88,42 @@ async function* cliAnthropicStream(
   };
   if (apiKey) headers['x-api-key'] = apiKey;
 
-  // `pause_turn` continuation loop — mirrors `app/src/lib/anthropic-stream.ts`.
-  // The Anthropic bridge surfaces `pause_turn` when the server-side sampling
-  // loop hits its iteration cap (web_search_20250305 can trigger this for
-  // multi-search turns); we replay the assistant's captured content[] until
-  // the turn terminates. Capped at 3 iterations. Each paused turn is fed back
-  // through `toAnthropicMessages` as a trailing assistant message.
-  const MAX_PAUSE_TURN_ITERATIONS = 3;
-  const replayAssistantTurns: Array<Array<Record<string, unknown>>> = [];
-  for (let attempt = 0; attempt <= MAX_PAUSE_TURN_ITERATIONS; attempt += 1) {
-    const upstreamBody = JSON.stringify(
-      toAnthropicMessages(req, {
-        modelOverride: model,
-        enableWebSearch,
-        temperatureDefault: 0.1,
-        replayAssistantTurns,
-      }),
-    );
-
-    const response = await fetch(config.url, {
-      method: 'POST',
-      headers,
-      body: upstreamBody,
-      signal: req.signal,
-    });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '(no body)');
-      throw new CliProviderError(
-        `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
-        response.status,
+  // Transport and serializer stay CLI-local; the replay state machine is
+  // shared with the web Anthropic family so cap/ordering/empty-block behavior
+  // cannot drift between shells.
+  yield* continueAnthropicPauseTurns({
+    baseBody: {},
+    runAttempt: async function* ({ replayAssistantTurns }) {
+      const upstreamBody = JSON.stringify(
+        toAnthropicMessages(req, {
+          modelOverride: model,
+          enableWebSearch,
+          temperatureDefault: 0.1,
+          replayAssistantTurns,
+        }),
       );
-    }
 
-    if (!response.body) {
-      // The Messages API normally streams. A bodyless response means upstream
-      // declined to stream (rare; usually only on errors which we've already
-      // handled). Yield a synthetic terminal event so the consumer doesn't
-      // hang waiting for `done`.
-      yield { type: 'done', finishReason: 'stop' };
-      return;
-    }
+      const response = await fetch(config.url, {
+        method: 'POST',
+        headers,
+        body: upstreamBody,
+        signal: req.signal,
+      });
 
-    let paused: Array<Record<string, unknown>> | null = null;
-    for await (const event of anthropicEventStream(response, req.signal)) {
-      if (event.type === 'pause_turn') {
-        paused = event.assistantBlocks;
-        continue;
+      if (!response.ok) {
+        const errBody = await response.text().catch(() => '(no body)');
+        throw new CliProviderError(
+          `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
+          response.status,
+        );
       }
-      yield event;
-    }
 
-    // Defensive zero-length guard — see `app/src/lib/anthropic-stream.ts`
-    // for context. Belt-and-suspenders with the pump's empty-blocks filter.
-    if (!paused || paused.length === 0) return;
-    if (attempt === MAX_PAUSE_TURN_ITERATIONS) {
-      // Cap exhausted. Synthesize a terminal `done` so the consumer doesn't
-      // hang — whatever text streamed so far becomes the answer.
-      yield { type: 'done', finishReason: 'stop' };
-      return;
-    }
-    replayAssistantTurns.push(paused);
-  }
+      if (!response.body) {
+        yield { type: 'done', finishReason: 'stop' };
+        return;
+      }
+
+      yield* anthropicEventStream(response, req.signal);
+    },
+  });
 }

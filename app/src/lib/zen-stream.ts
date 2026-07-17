@@ -12,6 +12,7 @@ import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
+import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import type { WorkspaceContext } from '@/types';
@@ -153,15 +154,9 @@ export async function* zenStream(
     // it). Drain any `pause_turn` defensively rather than replaying it, and
     // guarantee a terminal `done` so a pause-without-done can't leave the round
     // loop hanging.
-    let sawDone = false;
-    for await (const event of anthropicEventStream(response, req.signal, (name) =>
-      KNOWN_TOOL_NAMES.has(name),
-    )) {
-      if (event.type === 'pause_turn') continue;
-      if (event.type === 'done') sawDone = true;
-      yield event;
-    }
-    if (!sawDone) yield { type: 'done', finishReason: 'stop' };
+    yield* completeAnthropicStreamWithoutPause(
+      anthropicEventStream(response, req.signal, (name) => KNOWN_TOOL_NAMES.has(name)),
+    );
     return;
   }
 
