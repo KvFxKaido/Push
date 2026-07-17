@@ -55,7 +55,7 @@ import { osc52Copy } from '../tui-renderer.js';
 import { copyLastResponse } from '../transcript-copy.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
-import { isReducedMotion, isSpinnerName, SPINNER_NAMES, SPINNERS } from '../tui-spinner.js';
+import { isReducedMotion, type StatusActivity } from '../tui-verbs.js';
 import { detectThemeName, isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
 import { ESC } from '../tui-renderer.js';
 import { formatWorktreeStatus } from '../worktree.js';
@@ -76,6 +76,13 @@ export type SilveryTranscriptItem = DaemonTranscriptRow;
 export interface SilverySnapshot {
   rows: SilveryTranscriptItem[];
   running: boolean;
+  /**
+   * What Push is doing right now — drives the header's status verb.
+   * Null when idle. DERIVED, never stored: see `currentActivity()`.
+   */
+  activity: StatusActivity;
+  /** Stable per session — seeds the quiet-state mood verb so it can't flicker. */
+  sessionId: string;
   startedAt: number | null;
   provider: string;
   model: string;
@@ -281,6 +288,38 @@ export async function createSilveryController(
   const listeners = new Set<() => void>();
 
   const nextId = (kind: string) => `${kind}-${++sequence}`;
+
+  /**
+   * What Push is doing right now, for the header verb.
+   *
+   * Derived from state that already exists — deliberately NOT a field updated
+   * from the event switch. A stored `activity` would be a second state machine
+   * tracking the same run, and the two would disagree on exactly the paths
+   * nobody tests: a tool that errors, an abort mid-stream, a turn that ends
+   * with calls still pending. Reading the answer out of `running` / `liveText`
+   * / the pending rows makes desync unrepresentable rather than unlikely.
+   *
+   * `running` gates everything, which is what makes a stale pending row
+   * harmless: `submit()` clears `activityRows` per turn, and the `finally`
+   * drops `running` even on abort, so an unsettled call from a cancelled turn
+   * can never pin the verb.
+   *
+   * Last pending call wins. Reads run in parallel (cap 6) so several can be
+   * live at once, and the most recent one is the honest label — it is the one
+   * that just changed.
+   */
+  const currentActivity = (): StatusActivity => {
+    if (!running) return null;
+    for (let i = activityRows.length - 1; i >= 0; i -= 1) {
+      const row = activityRows[i];
+      if (row?.kind === 'tool' && row.pending && row.toolName) {
+        return { kind: 'tool', toolName: row.toolName };
+      }
+    }
+    // Tokens arriving means prose is streaming; silence means the model is
+    // still deciding. Both clear per turn and at `assistant_done`.
+    return liveText ? { kind: 'streaming' } : { kind: 'thinking' };
+  };
   const historyRows = (): SilveryTranscriptItem[] =>
     sessionMessagesToTranscriptRows(state.messages)
       .slice(hiddenBefore)
@@ -342,6 +381,8 @@ export async function createSilveryController(
             : []),
         ],
     running,
+    activity: currentActivity(),
+    sessionId: state.sessionId,
     startedAt,
     provider: state.provider,
     model: state.model,
@@ -1009,7 +1050,6 @@ export async function createSilveryController(
           '  /rc [pair]             Hand this session to your phone',
           '  /daemon status|restart Show pushd status or reconnect',
           '  /theme [list|name]     List or set the saved theme preference',
-          '  /spinner [list|name]   List or pin the spinner preference',
           '  /editor                Compose the prompt in $EDITOR (PUSH_EDITOR/VISUAL/EDITOR)',
           '  /debug runtime         Runtime path/provider/session diagnostics',
           '  /worktree              Show worktree sandbox status',
@@ -1611,56 +1651,6 @@ export async function createSilveryController(
       process.env.PUSH_THEME = name;
       await persistConfig(config);
       appendStatus(`theme: ${name} — accent hue applied.`);
-      return true;
-    }
-
-    if (command === 'spinner') {
-      const parts = arg.split(/\s+/).filter(Boolean);
-      const sub = (parts[0] || 'show').toLowerCase();
-      if (!arg || sub === 'show') {
-        appendStatus(
-          `spinner preference: ${config.spinner || process.env.PUSH_SPINNER || 'off'}${isReducedMotion() ? ' — reduced-motion active' : ''}`,
-        );
-        return true;
-      }
-      if (sub === 'list') {
-        appendStatus(
-          [
-            'Spinners:',
-            ...SPINNER_NAMES.map((name) => {
-              const preview = name === 'off' ? ' ' : (SPINNERS[name].frames[0] ?? ' ');
-              return `  ${preview}  ${name.padEnd(10)}  ${SPINNERS[name].description}`;
-            }),
-          ].join('\n'),
-        );
-        return true;
-      }
-      const name = ((sub === 'set' ? parts[1] : sub) || '').toLowerCase();
-      if (name === 'unpin') {
-        delete config.spinner;
-        delete process.env.PUSH_SPINNER;
-        await persistConfig(config);
-        appendStatus('spinner: off (unpinned)');
-        return true;
-      }
-      if (!isSpinnerName(name)) {
-        appendStatus(
-          `Unknown spinner: ${name || '(missing)'}. Available: ${SPINNER_NAMES.join(', ')}. Use 'unpin' to clear.`,
-          true,
-        );
-        return true;
-      }
-      if (isReducedMotion() && name !== 'off') {
-        appendStatus(
-          'Spinner disabled: reduced-motion is set (PUSH_REDUCED_MOTION / REDUCED_MOTION). Unset it to enable.',
-          true,
-        );
-        return true;
-      }
-      config.spinner = name;
-      process.env.PUSH_SPINNER = name;
-      await persistConfig(config);
-      appendStatus(`spinner: ${name} (saved preference)`);
       return true;
     }
 

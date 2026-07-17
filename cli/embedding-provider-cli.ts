@@ -71,7 +71,7 @@ const DEBUG = process.env.PUSH_DEBUG === '1' || process.env.PUSH_DEBUG === 'true
  *
  * Diagnostics go to stderr and only under PUSH_DEBUG: this runs on every CLI
  * command, and stdout is the user-output / `--json` channel — a stray log line
- * there corrupts machine-readable output (and broke `push spinner show` /
+ * there corrupts machine-readable output (and broke `push theme show` /
  * `push resume --json` when this first logged to stdout).
  */
 export function installCliEmbeddingProvider(): void {

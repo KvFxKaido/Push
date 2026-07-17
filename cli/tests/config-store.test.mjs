@@ -131,22 +131,6 @@ describe('applyConfigToEnv', () => {
     assert.equal(process.env.PUSH_THEME, 'forest');
   });
 
-  it('applies spinner to PUSH_SPINNER when missing', () => {
-    delete process.env.PUSH_SPINNER;
-
-    applyConfigToEnv({ spinner: 'braille' });
-
-    assert.equal(process.env.PUSH_SPINNER, 'braille');
-  });
-
-  it('does not override existing PUSH_SPINNER', () => {
-    process.env.PUSH_SPINNER = 'orbit';
-
-    applyConfigToEnv({ spinner: 'helix' });
-
-    assert.equal(process.env.PUSH_SPINNER, 'orbit');
-  });
-
   it('applies TUI mouse mode to PUSH_TUI_MOUSE_MODE when missing', () => {
     delete process.env.PUSH_TUI_MOUSE_MODE;
 

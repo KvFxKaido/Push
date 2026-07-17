@@ -16,7 +16,9 @@ import {
   PUSH_BRAND_ART_COLS,
   VL_COLOR,
   accentHexForTheme,
-  breathingHex,
+  livenessHex,
+  shimmerIntensity,
+  verbShimmerColors,
   countUserTurns,
   createModalMotionState,
   densityMeter,
@@ -198,30 +200,71 @@ describe('visual language v2 color budget', () => {
 describe('visual language v2 motion', () => {
   it('maps web motion axes into tick counts (law 9)', () => {
     assert.equal(MOTION_TICKS.modalFade, 3);
-    assert.ok(MOTION_TICKS.breathePeriod >= 4);
+    assert.ok(MOTION_TICKS.verbShimmerPeriod >= 4);
     assert.ok(MOTION_TICKS.clockMs > 0);
   });
 
-  it('breathes on the shared clock while working; freezes under reduced motion (laws 8, 10)', () => {
+  it('marks liveness by glyph and accent, with nothing moving (laws 2, 8)', () => {
     const g = GLYPHS_UNICODE;
-    const idle = breathingHex(0, 'idle', g, false);
-    assert.equal(idle.glyph, '⬡');
-    assert.equal(idle.bright, false);
-
-    const reduced = breathingHex(3, 'working', g, true);
-    assert.equal(reduced.glyph, '⬢');
-    assert.equal(reduced.bright, true);
-
-    const a = breathingHex(0, 'working', g, false);
-    const b = breathingHex(MOTION_TICKS.breathePeriod / 2, 'working', g, false);
-    // Opposite halves of the cycle must disagree on fill (phase-locked breathe).
-    assert.notEqual(a.glyph === '⬢', b.glyph === '⬢');
+    // The hex used to breathe — law 8's one animation now belongs to the verb
+    // shimmer, so this is a static anchor and takes no tick at all.
+    assert.deepEqual(livenessHex('idle', g), { glyph: '⬡', bright: false });
+    assert.deepEqual(livenessHex('working', g), { glyph: '⬢', bright: false });
+    assert.deepEqual(livenessHex('attention', g), { glyph: '⬢', bright: true });
   });
 
-  it('attention is a single filled pulse, not a loop vocabulary (law 8)', () => {
-    const pulse = breathingHex(99, 'attention', GLYPHS_UNICODE, false);
-    assert.equal(pulse.glyph, '⬢');
-    assert.equal(pulse.bright, true);
+  it('keeps working and attention distinguishable without motion (law 2)', () => {
+    // Freezing the hex collapsed the old glyph-level distinction (both filled),
+    // so the accent carries it. If these ever agree on BOTH axes, "needs you"
+    // and "busy" become the same pixel.
+    assert.notDeepEqual(
+      livenessHex('working', GLYPHS_UNICODE),
+      livenessHex('attention', GLYPHS_UNICODE),
+    );
+  });
+
+  it('sweeps the shimmer band left to right across the verb (laws 8, 9)', () => {
+    const verb = 'editing';
+    // Peak intensity must TRAVEL: early in the sweep the left of the word is
+    // lit, late in the sweep the right is. Silvery's own TextShimmer lights the
+    // whole word at once and would fail this — see the note in theme.tsx.
+    const argmax = (xs) => xs.indexOf(Math.max(...xs));
+    const at = (p) => argmax([...verb].map((_, i) => shimmerIntensity(i, verb.length, p)));
+    assert.ok(at(0.15) < at(0.85), `band did not travel: ${at(0.15)} → ${at(0.85)}`);
+  });
+
+  it('lights only a band, never the whole label (law 9: light, not space)', () => {
+    const len = 10;
+    const lit = [...Array(len)].map((_, i) => shimmerIntensity(i, len, 0.5)).filter((t) => t > 0);
+    assert.ok(lit.length > 0, 'band vanished mid-sweep');
+    assert.ok(lit.length < len, 'band swamped the whole label — that is a pulse, not a sweep');
+  });
+
+  it('returns one color per character and never resizes the label', () => {
+    // Width safety: a color effect must not be able to reflow the header.
+    for (const verb of ['ok', 'committing', 'brewing']) {
+      assert.equal(verbShimmerColors(verb, 3, false).length, [...verb].length);
+    }
+  });
+
+  it('phase-locks the sweep to the shared tick and wraps cleanly (law 8)', () => {
+    const period = MOTION_TICKS.verbShimmerPeriod;
+    // Same phase of a later cycle → identical frame. That is what "one clock"
+    // buys: no drift against the modal fade.
+    assert.deepEqual(
+      verbShimmerColors('editing', 2, false),
+      verbShimmerColors('editing', 2 + period, false),
+    );
+    // A negative tick must not yield a NaN color.
+    for (const color of verbShimmerColors('editing', -3, false)) {
+      assert.match(color, /^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it('flattens to one static color under reduced motion (law 10)', () => {
+    const colors = verbShimmerColors('editing', 7, true);
+    assert.equal(new Set(colors).size, 1, 'reduced motion still gradients');
+    assert.deepEqual(colors, verbShimmerColors('editing', 999, true));
   });
 
   it('ramps modal backdrop fades over the shared three-tick window (law 9)', () => {
@@ -264,13 +307,23 @@ describe('visual language v2 motion', () => {
 describe('visual language v2 frame helpers', () => {
   it('builds a fact-only header strip (law 1)', () => {
     const segs = headerSegments({
-      brandMark: '⬢',
       branch: 'main',
       path: '~/proj',
       context: '12k',
       turn: 'turn 3',
     });
-    assert.deepEqual(segs, ['⬢', 'main', '~/proj', '12k', 'turn 3']);
+    // No brand mark and no verb: those are separately styled zones (accent hex,
+    // shimmering verb) and cannot ride a joined muted string. Carrying
+    // `brandMark` here is what kept this helper unwired while HeaderBar
+    // hand-built the same row.
+    assert.deepEqual(segs, ['main', '~/proj', '12k', 'turn 3']);
+  });
+
+  it('omits empty facts rather than emitting empty segments', () => {
+    assert.deepEqual(headerSegments({ branch: 'main', path: '', context: '12k', turn: '' }), [
+      'main',
+      '12k',
+    ]);
   });
 
   it('formats turn timestamps compactly and tolerates missing legacy timestamps', () => {

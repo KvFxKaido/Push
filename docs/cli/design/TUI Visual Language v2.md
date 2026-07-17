@@ -176,9 +176,26 @@ the color budget: **one live animation at a time.**
 - *Idle:* nothing moves.
 - *Streaming:* the reveal cadence **is** the motion (same word, same concept as the web
   surface's Streamdown-derived prose cadence).
-- *Working:* the breathing hex — `⬡` dim → `⬢` bright and back on the tick.
+- *Working:* the **shimmering status verb** — a brightness band sweeps left→right across
+  the live verb (`editing…`, `committing…`, `brewing…`) once per 16 ticks. The label **is**
+  the loader, so no cell is spent on a separate spinner glyph. The hexagon holds **static
+  and filled** beside it as a liveness anchor.
 - *Attention:* a single pulse that fires **once**. A looping attention animation is
   nagging; one pulse is a tap on the shoulder.
+
+The working animation used to be the breathing hex (`⬡` dim → `⬢` bright on the tick), and
+the verb was not rendered at all. Both moved for the same reason: the budget is one
+animation, and it should sit on the element carrying the most information. A breathing hex
+can only say *alive*; a shimmering verb says *alive **and what***. The hex keeps its three
+states — hollow/idle, filled/working, filled+accent/attention — distinguished by glyph and
+the one-accent budget rather than by motion, which is why freezing it costs nothing.
+
+> **Do not use silvery's `TextShimmer` for this.** The name matches; the component does not.
+> It is a whole-word binary flip between two colors (`value > .5 ? high : low`), not a band
+> sweep, and it drives itself from a private `useAnimation` timer — a second clock, beating
+> against this one, which is the exact failure this law names. `verbShimmerColors()` in
+> `visual-language.ts` computes the sweep off the shared tick instead. Same trap family as
+> `Diff` (see the component note in `silvery/theme.tsx`).
 
 ### 9. Motion primitives are time and light, not space
 
@@ -189,7 +206,8 @@ Cells are integers; nothing slides. The primitives:
   single highest-value smoothness primitive; use it for all chrome enter/exit.
 - **Brightness ramps** — dim → normal → bold as the terminal's easing curve.
 - **Density ramps** — `░▒▓█` where a meter needs continuous feel.
-- **Phase cycles** — spinner/breathing glyph sequences, always on the shared clock.
+- **Phase cycles** — a sweeping/breathing sequence, always on the shared clock. The verb
+  shimmer is the only one the working state spends (law 8); a glyph spinner would be a second.
 
 Motion tokens are **translated, not invented**: the web app's five-axis motion token
 system (transitions.dev lineage, `app/src/index.css`, `DESIGN.md`) maps into tick-space —

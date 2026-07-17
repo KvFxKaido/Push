@@ -49,7 +49,6 @@ export interface PushConfig {
   webSearchBackend?: string;
   execMode?: string;
   theme?: string;
-  spinner?: string;
   /**
    * TUI mouse handling. "native" (default) leaves mouse selection to the
    * terminal; "app" captures mouse events so Push can wheel-scroll and copy
@@ -205,7 +204,6 @@ function environmentConfigLayers(env: NodeJS.ProcessEnv): Array<ConfigLayer<Push
   add(['PUSH_WEB_SEARCH_BACKEND'], ['webSearchBackend']);
   add(['PUSH_EXEC_MODE'], ['execMode']);
   add(['PUSH_THEME'], ['theme']);
-  add(['PUSH_SPINNER'], ['spinner']);
   add(['PUSH_TUI_MOUSE_MODE'], ['tuiMouseMode']);
   add([AUDITOR_GATE_ENV_VAR], ['auditorGate'], parseStrictEnvironmentBoolean);
   add([POST_EDIT_DIAGNOSTICS_ENV_VAR], ['postEditDiagnostics'], parseStrictEnvironmentBoolean);
@@ -370,7 +368,6 @@ export function applyConfigToEnv(config: PushConfig): void {
   }
   setEnvIfMissing('PUSH_EXEC_MODE', config.execMode);
   setEnvIfMissing('PUSH_THEME', config.theme);
-  setEnvIfMissing('PUSH_SPINNER', config.spinner);
   setEnvIfMissing('PUSH_TUI_MOUSE_MODE', config.tuiMouseMode);
 
   // Forward tool allow/deny lists as comma-separated env vars so child

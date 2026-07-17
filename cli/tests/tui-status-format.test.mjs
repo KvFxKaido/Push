@@ -1,21 +1,15 @@
 /**
  * tui-status-format.test.mjs — formatElapsed + formatTokenCount.
  *
- * Both are pure formatting helpers used by the running indicator and
- * the status bar. Tested here separately from
- * renderStatusBar so the format conventions are pinned without
- * needing a screen buffer.
+ * Pure formatting helpers for the Silvery header and footer. The
+ * `renderStatusBar` block that used to live here went with the function: it
+ * painted into the ANSI `ScreenBuffer` that no longer exists, and its green
+ * tests were the reason nobody noticed.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import {
-  formatElapsed,
-  formatTokenCount,
-  formatWorkspaceStateView,
-  renderStatusBar,
-} from '../tui-status.ts';
-import { createTheme } from '../tui-theme.ts';
+import { formatElapsed, formatTokenCount, formatWorkspaceStateView } from '../tui-status.ts';
 
 describe('formatElapsed', () => {
   it('renders sub-second as 0s', () => {
@@ -114,52 +108,5 @@ describe('formatWorkspaceStateView', () => {
       ),
       'main clean no-protect-main sandbox-wait',
     );
-  });
-});
-
-describe('renderStatusBar', () => {
-  it('prefers fresh git status fields while appending daemon-only guards', () => {
-    const writes = [];
-    const buf = {
-      writeLine(_row, _col, text) {
-        writes.push(text);
-      },
-    };
-
-    renderStatusBar(
-      buf,
-      { footer: { top: 0, left: 0, width: 140 } },
-      createTheme({ tier: 'none', unicode: false }),
-      {
-        gitStatus: {
-          branch: 'fresh',
-          dirty: 3,
-          ahead: 0,
-          behind: 0,
-        },
-        workspaceStateView: {
-          workspaceId: 'sess_ws',
-          rev: 3,
-          state: {
-            activeBranch: 'stale',
-            headSha: 'abc1234',
-            ahead: 7,
-            behind: 2,
-            dirtyFiles: [],
-            protectMain: false,
-            sandboxReady: true,
-          },
-        },
-        cwd: '/tmp/project',
-        tokens: 0,
-        messageCount: 0,
-      },
-    );
-
-    const line = writes[0];
-    assert.match(line, /git: fresh \+3 no-protect-main sandbox-ready/);
-    assert.doesNotMatch(line, /stale/);
-    assert.doesNotMatch(line, /clean/);
-    assert.doesNotMatch(line, /↑7|↓2/);
   });
 });

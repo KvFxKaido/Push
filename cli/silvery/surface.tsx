@@ -28,7 +28,7 @@ import { getProviderList } from '../provider.js';
 import { createTabCompleter, type CompletionState } from '../tui-completer.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
-import { isReducedMotion } from '../tui-spinner.js';
+import { isReducedMotion, verbForActivity, type StatusActivity } from '../tui-verbs.js';
 import { estimateTokens, formatElapsed, formatTokenCount } from '../tui-status.js';
 import { detectUnicode } from '../tui-theme.js';
 import type { SilveryController, SilverySnapshot, SilveryTranscriptItem } from './controller.js';
@@ -39,13 +39,14 @@ import {
   type SilveryTranscriptToolGroup,
 } from './transcript-groups.js';
 import {
-  breathingHex,
   countUserTurns,
   densityMeter,
   diffLineColor,
   footerKeybinds,
   createModalMotionState,
   formatTurnTimestamp,
+  headerSegments,
+  livenessHex,
   MOTION_TICKS,
   modalFadeAmount,
   modeLabel,
@@ -55,6 +56,7 @@ import {
   resolveGlyphs,
   shortenPath,
   streamMark,
+  verbShimmerColors,
   VL_COLOR,
   type FooterScope,
   type ModalMotionState,
@@ -663,12 +665,8 @@ function HeaderBar({
   freezeMotion: boolean;
 }) {
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
-  const reduced = isReducedMotion();
   const phase = attention ? 'attention' : snapshot.running ? 'working' : 'idle';
-  const live =
-    freezeMotion && !attention
-      ? { glyph: glyphs.hexActive, bright: false }
-      : breathingHex(tick, phase, glyphs, reduced);
+  const live = livenessHex(phase, glyphs);
   const branch = snapshot.gitStatus?.branch || '—';
   const dirty =
     snapshot.gitStatus?.dirty && snapshot.gitStatus.dirty > 0
@@ -685,20 +683,93 @@ function HeaderBar({
     : `${formatTokenCount(tokens)} / ?`;
   const path = shortenPath(snapshot.cwd, Math.max(12, Math.min(28, Math.floor(columns / 4))));
   const turns = countUserTurns(snapshot.rows);
-  const turnLabel = turns > 0 ? `turn ${turns}` : '';
+  const facts = headerSegments({
+    branch: `${branch}${dirty}`,
+    path,
+    context: `${meter} ${contextLabel}`,
+    turn: turns > 0 ? `turn ${turns}` : '',
+  });
 
+  // ONE row, always (law 1: the header is a fact strip, not a paragraph). The
+  // facts truncate; the mark and the verb never shrink.
+  //
+  // Silvery's default `wrap` is word-wrap, so before this the header silently
+  // became two rows on a narrow terminal — the fact strip spilling into the
+  // space `transcriptHeight` (rows - 6) had already promised the transcript.
+  // It went unnoticed because the wrap point sat below the usual width; the
+  // verb moved it ~10 columns wider and made it easy to hit. Facts are ordered
+  // most- to least-durable (branch, path, context, turn), so an `end` truncation
+  // drops the least useful first.
   return (
-    <Box width={columns}>
-      <Text bold color={live.bright ? VL_COLOR.accent : VL_COLOR.muted}>
+    <Box width={columns} flexWrap="nowrap">
+      <Text bold flexShrink={0} color={live.bright ? VL_COLOR.accent : VL_COLOR.muted}>
         {live.glyph}
       </Text>
-      <Text color={VL_COLOR.muted}>
-        {' '}
-        · {branch}
-        {dirty} · {path} · {meter} {contextLabel}
-        {turnLabel ? ` · ${turnLabel}` : ''}
+      <StatusVerb
+        activity={snapshot.activity}
+        sessionId={snapshot.sessionId}
+        tick={tick}
+        freezeMotion={freezeMotion}
+      />
+      <Text color={VL_COLOR.muted} wrap="truncate-end">
+        {` · ${facts.join(' · ')}`}
       </Text>
     </Box>
+  );
+}
+
+/**
+ * The live status verb — what Push is doing, and the frame's one animation.
+ *
+ * Renders nothing at all when idle (including no leading space), so an idle
+ * header is byte-identical to what it was before the verb existed.
+ *
+ * One `<Text>` per character is the cost of a per-character gradient in a
+ * retained tree; the verbs are ≤10 chars by construction (`MOOD_VERBS` and
+ * `VERB_BY_TOOL` both cap themselves for exactly this row), so the fan-out is
+ * bounded at ~10 nodes and only exists while a turn runs.
+ */
+function StatusVerb({
+  activity,
+  sessionId,
+  tick,
+  freezeMotion,
+}: {
+  activity: StatusActivity;
+  sessionId: string;
+  tick: number;
+  freezeMotion: boolean;
+}) {
+  const verb = verbForActivity(activity, sessionId);
+  if (!verb) return null;
+  // A modal is up: the verb still says what it says, it just stops moving.
+  // Same contract as reduced motion, which `verbShimmerColors` handles.
+  const colors = verbShimmerColors(verb, tick, freezeMotion || isReducedMotion());
+  const chars = [...verb];
+  // The separating space rides the FIRST character's node rather than a node of
+  // its own. A lone `<Text> </Text>` is a flex item one cell wide and the first
+  // thing shrink-to-fit eats, so on a tight row the header painted `⬢testing…`
+  // with the mark jammed against the verb. A space carried inside a sibling
+  // that must exist anyway cannot be dropped on its own. (Coloring it is free —
+  // a space has no foreground.)
+  //
+  // `flexShrink={0}` throughout: the verb is the row's most perishable content
+  // and the least willing to lose a character. Facts truncate instead.
+  return (
+    <>
+      {chars.map((ch, i) => (
+        // Index as key: a fixed-length gradient over a stable string, where the
+        // position IS the identity — and the character is not unique ('editing'
+        // has two 'i's), so the char would be the wrong key.
+        // biome-ignore lint/suspicious/noArrayIndexKey: see above
+        <Text key={i} flexShrink={0} color={colors[i]}>
+          {i === 0 ? ` ${ch}` : ch}
+        </Text>
+      ))}
+      <Text flexShrink={0} color={VL_COLOR.muted}>
+        …
+      </Text>
+    </>
   );
 }
 

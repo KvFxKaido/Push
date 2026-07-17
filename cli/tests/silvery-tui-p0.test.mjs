@@ -2601,3 +2601,306 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 });
+
+describe('silvery status verb — snapshot.activity', () => {
+  // Against the REAL caller. `verbForActivity` had a full unit suite and zero
+  // production callers for the whole of the Silvery era; testing the helper
+  // again would reproduce exactly the blind spot that let that happen. These
+  // drive `createSilveryController` through real turns and read the snapshot
+  // the header renders from.
+  const baseState = () => ({
+    sessionId: 'verb-session',
+    messages: [{ role: 'system', content: 'system' }],
+    eventSeq: 0,
+    updatedAt: Date.now(),
+    cwd: '/repo',
+    provider: 'ollama',
+    model: 'test-model',
+    rounds: 0,
+    sessionName: '',
+    workingMemory: {},
+    mode: 'tui',
+  });
+
+  const harness = async (runTurn) => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = baseState();
+    const seen = [];
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: (receivedState, _p, _k, _text, _rounds, options) =>
+          runTurn(receivedState, options, state),
+      },
+    );
+    controller.subscribe(() => seen.push(controller.getSnapshot().activity));
+    return { controller, seen, state };
+  };
+
+  const emit = (options, type, payload, sessionId) =>
+    options.emit({ type, payload, runId: 'run-1', sessionId });
+
+  it('is null when idle, before and after a turn', async () => {
+    const { controller, state } = await harness(async () => ({
+      outcome: 'success',
+      finalAssistantText: 'ok',
+      rounds: 1,
+      runId: 'run-1',
+    }));
+    assert.equal(controller.getSnapshot().activity, null, 'idle before the turn');
+    await controller.submit('hi');
+    assert.equal(controller.getSnapshot().activity, null, 'idle after the turn');
+    assert.ok(state);
+    await controller.dispose();
+  });
+
+  it('reports the running tool while a call is in flight, and drops it once settled', async () => {
+    let midCall = null;
+    let afterSettle = null;
+    const { controller } = await harness(async (_s, options, state) => {
+      emit(
+        options,
+        'tool.execution_start',
+        { toolName: 'edit_file', executionId: 'x1' },
+        state.sessionId,
+      );
+      midCall = controller.getSnapshot().activity;
+      emit(
+        options,
+        'tool.execution_complete',
+        { toolName: 'edit_file', executionId: 'x1', target: 'a.ts' },
+        state.sessionId,
+      );
+      afterSettle = controller.getSnapshot().activity;
+      return { outcome: 'success', finalAssistantText: 'done', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('edit something');
+    assert.deepEqual(midCall, { kind: 'tool', toolName: 'edit_file' });
+    // Settled → back to the quiet state, NOT a stale 'edit_file'. The old TUI
+    // needed an explicit re-assignment here to avoid a stale tool verb; the
+    // derivation makes it fall out.
+    assert.deepEqual(afterSettle, { kind: 'thinking' });
+    await controller.dispose();
+  });
+
+  it('reports the LAST of several parallel calls (reads fan out, cap 6)', async () => {
+    let observed = null;
+    const { controller } = await harness(async (_s, options, state) => {
+      emit(
+        options,
+        'tool.execution_start',
+        { toolName: 'read_file', executionId: 'r1' },
+        state.sessionId,
+      );
+      emit(
+        options,
+        'tool.execution_start',
+        { toolName: 'grep', executionId: 'r2' },
+        state.sessionId,
+      );
+      observed = controller.getSnapshot().activity;
+      return { outcome: 'success', finalAssistantText: 'done', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('look around');
+    assert.deepEqual(observed, { kind: 'tool', toolName: 'grep' });
+    await controller.dispose();
+  });
+
+  it('reports streaming once tokens arrive', async () => {
+    let observed = null;
+    const { controller } = await harness(async (_s, options, state) => {
+      emit(options, 'assistant_token', { text: 'hello' }, state.sessionId);
+      observed = controller.getSnapshot().activity;
+      return { outcome: 'success', finalAssistantText: 'hello', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('say hi');
+    assert.deepEqual(observed, { kind: 'streaming' });
+    await controller.dispose();
+  });
+
+  it('a tool call outranks streamed prose still on screen', async () => {
+    // Ordering matters: `liveText` survives until `assistant_done`, so a naive
+    // check would keep saying "replying" while a tool is actually running.
+    let observed = null;
+    const { controller } = await harness(async (_s, options, state) => {
+      emit(options, 'assistant_token', { text: 'let me look' }, state.sessionId);
+      emit(
+        options,
+        'tool.execution_start',
+        { toolName: 'read_file', executionId: 'r1' },
+        state.sessionId,
+      );
+      observed = controller.getSnapshot().activity;
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('look');
+    assert.deepEqual(observed, { kind: 'tool', toolName: 'read_file' });
+    await controller.dispose();
+  });
+
+  it('an unsettled call from a failed turn cannot pin the verb', async () => {
+    // The reason `running` gates the derivation. A turn that throws mid-call
+    // leaves a pending row behind forever; the header must still go idle.
+    const { controller } = await harness(async (_s, options, state) => {
+      emit(
+        options,
+        'tool.execution_start',
+        { toolName: 'sandbox_exec', executionId: 'e1' },
+        state.sessionId,
+      );
+      throw new Error('provider exploded');
+    });
+    await controller.submit('run it');
+    const snapshot = controller.getSnapshot();
+    assert.equal(snapshot.running, false);
+    assert.equal(snapshot.activity, null, 'a leaked pending row pinned the verb');
+    assert.ok(
+      snapshot.rows.some((row) => row.pending),
+      'precondition: the row did leak',
+    );
+    await controller.dispose();
+  });
+});
+
+describe('silvery header — one row at any width', () => {
+  // Renders the REAL surface. The wrap this pins is not hypothetical: silvery's
+  // default `wrap` is word-wrap, so the fact strip quietly became two or three
+  // rows on a narrow terminal, spilling into the space `transcriptHeight`
+  // (rows - 6) had already promised the transcript. Nothing caught it because
+  // every unit test around the header asserted on strings, and a string has no
+  // width. Found by rendering; kept honest by rendering.
+  const widths = [100, 76, 60, 44, 32];
+
+  const parkedController = async (toolName) => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'header-width-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/home/ishaw/projects/Push',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let release;
+    const parked = new Promise((resolve) => {
+      release = resolve;
+    });
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        // A long branch name is the realistic pressure, not a synthetic one.
+        gitStatus: async () => ({
+          branch: 'feat/a-realistically-long-branch-name',
+          dirty: 3,
+          ahead: 0,
+          behind: 0,
+        }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: async (_s, _p, _k, _t, _r, options) => {
+          options.emit({
+            type: 'tool.execution_start',
+            payload: { toolName, executionId: 'x1' },
+            runId: 'run-1',
+            sessionId: state.sessionId,
+          });
+          await parked;
+          return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+        },
+      },
+    );
+    return { controller, release, turn: controller.submit('go') };
+  };
+
+  // Returns the plain-text frame rows plus the index of the header row.
+  const renderFrame = async (controller, columns) => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(columns, 14);
+    const instance = Silvery.render(
+      React.createElement(PushSurface, { controller }),
+      { stdout, stdin: new FakeStdin() },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: false },
+    );
+    instance.run?.();
+    await instance;
+    await sleep(200);
+    const rows = stdout.bytes
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '\n')
+      .split('\n');
+    instance.unmount?.();
+    // Anchor on the verb, never on the facts: the facts truncate BY DESIGN (at
+    // 44 columns the branch name and meter are both gone), so matching them
+    // would report a correctly-truncated header as a missing one.
+    const headerIndex = rows.findIndex((line) => /⬢ testing…/.test(line));
+    return { rows, headerIndex };
+  };
+
+  /** Fact-strip debris — what a wrapped header spills onto the next row. */
+  const FACT_DEBRIS = /░|turn \d|realistically|\+3/;
+
+  for (const columns of widths) {
+    it(`keeps the fact strip on a single row at ${columns} columns`, {
+      skip: silverySkip,
+    }, async () => {
+      const { controller, release, turn } = await parkedController('sandbox_run_tests');
+      try {
+        const { rows, headerIndex } = await renderFrame(controller, columns);
+        assert.ok(headerIndex >= 0, `header row not found at ${columns} cols`);
+
+        // The invariant, stated where it can actually fail: the row BELOW the
+        // header must carry no fact-strip debris. Counting verb-matching rows
+        // cannot detect this — the verb only ever renders on the first row, so
+        // that count stays 1 whether the facts wrapped or not.
+        const below = rows[headerIndex + 1] ?? '';
+        assert.ok(
+          !FACT_DEBRIS.test(below),
+          `header wrapped onto the next row at ${columns} cols:\n  ${rows[headerIndex]}\n  ${below}`,
+        );
+        assert.ok(
+          rows[headerIndex].trimEnd().length <= columns,
+          `header overflowed ${columns} cols: ${rows[headerIndex].trimEnd().length}`,
+        );
+      } finally {
+        release();
+        await turn;
+        await controller.dispose();
+      }
+    });
+  }
+
+  it('keeps the mark separated from the verb when the row is tight', {
+    skip: silverySkip,
+  }, async () => {
+    // The separator space used to be its own one-cell flex item and was the
+    // first thing shrink-to-fit dropped, painting `⬢testing…`.
+    const { controller, release, turn } = await parkedController('sandbox_run_tests');
+    try {
+      const { rows, headerIndex } = await renderFrame(controller, 60);
+      assert.ok(headerIndex >= 0, 'the mark and verb were painted jammed together');
+      assert.match(rows[headerIndex], /⬢ testing…/);
+    } finally {
+      release();
+      await turn;
+      await controller.dispose();
+    }
+  });
+});
