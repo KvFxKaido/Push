@@ -38,8 +38,9 @@ cd app && pnpm run android:sync && cd android && ./gradlew installDebug
 ### Desktop (Electron, experimental)
 
 ```bash
-cd app && npx cap add @capawesome/capacitor-electron   # one-time scaffold (local/Windows box)
-cd app && pnpm run electron:run                        # thereafter: build SPA + sync + launch
+cd app && npx cap add @capawesome/capacitor-electron            # one-time scaffold (local/Windows box)
+cd app/electron && pnpm install --ignore-workspace && cd ../..  # one-time deps — the flag is load-bearing (see app/README.md)
+cd app && pnpm run electron:run                                 # thereafter: build SPA + sync + launch
 ```
 
 Desktop wraps the same PWA via `@capawesome/capacitor-electron` (a Capacitor platform, same wiring model as Android), remote-hosted like Android — the window follows `server.url`, no local `dist/` ship. This is the scaffolding path for the "native Windows Electron shell" in [`docs/decisions/Windows Desktop — WSL-Hosted Daemon.md`](docs/decisions/Windows%20Desktop%20—%20WSL-Hosted%20Daemon.md). Wired at **config + docs** stage: deps + `electron:*` scripts + `ensure-capacitor-electron.mjs` guard exist, but `app/electron/` is **not committed yet** (scaffold it locally, then commit as source mirroring `app/android/`).

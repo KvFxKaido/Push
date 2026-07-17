@@ -128,7 +128,10 @@ box), then sync:
 ```bash
 # one-time, from app/ — generates app/electron/
 npx cap add @capawesome/capacitor-electron
-cd electron && pnpm install && cd ..
+# --ignore-workspace is load-bearing: app/electron is not a pnpm workspace
+# member, so a bare `pnpm install` here resolves the REPO workspace instead,
+# reports success, and installs none of the scaffold's deps (verified).
+cd electron && pnpm install --ignore-workspace && cd ..
 
 # thereafter: build the SPA + sync + launch
 pnpm run electron:run

@@ -24,7 +24,11 @@ if (!existsSync(electronPkg)) {
       'Electron toolchain lives), then re-run:\n' +
       '\n' +
       '  npx cap add @capawesome/capacitor-electron\n' +
-      '  cd electron && pnpm install && cd ..\n' +
+      '  cd electron && pnpm install --ignore-workspace && cd ..\n' +
+      '\n' +
+      '(--ignore-workspace is required: app/electron is not a workspace member,\n' +
+      'so a bare `pnpm install` resolves the repo workspace, reports success,\n' +
+      'and installs none of the Electron deps.)\n' +
       '\n' +
       'Remote-hosted load: the shell follows `server.url` in capacitor.config.ts\n' +
       '(already the hosted Worker), matching the Android shell — no local dist ship.\n' +
