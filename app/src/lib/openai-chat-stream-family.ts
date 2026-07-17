@@ -17,11 +17,8 @@ import type {
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { toLLMMessages } from './orchestrator';
-import { parseProviderError } from './orchestrator-streaming';
-import { REQUEST_ID_HEADER, createRequestId } from './request-id';
-import { ProviderStreamError } from './stream-error';
+import { buildProviderStreamHeaders, postProviderStream } from './provider-stream-fetch';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { injectTraceHeaders } from './tracing';
 
 export type OpenAIChatFamilyProvider = Extract<
   AIProviderType,
@@ -77,46 +74,16 @@ export function createOpenAIChatStream(config: OpenAIChatStreamFamilyConfig) {
         : {}),
     };
 
-    const apiKey =
-      config.credential.kind === 'bearer'
-        ? (config.credential.getApiKey() ?? '').trim()
-        : undefined;
-    const requestId = createRequestId('chat');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      [REQUEST_ID_HEADER]: requestId,
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    };
-    injectTraceHeaders(headers);
-
-    const response = await fetch(config.endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
+    const response = await postProviderStream({
+      endpoint: config.endpoint,
+      headers: buildProviderStreamHeaders(
+        config.credential.kind === 'bearer' ? config.credential.getApiKey() : undefined,
+      ),
+      body,
       signal: req.signal,
+      displayName: config.displayName,
+      errorPrefix: config.errorPrefix,
     });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      let detail: string;
-      try {
-        const parsed = JSON.parse(errBody);
-        detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-      } catch {
-        detail = errBody ? errBody.slice(0, 200) : 'empty body';
-      }
-      const preserveWorkerPrefix =
-        config.errorPrefix === 'preserve-worker-prefix' &&
-        detail.startsWith(`${config.displayName} `);
-      const message = preserveWorkerPrefix
-        ? detail
-        : `${config.displayName} ${response.status}: ${detail}`;
-      throw new ProviderStreamError(message, { status: response.status });
-    }
-
-    if (!response.body) {
-      throw new Error(`${config.displayName} response had no body`);
-    }
 
     yield* openAISSEPump({
       body: response.body,

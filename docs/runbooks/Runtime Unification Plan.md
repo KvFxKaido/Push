@@ -126,8 +126,10 @@ incrementally. Do not create one provider mega-adapter.
    OpenAI-compatible wire is not interchangeable with direct Gemini.
 
 The OpenAI Responses slice owns prompt composition, neutral-message conversion,
-request serialization, traced fetch, error parsing, response-body validation,
-and SSE pumping. OpenRouter remains outside that builder: its session trace,
+request serialization, and SSE pumping. The traced fetch, error-prefix
+normalization, and response-body validation common to all three families live
+in one `provider-stream-fetch` helper — transport plumbing only, so it cannot
+drift into the mega-adapter this plan rules out. OpenRouter remains outside that builder: its session trace,
 provider routing controls, and dual Chat/Responses paths are real product
 behavior rather than copy-shaped transport boilerplate.
 

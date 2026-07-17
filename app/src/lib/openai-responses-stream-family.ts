@@ -5,8 +5,8 @@
  * Provider modules keep their endpoint, credential lookup, and public name
  * explicit. This module owns only the copy-shaped Responses mechanics:
  * prompt composition, neutral-message conversion, request serialization,
- * traced fetch, provider-error normalization, body validation, and SSE
- * pumping.
+ * and SSE pumping. The traced fetch, error normalization, and body
+ * validation shared by all three families live in `provider-stream-fetch`.
  */
 
 import type { ChatMessage, WorkspaceContext } from '@/types';
@@ -21,11 +21,8 @@ import type {
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { toLLMMessages } from './orchestrator';
-import { parseProviderError } from './orchestrator-streaming';
-import { REQUEST_ID_HEADER, createRequestId } from './request-id';
-import { ProviderStreamError } from './stream-error';
+import { buildProviderStreamHeaders, postProviderStream } from './provider-stream-fetch';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { injectTraceHeaders } from './tracing';
 import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export type OpenAIResponsesFamilyProvider = Extract<
@@ -109,40 +106,14 @@ export function createOpenAIResponsesStream(config: OpenAIResponsesStreamFamilyC
       responsesWebSearch,
     });
 
-    const apiKey = (config.getApiKey() ?? '').trim();
-    const requestId = createRequestId('chat');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      [REQUEST_ID_HEADER]: requestId,
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    };
-    injectTraceHeaders(headers);
-
-    const response = await fetch(config.endpoint, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
+    const response = await postProviderStream({
+      endpoint: config.endpoint,
+      headers: buildProviderStreamHeaders(config.getApiKey()),
+      body,
       signal: req.signal,
+      displayName: config.displayName,
+      errorPrefix: 'preserve-worker-prefix',
     });
-
-    if (!response.ok) {
-      const errBody = await response.text().catch(() => '');
-      let detail: string;
-      try {
-        const parsed = JSON.parse(errBody);
-        detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-      } catch {
-        detail = errBody ? errBody.slice(0, 200) : 'empty body';
-      }
-      const message = detail.startsWith(`${config.displayName} `)
-        ? detail
-        : `${config.displayName} ${response.status}: ${detail}`;
-      throw new ProviderStreamError(message, { status: response.status });
-    }
-
-    if (!response.body) {
-      throw new Error(`${config.displayName} response had no body`);
-    }
 
     yield* openAIResponsesSSEPump({
       body: response.body,

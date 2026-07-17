@@ -21,11 +21,8 @@ import type {
 import { toPushStreamWire } from '@push/lib/provider-wire';
 import { resolvePushCapabilityProfile } from './model-catalog';
 import { toLLMMessages } from './orchestrator';
-import { parseProviderError } from './orchestrator-streaming';
-import { REQUEST_ID_HEADER, createRequestId } from './request-id';
-import { ProviderStreamError } from './stream-error';
+import { buildProviderStreamHeaders, postProviderStream } from './provider-stream-fetch';
 import { KNOWN_TOOL_NAMES } from './tool-dispatch';
-import { injectTraceHeaders } from './tracing';
 import { isNativeWebSearchEnabled } from './web-search-mode';
 
 export type AnthropicFamilyProvider = Extract<AIProviderType, 'anthropic' | 'deepseek'>;
@@ -66,6 +63,15 @@ export function createAnthropicFamilyStream(config: AnthropicStreamFamilyConfig)
     const anthropicWebSearch =
       config.nativeWebSearch === 'anthropic' &&
       (req.anthropicWebSearch ?? isNativeWebSearchEnabled('anthropic', req.model));
+    // Neutral `push.stream.v1` wire body. Sampling scalars and the web-search
+    // flag ride as neutral fields; the Worker's dual-accept neutral branch
+    // serializes them to Anthropic Messages. System-prompt prefix caching is
+    // preserved unchanged: the cacheable `toLLMMessages` output already bakes
+    // `cache_control` into the system message's content-part array, which
+    // rides through the wire and is honored by `toAnthropicMessages`. The
+    // separate `cacheBreakpointIndices` rolling-tail mechanism is intentionally
+    // NOT sent — the legacy OpenAI-shape body never carried it on this path,
+    // so enabling it is a deliberate change, not a cleanup.
     const baseBody = toPushStreamWire(llmMessages, {
       provider: config.provider,
       model: req.model,
@@ -77,41 +83,19 @@ export function createAnthropicFamilyStream(config: AnthropicStreamFamilyConfig)
       ...(req.responseFormat ? { responseFormat: req.responseFormat } : {}),
     });
 
-    const apiKey = (config.getApiKey() ?? '').trim();
-    const requestId = createRequestId('chat');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-      [REQUEST_ID_HEADER]: requestId,
-      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-    };
-    injectTraceHeaders(headers);
+    // Built once and reused across pause-turn attempts, so every continuation
+    // request carries the same request id (matching the pre-family behavior).
+    const headers = buildProviderStreamHeaders(config.getApiKey());
 
     const runAttempt = async function* (body: typeof baseBody): AsyncIterable<PushStreamEvent> {
-      const response = await fetch(config.endpoint, {
-        method: 'POST',
+      const response = await postProviderStream({
+        endpoint: config.endpoint,
         headers,
-        body: JSON.stringify(body),
+        body,
         signal: req.signal,
+        displayName: config.displayName,
+        errorPrefix: 'preserve-worker-prefix',
       });
-
-      if (!response.ok) {
-        const errBody = await response.text().catch(() => '');
-        let detail: string;
-        try {
-          const parsed = JSON.parse(errBody);
-          detail = parseProviderError(parsed, errBody.slice(0, 200), true);
-        } catch {
-          detail = errBody ? errBody.slice(0, 200) : 'empty body';
-        }
-        const message = detail.startsWith(`${config.displayName} `)
-          ? detail
-          : `${config.displayName} ${response.status}: ${detail}`;
-        throw new ProviderStreamError(message, { status: response.status });
-      }
-
-      if (!response.body) {
-        throw new Error(`${config.displayName} response had no body`);
-      }
 
       yield* anthropicEventStream(response, req.signal, (name) => KNOWN_TOOL_NAMES.has(name));
     };
