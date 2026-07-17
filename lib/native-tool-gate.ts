@@ -1,17 +1,9 @@
 /**
  * Shared native function-calling gate primitives.
  *
- * Native-FC gating runs on two surfaces with different runtime constraints: the
- * web gate (`providerModelSupportsNativeToolCalling` in
- * `app/src/lib/model-catalog.ts`) can read models.dev capability caches and
- * browser config; the CLI gate (`cliProviderModelSupportsNativeToolCalling` in
- * `cli/native-tool-gate.ts`) cannot. The web gate therefore can't be the CLI's
- * definition. To keep the two from drifting, the pieces that ARE pure and shared
- * — the OpenAI model-id shape check — live here and are imported by both. A
- * drift-detector test (`app/src/lib/model-catalog.test.ts`) pins web↔CLI parity
- * for the name-based providers; capability-based providers (OpenRouter / Ollama
- * / Nvidia via models.dev) are intentionally resolved per surface and excluded
- * from parity.
+ * `lib/capability-profile.ts` owns the cross-surface decision algorithm. These
+ * are the lower-level model-id exceptions it consumes after each surface has
+ * supplied its catalog metadata.
  */
 import { OPENAI_MODELS } from './provider-models.js';
 

@@ -147,13 +147,15 @@ Coder/Explorer, and scoped toolsets.
   rejection (Gemini 400s on a parameterless OBJECT) is handled by Vertex's
   OpenAI-compatible layer translating standard OpenAI tools — a first-run
   watch-item if a no-arg tool ever 400s a Vertex Gemini request.
-- **Shared gate, single source.** The name-based gate decisions (the OpenAI /
-  Bedrock model-id shapes and the curated Vertex set) live once in
-  `lib/native-tool-gate.ts` (data from `lib/provider-models.ts`), imported by both
-  the web gate (`model-catalog.ts`) and the CLI gate (`cli/native-tool-gate.ts`).
-  A web↔CLI drift test in `model-catalog.test.ts` pins parity for the name-based
-  providers; capability-based providers (OpenRouter / Ollama / Nvidia via
-  models.dev) stay surface-specific by necessity (the CLI has no models.dev cache).
+- **Shared resolver, surface-local evidence.** `lib/capability-profile.ts` owns
+  the provider/model decision algorithm and complete `PushCapabilityProfile`.
+  Web supplies live/cached catalog evidence through `model-catalog.ts`; CLI
+  projects curated fallback lists through `cli/native-tool-gate.ts`. Provider
+  eligibility, OpenAI shape handling, the Ollama denylist, Cloudflare unknown-vs-
+  false fallback, and tool/streaming coherence therefore execute once. A web↔CLI
+  drift test pins the adapters where their catalogs intentionally agree;
+  OpenRouter / Ollama / Nvidia evidence remains surface-specific because the CLI
+  has no models.dev cache.
 - **Other roles.** Auditor/reviewer are unchanged (they use `response_format`
   structured outputs, a separate mechanism — see
   `docs/runbooks/OpenRouter Capability Expansion.md`).

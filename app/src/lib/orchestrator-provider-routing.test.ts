@@ -200,8 +200,12 @@ function mockFailoverState(opts?: {
       getLastUsedProvider: () => null,
     };
   });
-  vi.doMock('./zen-go', async () => ({
-    ...(await vi.importActual<typeof import('./zen-go')>('./zen-go')),
+  // The transport predicate lives in root lib (`lib/zen-go.ts`) since the
+  // Phase 3 capability-resolver move; the app `./zen-go` module is only a
+  // re-export shim, so the mock must target the lib module the resolver
+  // actually imports.
+  vi.doMock('@push/lib/zen-go', async () => ({
+    ...(await vi.importActual<typeof import('@push/lib/zen-go')>('@push/lib/zen-go')),
     getZenGoTransport: () => zenTransport,
   }));
 }

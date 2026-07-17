@@ -92,9 +92,9 @@ not treating the existing import as sufficient. An intent picks the best live
 model from the provider's shared curated list (`ZEN_MODELS` in
 `lib/provider-models.ts` for v1) matching the capability shape, with a
 **declared fallback id** per intent so a cold metadata cache or a retired model
-never dead-ends. If the v1 target remains Zen Go, first move the Go-tier
-`ZEN_GO_MODELS` list out of `app/src/lib/zen-go.ts` into shared `lib/` so the
-CLI and drift tests resolve the same catalog. When a preset can't resolve a role
+never dead-ends. The Go-tier `ZEN_GO_MODELS` list now lives in
+`lib/zen-go.ts`, so a Zen Go preset can consume the same catalog from web and
+CLI when this draft is implemented. When a preset can't resolve a role
 to a live model, it falls back to the provider's default model and emits a
 structured log (see §6) — never a silent substitution.
 
