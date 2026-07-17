@@ -94,6 +94,7 @@ import { createMutationFailureTracker, getToolInvocationKey } from './agent-loop
 import {
   createToolBudgetBlockIntervention,
   createToolExecutionLedger,
+  type ToolLedgerEntry,
   type ToolLedgerSnapshot,
 } from './tool-ledger.js';
 import { recordLoopVerdict } from './loop-metrics.js';
@@ -857,6 +858,11 @@ export interface CoderCheckpointState<TCard extends ToolCard = ToolCard> {
   workingMemory: CoderWorkingMemory;
   /** UI cards emitted so far, so a resumed run doesn't re-emit them. */
   cards: TCard[];
+  /** Execution ledger through the prior round, so a resumed run's final
+   *  `toolLedger` spans the whole logical run — without it the post-Coder
+   *  Auditor loses every call (including failures) from before the restore.
+   *  Optional: checkpoints persisted before Phase 4 don't carry it. */
+  toolLedger?: ToolLedgerSnapshot;
 }
 
 export interface CoderAgentCallbacks<TCard extends ToolCard = ToolCard> {
@@ -1441,6 +1447,9 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
 
   const allCards: TCard[] = resumeState ? [...resumeState.cards] : [];
   const executionLedger = createToolExecutionLedger<TCall>({
+    initialEntries: resumeState?.toolLedger?.entries as
+      | readonly ToolLedgerEntry<TCall>[]
+      | undefined,
     describeCall(call) {
       const fields = getKernelToolCallFields(call);
       const source = call as { source?: unknown } | null;
@@ -1817,7 +1826,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     // checkpoint failure never aborts the run.
     if (callbacks.onCheckpoint && round > 0 && round % checkpointCadenceRounds === 0) {
       try {
-        await callbacks.onCheckpoint({ round, messages, workingMemory, cards: allCards });
+        await callbacks.onCheckpoint({
+          round,
+          messages,
+          workingMemory,
+          cards: allCards,
+          toolLedger: executionLedger.snapshot(),
+        });
       } catch (err) {
         callbacks.onStatus('Checkpoint skipped', err instanceof Error ? err.message : String(err));
       }
@@ -2160,6 +2175,12 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         parallelDelegations: detected.parallelDelegations ?? [],
         fileMutations: detected.fileMutations,
         mutating: detected.mutating,
+        // Batch-overflowed file mutations are skipped by execution (grouping
+        // already removed them from `fileMutations`), so they must be recorded
+        // as rejected — otherwise the Auditor reads a clean accepted batch and
+        // no correction notice fires (Codex P2 on #1521). CLI folds these into
+        // `extraMutations` at the detector; web keeps them distinct.
+        batchOverflow: detected.batchOverflow ?? [],
         extraMutations: detected.extraMutations,
       },
       round,
@@ -2634,15 +2655,17 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       // third was dropped (silent path; CLAUDE.md "silent return paths"). Purely
       // additive: the accepted batch already ran, this only appends the notice.
       if (toolBudgetIntervention) {
-        const droppedTools = detected.extraMutations
-          .map((c) => (c as unknown as { call: { tool: string } }).call.tool)
-          .join(', ');
+        // Name every rejected call from the ledger — ordering violations
+        // (`extraMutations`) AND file-mutation batch overflow — so neither
+        // class is dropped without a signal (Codex P2 on #1521: the overflow
+        // half previously never reached this notice on the web path).
+        const droppedTools = roundLedger.rejected.map((entry) => entry.toolName).join(', ');
         console.log(
           JSON.stringify({
             level: 'warn',
             event: 'coder_turn_overflow_dropped',
             round,
-            count: detected.extraMutations.length,
+            count: roundLedger.rejected.length,
             tools: droppedTools,
           }),
         );
@@ -2650,7 +2673,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           id: `coder-overflow-${round}`,
           role: 'user',
           content: formatToolResultEnvelope(
-            `[RUNTIME_INTERVENTION mode="${toolBudgetIntervention.mode}" source="${toolBudgetIntervention.source}" reason="${toolBudgetIntervention.reason}"]\n[TOOL_CALLS_NOT_RUN] ${detected.extraMutations.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. ${toolBudgetIntervention.guidance ?? ''}[/TOOL_CALLS_NOT_RUN]\n[/RUNTIME_INTERVENTION]`,
+            `[RUNTIME_INTERVENTION mode="${toolBudgetIntervention.mode}" source="${toolBudgetIntervention.source}" reason="${toolBudgetIntervention.reason}"]\n[TOOL_CALLS_NOT_RUN] ${roundLedger.rejected.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. ${toolBudgetIntervention.guidance ?? ''}[/TOOL_CALLS_NOT_RUN]\n[/RUNTIME_INTERVENTION]`,
           ),
           timestamp: Date.now(),
           isToolResult: true,
@@ -2803,7 +2826,13 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
               context: checkpoint.args.context || '',
               resumeSchema: DEFAULT_CODER_RESUME_SCHEMA,
             },
-            { round: round + 1, messages, workingMemory, cards: allCards },
+            {
+              round: round + 1,
+              messages,
+              workingMemory,
+              cards: allCards,
+              toolLedger: executionLedger.snapshot(),
+            },
           );
         }
 

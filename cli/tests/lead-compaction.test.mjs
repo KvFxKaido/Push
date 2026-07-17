@@ -88,6 +88,21 @@ describe('maybeCompactLeadHistory', () => {
     assert.match(seeds[0].inputs.workingGoalSeed, /Did A and B/);
   });
 
+  it('a throwing goal-file seed cannot reject the compaction (soft-failure contract)', async () => {
+    const state = makeState(bigHistory());
+    const events = [];
+    const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
+      streamFactory: fakeStreamFactory(summaryEvents),
+      seedGoalFile: async () => {
+        throw new Error('disk exploded');
+      },
+      persistEvent: (type, payload) => events.push({ type, payload }),
+    });
+    // The summary succeeded; a failing seed must not lose the compaction.
+    assert.equal(compacted, true);
+    assert.ok(events.some((e) => e.type === 'context_compacted'));
+  });
+
   it('triggers on the eager summarizeTokens, not the patient handoffTokens (bounded-preamble guard)', async () => {
     // The CLI lead feeds a bounded preamble, so the [CONTEXT HANDOFF] is the only
     // carrier of older context and must fire eagerly. On a 1M-window model the

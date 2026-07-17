@@ -217,6 +217,72 @@ describe('tool ledger', () => {
     expect(context).toContain('120 total; 120 accepted; 0 rejected; 119 completed; 1 failed');
   });
 
+  it('seeds a resumed ledger with checkpointed entries and keeps appending', () => {
+    const first = createToolExecutionLedger({ describeCall });
+    const read = call('1', 'sandbox_read_file');
+    first.recordGroupedCalls(
+      {
+        readOnly: [read],
+        parallelDelegations: [],
+        fileMutations: [],
+        mutating: null,
+        extraMutations: [],
+      },
+      0,
+    );
+    first.start(read, { executionId: 'pre-restore' });
+    first.fail(read, { structuredErrorType: 'PRE_RESTORE_FAILURE', durationMs: 3 });
+
+    // A resumed run seeds from the persisted snapshot and keeps recording.
+    const resumed = createToolExecutionLedger({
+      describeCall,
+      initialEntries: first.snapshot().entries,
+    });
+    const write = call('2', 'sandbox_write_file');
+    resumed.recordGroupedCalls(
+      {
+        readOnly: [],
+        parallelDelegations: [],
+        fileMutations: [write],
+        mutating: null,
+        extraMutations: [],
+      },
+      5,
+    );
+    resumed.start(write, { executionId: 'post-restore' });
+    resumed.complete(write, { durationMs: 2 });
+
+    const merged = resumed.snapshot();
+    expect(merged.entries.map((entry) => entry.sequence)).toEqual([0, 1]);
+    expect(merged.entries[0].execution).toMatchObject({
+      status: 'failed',
+      structuredErrorType: 'PRE_RESTORE_FAILURE',
+    });
+    expect(merged.entries[1].execution).toMatchObject({ status: 'completed' });
+    // The pre-restore failure survives into Auditor context.
+    expect(formatToolLedgerContext(merged)).toContain('error=PRE_RESTORE_FAILURE');
+  });
+
+  it('records batch-overflowed file mutations as rejected', () => {
+    const ledger = createToolExecutionLedger({ describeCall });
+    const turn = ledger.recordGroupedCalls(
+      {
+        readOnly: [],
+        parallelDelegations: [],
+        fileMutations: [call('1', 'sandbox_write_file')],
+        mutating: null,
+        batchOverflow: [call('2', 'sandbox_write_file')],
+        extraMutations: [],
+      },
+      0,
+    );
+    expect(turn.counts.rejected).toBe(1);
+    expect(turn.rejected[0]).toMatchObject({
+      rejectionReason: 'file_mutation_batch_overflow',
+      phase: 'file_mutation_batch_overflow',
+    });
+  });
+
   it('emits every line when the run fits the detail budget', () => {
     const ledger = createToolExecutionLedger({ describeCall });
     const read = call('1', 'sandbox_read_file');

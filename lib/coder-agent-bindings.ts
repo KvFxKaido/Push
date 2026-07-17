@@ -317,11 +317,20 @@ export function buildCoderDetectors<
     const parallelDelegations = (raw.parallelDelegations ?? []).filter((c) =>
       allowsExtra(c.source),
     );
+    // The web detector keeps file-mutation batch overflow in its own field
+    // (unlike the CLI, which folds it into `extraMutations`); pass it through
+    // with the same source filter as `fileMutations` so the kernel ledger can
+    // record the skipped writes as rejected instead of reporting a clean batch.
+    const rawBatchOverflow = (raw as { batchOverflow?: TCoderCall[] }).batchOverflow ?? [];
+    const sandboxBatchOverflow = rawBatchOverflow.filter(
+      (c) => c.source === 'sandbox' || allowsExtra(c.source),
+    );
     return {
       readOnly: sandboxReads,
       parallelDelegations,
       fileMutations: sandboxFileMutations,
       mutating: sandboxMutating,
+      ...(sandboxBatchOverflow.length > 0 ? { batchOverflow: sandboxBatchOverflow } : {}),
       extraMutations: raw.extraMutations,
       // Filter Coder-internal tools out of droppedCandidates so the
       // parse-error guard in lib/coder-agent.ts doesn't false-positive

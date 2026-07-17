@@ -230,11 +230,21 @@ function snapshotEntries<TCall>(
 /**
  * Mutable run-scoped execution ledger. Its snapshots are detached values, so
  * callers can safely retain a turn view while later executions keep updating.
+ *
+ * `initialEntries` seeds a resumed run with the ledger persisted at its last
+ * checkpoint, so the final snapshot spans the whole logical run rather than
+ * only the rounds after a sandbox restore. Restored entries are settled
+ * history: their `call` references never match live call objects by identity,
+ * so lifecycle updates cannot touch them.
  */
 export function createToolExecutionLedger<TCall>(
-  options: BuildToolLedgerOptions<TCall>,
+  options: BuildToolLedgerOptions<TCall> & {
+    initialEntries?: readonly ToolLedgerEntry<TCall>[];
+  },
 ): ToolExecutionLedger<TCall> {
-  const entries: Array<ToolLedgerEntry<TCall>> = [];
+  const entries: Array<ToolLedgerEntry<TCall>> = (options.initialEntries ?? []).map(
+    (entry, index) => ({ ...entry, sequence: index }),
+  );
 
   const findPending = (call: TCall): number => {
     for (let index = entries.length - 1; index >= 0; index -= 1) {

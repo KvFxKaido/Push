@@ -177,6 +177,13 @@ export interface DetectedToolCalls<TCall> {
   parallelDelegations?: TCall[];
   fileMutations: TCall[];
   mutating: TCall | null;
+  /**
+   * File mutations beyond the batch cap. Optional: the CLI detector folds
+   * these into `extraMutations`; the web detector keeps them distinct and the
+   * bindings pass them through so the kernel ledger records them as rejected.
+   * Consumers default to `[]`.
+   */
+  batchOverflow?: TCall[];
   extraMutations: TCall[];
   droppedCandidates: DroppedToolCallCandidate[];
 }

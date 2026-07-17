@@ -170,8 +170,19 @@ export async function maybeCompactLeadHistory(
       !isHandoffBlock(message.content),
   )?.content;
   if (typeof firstUserTurn === 'string') {
-    const seedGoal = deps.seedGoalFile ?? seedUserGoalFile;
-    await seedGoal(state.cwd, { firstUserTurn, workingGoalSeed: summary });
+    // Best-effort, matching this compactor's documented never-throws contract:
+    // the real writer already soft-fails, but an injected seed (or a future
+    // writer change) must not be able to reject the whole compaction after the
+    // LLM summary succeeded and before history is collapsed (fugu on #1521).
+    try {
+      const seedGoal = deps.seedGoalFile ?? seedUserGoalFile;
+      await seedGoal(state.cwd, { firstUserTurn, workingGoalSeed: summary });
+    } catch (err) {
+      log('warn', 'cli_goal_seed_failed', {
+        sessionId: state.sessionId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Retain the raw span in the verbatim log BEFORE the destructive collapse —
