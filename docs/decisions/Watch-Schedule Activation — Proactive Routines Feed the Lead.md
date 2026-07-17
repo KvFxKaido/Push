@@ -13,7 +13,9 @@ was silently dropped and the new head never reviewed — see
 **Remaining:** repo-committed `.push/routines/*.md` (the capability ceiling, per-repo
 enable, and base-ref trust rule are specified below but *not enforced by any code yet* —
 see Guardrails); `schedule` as a general mechanism (today it is one hardcoded sweep, not a
-`schedule:` frontmatter field); pushd parity. Owner: Push runtime.
+`schedule:` frontmatter field); fan-out (the receiver is single-dispatch); pushd parity.
+Tracked with the open questions at [#1518](https://github.com/KvFxKaido/Push/issues/1518).
+Owner: Push runtime.
 **Date:** 2026-07-09
 Related:
 [`Durable Runs — Adopt-on-Silence.md`](<Durable Runs — Adopt-on-Silence.md>)
