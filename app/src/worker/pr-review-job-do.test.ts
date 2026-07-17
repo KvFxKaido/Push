@@ -2040,6 +2040,77 @@ describe('PrReviewJob head-advance sweep', () => {
     expect(sweeps.length, 'the chain must be bounded').toBeLessThanOrEqual(3);
   });
 
+  it('stands down when a review reserves the head DURING the token/head awaits', async () => {
+    // Codex P2 on #1515. The liveness check happens before two network awaits
+    // (token mint, head fetch), and a DO's input gate is open across those — so
+    // a manual/comment start can land mid-await and reserve the head. Shipping
+    // the check only above the awaits is the exact race handleStart's #910
+    // invariant already documents. Simulated by inserting a competing row from
+    // inside the head fetch.
+    const mock = createMockCtx();
+    const do_ = new PrReviewJob(mock.ctx as never, APP_ENV);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockImplementation(async () => {
+      mock.reviews.set('manual-1', queuedRow({ delivery_id: 'manual-1', head_sha: 'shaB' }));
+      return 'shaB';
+    });
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(
+      [...mock.reviews.keys()].filter((k) => k.startsWith('sweep-')),
+      'a review that reserved the head mid-await must win — no double review',
+    ).toEqual([]);
+  });
+
+  it('records the sweep in the cross-PR in-flight index', async () => {
+    // Codex P2 on #1515. The active-reviews surface discovers candidates ONLY
+    // from this KV index, so a sweep missing from it is neither visible nor
+    // cancellable there — the same reason retryDeadReview records its retry.
+    const mock = createMockCtx();
+    const store = new Map<string, string>();
+    const env = {
+      GITHUB_APP_ID: 'app',
+      GITHUB_APP_PRIVATE_KEY: 'key',
+      SNAPSHOT_INDEX: {
+        put: async (k: string, v: string) => {
+          store.set(k, v);
+        },
+        get: async (k: string) => store.get(k) ?? null,
+        delete: async (k: string) => {
+          store.delete(k);
+        },
+        list: async ({ prefix }: { prefix: string }) => ({
+          keys: [...store.keys()].filter((k) => k.startsWith(prefix)).map((name) => ({ name })),
+        }),
+      },
+    } as unknown as Env;
+    const do_ = new PrReviewJob(mock.ctx as never, env);
+
+    __setPrReviewExecutorOverride('d1', headAdvanced('shaB'));
+    await do_.fetch(startRequest(startInput({ deliveryId: 'd1', headSha: 'shaA' })));
+    await settle(mock.pending);
+
+    vi.mocked(fetchPullRequestHeadSha).mockResolvedValue('shaB');
+    __setPrReviewExecutorOverride('sweep-shaB', async () => ({
+      result: RESULT,
+      commentsPosted: 1,
+      posted: true,
+    }));
+
+    makeDue(mock, 'd1');
+    await do_.alarm();
+    await settle(mock.pending);
+
+    expect(store.has('inflight:pr-review:octo/repo#7#sweep-shaB')).toBe(true);
+  });
+
   it('sweep ids stay within the cancel route delivery-id charset', () => {
     // Same drift pin as the auto-retry suffix: an id outside this charset makes
     // a running sweep uncancellable from the UI (the route 400s before the DO).

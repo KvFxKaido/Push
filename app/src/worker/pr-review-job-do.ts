@@ -1463,6 +1463,15 @@ export class PrReviewJob {
     return rows[0] ?? null;
   }
 
+  /** How many reviews are queued or running. Synchronous on purpose: the
+   *  head-advance sweep re-reads it as a reservation check with no await
+   *  between it and the insert. */
+  private liveReviewCount(): number {
+    return this.ctx.storage.sql
+      .exec("SELECT delivery_id FROM review WHERE status IN ('queued','running')")
+      .toArray().length;
+  }
+
   private emit(deliveryId: string, type: string, payload: Record<string, unknown>): void {
     this.ctx.storage.sql.exec(
       'INSERT INTO event (delivery_id, ts, type, payload_json) VALUES (?, ?, ?, ?)',
@@ -1652,10 +1661,9 @@ export class PrReviewJob {
 
       // A live review already owns the head; it will post or strand on its own.
       // Racing it would double-review the same commit.
-      const live = this.ctx.storage.sql
-        .exec("SELECT delivery_id FROM review WHERE status IN ('queued','running')")
-        .toArray();
-      if (live.length) return null;
+      // Cheap early-out so a live review costs no token mint. NOT the real
+      // guard — the awaits below invalidate it; see the re-check before insert.
+      if (this.liveReviewCount()) return null;
 
       const swept = (
         this.ctx.storage.sql
@@ -1694,11 +1702,6 @@ export class PrReviewJob {
       }
 
       const sweepId = SWEEP_ID_PREFIX + head;
-      // Deterministic per head, so a repeated firing (or a head that bounced
-      // back to a SHA we already swept) dedupes here instead of queueing a
-      // second deep pass for the same commit.
-      if (this.reviewRow(sweepId)) return null;
-
       const input: PrReviewStartInput = {
         deliveryId: sweepId,
         repoFullName: stranded.repo,
@@ -1712,7 +1715,21 @@ export class PrReviewJob {
         pinnedProvider: stranded.pinned_provider ?? undefined,
         pinnedModel: stranded.pinned_model ?? undefined,
       };
+
+      // ⚠️ INVARIANT: from here to insertQueuedReview() MUST stay synchronous —
+      // the same reservation rule handleStart documents, and for the same reason
+      // (Codex P1, PR #910). The token mint and head fetch above are network
+      // awaits, and a DO's input gate is open across those: a manual or
+      // comment-triggered start can land mid-await and reserve this very head.
+      // The early-out before the awaits is therefore stale by construction, and
+      // these three re-checks are the real guard. Anything async belongs after
+      // the insert. (Codex P2 on PR #1515 — this shipped with the checks above
+      // the awaits, which is exactly the race #910 already paid for.)
+      if (this.reviewRow(sweepId)) return null;
+      if (this.liveReviewCount()) return null;
+      if (this.latestPostedReview('')) return null;
       this.insertQueuedReview(input);
+
       this.emit(sweepId, 'review.queued', {
         sweepOf: stranded.delivery_id,
         strandedSha: stranded.head_sha,
@@ -1725,6 +1742,19 @@ export class PrReviewJob {
         strandedSha: stranded.head_sha,
         headSha: head,
       });
+      // Same as the auto-retry path: without this the sweep is invisible to the
+      // cross-PR active-review surface, which discovers candidates only from this
+      // index — so a running sweep on another PR could be neither seen nor
+      // cancelled. (Codex P2 on PR #1515.)
+      this.ctx.waitUntil(
+        recordInflightReview(this.env, {
+          repo: input.repoFullName,
+          prNumber: input.prNumber,
+          deliveryId: sweepId,
+          headSha: head,
+          createdAt: Date.now(),
+        }),
+      );
       this.ctx.waitUntil(this.runReview(input));
       return null;
     } catch (err) {
