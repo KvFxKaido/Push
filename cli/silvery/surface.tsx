@@ -216,11 +216,11 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
       : null;
   const cardBodyLines = card?.bodyLines ?? [];
   const visibleCardBodyLines = expanded ? cardBodyLines : cardBodyLines.slice(0, 8);
-  // A typed card / diff is already a compact representation and stays visible;
-  // only the verbose raw preview (a read's file contents, a command's stdout)
-  // folds to its first line by default, expanding on click. `…` marks a row
-  // that has more behind it.
-  const previewOnly = !card && !item.diff && Boolean(item.resultPreview);
+  // A declared card / diff is already the structured representation, even when
+  // its formatter intentionally reduces it to no visible card (a clean silent
+  // command). Only an unstructured raw preview folds to its first line by
+  // default, expanding on click. `…` marks a row that has more behind it.
+  const previewOnly = !item.card && !item.diff && Boolean(item.resultPreview);
   const previewLines = item.resultPreview ? item.resultPreview.split('\n') : [];
   const previewHasMore = previewOnly && previewLines.length > 1;
   return (

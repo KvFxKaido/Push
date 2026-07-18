@@ -351,6 +351,7 @@ describe('command (exec) card', () => {
       stdout: '',
       stderr: '',
       exitCode: 0,
+      truncated: false,
       durationMs: 57,
     });
     assert.ok(isEmpty(d), `expected an empty card, got ${JSON.stringify(d)}`);
@@ -358,6 +359,18 @@ describe('command (exec) card', () => {
     assert.equal(d.title, '');
     assert.deepEqual(d.rows, []);
     assert.equal(d.bodyLines, undefined);
+  });
+
+  it('surfaces truncated output while continuing to hide truncated:false', () => {
+    const d = command({
+      command: 'generate',
+      stdout: 'partial output',
+      stderr: '',
+      exitCode: 0,
+      truncated: true,
+    });
+    assert.deepEqual(d.rows, [{ label: 'Output', value: 'truncated' }]);
+    assert.deepEqual(d.bodyLines, [{ text: 'partial output', tone: 'context' }]);
   });
 
   it('shows stdout bare, like a read preview, with no Command/Exit/duration chrome', () => {

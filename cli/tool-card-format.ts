@@ -341,6 +341,7 @@ function formatSandboxStateCard(card: ToolCardPayload): ToolCardDisplay | null {
  *
  * What survives is only what a reader came for:
  *   - a nonzero exit code (zero is the default nobody needs told);
+ *   - an explicit notice when the producer truncated the command output;
  *   - stderr, then stdout, and only when non-empty — stderr first because the
  *     reason a command failed is the point.
  *
@@ -358,6 +359,7 @@ function formatCommandCard(card: ToolCardPayload): ToolCardDisplay | null {
 
   const rows: ToolCardDisplay['rows'] = [];
   if (exitCode !== 0) rows.push({ label: 'Exit', value: String(exitCode) });
+  if (data.truncated === true) rows.push({ label: 'Output', value: 'truncated' });
 
   const bodyLines: NonNullable<ToolCardDisplay['bodyLines']> = [];
   const streams: Array<[string, string]> = [];

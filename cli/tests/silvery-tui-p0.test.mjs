@@ -2180,6 +2180,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
           toolName: 'sandbox_exec',
           target: 'rm shot.png',
           pending: false,
+          resultPreview: 'exit_code: 0\nstdout: <empty>',
           card: {
             type: 'sandbox',
             data: { command: 'rm shot.png', stdout: '', stderr: '', exitCode: 0, durationMs: 57 },
@@ -2226,6 +2227,10 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.doesNotMatch(stdout.bytes, /Exit Code:/);
     assert.doesNotMatch(stdout.bytes, /Truncated:/);
     assert.doesNotMatch(stdout.bytes, /Duration Ms:/);
+    // Resumed/daemon rows retain the model-facing preview alongside the card;
+    // the intentionally empty typed card must still suppress that raw fallback.
+    assert.doesNotMatch(stdout.bytes, /exit_code: 0/);
+    assert.doesNotMatch(stdout.bytes, /stdout: <empty>/);
 
     instance.unmount();
     await lifecycle;
