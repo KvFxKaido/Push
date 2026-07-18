@@ -7,9 +7,15 @@ commitment. Owner: Push CLI/desktop.
 Progress: the Electron shell's Capacitor wiring has landed as the scaffolding path
 for Phase 2's "Electron Windows shell" — `@capawesome/capacitor-electron` dep +
 `electron:setup`/`sync`/`open`/`run` scripts + `ensure-capacitor-electron.mjs` guard
-+ docs, remote-hosted (follows `server.url`, matching Android). Config-and-docs
-stage only: the generated `app/electron/` platform is not committed, and the
-WSL direct-loopback daemon client (below) is untouched.
++ docs. First scaffold walked end-to-end 2026-07-18 (Windows box): bootstrap,
+sync, and launch all work. **Load mode is bundled, not remote-hosted** — the
+runtime ignores `server.url` (verified against plugin source + live launch) and
+serves the synced `dist/` at `capacitor-electron://localhost/`; remote load only
+via `CAPACITOR_ELECTRON_DEV_SERVER_URL`, which is dev-server mode with relaxed
+CSP (escape hatch, not the shipping loader — a first-class remote mode is an
+upstream feature request). Config-and-docs stage only: the generated
+`app/electron/` platform is not committed, and the WSL direct-loopback daemon
+client (below) is untouched.
 
 ## Problem
 

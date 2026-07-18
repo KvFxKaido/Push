@@ -116,9 +116,19 @@ scaffolding path for the "native Windows Electron shell" in
 treat it as experimental until the platform scaffold is committed and a build is
 walked end-to-end.
 
-**Load mode is remote-hosted**, matching Android: the window follows `server.url`
-in `capacitor.config.ts` (the hosted Worker), so there's no local `dist/` to ship
-on each web deploy. The Worker `/api` backend is remote regardless.
+**Load mode is bundled, unlike Android.** The Electron runtime does not read
+`server.url` from `capacitor.config.ts` — verified against the plugin source
+(no config option consumes it) and a live launch (2026-07-18): the window
+serves the synced `dist/` copy at `capacitor-electron://localhost/`. Each web
+deploy therefore needs a `pnpm run electron:sync` to refresh the shell. The
+Worker `/api` backend is remote regardless.
+
+Remote load exists only through the `CAPACITOR_ELECTRON_DEV_SERVER_URL` env
+var (verified: with it set, the window loads the hosted Worker and the PWA
+service worker registers). The runtime treats that as **dev-server mode and
+relaxes CSP**, so use it as a development escape hatch, not the shipping
+loader. If a first-class remote mode matters later, that's an upstream
+feature request, not a config tweak.
 
 This surface is wired at the **config + docs** stage — the deps, scripts, and this
 doc are in place, but `app/electron/` (the generated Capacitor platform) is **not
@@ -142,7 +152,4 @@ pnpm run electron:run
 guards that the platform exists and prints the bootstrap command when it doesn't.
 
 Once `app/electron/` carries real customization, commit it as source (mirroring
-`app/android/`) and gitignore its build outputs + `node_modules`. `server.url` is
-loaded remotely; if the Electron platform ignores it and loads the bundled
-`webDir` instead, set the load URL in the generated
-`electron/capacitor.electron.config.ts`.
+`app/android/`) and gitignore its build outputs + `node_modules`.

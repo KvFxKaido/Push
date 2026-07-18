@@ -30,8 +30,10 @@ if (!existsSync(electronPkg)) {
       'so a bare `pnpm install` resolves the repo workspace, reports success,\n' +
       'and installs none of the Electron deps.)\n' +
       '\n' +
-      'Remote-hosted load: the shell follows `server.url` in capacitor.config.ts\n' +
-      '(already the hosted Worker), matching the Android shell — no local dist ship.\n' +
+      'Bundled load (unlike Android): the Electron runtime ignores `server.url`\n' +
+      'and serves the synced dist/ copy — re-run `pnpm run electron:sync` after\n' +
+      'each web deploy. Remote load only via CAPACITOR_ELECTRON_DEV_SERVER_URL\n' +
+      '(dev-server mode, relaxed CSP — not the shipping loader).\n' +
       'Add app/electron/ as committed source once it carries real customization\n' +
       '(mirroring app/android/), and gitignore its build outputs + node_modules.',
   );
