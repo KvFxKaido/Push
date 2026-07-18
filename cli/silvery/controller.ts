@@ -22,6 +22,7 @@ import { tryConnect } from '../daemon-client.js';
 import { DEFAULT_MAX_ROUNDS, runAssistantTurn, type EngineEvent } from '../engine.js';
 import { appendUserMessageWithFileReferences } from '../file-references.js';
 import { getCuratedModels } from '../model-catalog.js';
+import { isInternalEnvelope } from '../message-envelopes.js';
 import {
   getProviderList,
   PROVIDER_CONFIGS,
@@ -54,6 +55,7 @@ import { createDefaultTuiIo, type TuiIo } from '../tui-io.js';
 import { osc52Copy } from '../tui-renderer.js';
 import { copyLastResponse } from '../transcript-copy.js';
 import { createDaemonSession, type DaemonClientLike } from '../tui-daemon-session.js';
+import { scopeSessionsToWorkspace } from '../tui-fuzzy.js';
 import { getCompactGitStatus, type CompactGitStatus } from '../tui-status.js';
 import { isReducedMotion, type StatusActivity } from '../tui-verbs.js';
 import { detectThemeName, isThemeName, THEME_NAMES, VARIANTS } from '../tui-theme.js';
@@ -113,16 +115,40 @@ export interface SilveryPickerOption {
   current: boolean;
   /** Providers without a key can't be selected (shown dimmed). */
   disabled?: boolean;
+  /** Session metadata used by the resume picker's two-column view. */
+  session?: SessionListEntry;
+}
+
+export interface SilverySessionPreviewMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface SilverySessionPreview {
+  /** Session whose preview is represented; prevents stale async paints. */
+  optionId: string;
+  loading: boolean;
+  messages: SilverySessionPreviewMessage[];
+  error?: string;
 }
 
 export interface SilveryPicker {
-  kind: 'provider' | 'model';
+  kind: 'provider' | 'model' | 'session';
   title: string;
   options: SilveryPickerOption[];
   /** Cursor index to open on (the current option). */
   initialIndex: number;
   /** Fresh per open so the view remounts and re-centers the cursor. */
   token: number;
+  /** Session picker scope; absent for provider/model pickers. */
+  scope?: 'workspace' | 'all';
+  /** Number of rows hidden by workspace scope. */
+  scopedOutCount?: number;
+  /** Async preview for the currently highlighted session. */
+  preview?: SilverySessionPreview;
+  /** Session rows are fetched asynchronously after the modal opens. */
+  loading?: boolean;
+  error?: string;
 }
 
 interface ControllerDeps {
@@ -159,12 +185,16 @@ export interface SilveryController {
   submit(text: string): Promise<void>;
   cancel(): void;
   respondToInteraction(id: string, value: boolean | string): void;
-  /** Open the model/provider chooser (no-op while a turn is running). */
-  openPicker(kind: 'provider' | 'model'): void;
+  /** Open a model/provider/session chooser (no-op while a turn is running). */
+  openPicker(kind: 'provider' | 'model' | 'session'): void;
   /** Dismiss the open picker without switching. */
   closePicker(): void;
-  /** Apply the highlighted provider/model; disabled options keep the picker open. */
+  /** Apply the highlighted provider/model/session; disabled options keep the picker open. */
   selectPickerOption(id: string): void;
+  /** Load the highlighted session's recent messages into the preview pane. */
+  previewPickerOption(id: string): void;
+  /** Toggle the resume picker between this workspace and all workspaces. */
+  toggleSessionPickerScope(): void;
   clearDisplay(): void;
   /**
    * Yank the last assistant response to the system clipboard (OSC 52).
@@ -208,6 +238,33 @@ function activityText(event: EngineEvent): string {
     return `${tool} ${payload.isError ? 'failed' : 'complete'}`;
   }
   return tool;
+}
+
+/**
+ * Reduce persisted messages to the recent human/assistant exchange shown by
+ * the session picker. Internal user envelopes are runtime plumbing, not chat.
+ */
+export function sessionPreviewMessages(messages: unknown): SilverySessionPreviewMessage[] {
+  if (!Array.isArray(messages)) return [];
+  const preview: SilverySessionPreviewMessage[] = [];
+  for (const value of messages) {
+    if (!value || typeof value !== 'object') continue;
+    const message = value as { role?: unknown; content?: unknown };
+    if (message.role !== 'user' && message.role !== 'assistant') continue;
+    let content = '';
+    if (typeof message.content === 'string') content = message.content;
+    else {
+      try {
+        content = JSON.stringify(message.content) ?? String(message.content ?? '');
+      } catch {
+        content = String(message.content ?? '');
+      }
+    }
+    if (!content.trim()) continue;
+    if (message.role === 'user' && isInternalEnvelope(content.trim())) continue;
+    preview.push({ role: message.role, content });
+  }
+  return preview.slice(-6);
 }
 
 /**
@@ -295,6 +352,8 @@ export async function createSilveryController(
   let interaction: SilveryInteraction | null = null;
   let picker: SilveryPicker | null = null;
   let pickerToken = 0;
+  let sessionPickerRows: SessionListEntry[] = [];
+  let sessionPreviewRequest = 0;
   let resolveApproval: ((approved: boolean) => void) | null = null;
   let resolveQuestion: ((answer: string) => void) | null = null;
   let hiddenBefore = 0;
@@ -989,6 +1048,52 @@ export async function createSilveryController(
     notify();
   }
 
+  /** Shared session switch used by `/resume <id>` and the resume picker. */
+  async function applySessionSwitch(targetId: string): Promise<void> {
+    if (targetId === state.sessionId) {
+      appendStatus(`Already on session ${state.sessionId}.`);
+      return;
+    }
+    try {
+      const next = await (deps.loadState ?? loadSessionState)(targetId);
+      const previousState = { ...state };
+      const previousPersisted = persisted;
+      const replaceSessionState = (replacement: typeof state) => {
+        for (const key of Object.keys(state)) delete state[key];
+        Object.assign(state, replacement);
+      };
+      replaceSessionState(next);
+      persisted = true;
+
+      if (daemon.connected && !(await daemon.rebindExistingSession())) {
+        replaceSessionState(previousState);
+        persisted = previousPersisted;
+        const restored = await daemon.rebindExistingSession();
+        throw new Error(
+          `pushd could not attach session ${targetId}${
+            restored ? '; the previous daemon session was restored' : '; the daemon is now detached'
+          }`,
+        );
+      }
+      daemonMirror = createDaemonTranscriptMirror();
+      daemonHiddenBefore = 0;
+      daemonStateStale = false;
+      activityRows = [];
+      liveText = '';
+      hiddenBefore = 0;
+      gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
+      appendStatus(
+        `Resumed session ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}.`,
+      );
+      notify();
+    } catch (cause) {
+      appendStatus(
+        `Resume failed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        true,
+      );
+    }
+  }
+
   function buildProviderPicker(): SilveryPicker {
     const options: SilveryPickerOption[] = getProviderList().map((entry) => ({
       id: entry.id,
@@ -1023,9 +1128,100 @@ export async function createSilveryController(
     };
   }
 
-  function openPicker(kind: 'provider' | 'model'): void {
+  function buildSessionPicker(scope: 'workspace' | 'all'): SilveryPicker {
+    const workspaceRows = scopeSessionsToWorkspace(sessionPickerRows, state.cwd);
+    const rows = scope === 'workspace' ? workspaceRows : sessionPickerRows;
+    const options: SilveryPickerOption[] = rows.map((entry) => ({
+      id: entry.sessionId,
+      label: entry.sessionName || entry.sessionId,
+      hint: `${entry.provider}/${entry.model}`,
+      current: entry.sessionId === state.sessionId,
+      session: entry,
+    }));
+    const currentIndex = options.findIndex((option) => option.current);
+    return {
+      kind: 'session',
+      title: 'Resume session',
+      options,
+      initialIndex: currentIndex >= 0 ? currentIndex : 0,
+      token: (pickerToken += 1),
+      scope,
+      scopedOutCount: sessionPickerRows.length - rows.length,
+    };
+  }
+
+  async function loadSessionPickerPreview(target: SilveryPicker, optionId: string): Promise<void> {
+    if (target.kind !== 'session') return;
+    const option = target.options.find((candidate) => candidate.id === optionId);
+    if (!option) return;
+    const request = (sessionPreviewRequest += 1);
+    target.preview = { optionId, loading: true, messages: [] };
+    if (picker === target) notify();
+    try {
+      const previewState =
+        optionId === state.sessionId ? state : await (deps.loadState ?? loadSessionState)(optionId);
+      if (picker !== target || request !== sessionPreviewRequest) return;
+      target.preview = {
+        optionId,
+        loading: false,
+        messages: sessionPreviewMessages(previewState.messages),
+      };
+    } catch {
+      if (picker !== target || request !== sessionPreviewRequest) return;
+      target.preview = {
+        optionId,
+        loading: false,
+        messages: [],
+        error: 'Failed to load preview',
+      };
+    }
+    notify();
+  }
+
+  async function openSessionPicker(): Promise<void> {
     if (running) {
-      appendStatus('Finish or cancel the turn before switching provider/model.', true);
+      appendStatus('Finish or cancel the turn before resuming another session.', true);
+      return;
+    }
+    const loadingPicker: SilveryPicker = {
+      kind: 'session',
+      title: 'Resume session',
+      options: [],
+      initialIndex: 0,
+      token: (pickerToken += 1),
+      loading: true,
+      scope: 'workspace',
+      scopedOutCount: 0,
+    };
+    picker = loadingPicker;
+    notify();
+    try {
+      sessionPickerRows = await fetchSessionRows();
+      if (picker !== loadingPicker) return;
+      const workspaceRows = scopeSessionsToWorkspace(sessionPickerRows, state.cwd);
+      const scope = workspaceRows.length > 0 ? 'workspace' : 'all';
+      const next = buildSessionPicker(scope);
+      picker = next;
+      notify();
+      const initial = next.options[next.initialIndex];
+      if (initial) await loadSessionPickerPreview(next, initial.id);
+    } catch (cause) {
+      if (picker !== loadingPicker) return;
+      loadingPicker.loading = false;
+      loadingPicker.error = `Failed to list sessions: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`;
+      notify();
+    }
+  }
+
+  function openPicker(kind: 'provider' | 'model' | 'session'): void {
+    if (running) {
+      appendStatus('Finish or cancel the turn before opening a picker.', true);
+      return;
+    }
+    if (kind === 'session') {
+      void openSessionPicker();
       return;
     }
     if (kind === 'model' && getCuratedModels(state.provider).length === 0) {
@@ -1038,8 +1234,26 @@ export async function createSilveryController(
 
   function closePicker(): void {
     if (!picker) return;
+    sessionPreviewRequest += 1;
     picker = null;
     notify();
+  }
+
+  function previewPickerOption(id: string): void {
+    const active = picker;
+    if (!active || active.kind !== 'session') return;
+    void loadSessionPickerPreview(active, id);
+  }
+
+  function toggleSessionPickerScope(): void {
+    const active = picker;
+    if (!active || active.kind !== 'session' || active.loading) return;
+    sessionPreviewRequest += 1;
+    const next = buildSessionPicker(active.scope === 'workspace' ? 'all' : 'workspace');
+    picker = next;
+    notify();
+    const initial = next.options[next.initialIndex];
+    if (initial) void loadSessionPickerPreview(next, initial.id);
   }
 
   async function selectPicker(id: string): Promise<void> {
@@ -1057,8 +1271,10 @@ export async function createSilveryController(
     // while patchDaemonSession is still in flight. Clear on success or failure.
     try {
       if (active.kind === 'provider') await applyProviderSwitch(id);
-      else await applyModelSwitch(id);
+      else if (active.kind === 'model') await applyModelSwitch(id);
+      else await applySessionSwitch(id);
     } finally {
+      sessionPreviewRequest += 1;
       picker = null;
       notify();
     }
@@ -1081,7 +1297,7 @@ export async function createSilveryController(
           '  /model [name|#]        Open the model picker or switch directly',
           '  /config                Show config overview (secrets masked)',
           '  /config key|url|…      Set provider keys, sandbox, daemon, tavily',
-          '  /resume [session-id]   List or switch to a saved session',
+          '  /resume [session-id]   Open the session picker or switch directly',
           '  /skills [reload|lint]  List, reload, or lint workspace skills',
           '  /compact [turns]       Compact context (default preserve 6 turns)',
           '  /revert [turns]        Daemon: remove recent user turns',
@@ -1101,6 +1317,7 @@ export async function createSilveryController(
           '  Tab / Shift+Tab        Complete and cycle slash commands or @paths',
           '  Ctrl+K                 Open the command palette',
           '  Ctrl+P                 Open the provider picker',
+          '  Ctrl+R                 Open the session picker',
           '  Ctrl+L                 Clear the transcript display',
           '  Ctrl+O                 Copy the last response to the clipboard',
           '  Ctrl+C                 Cancel the active turn or exit while idle',
@@ -1332,45 +1549,14 @@ export async function createSilveryController(
 
     if (command === 'resume') {
       if (!arg) {
-        const sessions = await fetchSessionRows();
-        appendStatus(
-          sessions.length
-            ? sessions
-                .slice(0, 12)
-                .map(
-                  (entry) =>
-                    `${entry.sessionId}${entry.sessionName ? ` · ${entry.sessionName}` : ''} · ${entry.provider}/${entry.model}`,
-                )
-                .join('\n') + (sessions.length > 12 ? `\n… ${sessions.length - 12} more` : '')
-            : 'No saved sessions.',
-        );
+        await openSessionPicker();
         return true;
       }
       if (!SESSION_ID_RE.test(arg)) {
         appendStatus('Usage: /resume | /resume <session-id>', true);
         return true;
       }
-      try {
-        const next = await (deps.loadState ?? loadSessionState)(arg);
-        Object.assign(state, next);
-        daemonMirror = createDaemonTranscriptMirror();
-        daemonHiddenBefore = 0;
-        daemonStateStale = false;
-        activityRows = [];
-        liveText = '';
-        hiddenBefore = 0;
-        persisted = true;
-        gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
-        appendStatus(
-          `Resumed session ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}.`,
-        );
-        notify();
-      } catch (cause) {
-        appendStatus(
-          `Resume failed: ${cause instanceof Error ? cause.message : String(cause)}`,
-          true,
-        );
-      }
+      await applySessionSwitch(arg);
       return true;
     }
 
@@ -1956,6 +2142,8 @@ export async function createSilveryController(
     },
     openPicker,
     closePicker,
+    previewPickerOption,
+    toggleSessionPickerScope,
     selectPickerOption(id) {
       // selectPicker is fire-and-forget from the view; surface any late failure
       // (config/session persistence) as a status line rather than swallowing it.

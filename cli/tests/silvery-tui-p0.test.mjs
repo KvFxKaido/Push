@@ -205,7 +205,117 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(resolveComposerShortcut('k', { ctrl: true }), 'palette');
     assert.equal(resolveComposerShortcut('l', { ctrl: true }), 'clear');
     assert.equal(resolveComposerShortcut('p', { ctrl: true }), 'provider');
+    assert.equal(resolveComposerShortcut('r', { ctrl: true }), 'session');
     assert.equal(resolveComposerShortcut('p', {}), null);
+  });
+
+  it('keeps session previews to six recent human/assistant messages', async () => {
+    const { sessionPreviewMessages } = await import('../silvery/controller.ts');
+    const messages = [
+      { role: 'system', content: 'system' },
+      { role: 'user', content: '  [TOOL_RESULT]\n{}\n[/TOOL_RESULT]' },
+      ...Array.from({ length: 8 }, (_, index) => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `message-${index}`,
+      })),
+    ];
+
+    assert.deepEqual(
+      sessionPreviewMessages(messages),
+      Array.from({ length: 6 }, (_, index) => ({
+        role: index % 2 === 0 ? 'user' : 'assistant',
+        content: `message-${index + 2}`,
+      })),
+    );
+  });
+
+  it('rebinds the daemon controller to a new durable session from seq zero', async () => {
+    const { createDaemonSession } = await import('../tui-daemon-session.ts');
+    const { PROTOCOL_VERSION } = await import('../../lib/protocol-schema.ts');
+    let durable = {
+      persisted: true,
+      sessionId: 'sess_old_abc123',
+      attachToken: 'old-token',
+    };
+    const attachRequests = [];
+    const client = {
+      connected: true,
+      request: async (type, payload) => {
+        if (type === 'hello') {
+          return {
+            payload: {
+              runtimeName: 'pushd',
+              runtimeVersion: 'test',
+              protocolVersion: PROTOCOL_VERSION,
+              capabilities: [],
+            },
+          };
+        }
+        if (type === 'attach_session') {
+          attachRequests.push(payload);
+          return { payload: { attachToken: `adopted-${payload.sessionId}` } };
+        }
+        return { payload: {} };
+      },
+      onEvent: () => () => undefined,
+      close: () => undefined,
+      _socket: { on: () => undefined },
+    };
+    const daemon = createDaemonSession(
+      {
+        tryConnectTransport: async () => client,
+        note: () => undefined,
+        markFooterDirty: () => undefined,
+        markAllDirty: () => undefined,
+        onEngineEvent: () => undefined,
+        onSocketClose: () => undefined,
+        isAutoStartEnabled: () => false,
+        spawnDaemon: async () => ({
+          status: 'already-running',
+          ready: false,
+          socketPath: '',
+          logPath: '',
+        }),
+        onReusedDaemon: async () => undefined,
+        appendDaemonLogTail: async () => undefined,
+        getDurableSession: () => durable,
+        setDurableAttachToken: (token) => {
+          durable.attachToken = token;
+        },
+        getStartSessionPayload: () => ({ provider: 'zen', model: 'model', cwd: '/repo' }),
+        onAttached: () => undefined,
+        invalidateReconnectAnimators: () => undefined,
+      },
+      [],
+    );
+
+    assert.equal(await daemon.tryConnect(), true);
+    assert.equal(await daemon.attachExistingSession(), true);
+    daemon.noteSeenSeq(41);
+    durable = {
+      persisted: true,
+      sessionId: 'sess_new_abc123',
+      attachToken: 'new-token',
+    };
+
+    assert.equal(await daemon.rebindExistingSession(), true);
+    assert.equal(daemon.sessionId, 'sess_new_abc123');
+    assert.equal(daemon.attachToken, 'adopted-sess_new_abc123');
+    assert.deepEqual(attachRequests, [
+      {
+        sessionId: 'sess_old_abc123',
+        lastSeenSeq: 0,
+        attachToken: 'old-token',
+        capabilities: [],
+      },
+      {
+        sessionId: 'sess_new_abc123',
+        lastSeenSeq: 0,
+        attachToken: 'new-token',
+        capabilities: [],
+      },
+    ]);
+    daemon.teardown();
   });
 
   it('renders an inline failure while the shell stays alive, then settles on unmount', {
@@ -703,7 +813,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
-  it('serves /resume rows from list_sessions when the daemon is attached', async () => {
+  it('opens a workspace-scoped /resume picker with a daemon-served preview', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const state = {
       sessionId: 'sess_resume_abc123',
@@ -713,6 +823,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
       cwd: '/repo',
       provider: 'ollama',
       model: 'test-model',
+      attachToken: 'token-sess_resume_abc123',
       rounds: 0,
       sessionName: '',
       workingMemory: {},
@@ -730,11 +841,27 @@ describe('silvery TUI Phase 1 chat surface', () => {
       lastUserMessage: 'served over the socket',
       mode: 'tui',
     };
+    const elsewhere = {
+      ...row,
+      sessionId: 'sess_elsewhere_abc123',
+      cwd: '/other-repo',
+      sessionName: 'elsewhere',
+    };
+    const second = {
+      ...row,
+      sessionId: 'sess_second_abc123',
+      sessionName: 'second-local-session',
+    };
+    let daemonSessionId = state.sessionId;
+    let daemonAttachToken = state.attachToken;
+    let sendPayload;
+    let sendSessionArg;
+    const rebinds = [];
     const client = {
-      request: async (type, payload) => {
+      request: async (type, payload, sessionId) => {
         if (type === 'list_sessions') {
           assert.equal(payload.limit, 1000);
-          return { ok: true, payload: { sessions: [row] } };
+          return { ok: true, payload: { sessions: [row, second, elsewhere] } };
         }
         if (type === 'get_session_snapshot') {
           return {
@@ -742,6 +869,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
               transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
             },
           };
+        }
+        if (type === 'send_user_message') {
+          sendPayload = payload;
+          sendSessionArg = sessionId;
+          queueMicrotask(() => hooks.onEngineEvent({ type: 'run_complete', payload: {} }));
+          return { payload: { runId: 'run-resumed-session' } };
         }
         return { payload: {} };
       },
@@ -754,6 +887,19 @@ describe('silvery TUI Phase 1 chat surface', () => {
         initSession: async () => state,
         gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
         saveState: async () => undefined,
+        loadState: async (sessionId) => ({
+          ...state,
+          sessionId,
+          provider: 'zen',
+          model: 'from-daemon',
+          attachToken: `token-${sessionId}`,
+          sessionName: 'from-daemon',
+          messages: [
+            { role: 'system', content: 'system' },
+            { role: 'user', content: `question from ${sessionId}` },
+            { role: 'assistant', content: 'The failure is in the parser.' },
+          ],
+        }),
         listSessions: async () => {
           listSessionsCalls += 1;
           return [];
@@ -762,12 +908,23 @@ describe('silvery TUI Phase 1 chat surface', () => {
           hooks = receivedHooks;
           return {
             connected: true,
-            sessionId: state.sessionId,
-            attachToken: 'token',
+            get sessionId() {
+              return daemonSessionId;
+            },
+            get attachToken() {
+              return daemonAttachToken;
+            },
             client,
             ensureConnected: async () => true,
             ensureReady: async () => true,
             ensureSession: async () => undefined,
+            rebindExistingSession: async () => {
+              const durable = hooks.getDurableSession();
+              rebinds.push({ ...durable });
+              daemonSessionId = durable.sessionId;
+              daemonAttachToken = durable.attachToken;
+              return true;
+            },
             noteSeenSeq: () => undefined,
             scheduleReconnect: () => undefined,
             teardown: () => undefined,
@@ -778,11 +935,307 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     await controller.submit('/resume');
     assert.equal(listSessionsCalls, 0, 'must not fall back to disk when RPC succeeds');
-    assert.ok(
-      controller.getSnapshot().rows.some((r) => /sess_daemonrow_abc123/.test(r.text)),
-      'resume listing should show the daemon-served session id',
+    const picker = controller.getSnapshot().picker;
+    assert.ok(picker, 'bare /resume opens the picker');
+    assert.equal(picker.kind, 'session');
+    assert.equal(picker.scope, 'workspace');
+    assert.equal(picker.scopedOutCount, 1);
+    assert.deepEqual(
+      picker.options.map((option) => option.id),
+      ['sess_daemonrow_abc123', 'sess_second_abc123'],
+      'the other workspace stays out of the default view',
     );
-    assert.ok(controller.getSnapshot().rows.some((r) => /from-daemon/.test(r.text)));
+    assert.deepEqual(picker.preview?.messages, [
+      { role: 'user', content: 'question from sess_daemonrow_abc123' },
+      { role: 'assistant', content: 'The failure is in the parser.' },
+    ]);
+
+    controller.previewPickerOption('sess_second_abc123');
+    for (
+      let i = 0;
+      i < 50 &&
+      (controller.getSnapshot().picker.preview?.optionId !== 'sess_second_abc123' ||
+        controller.getSnapshot().picker.preview?.loading);
+      i++
+    )
+      await sleep(0);
+    assert.deepEqual(controller.getSnapshot().picker.preview?.messages, [
+      { role: 'user', content: 'question from sess_second_abc123' },
+      { role: 'assistant', content: 'The failure is in the parser.' },
+    ]);
+
+    controller.toggleSessionPickerScope();
+    assert.equal(controller.getSnapshot().picker.scope, 'all');
+    assert.deepEqual(
+      controller.getSnapshot().picker.options.map((option) => option.id),
+      ['sess_daemonrow_abc123', 'sess_second_abc123', 'sess_elsewhere_abc123'],
+    );
+
+    controller.selectPickerOption('sess_second_abc123');
+    for (let i = 0; i < 50 && controller.getSnapshot().picker !== null; i++) await sleep(0);
+    assert.equal(controller.getSnapshot().picker, null, 'resuming closes the picker');
+    assert.equal(controller.getSnapshot().sessionId, 'sess_second_abc123');
+    assert.deepEqual(rebinds, [
+      {
+        persisted: true,
+        sessionId: 'sess_second_abc123',
+        attachToken: 'token-sess_second_abc123',
+      },
+    ]);
+    assert.ok(controller.getSnapshot().rows.some((item) => /Resumed session/.test(item.text)));
+
+    await controller.submit('continue in the selected session');
+    assert.equal(sendPayload.sessionId, 'sess_second_abc123');
+    assert.equal(sendPayload.attachToken, 'token-sess_second_abc123');
+    assert.equal(sendSessionArg, 'sess_second_abc123');
+    await controller.dispose();
+  });
+
+  it('rolls back to the previous session when the daemon rejects the resume attach', async () => {
+    // Codex's rollback claim, made falsifiable: a failed rebind must leave you
+    // on the session you were already in — not stranded half-switched (new
+    // session in `state`, daemon detached). Mutation: drop the
+    // `replaceSessionState(previousState)` restore and this goes red.
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_origin_current',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'origin-model',
+      attachToken: 'token-origin',
+      rounds: 0,
+      sessionName: 'origin',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const target = {
+      sessionId: 'sess_target_abc123',
+      updatedAt: Date.now(),
+      provider: 'zen',
+      model: 'from-daemon',
+      cwd: '/repo',
+      sessionName: 'target',
+      mode: 'tui',
+    };
+    let hooks;
+    let rebindCalls = 0;
+    // First rebind (attach the target) fails; the rollback re-attach succeeds.
+    const rebindResults = [false, true];
+    const client = {
+      request: async (type) => {
+        if (type === 'list_sessions') return { ok: true, payload: { sessions: [target] } };
+        if (type === 'get_session_snapshot')
+          return { payload: { transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } } } };
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        loadState: async (sessionId) => ({
+          ...state,
+          sessionId,
+          sessionName: `loaded-${sessionId}`,
+          messages: [
+            { role: 'system', content: 'system' },
+            { role: 'user', content: `q ${sessionId}` },
+          ],
+        }),
+        listSessions: async () => [],
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            get sessionId() {
+              return null;
+            },
+            get attachToken() {
+              return null;
+            },
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            rebindExistingSession: async () => rebindResults[rebindCalls++] ?? false,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+    assert.ok(hooks);
+
+    await controller.submit('/resume');
+    controller.selectPickerOption('sess_target_abc123');
+    for (let i = 0; i < 50 && controller.getSnapshot().picker !== null; i += 1) await sleep(0);
+
+    const snap = controller.getSnapshot();
+    assert.equal(
+      snap.sessionId,
+      'sess_origin_current',
+      'a failed resume must roll back to the previous session, not strand the new one',
+    );
+    assert.equal(rebindCalls, 2, 'rollback re-attaches the previous session (second rebind)');
+    assert.ok(
+      snap.rows.some((item) => /Resume failed/.test(item.text)),
+      'the failure is surfaced to the user',
+    );
+    await controller.dispose();
+  });
+
+  it('discards a stale preview that resolves after a newer one (out-of-order race)', async () => {
+    // The "race-safe" claim, made falsifiable. The picker fires an async
+    // preview load per highlighted row; move the cursor fast and two loads are
+    // in flight. If the FIRST-requested one resolves LAST, it must not clobber
+    // the newer preview — the row under the cursor would otherwise show a
+    // different session's messages. Guarded by the `sessionPreviewRequest`
+    // counter in loadSessionPickerPreview; this test controls resolution order
+    // so it actually exercises that guard (mutation: drop the counter check →
+    // this fails).
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_race_current',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const mk = (id) => ({
+      sessionId: id,
+      updatedAt: Date.now(),
+      provider: 'zen',
+      model: 'm',
+      cwd: '/repo',
+      sessionName: id,
+      mode: 'tui',
+    });
+    // Deferred loadState: each call parks until `settle(id)` is called, so the
+    // test picks the resolution order.
+    const pending = new Map();
+    const settle = (id) => {
+      const resolve = pending.get(id);
+      assert.ok(resolve, `no pending load for ${id}`);
+      pending.delete(id);
+      resolve({
+        ...state,
+        sessionId: id,
+        messages: [
+          { role: 'system', content: 'system' },
+          { role: 'user', content: `q from ${id}` },
+          { role: 'assistant', content: `a from ${id}` },
+        ],
+      });
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        loadState: (id) => new Promise((resolve) => pending.set(id, resolve)),
+        listSessions: async () => [mk('sess_alpha'), mk('sess_beta')],
+      },
+    );
+
+    const opened = controller.submit('/resume');
+    // The initial preview loads the first option (sess_alpha); let it settle so
+    // the picker is fully open before the race.
+    for (let i = 0; i < 50 && !pending.has('sess_alpha'); i += 1) await sleep(0);
+    settle('sess_alpha');
+    await opened;
+
+    // Two previews in flight: alpha requested first, beta second. Beta is the
+    // newer request and the one the cursor lands on.
+    controller.previewPickerOption('sess_alpha');
+    controller.previewPickerOption('sess_beta');
+    for (let i = 0; i < 50 && !(pending.has('sess_alpha') && pending.has('sess_beta')); i += 1)
+      await sleep(0);
+
+    // Resolve out of order: the newer (beta) first, then the stale (alpha).
+    settle('sess_beta');
+    for (let i = 0; i < 50 && controller.getSnapshot().picker.preview?.loading; i += 1)
+      await sleep(0);
+    settle('sess_alpha');
+    for (let i = 0; i < 20; i += 1) await sleep(0);
+
+    const preview = controller.getSnapshot().picker.preview;
+    assert.equal(preview?.optionId, 'sess_beta', 'the stale alpha load clobbered the newer beta');
+    assert.deepEqual(preview?.messages, [
+      { role: 'user', content: 'q from sess_beta' },
+      { role: 'assistant', content: 'a from sess_beta' },
+    ]);
+    await controller.dispose();
+  });
+
+  it('drops an in-flight preview when the picker closes (no paint after close)', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_close_current',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const pending = new Map();
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        loadState: (id) => new Promise((resolve) => pending.set(id, resolve)),
+        listSessions: async () => [
+          {
+            sessionId: 'sess_only',
+            updatedAt: Date.now(),
+            provider: 'zen',
+            model: 'm',
+            cwd: '/repo',
+            sessionName: 'only',
+            mode: 'tui',
+          },
+        ],
+      },
+    );
+    const opened = controller.submit('/resume');
+    for (let i = 0; i < 50 && !pending.has('sess_only'); i += 1) await sleep(0);
+    // Close before the initial preview resolves, then let it resolve.
+    controller.closePicker();
+    const resolve = pending.get('sess_only');
+    pending.delete('sess_only');
+    resolve({ ...state, sessionId: 'sess_only', messages: [{ role: 'user', content: 'late' }] });
+    await opened;
+    for (let i = 0; i < 20; i += 1) await sleep(0);
+    assert.equal(
+      controller.getSnapshot().picker,
+      null,
+      'a late preload must not reopen the picker',
+    );
     await controller.dispose();
   });
 
@@ -2623,6 +3076,99 @@ describe('silvery TUI Phase 1 chat surface', () => {
     // Composer is inert while the picker holds focus (hidden-but-interactive class).
     assert.equal(hook.getState().pickerOpen, true);
     assert.equal(hook.getState().inputActive, false);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('renders the session picker as a list plus recent-message preview pane', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(120, 28);
+    const stdin = new FakeStdin();
+    const snapshot = {
+      rows: [],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: {
+        kind: 'session',
+        title: 'Resume session',
+        options: [
+          {
+            id: 'sess_preview_abc123',
+            label: 'Parser investigation',
+            hint: 'ollama/test-model',
+            current: true,
+            session: {
+              sessionId: 'sess_preview_abc123',
+              updatedAt: Date.now() - 120_000,
+              provider: 'ollama',
+              model: 'test-model',
+              cwd: '/repo',
+              sessionName: 'Parser investigation',
+              lastUserMessage: 'Why does this parser fail?',
+              mode: 'tui',
+            },
+          },
+        ],
+        initialIndex: 0,
+        token: 1,
+        scope: 'workspace',
+        scopedOutCount: 2,
+        preview: {
+          optionId: 'sess_preview_abc123',
+          loading: false,
+          messages: [
+            { role: 'user', content: 'Why does this parser fail?' },
+            { role: 'assistant', content: 'The closing fence is consumed too early.' },
+          ],
+        },
+      },
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+      openPicker: () => undefined,
+      closePicker: () => undefined,
+      selectPickerOption: () => undefined,
+      previewPickerOption: () => undefined,
+      toggleSessionPickerScope: () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook: {} }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(180);
+
+    assert.match(stdout.bytes, /Resume session/);
+    assert.match(stdout.bytes, /this workspace/);
+    assert.match(stdout.bytes, /2 elsewhere/);
+    assert.match(stdout.bytes, /Parser investigation/);
+    assert.match(stdout.bytes, /Preview/);
+    assert.match(stdout.bytes, /Why does this parser fail\?/);
+    assert.match(stdout.bytes, /closing fence is consumed too early/);
+    assert.match(stdout.bytes, /sess_preview_abc123/);
+    assert.match(stdout.bytes, /Path: \/repo/);
+    assert.match(stdout.bytes, /Model: ollama\/test-model/);
 
     instance.unmount();
     await lifecycle;
