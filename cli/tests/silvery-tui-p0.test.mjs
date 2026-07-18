@@ -2159,6 +2159,155 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await lifecycle;
   });
 
+  it('renders a clean silent command as its header row alone — no empty card box', {
+    skip: silverySkip,
+  }, async () => {
+    // The screenshot regression, against the REAL surface: a `rm` that succeeded
+    // and printed nothing must render `Ran rm …` and STOP — no "Sandbox" title,
+    // no Command:/Exit Code:/Truncated:/Duration Ms: dump, no blank card line.
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 14);
+    const stdin = new FakeStdin();
+    const snapshot = {
+      rows: [
+        {
+          id: 'exec',
+          kind: 'tool',
+          role: 'coder',
+          text: 'sandbox_exec complete',
+          toolName: 'sandbox_exec',
+          target: 'rm shot.png',
+          pending: false,
+          card: {
+            type: 'sandbox',
+            data: { command: 'rm shot.png', stdout: '', stderr: '', exitCode: 0, durationMs: 57 },
+          },
+        },
+      ],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook: {} }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(120);
+
+    // The header row is the whole story.
+    assert.match(stdout.bytes, /Ran rm shot\.png/);
+    // None of the dumped chrome survives.
+    assert.doesNotMatch(stdout.bytes, /Sandbox/);
+    assert.doesNotMatch(stdout.bytes, /Command:/);
+    assert.doesNotMatch(stdout.bytes, /Exit Code:/);
+    assert.doesNotMatch(stdout.bytes, /Truncated:/);
+    assert.doesNotMatch(stdout.bytes, /Duration Ms:/);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('renders a command with output as the header plus bare output lines', {
+    skip: silverySkip,
+  }, async () => {
+    // The has-output path: no "Sandbox" title dump, just the stdout under the
+    // header. The load-bearing piece is `formatCommandCard` — swap it out and
+    // this reads "Sandbox / Command: ls / …" instead.
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(72, 14);
+    const stdin = new FakeStdin();
+    const snapshot = {
+      rows: [
+        {
+          id: 'exec',
+          kind: 'tool',
+          role: 'coder',
+          text: 'sandbox_exec complete',
+          toolName: 'sandbox_exec',
+          target: 'ls',
+          pending: false,
+          card: {
+            type: 'sandbox',
+            data: { command: 'ls', stdout: 'alpha.ts\nbeta.ts', stderr: '', exitCode: 0 },
+          },
+        },
+      ],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook: {} }),
+      { stdout, stdin },
+      { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(120);
+
+    assert.match(stdout.bytes, /Ran ls/);
+    assert.match(stdout.bytes, /alpha\.ts/);
+    assert.match(stdout.bytes, /beta\.ts/);
+    assert.doesNotMatch(stdout.bytes, /Sandbox/);
+    assert.doesNotMatch(stdout.bytes, /Command:/);
+    // Output sits directly under the header, on consecutive rows.
+    const plain = stdout.bytes
+      .replace(/\x1b\[[0-9;]*m/g, '')
+      .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '\n');
+    const rows = plain.split('\n').map((r) => r.trimEnd());
+    const header = rows.findIndex((r) => /Ran ls/.test(r));
+    assert.ok(header >= 0, 'header row not found');
+    assert.match(rows[header + 1] ?? '', /alpha\.ts/);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
   // Regression for the #1431 review (fugu WARNING, triaged false-positive but
   // hardened): while an interaction modal is open, the background composer must
   // NOT be active — otherwise a keystroke could edit/submit the composer under

@@ -200,12 +200,20 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
   // File mutations carry both the cross-surface `diff-preview` card and the
   // CLI-native line-numbered EditDiff. Prefer the richer local renderer while
   // still keeping the declared card on the event for other consumers.
-  const card =
+  const formatted =
     item.card?.type === 'diff-preview' && item.diff
       ? null
       : item.card
         ? formatToolCard(item.card)
         : null;
+  // A card that reduces to nothing — no title, no rows, no body — is the absence
+  // of a card, so drop the element entirely rather than rely on an empty <Box>
+  // happening to be zero-height. A clean silent command (`formatCommandCard`
+  // returns exactly this shape) then renders as its header row alone.
+  const card =
+    formatted && (formatted.title || formatted.rows.length || formatted.bodyLines?.length)
+      ? formatted
+      : null;
   const cardBodyLines = card?.bodyLines ?? [];
   const visibleCardBodyLines = expanded ? cardBodyLines : cardBodyLines.slice(0, 8);
   // A typed card / diff is already a compact representation and stays visible;
@@ -224,7 +232,13 @@ function ToolCard({ item }: { item: SilveryTranscriptItem }) {
       </Text>
       {card ? (
         <Box flexDirection="column">
-          <Text color={card.known ? VL_COLOR.primary : VL_COLOR.muted}>{card.title}</Text>
+          {/* `formatCommandCard` sets `title: ''` (the header row already names
+              the command). Silvery collapses an empty <Text> to zero height, so
+              this guard is for intent, not to suppress a visible blank line —
+              the card's content shouldn't depend on that collapse behavior. */}
+          {card.title ? (
+            <Text color={card.known ? VL_COLOR.primary : VL_COLOR.muted}>{card.title}</Text>
+          ) : null}
           {card.rows.map((row, index) => (
             <Text key={`${row.label}-${index}`} color={VL_COLOR.muted}>
               {row.label}: {row.value}
