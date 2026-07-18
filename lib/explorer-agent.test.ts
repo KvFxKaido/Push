@@ -110,6 +110,59 @@ describe('runExplorerAgent (PushStream consumer)', () => {
     expect(req.tools).toBe(nativeToolSchemas);
   });
 
+  it('stops the side-effect chain on the first [Tool Error] result (fail-fast contract)', async () => {
+    // Round 1 emits a read + a two-call chain; the first chain call fails.
+    // The second chain call must NOT execute (fugu WARNING on #1536).
+    const readCall: Call = { call: { tool: 'read_file', args: { path: '/a' } } };
+    const chain1: Call = { call: { tool: 'exec', args: { command: 'fails' } } };
+    const chain2: Call = { call: { tool: 'exec', args: { command: 'never-runs' } } };
+    const detector = vi.fn();
+    detector
+      .mockReturnValueOnce({
+        readOnly: [readCall],
+        sideEffects: [chain1, chain2],
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      })
+      .mockReturnValue({
+        readOnly: [],
+        sideEffects: [],
+        fileMutations: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      });
+    const executed: string[] = [];
+    const { stream } = makePushStream([
+      [
+        { type: 'text_delta', text: 'calling tools' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+      [
+        { type: 'text_delta', text: 'Summary:\nDone.' },
+        { type: 'done', finishReason: 'stop' },
+      ],
+    ]);
+
+    await runExplorerAgent(
+      baseOptions({
+        stream,
+        detectAllToolCalls: detector,
+        toolExec: async (call) => {
+          const cmd = String(call.call.args.command ?? call.call.args.path);
+          executed.push(cmd);
+          return {
+            resultText: cmd === 'fails' ? '[Tool Error] exec failed: exit 1' : 'tool-result',
+          };
+        },
+      }),
+      { onStatus: () => {} },
+    );
+
+    expect(executed).toContain('fails');
+    expect(executed).not.toContain('never-runs');
+  });
+
   it('continues looping while tool calls are detected', async () => {
     const detector = vi.fn();
     detector

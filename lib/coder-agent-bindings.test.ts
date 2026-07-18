@@ -290,3 +290,79 @@ describe('buildCoderEvaluateAfterModel — forceToolChoiceNextRound escalation',
     expect(await nullEval('anything', 0)).toBeNull();
   });
 });
+
+describe('buildCoderDetectors — side-effect chain source filtering (Codex P2 on #1536)', () => {
+  const execCall = {
+    source: 'sandbox',
+    call: { tool: 'sandbox_exec', args: { command: 'npm test' } },
+  };
+  const execCall2 = {
+    source: 'sandbox',
+    call: { tool: 'sandbox_exec', args: { command: 'npm run build' } },
+  };
+  const githubCall = { source: 'github', call: { tool: 'pr_create', args: {} } };
+
+  function makeServices(sideEffects: unknown[], extraToolSources?: Set<string>) {
+    return {
+      policy: {} as never,
+      capabilityLedger: {} as never,
+      turnCtx: {} as never,
+      onStatus: () => {},
+      activeProvider: 'openrouter',
+      activeModel: undefined,
+      sandboxId: 'sbx',
+      tracing: {} as never,
+      executeSandboxToolCall: async () => ({}) as never,
+      executeWebSearch: async () => ({}) as never,
+      sandboxStatus: async () => ({}) as never,
+      detectSandboxToolCall: () => null,
+      detectWebSearchToolCall: () => null,
+      detectAnyToolCall: () => null,
+      ...(extraToolSources ? { extraToolSources } : {}),
+      detectAllToolCalls: () => ({
+        readOnly: [],
+        fileMutations: [],
+        sideEffects,
+        extraMutations: [],
+        droppedCandidates: [],
+      }),
+      tagSandboxCall: (call: unknown) => ({ source: 'sandbox', call }),
+      tagWebSearchCall: (call: unknown) => ({ source: 'web-search', call }),
+    } as never;
+  }
+
+  it('truncates the chain at the first disallowed source and rejects the tail (no silent mid-chain drop)', () => {
+    // A disallowed pr_create BEFORE a supported exec: the exec may depend on
+    // the dropped step, so it must NOT run. Both land in extraMutations for
+    // the ledger's overflow notice.
+    const { detectAllToolCalls } = buildCoderDetectors(makeServices([githubCall, execCall]));
+    const result = detectAllToolCalls('anything');
+    expect(result.sideEffects).toEqual([]);
+    expect(result.extraMutations).toEqual([githubCall, execCall]);
+  });
+
+  it('keeps the allowed prefix and rejects from the first disallowed call onward', () => {
+    const { detectAllToolCalls } = buildCoderDetectors(
+      makeServices([execCall, githubCall, execCall2]),
+    );
+    const result = detectAllToolCalls('anything');
+    expect(result.sideEffects).toEqual([execCall]);
+    expect(result.extraMutations).toEqual([githubCall, execCall2]);
+  });
+
+  it('passes a fully-allowed chain through untouched', () => {
+    const { detectAllToolCalls } = buildCoderDetectors(makeServices([execCall, execCall2]));
+    const result = detectAllToolCalls('anything');
+    expect(result.sideEffects).toEqual([execCall, execCall2]);
+    expect(result.extraMutations).toEqual([]);
+  });
+
+  it('allows non-sandbox sources when the surface opts in via extraToolSources', () => {
+    const { detectAllToolCalls } = buildCoderDetectors(
+      makeServices([githubCall, execCall], new Set(['github'])),
+    );
+    const result = detectAllToolCalls('anything');
+    expect(result.sideEffects).toEqual([githubCall, execCall]);
+    expect(result.extraMutations).toEqual([]);
+  });
+});

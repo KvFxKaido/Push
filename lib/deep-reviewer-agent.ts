@@ -1009,7 +1009,7 @@ export async function runDeepReviewer<TCall, TCard>(
           buildToolCallParseErrorBlock({
             errorType: 'multiple_mutating_calls',
             problem:
-              'Deep Reviewer only supports read-only inspection tools and at most one trailing call per turn.',
+              'Deep Reviewer only supports read-only inspection tools, optionally followed by a short trailing chain of verification calls (which stops on the first failure).',
             hint: `Use one or more read-only tools, then finish with a plain-text analysis or emit ${REVIEW_COMPLETE_MARKER}.`,
           }),
         ),
@@ -1048,6 +1048,10 @@ export async function runDeepReviewer<TCall, TCard>(
           content: formatAgentToolResult(trailing.resultText),
           timestamp: Date.now(),
         });
+        // Fail-fast per the side-effect-chain contract (tool-call-grouping):
+        // a hard failure stops the chain; the model sees the error result
+        // and re-plans instead of running later steps against surprise state.
+        if (trailing.resultText.includes('[Tool Error')) break;
       }
 
       continue;

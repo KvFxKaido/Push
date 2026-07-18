@@ -530,6 +530,33 @@ describe('detectAllToolCalls', () => {
     expect(detected.sideEffects).toEqual([]);
   });
 
+  it('a full-budget turn (6 reads + 8 mutations + 3-chain) survives the pre-group scan cap', () => {
+    // Codex P2 on #1536: the merge-loop soft cap reserved a single trailing
+    // slot, so call 17 of a maximal valid turn was dropped before grouping.
+    const reads = Array.from({ length: 6 }, (_, i) =>
+      JSON.stringify({ tool: 'sandbox_read_file', args: { path: `/workspace/r${i}.ts` } }),
+    );
+    const writes = Array.from({ length: 8 }, (_, i) =>
+      JSON.stringify({
+        tool: 'sandbox_write_file',
+        args: { path: `/workspace/w${i}.ts`, content: `${i}` },
+      }),
+    );
+    const execs = ['npm test', 'npm run build', 'echo done'].map((command) =>
+      JSON.stringify({ tool: 'sandbox_exec', args: { command } }),
+    );
+    const detected = detectAllToolCalls([...reads, ...writes, ...execs].join('\n'));
+    expect(detected.readOnly).toHaveLength(6);
+    expect(detected.fileMutations).toHaveLength(8);
+    expect(
+      detected.sideEffects.map((c) =>
+        c.source === 'sandbox' && c.call.tool === 'sandbox_exec' ? c.call.args.command : null,
+      ),
+    ).toEqual(['npm test', 'npm run build', 'echo done']);
+    expect(detected.batchOverflow).toEqual([]);
+    expect(detected.extraMutations).toEqual([]);
+  });
+
   it('treats sandbox_read_symbols as read-only when a mutating call follows', () => {
     const text = [
       '{"tool":"sandbox_read_symbols","args":{"path":"/workspace/app/src/lib/tool-dispatch.ts"}}',

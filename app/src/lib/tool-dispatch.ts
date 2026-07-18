@@ -619,8 +619,13 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     if (seen.has(key)) continue;
     seen.add(key);
     allCalls.push(entry.call);
-    // Soft cap: leave headroom for the batch + trailing side-effect.
-    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + 1) break;
+    // Soft cap: leave headroom for the batch + the side-effect chain. Must
+    // reserve MAX_SIDE_EFFECT_CHAIN slots (not 1) or a full-budget turn
+    // (6 reads + 8 mutations + exec → exec → commit = 17 calls) silently
+    // drops the final side-effect before grouping ever sees it (Codex P2
+    // on #1536).
+    if (allCalls.length > MAX_PARALLEL_TOOL_CALLS + MAX_FILE_MUTATION_BATCH + MAX_SIDE_EFFECT_CHAIN)
+      break;
   }
 
   // Enforce argument-type contracts: a call whose args still carry a

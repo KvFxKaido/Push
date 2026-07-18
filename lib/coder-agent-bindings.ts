@@ -307,9 +307,22 @@ export function buildCoderDetectors<
     const sandboxFileMutations = raw.fileMutations.filter(
       (c) => c.source === 'sandbox' || allowsExtra(c.source),
     );
-    const sandboxSideEffects = raw.sideEffects.filter(
-      (c) => c.source === 'sandbox' || allowsExtra(c.source),
-    );
+    // Truncate the side-effect chain at the FIRST disallowed source instead
+    // of filtering per-element: filtering could silently drop a mid-chain
+    // step (e.g. an unsupported pr_create before a supported exec) and then
+    // run the later call that may depend on it. The disallowed call and
+    // everything after it become rejected calls so the kernel ledger names
+    // them in the overflow notice instead of dropping them without signal
+    // (Codex P2 on #1536).
+    const allowsSideEffect = (c: TCoderCall): boolean =>
+      c.source === 'sandbox' || allowsExtra(c.source);
+    const firstDisallowedSideEffect = raw.sideEffects.findIndex((c) => !allowsSideEffect(c));
+    const sandboxSideEffects =
+      firstDisallowedSideEffect === -1
+        ? raw.sideEffects
+        : raw.sideEffects.slice(0, firstDisallowedSideEffect);
+    const rejectedSideEffects =
+      firstDisallowedSideEffect === -1 ? [] : raw.sideEffects.slice(firstDisallowedSideEffect);
     // Parallel-safe delegations (Inline Foreground Lane: concurrent Explorers)
     // ride the `delegate` extra source. Empty on surfaces that don't opt into
     // the bucket, so this is a no-op for the delegated Coder.
@@ -330,7 +343,7 @@ export function buildCoderDetectors<
       fileMutations: sandboxFileMutations,
       sideEffects: sandboxSideEffects,
       ...(sandboxBatchOverflow.length > 0 ? { batchOverflow: sandboxBatchOverflow } : {}),
-      extraMutations: raw.extraMutations,
+      extraMutations: [...raw.extraMutations, ...rejectedSideEffects],
       // Filter Coder-internal tools out of droppedCandidates so the
       // parse-error guard in lib/coder-agent.ts doesn't false-positive
       // on them. `coder_update_state` and `coder_checkpoint` are
