@@ -4466,7 +4466,7 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.equal(detected.readOnly[0].source, 'cli');
     assert.equal(detected.readOnly[0].call.tool, 'read_file');
     assert.deepEqual(detected.fileMutations, []);
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.deepEqual(detected.extraMutations, []);
   });
 
@@ -4481,7 +4481,7 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.equal(detected.fileMutations.length, 1);
     assert.equal(detected.fileMutations[0].source, 'cli');
     assert.equal(detected.fileMutations[0].call.tool, 'write_file');
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.deepEqual(detected.extraMutations, []);
   });
 
@@ -4494,7 +4494,7 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.equal(detected.fileMutations.length, 2);
     assert.equal(detected.fileMutations[0].call.args.path, 'a.txt');
     assert.equal(detected.fileMutations[1].call.args.path, 'b.txt');
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.deepEqual(detected.extraMutations, []);
   });
 
@@ -4504,23 +4504,37 @@ describe('wrapCliDetectAllToolCalls', () => {
     const text = `\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${exec}\n\`\`\``;
     const detected = wrapCliDetectAllToolCalls(text);
     assert.equal(detected.fileMutations.length, 1);
-    assert.ok(detected.mutating);
-    assert.equal(detected.mutating.call.tool, 'exec');
+    assert.ok(detected.sideEffects.length > 0);
+    assert.equal(detected.sideEffects[0].call.tool, 'exec');
     assert.deepEqual(detected.extraMutations, []);
   });
 
-  it('rejects a second side-effect after the batch', () => {
+  it('chains consecutive side-effects up to the cap, overflow rejected', () => {
     const write = JSON.stringify({ tool: 'write_file', args: { path: 'a.txt', content: '1' } });
     const exec1 = JSON.stringify({ tool: 'exec', args: { command: 'npm test' } });
     const exec2 = JSON.stringify({ tool: 'exec', args: { command: 'npm run build' } });
     const text = `\`\`\`json\n${write}\n\`\`\`\n\`\`\`json\n${exec1}\n\`\`\`\n\`\`\`json\n${exec2}\n\`\`\``;
     const detected = wrapCliDetectAllToolCalls(text);
     assert.equal(detected.fileMutations.length, 1);
-    assert.ok(detected.mutating);
-    assert.equal(detected.mutating.call.tool, 'exec');
-    assert.equal(detected.mutating.call.args.command, 'npm test');
-    assert.equal(detected.extraMutations.length, 1);
-    assert.equal(detected.extraMutations[0].call.tool, 'exec');
+    assert.equal(detected.sideEffects.length, 2);
+    assert.equal(detected.sideEffects[0].call.args.command, 'npm test');
+    assert.equal(detected.sideEffects[1].call.args.command, 'npm run build');
+    assert.deepEqual(detected.extraMutations, []);
+
+    // Overflow: a fourth side-effect exceeds MAX_SIDE_EFFECT_CHAIN (3) and
+    // is rejected into extraMutations for the re-issue-next-turn hint.
+    const execs = ['a', 'b', 'c', 'd'].map((cmd) =>
+      JSON.stringify({ tool: 'exec', args: { command: cmd } }),
+    );
+    const overflowText = execs.map((block) => `\`\`\`json\n${block}\n\`\`\``).join('\n');
+    const overflowDetected = wrapCliDetectAllToolCalls(overflowText);
+    assert.equal(overflowDetected.sideEffects.length, 3);
+    assert.deepEqual(
+      overflowDetected.sideEffects.map((call) => call.call.args.command),
+      ['a', 'b', 'c'],
+    );
+    assert.equal(overflowDetected.extraMutations.length, 1);
+    assert.equal(overflowDetected.extraMutations[0].call.args.command, 'd');
   });
 
   it('collects parallel reads + file-mutation batch + trailing side-effect', () => {
@@ -4535,8 +4549,8 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.equal(detected.readOnly[1].call.tool, 'list_dir');
     assert.equal(detected.fileMutations.length, 1);
     assert.equal(detected.fileMutations[0].call.tool, 'write_file');
-    assert.ok(detected.mutating);
-    assert.equal(detected.mutating.call.tool, 'exec');
+    assert.ok(detected.sideEffects.length > 0);
+    assert.equal(detected.sideEffects[0].call.tool, 'exec');
     assert.deepEqual(detected.extraMutations, []);
   });
 
@@ -4548,7 +4562,7 @@ describe('wrapCliDetectAllToolCalls', () => {
     assert.deepEqual(detected.readOnly, []);
     assert.equal(detected.fileMutations.length, 1);
     assert.equal(detected.fileMutations[0].call.tool, 'write_file');
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.equal(detected.extraMutations.length, 1);
     assert.equal(detected.extraMutations[0].call.tool, 'read_file');
   });
@@ -4557,7 +4571,7 @@ describe('wrapCliDetectAllToolCalls', () => {
     const detected = wrapCliDetectAllToolCalls('just some prose with no fenced json at all.');
     assert.deepEqual(detected.readOnly, []);
     assert.deepEqual(detected.fileMutations, []);
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.deepEqual(detected.extraMutations, []);
   });
 });
@@ -4767,7 +4781,7 @@ describe('makeDaemonExplorerToolExec', () => {
 
   it('refuses mutating tools with a denial resultText (read-only contract)', async () => {
     // Even though the Explorer kernel is "read-only", it still routes
-    // the optional `mutating` slot from `wrapCliDetectAllToolCalls`
+    // the `sideEffects` chain from `wrapCliDetectAllToolCalls`
     // through `toolExec` when the model emits one. The executor must
     // reject by returning a polite denial resultText — the kernel
     // surfaces it as a user message in the next round and the model

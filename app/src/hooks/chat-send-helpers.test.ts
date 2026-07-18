@@ -97,7 +97,7 @@ function emptyDetected(overrides: Partial<DetectedToolCalls> = {}): DetectedTool
   return {
     readOnly: [],
     fileMutations: [],
-    mutating: null,
+    sideEffects: [],
     batchOverflow: [],
     extraMutations: [],
     droppedCandidates: [],

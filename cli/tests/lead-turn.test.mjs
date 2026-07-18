@@ -507,7 +507,7 @@ describe('wrapCliDetectAllToolCalls — lead Explorer fan-out bucket', () => {
 
     assert.equal(detected.readOnly.length, 1);
     assert.equal((detected.parallelDelegations ?? []).length, 0);
-    assert.equal(detected.mutating?.call.tool, 'delegate_explorer');
+    assert.equal(detected.sideEffects[0]?.call.tool, 'delegate_explorer');
   });
 
   it('rides delegations alongside reads when the lead cap is enabled', () => {
@@ -522,7 +522,7 @@ describe('wrapCliDetectAllToolCalls — lead Explorer fan-out bucket', () => {
 
     assert.equal(detected.readOnly.length, 1);
     assert.equal(detected.parallelDelegations.length, 2);
-    assert.equal(detected.mutating, null);
+    assert.deepEqual(detected.sideEffects, []);
     assert.equal(detected.extraMutations.length, 0);
   });
 

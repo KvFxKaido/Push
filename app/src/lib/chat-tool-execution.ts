@@ -16,7 +16,11 @@ import type { ApprovalCallback } from '@push/lib/tool-execution-runtime';
 import type { ExecutionMode } from '@push/lib/capabilities';
 import { createDefaultApprovalGates } from '@/lib/approval-gates';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
-import { executeAnyToolCall, MAX_FILE_MUTATION_BATCH } from '@/lib/tool-dispatch';
+import {
+  executeAnyToolCall,
+  MAX_FILE_MUTATION_BATCH,
+  MAX_SIDE_EFFECT_CHAIN,
+} from '@/lib/tool-dispatch';
 import {
   appendCardsToLatestToolCall,
   buildToolMeta,
@@ -647,10 +651,10 @@ export function handleDroppedCandidatesError(
  *
  *   - `batchOverflow` — file mutations exceeding MAX_FILE_MUTATION_BATCH.
  *     Hint: continue the batch on the next turn.
- *   - `extraMutations` — ordering violations (a second side-effect, a
- *     call after a side-effect, a read after the mutation batch started,
- *     or a file mutation that didn't reach the batch because the
- *     transaction was already done). Hint: reorder or split.
+ *   - `extraMutations` — ordering violations (a side-effect beyond the
+ *     MAX_SIDE_EFFECT_CHAIN cap, a non-side-effect call after the chain
+ *     began, or a read after the mutation batch started). Hint: reorder
+ *     or split.
  *
  * Mirrors the CLI's per-call error-code split (PR #680) so model-facing
  * vocabulary is consistent across surfaces. Pre-split, web emitted a
@@ -663,7 +667,7 @@ export function handleDroppedCandidatesError(
  */
 export function handleMultipleMutationsError(
   detected: {
-    mutating: AnyToolCall | null;
+    sideEffects: AnyToolCall[];
     batchOverflow: AnyToolCall[];
     extraMutations: AnyToolCall[];
   },
@@ -675,20 +679,18 @@ export function handleMultipleMutationsError(
   currentBranch?: string,
   runtimeIntervention?: RuntimeIntervention,
 ): MultipleMutationsErrorAction {
-  // `mutating` ONLY counts as a rejected ordering call when actual
-  // ordering extras are present (i.e. the model emitted a second
-  // side-effect, or violated the reads→mutations→side-effect order).
-  // When only `batchOverflow` triggered the rejection, `mutating` may
-  // be a legitimate trailing exec — it gets aborted as collateral
-  // damage of the conservative "reject whole turn on overflow"
-  // policy, but it must NOT be labeled as a per-call ordering
-  // violation in the model-facing error. Codex P2 / Copilot review
-  // on PR #684 caught this misclassification.
+  // `sideEffects` ONLY count as rejected ordering calls when actual
+  // ordering extras are present (i.e. the model exceeded the chain cap
+  // or violated the reads→mutations→side-effects order). When only
+  // `batchOverflow` triggered the rejection, the chain may be a
+  // legitimate trailing exec — it gets aborted as collateral damage of
+  // the conservative "reject whole turn on overflow" policy, but it
+  // must NOT be labeled as a per-call ordering violation in the
+  // model-facing error. Codex P2 / Copilot review on PR #684 caught
+  // this misclassification.
   const hasOrderingViolations = detected.extraMutations.length > 0;
   const orderingRejected: AnyToolCall[] = hasOrderingViolations
-    ? detected.mutating
-      ? [detected.mutating, ...detected.extraMutations]
-      : detected.extraMutations
+    ? [...detected.sideEffects, ...detected.extraMutations]
     : [];
   const batchOverflowNames = detected.batchOverflow.map((call) => getToolName(call));
   const orderingNames = orderingRejected.map((call) => getToolName(call));
@@ -718,7 +720,7 @@ export function handleMultipleMutationsError(
   }
   if (hasOrderingViolations) {
     hintParts.push(
-      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then at most one trailing side-effect (exec, commit, push, delegate, workflow_run). Use at most one mutation per file path in the batch; combine same-file edits into one call. Reorder or split across turns.`,
+      `A turn may emit read-only calls first, then up to ${MAX_FILE_MUTATION_BATCH} pure file mutations as one batch (write/edit/patch on sandbox-backed surfaces), then a trailing chain of up to ${MAX_SIDE_EFFECT_CHAIN} side-effecting calls (exec, commit, push, delegate, workflow_run) that run sequentially and stop on the first failure. Use at most one mutation per file path in the batch; combine same-file edits into one call. Reorder or split across turns.`,
     );
   }
 

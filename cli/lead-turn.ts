@@ -33,7 +33,7 @@ import {
   type CoderToolExecResult,
   type DetectedToolCalls,
 } from '../lib/coder-agent.ts';
-import { groupCallsByPhase } from '../lib/tool-call-grouping.ts';
+import { groupCallsByPhase, MAX_SIDE_EFFECT_CHAIN } from '../lib/tool-call-grouping.ts';
 import { RUN_TOKEN_BUDGET_ENV_VAR, resolveRunTokenBudget } from '../lib/run-cost-budget.ts';
 import { isEditDiff } from '../lib/edit-diff.ts';
 import { isToolCard } from '../lib/tool-cards.ts';
@@ -239,12 +239,17 @@ function classifyCliToolCalls(
     maxParallelReads: null,
     maxFileMutationBatch: null,
     maxParallelDelegations: options?.maxParallelDelegations ?? null,
+    // Reads/mutations stay uncapped (historical CLI behavior), but the
+    // side-effect chain shares the canonical cap: it bounds approval
+    // prompts per turn, and 3 covers the dominant exec → exec → commit
+    // chain interleaved-tool-calling models emit.
+    maxSideEffectChain: MAX_SIDE_EFFECT_CHAIN,
   });
   return {
     readOnly: grouped.readOnly,
     parallelDelegations: grouped.parallelDelegations,
     fileMutations: grouped.fileMutations,
-    mutating: grouped.mutating,
+    sideEffects: grouped.sideEffects,
     extraMutations: [...grouped.extraMutations, ...grouped.batchOverflow],
     droppedCandidates,
   };

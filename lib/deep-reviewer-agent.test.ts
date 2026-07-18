@@ -72,7 +72,7 @@ function baseOptions(overrides: {
       overrides.detectAllToolCalls ??
       (() => ({
         readOnly: [],
-        mutating: null,
+        sideEffects: [],
         fileMutations: [],
         extraMutations: [],
         droppedCandidates: [],
@@ -173,7 +173,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
         { call: { tool: 'repo_grep', args: {} } },
         { call: { tool: 'repo_search', args: {} } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -286,7 +286,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
     // what we're testing here.
     const oneRead = (): ReturnType<DeepReviewerOptions<Call, never>['detectAllToolCalls']> => ({
       readOnly: [{ call: { tool: 'repo_grep', args: {} } }],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -298,7 +298,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
         if (calls === 1) return oneRead();
         return {
           readOnly: [],
-          mutating: null,
+          sideEffects: [],
           fileMutations: [],
           extraMutations: [],
           droppedCandidates: [],
@@ -560,7 +560,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
           // detectAnyToolCall path executes it).
           detectAllToolCalls: (content: string) => ({
             readOnly: [],
-            mutating: content.includes('"tool": "typecheck"') ? typecheckCall : null,
+            sideEffects: content.includes('"tool": "typecheck"') ? [typecheckCall] : [],
             fileMutations: [],
             extraMutations: [],
             droppedCandidates: [],
@@ -622,7 +622,7 @@ describe('runDeepReviewer (PushStream consumer)', () => {
           stream,
           detectAllToolCalls: (content: string) => ({
             readOnly: [],
-            mutating: content.includes('"tool": "typecheck"') ? typecheckCall : null,
+            sideEffects: content.includes('"tool": "typecheck"') ? [typecheckCall] : [],
             fileMutations: [],
             extraMutations: [],
             droppedCandidates: [],

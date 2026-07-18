@@ -168,7 +168,7 @@ export async function processAssistantTurn(
   // --- Branch dispatch ---
   const fileMutationBatch = detected.fileMutations;
   const totalBatchedCalls =
-    parallelToolCalls.length + fileMutationBatch.length + (detected.mutating ? 1 : 0);
+    parallelToolCalls.length + fileMutationBatch.length + detected.sideEffects.length;
   if (totalBatchedCalls > 1) {
     return executeBatchedToolCalls(
       detected,
@@ -186,7 +186,7 @@ export async function processAssistantTurn(
   const singleDetectedCalls = detected.readOnly.concat(
     detected.parallelDelegations ?? [],
     detected.fileMutations,
-    detected.mutating ? [detected.mutating] : [],
+    detected.sideEffects,
   );
   const nativeSingle = singleDetectedCalls.length === 1 ? singleDetectedCalls[0] : null;
   // Text path keeps detectAnyToolCall's recovery (bare-args/namespaced/xml/token) that detectAllToolCalls gates off (#1162).

@@ -144,7 +144,7 @@ function baseCoderOptions(overrides: {
       overrides.detectAllToolCalls ??
       (() => ({
         readOnly: [],
-        mutating: null,
+        sideEffects: [],
         fileMutations: [],
         extraMutations: [],
         droppedCandidates: [],
@@ -168,7 +168,7 @@ describe('runCoderAgent — adaptMaxRounds seam', () => {
   const repeatedRead = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
   const detectRepeatedRead = () => ({
     readOnly: [repeatedRead],
-    mutating: null,
+    sideEffects: [],
     fileMutations: [],
     extraMutations: [],
     droppedCandidates: [],
@@ -321,7 +321,7 @@ describe('runCoderAgent (PushStream consumer) — forceToolChoiceNextRound escal
         nativeToolSchemas: NATIVE_TOOLS,
         detectNativeToolCalls: () => ({
           readOnly: [taggedCall],
-          mutating: null,
+          sideEffects: [],
           fileMutations: [],
           extraMutations: [],
           droppedCandidates: [],
@@ -671,7 +671,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -707,7 +707,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -740,7 +740,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -773,7 +773,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const call = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
     const detectAllToolCalls = () => ({
       readOnly: [call],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -805,7 +805,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const call = { call: { tool: 'sandbox_read_file', args: { path: 'a' } } };
     const detectAllToolCalls = () => ({
       readOnly: [call],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -838,7 +838,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const call = { call: { tool: 'exec_poll', args: { session_id: 's1', from_seq: 0 } } };
     const detectAllToolCalls = () => ({
       readOnly: [call],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -875,7 +875,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
       parallelDelegations: [],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [{ call: { tool: 'delegate_explorer', args: { task: 'third thread' } } }],
       droppedCandidates: [],
@@ -925,7 +925,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1028,7 +1028,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const readB = { call: { tool: 'sandbox_read_file', args: { path: 'b.ts' } } };
     const detectAllToolCalls = () => ({
       readOnly: [readA, readB],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1116,7 +1116,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'list_commits', args: {} } },
         { call: { tool: 'sandbox_read_file', args: { path: 'a.ts' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1172,7 +1172,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a.ts' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b.ts' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1217,7 +1217,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     };
     const detectAllToolCalls = () => ({
       readOnly: [signedRead, unsignedRead],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1322,7 +1322,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     } as unknown as Call;
     const detectAllToolCalls = () => ({
       readOnly: [signedRead, unsignedRead],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1373,7 +1373,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1444,7 +1444,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
         { call: { tool: 'sandbox_read_file', args: { path: 'a' } } },
         { call: { tool: 'sandbox_read_file', args: { path: 'b' } } },
       ],
-      mutating: null,
+      sideEffects: [],
       fileMutations: [],
       extraMutations: [],
       droppedCandidates: [],
@@ -1755,7 +1755,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
           if (detectCallCount === 1) {
             return {
               readOnly: [{ call: { tool: 'sandbox_diff', args: {} } }] as never,
-              mutating: null,
+              sideEffects: [],
               fileMutations: [],
               extraMutations: [],
               droppedCandidates: [
@@ -1770,7 +1770,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
           }
           return {
             readOnly: [],
-            mutating: null,
+            sideEffects: [],
             fileMutations: [],
             extraMutations: [],
             droppedCandidates: [],
@@ -1876,7 +1876,7 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
           harnessMaxRounds: 2,
           detectAllToolCalls: () => ({
             readOnly: [repeatedRead],
-            mutating: null,
+            sideEffects: [],
             fileMutations: [],
             extraMutations: [],
             droppedCandidates: [],
@@ -1922,7 +1922,7 @@ describe('runCoderAgent — run-cost receipt (coder_run_cost)', () => {
           harnessMaxRounds: 10,
           detectAllToolCalls: () => ({
             readOnly: [call],
-            mutating: null,
+            sideEffects: [],
             fileMutations: [],
             extraMutations: [],
             droppedCandidates: [],

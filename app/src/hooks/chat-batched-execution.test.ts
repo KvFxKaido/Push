@@ -172,7 +172,7 @@ describe('executeBatchedToolCalls', () => {
       {
         readOnly: [readCall],
         fileMutations: [],
-        mutating: mergeCall,
+        sideEffects: [mergeCall],
         batchOverflow: [],
         extraMutations: [],
         droppedCandidates: [],

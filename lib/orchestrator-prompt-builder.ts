@@ -18,6 +18,7 @@ import {
   TOOL_CALL_PLACEMENT_SECTION,
 } from './system-prompt-sections.js';
 import { getToolPublicName, getToolPublicNames } from './tool-registry.js';
+import { MAX_SIDE_EFFECT_CHAIN } from './tool-call-grouping.js';
 
 // ---------------------------------------------------------------------------
 // Orchestrator identity/voice — shared constants
@@ -169,9 +170,9 @@ export function buildOrchestratorDelegation(opts: OrchestratorPromptOptions = {}
 A single turn may emit:
 - Any number of read-only calls (they run in parallel, cap 6).
 - Any number of pure file mutations (\`${getToolPublicName('sandbox_write_file')}\`, \`${getToolPublicName('sandbox_edit_file')}\`, \`${getToolPublicName('sandbox_edit_range')}\`, \`${getToolPublicName('sandbox_search_replace')}\`, \`${getToolPublicName('sandbox_apply_patchset')}\`) — the runtime executes them sequentially as one mutation batch; use at most one mutation tool call per file path in a turn and combine same-file edits into that call.
-- At most one trailing side-effecting call: ${trailingSideEffectMenu}. Any second side-effect is rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
+- A trailing chain of up to ${MAX_SIDE_EFFECT_CHAIN} side-effecting calls: ${trailingSideEffectMenu}. The chain runs sequentially and stops on the first failure (later calls in the chain are not executed). Side-effects beyond the cap are rejected with \`MULTI_MUTATION_NOT_ALLOWED\`.
 
-Order matters: put reads first, then writes/edits, then the single side-effect last. If you need to write files and then run tests, emit the writes and the \`${getToolPublicName('sandbox_exec')}\` in one turn.`;
+Order matters: put reads first, then writes/edits, then the side-effect chain last. If you need to write files, run tests, and commit, you can emit the writes, the \`${getToolPublicName('sandbox_exec')}\`, and the commit in one turn — but only chain side-effects whose later steps remain valid if an earlier step's output surprises you; otherwise stop after the step you need to see.`;
 
   return `## Efficient Delegation Briefs
 

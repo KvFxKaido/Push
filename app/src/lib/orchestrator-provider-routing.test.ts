@@ -243,6 +243,14 @@ describe('routeReplaysReasoningContent', () => {
     expect(routeReplaysReasoningContent('huggingface', 'deepseek-ai/DeepSeek-V4-Pro')).toBe(true);
     expect(routeReplaysReasoningContent('huggingface', 'zai-org/GLM-5.2')).toBe(false);
     expect(routeReplaysReasoningContent('zen', undefined)).toBe(false);
+    // Gateway-routed Kimi: preserve-thinking is forced on model-side, so
+    // K2.x needs the reasoning echo through gateways too — the miss is a
+    // silent chain-of-thought loss, not a 400 (unlike DeepSeek).
+    expect(routeReplaysReasoningContent('openrouter', 'moonshotai/kimi-k2.7-code')).toBe(true);
+    expect(routeReplaysReasoningContent('openrouter', 'moonshotai/kimi-k2-thinking')).toBe(true);
+    expect(routeReplaysReasoningContent('huggingface', 'moonshotai/Kimi-K2.7-Code')).toBe(true);
+    expect(routeReplaysReasoningContent('zen', 'kimi-k2.7')).toBe(true);
+    expect(routeReplaysReasoningContent('openrouter', 'openai/gpt-5.2')).toBe(false);
   });
 });
 

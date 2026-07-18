@@ -78,7 +78,7 @@ export interface BuildToolLedgerOptions<TCall> {
 
 export type ToolLedgerGroupedCalls<TCall> = Pick<
   GroupedCalls<TCall>,
-  'readOnly' | 'parallelDelegations' | 'fileMutations' | 'mutating' | 'extraMutations'
+  'readOnly' | 'parallelDelegations' | 'fileMutations' | 'sideEffects' | 'extraMutations'
 > & { readonly batchOverflow?: readonly TCall[] };
 
 const TOOL_LEDGER_PHASES: readonly ToolLedgerPhase[] = [
@@ -142,7 +142,10 @@ export function buildToolLedgerFromGroupedCalls<TCall>(
     addEntry(call, 'parallel_delegation', 'accepted');
   }
   for (const call of grouped.fileMutations) addEntry(call, 'file_mutation', 'accepted');
-  if (grouped.mutating) addEntry(grouped.mutating, 'trailing_side_effect', 'accepted');
+  // The phase label stays `trailing_side_effect` for the whole chain —
+  // renaming it would ripple through the event vocabulary for no
+  // semantic gain (each entry is still a trailing side-effect).
+  for (const call of grouped.sideEffects) addEntry(call, 'trailing_side_effect', 'accepted');
   for (const call of grouped.batchOverflow ?? []) {
     addEntry(call, 'file_mutation_batch_overflow', 'rejected', 'file_mutation_batch_overflow');
   }

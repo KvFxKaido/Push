@@ -110,7 +110,7 @@ export async function executeBatchedToolCalls(
   const allDetectedToolCalls: AnyToolCall[] = [
     ...parallelToolCalls,
     ...fileMutationBatch,
-    ...(detected.mutating ? [detected.mutating] : []),
+    ...detected.sideEffects,
   ];
   const toolUseIdByCall = new Map<AnyToolCall, string>();
   const toolUses = allDetectedToolCalls.map((call) => {
@@ -129,7 +129,7 @@ export async function executeBatchedToolCalls(
   console.log(`[Push] Batched tool calls detected:`, {
     reads: parallelToolCalls.length,
     fileMutations: fileMutationBatch.length,
-    trailing: detected.mutating ? getToolName(detected.mutating) : null,
+    trailing: detected.sideEffects.map((call) => getToolName(call)),
   });
   const parallelExecutionIds = parallelToolCalls.map(() => createId());
 
@@ -163,7 +163,7 @@ export async function executeBatchedToolCalls(
   const batchNeedsSandbox =
     hasParallelSandboxCalls ||
     fileMutationBatch.some((call) => call.source === 'sandbox') ||
-    detected.mutating?.source === 'sandbox';
+    detected.sideEffects.some((call) => call.source === 'sandbox');
   if (
     batchNeedsSandbox &&
     !sandboxIdRef.current &&
@@ -234,7 +234,7 @@ export async function executeBatchedToolCalls(
     lockedProvider,
     resolvedModel,
     parallelSandboxStatus,
-    shouldEmitPeriodicPulse(round) && !detected.mutating
+    shouldEmitPeriodicPulse(round) && detected.sideEffects.length === 0
       ? { includePulse: true, pulseReason: 'periodic' }
       : undefined,
   );
@@ -452,8 +452,8 @@ export async function executeBatchedToolCalls(
     }
   }
 
-  // Execute trailing side-effect after the batch, unless the batch
-  // hard-failed above (in which case we return to the model for a fix).
+  // Execute the trailing side-effect chain after the batch, unless the
+  // batch hard-failed above (in which case we return to the model for a fix).
   // Abort check is unconditional: an aborted turn must `break` regardless
   // of whether a trailing mutation was queued (pre-extraction code gated
   // this on `detected.mutating`, which let an abort-without-mutation case
@@ -467,7 +467,7 @@ export async function executeBatchedToolCalls(
       loopCompletedNormally: false,
     };
   }
-  if (detected.mutating && batchHadHardFailure) {
+  if (detected.sideEffects.length > 0 && batchHadHardFailure) {
     return {
       nextApiMessages,
       nextRecoveryState: recoveryState,
@@ -476,8 +476,11 @@ export async function executeBatchedToolCalls(
     };
   }
 
-  if (detected.mutating) {
-    const mutCall = detected.mutating;
+  // Side-effect chain: sequential, fail-fast. A hard failure stops the
+  // chain — the model sees the failed result and the unexecuted tail is
+  // simply not run, mirroring the file-mutation batch's short-circuit
+  // semantics above.
+  for (const mutCall of detected.sideEffects) {
     const mutExecutionId = createId();
     const mutStatusLabel = getToolStatusLabel(mutCall);
     const mutExecStart = Date.now();
@@ -651,6 +654,14 @@ export async function executeBatchedToolCalls(
     const trailingPolicyAction = applyPostToolPolicyEffects(nextApiMessages, [mutOutcome.raw]);
     if (trailingPolicyAction) {
       return trailingPolicyAction;
+    }
+
+    if (isMutError) {
+      // Stop the chain on the first hard error so the model reacts to
+      // the failure before any later side-effect runs against state it
+      // didn't plan for. The unexecuted tail returns to the model as
+      // "not run" by omission — same contract as the mutation batch.
+      break;
     }
   }
 

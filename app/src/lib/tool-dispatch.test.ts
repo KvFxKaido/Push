@@ -259,7 +259,7 @@ describe('detectAnyToolCall resilience', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(2);
     expect(detected.readOnly.some((c) => c.source === 'todo')).toBe(true);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
   });
 
   it('classifies todo_write as a trailing mutation after parallel reads', () => {
@@ -273,9 +273,9 @@ describe('detectAnyToolCall resilience', () => {
     ].join('\n');
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
-    expect(detected.mutating).not.toBeNull();
-    expect(detected.mutating!.source).toBe('todo');
-    expect(detected.mutating!.call.tool).toBe('todo_write');
+    expect(detected.sideEffects).toHaveLength(1);
+    expect(detected.sideEffects[0]?.source).toBe('todo');
+    expect(detected.sideEffects[0]?.call.tool).toBe('todo_write');
   });
 });
 
@@ -450,7 +450,7 @@ describe('detectAllToolCalls', () => {
       ...grouped.readOnly,
       ...(grouped.parallelDelegations ?? []),
       ...grouped.fileMutations,
-      ...(grouped.mutating ? [grouped.mutating] : []),
+      ...grouped.sideEffects,
     ];
     expect(singleFromGrouped).toHaveLength(0);
   });
@@ -527,7 +527,34 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(2);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
+  });
+
+  it('a full-budget turn (6 reads + 8 mutations + 3-chain) survives the pre-group scan cap', () => {
+    // Codex P2 on #1536: the merge-loop soft cap reserved a single trailing
+    // slot, so call 17 of a maximal valid turn was dropped before grouping.
+    const reads = Array.from({ length: 6 }, (_, i) =>
+      JSON.stringify({ tool: 'sandbox_read_file', args: { path: `/workspace/r${i}.ts` } }),
+    );
+    const writes = Array.from({ length: 8 }, (_, i) =>
+      JSON.stringify({
+        tool: 'sandbox_write_file',
+        args: { path: `/workspace/w${i}.ts`, content: `${i}` },
+      }),
+    );
+    const execs = ['npm test', 'npm run build', 'echo done'].map((command) =>
+      JSON.stringify({ tool: 'sandbox_exec', args: { command } }),
+    );
+    const detected = detectAllToolCalls([...reads, ...writes, ...execs].join('\n'));
+    expect(detected.readOnly).toHaveLength(6);
+    expect(detected.fileMutations).toHaveLength(8);
+    expect(
+      detected.sideEffects.map((c) =>
+        c.source === 'sandbox' && c.call.tool === 'sandbox_exec' ? c.call.args.command : null,
+      ),
+    ).toEqual(['npm test', 'npm run build', 'echo done']);
+    expect(detected.batchOverflow).toEqual([]);
+    expect(detected.extraMutations).toEqual([]);
   });
 
   it('treats sandbox_read_symbols as read-only when a mutating call follows', () => {
@@ -542,10 +569,8 @@ describe('detectAllToolCalls', () => {
     if (detected.readOnly[0].source === 'sandbox') {
       expect(detected.readOnly[0].call.tool).toBe('sandbox_read_symbols');
     }
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
   });
 
   it('treats sandbox_find_references as read-only when a mutating call follows', () => {
@@ -560,10 +585,8 @@ describe('detectAllToolCalls', () => {
     if (detected.readOnly[0].source === 'sandbox') {
       expect(detected.readOnly[0].call.tool).toBe('sandbox_find_references');
     }
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
   });
 
   it('keeps trailing mutating call when there is exactly one read call', () => {
@@ -575,10 +598,8 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
     expect(detected.readOnly[0].source).toBe('github');
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_commit');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_commit');
   });
 
   it('treats grep_file as read-only when a mutation follows', () => {
@@ -593,10 +614,8 @@ describe('detectAllToolCalls', () => {
     if (detected.readOnly[0].source === 'github') {
       expect(detected.readOnly[0].call.tool).toBe('grep_file');
     }
-    expect(detected.mutating?.source).toBe('delegate');
-    if (detected.mutating?.source === 'delegate') {
-      expect(detected.mutating.call.tool).toBe('delegate_explorer');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('delegate');
+    expect(detected.sideEffects[0]?.call.tool).toBe('delegate_explorer');
   });
 
   it('deduplicates wrapper and bare forms of the same call', () => {
@@ -607,7 +626,7 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
   });
 
   it('deduplicates identical wrapper calls with reordered args keys', () => {
@@ -618,7 +637,7 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
   });
 
   it('deduplicates nested args regardless of key order', () => {
@@ -629,10 +648,8 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
   });
 
   it('truncates parallel reads to MAX instead of bailing', () => {
@@ -645,7 +662,7 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(6); // MAX_PARALLEL_TOOL_CALLS
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
   });
 
   it('keeps read prefix when mutation appears mid-sequence', () => {
@@ -659,10 +676,9 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(2);
-    expect(detected.mutating).not.toBeNull();
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects).toHaveLength(1);
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
   });
 
   it('rejects a file mutation that comes after a side-effect', () => {
@@ -676,11 +692,10 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(1);
     expect(detected.fileMutations).toHaveLength(0);
-    expect(detected.mutating).not.toBeNull();
+    expect(detected.sideEffects).toHaveLength(1);
     expect(detected.extraMutations).toHaveLength(1);
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
     if (detected.extraMutations[0]?.source === 'sandbox') {
       expect(detected.extraMutations[0].call.tool).toBe('sandbox_write_file');
     }
@@ -707,7 +722,7 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(2);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
     expect(detected.extraMutations).toHaveLength(0);
     if (detected.fileMutations[0]?.source === 'sandbox') {
       expect(detected.fileMutations[0].call.tool).toBe('sandbox_write_file');
@@ -779,10 +794,8 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(2);
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_exec');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_exec');
     expect(detected.extraMutations).toHaveLength(0);
   });
 
@@ -799,15 +812,14 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(2);
     expect(detected.fileMutations).toHaveLength(2);
-    expect(detected.mutating?.source).toBe('sandbox');
-    if (detected.mutating?.source === 'sandbox') {
-      expect(detected.mutating.call.tool).toBe('sandbox_commit');
-    }
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects[0]?.call.tool).toBe('sandbox_commit');
     expect(detected.extraMutations).toHaveLength(0);
   });
 
-  it('rejects a second side-effect after a file mutation batch', () => {
-    // [write, exec, exec] — second exec is extraMutations
+  it('accepts a side-effect chain after a file mutation batch, up to the cap', () => {
+    // [write, exec, exec] — both execs join the trailing chain (cap 3),
+    // in emission order; nothing overflows.
     const text = [
       '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
       '{"tool":"sandbox_exec","args":{"command":"npm test"}}',
@@ -816,19 +828,53 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.fileMutations).toHaveLength(1);
-    expect(detected.mutating?.source).toBe('sandbox');
+    expect(detected.sideEffects).toHaveLength(2);
+    expect(detected.sideEffects[0]?.source).toBe('sandbox');
+    expect(detected.sideEffects.map((c) => c.call.tool)).toEqual(['sandbox_exec', 'sandbox_exec']);
+    if (
+      detected.sideEffects[0]?.source === 'sandbox' &&
+      detected.sideEffects[0].call.tool === 'sandbox_exec'
+    ) {
+      expect(detected.sideEffects[0].call.args.command).toBe('npm test');
+    }
+    expect(detected.extraMutations).toHaveLength(0);
+  });
+
+  it('overflows side-effects beyond MAX_SIDE_EFFECT_CHAIN into extraMutations', () => {
+    // [write, exec ×4] — first 3 execs fill the chain (MAX_SIDE_EFFECT_CHAIN = 3),
+    // the 4th lands in extraMutations as an ordering-violation-class reject.
+    const execs = Array.from(
+      { length: 4 },
+      (_, i) => `{"tool":"sandbox_exec","args":{"command":"step ${i}"}}`,
+    );
+    const text = [
+      '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}',
+      ...execs,
+    ].join('\n');
+
+    const detected = detectAllToolCalls(text);
+    expect(detected.fileMutations).toHaveLength(1);
+    expect(detected.sideEffects).toHaveLength(3);
+    detected.sideEffects.forEach((call, i) => {
+      if (call.source === 'sandbox' && call.call.tool === 'sandbox_exec') {
+        expect(call.call.args.command).toBe(`step ${i}`);
+      }
+    });
     expect(detected.extraMutations).toHaveLength(1);
-    if (detected.extraMutations[0]?.source === 'sandbox') {
-      expect(detected.extraMutations[0].call.tool).toBe('sandbox_exec');
+    if (
+      detected.extraMutations[0]?.source === 'sandbox' &&
+      detected.extraMutations[0].call.tool === 'sandbox_exec'
+    ) {
+      expect(detected.extraMutations[0].call.args.command).toBe('step 3');
     }
   });
 
-  it('classifies a single file mutation into fileMutations, not mutating', () => {
+  it('classifies a single file mutation into fileMutations, not sideEffects', () => {
     const text = '{"tool":"sandbox_write_file","args":{"path":"/workspace/a.md","content":"one"}}';
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(1);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
     expect(detected.extraMutations).toHaveLength(0);
   });
 
@@ -847,7 +893,7 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(8);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
     expect(detected.batchOverflow).toHaveLength(2);
     expect(detected.extraMutations).toHaveLength(0);
 
@@ -894,7 +940,7 @@ describe('detectAllToolCalls', () => {
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
     expect(detected.fileMutations).toHaveLength(1);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
     expect(detected.extraMutations).toHaveLength(2);
     if (detected.extraMutations[0]?.source === 'sandbox') {
       expect(detected.extraMutations[0].call.tool).toBe('sandbox_read_file');
@@ -904,7 +950,7 @@ describe('detectAllToolCalls', () => {
     }
   });
 
-  it('captures extra delegate_coder mutations so the caller can reject them', () => {
+  it('chains multiple delegate_coder calls into the side-effect chain up to the cap', () => {
     const text = [
       '{"tool":"delegate_coder","args":{"task":"refactor the auth module to use tokens"}}',
       '{"tool":"delegate_coder","args":{"task":"add unit tests for the session handler"}}',
@@ -912,17 +958,14 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
-    expect(detected.mutating?.source).toBe('delegate');
-    expect(detected.extraMutations).toHaveLength(1);
-    if (detected.mutating?.source === 'delegate') {
-      expect(detected.mutating.call.tool).toBe('delegate_coder');
-    }
-    if (detected.extraMutations[0]?.source === 'delegate') {
-      expect(detected.extraMutations[0].call.tool).toBe('delegate_coder');
-    }
+    expect(detected.sideEffects.map((c) => [c.source, c.call.tool])).toEqual([
+      ['delegate', 'delegate_coder'],
+      ['delegate', 'delegate_coder'],
+    ]);
+    expect(detected.extraMutations).toHaveLength(0);
   });
 
-  it('captures extra delegate_explorer mutations so the caller can reject them', () => {
+  it('chains multiple delegate_explorer calls into the side-effect chain up to the cap', () => {
     const text = [
       '{"tool":"delegate_explorer","args":{"task":"trace the auth flow across files"}}',
       '{"tool":"delegate_explorer","args":{"task":"find all session refresh triggers"}}',
@@ -930,14 +973,11 @@ describe('detectAllToolCalls', () => {
 
     const detected = detectAllToolCalls(text);
     expect(detected.readOnly).toHaveLength(0);
-    expect(detected.mutating?.source).toBe('delegate');
-    expect(detected.extraMutations).toHaveLength(1);
-    if (detected.mutating?.source === 'delegate') {
-      expect(detected.mutating.call.tool).toBe('delegate_explorer');
-    }
-    if (detected.extraMutations[0]?.source === 'delegate') {
-      expect(detected.extraMutations[0].call.tool).toBe('delegate_explorer');
-    }
+    expect(detected.sideEffects.map((c) => [c.source, c.call.tool])).toEqual([
+      ['delegate', 'delegate_explorer'],
+      ['delegate', 'delegate_explorer'],
+    ]);
+    expect(detected.extraMutations).toHaveLength(0);
   });
 
   it('detects delegate_explorer JSON with trimmed context fields', () => {
@@ -1184,7 +1224,7 @@ describe('detectAllToolCalls — namespaced-functions recovery', () => {
     // drops because the web runtime has no tool by that name — recovery
     // can only succeed for tools the runtime actually exposes.
     const allCalls = [...result.readOnly, ...result.fileMutations];
-    if (result.mutating) allCalls.push(result.mutating);
+    allCalls.push(...result.sideEffects);
 
     const toolNames = allCalls.map((c) => c.call.tool).sort();
     expect(toolNames).toEqual(['sandbox_read_file', 'sandbox_read_file']);
@@ -1236,7 +1276,7 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
   it('recovers a Shape B `<tool_call>` block via detectAllToolCalls', () => {
     const result = detectAllToolCalls(SHAPE_B_CAPTURE);
     const allCalls = [...result.readOnly, ...result.fileMutations];
-    if (result.mutating) allCalls.push(result.mutating);
+    allCalls.push(...result.sideEffects);
     expect(allCalls).toHaveLength(1);
     // The web runtime resolves the bare `read_file` + `{path}` shape to
     // the sandbox variant via inferToolFromArgs.
@@ -1246,7 +1286,7 @@ describe('detectAllToolCalls — XML-wrapper recovery', () => {
   it('recovers a Shape A `<tool_call>` block via detectAllToolCalls', () => {
     const result = detectAllToolCalls(SHAPE_A_CAPTURE);
     const allCalls = [...result.readOnly, ...result.fileMutations];
-    if (result.mutating) allCalls.push(result.mutating);
+    allCalls.push(...result.sideEffects);
     expect(allCalls).toHaveLength(1);
     expect(allCalls[0].call.tool).toBe('sandbox_read_file');
   });
@@ -1504,7 +1544,7 @@ describe('detectAllToolCalls — droppedCandidates tracking', () => {
     ].join('\n');
     const result = detectAllToolCalls(text);
     expect(result.readOnly).toHaveLength(0);
-    expect(result.mutating).toBeNull();
+    expect(result.sideEffects).toEqual([]);
     expect(result.droppedCandidates).toHaveLength(1);
     expect(result.droppedCandidates[0].rawToolName).toBe('sandbox');
     expect(result.droppedCandidates[0].resolvedToolName).toBeNull();
@@ -1539,8 +1579,8 @@ describe('detectAllToolCalls — textual-order merging', () => {
     // as `missing_args_object` and the legacy fallback claims it. Wrapped
     // sandbox_exec is a clean kernel claim. The flat-form appears FIRST
     // textually, so the merged ordering must put scratchpad before exec —
-    // otherwise the grouping state machine flips which side-effect runs as
-    // `mutating` vs which gets shoved into `extraMutations`.
+    // otherwise the grouping state machine flips the order in which the
+    // side-effect chain executes them.
     const text = [
       '```json',
       '{"tool": "set_scratchpad", "content": "remember this"}',
@@ -1551,15 +1591,13 @@ describe('detectAllToolCalls — textual-order merging', () => {
     ].join('\n');
     const result = detectAllToolCalls(text);
     // Both are side-effecting (scratchpad mutates session state, exec is
-    // a shell side-effect), so only one fits `mutating` and the other
-    // goes to `extraMutations`. The textually-first call wins `mutating`.
-    expect(result.mutating).not.toBeNull();
-    expect(result.mutating?.source).toBe('scratchpad');
-    expect(result.extraMutations).toHaveLength(1);
-    expect(result.extraMutations[0].source).toBe('sandbox');
-    if (result.extraMutations[0].source === 'sandbox') {
-      expect(result.extraMutations[0].call.tool).toBe('sandbox_exec');
-    }
+    // a shell side-effect), so both join the trailing chain — in the
+    // model's textual emission order: scratchpad first, exec second.
+    expect(result.sideEffects).toHaveLength(2);
+    expect(result.sideEffects[0]?.source).toBe('scratchpad');
+    expect(result.sideEffects[1]?.source).toBe('sandbox');
+    expect(result.sideEffects[1]?.call.tool).toBe('sandbox_exec');
+    expect(result.extraMutations).toHaveLength(0);
   });
 
   it('wrapped read followed by flat-form scratchpad keeps the read in readOnly', () => {
@@ -1574,7 +1612,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const result = detectAllToolCalls(text);
     expect(result.readOnly).toHaveLength(1);
     expect(result.readOnly[0].source).toBe('sandbox');
-    expect(result.mutating?.source).toBe('scratchpad');
+    expect(result.sideEffects[0]?.source).toBe('scratchpad');
     expect(result.extraMutations).toHaveLength(0);
   });
 
@@ -1605,7 +1643,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const tools = [
       ...result.readOnly.map((c) => c.call.tool),
       ...result.fileMutations.map((c) => c.call.tool),
-      ...(result.mutating ? [result.mutating.call.tool] : []),
+      ...result.sideEffects.map((c) => c.call.tool),
     ];
     expect(tools).not.toContain('sandbox_write_file');
   });
@@ -1630,7 +1668,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const allTools = [
       ...result.readOnly.map((c) => c.call.tool),
       ...result.fileMutations.map((c) => c.call.tool),
-      ...(result.mutating ? [result.mutating.call.tool] : []),
+      ...result.sideEffects.map((c) => c.call.tool),
     ];
     expect(allTools).toContain('set_scratchpad');
     expect(allTools).not.toContain('read_file');
@@ -1653,7 +1691,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const allTools = [
       ...result.readOnly.map((c) => c.call.tool),
       ...result.fileMutations.map((c) => c.call.tool),
-      ...(result.mutating ? [result.mutating.call.tool] : []),
+      ...result.sideEffects.map((c) => c.call.tool),
     ];
     expect(allTools).toContain('set_scratchpad');
     expect(allTools).not.toContain('read_file');
@@ -1682,7 +1720,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const allTools = [
       ...result.readOnly.map((c) => c.call.tool),
       ...result.fileMutations.map((c) => c.call.tool),
-      ...(result.mutating ? [result.mutating.call.tool] : []),
+      ...result.sideEffects.map((c) => c.call.tool),
     ];
     // The fenced read should land.
     expect(allTools).toContain('sandbox_read_file');
@@ -1709,7 +1747,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
     const allTools = [
       ...result.readOnly.map((c) => c.call.tool),
       ...result.fileMutations.map((c) => c.call.tool),
-      ...(result.mutating ? [result.mutating.call.tool] : []),
+      ...result.sideEffects.map((c) => c.call.tool),
     ];
     expect(allTools).toContain('sandbox_read_file');
     expect(allTools).not.toContain('sandbox_write_file');
@@ -1727,7 +1765,7 @@ describe('detectAllToolCalls — textual-order merging', () => {
 describe('detectAllToolCalls — argument-type drift', () => {
   it('coerces a quoted integer on the text path (fetch_pr)', () => {
     const detected = detectAllToolCalls('{"tool":"fetch_pr","args":{"repo":"o/r","pr":"105"}}');
-    const call = [...detected.readOnly, ...(detected.mutating ? [detected.mutating] : [])][0];
+    const call = [...detected.readOnly, ...detected.sideEffects][0];
     expect(call?.call.tool).toBe('fetch_pr');
     expect((call?.call as { args: Record<string, unknown> }).args.pr).toBe(105);
     expect(detected.droppedCandidates).toHaveLength(0);
@@ -1749,7 +1787,7 @@ describe('detectAllToolCalls — argument-type drift', () => {
       '{"tool":"fetch_pr","args":{"repo":"o/r","pr":"not-a-number"}}',
     );
     expect(detected.readOnly).toHaveLength(0);
-    expect(detected.mutating).toBeNull();
+    expect(detected.sideEffects).toEqual([]);
     expect(detected.droppedCandidates).toHaveLength(1);
     expect(detected.droppedCandidates[0]).toMatchObject({ resolvedToolName: 'fetch_pr' });
     // The github detector coerces the unparseable string to NaN before the
@@ -1792,7 +1830,7 @@ describe('detectAllToolCalls — argument-type drift', () => {
       },
     ]);
     expect(detected.droppedCandidates).toHaveLength(0);
-    const call = detected.fileMutations[0] ?? detected.mutating;
+    const call = detected.fileMutations[0] ?? detected.sideEffects[0];
     expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('abc123');
   });
 
@@ -1810,7 +1848,7 @@ describe('detectAllToolCalls — argument-type drift', () => {
       },
     ]);
     expect(detected.droppedCandidates).toHaveLength(0);
-    const call = detected.fileMutations[0] ?? detected.mutating;
+    const call = detected.fileMutations[0] ?? detected.sideEffects[0];
     expect((call?.call as { args: Record<string, unknown> }).args.expected_version).toBe('42');
   });
 
@@ -1827,6 +1865,6 @@ describe('detectAllToolCalls — argument-type drift', () => {
       },
     ]);
     expect(detected.droppedCandidates).toHaveLength(0);
-    expect(detected.fileMutations.length + (detected.mutating ? 1 : 0)).toBe(1);
+    expect(detected.fileMutations.length + detected.sideEffects.length).toBe(1);
   });
 });

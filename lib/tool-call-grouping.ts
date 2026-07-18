@@ -8,9 +8,10 @@
  *   1. Contiguous prefix of read-only calls → `readOnly` (executed in
  *      parallel).
  *   2. Contiguous file mutations → `fileMutations` (sequential, fail-fast).
- *   3. At most one trailing side-effecting call → `mutating`.
+ *   3. A trailing chain of side-effecting calls → `sideEffects`
+ *      (sequential, fail-fast, capped at `maxSideEffectChain`).
  *   4. Anything that violates the ordering (read after mutations
- *      started, second side-effect, calls after a side-effect, overflow)
+ *      started, non-side-effect after the chain began, chain overflow)
  *      → `extraMutations` so the caller can surface a structured error.
  *
  * Two parallel state machines with a comment in each pointing at the
@@ -84,6 +85,20 @@ export interface GroupingCaps {
    * Requires `predicates.isParallelDelegation` to take effect.
    */
   readonly maxParallelDelegations?: number | null;
+  /**
+   * Maximum trailing side-effecting calls per turn (the sequential,
+   * fail-fast chain: exec → exec → commit and similar). Overflow lands
+   * in `extraMutations` (ordering-violation hint — the model re-issues
+   * the tail next turn). `null` disables the cap (unbounded chain).
+   *
+   * Historically this was structurally fixed at 1 ("at most one trailing
+   * side-effect") — a defensive default from the early single-model days.
+   * Interleaved-tool-calling models (Kimi K2.7 et al.) natively chain
+   * several side-effecting steps per turn; per-call Auditor gates and
+   * Gate-at-Push audit cumulative state, so the chain does not weaken
+   * governance. See `MAX_SIDE_EFFECT_CHAIN`.
+   */
+  readonly maxSideEffectChain: number | null;
 }
 
 /**
@@ -104,6 +119,14 @@ export const MAX_PARALLEL_TOOL_CALLS = 6;
 export const MAX_FILE_MUTATION_BATCH = 8;
 
 /**
+ * Per-turn cap on the trailing side-effect chain. Sized for the dominant
+ * real chain (exec → exec → commit); anything longer is usually a turn
+ * that wanted to be two turns, and bounding it keeps the structured
+ * overflow error as the runaway backstop.
+ */
+export const MAX_SIDE_EFFECT_CHAIN = 3;
+
+/**
  * Canonical caps used by both web (`app/src/lib/tool-dispatch.ts`) and
  * CLI (`cli/engine.ts`). Matches the web defaults shipped 2026-03 and
  * adopted by CLI on the parser-convergence followup (PR after #679).
@@ -111,6 +134,7 @@ export const MAX_FILE_MUTATION_BATCH = 8;
 export const DEFAULT_GROUPING_CAPS: GroupingCaps = {
   maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
   maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
+  maxSideEffectChain: MAX_SIDE_EFFECT_CHAIN,
 };
 
 export interface GroupedCalls<T> {
@@ -129,8 +153,13 @@ export interface GroupedCalls<T> {
    * fail-fast — NOT atomic.
    */
   fileMutations: T[];
-  /** Optional trailing side-effecting call (at most one per turn). */
-  mutating: T | null;
+  /**
+   * Trailing chain of side-effecting calls, in emission order. Executed
+   * sequentially, fail-fast — a hard failure stops the chain and the
+   * unexecuted tail returns to the model. Capped at
+   * `maxSideEffectChain`; overflow lands in `extraMutations`.
+   */
+  sideEffects: T[];
   /**
    * File-mutation calls that exceeded `maxFileMutationBatch`. The
    * batch hit the cap, the rest of the input's contiguous file
@@ -142,11 +171,10 @@ export interface GroupedCalls<T> {
    * Ordering-violation calls the turn couldn't accept. Distinct from
    * `batchOverflow` so callers can give the model the right
    * correction hint. Sources:
-   *   - a second side-effect after `mutating` was set
-   *   - any call after `mutating` was set
+   *   - a side-effect beyond the `maxSideEffectChain` cap
+   *   - a non-side-effect call after the side-effect chain began
+   *     (read / file mutation / delegation after an exec)
    *   - a read emitted after the mutation transaction began
-   *   - a file mutation that didn't reach the batch because the
-   *     transaction was already done (exec → write_file)
    */
   extraMutations: T[];
 }
@@ -170,7 +198,7 @@ export function groupCallsByPhase<T>(
     readOnly: [],
     parallelDelegations: [],
     fileMutations: [],
-    mutating: null,
+    sideEffects: [],
     batchOverflow: [],
     extraMutations: [],
   };
@@ -194,15 +222,15 @@ export function groupCallsByPhase<T>(
     if (isParallelDelegation(only)) return { ...empty, parallelDelegations: [only] };
     if (predicates.isReadOnly(only)) return { ...empty, readOnly: [only] };
     if (predicates.isFileMutation(only)) return { ...empty, fileMutations: [only] };
-    return { ...empty, mutating: only };
+    return { ...empty, sideEffects: [only] };
   }
 
   const readOnly: T[] = [];
   const parallelDelegations: T[] = [];
   const fileMutations: T[] = [];
-  let mutating: T | null = null;
+  const sideEffects: T[] = [];
   const extraMutations: T[] = [];
-  let phase: 'reads' | 'mutations' | 'done' = 'reads';
+  let phase: 'reads' | 'mutations' | 'sideEffects' | 'done' = 'reads';
 
   for (const call of calls) {
     const isDelegation = isParallelDelegation(call);
@@ -210,8 +238,23 @@ export function groupCallsByPhase<T>(
     const isFileMut = !isDelegation && !isRead && predicates.isFileMutation(call);
 
     if (phase === 'done') {
-      // A side-effect already landed — anything else is overflow.
+      // An ordering violation already ended the turn — anything else is
+      // overflow.
       extraMutations.push(call);
+      continue;
+    }
+
+    if (phase === 'sideEffects') {
+      // The side-effect chain is open: more side-effecting calls extend
+      // it (the cap is applied after the walk); anything else — a read,
+      // file mutation, or delegation after an exec — is an ordering
+      // violation that also closes the turn.
+      if (!isDelegation && !isRead && !isFileMut) {
+        sideEffects.push(call);
+        continue;
+      }
+      extraMutations.push(call);
+      phase = 'done';
       continue;
     }
 
@@ -249,9 +292,9 @@ export function groupCallsByPhase<T>(
       continue;
     }
 
-    // Side-effecting call. Only one allowed per turn.
-    mutating = call;
-    phase = 'done';
+    // Side-effecting call — opens the trailing chain.
+    sideEffects.push(call);
+    phase = 'sideEffects';
   }
 
   // Cap parallel reads — truncate instead of bailing entirely. Reads
@@ -282,15 +325,32 @@ export function groupCallsByPhase<T>(
     batchOverflow = fileMutations.splice(caps.maxFileMutationBatch);
   }
 
-  return { readOnly, parallelDelegations, fileMutations, mutating, batchOverflow, extraMutations };
+  // Cap the side-effect chain — overflow is an ordering-violation-class
+  // reject (model re-issues the tail next turn), NOT a silent truncation:
+  // dropping a side-effect the model explicitly planned would desync its
+  // mental model of the workspace with no feedback.
+  if (caps.maxSideEffectChain !== null && sideEffects.length > caps.maxSideEffectChain) {
+    const overflow = sideEffects.splice(caps.maxSideEffectChain);
+    extraMutations.push(...overflow);
+  }
+
+  return {
+    readOnly,
+    parallelDelegations,
+    fileMutations,
+    sideEffects,
+    batchOverflow,
+    extraMutations,
+  };
 }
 
 /**
- * Convenience: pass-through caps that disable both limits. Useful for
+ * Convenience: pass-through caps that disable all limits. Useful for
  * tests and any caller that explicitly wants no per-turn enforcement.
  * Production surfaces (web + CLI) pass `DEFAULT_GROUPING_CAPS`.
  */
 export const UNCAPPED_GROUPING: GroupingCaps = {
   maxParallelReads: null,
   maxFileMutationBatch: null,
+  maxSideEffectChain: null,
 };

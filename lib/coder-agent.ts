@@ -113,6 +113,7 @@ import {
 } from './tool-registry.js';
 import { getToolTargetDetail } from './tool-target-detail.js';
 import type { DetectedToolCalls } from './deep-reviewer-agent.js';
+import { MAX_SIDE_EFFECT_CHAIN } from './tool-call-grouping.js';
 import { buildContextSummaryBlock, normalizeTrimmedRoleAlternation } from './coder-context-trim.js';
 import {
   clearMutationFailure,
@@ -2214,7 +2215,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         readOnly: detected.readOnly,
         parallelDelegations: detected.parallelDelegations ?? [],
         fileMutations: detected.fileMutations,
-        mutating: detected.mutating,
+        sideEffects: detected.sideEffects,
         // Batch-overflowed file mutations are skipped by execution (grouping
         // already removed them from `fileMutations`), so they must be recorded
         // as rejected — otherwise the Auditor reads a clean accepted batch and
@@ -2381,14 +2382,11 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
     // parallel-delegation bucket, so this is a no-op there.
     const parallelCalls = [...detected.readOnly, ...(detected.parallelDelegations ?? [])];
     const fileMutationBatch = detected.fileMutations;
-    const trailingMutation = detected.mutating;
     // Mutation work to run sequentially after parallel reads: the
-    // contiguous file-mutation batch followed by the optional trailing
-    // side-effect. Failures in the batch short-circuit further work.
-    const mutationQueue: TCall[] = [
-      ...fileMutationBatch,
-      ...(trailingMutation ? [trailingMutation] : []),
-    ];
+    // contiguous file-mutation batch followed by the trailing
+    // side-effect chain. Failures anywhere in the queue short-circuit
+    // further work — a failed exec stops the rest of the chain.
+    const mutationQueue: TCall[] = [...fileMutationBatch, ...detected.sideEffects];
     const batchTotal = parallelCalls.length + mutationQueue.length;
 
     // The prose prefix belongs to the user's transcript, not the model's
@@ -2688,8 +2686,8 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       }
 
       // Per-turn overflow feedback: calls the grouper rejected (a parallel
-      // Explorer delegation past the cap, a second side-effect, or a read after
-      // a mutation began) land in `extraMutations`, which the executable batch
+      // Explorer delegation past the cap, a side-effect past the chain cap, or
+      // a read after a mutation began) land in `extraMutations`, which the executable batch
       // above never runs. Surface them so the model knows part of its plan
       // didn't execute and can re-issue next turn — otherwise a lead that
       // fanned out three Explorers would get two results with no signal the
@@ -2714,7 +2712,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
           id: `coder-overflow-${round}`,
           role: 'user',
           content: formatToolResultEnvelope(
-            `[RUNTIME_INTERVENTION mode="${toolBudgetIntervention.mode}" source="${toolBudgetIntervention.source}" reason="${toolBudgetIntervention.reason}"]\n[TOOL_CALLS_NOT_RUN] ${roundLedger.rejected.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and at most one trailing side-effect; the calls above were over those limits. ${toolBudgetIntervention.guidance ?? ''}[/TOOL_CALLS_NOT_RUN]\n[/RUNTIME_INTERVENTION]`,
+            `[RUNTIME_INTERVENTION mode="${toolBudgetIntervention.mode}" source="${toolBudgetIntervention.source}" reason="${toolBudgetIntervention.reason}"]\n[TOOL_CALLS_NOT_RUN] ${roundLedger.rejected.length} tool call(s) exceeded this turn's limits and were NOT executed: ${droppedTools}. A turn runs parallel reads, up to two parallel Explorer delegations, one file-mutation batch, and a trailing chain of at most ${MAX_SIDE_EFFECT_CHAIN} side-effecting calls; the calls above were over those limits. ${toolBudgetIntervention.guidance ?? ''}[/TOOL_CALLS_NOT_RUN]\n[/RUNTIME_INTERVENTION]`,
           ),
           timestamp: Date.now(),
           isToolResult: true,
@@ -2803,7 +2801,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
         nativeToolCalls.length > 0 && detectNativeToolCalls
           ? detected.readOnly[0] ||
             detected.fileMutations[0] ||
-            detected.mutating ||
+            detected.sideEffects[0] ||
             detected.extraMutations[0] ||
             null
           : detectAnyToolCall(accumulated);
@@ -2832,7 +2830,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       ...detected.readOnly,
       ...(detected.parallelDelegations ?? []),
       ...detected.fileMutations,
-      ...(detected.mutating ? [detected.mutating] : []),
+      ...detected.sideEffects,
     ];
     const toolCall =
       singleDetectedCalls.length === 1

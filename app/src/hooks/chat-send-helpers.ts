@@ -112,7 +112,7 @@ export function recordGithubToolTurnUsage(
     ...detected.fileMutations,
     ...detected.batchOverflow,
     ...detected.extraMutations,
-    ...(detected.mutating ? [detected.mutating] : []),
+    ...detected.sideEffects,
   ];
   // A malformed GitHub call (e.g. `{"tool":"pr"}` with bad args) lands in
   // `droppedCandidates`, not the classified arrays — but it's still intent to
@@ -971,7 +971,7 @@ export function checkLoopBreaker(
   const allIncomingCalls = [
     ...detected.readOnly,
     ...detected.fileMutations,
-    ...(detected.mutating ? [detected.mutating] : []),
+    ...detected.sideEffects,
   ];
 
   // Collect the three exact-match breaker trips as reasons rather than
@@ -1011,10 +1011,7 @@ export function checkLoopBreaker(
   // (`sandbox_edit_file` hashline ops, `sandbox_apply_patchset`) don't feed the
   // window yet. Only the exact-match breakers drive `action` today.
   let worstSimilarity: { value: number; streak: number } | undefined;
-  for (const call of [
-    ...detected.fileMutations,
-    ...(detected.mutating ? [detected.mutating] : []),
-  ]) {
+  for (const call of [...detected.fileMutations, ...detected.sideEffects]) {
     const target = writeTargetOf((call.call as { args?: Record<string, unknown> }).args);
     if (!target) continue;
     const obs = detector.observeWrite(target.path, target.content);

@@ -5,6 +5,7 @@ import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
 import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
+import { MAX_SIDE_EFFECT_CHAIN } from '../lib/tool-call-grouping.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { spawnCommandInResolvedShell } from './shell.js';
@@ -1021,7 +1022,7 @@ Rules:
 - Paths are relative to workspace root unless absolute inside workspace.
 - Never attempt paths outside workspace.
 - You may emit multiple tool calls in one assistant reply.
-- Per-turn tool budget: read-only calls first (they run in parallel), then any number of file mutations (write_file / edit_file / undo_edit — run sequentially as one batch), then at most one trailing side-effect (exec / git_commit / save_memory). A second side-effect is rejected with MULTI_MUTATION_NOT_ALLOWED.
+- Per-turn tool budget: read-only calls first (they run in parallel), then any number of file mutations (write_file / edit_file / undo_edit — run sequentially as one batch), then a trailing chain of up to ${MAX_SIDE_EFFECT_CHAIN} side-effecting calls (exec / git_commit / save_memory) that run sequentially and stop on the first failure. Side-effects beyond the cap are rejected with MULTI_MUTATION_NOT_ALLOWED. Only chain side-effects whose later steps remain valid regardless of the earlier steps' output; otherwise stop after the step you need to see.
 - write_file / edit_file results append file-scoped type-checker diagnostics when a project checker is available. Treat reported errors as introduced by your change and fix them before moving on; "Diagnostics: clean" means the checker ran and found nothing for that file. Each check runs immediately after its edit — in a multi-file batch, a finding can be resolved by a later edit in the same reply (e.g. step 1 references a symbol step 2 adds), so before fixing a reported error, check whether a sibling edit already addressed it; when unsure, re-run lsp_diagnostics instead of re-editing.
 - Prefer edit_file over full-file rewrites when possible.
 - If a tool fails, correct the call and retry when appropriate.

@@ -258,6 +258,34 @@ conformanceColumn('reasoningBlocks', () => {
       reasoning_content: 'plain DeepSeek thought',
     });
   });
+
+  it('gateway-routed Kimi uses plain reasoning_content replay (preserve-thinking is forced on)', () => {
+    // Direct `kimi` has replayed since K2.7 support landed; the gateway arm
+    // (openrouter/zen/huggingface Kimi model IDs) closes the same gap for
+    // routed Kimi. Unlike DeepSeek (loud 400), a missing echo here degrades
+    // silently — the model loses its chain of thought across tool turns.
+    const model = 'moonshotai/kimi-k2.7-code';
+    expect(routeReplaysReasoningContent('openrouter', model)).toBe(true);
+    const body = toOpenAIChat(
+      req('openrouter', model, {
+        messages: [
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'visible answer',
+            timestamp: 0,
+            reasoningContent: 'plain Kimi thought',
+          },
+        ],
+      }),
+    );
+
+    expect(body.messages?.[0]).toEqual({
+      role: 'assistant',
+      content: 'visible answer',
+      reasoning_content: 'plain Kimi thought',
+    });
+  });
 });
 
 // === multimodal (delivery + model axis proven; degrade path still pending) ===
