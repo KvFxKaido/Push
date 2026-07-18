@@ -40,7 +40,7 @@ describe('generic CLI tool-card fallback', () => {
 
   it('bounds nested and long payloads instead of dumping the card', () => {
     const display = formatToolCard({
-      type: 'sandbox',
+      type: 'ci-status',
       data: Object.fromEntries(
         Array.from({ length: 10 }, (_, index) => [
           `field_${index}`,
@@ -62,7 +62,7 @@ describe('generic CLI tool-card fallback', () => {
     assert.ok(display.title.length <= 80);
 
     const known = formatToolCard({
-      type: 'sandbox',
+      type: 'ci-status',
       data: {
         ['very_long_key_'.repeat(100_000)]: 'x'.repeat(1_000_000),
         hugeArray: Array.from({ length: 100_000 }, () => 'not joined'),
@@ -77,7 +77,7 @@ describe('generic CLI tool-card fallback', () => {
     const data = Object.fromEntries(
       Array.from({ length: 100_000 }, (_, index) => [`omitted_${index}`, undefined]),
     );
-    const display = formatToolCard({ type: 'sandbox', data });
+    const display = formatToolCard({ type: 'ci-status', data });
     assert.deepEqual(display.rows, [{ label: 'More', value: 'Additional fields' }]);
   });
 
@@ -189,7 +189,7 @@ describe('generic CLI tool-card fallback', () => {
 
   it('leaves scalar arrays and mixed arrays on the existing count path', () => {
     const display = formatToolCard({
-      type: 'sandbox',
+      type: 'ci-status',
       data: {
         scalars: Array.from({ length: 100 }, () => 'x'),
         mixed: [{ a: 1 }, 'not-an-object'],
@@ -239,14 +239,15 @@ describe('generic CLI tool-card fallback', () => {
 
   it('treats a trailing newline as a scalar, not a document', () => {
     // "main\n" is a branch name. Only a newline inside the trimmed content promotes.
+    // `empty: ''` renders no row now — an empty string is nothing to show
+    // (isEmptyCardValue), so it is dropped rather than printed as `Empty:`.
     const display = formatToolCard({
-      type: 'sandbox',
+      type: 'ci-status',
       data: { branch: 'main\n', blank: '\n\n\n', empty: '' },
     });
     assert.deepEqual(display.rows, [
       { label: 'Branch', value: 'main' },
       { label: 'Blank', value: '' },
-      { label: 'Empty', value: '' },
     ]);
     assert.equal(display.bodyLines, undefined);
   });
@@ -333,6 +334,125 @@ describe('generic CLI tool-card fallback', () => {
     assert.deepEqual(display.bodyLines, [
       { text: 'M src/app.ts', tone: 'context' },
       { text: '?? notes.txt', tone: 'context' },
+    ]);
+  });
+});
+
+describe('command (exec) card', () => {
+  const command = (data) => formatToolCard({ type: 'sandbox', data });
+  const isEmpty = (d) => !(d.title || d.rows.length || (d.bodyLines?.length ?? 0));
+
+  it('reduces a clean silent command to nothing — the header row is the whole story', () => {
+    // The screenshot: `rm` succeeded, printed nothing. Before this, the generic
+    // dumper rendered a "Sandbox" title, a Command: row duplicating the header,
+    // empty Stdout:/Stderr:, and Exit Code: 0 / Truncated: false / Duration Ms.
+    const d = command({
+      command: 'rm shot.png',
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+      durationMs: 57,
+    });
+    assert.ok(isEmpty(d), `expected an empty card, got ${JSON.stringify(d)}`);
+    // No Command row (the header names it), no Duration/Truncated telemetry.
+    assert.equal(d.title, '');
+    assert.deepEqual(d.rows, []);
+    assert.equal(d.bodyLines, undefined);
+  });
+
+  it('surfaces truncated output while continuing to hide truncated:false', () => {
+    const d = command({
+      command: 'generate',
+      stdout: 'partial output',
+      stderr: '',
+      exitCode: 0,
+      truncated: true,
+    });
+    assert.deepEqual(d.rows, [{ label: 'Output', value: 'truncated' }]);
+    assert.deepEqual(d.bodyLines, [{ text: 'partial output', tone: 'context' }]);
+  });
+
+  it('shows stdout bare, like a read preview, with no Command/Exit/duration chrome', () => {
+    const d = command({
+      command: 'ls',
+      stdout: 'a.ts\nb.ts',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 12,
+    });
+    assert.equal(d.title, '');
+    assert.deepEqual(d.rows, []);
+    assert.deepEqual(d.bodyLines, [
+      { text: 'a.ts', tone: 'context' },
+      { text: 'b.ts', tone: 'context' },
+    ]);
+  });
+
+  it('surfaces the exit code and stderr on failure, stderr labelled', () => {
+    const d = command({
+      command: 'cat x',
+      stdout: '',
+      stderr: 'cat: x: No such file',
+      exitCode: 1,
+      durationMs: 3,
+    });
+    assert.deepEqual(d.rows, [{ label: 'Exit', value: '1' }]);
+    assert.deepEqual(d.bodyLines, [
+      { text: 'stderr:', tone: 'context' },
+      { text: '  cat: x: No such file', tone: 'context' },
+    ]);
+  });
+
+  it('labels both streams when both are present, stderr first', () => {
+    const d = command({
+      command: 'build',
+      stdout: 'done',
+      stderr: 'warn: deprecated',
+      exitCode: 0,
+    });
+    assert.deepEqual(d.bodyLines, [
+      { text: 'stderr:', tone: 'context' },
+      { text: '  warn: deprecated', tone: 'context' },
+      { text: 'stdout:', tone: 'context' },
+      { text: '  done', tone: 'context' },
+    ]);
+  });
+
+  it('a command-less sandbox card is not an exec card — it falls through to the dumper', () => {
+    // formatCommandCard requires a `command` string; without one the payload is
+    // some other sandbox-shaped struct and must not be mistaken for a run.
+    const d = formatToolCard({ type: 'sandbox', data: { note: 'not a command' } });
+    assert.equal(d.title, 'Sandbox');
+    assert.deepEqual(d.rows, [{ label: 'Note', value: 'not a command' }]);
+  });
+});
+
+describe('generic dumper — drops noise, keeps signal', () => {
+  it('omits empty strings, telemetry keys, and truncated:false', () => {
+    const d = formatToolCard({
+      type: 'ci-status',
+      data: { ref: 'main', empty: '', durationMs: 42, startedAt: 1, truncated: false },
+    });
+    assert.deepEqual(d.rows, [{ label: 'Ref', value: 'main' }]);
+  });
+
+  it('KEEPS a meaningful false — a dropped negative reads as a clean pass', () => {
+    // The one thing this must never do: hide `passed: false`. A generic dumper
+    // has no way to know a false is signal, so it keeps them; only a formatter
+    // with semantics may hide one.
+    const d = formatToolCard({ type: 'ci-status', data: { passed: false, mergeable: false } });
+    assert.deepEqual(d.rows, [
+      { label: 'Passed', value: 'false' },
+      { label: 'Mergeable', value: 'false' },
+    ]);
+  });
+
+  it('keeps truncated:true — a cut payload is a fact the reader must see', () => {
+    const d = formatToolCard({ type: 'ci-status', data: { ref: 'main', truncated: true } });
+    assert.deepEqual(d.rows, [
+      { label: 'Ref', value: 'main' },
+      { label: 'Truncated', value: 'true' },
     ]);
   });
 });

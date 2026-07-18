@@ -49,6 +49,37 @@ const ACRONYMS: Readonly<Record<string, string>> = {
   Urls: 'URLs',
 };
 
+/**
+ * Timing/bookkeeping keys that are never content in the generic fallback. A
+ * card that genuinely wants to surface one of these should declare a formatter;
+ * in the semantics-free dump they are noise (`Duration Ms: 57`, and the header
+ * row already carries duration).
+ */
+const TELEMETRY_KEYS: ReadonlySet<string> = new Set(['durationMs', 'elapsedMs', 'startedAt']);
+
+/**
+ * Whether a generic-fallback field should be dropped rather than rendered as a
+ * row. This is the LAST-RESORT dumper (a card type with no formatter), so the
+ * rule is deliberately narrow:
+ *
+ *   - `undefined` / `''` — nothing to show.
+ *   - a telemetry key — internal timing, never content.
+ *   - `truncated: false` — a confirmation that nothing happened; the `true`
+ *     case is kept, because a cut payload IS a fact a reader must see.
+ *
+ * Note what is NOT dropped: an arbitrary `false`. Blanket-hiding false would
+ * silence a meaningful `passed: false` / `mergeable: false` in some future
+ * card, and a dropped negative reads exactly like a clean pass — the silent-cap
+ * failure this codebase treats as a bug, not a tidy-up. A false worth hiding
+ * gets hidden by its own formatter, not here.
+ */
+function isEmptyCardValue(key: string, value: unknown): boolean {
+  if (value === undefined || value === '') return true;
+  if (TELEMETRY_KEYS.has(key)) return true;
+  if (key === 'truncated' && value === false) return true;
+  return false;
+}
+
 function humanize(value: string, limit: number): string {
   const bounded = truncate(value, limit);
   const label = bounded
@@ -298,6 +329,70 @@ function formatSandboxStateCard(card: ToolCardPayload): ToolCardDisplay | null {
 }
 
 /**
+ * `exec` / `sandbox` command card.
+ *
+ * The `type: 'sandbox'` card (a plain command that isn't a test run or a
+ * typecheck) had no formatter and fell through to the generic key-dumper, which
+ * rendered a raw struct: a `Sandbox` title, a `Command:` row duplicating the
+ * header ("Ran rm …") verbatim, empty `Stdout:` / `Stderr:` rows, and
+ * `Exit Code: 0` / `Truncated: false` / `Duration Ms: 57` — telemetry and
+ * confirmations of nothing. For a command that succeeded silently, the header
+ * row already IS the whole story, so the honest card is empty.
+ *
+ * What survives is only what a reader came for:
+ *   - a nonzero exit code (zero is the default nobody needs told);
+ *   - an explicit notice when the producer truncated the command output;
+ *   - stderr, then stdout, and only when non-empty — stderr first because the
+ *     reason a command failed is the point.
+ *
+ * No title (the header names the command), no Command row (same), no duration
+ * (telemetry; already available to the header row) and no `Truncated: false`.
+ * Returns an all-empty display for a clean silent run; the renderer drops a card
+ * with no title, no rows and no body, leaving the header alone.
+ */
+function formatCommandCard(card: ToolCardPayload): ToolCardDisplay | null {
+  const { data } = card;
+  if (card.type !== 'sandbox' || typeof data.command !== 'string') return null;
+  const stdout = typeof data.stdout === 'string' ? data.stdout.trimEnd() : '';
+  const stderr = typeof data.stderr === 'string' ? data.stderr.trimEnd() : '';
+  const exitCode = typeof data.exitCode === 'number' ? data.exitCode : 0;
+
+  const rows: ToolCardDisplay['rows'] = [];
+  if (exitCode !== 0) rows.push({ label: 'Exit', value: String(exitCode) });
+  if (data.truncated === true) rows.push({ label: 'Output', value: 'truncated' });
+
+  const bodyLines: NonNullable<ToolCardDisplay['bodyLines']> = [];
+  const streams: Array<[string, string]> = [];
+  if (stderr) streams.push(['stderr', stderr]);
+  if (stdout) streams.push(['stdout', stdout]);
+  // Label a stream only when it needs disambiguating: both present, or stderr
+  // on its own (so warn-on-success output doesn't read as the command's result).
+  // A lone stdout renders bare, like a read's preview.
+  const labelStreams = streams.length > 1;
+  for (const [name, value] of streams) {
+    const all = value.split('\n');
+    const shown = all.slice(0, BODY_LINE_LIMIT);
+    const labelled = labelStreams || name === 'stderr';
+    if (labelled) bodyLines.push({ text: `${name}:`, tone: 'context' });
+    const indent = labelled ? '  ' : '';
+    for (const line of shown)
+      bodyLines.push({ text: `${indent}${clipLine(line)}`, tone: 'context' });
+    // No silent cap: say what was dropped (CLAUDE.md). The producer already
+    // char-bounds the streams; this is the line bound on top of it.
+    if (all.length > shown.length) {
+      bodyLines.push({ text: `${indent}… +${all.length - shown.length} more`, tone: 'context' });
+    }
+  }
+
+  return {
+    title: '',
+    known: true,
+    rows,
+    ...(bodyLines.length > 0 ? { bodyLines } : {}),
+  };
+}
+
+/**
  * Turn a declared card into the bounded generic fallback shared by CLI
  * renderers. Known cards get title + key/value rows; unknown future card types
  * become an inert tombstone so persisted chats remain renderable.
@@ -312,7 +407,8 @@ export function formatToolCard(card: ToolCardPayload): ToolCardDisplay {
     };
   }
 
-  const specialized = formatDiffPreviewCard(card) ?? formatSandboxStateCard(card);
+  const specialized =
+    formatDiffPreviewCard(card) ?? formatSandboxStateCard(card) ?? formatCommandCard(card);
   if (specialized) return specialized;
 
   const rows: ToolCardDisplay['rows'] = [];
@@ -326,7 +422,7 @@ export function formatToolCard(card: ToolCardPayload): ToolCardDisplay {
     }
     if (!Object.hasOwn(card.data, key)) continue;
     const value = card.data[key];
-    if (value === undefined) continue;
+    if (isEmptyCardValue(key, value)) continue;
     const label = humanize(key, LABEL_LIMIT);
     // An object list becomes a section instead of a row: a row could only ever
     // say "N items", and the count is already in the section header.
