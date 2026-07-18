@@ -47,6 +47,11 @@ allowBuilds:
 # `typescript@^7` with no override at all. Do NOT add a global `typescript`
 # override here: it would pull root/cli/mcp down to TS 6 and break their build.
 overrides:
+  # GHSA advisory (Dependabot #99): crafted ZIP triggers a 4GB allocation in
+  # adm-zip < 0.6.0. Reaches us via onnxruntime-node (@huggingface/transformers,
+  # the optional local-embeddings chain), which pins ^0.5.16 — drop the override
+  # once upstream declares >= 0.6.0.
+  adm-zip: ^0.6.0
   sharp: ^0.33.5
   tar: ^7.5.16
   minimatch@10.2.5>brace-expansion: ^5.0.6
