@@ -863,6 +863,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
     const previousZenKey = process.env.PUSH_ZEN_API_KEY;
     const previousExplainMode = process.env.PUSH_EXPLAIN_MODE;
+    const previousSandboxBackend = process.env.PUSH_LOCAL_SANDBOX;
     const existingKey = 'sk-existing-plaintext-1234';
     const pastedKey = 'sk-pasted-on-composer-9999';
     const replacementKey = 'sk-new-secret-5678';
@@ -884,6 +885,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
     const saves = [];
     const daemonRequests = [];
     let rejectSave = false;
+    let rejectDaemonSandbox = false;
     let controller;
     try {
       controller = await createSilveryController(
@@ -911,6 +913,13 @@ describe('silvery TUI Phase 1 chat surface', () => {
               connected: true,
               request: async (type, payload) => {
                 daemonRequests.push([type, payload]);
+                if (
+                  rejectDaemonSandbox &&
+                  type === 'set_daemon_runtime_config' &&
+                  payload.patch?.sandboxBackend
+                ) {
+                  throw new Error('pushd unavailable');
+                }
                 if (type === 'get_daemon_runtime_config') {
                   return { payload: { execMode: 'auto' } };
                 }
@@ -963,6 +972,26 @@ describe('silvery TUI Phase 1 chat surface', () => {
         'on',
       );
 
+      assert.equal(await controller.saveConfigPreference('sandbox', 'docker'), true);
+      assert.equal(saves.at(-1)?.localSandbox, 'docker');
+      assert.equal(process.env.PUSH_LOCAL_SANDBOX, 'docker');
+      assert.ok(
+        daemonRequests.some(
+          ([type, payload]) =>
+            type === 'set_daemon_runtime_config' && payload.patch?.sandboxBackend === 'docker',
+        ),
+      );
+
+      rejectDaemonSandbox = true;
+      assert.equal(await controller.saveConfigPreference('sandbox', 'native'), true);
+      assert.ok(
+        controller
+          .getSnapshot()
+          .rows.some((row) =>
+            row.text.includes('Restart pushd to apply it to daemon-backed exec.'),
+          ),
+      );
+
       rejectSave = true;
       assert.equal(await controller.saveConfigSecret('zen', rejectedKey), false);
       snapshotText = JSON.stringify(controller.getSnapshot());
@@ -995,6 +1024,8 @@ describe('silvery TUI Phase 1 chat surface', () => {
       else process.env.PUSH_ZEN_API_KEY = previousZenKey;
       if (previousExplainMode === undefined) delete process.env.PUSH_EXPLAIN_MODE;
       else process.env.PUSH_EXPLAIN_MODE = previousExplainMode;
+      if (previousSandboxBackend === undefined) delete process.env.PUSH_LOCAL_SANDBOX;
+      else process.env.PUSH_LOCAL_SANDBOX = previousSandboxBackend;
     }
   });
 

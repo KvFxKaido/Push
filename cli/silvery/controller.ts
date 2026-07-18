@@ -1272,6 +1272,22 @@ export async function createSilveryController(
     }
   }
 
+  async function notifyDaemonRuntimeConfig(
+    patch: { execMode?: string; sandboxBackend?: string },
+    failureEvent: string,
+  ): Promise<boolean> {
+    const client = daemon.client;
+    if (!client?.connected) return deps.useDaemon === false;
+    try {
+      await client.request('set_daemon_runtime_config', { patch }, null, 3000);
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      io.stderr.write(`${JSON.stringify({ level: 'warn', event: failureEvent, message })}\n`);
+      return false;
+    }
+  }
+
   function refreshOpenConfigEditor(active: SilveryConfigEditor): void {
     if (configEditor !== active) return;
     const refreshed = buildConfigEditor();
@@ -1374,6 +1390,7 @@ export async function createSilveryController(
           : targetId === 'explain'
             ? config.explainMode
             : config.tuiDaemonAutoStart;
+    let daemonSandboxSynced = true;
     try {
       if (targetId === 'sandbox') config.localSandbox = value === 'host' ? false : value;
       else if (targetId === 'execMode') config.execMode = value;
@@ -1381,32 +1398,29 @@ export async function createSilveryController(
       else config.tuiDaemonAutoStart = value === 'auto';
       await persistConfig(config);
 
-      if (targetId === 'sandbox') process.env.PUSH_LOCAL_SANDBOX = value;
-      else if (targetId === 'execMode') {
+      if (targetId === 'sandbox') {
+        process.env.PUSH_LOCAL_SANDBOX = value;
+        daemonSandboxSynced = await notifyDaemonRuntimeConfig(
+          { sandboxBackend: value },
+          'silvery_sandbox_backend_notify_failed',
+        );
+      } else if (targetId === 'execMode') {
         process.env.PUSH_EXEC_MODE = value;
         execMode = normalizeDaemonExecMode(value) ?? 'auto';
-        const client = daemon.client;
-        if (client?.connected) {
-          try {
-            await client.request(
-              'set_daemon_runtime_config',
-              { patch: { execMode: value } },
-              null,
-              3000,
-            );
-            await refreshDaemonExecMode();
-          } catch (cause) {
-            const message = cause instanceof Error ? cause.message : String(cause);
-            io.stderr.write(
-              `${JSON.stringify({ level: 'warn', event: 'silvery_exec_mode_notify_failed', message })}\n`,
-            );
-          }
+        if (
+          await notifyDaemonRuntimeConfig({ execMode: value }, 'silvery_exec_mode_notify_failed')
+        ) {
+          await refreshDaemonExecMode();
         }
       } else if (targetId === 'explain') process.env.PUSH_EXPLAIN_MODE = String(value === 'on');
       else process.env.PUSH_TUI_DAEMON_AUTOSTART = String(value === 'auto');
 
       if (active) refreshOpenConfigEditor(active);
-      appendStatus(`${targetId === 'execMode' ? 'Exec mode' : targetId}: ${value}`);
+      appendStatus(
+        targetId === 'sandbox' && !daemonSandboxSynced
+          ? `sandbox: ${value}. Restart pushd to apply it to daemon-backed exec.`
+          : `${targetId === 'execMode' ? 'Exec mode' : targetId}: ${value}`,
+      );
       return true;
     } catch {
       if (targetId === 'sandbox') config.localSandbox = previous;

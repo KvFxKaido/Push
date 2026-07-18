@@ -19,6 +19,7 @@ import path from 'node:path';
 import process from 'node:process';
 import { promisify } from 'node:util';
 
+import type { DaemonSandboxBackend } from '../lib/daemon-runtime-settings.js';
 import {
   resolveCommandShell,
   runCommandInResolvedShell,
@@ -27,7 +28,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export type ExecSandboxBackend = 'host' | 'docker' | 'native';
+export type ExecSandboxBackend = DaemonSandboxBackend;
 
 export interface ExecSandboxPlan {
   backend: Exclude<ExecSandboxBackend, 'host'>;

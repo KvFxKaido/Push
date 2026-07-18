@@ -24,8 +24,8 @@
  *   delegate_deep_reviewer — launch Deep Reviewer sub-agent (real streamFn + read-only tool loop via makeDaemonExplorerToolExec; investigates then reviews)
  *   cancel_delegation      — cancel active sub-agent delegation
  *   fetch_delegation_events — replay delegation event stream
- *   get_daemon_runtime_config — read daemon-owned exec/search settings
- *   set_daemon_runtime_config — persist daemon-owned exec/search settings
+ *   get_daemon_runtime_config — read daemon-owned exec/search/sandbox settings
+ *   set_daemon_runtime_config — persist daemon-owned exec/search/sandbox settings
  */
 import net from 'node:net';
 import { promises as fs } from 'node:fs';

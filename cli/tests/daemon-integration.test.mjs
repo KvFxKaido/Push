@@ -7689,12 +7689,14 @@ describe('daemon runtime config verbs', () => {
   let savedConfigPath;
   let savedExecMode;
   let savedWebSearchBackend;
+  let savedSandboxBackend;
   let tmpConfigDir;
 
   before(async () => {
     savedConfigPath = process.env.PUSH_CONFIG_PATH;
     savedExecMode = process.env.PUSH_EXEC_MODE;
     savedWebSearchBackend = process.env.PUSH_WEB_SEARCH_BACKEND;
+    savedSandboxBackend = process.env.PUSH_LOCAL_SANDBOX;
     tmpConfigDir = await fs.mkdtemp(path.join(os.tmpdir(), 'push-runtime-cfg-'));
   });
 
@@ -7705,6 +7707,8 @@ describe('daemon runtime config verbs', () => {
     else process.env.PUSH_EXEC_MODE = savedExecMode;
     if (savedWebSearchBackend === undefined) delete process.env.PUSH_WEB_SEARCH_BACKEND;
     else process.env.PUSH_WEB_SEARCH_BACKEND = savedWebSearchBackend;
+    if (savedSandboxBackend === undefined) delete process.env.PUSH_LOCAL_SANDBOX;
+    else process.env.PUSH_LOCAL_SANDBOX = savedSandboxBackend;
     await fs.rm(tmpConfigDir, { recursive: true, force: true });
   });
 
@@ -7712,12 +7716,17 @@ describe('daemon runtime config verbs', () => {
     const configPath = path.join(tmpConfigDir, 'read-config.json');
     await fs.writeFile(
       configPath,
-      JSON.stringify({ execMode: 'strict', webSearchBackend: 'tavily' }),
+      JSON.stringify({
+        execMode: 'strict',
+        webSearchBackend: 'tavily',
+        localSandbox: 'docker',
+      }),
       'utf8',
     );
     process.env.PUSH_CONFIG_PATH = configPath;
     process.env.PUSH_EXEC_MODE = 'yolo';
     process.env.PUSH_WEB_SEARCH_BACKEND = 'duckduckgo';
+    process.env.PUSH_LOCAL_SANDBOX = 'native';
 
     const res = await handleRequest(makeRequest('get_daemon_runtime_config', {}), () => {});
 
@@ -7725,6 +7734,7 @@ describe('daemon runtime config verbs', () => {
     assert.equal(res.payload.execMode, 'yolo');
     assert.equal(res.payload.approvalMode, 'full-auto');
     assert.equal(res.payload.webSearchBackend, 'duckduckgo');
+    assert.equal(res.payload.sandboxBackend, 'native');
     assert.equal(res.payload.configPath, configPath);
   });
 
@@ -7734,10 +7744,11 @@ describe('daemon runtime config verbs', () => {
     process.env.PUSH_CONFIG_PATH = configPath;
     delete process.env.PUSH_EXEC_MODE;
     delete process.env.PUSH_WEB_SEARCH_BACKEND;
+    delete process.env.PUSH_LOCAL_SANDBOX;
 
     const res = await handleRequest(
       makeRequest('set_daemon_runtime_config', {
-        patch: { execMode: 'strict', webSearchBackend: 'ollama' },
+        patch: { execMode: 'strict', webSearchBackend: 'ollama', sandboxBackend: 'docker' },
       }),
       () => {},
     );
@@ -7746,12 +7757,15 @@ describe('daemon runtime config verbs', () => {
     assert.equal(res.payload.execMode, 'strict');
     assert.equal(res.payload.approvalMode, 'supervised');
     assert.equal(res.payload.webSearchBackend, 'ollama');
+    assert.equal(res.payload.sandboxBackend, 'docker');
     assert.equal(process.env.PUSH_EXEC_MODE, 'strict');
     assert.equal(process.env.PUSH_WEB_SEARCH_BACKEND, 'ollama');
+    assert.equal(process.env.PUSH_LOCAL_SANDBOX, 'docker');
     const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
     assert.equal(stored.provider, 'zen');
     assert.equal(stored.execMode, 'strict');
     assert.equal(stored.webSearchBackend, 'ollama');
+    assert.equal(stored.localSandbox, 'docker');
   });
 
   it('rejects unsupported values without mutating config', async () => {
@@ -7770,6 +7784,16 @@ describe('daemon runtime config verbs', () => {
     assert.equal(res.error.code, 'INVALID_REQUEST');
     const stored = JSON.parse(await fs.readFile(configPath, 'utf8'));
     assert.equal(stored.execMode, 'auto');
+
+    const invalidSandbox = await handleRequest(
+      makeRequest('set_daemon_runtime_config', {
+        patch: { sandboxBackend: 'virtual-machine' },
+      }),
+      () => {},
+    );
+
+    assert.equal(invalidSandbox.ok, false);
+    assert.equal(invalidSandbox.error.code, 'INVALID_REQUEST');
   });
 
   it('refuses a relay-sourced write without mutating config (global safety posture, not session-scoped)', async () => {
