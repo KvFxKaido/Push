@@ -49,7 +49,7 @@ function baseOptions(overrides: {
       overrides.detectAllToolCalls ??
       (() => ({
         readOnly: [],
-        mutating: null,
+        sideEffects: [],
         fileMutations: [],
         extraMutations: [],
         droppedCandidates: [],
@@ -115,14 +115,14 @@ describe('runExplorerAgent (PushStream consumer)', () => {
     detector
       .mockReturnValueOnce({
         readOnly: [],
-        mutating: { call: { tool: 'sandbox_read_file', args: {} } },
+        sideEffects: [{ call: { tool: 'sandbox_read_file', args: {} } }],
         fileMutations: [],
         extraMutations: [],
         droppedCandidates: [],
       })
       .mockReturnValueOnce({
         readOnly: [],
-        mutating: null,
+        sideEffects: [],
         fileMutations: [],
         extraMutations: [],
         droppedCandidates: [],

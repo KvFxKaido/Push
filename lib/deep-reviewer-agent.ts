@@ -151,8 +151,9 @@ const REVIEWER_MUTATION_BLOCKLIST = [
  *     (such as write/edit/patch on sandbox-backed surfaces, plus
  *     surface-specific variants like CLI `undo_edit` where available).
  *     Executed sequentially as one mutation transaction. May be empty.
- *   - `mutating`: the optional trailing side-effecting call (exec, commit,
- *     push, delegate, workflow dispatch, etc.). At most one per turn.
+ *   - `sideEffects`: the trailing chain of side-effecting calls (exec,
+ *     commit, push, delegate, workflow dispatch, etc.). Sequential,
+ *     fail-fast, capped at `MAX_SIDE_EFFECT_CHAIN` per turn.
  *   - `extraMutations`: overflow calls that violated ordering or batch-size
  *     rules. Callers are expected to reject these with a structured error.
  *   - `droppedCandidates`: parsed JSON objects that carried a `{tool, args}`
@@ -176,7 +177,7 @@ export interface DetectedToolCalls<TCall> {
    */
   parallelDelegations?: TCall[];
   fileMutations: TCall[];
-  mutating: TCall | null;
+  sideEffects: TCall[];
   /**
    * File mutations beyond the batch cap. Optional: the CLI detector folds
    * these into `extraMutations`; the web detector keeps them distinct and the
@@ -901,7 +902,7 @@ export async function runDeepReviewer<TCall, TCard>(
     // was about to surface. A fumbled forced turn degrades to the fallback
     // result, which is presented as incomplete — never as a clean pass.
     const detected = detectAllToolCalls(accumulated);
-    const hasExecutableCalls = detected.readOnly.length > 0 || detected.mutating !== null;
+    const hasExecutableCalls = detected.readOnly.length > 0 || detected.sideEffects.length > 0;
 
     // Check for the completion marker
     const reviewJson = extractReviewJson(accumulated);
@@ -1017,7 +1018,10 @@ export async function runDeepReviewer<TCall, TCard>(
       continue;
     }
 
-    if (detected.readOnly.length > 1 || (detected.readOnly.length > 0 && detected.mutating)) {
+    if (
+      detected.readOnly.length > 1 ||
+      (detected.readOnly.length > 0 && detected.sideEffects.length > 0)
+    ) {
       callbacks.onStatus(
         'Deep review executing...',
         `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`,
@@ -1035,11 +1039,11 @@ export async function runDeepReviewer<TCall, TCard>(
         });
       }
 
-      if (detected.mutating) {
-        const trailing = await toolExec(detected.mutating);
+      for (const [chainIndex, sideEffectCall] of detected.sideEffects.entries()) {
+        const trailing = await toolExec(sideEffectCall);
         totalToolCalls++;
         messages.push({
-          id: `deep-review-trailing-result-${round}`,
+          id: `deep-review-trailing-result-${round}-${chainIndex}`,
           role: 'user',
           content: formatAgentToolResult(trailing.resultText),
           timestamp: Date.now(),
@@ -1204,7 +1208,7 @@ export async function runDeepReviewer<TCall, TCard>(
   const finalStillInvestigating =
     finalDetected.readOnly.length > 0 ||
     finalDetected.fileMutations.length > 0 ||
-    finalDetected.mutating !== null ||
+    finalDetected.sideEffects.length > 0 ||
     finalDetected.extraMutations.length > 0 ||
     finalDetected.droppedCandidates.length > 0;
   if (finalStillInvestigating) {

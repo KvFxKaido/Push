@@ -415,7 +415,7 @@ const stubDetectors: CoderJobDetectorAdapter = {
   detectAllToolCalls: () => ({
     readOnly: [],
     fileMutations: [],
-    mutating: null,
+    sideEffects: [],
     extraMutations: [],
     droppedCandidates: [],
   }),

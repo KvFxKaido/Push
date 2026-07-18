@@ -35,7 +35,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
   it('handleMultipleMutationsError stamps reasoningBlocks onto the assistant entry it appends', () => {
     const apiMessages: ChatMessage[] = [userMessage('do two mutations')];
     const action = handleMultipleMutationsError(
-      { mutating: null, batchOverflow: [], extraMutations: [] },
+      { sideEffects: [], batchOverflow: [], extraMutations: [] },
       'assistant text',
       'thinking',
       blocks,
@@ -82,7 +82,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
   it('omits the field when no reasoning blocks were captured', () => {
     const apiMessages: ChatMessage[] = [userMessage('do two mutations')];
     const action = handleMultipleMutationsError(
-      { mutating: null, batchOverflow: [], extraMutations: [] },
+      { sideEffects: [], batchOverflow: [], extraMutations: [] },
       'plain',
       '',
       [],
@@ -168,7 +168,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     const apiMessages: ChatMessage[] = [userMessage('write 9 files')];
     const action = handleMultipleMutationsError(
       {
-        mutating: null,
+        sideEffects: [],
         batchOverflow: [
           sandboxCall('sandbox_write_file', { path: '/9.md' }),
           sandboxCall('sandbox_write_file', { path: '/10.md' }),
@@ -191,9 +191,10 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     const apiMessages: ChatMessage[] = [userMessage('write then read')];
     const action = handleMultipleMutationsError(
       {
-        // mutating is set → the rejection list includes it as a "the
-        // model emitted multiple mutations and we rejected all" signal.
-        mutating: sandboxCall('sandbox_exec', { command: 'echo hi' }),
+        // sideEffects is populated → because ordering extras exist, the
+        // rejection list includes the chain as part of "the model emitted
+        // an invalid turn and we rejected all" signal.
+        sideEffects: [sandboxCall('sandbox_exec', { command: 'echo hi' })],
         batchOverflow: [],
         extraMutations: [sandboxCall('sandbox_write_file', { path: '/after-exec.md' })],
       },
@@ -218,7 +219,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
 
     const action = handleMultipleMutationsError(
       {
-        mutating: sandboxCall('sandbox_exec', { command: 'npm test' }),
+        sideEffects: [sandboxCall('sandbox_exec', { command: 'npm test' })],
         batchOverflow: [],
         extraMutations: [sandboxCall('sandbox_exec', { command: 'npm run build' })],
       },
@@ -238,8 +239,9 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
   it('handleMultipleMutationsError does NOT classify a valid trailing exec as ordering when only batch overflowed', () => {
     // Codex P2 / Copilot regression. Scenario: 9 file writes + valid
     // trailing sandbox_exec. Kernel returns:
-    //   batchOverflow = [9th write], mutating = exec, extraMutations = []
-    // Pre-fix, `hasOrderingViolations = mutating !== null` included the
+    //   batchOverflow = [9th write], sideEffects = [exec], extraMutations = []
+    // Pre-fix, `hasOrderingViolations = mutating !== null` (the old
+    // single-trailing-slot field) included the
     // exec as a per-call ordering violation and emitted
     // MULTI_MUTATION_NOT_ALLOWED for it — the exec was actually fine,
     // it just got aborted as collateral damage of the "reject whole
@@ -248,7 +250,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     const apiMessages: ChatMessage[] = [userMessage('write 9 files then run tests')];
     const action = handleMultipleMutationsError(
       {
-        mutating: sandboxCall('sandbox_exec', { command: 'npm test' }),
+        sideEffects: [sandboxCall('sandbox_exec', { command: 'npm test' })],
         batchOverflow: [sandboxCall('sandbox_write_file', { path: '/9.md' })],
         extraMutations: [],
       },
@@ -269,7 +271,7 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     const apiMessages: ChatMessage[] = [userMessage('write 9 files then exec then write')];
     const action = handleMultipleMutationsError(
       {
-        mutating: sandboxCall('sandbox_exec', { command: 'echo hi' }),
+        sideEffects: [sandboxCall('sandbox_exec', { command: 'echo hi' })],
         batchOverflow: [sandboxCall('sandbox_write_file', { path: '/9.md' })],
         extraMutations: [sandboxCall('sandbox_write_file', { path: '/after-exec.md' })],
       },

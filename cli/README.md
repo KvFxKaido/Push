@@ -479,7 +479,7 @@ Available tools:
 | `coder_update_state` | memory | Update working memory (plan, tasks, etc.) |
 | `ask_user` | control | Pause for operator clarification when a critical ambiguity would waste work |
 
-**Read/mutate split:** The CLI groups each turn as read-only calls first, then a sequential file-mutation batch (`write_file`, `edit_file`, `undo_edit`), then at most one trailing side-effect (`exec`, `git_commit`, `save_memory`, etc.). Reads run in parallel; file mutations run sequentially with fail-fast; extra side effects or reads after mutation starts are rejected with `MULTI_MUTATION_NOT_ALLOWED`. Memory/control tools do not modify workspace files.
+**Read/mutate split:** The CLI groups each turn as read-only calls first, then a sequential file-mutation batch (`write_file`, `edit_file`, `undo_edit`), then a trailing chain of up to 3 side-effecting calls (`exec`, `git_commit`, `save_memory`, etc.). Reads run in parallel; file mutations and the side-effect chain run sequentially with fail-fast; side-effects beyond the chain cap or reads after mutation starts are rejected with `MULTI_MUTATION_NOT_ALLOWED`. Memory/control tools do not modify workspace files.
 
 ### GitHub tools
 

@@ -627,7 +627,10 @@ export async function runExplorerAgent<TCall, TCard>(
       continue;
     }
 
-    if (detected.readOnly.length > 1 || (detected.readOnly.length > 0 && detected.mutating)) {
+    if (
+      detected.readOnly.length > 1 ||
+      (detected.readOnly.length > 0 && detected.sideEffects.length > 0)
+    ) {
       callbacks.onStatus(
         'Explorer executing...',
         `${detected.readOnly.length} read-only tool call${detected.readOnly.length === 1 ? '' : 's'}`,
@@ -645,11 +648,11 @@ export async function runExplorerAgent<TCall, TCard>(
         });
       }
 
-      if (detected.mutating) {
-        const trailing = await toolExec(detected.mutating);
+      for (const [chainIndex, sideEffectCall] of detected.sideEffects.entries()) {
+        const trailing = await toolExec(sideEffectCall);
         if (trailing.card) cards.push(trailing.card);
         messages.push({
-          id: `explorer-trailing-result-${round}`,
+          id: `explorer-trailing-result-${round}-${chainIndex}`,
           role: 'user',
           content: formatAgentToolResult(trailing.resultText),
           timestamp: Date.now(),
@@ -663,7 +666,7 @@ export async function runExplorerAgent<TCall, TCard>(
       ...detected.readOnly,
       ...(detected.parallelDelegations ?? []),
       ...detected.fileMutations,
-      ...(detected.mutating ? [detected.mutating] : []),
+      ...detected.sideEffects,
     ];
     const toolCall =
       nativeToolCalls.length > 0 && detectNativeToolCalls

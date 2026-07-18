@@ -775,7 +775,7 @@ describe('lead tool surface (inline foreground lane)', () => {
       'delegate_explorer',
       'delegate_explorer',
     ]);
-    expect(two.mutating).toBeNull();
+    expect(two.sideEffects).toEqual([]);
     // A third in the same turn overflows to extraMutations (re-issue next turn),
     // not silently dropped.
     const three = options.detectAllToolCalls(

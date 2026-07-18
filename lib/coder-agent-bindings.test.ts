@@ -57,7 +57,7 @@ describe('buildCoderDetectors — droppedCandidates filtering', () => {
       detectAllToolCalls: () => ({
         readOnly: [],
         fileMutations: [],
-        mutating: null,
+        sideEffects: [],
         extraMutations: [],
         droppedCandidates: rawDropped,
       }),
@@ -138,7 +138,7 @@ describe('buildCoderDetectors — memory source (LCM)', () => {
       detectAllToolCalls: () => ({
         readOnly: opts.readOnly ?? [],
         fileMutations: [],
-        mutating: null,
+        sideEffects: [],
         extraMutations: [],
         droppedCandidates: [],
       }),

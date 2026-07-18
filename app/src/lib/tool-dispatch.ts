@@ -52,6 +52,7 @@ import {
   groupCallsByPhase,
   MAX_FILE_MUTATION_BATCH,
   MAX_PARALLEL_TOOL_CALLS,
+  MAX_SIDE_EFFECT_CHAIN,
 } from '@push/lib/tool-call-grouping';
 import {
   buildToolLedgerFromGroupedCalls,
@@ -101,7 +102,7 @@ export const PARALLEL_READ_ONLY_SANDBOX_TOOLS = new Set(
 // (`cli/engine.ts`) and the web dispatcher pull from the same source.
 // Re-exported here so existing imports (`@/lib/tool-dispatch`) keep
 // working without churn.
-export { MAX_PARALLEL_TOOL_CALLS, MAX_FILE_MUTATION_BATCH };
+export { MAX_PARALLEL_TOOL_CALLS, MAX_FILE_MUTATION_BATCH, MAX_SIDE_EFFECT_CHAIN };
 const KNOWN_CAPABILITIES = new Set<Capability>(ALL_CAPABILITIES);
 
 function asTrimmedString(value: unknown): string | undefined {
@@ -141,7 +142,7 @@ export interface DetectedToolCalls {
    * read phase. Populated only when the caller opts into the bucket via
    * `detectAllToolCalls(text, { maxParallelDelegations })` — the Inline
    * Foreground Lane (cap 2). Empty/absent for the Orchestrator path, which
-   * keeps routing a single `delegate_explorer` through `mutating` as before.
+   * keeps routing a single `delegate_explorer` through `sideEffects` as before.
    * Optional so existing callers that build a `DetectedToolCalls` literal
    * don't have to populate it; consumers default to `[]`.
    */
@@ -155,11 +156,12 @@ export interface DetectedToolCalls {
    */
   fileMutations: AnyToolCall[];
   /**
-   * Optional trailing side-effecting call (exec, commit, push, delegate,
-   * workflow dispatch, etc.). At most one per turn. Runs after the
-   * fileMutations batch.
+   * Trailing chain of side-effecting calls (exec, commit, push, delegate,
+   * workflow dispatch, etc.), in emission order. Runs sequentially after
+   * the fileMutations batch, fail-fast — a hard failure stops the chain.
+   * Capped at MAX_SIDE_EFFECT_CHAIN per turn.
    */
-  mutating: AnyToolCall | null;
+  sideEffects: AnyToolCall[];
   /**
    * File-mutation calls that exceeded MAX_FILE_MUTATION_BATCH. Distinct
    * from `extraMutations` so callers can give the model a "split the
@@ -170,12 +172,13 @@ export interface DetectedToolCalls {
   batchOverflow: AnyToolCall[];
   /**
    * Ordering-violation calls the turn couldn't accommodate. Sources
-   * include: a second side-effect, any call after a side-effect, a
-   * read emitted after the mutation transaction began, and a file
-   * mutation that didn't reach the batch because the transaction was
-   * already done (exec → write_file). File-mutation batch overflow
-   * lives in `batchOverflow`, NOT here. Callers reject these with a
-   * structured error so the model can correct on the next turn.
+   * include: a side-effect beyond the MAX_SIDE_EFFECT_CHAIN cap, a
+   * non-side-effect call after the chain began, a read emitted after
+   * the mutation transaction began, and a file mutation that didn't
+   * reach the batch because the chain was already open (exec →
+   * write_file). File-mutation batch overflow lives in `batchOverflow`,
+   * NOT here. Callers reject these with a structured error so the
+   * model can correct on the next turn.
    */
   extraMutations: AnyToolCall[];
   /**
@@ -202,13 +205,15 @@ export type DetectedToolCallLedger = ToolLedgerSnapshot<AnyToolCall>;
  *   2. Any number of contiguous file-mutation calls (such as write/edit/patch
  *      on sandbox-backed surfaces) go into `fileMutations` (executed sequentially;
  *      stops on first hard failure, NOT atomic).
- *   3. At most one trailing side-effecting call (exec, commit, push,
- *      delegate, workflow dispatch, etc.) goes into `mutating`.
+ *   3. A trailing chain of side-effecting calls (exec, commit, push,
+ *      delegate, workflow dispatch, etc.) goes into `sideEffects`
+ *      (sequential, fail-fast, capped at MAX_SIDE_EFFECT_CHAIN).
  *   4. Anything that violates that ordering — a read after mutations
- *      started, a second side-effect, any call after a side-effect, or
- *      file-mutation overflow beyond MAX_FILE_MUTATION_BATCH — goes into
- *      `extraMutations` so the caller can surface a structured error and
- *      let the model correct on the next turn.
+ *      started, a side-effect beyond the chain cap, a non-side-effect
+ *      after the chain began, or file-mutation overflow beyond
+ *      MAX_FILE_MUTATION_BATCH — goes into `extraMutations` so the
+ *      caller can surface a structured error and let the model correct
+ *      on the next turn.
  *
  * Falls back cleanly when only one call is present.
  */
@@ -465,9 +470,9 @@ function mapMalformedToDropped(report: ToolMalformedReport): DroppedToolCallCand
 export interface DetectToolCallsOptions {
   /**
    * Enable the parallel-delegation bucket (concurrent Explorers) with this
-   * cap. Omitted/0 → `delegate_explorer` keeps falling through to the single
-   * trailing `mutating` slot (the Orchestrator default). The Inline Foreground
-   * Lane passes 2.
+   * cap. Omitted/0 → `delegate_explorer` keeps falling through to the
+   * trailing `sideEffects` chain (the Orchestrator default). The Inline
+   * Foreground Lane passes 2.
    */
   maxParallelDelegations?: number;
 }
@@ -477,7 +482,7 @@ export function detectAllToolCalls(text: string, opts?: DetectToolCallsOptions):
     readOnly: [],
     parallelDelegations: [],
     fileMutations: [],
-    mutating: null,
+    sideEffects: [],
     batchOverflow: [],
     extraMutations: [],
     droppedCandidates: [],
@@ -684,7 +689,7 @@ export function detectNativeToolCalls(
       readOnly: [],
       parallelDelegations: [],
       fileMutations: [],
-      mutating: null,
+      sideEffects: [],
       batchOverflow: [],
       extraMutations: [],
       droppedCandidates,
@@ -889,6 +894,7 @@ function classifyDetectedCalls(
       maxParallelReads: MAX_PARALLEL_TOOL_CALLS,
       maxFileMutationBatch: MAX_FILE_MUTATION_BATCH,
       maxParallelDelegations: opts?.maxParallelDelegations,
+      maxSideEffectChain: MAX_SIDE_EFFECT_CHAIN,
     },
   );
   const splitFileMutations = splitOverlappingFileMutations(grouped.fileMutations);
@@ -906,7 +912,7 @@ export function buildDetectedToolLedger(detected: DetectedToolCalls): DetectedTo
       readOnly: detected.readOnly,
       parallelDelegations: detected.parallelDelegations ?? [],
       fileMutations: detected.fileMutations,
-      mutating: detected.mutating,
+      sideEffects: detected.sideEffects,
       batchOverflow: detected.batchOverflow,
       extraMutations: detected.extraMutations,
     },

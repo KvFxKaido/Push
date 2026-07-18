@@ -307,10 +307,9 @@ export function buildCoderDetectors<
     const sandboxFileMutations = raw.fileMutations.filter(
       (c) => c.source === 'sandbox' || allowsExtra(c.source),
     );
-    const sandboxMutating =
-      raw.mutating && (raw.mutating.source === 'sandbox' || allowsExtra(raw.mutating.source))
-        ? raw.mutating
-        : null;
+    const sandboxSideEffects = raw.sideEffects.filter(
+      (c) => c.source === 'sandbox' || allowsExtra(c.source),
+    );
     // Parallel-safe delegations (Inline Foreground Lane: concurrent Explorers)
     // ride the `delegate` extra source. Empty on surfaces that don't opt into
     // the bucket, so this is a no-op for the delegated Coder.
@@ -329,7 +328,7 @@ export function buildCoderDetectors<
       readOnly: sandboxReads,
       parallelDelegations,
       fileMutations: sandboxFileMutations,
-      mutating: sandboxMutating,
+      sideEffects: sandboxSideEffects,
       ...(sandboxBatchOverflow.length > 0 ? { batchOverflow: sandboxBatchOverflow } : {}),
       extraMutations: raw.extraMutations,
       // Filter Coder-internal tools out of droppedCandidates so the

@@ -556,7 +556,7 @@ test('adoption detectors keep non-sandbox sources in the batch (no silent filter
     detectAllToolCalls: () => ({
       readOnly: [scratchpadCall],
       fileMutations: [],
-      mutating: { source: 'github', call: { tool: 'pr_create', args: {} } },
+      sideEffects: [{ source: 'github', call: { tool: 'pr_create', args: {} } }],
       extraMutations: [],
       droppedCandidates: [
         { rawToolName: 'coder_update_state', resolvedToolName: null },
@@ -569,7 +569,7 @@ test('adoption detectors keep non-sandbox sources in the batch (no silent filter
   const detected = detectors.detectAllToolCalls('...');
   // Deferred-family calls survive detection so the gate can answer them.
   assert.deepEqual(detected.readOnly, [scratchpadCall]);
-  assert.equal(detected.mutating?.call.tool, 'pr_create');
+  assert.equal(detected.sideEffects[0]?.call.tool, 'pr_create');
   // Coder-internal pseudo-tools are filtered from droppedCandidates (the
   // kernel handles them inline); genuinely unknown names stay surfaced.
   assert.deepEqual(
