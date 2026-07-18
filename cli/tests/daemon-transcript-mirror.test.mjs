@@ -132,6 +132,30 @@ describe('daemon transcript mirror', () => {
     assert.equal(adopted.lastSeq, 4);
   });
 
+  it('carries a mid-run visible-output count across a snapshot, so a post-reconnect completion is not misread as empty', () => {
+    // The reason the count rides in the snapshot at all. A run emits visible
+    // output, THEN the client reconnects (rebuilding the mirror from a
+    // snapshot) BEFORE run_complete arrives. If the count doesn't survive, the
+    // rebuilt mirror starts at 0 and the completion falsely warns "empty".
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, { seq: 1, type: 'user_message', payload: { text: 'go' } });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 2,
+      type: 'assistant_token',
+      payload: { text: 'a real reply' },
+    });
+    // Reconnect mid-run: snapshot with count > 0, rebuild, THEN completion.
+    assert.ok(mirror.runVisibleEmissionCount > 0, 'precondition: the run has visible output');
+    const adopted = createDaemonTranscriptMirror(snapshotDaemonTranscript(mirror));
+    assert.equal(adopted.runVisibleEmissionCount, mirror.runVisibleEmissionCount, 'count survived');
+    applyDaemonTranscriptEvent(adopted, { seq: 3, type: 'run_complete', payload: {} });
+    assert.equal(
+      adopted.rows.filter((row) => /response was empty/i.test(row.text)).length,
+      0,
+      'a completion after a mid-run reconnect must not falsely warn empty',
+    );
+  });
+
   it('replaces streamed tool-round text with ordered render-only tool prose', () => {
     const mirror = createDaemonTranscriptMirror();
     applyDaemonTranscriptEvent(mirror, {
