@@ -991,6 +991,107 @@ describe('silvery TUI Phase 1 chat surface', () => {
     await controller.dispose();
   });
 
+  it('rolls back to the previous session when the daemon rejects the resume attach', async () => {
+    // Codex's rollback claim, made falsifiable: a failed rebind must leave you
+    // on the session you were already in — not stranded half-switched (new
+    // session in `state`, daemon detached). Mutation: drop the
+    // `replaceSessionState(previousState)` restore and this goes red.
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = {
+      sessionId: 'sess_origin_current',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'origin-model',
+      attachToken: 'token-origin',
+      rounds: 0,
+      sessionName: 'origin',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const target = {
+      sessionId: 'sess_target_abc123',
+      updatedAt: Date.now(),
+      provider: 'zen',
+      model: 'from-daemon',
+      cwd: '/repo',
+      sessionName: 'target',
+      mode: 'tui',
+    };
+    let hooks;
+    let rebindCalls = 0;
+    // First rebind (attach the target) fails; the rollback re-attach succeeds.
+    const rebindResults = [false, true];
+    const client = {
+      request: async (type) => {
+        if (type === 'list_sessions') return { ok: true, payload: { sessions: [target] } };
+        if (type === 'get_session_snapshot')
+          return { payload: { transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } } } };
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        saveState: async () => undefined,
+        loadState: async (sessionId) => ({
+          ...state,
+          sessionId,
+          sessionName: `loaded-${sessionId}`,
+          messages: [
+            { role: 'system', content: 'system' },
+            { role: 'user', content: `q ${sessionId}` },
+          ],
+        }),
+        listSessions: async () => [],
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            get sessionId() {
+              return null;
+            },
+            get attachToken() {
+              return null;
+            },
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            rebindExistingSession: async () => rebindResults[rebindCalls++] ?? false,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+    assert.ok(hooks);
+
+    await controller.submit('/resume');
+    controller.selectPickerOption('sess_target_abc123');
+    for (let i = 0; i < 50 && controller.getSnapshot().picker !== null; i += 1) await sleep(0);
+
+    const snap = controller.getSnapshot();
+    assert.equal(
+      snap.sessionId,
+      'sess_origin_current',
+      'a failed resume must roll back to the previous session, not strand the new one',
+    );
+    assert.equal(rebindCalls, 2, 'rollback re-attaches the previous session (second rebind)');
+    assert.ok(
+      snap.rows.some((item) => /Resume failed/.test(item.text)),
+      'the failure is surfaced to the user',
+    );
+    await controller.dispose();
+  });
+
   it('discards a stale preview that resolves after a newer one (out-of-order race)', async () => {
     // The "race-safe" claim, made falsifiable. The picker fires an async
     // preview load per highlighted row; move the cursor fast and two loads are
