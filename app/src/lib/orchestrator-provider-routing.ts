@@ -113,10 +113,21 @@ export function routesThroughAnthropicBridge(
 
 /**
  * Whether a provider+model pair requires plain unsigned reasoning text to be
- * replayed on prior assistant turns. DeepSeek thinking mode through
- * OpenAI-compatible transports rejects round 2 unless the exact
- * `reasoning_content` string is echoed back; other OpenAI-transport models may
- * reject the field, so this stays provider+DeepSeek-specific.
+ * replayed on prior assistant turns. Two model families need it, with
+ * different failure shapes:
+ *
+ *   - DeepSeek thinking mode through OpenAI-compatible transports REJECTS
+ *     round 2 unless the exact `reasoning_content` string is echoed back
+ *     (a loud 400).
+ *   - Kimi K2.x "preserve thinking" is forced on model-side: the API
+ *     tolerates a missing echo but the model silently loses its chain of
+ *     thought across tool turns — exactly the multi-step workloads K2.7
+ *     is strongest at. Covered on the direct `kimi` provider since the
+ *     K2.7 support landed; the gateway arm (kimi/moonshot model IDs on
+ *     zen/openrouter/huggingface) closes the same gap for routed Kimi.
+ *
+ * Other OpenAI-transport models may reject the field, so this stays
+ * scoped to those two families rather than defaulting on.
  */
 export function routeReplaysReasoningContent(
   provider: Exclude<ActiveProvider, 'demo'> | undefined,
@@ -126,7 +137,7 @@ export function routeReplaysReasoningContent(
   return (
     provider === 'kimi' ||
     ((provider === 'zen' || provider === 'openrouter' || provider === 'huggingface') &&
-      /deepseek/i.test(model))
+      /deepseek|kimi|moonshot/i.test(model))
   );
 }
 
