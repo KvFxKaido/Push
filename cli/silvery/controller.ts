@@ -73,6 +73,11 @@ import { normalizeDaemonExecMode, type DaemonExecMode } from '../../lib/daemon-r
 import { isTranscriptMutationEvent } from '../../lib/session-transcript-events.js';
 import { isToolCardPayload } from '../../lib/tool-cards.js';
 import type { RunTuiOptions } from './entry.js';
+import {
+  formatCitationsRow,
+  formatEmptyRunWarning,
+  isVisibleEmission,
+} from './event-diagnostics.js';
 
 export type SilveryTranscriptItem = DaemonTranscriptRow;
 
@@ -390,6 +395,9 @@ export async function createSilveryController(
   let configEditorToken = 0;
   let sessionPickerRows: SessionListEntry[] = [];
   let sessionPreviewRequest = 0;
+  // Visible-output count for the current run, for the empty-run diagnostic. Both
+  // lanes feed `observeEventDiagnostics`; reset at run start (`submit`).
+  let runVisibleEmissionCount = 0;
   let resolveApproval: ((approved: boolean) => void) | null = null;
   let resolveQuestion: ((answer: string) => void) | null = null;
   let hiddenBefore = 0;
@@ -671,7 +679,32 @@ export async function createSilveryController(
   /** Populated by /editor; surface reads via takePendingComposerText(). */
   let pendingComposerText: string | null = null;
 
+  /**
+   * Lane-agnostic diagnostics run before either switch renders the event:
+   * count visible output for the empty-run check, and surface web-search
+   * sources. Called from both `onEvent` (inline) and `onDaemonEvent` (daemon),
+   * so a given run only feeds it through whichever lane is active.
+   */
+  function observeEventDiagnostics(event: EngineEvent): void {
+    if (isVisibleEmission(event.type)) runVisibleEmissionCount += 1;
+    if (event.type === 'assistant_citations') {
+      const sources = formatCitationsRow(event.payload);
+      if (sources) appendStatus(sources);
+    }
+  }
+
+  /**
+   * On run completion, warn if the turn produced no visible output at all — the
+   * Tool-Call Parser Convergence Gap symptom, otherwise an unexplained blank
+   * turn. Always resets the counter for the next run.
+   */
+  function finishRunDiagnostics(): void {
+    if (runVisibleEmissionCount === 0) appendStatus(formatEmptyRunWarning());
+    runVisibleEmissionCount = 0;
+  }
+
   const onEvent = (event: EngineEvent) => {
+    observeEventDiagnostics(event);
     const payload = (event.payload ?? {}) as Record<string, unknown>;
     switch (event.type) {
       case 'assistant_token':
@@ -766,6 +799,7 @@ export async function createSilveryController(
         ];
         break;
       case 'run_complete':
+        finishRunDiagnostics();
         running = false;
         startedAt = null;
         resolveDaemonTurn?.();
@@ -776,6 +810,7 @@ export async function createSilveryController(
   };
 
   const onDaemonEvent = (event: EngineEvent & { seq?: number }) => {
+    observeEventDiagnostics(event);
     applyDaemonTranscriptEvent(daemonMirror, {
       seq: typeof event.seq === 'number' ? event.seq : 0,
       type: event.type,
@@ -788,6 +823,7 @@ export async function createSilveryController(
       optimisticDaemonInsertIndex = null;
     }
     if (event.type === 'run_complete') {
+      finishRunDiagnostics();
       running = false;
       startedAt = null;
       resolveDaemonTurn?.();
@@ -2234,6 +2270,10 @@ export async function createSilveryController(
       error = null;
       activityRows = [];
       liveText = '';
+      // Fresh run: reset the visible-output counter so a prior turn's output
+      // can't suppress this turn's empty-run diagnostic (defensive — a completed
+      // run already reset it in finishRunDiagnostics).
+      runVisibleEmissionCount = 0;
       const submittedAt = now();
       optimisticDaemonInsertIndex = null;
       optimisticUserRow = {
