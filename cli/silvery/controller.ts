@@ -6,6 +6,7 @@ import {
   applyConfigToEnv,
   loadConfig,
   maskSecret,
+  reapplyProviderConfigToEnv,
   saveConfig,
   type PushConfig,
 } from '../config-store.js';
@@ -95,6 +96,8 @@ export interface SilverySnapshot {
   interaction: SilveryInteraction | null;
   /** Idle-time model/provider chooser; null when no picker is open. */
   picker: SilveryPicker | null;
+  /** Config editor; credential values are masked and raw drafts never enter this snapshot. */
+  configEditor: SilveryConfigEditor | null;
   /** Live theme preference — drives silvery `ThemeProvider` accent hue (v2 law 2). */
   theme: string;
   /** CLI exec mode (`auto` / `strict` / `yolo`) for the composer mode label. */
@@ -151,6 +154,29 @@ export interface SilveryPicker {
   error?: string;
 }
 
+export interface SilveryConfigEditorItem {
+  /** Provider id, credential id, or runtime preference id. */
+  id: string;
+  label: string;
+  kind: 'secret' | 'toggle' | 'select';
+  /** Safe display value. Secret rows contain only a masked value. */
+  value: string;
+  detail?: string;
+  current: boolean;
+  options?: Array<{ value: string; label: string; detail: string }>;
+}
+
+export interface SilveryConfigEditor {
+  items: SilveryConfigEditorItem[];
+  initialIndex: number;
+  /** Opens directly in the masked field for `/config key` redirects. */
+  initialEditTarget?: string;
+  /** Fresh per open so local cursor/draft state cannot survive reopening. */
+  token: number;
+  saving: boolean;
+  error?: string;
+}
+
 interface ControllerDeps {
   loadConfig?: () => Promise<PushConfig>;
   saveConfig?: typeof saveConfig;
@@ -195,6 +221,14 @@ export interface SilveryController {
   previewPickerOption(id: string): void;
   /** Toggle the resume picker between this workspace and all workspaces. */
   toggleSessionPickerScope(): void;
+  /** Open the masked config editor, optionally focused on one provider key. */
+  openConfigEditor(targetId?: string): void;
+  /** Dismiss the config editor and discard its surface-owned secret draft. */
+  closeConfigEditor(): void;
+  /** Persist a secret submitted by the masked field. Raw text is never snapshotted. */
+  saveConfigSecret(targetId: string, secret: string): Promise<boolean>;
+  /** Persist a non-secret preference selected in the config editor. */
+  saveConfigPreference(targetId: string, value: string): Promise<boolean>;
   clearDisplay(): void;
   /**
    * Yank the last assistant response to the system clipboard (OSC 52).
@@ -352,6 +386,8 @@ export async function createSilveryController(
   let interaction: SilveryInteraction | null = null;
   let picker: SilveryPicker | null = null;
   let pickerToken = 0;
+  let configEditor: SilveryConfigEditor | null = null;
+  let configEditorToken = 0;
   let sessionPickerRows: SessionListEntry[] = [];
   let sessionPreviewRequest = 0;
   let resolveApproval: ((approved: boolean) => void) | null = null;
@@ -493,6 +529,7 @@ export async function createSilveryController(
     error,
     interaction,
     picker,
+    configEditor,
     theme: resolveThemeName(),
     execMode,
   });
@@ -1094,6 +1131,311 @@ export async function createSilveryController(
     }
   }
 
+  function maskedProviderKey(providerId: string): string {
+    const providerBranch = config[providerId];
+    const configured =
+      providerBranch && typeof providerBranch === 'object'
+        ? (providerBranch as { apiKey?: unknown }).apiKey
+        : undefined;
+    if (configured) return maskSecret(configured) || '(not set)';
+    const provider = PROVIDER_CONFIGS[providerId];
+    if (!provider) return '(not set)';
+    try {
+      return maskSecret((deps.resolveKey ?? resolveApiKey)(provider)) || '(not set)';
+    } catch {
+      return '(not set)';
+    }
+  }
+
+  function buildConfigEditor(targetId?: string): SilveryConfigEditor {
+    const items: SilveryConfigEditorItem[] = getProviderList().map((provider) => {
+      const branch = config[provider.id];
+      const model =
+        branch && typeof branch === 'object' ? (branch as { model?: unknown }).model : undefined;
+      return {
+        id: provider.id,
+        label: provider.id,
+        kind: 'secret' as const,
+        value: maskedProviderKey(provider.id),
+        detail: typeof model === 'string' && model ? model : provider.defaultModel,
+        current: provider.id === state.provider,
+      };
+    });
+    const tavilyKey = config.tavilyApiKey || process.env.PUSH_TAVILY_API_KEY;
+    items.push({
+      id: 'tavily',
+      label: 'tavily',
+      kind: 'secret',
+      value: maskSecret(tavilyKey) || '(not set)',
+      detail: 'web search',
+      current: false,
+    });
+    const sandbox = resolveExecSandboxBackend(
+      process.env.PUSH_LOCAL_SANDBOX ?? config.localSandbox,
+    );
+    items.push({
+      id: 'sandbox',
+      label: 'sandbox',
+      kind: 'select',
+      value: sandbox,
+      detail: 'exec isolation',
+      current: false,
+      options: [
+        { value: 'host', label: 'host', detail: 'run directly on this machine' },
+        { value: 'docker', label: 'docker', detail: 'isolated Docker sandbox' },
+        { value: 'native', label: 'native', detail: 'native sandbox backend' },
+      ],
+    });
+    items.push({
+      id: 'execMode',
+      label: 'exec mode',
+      kind: 'select',
+      value: localExecMode(),
+      detail: 'command approvals',
+      current: false,
+      options: [
+        { value: 'strict', label: 'strict', detail: 'prompt before every exec command' },
+        { value: 'auto', label: 'auto', detail: 'prompt only for high-risk commands' },
+        { value: 'yolo', label: 'yolo', detail: 'no exec prompts' },
+      ],
+    });
+    const explainEnv = process.env.PUSH_EXPLAIN_MODE;
+    const explainOn =
+      explainEnv === undefined
+        ? config.explainMode === true || config.explainMode === 'true'
+        : explainEnv === 'true';
+    items.push({
+      id: 'explain',
+      label: 'explain',
+      kind: 'toggle',
+      value: explainOn ? 'on' : 'off',
+      detail: 'tool narration',
+      current: false,
+    });
+    const daemonAuto = !(
+      process.env.PUSH_TUI_DAEMON_AUTOSTART === 'false' ||
+      config.tuiDaemonAutoStart === false ||
+      config.tuiDaemonAutoStart === 'false'
+    );
+    items.push({
+      id: 'daemon',
+      label: 'daemon',
+      kind: 'toggle',
+      value: daemonAuto ? 'auto' : 'off',
+      detail: 'TUI autostart',
+      current: false,
+    });
+    const requestedIndex = targetId ? items.findIndex((item) => item.id === targetId) : -1;
+    const requestedItem = requestedIndex >= 0 ? items[requestedIndex] : undefined;
+    const currentIndex = items.findIndex((item) => item.current);
+    return {
+      items,
+      initialIndex: requestedIndex >= 0 ? requestedIndex : Math.max(0, currentIndex),
+      initialEditTarget: requestedItem?.kind === 'secret' ? targetId : undefined,
+      token: (configEditorToken += 1),
+      saving: false,
+    };
+  }
+
+  function openConfigEditor(targetId?: string): void {
+    if (running) {
+      appendStatus('Finish or cancel the turn before editing config.', true);
+      return;
+    }
+    picker = null;
+    configEditor = buildConfigEditor(targetId);
+    notify();
+  }
+
+  function closeConfigEditor(): void {
+    if (!configEditor) return;
+    configEditor = null;
+    notify();
+  }
+
+  async function notifyDaemonConfigReload(): Promise<void> {
+    const client = daemon.client;
+    if (!client?.connected) return;
+    try {
+      await client.request('reload_config', {}, null, 3000);
+      await refreshDaemonExecMode();
+    } catch (cause) {
+      const code =
+        cause && typeof cause === 'object' && 'code' in cause
+          ? String((cause as { code?: unknown }).code || '')
+          : '';
+      if (code === 'UNSUPPORTED_REQUEST_TYPE') return;
+      const message = cause instanceof Error ? cause.message : String(cause);
+      io.stderr.write(
+        `${JSON.stringify({ level: 'warn', event: 'silvery_config_reload_notify_failed', message })}\n`,
+      );
+    }
+  }
+
+  async function notifyDaemonRuntimeConfig(
+    patch: { execMode?: string; sandboxBackend?: string },
+    failureEvent: string,
+  ): Promise<boolean> {
+    const client = daemon.client;
+    if (!client?.connected) return deps.useDaemon === false;
+    try {
+      await client.request('set_daemon_runtime_config', { patch }, null, 3000);
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      io.stderr.write(`${JSON.stringify({ level: 'warn', event: failureEvent, message })}\n`);
+      return false;
+    }
+  }
+
+  function refreshOpenConfigEditor(active: SilveryConfigEditor): void {
+    if (configEditor !== active) return;
+    const refreshed = buildConfigEditor();
+    refreshed.token = active.token;
+    refreshed.initialIndex = active.initialIndex;
+    configEditor = refreshed;
+  }
+
+  async function saveConfigSecret(targetId: string, rawSecret: string): Promise<boolean> {
+    const secret = rawSecret.trim();
+    const active = configEditor;
+    if (!secret) {
+      if (active) {
+        active.error = 'Key cannot be empty.';
+        notify();
+      }
+      return false;
+    }
+    if (targetId !== 'tavily' && !PROVIDER_CONFIGS[targetId]) {
+      if (active) {
+        active.error = `Unknown provider: ${targetId}`;
+        notify();
+      }
+      return false;
+    }
+
+    if (active) {
+      active.saving = true;
+      active.error = undefined;
+      notify();
+    }
+    const previous = targetId === 'tavily' ? config.tavilyApiKey : config[targetId];
+    try {
+      if (targetId === 'tavily') {
+        config.tavilyApiKey = secret;
+      } else {
+        const branch =
+          config[targetId] && typeof config[targetId] === 'object'
+            ? { ...(config[targetId] as Record<string, unknown>) }
+            : {};
+        branch.apiKey = secret;
+        config[targetId] = branch;
+      }
+      await persistConfig(config);
+      reapplyProviderConfigToEnv(config);
+      await notifyDaemonConfigReload();
+
+      if (active) refreshOpenConfigEditor(active);
+      appendStatus(
+        `${targetId === 'tavily' ? 'Tavily' : targetId} API key saved (${maskSecret(secret)}).`,
+      );
+      return true;
+    } catch {
+      if (targetId === 'tavily') {
+        config.tavilyApiKey = previous as string | undefined;
+      } else if (previous === undefined) {
+        delete config[targetId];
+      } else {
+        config[targetId] = previous;
+      }
+      if (configEditor === active && active) {
+        active.saving = false;
+        active.error = 'Failed to save key. Check config file permissions and try again.';
+        notify();
+      }
+      return false;
+    }
+  }
+
+  async function saveConfigPreference(targetId: string, value: string): Promise<boolean> {
+    const allowed =
+      targetId === 'sandbox'
+        ? ['host', 'docker', 'native']
+        : targetId === 'execMode'
+          ? ['strict', 'auto', 'yolo']
+          : targetId === 'explain'
+            ? ['on', 'off']
+            : targetId === 'daemon'
+              ? ['auto', 'off']
+              : [];
+    const active = configEditor;
+    if (!allowed.includes(value)) {
+      if (active) {
+        active.error = 'Invalid config preference.';
+        notify();
+      }
+      return false;
+    }
+
+    if (active) {
+      active.saving = true;
+      active.error = undefined;
+      notify();
+    }
+    const previous =
+      targetId === 'sandbox'
+        ? config.localSandbox
+        : targetId === 'execMode'
+          ? config.execMode
+          : targetId === 'explain'
+            ? config.explainMode
+            : config.tuiDaemonAutoStart;
+    let daemonSandboxSynced = true;
+    try {
+      if (targetId === 'sandbox') config.localSandbox = value === 'host' ? false : value;
+      else if (targetId === 'execMode') config.execMode = value;
+      else if (targetId === 'explain') config.explainMode = value === 'on';
+      else config.tuiDaemonAutoStart = value === 'auto';
+      await persistConfig(config);
+
+      if (targetId === 'sandbox') {
+        process.env.PUSH_LOCAL_SANDBOX = value;
+        daemonSandboxSynced = await notifyDaemonRuntimeConfig(
+          { sandboxBackend: value },
+          'silvery_sandbox_backend_notify_failed',
+        );
+      } else if (targetId === 'execMode') {
+        process.env.PUSH_EXEC_MODE = value;
+        execMode = normalizeDaemonExecMode(value) ?? 'auto';
+        if (
+          await notifyDaemonRuntimeConfig({ execMode: value }, 'silvery_exec_mode_notify_failed')
+        ) {
+          await refreshDaemonExecMode();
+        }
+      } else if (targetId === 'explain') process.env.PUSH_EXPLAIN_MODE = String(value === 'on');
+      else process.env.PUSH_TUI_DAEMON_AUTOSTART = String(value === 'auto');
+
+      if (active) refreshOpenConfigEditor(active);
+      appendStatus(
+        targetId === 'sandbox' && !daemonSandboxSynced
+          ? `sandbox: ${value}. Restart pushd to apply it to daemon-backed exec.`
+          : `${targetId === 'execMode' ? 'Exec mode' : targetId}: ${value}`,
+      );
+      return true;
+    } catch {
+      if (targetId === 'sandbox') config.localSandbox = previous;
+      else if (targetId === 'execMode') config.execMode = previous as string | undefined;
+      else if (targetId === 'explain') config.explainMode = previous;
+      else config.tuiDaemonAutoStart = previous;
+      if (configEditor === active && active) {
+        active.saving = false;
+        active.error = 'Failed to save preference. Check config file permissions and try again.';
+        notify();
+      }
+      return false;
+    }
+  }
+
   function buildProviderPicker(): SilveryPicker {
     const options: SilveryPickerOption[] = getProviderList().map((entry) => ({
       id: entry.id,
@@ -1220,6 +1562,7 @@ export async function createSilveryController(
       appendStatus('Finish or cancel the turn before opening a picker.', true);
       return;
     }
+    configEditor = null;
     if (kind === 'session') {
       void openSessionPicker();
       return;
@@ -1295,8 +1638,9 @@ export async function createSilveryController(
           '  /session rename <name> Rename the session (--clear to unset)',
           '  /provider [name|#]     Open the provider picker or switch directly',
           '  /model [name|#]        Open the model picker or switch directly',
-          '  /config                Show config overview (secrets masked)',
-          '  /config key|url|…      Set provider keys, sandbox, daemon, tavily',
+          '  /config                Open the masked API-key editor',
+          '  /config key [provider] Open a provider directly in the editor',
+          '  /config url|sandbox|…  Set non-secret runtime preferences',
           '  /resume [session-id]   Open the session picker or switch directly',
           '  /skills [reload|lint]  List, reload, or lint workspace skills',
           '  /compact [turns]       Compact context (default preserve 6 turns)',
@@ -1423,55 +1767,15 @@ export async function createSilveryController(
 
     if (command === 'config') {
       if (!arg) {
-        const providerCfg = (config[state.provider] ?? {}) as {
-          apiKey?: string;
-          url?: string;
-        };
-        appendStatus(
-          [
-            `provider: ${state.provider}`,
-            `model: ${state.model}`,
-            `key: ${maskSecret(providerCfg.apiKey) || '(env / unset)'}`,
-            `url: ${providerCfg.url || PROVIDER_CONFIGS[state.provider]?.url || '(default)'}`,
-            `tavily: ${maskSecret(config.tavilyApiKey) || '(unset)'}`,
-            `daemon autostart: ${config.tuiDaemonAutoStart === false || config.tuiDaemonAutoStart === 'false' ? 'off' : 'auto'}`,
-            `sandbox: ${resolveExecSandboxBackend(config.localSandbox)}`,
-          ].join('\n'),
-        );
+        openConfigEditor();
         return true;
       }
       const [sub, ...restArgs] = arg.split(/\s+/);
       const subcommand = sub?.toLowerCase() ?? '';
       if (subcommand === 'key') {
-        if (restArgs.length === 1) {
-          const secret = restArgs[0]!;
-          if (!config[state.provider] || typeof config[state.provider] !== 'object') {
-            (config as Record<string, unknown>)[state.provider] = {};
-          }
-          (config[state.provider] as { apiKey?: string }).apiKey = secret;
-          await persistConfig(config);
-          applyConfigToEnv(config);
-          appendStatus(`API key set for ${state.provider} (${maskSecret(secret)}).`);
-          return true;
-        }
-        if (restArgs.length >= 2) {
-          const targetProvider =
-            redirectDeprecatedProvider(restArgs[0]!.toLowerCase()) ?? restArgs[0]!.toLowerCase();
-          const secret = restArgs.slice(1).join(' ');
-          if (!PROVIDER_CONFIGS[targetProvider]) {
-            appendStatus(`Unknown provider: ${restArgs[0]}`, true);
-            return true;
-          }
-          if (!config[targetProvider] || typeof config[targetProvider] !== 'object') {
-            (config as Record<string, unknown>)[targetProvider] = {};
-          }
-          (config[targetProvider] as { apiKey?: string }).apiKey = secret;
-          await persistConfig(config);
-          applyConfigToEnv(config);
-          appendStatus(`API key set for ${targetProvider} (${maskSecret(secret)}).`);
-          return true;
-        }
-        appendStatus('Usage: /config key <secret> or /config key <provider> <secret>', true);
+        const candidate = restArgs[0]?.toLowerCase();
+        const redirected = candidate ? (redirectDeprecatedProvider(candidate) ?? candidate) : '';
+        openConfigEditor(redirected && PROVIDER_CONFIGS[redirected] ? redirected : state.provider);
         return true;
       }
       if (subcommand === 'url') {
@@ -1490,15 +1794,7 @@ export async function createSilveryController(
         return true;
       }
       if (subcommand === 'tavily') {
-        const secret = restArgs.join(' ').trim();
-        if (!secret) {
-          appendStatus('Usage: /config tavily <key>', true);
-          return true;
-        }
-        config.tavilyApiKey = secret;
-        await persistConfig(config);
-        applyConfigToEnv(config);
-        appendStatus(`Tavily key set (${maskSecret(secret)}).`);
+        openConfigEditor('tavily');
         return true;
       }
       if (subcommand === 'sandbox') {
@@ -1541,7 +1837,7 @@ export async function createSilveryController(
         return true;
       }
       appendStatus(
-        'Usage: /config | /config key <secret> | /config key <provider> <secret> | /config url <url> | /config tavily <key> | /config sandbox host|docker|native | /config explain on|off | /config daemon auto|off',
+        'Usage: /config | /config key [provider] | /config tavily | /config url <url> | /config sandbox host|docker|native | /config explain on|off | /config daemon auto|off',
         true,
       );
       return true;
@@ -2144,6 +2440,10 @@ export async function createSilveryController(
     closePicker,
     previewPickerOption,
     toggleSessionPickerScope,
+    openConfigEditor,
+    closeConfigEditor,
+    saveConfigSecret,
+    saveConfigPreference,
     selectPickerOption(id) {
       // selectPicker is fire-and-forget from the view; surface any late failure
       // (config/session persistence) as a status line rather than swallowing it.

@@ -3,11 +3,14 @@ import process from 'node:process';
 
 import {
   DAEMON_EXEC_MODES,
+  DAEMON_SANDBOX_BACKENDS,
   DAEMON_WEB_SEARCH_BACKENDS,
   daemonExecModeToApprovalMode,
   normalizeDaemonExecMode,
+  normalizeDaemonSandboxBackend,
   normalizeDaemonWebSearchBackend,
 } from '../../lib/daemon-runtime-settings.ts';
+import { resolveExecSandboxBackend } from '../exec-sandbox.js';
 import {
   getConfigPath,
   loadConfig,
@@ -30,16 +33,20 @@ function resolveDaemonRuntimeConfigPayload(config: any) {
     normalizeDaemonWebSearchBackend(process.env.PUSH_WEB_SEARCH_BACKEND) ||
     normalizeDaemonWebSearchBackend(config.webSearchBackend) ||
     'auto';
+  const sandboxBackend = resolveExecSandboxBackend(
+    process.env.PUSH_LOCAL_SANDBOX ?? config.localSandbox,
+  );
   return {
     execMode,
     approvalMode: daemonExecModeToApprovalMode(execMode),
     webSearchBackend,
+    sandboxBackend,
     configPath: getConfigPath(),
   };
 }
 
 /**
- * Read daemon-owned runtime controls for paired web clients. Unlike repo-mode
+ * Read daemon-owned runtime controls for paired clients. Unlike repo-mode
  * controls, these values are resolved from the daemon process itself (env first,
  * then ~/.push/config.json) because Remote turns execute on this machine, not
  * in the browser.
@@ -92,18 +99,19 @@ async function handleSetDaemonRuntimeConfig(req: any, _emitEvent: any, context: 
       req.requestId,
       req.type,
       'INVALID_REQUEST',
-      'patch must be a non-null object with optional { execMode, webSearchBackend }',
+      'patch must be a non-null object with optional { execMode, webSearchBackend, sandboxBackend }',
     );
   }
 
   const hasExecMode = Object.prototype.hasOwnProperty.call(rawPatch, 'execMode');
   const hasWebSearchBackend = Object.prototype.hasOwnProperty.call(rawPatch, 'webSearchBackend');
-  if (!hasExecMode && !hasWebSearchBackend) {
+  const hasSandboxBackend = Object.prototype.hasOwnProperty.call(rawPatch, 'sandboxBackend');
+  if (!hasExecMode && !hasWebSearchBackend && !hasSandboxBackend) {
     return makeErrorResponse(
       req.requestId,
       req.type,
       'INVALID_REQUEST',
-      'patch must include execMode or webSearchBackend',
+      'patch must include execMode, webSearchBackend, or sandboxBackend',
     );
   }
 
@@ -129,6 +137,18 @@ async function handleSetDaemonRuntimeConfig(req: any, _emitEvent: any, context: 
     );
   }
 
+  const sandboxBackend = hasSandboxBackend
+    ? normalizeDaemonSandboxBackend(rawPatch.sandboxBackend)
+    : null;
+  if (hasSandboxBackend && !sandboxBackend) {
+    return makeErrorResponse(
+      req.requestId,
+      req.type,
+      'INVALID_REQUEST',
+      `sandboxBackend must be one of: ${DAEMON_SANDBOX_BACKENDS.join(', ')}`,
+    );
+  }
+
   let config;
   try {
     config = await loadConfig();
@@ -144,6 +164,9 @@ async function handleSetDaemonRuntimeConfig(req: any, _emitEvent: any, context: 
   if (webSearchBackend) {
     next.webSearchBackend = webSearchBackend;
   }
+  if (sandboxBackend) {
+    next.localSandbox = sandboxBackend === 'host' ? false : sandboxBackend;
+  }
 
   try {
     await saveConfig(next);
@@ -154,6 +177,7 @@ async function handleSetDaemonRuntimeConfig(req: any, _emitEvent: any, context: 
 
   if (execMode) process.env.PUSH_EXEC_MODE = execMode;
   if (webSearchBackend) process.env.PUSH_WEB_SEARCH_BACKEND = webSearchBackend;
+  if (sandboxBackend) process.env.PUSH_LOCAL_SANDBOX = sandboxBackend;
 
   void appendAuditEvent({
     type: 'daemon.set_runtime_config',
@@ -162,6 +186,7 @@ async function handleSetDaemonRuntimeConfig(req: any, _emitEvent: any, context: 
       boundOrigin: context?.auth?.boundOrigin,
       ...(execMode ? { execMode } : {}),
       ...(webSearchBackend ? { webSearchBackend } : {}),
+      ...(sandboxBackend ? { sandboxBackend } : {}),
     },
   });
 
