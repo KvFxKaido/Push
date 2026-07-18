@@ -229,6 +229,95 @@ describe('silvery Phase 0 fault shell', () => {
     );
   });
 
+  it('rebinds the daemon controller to a new durable session from seq zero', async () => {
+    const { createDaemonSession } = await import('../tui-daemon-session.ts');
+    const { PROTOCOL_VERSION } = await import('../../lib/protocol-schema.ts');
+    let durable = {
+      persisted: true,
+      sessionId: 'sess_old_abc123',
+      attachToken: 'old-token',
+    };
+    const attachRequests = [];
+    const client = {
+      connected: true,
+      request: async (type, payload) => {
+        if (type === 'hello') {
+          return {
+            payload: {
+              runtimeName: 'pushd',
+              runtimeVersion: 'test',
+              protocolVersion: PROTOCOL_VERSION,
+              capabilities: [],
+            },
+          };
+        }
+        if (type === 'attach_session') {
+          attachRequests.push(payload);
+          return { payload: { attachToken: `adopted-${payload.sessionId}` } };
+        }
+        return { payload: {} };
+      },
+      onEvent: () => () => undefined,
+      close: () => undefined,
+      _socket: { on: () => undefined },
+    };
+    const daemon = createDaemonSession(
+      {
+        tryConnectTransport: async () => client,
+        note: () => undefined,
+        markFooterDirty: () => undefined,
+        markAllDirty: () => undefined,
+        onEngineEvent: () => undefined,
+        onSocketClose: () => undefined,
+        isAutoStartEnabled: () => false,
+        spawnDaemon: async () => ({
+          status: 'already-running',
+          ready: false,
+          socketPath: '',
+          logPath: '',
+        }),
+        onReusedDaemon: async () => undefined,
+        appendDaemonLogTail: async () => undefined,
+        getDurableSession: () => durable,
+        setDurableAttachToken: (token) => {
+          durable.attachToken = token;
+        },
+        getStartSessionPayload: () => ({ provider: 'zen', model: 'model', cwd: '/repo' }),
+        onAttached: () => undefined,
+        invalidateReconnectAnimators: () => undefined,
+      },
+      [],
+    );
+
+    assert.equal(await daemon.tryConnect(), true);
+    assert.equal(await daemon.attachExistingSession(), true);
+    daemon.noteSeenSeq(41);
+    durable = {
+      persisted: true,
+      sessionId: 'sess_new_abc123',
+      attachToken: 'new-token',
+    };
+
+    assert.equal(await daemon.rebindExistingSession(), true);
+    assert.equal(daemon.sessionId, 'sess_new_abc123');
+    assert.equal(daemon.attachToken, 'adopted-sess_new_abc123');
+    assert.deepEqual(attachRequests, [
+      {
+        sessionId: 'sess_old_abc123',
+        lastSeenSeq: 0,
+        attachToken: 'old-token',
+        capabilities: [],
+      },
+      {
+        sessionId: 'sess_new_abc123',
+        lastSeenSeq: 0,
+        attachToken: 'new-token',
+        capabilities: [],
+      },
+    ]);
+    daemon.teardown();
+  });
+
   it('renders an inline failure while the shell stays alive, then settles on unmount', {
     skip: silverySkip,
   }, async () => {
@@ -734,6 +823,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
       cwd: '/repo',
       provider: 'ollama',
       model: 'test-model',
+      attachToken: 'token-sess_resume_abc123',
       rounds: 0,
       sessionName: '',
       workingMemory: {},
@@ -762,8 +852,13 @@ describe('silvery TUI Phase 1 chat surface', () => {
       sessionId: 'sess_second_abc123',
       sessionName: 'second-local-session',
     };
+    let daemonSessionId = state.sessionId;
+    let daemonAttachToken = state.attachToken;
+    let sendPayload;
+    let sendSessionArg;
+    const rebinds = [];
     const client = {
-      request: async (type, payload) => {
+      request: async (type, payload, sessionId) => {
         if (type === 'list_sessions') {
           assert.equal(payload.limit, 1000);
           return { ok: true, payload: { sessions: [row, second, elsewhere] } };
@@ -774,6 +869,12 @@ describe('silvery TUI Phase 1 chat surface', () => {
               transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } },
             },
           };
+        }
+        if (type === 'send_user_message') {
+          sendPayload = payload;
+          sendSessionArg = sessionId;
+          queueMicrotask(() => hooks.onEngineEvent({ type: 'run_complete', payload: {} }));
+          return { payload: { runId: 'run-resumed-session' } };
         }
         return { payload: {} };
       },
@@ -791,6 +892,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
           sessionId,
           provider: 'zen',
           model: 'from-daemon',
+          attachToken: `token-${sessionId}`,
           sessionName: 'from-daemon',
           messages: [
             { role: 'system', content: 'system' },
@@ -806,12 +908,23 @@ describe('silvery TUI Phase 1 chat surface', () => {
           hooks = receivedHooks;
           return {
             connected: true,
-            sessionId: state.sessionId,
-            attachToken: 'token',
+            get sessionId() {
+              return daemonSessionId;
+            },
+            get attachToken() {
+              return daemonAttachToken;
+            },
             client,
             ensureConnected: async () => true,
             ensureReady: async () => true,
             ensureSession: async () => undefined,
+            rebindExistingSession: async () => {
+              const durable = hooks.getDurableSession();
+              rebinds.push({ ...durable });
+              daemonSessionId = durable.sessionId;
+              daemonAttachToken = durable.attachToken;
+              return true;
+            },
             noteSeenSeq: () => undefined,
             scheduleReconnect: () => undefined,
             teardown: () => undefined,
@@ -862,7 +975,19 @@ describe('silvery TUI Phase 1 chat surface', () => {
     for (let i = 0; i < 50 && controller.getSnapshot().picker !== null; i++) await sleep(0);
     assert.equal(controller.getSnapshot().picker, null, 'resuming closes the picker');
     assert.equal(controller.getSnapshot().sessionId, 'sess_second_abc123');
+    assert.deepEqual(rebinds, [
+      {
+        persisted: true,
+        sessionId: 'sess_second_abc123',
+        attachToken: 'token-sess_second_abc123',
+      },
+    ]);
     assert.ok(controller.getSnapshot().rows.some((item) => /Resumed session/.test(item.text)));
+
+    await controller.submit('continue in the selected session');
+    assert.equal(sendPayload.sessionId, 'sess_second_abc123');
+    assert.equal(sendPayload.attachToken, 'token-sess_second_abc123');
+    assert.equal(sendSessionArg, 'sess_second_abc123');
     await controller.dispose();
   });
 

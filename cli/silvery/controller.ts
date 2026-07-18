@@ -1056,14 +1056,31 @@ export async function createSilveryController(
     }
     try {
       const next = await (deps.loadState ?? loadSessionState)(targetId);
-      Object.assign(state, next);
+      const previousState = { ...state };
+      const previousPersisted = persisted;
+      const replaceSessionState = (replacement: typeof state) => {
+        for (const key of Object.keys(state)) delete state[key];
+        Object.assign(state, replacement);
+      };
+      replaceSessionState(next);
+      persisted = true;
+
+      if (daemon.connected && !(await daemon.rebindExistingSession())) {
+        replaceSessionState(previousState);
+        persisted = previousPersisted;
+        const restored = await daemon.rebindExistingSession();
+        throw new Error(
+          `pushd could not attach session ${targetId}${
+            restored ? '; the previous daemon session was restored' : '; the daemon is now detached'
+          }`,
+        );
+      }
       daemonMirror = createDaemonTranscriptMirror();
       daemonHiddenBefore = 0;
       daemonStateStale = false;
       activityRows = [];
       liveText = '';
       hiddenBefore = 0;
-      persisted = true;
       gitStatus = await (deps.gitStatus ?? getCompactGitStatus)(state.cwd);
       appendStatus(
         `Resumed session ${state.sessionId}${state.sessionName ? ` (${state.sessionName})` : ''}.`,

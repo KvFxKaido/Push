@@ -10,7 +10,8 @@
  * warn registry) — privately, and exposes:
  *
  *   - lifecycle: `ensureConnected()`, `tryConnect()`, `ensureSession()`,
- *     `attachExistingSession()`, `ensureReady()`, `scheduleReconnect()`,
+ *     `attachExistingSession()`, `rebindExistingSession()`, `ensureReady()`,
+ *     `scheduleReconnect()`,
  *     `cancelPendingReconnectTimer()`, `teardown()`, `resetForRespawn()`
  *   - transport: `sendVerb(type, payload)` (the bearer-attaching helper),
  *     `client` / `connected` / `sessionId` / `attachToken` accessors,
@@ -595,6 +596,20 @@ export class DaemonSessionController {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Replace the transient daemon binding with the durable session currently
+   * exposed by the TUI hooks. Session switching is different from reconnect:
+   * the new conversation must replay from seq 0, and retaining either the old
+   * session id or bearer would route the next prompt to the prior session.
+   */
+  async rebindExistingSession(): Promise<boolean> {
+    if (!this.#client?.connected) return false;
+    this.#sessionId = null;
+    this.#attachToken = null;
+    this.#lastSeenSeq = 0;
+    return this.attachExistingSession();
   }
 
   /**
