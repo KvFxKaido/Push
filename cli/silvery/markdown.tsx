@@ -26,6 +26,7 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'silvery';
 
+import { type CodeSpan, highlightToSpans } from '../tui-highlight.js';
 import { detectUnicode } from '../tui-theme.js';
 import { VL_COLOR, type VlColor } from './visual-language.js';
 
@@ -206,6 +207,13 @@ export interface MdLine {
   raw?: string;
   /** Fence language tag, when present. */
   lang?: string;
+  /**
+   * Syntax-highlighted spans for a `code` line, stamped on fence close when the
+   * language has a lexer. Absent → render the raw line flat-muted (the look
+   * before highlighting, and the fallback for unsupported languages). Whitespace
+   * is preserved: concatenating `codeSpans[*].text` reproduces `raw` exactly.
+   */
+  codeSpans?: CodeSpan[];
 }
 
 const HR = /^\s*([-*_])\1{2,}\s*$/;
@@ -223,6 +231,17 @@ const BULLET = /^(\s*)[-*+]\s+(.*)$/;
 export function parseMarkdown(text: string): MdLine[] {
   const out: MdLine[] = [];
   let inFence = false;
+  // Open fence's language + the code-line objects collected so far, so the
+  // whole block can be highlighted at once on close. Block-level, not
+  // line-level, is required: a multi-line string or block comment is only
+  // tokenized correctly with the lines above it in hand.
+  let fenceLang = '';
+  let fenceCodeLines: MdLine[] = [];
+  const closeFence = () => {
+    stampHighlight(fenceLang, fenceCodeLines);
+    fenceCodeLines = [];
+    fenceLang = '';
+  };
   // Split on CRLF as well as LF so a stray `\r` never lands in a rendered cell
   // (it would carriage-return the terminal). Count is unchanged either way.
   for (const raw of text.split(/\r?\n/)) {
@@ -230,7 +249,8 @@ export function parseMarkdown(text: string): MdLine[] {
     if (fence) {
       if (!inFence) {
         inFence = true;
-        out.push({ kind: 'fence', lang: fence[1].trim() });
+        fenceLang = fence[1].trim();
+        out.push({ kind: 'fence', lang: fenceLang });
         continue;
       }
       // Inside a fence, only a bare ``` (nothing but whitespace after the
@@ -239,12 +259,15 @@ export function parseMarkdown(text: string): MdLine[] {
       // block (CommonMark closing-fence rule).
       if (fence[1].trim() === '') {
         inFence = false;
+        closeFence();
         out.push({ kind: 'fence', lang: '' });
         continue;
       }
     }
     if (inFence) {
-      out.push({ kind: 'code', raw });
+      const codeLine: MdLine = { kind: 'code', raw };
+      fenceCodeLines.push(codeLine);
+      out.push(codeLine);
       continue;
     }
     if (raw.trim() === '') {
@@ -283,7 +306,27 @@ export function parseMarkdown(text: string): MdLine[] {
     }
     out.push({ kind: 'text', spans: parseInline(raw) });
   }
+  // An unterminated fence (streaming mid-block, or a missing close) still gets
+  // highlighted — the collected lines are valid code, just without a trailing
+  // ```. Nothing calls closeFence() for it otherwise.
+  if (inFence) closeFence();
   return out;
+}
+
+/**
+ * Highlight a fenced block's collected `code` lines in place. A no-op when the
+ * language has no lexer (`highlightToSpans` returns null) — those lines keep
+ * `codeSpans` unset and render flat-muted. The highlighter preserves line
+ * count, so spans zip onto lines by index.
+ */
+function stampHighlight(lang: string, codeLines: MdLine[]): void {
+  if (codeLines.length === 0) return;
+  const spanLines = highlightToSpans(codeLines.map((l) => l.raw ?? '').join('\n'), lang);
+  if (!spanLines) return;
+  for (let i = 0; i < codeLines.length; i += 1) {
+    const spans = spanLines[i];
+    if (spans && spans.length > 0) codeLines[i].codeSpans = spans;
+  }
 }
 
 // ── Render ────────────────────────────────────────────────────────────
@@ -345,6 +388,19 @@ function LineView({
     case 'fence':
       return <Text color={VL_COLOR.muted}>```{line.lang}</Text>;
     case 'code':
+      // Highlighted when the fence had a known language; flat-muted otherwise
+      // (unsupported language, or a whitespace-only line with no spans).
+      if (line.codeSpans && line.codeSpans.length > 0) {
+        return (
+          <Text>
+            {line.codeSpans.map((span, index) => (
+              <Text key={index} color={span.color}>
+                {span.text}
+              </Text>
+            ))}
+          </Text>
+        );
+      }
       return <Text color={VL_COLOR.muted}>{line.raw || ' '}</Text>;
     case 'heading':
       return (

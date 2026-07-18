@@ -9,7 +9,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { highlightCode, supportedHighlightLangs } from '../tui-highlight.ts';
+import { highlightCode, highlightToSpans, supportedHighlightLangs } from '../tui-highlight.ts';
 import { createTheme } from '../tui-theme.ts';
 import { stripAnsi } from '../tui-renderer.ts';
 
@@ -132,5 +132,72 @@ describe('supportedHighlightLangs', () => {
     for (const expected of ['js', 'python', 'go', 'rust', 'shell', 'json', 'diff']) {
       assert.ok(langs.includes(expected), `missing ${expected}`);
     }
+  });
+});
+
+describe('highlightToSpans: silvery span emitter', () => {
+  const langs = ['ts', 'python', 'go', 'rust', 'shell', 'json', 'diff'];
+  const sample = {
+    ts: 'const greet = (n: string) => {\n  // hi\n  return `x ${n}`;\n};',
+    python: 'def add(a, b):\n    # sum\n    return a + b',
+    go: 'func main() {\n\tx := 42 // n\n\tfmt.Println("hi")\n}',
+    rust: 'fn main() {\n    let x = 42; // n\n}',
+    shell: '# comment\necho "hello" | grep x',
+    json: '{"key": "value", "n": 42, "ok": true}',
+    diff: '@@ -1,2 +1,2 @@\n-old\n+new\n ctx',
+  };
+
+  it('preserves every character — concat(spans) === source line (width invariant)', () => {
+    // The one invariant that cannot regress: a highlighted line must be
+    // byte-identical to its source, or the retained layout math (which counts
+    // visible width) desyncs and the fence shears. Checked per line, per lang.
+    for (const lang of langs) {
+      const code = sample[lang];
+      const spanLines = highlightToSpans(code, lang);
+      assert.ok(spanLines, `${lang}: expected spans`);
+      const src = code.split('\n');
+      assert.equal(spanLines.length, src.length, `${lang}: line count preserved`);
+      for (let i = 0; i < src.length; i += 1) {
+        const recon = (spanLines[i] ?? []).map((sp) => sp.text).join('');
+        assert.equal(recon, src[i], `${lang} line ${i}: span concat must equal source`);
+      }
+    }
+  });
+
+  it('returns null for an unknown language, so the caller renders flat', () => {
+    assert.equal(highlightToSpans('x = 1', 'brainfuck'), null);
+    assert.equal(highlightToSpans('x = 1', ''), null);
+  });
+
+  it('colors the core categories distinctly (keyword / string / comment / number)', () => {
+    const spans = highlightToSpans('const n = 42; // note', 'ts').flat();
+    const colorOf = (text) => spans.find((sp) => sp.text === text)?.color;
+    const keyword = colorOf('const');
+    const number = colorOf('42');
+    const comment = spans.find((sp) => sp.text.includes('note'))?.color;
+    const str = highlightToSpans('const s = "hi"', 'ts')
+      .flat()
+      .find((sp) => sp.text === '"hi"')?.color;
+    for (const [name, c] of [
+      ['keyword', keyword],
+      ['number', number],
+      ['comment', comment],
+      ['string', str],
+    ]) {
+      assert.match(c ?? '', /^#[0-9a-f]{6}$/, `${name} should have a hex color`);
+    }
+    // Distinct categories must not collapse to one color, or highlighting is decorative.
+    assert.equal(new Set([keyword, number, comment, str]).size, 4, 'four categories, four colors');
+  });
+
+  it('reuses the same language set as the ANSI highlighter', () => {
+    for (const lang of supportedHighlightLangs()) {
+      assert.ok(highlightToSpans('x', lang) !== null, `${lang} should highlight to spans`);
+    }
+  });
+
+  it('carries the diff signal (add / del / hunk on distinct colors)', () => {
+    const [hunk, del, add] = highlightToSpans('@@ -1 +1 @@\n-a\n+b', 'diff');
+    assert.equal(new Set([hunk[0].color, del[0].color, add[0].color]).size, 3);
   });
 });
