@@ -4073,3 +4073,196 @@ describe('silvery header — one row at any width', () => {
     }
   });
 });
+
+describe('silvery event diagnostics — citations + empty-run', () => {
+  // Against the real inline lane: a runTurn mock emits engine events through
+  // `options.emit`, and we read the rendered transcript rows.
+  const baseState = () => ({
+    sessionId: 'diag-session',
+    messages: [{ role: 'system', content: 'system' }],
+    eventSeq: 0,
+    updatedAt: Date.now(),
+    cwd: '/repo',
+    provider: 'ollama',
+    model: 'test-model',
+    rounds: 0,
+    sessionName: '',
+    workingMemory: {},
+    mode: 'tui',
+  });
+
+  const harness = async (runTurn) => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const state = baseState();
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: false,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        runTurn: (_s, _p, _k, _t, _r, options) => runTurn(options, state),
+      },
+    );
+    return { controller, state };
+  };
+  const emit = (options, type, payload, sessionId) =>
+    options.emit({ type, payload, runId: 'run-1', sessionId });
+  const rowsText = (controller) => controller.getSnapshot().rows.map((r) => r.text);
+
+  it('renders web-search citations as a Sources block', async () => {
+    const { controller } = await harness(async (options, state) => {
+      emit(options, 'assistant_token', { text: 'here you go' }, state.sessionId);
+      emit(
+        options,
+        'assistant_citations',
+        { citations: [{ url: 'https://silvery.dev', title: 'Silvery' }] },
+        state.sessionId,
+      );
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: 'here you go', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('search the web');
+    assert.ok(
+      rowsText(controller).some((t) => /Sources \(1\)/.test(t) && /silvery\.dev/.test(t)),
+      `no sources row: ${JSON.stringify(rowsText(controller))}`,
+    );
+    await controller.dispose();
+  });
+
+  it('warns on a run that produced no visible output (empty-run)', async () => {
+    const { controller } = await harness(async (options, state) => {
+      // Nothing but the completion — the parser-drop / blank-turn symptom.
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('do something');
+    assert.ok(
+      rowsText(controller).some((t) => /response was empty/i.test(t)),
+      `no empty-run warning: ${JSON.stringify(rowsText(controller))}`,
+    );
+    await controller.dispose();
+  });
+
+  it('does NOT warn when the run emitted visible output (no false positive)', async () => {
+    const { controller } = await harness(async (options, state) => {
+      emit(options, 'assistant_token', { text: 'a real reply' }, state.sessionId);
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: 'a real reply', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('say something');
+    assert.ok(
+      !rowsText(controller).some((t) => /response was empty/i.test(t)),
+      'false-positive empty-run warning on a non-empty turn',
+    );
+    await controller.dispose();
+  });
+
+  it('resets between runs — a full turn does not suppress a later empty one', async () => {
+    let phase = 0;
+    const { controller } = await harness(async (options, state) => {
+      if (phase === 0) emit(options, 'assistant_token', { text: 'first' }, state.sessionId);
+      // phase 1 emits nothing visible.
+      emit(options, 'run_complete', {}, state.sessionId);
+      return { outcome: 'success', finalAssistantText: '', rounds: 1, runId: 'run-1' };
+    });
+    await controller.submit('turn one');
+    phase = 1;
+    await controller.submit('turn two');
+    const emptyWarnings = rowsText(controller).filter((t) => /response was empty/i.test(t));
+    assert.equal(emptyWarnings.length, 1, 'the empty second turn must warn exactly once');
+    await controller.dispose();
+  });
+});
+
+describe('silvery event diagnostics — daemon-owned rows', () => {
+  // The daemon lane observes runs via onEngineEvent, with no local submit()
+  // between them (a remote-triggered turn). The per-run reset therefore has to
+  // happen at run_complete, not only at submit — otherwise a non-empty run
+  // leaves the counter high and a following EMPTY run is silently not warned.
+  it('preserves citations and the per-run empty warning through completion resync', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const { applyDaemonTranscriptEvent, createDaemonTranscriptMirror, snapshotDaemonTranscript } =
+      await import('../daemon-transcript-mirror.ts');
+    const state = {
+      sessionId: 'diag-daemon',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'ollama',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    let hooks;
+    const serverMirror = createDaemonTranscriptMirror();
+    const client = {
+      request: async (type) => {
+        if (type === 'get_session_snapshot')
+          return {
+            payload: { transcript: { mirror: snapshotDaemonTranscript(serverMirror) } },
+          };
+        return { payload: {} };
+      },
+    };
+    const controller = await createSilveryController(
+      { sessionId: state.sessionId },
+      {
+        loadConfig: async () => ({ safeExecPatterns: [] }),
+        useDaemon: true,
+        initSession: async () => state,
+        gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+        resolveKey: () => '',
+        appendEvent: async () => undefined,
+        saveState: async () => undefined,
+        createDaemon: (receivedHooks) => {
+          hooks = receivedHooks;
+          return {
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'token',
+            client,
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          };
+        },
+      },
+    );
+    assert.ok(hooks, 'daemon hooks captured');
+
+    const deliver = (event) => {
+      applyDaemonTranscriptEvent(serverMirror, event);
+      hooks.onEngineEvent(event);
+    };
+
+    // Run 1: visible output and sources, then complete — no warning, counter resets.
+    deliver({ type: 'assistant_token', payload: { text: 'reply' }, seq: 1 });
+    deliver({
+      type: 'assistant_citations',
+      payload: { citations: [{ url: 'https://safe.dev', title: 'Safe' }] },
+      seq: 2,
+    });
+    deliver({ type: 'run_complete', payload: {}, seq: 3 });
+    // Run 2: nothing visible, then complete — MUST warn (this is the reset guard).
+    deliver({ type: 'user_message', payload: { text: 'empty run' }, seq: 4 });
+    deliver({ type: 'run_complete', payload: {}, seq: 5 });
+    for (let i = 0; i < 20; i += 1) await sleep(0);
+
+    const rowTexts = controller.getSnapshot().rows.map((row) => row.text);
+    const warnings = rowTexts.filter((text) => /response was empty/i.test(text));
+    const sources = rowTexts.filter((text) => /Sources \(1\)/.test(text));
+    assert.equal(warnings.length, 1, 'the empty second daemon run must warn (per-run reset)');
+    assert.equal(sources.length, 1, 'the daemon citation row must survive run-complete resync');
+    await controller.dispose();
+  });
+});
