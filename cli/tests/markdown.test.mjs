@@ -189,3 +189,50 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.deepEqual(line.spans, [{ text: 'second' }]);
   });
 });
+
+describe('parseMarkdown — code fence syntax highlighting', () => {
+  it('stamps block-level codeSpans on code lines for a known language', () => {
+    const lines = parseMarkdown('intro\n```ts\nconst x = 1\n// note\n```\nafter');
+    const code = lines.filter((l) => l.kind === 'code');
+    assert.equal(code.length, 2);
+    assert.ok(
+      code.every((l) => l.codeSpans && l.codeSpans.length > 0),
+      'both code lines highlighted',
+    );
+    // Whitespace/content preserved: concat(spans) === raw.
+    for (const l of code) {
+      assert.equal(l.codeSpans.map((s) => s.text).join(''), l.raw);
+    }
+  });
+
+  it('leaves codeSpans unset for an unsupported language (renders flat-muted)', () => {
+    const lines = parseMarkdown('```brainfuck\n+++.\n```');
+    const code = lines.filter((l) => l.kind === 'code');
+    assert.equal(code.length, 1);
+    assert.equal(code[0].codeSpans, undefined);
+  });
+
+  it('highlights an UNTERMINATED fence (streaming mid-block)', () => {
+    // No closing ``` — the collected lines are still valid code and must
+    // highlight, or a streaming code block stays gray until the fence lands.
+    const lines = parseMarkdown('```python\ndef f():\n    return 1');
+    const code = lines.filter((l) => l.kind === 'code');
+    assert.equal(code.length, 2);
+    assert.ok(code.every((l) => l.codeSpans && l.codeSpans.length > 0));
+  });
+
+  it('tokenizes the block as a whole — a line inside a multi-line construct is not mis-lit', () => {
+    // Line-by-line tokenizing would treat the middle line of a template
+    // literal as its own statement. Block-level keeps it a string.
+    const lines = parseMarkdown('```ts\nconst s = `line one\nline two`\n```');
+    const code = lines.filter((l) => l.kind === 'code');
+    const secondLine = code[1].codeSpans ?? [];
+    // The whole second line is part of the string literal → one span, string color.
+    assert.equal(secondLine.map((s) => s.text).join(''), 'line two`');
+    assert.equal(
+      new Set(secondLine.map((s) => s.color)).size,
+      1,
+      'the closing string line is one color',
+    );
+  });
+});

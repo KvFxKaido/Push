@@ -767,3 +767,115 @@ export function highlightCode(theme: Theme, code: string, lang: string): string[
 export function supportedHighlightLangs(): string[] {
   return [...Object.keys(SPECS), 'diff'];
 }
+
+// ── Silvery span emitter ────────────────────────────────────────────
+//
+// The retained-mode TUI (`cli/silvery/`) does not consume ANSI strings — its
+// compositor paints from a component tree, so it needs a COLOR per token, not
+// an escape sequence, exactly as `verbShimmerColors` returns colors rather than
+// SGR codes. The lexer above (`tokenize` / `SPECS` / `resolveLang` / the diff
+// categorization) is pure and reused verbatim; only the sink differs.
+
+/** One colored run within a highlighted code line. Colors are raw hex, which
+ *  silvery's `resolveThemeColor` passes straight through (non-`$` values). */
+export interface CodeSpan {
+  text: string;
+  color: string;
+}
+
+/**
+ * Fixed syntax palette for code fences — a deliberate carve-out of Visual
+ * Language v2 law 2 (one accent).
+ *
+ * The rest of the TUI is grayscale + one accent because color there is CHROME,
+ * and chrome that shouts competes with the work. Inside a code fence, color is
+ * INFORMATION: distinguishing a string from a keyword from a comment is the
+ * whole point of highlighting, and brightness alone (which is all law 2 would
+ * allow) can't carry six token categories legibly. So a fence gets its own
+ * small palette — and "small" and "desaturated" are the discipline that keeps
+ * this from becoming a rainbow that fights Push's severe canvas. These are
+ * tinted grays, not primaries: each hue is low-saturation and mid-light so it
+ * reads as "quiet syntax color" on `#0a0a0a`, not an editor theme.
+ *
+ * Deliberately theme-INDEPENDENT: a token's category is a fact about the code,
+ * not about the user's accent choice, so it must not shift when the accent hue
+ * changes. The accent stays reserved for "where the action is" (cursor,
+ * selection); code speaks its own quiet language.
+ */
+const SYNTAX_PALETTE: Record<Category, string> = {
+  keyword: '#c9a3c4', // muted mauve — declarations / control flow
+  type: '#9db8c9', // steel blue
+  function: '#b3c1d4', // soft slate — callables
+  string: '#a6c398', // sage
+  property: '#cdbb9a', // sand
+  number: '#d4b483', // amber
+  comment: '#6b6b6b', // dim — recedes, like fg.dim
+  variable: '#c4c4c4', // light gray
+  operator: '#8a8a8a', // muted gray
+  plain: '#bdbdbd', // secondary gray
+  'diff-add': '#a6c398', // sage (= string)
+  'diff-del': '#d19c9c', // muted rose — softer than the fault red, which law 3 reserves
+  'diff-hunk': '#9db8c9', // steel (= type)
+  'diff-meta': '#6b6b6b', // dim
+};
+
+/** Split tokenizer output into per-line span arrays. Mirrors `segsToLines`,
+ *  but carries a color per run instead of wrapping each in ANSI. */
+function segsToSpanLines(segs: Seg[]): CodeSpan[][] {
+  const lines: CodeSpan[][] = [];
+  let cur: CodeSpan[] = [];
+  for (const seg of segs) {
+    const parts = seg.text.split('\n');
+    for (let p = 0; p < parts.length; p++) {
+      if (p > 0) {
+        lines.push(cur);
+        cur = [];
+      }
+      const piece = parts[p];
+      if (!piece) continue;
+      const cat: Category = seg.cat === 'raw' ? 'plain' : seg.cat;
+      cur.push({ text: piece, color: SYNTAX_PALETTE[cat] });
+    }
+  }
+  lines.push(cur);
+  return lines;
+}
+
+/** Diff categorization as spans. Mirrors `highlightDiff`. */
+function diffToSpanLines(code: string): CodeSpan[][] {
+  return code.split('\n').map((line) => {
+    if (line === '') return [];
+    let cat: Category;
+    if (line.startsWith('@@')) {
+      cat = 'diff-hunk';
+    } else if (/^(\+\+\+|---|diff |index |new file|deleted file|rename |similarity )/.test(line)) {
+      cat = 'diff-meta';
+    } else if (line[0] === '+') {
+      cat = 'diff-add';
+    } else if (line[0] === '-') {
+      cat = 'diff-del';
+    } else {
+      cat = 'plain';
+    }
+    return [{ text: line, color: SYNTAX_PALETTE[cat] }];
+  });
+}
+
+/**
+ * Highlight `code` into per-line colored spans for the silvery renderer.
+ *
+ * Returns `null` when the language has no lexer, so the caller keeps its
+ * existing flat-muted rendering rather than this module inventing a fallback
+ * look (the ANSI `highlightCode` styles unknown langs `fg.secondary`; here the
+ * caller already owns that case). Line count is preserved: `result.length` ===
+ * `code.split('\n').length`, so a caller zipping spans onto source lines stays
+ * aligned.
+ */
+export function highlightToSpans(code: string, lang: string): CodeSpan[][] | null {
+  const key = resolveLang(lang);
+  if (!key) return null;
+  if (key === 'diff') return diffToSpanLines(code);
+  const spec = SPECS[key];
+  if (!spec) return null;
+  return segsToSpanLines(tokenize(code, spec));
+}
