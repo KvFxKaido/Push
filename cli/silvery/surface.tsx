@@ -64,6 +64,7 @@ import {
 } from './visual-language.js';
 
 const COMMANDS = [
+  { id: 'resume', label: 'Resume session', hint: 'browse saved conversations' },
   { id: 'model', label: 'Switch model', hint: 'pick a curated model' },
   { id: 'provider', label: 'Switch provider', hint: 'pick a provider' },
   { id: 'copy', label: 'Copy last response', hint: 'yank to clipboard · Ctrl+O' },
@@ -84,6 +85,33 @@ export function pickerWindow(
   const half = Math.floor(max / 2);
   const start = Math.max(0, Math.min(cursor - half, count - max));
   return { start, end: start + max };
+}
+
+export function formatPickerRelativeTime(timestamp: number, now = Date.now()): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return 'unknown';
+  const seconds = Math.floor(Math.max(0, now - timestamp) / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d ago`;
+  const date = new Date(timestamp);
+  return Number.isNaN(date.getTime()) ? 'unknown' : date.toISOString().slice(0, 10);
+}
+
+function truncatePickerText(value: string, width: number): string {
+  const safe = value
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: session metadata is user-controlled
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: strip OSC hyperlinks/window titles
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: remaining terminal controls become spaces
+    .replace(/[\x00-\x1f\x7f]/g, ' ');
+  const flat = safe.replace(/\s+/g, ' ').trim();
+  if (flat.length <= width) return flat;
+  return `${flat.slice(0, Math.max(0, width - 1))}…`;
 }
 
 export function tailWindow(
@@ -576,6 +604,65 @@ function Palette({
   );
 }
 
+function SessionPreviewPane({
+  picker,
+  option,
+  width,
+}: {
+  picker: NonNullable<SilverySnapshot['picker']>;
+  option: NonNullable<SilverySnapshot['picker']>['options'][number] | undefined;
+  width: number;
+}) {
+  const session = option?.session;
+  const preview = option && picker.preview?.optionId === option.id ? picker.preview : null;
+  const contentWidth = Math.max(12, width - 4);
+  return (
+    <Box
+      width={width}
+      minHeight={12}
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={VL_COLOR.muted}
+      paddingX={1}
+    >
+      <Text bold>Preview</Text>
+      {!option ? (
+        <Text color={VL_COLOR.muted}>
+          {picker.loading ? 'Loading sessions…' : 'Select a session to preview'}
+        </Text>
+      ) : !preview || preview.loading ? (
+        <Text color={VL_COLOR.muted}>Loading preview…</Text>
+      ) : preview.error ? (
+        <Text color={VL_COLOR.fault}>{preview.error}</Text>
+      ) : preview.messages.length === 0 ? (
+        <Text color={VL_COLOR.muted}>No messages in session</Text>
+      ) : (
+        preview.messages.slice(-4).map((message, index) => (
+          <Text key={`${message.role}-${index}`}>
+            <Text color={message.role === 'user' ? VL_COLOR.accent : VL_COLOR.primary} bold>
+              {message.role === 'user' ? 'You: ' : 'AI:  '}
+            </Text>
+            <Text color={VL_COLOR.muted}>
+              {truncatePickerText(message.content, Math.max(8, contentWidth - 5))}
+            </Text>
+          </Text>
+        ))
+      )}
+      {session ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={VL_COLOR.muted}>Session</Text>
+          <Text>{`ID: ${truncatePickerText(session.sessionId, contentWidth)}`}</Text>
+          {session.sessionName ? (
+            <Text>{`Name: ${truncatePickerText(session.sessionName, contentWidth)}`}</Text>
+          ) : null}
+          <Text>{`Path: ${truncatePickerText(session.cwd || '.', contentWidth)}`}</Text>
+          <Text>{`Model: ${truncatePickerText(`${session.provider}/${session.model}`, contentWidth)}`}</Text>
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 function PickerModal({
   picker,
   controller,
@@ -593,8 +680,14 @@ function PickerModal({
   const [selected, setSelected] = useState(picker.initialIndex);
   // The option set can shrink between renders (rare, but keep the cursor valid).
   const cursor = Math.min(Math.max(0, selected), Math.max(0, count - 1));
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
   useInput(
     (input, key) => {
+      if (picker.kind === 'session' && !key.ctrl && !key.meta && input.toLowerCase() === 'a') {
+        controller.toggleSessionPickerScope();
+        return;
+      }
       const action = getListNavigationAction(
         {
           ch: input,
@@ -613,53 +706,114 @@ function PickerModal({
         { allowNumbers: false, allowVim: true },
       );
       if (action?.type === 'cancel') controller.closePicker();
-      else if (action?.type === 'move')
-        setSelected((value) => (Math.min(value, count - 1) + action.delta + count) % count);
-      else if (action?.type === 'confirm') {
+      else if (action?.type === 'move' && count > 0) {
+        const next = (Math.min(cursorRef.current, count - 1) + action.delta + count) % count;
+        cursorRef.current = next;
+        setSelected(next);
+        if (picker.kind === 'session') {
+          const option = picker.options[next];
+          if (option) controller.previewPickerOption(option.id);
+        }
+      } else if (action?.type === 'confirm') {
         const option = picker.options[cursor];
         if (option) controller.selectPickerOption(option.id);
       }
     },
     { isActive: active },
   );
-  const modalWidth = Math.max(40, Math.min(64, width - 4));
+  const isSessionPicker = picker.kind === 'session';
+  const modalWidth = Math.max(40, Math.min(isSessionPicker ? 112 : 64, width - 4));
   const labelWidth = Math.max(
     ...picker.options.map((option) => option.label.length),
     picker.kind === 'model' ? 12 : 8,
   );
-  const { start, end } = pickerWindow(count, cursor);
+  const { start, end } = pickerWindow(count, cursor, isSessionPicker ? 7 : PICKER_MAX_VISIBLE);
   const visible = picker.options.slice(start, end);
+  const selectedOption = picker.options[cursor];
+  const sessionSideBySide = isSessionPicker && modalWidth >= 62;
+  const sessionListWidth = sessionSideBySide
+    ? Math.max(28, Math.floor((modalWidth - 5) * 0.5))
+    : modalWidth - 4;
+  const sessionPreviewWidth = sessionSideBySide
+    ? Math.max(26, modalWidth - sessionListWidth - 5)
+    : modalWidth - 4;
+  const scopeLabel =
+    picker.scope === 'workspace'
+      ? `this workspace${picker.scopedOutCount ? ` · ${picker.scopedOutCount} elsewhere` : ''}`
+      : 'all workspaces';
+  const optionsView = (
+    <Box flexDirection="column" width={isSessionPicker ? sessionListWidth : undefined}>
+      {isSessionPicker ? <Text color={VL_COLOR.muted}>{scopeLabel}</Text> : null}
+      {picker.loading ? <Text color={VL_COLOR.muted}>Loading sessions…</Text> : null}
+      {picker.error ? <Text color={VL_COLOR.fault}>{picker.error}</Text> : null}
+      {!picker.loading && !picker.error && count === 0 ? (
+        <Text color={VL_COLOR.muted}>No saved sessions</Text>
+      ) : null}
+      {start > 0 ? <Text color={VL_COLOR.muted}>{`  ↑ ${start} more`}</Text> : null}
+      {visible.map((option, index) => {
+        const optionIndex = start + index;
+        const isCursor = optionIndex === cursor;
+        const badge = option.current ? ' ·current' : '';
+        const color = option.disabled ? VL_COLOR.muted : isCursor ? VL_COLOR.accent : undefined;
+        if (isSessionPicker && option.session) {
+          const rowWidth = Math.max(12, sessionListWidth - 3);
+          return (
+            <Box
+              key={option.id}
+              flexDirection="column"
+              onClick={active ? () => controller.selectPickerOption(option.id) : undefined}
+            >
+              <Text color={color} bold={isCursor && !option.disabled}>
+                {`${isCursor ? '❯ ' : '  '}${truncatePickerText(option.label, rowWidth - badge.length)}${badge}`}
+              </Text>
+              <Text color={VL_COLOR.muted}>
+                {`    ${truncatePickerText(
+                  `${option.hint ?? ''} · ${formatPickerRelativeTime(option.session.updatedAt)}`,
+                  Math.max(8, rowWidth - 2),
+                )}`}
+              </Text>
+            </Box>
+          );
+        }
+        const label = option.label.padEnd(labelWidth);
+        const hint = option.hint ? `  ${option.hint}` : '';
+        return (
+          <Box
+            key={option.id}
+            onClick={active ? () => controller.selectPickerOption(option.id) : undefined}
+          >
+            <Text color={color} bold={isCursor && !option.disabled}>
+              {`${isCursor ? '❯ ' : '  '}${label}${badge}${hint}`}
+            </Text>
+          </Box>
+        );
+      })}
+      {end < count ? <Text color={VL_COLOR.muted}>{`  ↓ ${count - end} more`}</Text> : null}
+    </Box>
+  );
   return (
     <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
       <ModalDialog
         title={picker.title}
         width={modalWidth}
-        footer={footerKeybinds('picker')}
+        footer={
+          isSessionPicker ? '↑↓ move · ↵ resume · a scope · esc close' : footerKeybinds('picker')
+        }
         onClose={() => controller.closePicker()}
         fade={fade}
       >
-        <Box flexDirection="column">
-          {start > 0 ? <Text color={VL_COLOR.muted}>{`  ↑ ${start} more`}</Text> : null}
-          {visible.map((option, index) => {
-            const optionIndex = start + index;
-            const isCursor = optionIndex === cursor;
-            const label = option.label.padEnd(labelWidth);
-            const badge = option.current ? ' ·current' : '';
-            const hint = option.hint ? `  ${option.hint}` : '';
-            const color = option.disabled ? VL_COLOR.muted : isCursor ? VL_COLOR.accent : undefined;
-            return (
-              <Box
-                key={option.id}
-                onClick={active ? () => controller.selectPickerOption(option.id) : undefined}
-              >
-                <Text color={color} bold={isCursor && !option.disabled}>
-                  {`${isCursor ? '❯ ' : '  '}${label}${badge}${hint}`}
-                </Text>
-              </Box>
-            );
-          })}
-          {end < count ? <Text color={VL_COLOR.muted}>{`  ↓ ${count - end} more`}</Text> : null}
-        </Box>
+        {isSessionPicker ? (
+          <Box flexDirection={sessionSideBySide ? 'row' : 'column'} gap={1}>
+            {optionsView}
+            <SessionPreviewPane
+              picker={picker}
+              option={selectedOption}
+              width={sessionPreviewWidth}
+            />
+          </Box>
+        ) : (
+          optionsView
+        )}
       </ModalDialog>
     </Box>
   );
@@ -882,7 +1036,14 @@ export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: (
   else exit();
 }
 
-export type ComposerShortcut = 'complete' | 'palette' | 'clear' | 'provider' | 'copy' | null;
+export type ComposerShortcut =
+  | 'complete'
+  | 'palette'
+  | 'clear'
+  | 'provider'
+  | 'session'
+  | 'copy'
+  | null;
 
 /**
  * Ctrl+O for copy, not the mnemonic Ctrl+Y: readline already owns Ctrl+Y for
@@ -900,6 +1061,7 @@ export function resolveComposerShortcut(
   if (inputKey === 'k') return 'palette';
   if (inputKey === 'l') return 'clear';
   if (inputKey === 'p') return 'provider';
+  if (inputKey === 'r') return 'session';
   if (inputKey === 'o') return 'copy';
   return null;
 }
@@ -1021,7 +1183,8 @@ export function PushSurface({
   const runCommand = useCallback(
     (id: (typeof COMMANDS)[number]['id']) => {
       setPaletteOpen(false);
-      if (id === 'model') controller.openPicker('model');
+      if (id === 'resume') controller.openPicker('session');
+      else if (id === 'model') controller.openPicker('model');
       else if (id === 'provider') controller.openPicker('provider');
       else if (id === 'copy') controller.copyLastResponse();
       else if (id === 'clear') controller.clearDisplay();
@@ -1085,6 +1248,10 @@ export function PushSurface({
       }
       if (shortcut === 'copy') {
         controller.copyLastResponse();
+        return;
+      }
+      if (shortcut === 'session') {
+        controller.openPicker('session');
         return;
       }
       if (shortcut === 'provider') controller.openPicker('provider');

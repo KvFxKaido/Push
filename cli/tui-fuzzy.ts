@@ -180,7 +180,10 @@ export function highlightMatches(text: string, matches: MatchRange[], theme: The
  * workspace's own sessions aren't buried under every other project's
  * history; callers fall back to the unscoped list when it comes back empty.
  */
-export function scopeSessionsToWorkspace<T extends Session>(sessions: T[], cwd: string): T[] {
+export function scopeSessionsToWorkspace<T extends { cwd?: string }>(
+  sessions: T[],
+  cwd: string,
+): T[] {
   return sessions.filter((s) => (s.cwd || '') === cwd);
 }
 

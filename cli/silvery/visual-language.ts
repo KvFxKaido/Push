@@ -446,7 +446,7 @@ export function footerKeybinds(scope: FooterScope): string {
       return 'restart this screen';
     case 'composer':
     default:
-      return 'tab complete · ctrl+k commands · ? help · ctrl+c quit';
+      return 'tab complete · ctrl+k commands · ctrl+r sessions · ? help · ctrl+c quit';
   }
 }
 
