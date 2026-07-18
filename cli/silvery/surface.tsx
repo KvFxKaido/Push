@@ -14,6 +14,7 @@ import {
   Screen,
   Text,
   TextArea,
+  TextInput,
   useApp,
   useInput,
   useStdout,
@@ -64,6 +65,7 @@ import {
 } from './visual-language.js';
 
 const COMMANDS = [
+  { id: 'config', label: 'Open config', hint: 'edit API keys in a masked field' },
   { id: 'resume', label: 'Resume session', hint: 'browse saved conversations' },
   { id: 'model', label: 'Switch model', hint: 'pick a curated model' },
   { id: 'provider', label: 'Switch provider', hint: 'pick a provider' },
@@ -74,6 +76,23 @@ const COMMANDS = [
 ] as const;
 
 const PICKER_MAX_VISIBLE = 12;
+
+/**
+ * Catch secret-setting commands before their value can become composer state.
+ * The caller clears the composer and opens the password-style config field;
+ * any pasted tail is deliberately discarded and must be pasted again there.
+ */
+export function resolveSensitiveConfigComposerTarget(
+  value: string,
+  currentProvider: string,
+  providerIds: readonly string[] = getProviderList().map((provider) => provider.id),
+): string | null {
+  const match = value.match(/^\/config\s+(key|tavily)(?:\s+([\s\S]*))?$/i);
+  if (!match) return null;
+  if (match[1]?.toLowerCase() === 'tavily') return 'tavily';
+  const candidate = match[2]?.trim().split(/\s+/)[0]?.toLowerCase();
+  return candidate && providerIds.includes(candidate) ? candidate : currentProvider;
+}
 
 /** Window a long option list around the cursor, keeping the selection visible. */
 export function pickerWindow(
@@ -819,6 +838,254 @@ function PickerModal({
   );
 }
 
+function ConfigEditorModal({
+  editor,
+  controller,
+  width,
+  fade,
+  active,
+}: {
+  editor: NonNullable<SilverySnapshot['configEditor']>;
+  controller: SilveryController;
+  width: number;
+  fade: number;
+  active: boolean;
+}) {
+  const count = editor.items.length;
+  const [selected, setSelected] = useState(editor.initialIndex);
+  const [editTarget, setEditTarget] = useState<string | null>(editor.initialEditTarget ?? null);
+  const [choiceTarget, setChoiceTarget] = useState<string | null>(null);
+  const [choiceSelected, setChoiceSelected] = useState(0);
+  const [secret, setSecret] = useState('');
+  const cursor = Math.min(Math.max(0, selected), Math.max(0, count - 1));
+  const cursorRef = useRef(cursor);
+  cursorRef.current = cursor;
+  const selectedItem = editor.items[cursor];
+  const editItem = editTarget
+    ? (editor.items.find((item) => item.id === editTarget) ?? selectedItem)
+    : undefined;
+  const choiceItem = choiceTarget
+    ? editor.items.find((item) => item.id === choiceTarget)
+    : undefined;
+  const choiceOptions = choiceItem?.options ?? [];
+  const choiceCursor = Math.min(Math.max(0, choiceSelected), Math.max(0, choiceOptions.length - 1));
+  const choiceCursorRef = useRef(choiceCursor);
+  choiceCursorRef.current = choiceCursor;
+  const openItem = useCallback((target: string) => {
+    setSecret('');
+    setEditTarget(target);
+  }, []);
+  const openChoice = useCallback((item: (typeof editor.items)[number]) => {
+    const currentIndex = item.options?.findIndex((option) => option.value === item.value) ?? -1;
+    setChoiceSelected(Math.max(0, currentIndex));
+    setChoiceTarget(item.id);
+  }, []);
+  const cancelEdit = useCallback(() => {
+    setSecret('');
+    setEditTarget(null);
+  }, []);
+  const cancelChoice = useCallback(() => setChoiceTarget(null), []);
+  const activateItem = useCallback(
+    (item: (typeof editor.items)[number]) => {
+      if (item.kind === 'secret') openItem(item.id);
+      else if (item.kind === 'select') openChoice(item);
+      else {
+        const next =
+          item.id === 'daemon'
+            ? item.value === 'auto'
+              ? 'off'
+              : 'auto'
+            : item.value === 'on'
+              ? 'off'
+              : 'on';
+        void controller.saveConfigPreference(item.id, next);
+      }
+    },
+    [controller, openChoice, openItem],
+  );
+
+  useInput(
+    (input, key) => {
+      const action = getListNavigationAction(
+        {
+          ch: input,
+          name: key.escape
+            ? 'escape'
+            : key.upArrow
+              ? 'up'
+              : key.downArrow
+                ? 'down'
+                : key.return
+                  ? 'return'
+                  : input,
+          ctrl: key.ctrl,
+          meta: key.meta,
+        },
+        { allowNumbers: false, allowVim: true },
+      );
+      if (action?.type === 'cancel') controller.closeConfigEditor();
+      else if (action?.type === 'move' && count > 0) {
+        const next = (Math.min(cursorRef.current, count - 1) + action.delta + count) % count;
+        cursorRef.current = next;
+        setSelected(next);
+      } else if (action?.type === 'confirm') {
+        const item = editor.items[cursorRef.current];
+        if (item) activateItem(item);
+      }
+    },
+    { isActive: active && editTarget === null && choiceTarget === null && !editor.saving },
+  );
+  useInput(
+    (_input, key) => {
+      if (key.escape && !editor.saving) cancelEdit();
+    },
+    {
+      isActive: active && editTarget !== null,
+      onPaste: (text) => {
+        if (!editor.saving) setSecret(text.trim());
+      },
+    },
+  );
+  useInput(
+    (input, key) => {
+      const action = getListNavigationAction(
+        {
+          ch: input,
+          name: key.escape
+            ? 'escape'
+            : key.upArrow
+              ? 'up'
+              : key.downArrow
+                ? 'down'
+                : key.return
+                  ? 'return'
+                  : input,
+          ctrl: key.ctrl,
+          meta: key.meta,
+        },
+        { allowNumbers: false, allowVim: true },
+      );
+      if (action?.type === 'cancel') cancelChoice();
+      else if (action?.type === 'move' && choiceOptions.length > 0) {
+        const next =
+          (choiceCursorRef.current + action.delta + choiceOptions.length) % choiceOptions.length;
+        choiceCursorRef.current = next;
+        setChoiceSelected(next);
+      } else if (action?.type === 'confirm' && choiceItem) {
+        const option = choiceOptions[choiceCursorRef.current];
+        if (option) {
+          void controller
+            .saveConfigPreference(choiceItem.id, option.value)
+            .then((saved) => saved && cancelChoice());
+        }
+      }
+    },
+    { isActive: active && choiceTarget !== null && !editor.saving },
+  );
+
+  const modalWidth = Math.max(42, Math.min(72, width - 4));
+  const { start, end } = pickerWindow(count, cursor, 11);
+  const visible = editor.items.slice(start, end);
+  const submitSecret = useCallback(
+    async (value: string) => {
+      if (!editTarget || editor.saving) return;
+      if (await controller.saveConfigSecret(editTarget, value)) cancelEdit();
+    },
+    [cancelEdit, controller, editTarget, editor.saving],
+  );
+
+  return (
+    <Box position="absolute" marginLeft={2} marginTop={1} width={modalWidth}>
+      <ModalDialog
+        title={editItem ? `API key · ${editItem.label}` : choiceItem ? choiceItem.label : 'Config'}
+        width={modalWidth}
+        footer={
+          editItem
+            ? 'paste key · ↵ save · esc cancel'
+            : choiceItem
+              ? '↑↓ select · ↵ save · esc cancel'
+              : '↑↓ move · ↵ edit/toggle · esc close'
+        }
+        onClose={
+          editItem ? cancelEdit : choiceItem ? cancelChoice : () => controller.closeConfigEditor()
+        }
+        fade={fade}
+      >
+        {editItem ? (
+          <Box flexDirection="column" gap={1}>
+            <Text color={VL_COLOR.muted}>
+              Current: <Text color={VL_COLOR.primary}>{editItem.value}</Text>
+            </Text>
+            <TextInput
+              value={secret}
+              onChange={setSecret}
+              onSubmit={(value) => void submitSecret(value)}
+              placeholder="paste API key"
+              prompt="❯ "
+              promptColor={VL_COLOR.accent}
+              mask="•"
+              showUnderline
+              underlineWidth={Math.max(24, modalWidth - 12)}
+              isActive={active && !editor.saving}
+              readOnly={editor.saving}
+            />
+            <Text color={VL_COLOR.muted}>
+              {editor.saving ? 'Saving…' : 'The key is masked and never enters the composer.'}
+            </Text>
+            {editor.error ? <Text color={VL_COLOR.fault}>{editor.error}</Text> : null}
+          </Box>
+        ) : choiceItem ? (
+          <Box flexDirection="column">
+            {choiceOptions.map((option, index) => {
+              const isCursor = index === choiceCursor;
+              const current = option.value === choiceItem.value ? ' ·current' : '';
+              return (
+                <Box key={option.value}>
+                  <Text color={isCursor ? VL_COLOR.accent : undefined} bold={isCursor}>
+                    {`${isCursor ? '❯ ' : '  '}${option.label}${current}`}
+                  </Text>
+                  <Text color={VL_COLOR.muted}>{` · ${option.detail}`}</Text>
+                </Box>
+              );
+            })}
+            {editor.saving ? <Text color={VL_COLOR.muted}>Saving…</Text> : null}
+            {editor.error ? <Text color={VL_COLOR.fault}>{editor.error}</Text> : null}
+          </Box>
+        ) : (
+          <Box flexDirection="column">
+            <Text color={VL_COLOR.muted}>Provider keys</Text>
+            {start > 0 ? <Text color={VL_COLOR.muted}>{`  ↑ ${start} more`}</Text> : null}
+            {visible.map((item, index) => {
+              const itemIndex = start + index;
+              const isCursor = itemIndex === cursor;
+              const badge = item.current ? ' ·current' : '';
+              const rowWidth = Math.max(18, modalWidth - 6);
+              const label = truncatePickerText(`${item.label}${badge}`, Math.floor(rowWidth * 0.4));
+              const detail = item.detail ? ` · ${item.detail}` : '';
+              return (
+                <Box
+                  key={item.id}
+                  onClick={active && !editor.saving ? () => activateItem(item) : undefined}
+                >
+                  <Text color={isCursor ? VL_COLOR.accent : undefined} bold={isCursor}>
+                    {`${isCursor ? '❯ ' : '  '}${label.padEnd(Math.floor(rowWidth * 0.4))}`}
+                  </Text>
+                  <Text color={VL_COLOR.muted}>
+                    {truncatePickerText(`${item.value}${detail}`, Math.ceil(rowWidth * 0.6))}
+                  </Text>
+                </Box>
+              );
+            })}
+            {end < count ? <Text color={VL_COLOR.muted}>{`  ↓ ${count - end} more`}</Text> : null}
+            {editor.saving ? <Text color={VL_COLOR.muted}>Saving…</Text> : null}
+            {editor.error ? <Text color={VL_COLOR.fault}>{editor.error}</Text> : null}
+          </Box>
+        )}
+      </ModalDialog>
+    </Box>
+  );
+}
+
 function HeaderBar({
   snapshot,
   tick,
@@ -1082,10 +1349,15 @@ export function PushSurface({
   const [paletteAnimating, setPaletteAnimating] = useState(false);
   const [interactionAnimating, setInteractionAnimating] = useState(false);
   const [pickerAnimating, setPickerAnimating] = useState(false);
+  const [configAnimating, setConfigAnimating] = useState(false);
   const reducedMotion = isReducedMotion();
   // One shared clock for all motion (law 8). Idle freezes (law 6 / 8).
   const tick = useSharedClock(
-    snapshot.running || paletteAnimating || interactionAnimating || pickerAnimating,
+    snapshot.running ||
+      paletteAnimating ||
+      interactionAnimating ||
+      pickerAnimating ||
+      configAnimating,
   );
   const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
   const interactionMotion = useModalMotion(
@@ -1102,16 +1374,27 @@ export function PushSurface({
     reducedMotion,
     setPickerAnimating,
   );
+  const configMotion = useModalMotion(
+    Boolean(snapshot.configEditor),
+    tick,
+    0.35,
+    reducedMotion,
+    setConfigAnimating,
+  );
   const retainedInteraction = useRef(snapshot.interaction);
   if (snapshot.interaction) retainedInteraction.current = snapshot.interaction;
   const retainedPicker = useRef(snapshot.picker);
   if (snapshot.picker) retainedPicker.current = snapshot.picker;
+  const retainedConfigEditor = useRef(snapshot.configEditor);
+  if (snapshot.configEditor) retainedConfigEditor.current = snapshot.configEditor;
   const paletteOpenRef = useRef(false);
   paletteOpenRef.current = paletteMotion.visible;
   const interactionOpenRef = useRef(false);
   interactionOpenRef.current = interactionMotion.visible;
   const pickerOpenRef = useRef(false);
   pickerOpenRef.current = pickerMotion.visible;
+  const configOpenRef = useRef(false);
+  configOpenRef.current = configMotion.visible;
   const lastAttentionInteractionId = useRef<string | null>(null);
   const [attentionTick, setAttentionTick] = useState<number | null>(null);
   const completer = useMemo(
@@ -1175,15 +1458,22 @@ export function PushSurface({
         void submit('/help');
         return;
       }
+      const configTarget = resolveSensitiveConfigComposerTarget(value, snapshot.provider);
+      if (configTarget) {
+        setComposerInput('');
+        controller.openConfigEditor(configTarget);
+        return;
+      }
       setComposerInput(value);
     },
-    [input.length, setComposerInput, submit],
+    [controller, input.length, setComposerInput, snapshot.provider, submit],
   );
 
   const runCommand = useCallback(
     (id: (typeof COMMANDS)[number]['id']) => {
       setPaletteOpen(false);
-      if (id === 'resume') controller.openPicker('session');
+      if (id === 'config') controller.openConfigEditor();
+      else if (id === 'resume') controller.openPicker('session');
       else if (id === 'model') controller.openPicker('model');
       else if (id === 'provider') controller.openPicker('provider');
       else if (id === 'copy') controller.copyLastResponse();
@@ -1208,6 +1498,11 @@ export function PushSurface({
           handleKey: () => true,
         })
         .register({
+          id: 'config',
+          isActive: () => configOpenRef.current,
+          handleKey: () => true,
+        })
+        .register({
           id: 'command-palette',
           isActive: () => paletteOpenRef.current,
           handleKey: () => true,
@@ -1225,7 +1520,8 @@ export function PushSurface({
     focusStack.activeScope() === null &&
     !snapshot.running &&
     !interactionMotion.visible &&
-    !pickerMotion.visible;
+    !pickerMotion.visible &&
+    !configMotion.visible;
   useInput(
     (inputKey, key) => {
       if (key.ctrl && inputKey === 'c') {
@@ -1256,7 +1552,13 @@ export function PushSurface({
       }
       if (shortcut === 'provider') controller.openPicker('provider');
     },
-    { isActive: !paletteMotion.visible && !interactionMotion.visible && !pickerMotion.visible },
+    {
+      isActive:
+        !paletteMotion.visible &&
+        !interactionMotion.visible &&
+        !pickerMotion.visible &&
+        !configMotion.visible,
+    },
   );
 
   useEffect(() => {
@@ -1304,6 +1606,7 @@ export function PushSurface({
     scope = 'approval';
   else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
     scope = 'question';
+  else if (configMotion.visible) scope = 'picker';
   else if (pickerMotion.visible) scope = 'picker';
   else if (paletteMotion.visible) scope = 'palette';
   else if (snapshot.running) scope = 'running';
@@ -1316,13 +1619,23 @@ export function PushSurface({
           tick={tick}
           columns={columns}
           attention={attention}
-          freezeMotion={paletteMotion.visible || interactionMotion.visible || pickerMotion.visible}
+          freezeMotion={
+            paletteMotion.visible ||
+            interactionMotion.visible ||
+            pickerMotion.visible ||
+            configMotion.visible
+          }
         />
         <Transcript
           snapshot={snapshot}
           width={columns}
           height={transcriptHeight}
-          active={!paletteMotion.visible && !interactionMotion.visible && !pickerMotion.visible}
+          active={
+            !paletteMotion.visible &&
+            !interactionMotion.visible &&
+            !pickerMotion.visible &&
+            !configMotion.visible
+          }
         />
         {snapshot.error ? (
           <Text color={VL_COLOR.fault} bold>
@@ -1349,6 +1662,15 @@ export function PushSurface({
             width={columns}
             fade={interactionMotion.fade}
             active={interactionMotion.interactive}
+          />
+        ) : configMotion.visible && retainedConfigEditor.current ? (
+          <ConfigEditorModal
+            key={retainedConfigEditor.current.token}
+            editor={retainedConfigEditor.current}
+            controller={controller}
+            width={columns}
+            fade={configMotion.fade}
+            active={configMotion.interactive}
           />
         ) : pickerMotion.visible && retainedPicker.current ? (
           <PickerModal

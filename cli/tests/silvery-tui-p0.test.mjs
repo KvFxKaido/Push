@@ -35,6 +35,7 @@ class FakeStdin extends EventEmitter {
   constructor() {
     super();
     this.isTTY = true;
+    this.chunks = [];
   }
 
   setRawMode() {
@@ -61,8 +62,17 @@ class FakeStdin extends EventEmitter {
     return this;
   }
 
+  destroy() {
+    return this;
+  }
+
   read() {
-    return null;
+    return this.chunks.shift() ?? null;
+  }
+
+  send(chunk) {
+    this.chunks.push(String(chunk));
+    this.emit('readable');
   }
 }
 
@@ -207,6 +217,33 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(resolveComposerShortcut('p', { ctrl: true }), 'provider');
     assert.equal(resolveComposerShortcut('r', { ctrl: true }), 'session');
     assert.equal(resolveComposerShortcut('p', {}), null);
+  });
+
+  it('diverts secret-setting config commands before the composer accepts a key', {
+    skip: silverySkip,
+  }, async () => {
+    const { resolveSensitiveConfigComposerTarget } = await import('../silvery/surface.tsx');
+    const providers = ['ollama', 'zen', 'openai'];
+    assert.equal(
+      resolveSensitiveConfigComposerTarget('/config key', 'ollama', providers),
+      'ollama',
+    );
+    assert.equal(
+      resolveSensitiveConfigComposerTarget('/config key zen sk-plaintext', 'ollama', providers),
+      'zen',
+    );
+    assert.equal(
+      resolveSensitiveConfigComposerTarget('/config key sk-plaintext', 'ollama', providers),
+      'ollama',
+    );
+    assert.equal(
+      resolveSensitiveConfigComposerTarget('/config tavily tvly-plaintext', 'ollama', providers),
+      'tavily',
+    );
+    assert.equal(
+      resolveSensitiveConfigComposerTarget('/config url https://example.test', 'ollama', providers),
+      null,
+    );
   });
 
   it('keeps session previews to six recent human/assistant messages', async () => {
@@ -808,9 +845,157 @@ describe('silvery TUI Phase 1 chat surface', () => {
     assert.ok(
       controller.getSnapshot().rows.some((row) => /Model switched to: test-model-2/.test(row.text)),
     );
-    assert.ok(controller.getSnapshot().rows.some((row) => /provider: ollama/.test(row.text)));
+    assert.equal(controller.getSnapshot().configEditor?.items[0]?.id, 'ollama');
+    assert.equal(controller.getSnapshot().configEditor?.items[0]?.value, '********');
+    assert.deepEqual(
+      controller
+        .getSnapshot()
+        .configEditor?.items.filter((item) => item.kind !== 'secret')
+        .map((item) => item.id),
+      ['sandbox', 'execMode', 'explain', 'daemon'],
+    );
+    assert.equal(JSON.stringify(controller.getSnapshot()).includes('test-key'), false);
     assert.equal(savedConfig?.ollama?.model, 'test-model-2');
     await controller.dispose();
+  });
+
+  it('keeps existing and pasted API keys out of snapshots and the composer command path', async () => {
+    const { createSilveryController } = await import('../silvery/controller.ts');
+    const previousZenKey = process.env.PUSH_ZEN_API_KEY;
+    const previousExplainMode = process.env.PUSH_EXPLAIN_MODE;
+    const existingKey = 'sk-existing-plaintext-1234';
+    const pastedKey = 'sk-pasted-on-composer-9999';
+    const replacementKey = 'sk-new-secret-5678';
+    const rejectedKey = 'sk-rejected-secret-1357';
+    delete process.env.PUSH_ZEN_API_KEY;
+    const state = {
+      sessionId: 'config-security-session',
+      messages: [{ role: 'system', content: 'system' }],
+      eventSeq: 0,
+      updatedAt: Date.now(),
+      cwd: '/repo',
+      provider: 'zen',
+      model: 'test-model',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      mode: 'tui',
+    };
+    const saves = [];
+    const daemonRequests = [];
+    let rejectSave = false;
+    let controller;
+    try {
+      controller = await createSilveryController(
+        { sessionId: state.sessionId },
+        {
+          loadConfig: async () => ({
+            safeExecPatterns: [],
+            provider: 'zen',
+            zen: { apiKey: existingKey, model: 'test-model' },
+          }),
+          saveConfig: async (next) => {
+            if (rejectSave) throw new Error(`could not persist ${next.zen?.apiKey}`);
+            saves.push(structuredClone(next));
+            return '/tmp/push-config.json';
+          },
+          useDaemon: false,
+          initSession: async () => state,
+          gitStatus: async () => ({ branch: 'main', dirty: 0, ahead: 0, behind: 0 }),
+          saveState: async () => undefined,
+          createDaemon: () => ({
+            connected: true,
+            sessionId: state.sessionId,
+            attachToken: 'attach-token',
+            client: {
+              connected: true,
+              request: async (type, payload) => {
+                daemonRequests.push([type, payload]);
+                if (type === 'get_daemon_runtime_config') {
+                  return { payload: { execMode: 'auto' } };
+                }
+                return { payload: {} };
+              },
+            },
+            ensureConnected: async () => true,
+            ensureReady: async () => true,
+            ensureSession: async () => undefined,
+            noteSeenSeq: () => undefined,
+            scheduleReconnect: () => undefined,
+            teardown: () => undefined,
+          }),
+        },
+      );
+
+      await controller.submit('/config');
+      let snapshotText = JSON.stringify(controller.getSnapshot());
+      const zenItem = controller
+        .getSnapshot()
+        .configEditor?.items.find((item) => item.id === 'zen');
+      assert.equal(zenItem?.value, 'sk-e...1234');
+      assert.equal(snapshotText.includes(existingKey), false);
+
+      controller.closeConfigEditor();
+      await controller.submit(`/config key ${pastedKey}`);
+      snapshotText = JSON.stringify(controller.getSnapshot());
+      assert.equal(controller.getSnapshot().configEditor?.initialEditTarget, 'zen');
+      assert.equal(saves.length, 0, 'legacy command tails must not persist a plaintext key');
+      assert.equal(snapshotText.includes(pastedKey), false);
+
+      assert.equal(await controller.saveConfigSecret('zen', replacementKey), true);
+      snapshotText = JSON.stringify(controller.getSnapshot());
+      assert.equal(saves.at(-1)?.zen?.apiKey, replacementKey);
+      assert.equal(snapshotText.includes(replacementKey), false);
+      assert.equal(
+        controller.getSnapshot().configEditor?.items.find((item) => item.id === 'zen')?.value,
+        'sk-n...5678',
+      );
+      assert.ok(daemonRequests.some(([type]) => type === 'reload_config'));
+      assert.equal(
+        controller.getSnapshot().rows.some((row) => row.text.includes(replacementKey)),
+        false,
+      );
+
+      assert.equal(await controller.saveConfigPreference('explain', 'on'), true);
+      assert.equal(saves.at(-1)?.explainMode, true);
+      assert.equal(
+        controller.getSnapshot().configEditor?.items.find((item) => item.id === 'explain')?.value,
+        'on',
+      );
+
+      rejectSave = true;
+      assert.equal(await controller.saveConfigSecret('zen', rejectedKey), false);
+      snapshotText = JSON.stringify(controller.getSnapshot());
+      assert.equal(snapshotText.includes(rejectedKey), false);
+      assert.equal(
+        controller.getSnapshot().configEditor?.error?.startsWith('Failed to save'),
+        true,
+      );
+      assert.equal(
+        controller.getSnapshot().configEditor?.items.find((item) => item.id === 'zen')?.value,
+        'sk-n...5678',
+      );
+
+      // The in-memory rollback, made observable. The display above stays correct
+      // by not refreshing on failure — but `config[zen].apiKey` was mutated to
+      // the rejected key BEFORE persist threw. If the rollback doesn't restore
+      // it, the next unrelated successful persist silently writes the rejected
+      // key to disk. So: succeed at an unrelated save and assert the persisted
+      // config still carries the previous key, not the rejected one.
+      rejectSave = false;
+      assert.equal(await controller.saveConfigPreference('explain', 'off'), true);
+      assert.equal(
+        saves.at(-1)?.zen?.apiKey,
+        replacementKey,
+        'a rejected key must not linger in config and ride out on the next persist',
+      );
+    } finally {
+      await controller?.dispose();
+      if (previousZenKey === undefined) delete process.env.PUSH_ZEN_API_KEY;
+      else process.env.PUSH_ZEN_API_KEY = previousZenKey;
+      if (previousExplainMode === undefined) delete process.env.PUSH_EXPLAIN_MODE;
+      else process.env.PUSH_EXPLAIN_MODE = previousExplainMode;
+    }
   });
 
   it('opens a workspace-scoped /resume picker with a daemon-served preview', async () => {
@@ -3076,6 +3261,151 @@ describe('silvery TUI Phase 1 chat surface', () => {
     // Composer is inert while the picker holds focus (hidden-but-interactive class).
     assert.equal(hook.getState().pickerOpen, true);
     assert.equal(hook.getState().inputActive, false);
+
+    instance.unmount();
+    await lifecycle;
+  });
+
+  it('renders API-key drafts as bullets and submits the raw value only on save', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(90, 22);
+    const stdin = new FakeStdin();
+    const hook = {};
+    const listeners = new Set();
+    const openedTargets = [];
+    const submitted = [];
+    const preferences = [];
+    const discardedComposerSecret = 'sk-composer-tail-never-rendered';
+    const rawDraft = 'sk-raw-draft-never-rendered';
+    let snapshot = {
+      rows: [],
+      running: false,
+      startedAt: null,
+      provider: 'zen',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      configEditor: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: (listener) => (listeners.add(listener), () => listeners.delete(listener)),
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      dispose: async () => undefined,
+      openPicker: () => undefined,
+      closePicker: () => undefined,
+      selectPickerOption: () => undefined,
+      openConfigEditor: (target) => {
+        openedTargets.push(target);
+        snapshot = {
+          ...snapshot,
+          configEditor: {
+            items: [
+              {
+                id: 'zen',
+                label: 'zen',
+                kind: 'secret',
+                value: 'sk-e...1234',
+                detail: 'test-model',
+                current: true,
+              },
+              {
+                id: 'sandbox',
+                label: 'sandbox',
+                kind: 'select',
+                value: 'host',
+                detail: 'exec isolation',
+                current: false,
+                options: [
+                  { value: 'host', label: 'host', detail: 'run directly on this machine' },
+                  { value: 'docker', label: 'docker', detail: 'isolated Docker sandbox' },
+                ],
+              },
+              {
+                id: 'explain',
+                label: 'explain',
+                kind: 'toggle',
+                value: 'off',
+                detail: 'tool narration',
+                current: false,
+              },
+            ],
+            initialIndex: 0,
+            initialEditTarget: target,
+            token: 1,
+            saving: false,
+          },
+        };
+        for (const listener of listeners) listener();
+      },
+      closeConfigEditor: () => undefined,
+      saveConfigSecret: async (target, secret) => {
+        submitted.push([target, secret]);
+        return true;
+      },
+      saveConfigPreference: async (target, value) => {
+        preferences.push([target, value]);
+        return true;
+      },
+    };
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin },
+      {
+        exitOnCtrlC: false,
+        alternateScreen: false,
+        mode: 'fullscreen',
+        mouse: true,
+        stdin,
+      },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(420);
+
+    assert.ok(stdin.listenerCount('readable') > 0, 'Silvery must subscribe to the fake terminal');
+    stdin.send(`\x1b[200~/config key zen ${discardedComposerSecret}\x1b[201~`);
+    for (let i = 0; i < 50 && openedTargets.length === 0; i += 1) await sleep(10);
+    assert.deepEqual(openedTargets, ['zen']);
+    assert.equal(hook.getComposerState().input, '');
+    assert.equal(
+      stdout.bytes.includes(discardedComposerSecret),
+      false,
+      'legacy command tails must never reach a frame',
+    );
+    await sleep(100);
+    assert.match(stdout.bytes, /API key/);
+    assert.match(stdout.bytes, /Current:/);
+    assert.match(stdout.bytes, /sk-e\.\.\.1234/);
+    stdin.send(`\x1b[200~${rawDraft}\x1b[201~`);
+    await sleep(100);
+    assert.equal(stdout.bytes.includes(rawDraft), false, 'raw draft must never reach a frame');
+    stdin.send('\r');
+    for (let i = 0; i < 50 && submitted.length === 0; i += 1) await sleep(10);
+    assert.deepEqual(submitted, [['zen', rawDraft]]);
+    assert.match(stdout.bytes, /••••/);
+    await sleep(50);
+    assert.match(stdout.bytes, /sandbox/);
+    stdin.send('\x1b[B');
+    stdin.send('\r');
+    await sleep(50);
+    assert.match(stdout.bytes, /isolated Docker sandbox/);
+    stdin.send('\x1b[B');
+    stdin.send('\r');
+    for (let i = 0; i < 50 && preferences.length === 0; i += 1) await sleep(10);
+    assert.deepEqual(preferences, [['sandbox', 'docker']]);
 
     instance.unmount();
     await lifecycle;
