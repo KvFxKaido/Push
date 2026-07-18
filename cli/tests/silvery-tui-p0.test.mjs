@@ -4178,13 +4178,15 @@ describe('silvery event diagnostics — citations + empty-run', () => {
   });
 });
 
-describe('silvery event diagnostics — daemon lane reset', () => {
+describe('silvery event diagnostics — daemon-owned rows', () => {
   // The daemon lane observes runs via onEngineEvent, with no local submit()
   // between them (a remote-triggered turn). The per-run reset therefore has to
   // happen at run_complete, not only at submit — otherwise a non-empty run
   // leaves the counter high and a following EMPTY run is silently not warned.
-  it('resets the visible-output counter per run_complete, not only per submit', async () => {
+  it('preserves citations and the per-run empty warning through completion resync', async () => {
     const { createSilveryController } = await import('../silvery/controller.ts');
+    const { applyDaemonTranscriptEvent, createDaemonTranscriptMirror, snapshotDaemonTranscript } =
+      await import('../daemon-transcript-mirror.ts');
     const state = {
       sessionId: 'diag-daemon',
       messages: [{ role: 'system', content: 'system' }],
@@ -4199,10 +4201,13 @@ describe('silvery event diagnostics — daemon lane reset', () => {
       mode: 'tui',
     };
     let hooks;
+    const serverMirror = createDaemonTranscriptMirror();
     const client = {
       request: async (type) => {
         if (type === 'get_session_snapshot')
-          return { payload: { transcript: { mirror: { rows: [], liveText: '', lastSeq: 0 } } } };
+          return {
+            payload: { transcript: { mirror: snapshotDaemonTranscript(serverMirror) } },
+          };
         return { payload: {} };
       },
     };
@@ -4235,18 +4240,29 @@ describe('silvery event diagnostics — daemon lane reset', () => {
     );
     assert.ok(hooks, 'daemon hooks captured');
 
-    // Run 1: visible output, then complete — no warning, counter must reset.
-    hooks.onEngineEvent({ type: 'assistant_token', payload: { text: 'reply' }, seq: 1 });
-    hooks.onEngineEvent({ type: 'run_complete', payload: {}, seq: 2 });
+    const deliver = (event) => {
+      applyDaemonTranscriptEvent(serverMirror, event);
+      hooks.onEngineEvent(event);
+    };
+
+    // Run 1: visible output and sources, then complete — no warning, counter resets.
+    deliver({ type: 'assistant_token', payload: { text: 'reply' }, seq: 1 });
+    deliver({
+      type: 'assistant_citations',
+      payload: { citations: [{ url: 'https://safe.dev', title: 'Safe' }] },
+      seq: 2,
+    });
+    deliver({ type: 'run_complete', payload: {}, seq: 3 });
     // Run 2: nothing visible, then complete — MUST warn (this is the reset guard).
-    hooks.onEngineEvent({ type: 'run_complete', payload: {}, seq: 3 });
+    deliver({ type: 'user_message', payload: { text: 'empty run' }, seq: 4 });
+    deliver({ type: 'run_complete', payload: {}, seq: 5 });
     for (let i = 0; i < 20; i += 1) await sleep(0);
 
-    const warnings = controller
-      .getSnapshot()
-      .rows.map((r) => r.text)
-      .filter((t) => /response was empty/i.test(t));
+    const rowTexts = controller.getSnapshot().rows.map((row) => row.text);
+    const warnings = rowTexts.filter((text) => /response was empty/i.test(text));
+    const sources = rowTexts.filter((text) => /Sources \(1\)/.test(text));
     assert.equal(warnings.length, 1, 'the empty second daemon run must warn (per-run reset)');
+    assert.equal(sources.length, 1, 'the daemon citation row must survive run-complete resync');
     await controller.dispose();
   });
 });

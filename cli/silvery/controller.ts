@@ -680,17 +680,18 @@ export async function createSilveryController(
   let pendingComposerText: string | null = null;
 
   /**
-   * Lane-agnostic diagnostics run before either switch renders the event:
-   * count visible output for the empty-run check, and surface web-search
-   * sources. Called from both `onEvent` (inline) and `onDaemonEvent` (daemon),
-   * so a given run only feeds it through whichever lane is active.
+   * Inline-lane diagnostics run before the local switch renders the event.
+   * The daemon lane derives the same rows inside its daemon-owned transcript
+   * mirror so a completion resync cannot erase them.
    */
-  function observeEventDiagnostics(event: EngineEvent): void {
-    if (isVisibleEmission(event.type)) runVisibleEmissionCount += 1;
+  function observeInlineEventDiagnostics(event: EngineEvent): void {
     if (event.type === 'assistant_citations') {
       const sources = formatCitationsRow(event.payload);
-      if (sources) appendStatus(sources);
-    }
+      if (sources) {
+        runVisibleEmissionCount += 1;
+        appendStatus(sources);
+      }
+    } else if (isVisibleEmission(event.type)) runVisibleEmissionCount += 1;
   }
 
   /**
@@ -704,7 +705,7 @@ export async function createSilveryController(
   }
 
   const onEvent = (event: EngineEvent) => {
-    observeEventDiagnostics(event);
+    observeInlineEventDiagnostics(event);
     const payload = (event.payload ?? {}) as Record<string, unknown>;
     switch (event.type) {
       case 'assistant_token':
@@ -810,7 +811,6 @@ export async function createSilveryController(
   };
 
   const onDaemonEvent = (event: EngineEvent & { seq?: number }) => {
-    observeEventDiagnostics(event);
     applyDaemonTranscriptEvent(daemonMirror, {
       seq: typeof event.seq === 'number' ? event.seq : 0,
       type: event.type,
@@ -823,7 +823,6 @@ export async function createSilveryController(
       optimisticDaemonInsertIndex = null;
     }
     if (event.type === 'run_complete') {
-      finishRunDiagnostics();
       running = false;
       startedAt = null;
       resolveDaemonTurn?.();

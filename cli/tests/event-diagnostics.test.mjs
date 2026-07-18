@@ -16,17 +16,17 @@ describe('formatCitationsRow', () => {
         { url: 'https://b.dev', title: 'Beta' },
       ],
     });
-    assert.equal(out, 'Sources (2)\n  • Alpha — https://a.dev\n  • Beta — https://b.dev');
+    assert.equal(out, 'Sources (2)\n  • Alpha — https://a.dev/\n  • Beta — https://b.dev/');
   });
 
   it('falls back to the url alone when the title is missing or duplicates it', () => {
     assert.equal(
       formatCitationsRow({ citations: [{ url: 'https://x.dev' }] }),
-      'Sources (1)\n  • https://x.dev',
+      'Sources (1)\n  • https://x.dev/',
     );
     assert.equal(
       formatCitationsRow({ citations: [{ url: 'https://x.dev', title: 'https://x.dev' }] }),
-      'Sources (1)\n  • https://x.dev',
+      'Sources (1)\n  • https://x.dev/',
     );
   });
 
@@ -51,6 +51,26 @@ describe('formatCitationsRow', () => {
 
   it('strips a url that is only whitespace', () => {
     assert.equal(formatCitationsRow({ citations: [{ url: '   ' }] }), null);
+  });
+
+  it('filters unsafe schemes and strips terminal controls from displayed sources', () => {
+    const out = formatCitationsRow({
+      citations: [
+        { url: 'javascript:alert(1)', title: 'script' },
+        { url: 'data:text/plain,spoof', title: 'data' },
+        {
+          url: 'https://safe.dev/\u001b[31m',
+          title: 'Safe\u001b[2J\u202e title',
+        },
+      ],
+    });
+
+    assert.match(out, /^Sources \(1\)/);
+    assert.match(out, /https:\/\/safe\.dev\/%1B\[31m/);
+    assert.ok(!out.includes('javascript:'));
+    assert.ok(!out.includes('data:text'));
+    assert.ok(!out.includes('\u001b'));
+    assert.ok(!out.includes('\u202e'));
   });
 });
 

@@ -7,8 +7,8 @@
  *      Tool-Call Parser Convergence Gap symptom).
  *
  * Both the inline lane (`controller.ts`'s `onEvent`) and the daemon lane
- * (`onDaemonEvent`) feed these, so the logic lives here, pure and unit-tested,
- * rather than duplicated where it would drift.
+ * (`daemon-transcript-mirror.ts`) feed these, so the logic lives here, pure and
+ * unit-tested, rather than duplicated where it would drift.
  *
  * The third old-TUI diagnostic — the unknown-event drift warning
  * (`tui-daemon-handshake.ts`'s surviving `shouldWarnAboutUnknownEvent`) — is
@@ -18,6 +18,9 @@
  * positive list of what to show, which needs no such bookkeeping; the drift
  * warning is a separate, later change. See #1531.
  */
+
+import type { UrlCitation } from '../../lib/provider-contract.ts';
+import { safeCitations, sanitizeCitationText } from '../citation-format.js';
 
 /**
  * Event types that put a visible row in the transcript. A run that emits NONE
@@ -57,23 +60,14 @@ export function isVisibleEmission(eventType: string): boolean {
   return VISIBLE_EMISSION_TYPES.has(eventType);
 }
 
-interface Citation {
-  url: string;
-  title?: string;
-  content?: string;
-}
-
-function asCitations(value: unknown): Citation[] {
+function asCitations(value: unknown): UrlCitation[] {
   if (!Array.isArray(value)) return [];
-  const out: Citation[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== 'object') continue;
-    const url = (entry as { url?: unknown }).url;
-    if (typeof url !== 'string' || !url.trim()) continue;
-    const title = (entry as { title?: unknown }).title;
-    out.push({ url: url.trim(), title: typeof title === 'string' ? title.trim() : undefined });
-  }
-  return out;
+  return value.filter(
+    (entry): entry is UrlCitation =>
+      Boolean(entry) &&
+      typeof entry === 'object' &&
+      typeof (entry as { url?: unknown }).url === 'string',
+  );
 }
 
 const MAX_CITATION_ROWS = 8;
@@ -85,13 +79,20 @@ const MAX_CITATION_ROWS = 8;
  * Capped so a search returning dozens of sources doesn't flood the transcript.
  */
 export function formatCitationsRow(payload: unknown): string | null {
-  const citations = asCitations(
-    payload && typeof payload === 'object' ? (payload as { citations?: unknown }).citations : null,
+  const citations = safeCitations(
+    asCitations(
+      payload && typeof payload === 'object'
+        ? (payload as { citations?: unknown }).citations
+        : null,
+    ),
   );
   if (citations.length === 0) return null;
   const shown = citations.slice(0, MAX_CITATION_ROWS);
-  const lines = shown.map((c) => {
-    const label = c.title && c.title !== c.url ? `${c.title} — ${c.url}` : c.url;
+  const lines = shown.map(({ citation, url }) => {
+    const title = sanitizeCitationText(typeof citation.title === 'string' ? citation.title : '');
+    const href = url.href;
+    const duplicateTitle = title === href || title === citation.url.trim();
+    const label = title && !duplicateTitle ? `${title} — ${href}` : href;
     return `  • ${label}`;
   });
   const header = `Sources (${citations.length})`;

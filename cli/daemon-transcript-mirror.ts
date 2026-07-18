@@ -4,6 +4,11 @@ import { isTranscriptMutationEvent } from '../lib/session-transcript-events.ts';
 import { isToolCardPayload, type ToolCardPayload } from '../lib/tool-cards.ts';
 import { stripToolCallPayload } from '../lib/tool-prose.ts';
 import type { SessionEvent } from './session-store.ts';
+import {
+  formatCitationsRow,
+  formatEmptyRunWarning,
+  isVisibleEmission,
+} from './silvery/event-diagnostics.js';
 import { sessionMessagesToTranscriptRows } from './tui-history.ts';
 
 export type DaemonTranscriptRole =
@@ -44,10 +49,14 @@ export interface DaemonTranscriptSnapshot {
   rows: DaemonTranscriptRow[];
   liveText: string;
   lastSeq: number;
+  /** Visible event count for an in-progress run. Carried through reconnect
+   * snapshots so a later run_complete cannot misclassify that run as empty. */
+  runVisibleEmissionCount?: number;
 }
 
 export interface DaemonTranscriptMirror extends DaemonTranscriptSnapshot {
   nextLocalId: number;
+  runVisibleEmissionCount: number;
 }
 
 type EventLike = Pick<SessionEvent, 'seq' | 'type' | 'payload'> & { ts?: number };
@@ -138,6 +147,12 @@ export function createDaemonTranscriptMirror(
     rows: Array.isArray(snapshot?.rows) ? snapshot.rows.map((row) => ({ ...row })) : [],
     liveText: typeof snapshot?.liveText === 'string' ? snapshot.liveText : '',
     lastSeq: typeof snapshot?.lastSeq === 'number' ? snapshot.lastSeq : 0,
+    runVisibleEmissionCount:
+      typeof snapshot?.runVisibleEmissionCount === 'number' &&
+      Number.isFinite(snapshot.runVisibleEmissionCount) &&
+      snapshot.runVisibleEmissionCount >= 0
+        ? snapshot.runVisibleEmissionCount
+        : 0,
     nextLocalId: 0,
   };
 }
@@ -147,6 +162,7 @@ export function snapshotDaemonTranscript(mirror: DaemonTranscriptMirror): Daemon
     rows: mirror.rows.map((row) => ({ ...row })),
     liveText: mirror.liveText,
     lastSeq: mirror.lastSeq,
+    runVisibleEmissionCount: mirror.runVisibleEmissionCount,
   };
 }
 
@@ -156,9 +172,14 @@ export function applyDaemonTranscriptEvent(
 ): DaemonTranscriptMirror {
   if (typeof event.seq === 'number') mirror.lastSeq = Math.max(mirror.lastSeq, event.seq);
   const payload = payloadOf(event);
+  let visibleEmission = isVisibleEmission(event.type);
 
   switch (event.type) {
     case 'user_message': {
+      // A new prompt starts a fresh run even if the prior process died before
+      // emitting run_complete. Never let stale output suppress this run's
+      // empty-response diagnostic.
+      mirror.runVisibleEmissionCount = 0;
       const text = stringField(payload, 'text', 'preview');
       if (text) {
         mirror.rows.push({
@@ -177,6 +198,7 @@ export function applyDaemonTranscriptEvent(
       break;
     case 'assistant_done':
       if (mirror.liveText.trim()) {
+        visibleEmission = true;
         mirror.rows.push({
           id: eventId(mirror, event, 'assistant'),
           kind: 'message',
@@ -187,6 +209,19 @@ export function applyDaemonTranscriptEvent(
       }
       mirror.liveText = '';
       break;
+    case 'assistant_citations': {
+      const text = formatCitationsRow(payload);
+      visibleEmission = Boolean(text);
+      if (text) {
+        mirror.rows.push({
+          id: eventId(mirror, event, 'citations'),
+          kind: 'status',
+          role: 'status',
+          text,
+        });
+      }
+      break;
+    }
     case 'assistant.tool_prose': {
       const text = stringField(payload, 'text').trim();
       if (!text) break;
@@ -328,7 +363,19 @@ export function applyDaemonTranscriptEvent(
         isError: event.type === 'error',
       });
       break;
+    case 'run_complete':
+      if (mirror.runVisibleEmissionCount === 0) {
+        mirror.rows.push({
+          id: eventId(mirror, event, 'empty-run'),
+          kind: 'status',
+          role: 'status',
+          text: formatEmptyRunWarning(),
+        });
+      }
+      mirror.runVisibleEmissionCount = 0;
+      break;
   }
+  if (visibleEmission) mirror.runVisibleEmissionCount += 1;
   return mirror;
 }
 

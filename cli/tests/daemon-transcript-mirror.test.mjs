@@ -110,6 +110,28 @@ describe('daemon transcript mirror', () => {
     assert.equal(adopted.lastSeq, 4);
   });
 
+  it('keeps citations and empty-run diagnostics in daemon-owned snapshots', () => {
+    const mirror = createDaemonTranscriptMirror();
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 1,
+      type: 'assistant_citations',
+      payload: { citations: [{ url: 'https://safe.dev', title: 'Safe' }] },
+    });
+    applyDaemonTranscriptEvent(mirror, { seq: 2, type: 'run_complete', payload: {} });
+    applyDaemonTranscriptEvent(mirror, {
+      seq: 3,
+      type: 'user_message',
+      payload: { text: 'next run' },
+    });
+    applyDaemonTranscriptEvent(mirror, { seq: 4, type: 'run_complete', payload: {} });
+
+    const adopted = createDaemonTranscriptMirror(snapshotDaemonTranscript(mirror));
+    assert.equal(adopted.rows.filter((row) => /Sources \(1\)/.test(row.text)).length, 1);
+    assert.equal(adopted.rows.filter((row) => /response was empty/i.test(row.text)).length, 1);
+    assert.equal(adopted.runVisibleEmissionCount, 0);
+    assert.equal(adopted.lastSeq, 4);
+  });
+
   it('replaces streamed tool-round text with ordered render-only tool prose', () => {
     const mirror = createDaemonTranscriptMirror();
     applyDaemonTranscriptEvent(mirror, {
