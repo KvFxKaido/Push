@@ -147,19 +147,29 @@ Stillness is a state indication. An idle screen shows the frame, the composer, a
 whatever transcript exists. No ambient animation, no news, no tips, no busy-looking fill.
 A TUI that always looks busy is performing.
 
-An **empty transcript** may center one **static, dim** Push mark — the hexagon, rasterized
-from the real `PushMarkIcon` geometry onto the language's existing density cells. It
-introduces no new glyph, it never moves, and it is gone the instant there is a row to show.
+An **empty transcript** may center one **dim** Push mark — the hexagon, rasterized from the
+real `PushMarkIcon` geometry onto the language's existing density cells — with a compact list
+of real launch shortcuts beneath it. The mark introduces no new glyph and is gone the instant
+there is a row to show. On the launch screen it carries one slow shimmer, the idle state's
+single live animation (law 8), which freezes flat under reduced motion (law 10). The
+shortcuts appear only while the empty composer owns input, so the launch screen never
+advertises an unavailable action.
 
 *Reversal (2026-07-14).* This law previously said "**no placeholder art**", full stop, and
 that was too broad. Its real target is **performance** — a UI that manufactures activity to
-look alive. A motionless mark on a screen with nothing on it is not performing; it is the
-one moment the product has to say what it is. Identity is not busyness.
+look alive. A dim mark on a screen with nothing on it is not performing; it is the one moment
+the product has to say what it is. Identity is not busyness.
 
-The line the law still holds: the mark is the *only* thing that may occupy an empty
-transcript. Not a changelog, not a "try our new model" blurb, not a rotating tip. Those are
-marketing wearing the chrome's clothes, and they are what "no placeholder art" was really
-protecting against.
+*Extension (2026-07-18).* A short list of working launch controls may share this state with
+the mark, and the mark may carry one slow identity shimmer. Both are chrome, not ambient
+content: every displayed key must resolve to the advertised action and the list disappears
+whenever the composer cannot honor it; the shimmer is the *only* motion on the idle screen
+(law 8) and stops dead under reduced motion (law 10). A slow breath on the product's own mark
+is identity, not the manufactured busyness the law forbids.
+
+The line the law still holds: no ambient content may occupy an empty transcript. Not a
+changelog, not a "try our new model" blurb, not a rotating tip. Those are marketing wearing
+the chrome's clothes, and they are what "no placeholder art" was really protecting against.
 
 ### 7. Smooth by construction
 
