@@ -87,6 +87,7 @@ export const ALL_CAPABILITIES: readonly Capability[] = [
 export type PushToolCallingMode = 'native' | 'json-text' | 'none';
 export type PushStructuredOutputMode = 'strict' | 'best-effort' | 'none';
 export type PushContextTier = 'small' | 'medium' | 'large';
+export type PushOpenAIWire = 'responses' | 'chat-completions';
 
 /**
  * Provider/model capability profile for the Push Protocol model-wire layer.
@@ -105,6 +106,8 @@ export interface PushCapabilityProfile {
   multimodal: boolean;
   /** Native/provider-enforced structured-output strength. */
   structuredOutput: PushStructuredOutputMode;
+  /** OpenAI-family request/stream dialect for this provider+model route. */
+  openaiWire: PushOpenAIWire;
   /** True when the request route consumes `LlmMessage.contentBlocks`. */
   contentBlocks: boolean;
   /** True when signed reasoning blocks can round-trip on this route. */
@@ -118,6 +121,7 @@ export const DEFAULT_PUSH_CAPABILITY_PROFILE: PushCapabilityProfile = {
   streamingTools: false,
   multimodal: false,
   structuredOutput: 'none',
+  openaiWire: 'chat-completions',
   contentBlocks: false,
   reasoningBlocks: false,
   context: 'medium',

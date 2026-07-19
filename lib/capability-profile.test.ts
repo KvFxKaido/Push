@@ -31,6 +31,35 @@ describe('resolvePushCapabilityProfile', () => {
     ).toMatchObject({ toolCalling: 'json-text', streamingTools: false });
   });
 
+  it('resolves OpenRouter wire per model tier from private seed evidence', () => {
+    expect(resolvePushCapabilityProfile('openrouter', 'openai/gpt-5.4').openaiWire).toBe(
+      'responses',
+    );
+    expect(resolvePushCapabilityProfile('openrouter', 'minimax/minimax-m3').openaiWire).toBe(
+      'chat-completions',
+    );
+    expect(resolvePushCapabilityProfile('openrouter', undefined).openaiWire).toBe(
+      'chat-completions',
+    );
+  });
+
+  it('lets discoverable metadata override the OpenRouter cold-start seed in both directions', () => {
+    expect(
+      resolvePushCapabilityProfile(
+        'openrouter',
+        'openai/gpt-5.4',
+        lookup({ openaiWire: 'chat-completions' }),
+      ).openaiWire,
+    ).toBe('chat-completions');
+    expect(
+      resolvePushCapabilityProfile(
+        'openrouter',
+        'vendor/new-responses-model',
+        lookup({ openaiWire: 'responses' }),
+      ).openaiWire,
+    ).toBe('responses');
+  });
+
   it('accepts curated evidence from a surface without duplicating its catalog', () => {
     expect(
       resolvePushCapabilityProfile('anthropic', 'claude-sonnet-4-6', lookup({ toolCall: true })),

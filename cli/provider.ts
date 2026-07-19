@@ -13,12 +13,12 @@ import {
   type ProviderStreamShape,
 } from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
-import { openRouterModelUsesResponses } from '../lib/provider-models.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
 import { createCliGeminiStream } from './gemini-stream.ts';
+import { resolveCliPushCapabilityProfile } from './native-tool-gate.ts';
 
 export const DEFAULT_TIMEOUT_MS: number = 120_000;
 export const MAX_RETRIES: number = 3;
@@ -133,8 +133,8 @@ function firstLiveEnv(envVars: readonly string[]): string | undefined {
 /** All-models transport override for OpenRouter, in either direction:
  *  `chat`/`chat-completions`/`legacy` forces Chat Completions everywhere;
  *  `responses` forces the /responses beta everywhere (e.g. to trial a model
- *  before allowlisting it). `null` (unset/unknown value) means per-model
- *  dispatch via `OPENROUTER_RESPONSES_MODELS` — see createProviderStream. */
+ *  before its capability is known). `null` (unset/unknown value) means
+ *  per-model dispatch via `PushCapabilityProfile.openaiWire`. */
 function openRouterTransportOverride(): 'chat' | 'responses' | null {
   const raw = process.env.PUSH_OPENROUTER_TRANSPORT?.trim().toLowerCase();
   if (raw === 'chat' || raw === 'chat-completions' || raw === 'legacy') return 'chat';
@@ -245,7 +245,9 @@ export function createProviderStream(
     });
     return (req) => {
       const model = req.model?.trim() || config.defaultModel;
-      return openRouterModelUsesResponses(model) ? responsesStream(req) : chatStream(req);
+      return resolveCliPushCapabilityProfile('openrouter', model).openaiWire === 'responses'
+        ? responsesStream(req)
+        : chatStream(req);
     };
   }
 

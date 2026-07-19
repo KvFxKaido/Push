@@ -787,7 +787,7 @@ describe('streamCompletion', () => {
 
   describe('OpenRouter-specific behavior', () => {
     // These tests pin the RESPONSES-path machinery with fixture models that
-    // aren't in the /responses beta allowlist — force the transport so the
+    // aren't in the /responses beta capability tier — force the transport so the
     // per-model default (chat for unknown models) doesn't reroute them. The
     // per-model dispatch itself is covered in its own describe below.
     let prevTransport;
@@ -1150,7 +1150,7 @@ describe('streamCompletion', () => {
     // OpenRouter's /responses is a beta not implemented for every model, and
     // a Responses body can't ride /chat/completions — so with no all-models
     // override the transport is picked per request from the model's presence
-    // in OPENROUTER_RESPONSES_MODELS.
+    // in PushCapabilityProfile.openaiWire.
 
     describe('per-model transport dispatch', () => {
       let prevPerModelTransport;
@@ -1165,7 +1165,7 @@ describe('streamCompletion', () => {
         else process.env.PUSH_OPENROUTER_TRANSPORT = prevPerModelTransport;
       });
 
-      it('sends an allowlisted model to the Responses endpoint with an input body', async () => {
+      it('sends a responses-tier model to the Responses endpoint with an input body', async () => {
         let capturedUrl;
         let capturedBody;
         globalThis.fetch = async (url, opts) => {
@@ -1196,7 +1196,7 @@ describe('streamCompletion', () => {
         assert.equal(capturedBody.messages, undefined);
       });
 
-      it('sends a non-allowlisted model to Chat Completions with a messages body', async () => {
+      it('sends a chat-tier model to Chat Completions with a messages body', async () => {
         let capturedUrl;
         let capturedBody;
         globalThis.fetch = async (url, opts) => {
@@ -1216,7 +1216,7 @@ describe('streamCompletion', () => {
         const tokens = [];
         for await (const event of stream({
           provider: 'openrouter',
-          // The model that motivated the allowlist — /chat/completions only.
+          // The model that motivated the capability split — /chat/completions only.
           model: 'minimax/minimax-m3',
           messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
         })) {
@@ -1243,7 +1243,7 @@ describe('streamCompletion', () => {
           };
         };
 
-        // orConfig.defaultModel ('openrouter-model') is not allowlisted, so a
+        // orConfig.defaultModel ('openrouter-model') is chat-tier, so a
         // request with no model rides Chat Completions.
         const stream = createProviderStream(orConfig, 'key');
         for await (const _ of stream({

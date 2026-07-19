@@ -12,6 +12,7 @@ import {
   DEFAULT_PUSH_CAPABILITY_PROFILE,
   type PushCapabilityProfile,
   type PushContextTier,
+  type PushOpenAIWire,
   type PushStructuredOutputMode,
 } from './capabilities.js';
 import {
@@ -34,6 +35,8 @@ export interface PushModelCapabilityMetadata {
   vision?: boolean;
   /** Whether the route/model can enforce a native JSON-schema constraint. */
   structuredOutput?: boolean;
+  /** Discoverable OpenAI-family wire support, when a provider catalog exposes it. */
+  openaiWire?: PushOpenAIWire;
   /** Provider-advertised context window. Zero/undefined means unknown. */
   contextLimit?: number;
 }
@@ -85,6 +88,54 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'anthropic',
   'google',
 ]);
+
+/**
+ * OpenRouter's catalog currently advertises model parameters, not whether a
+ * model is served by the beta `/responses` endpoint. Keep the verified IDs as
+ * private cold-start evidence beneath the profile resolver until the catalog
+ * grows a discoverable endpoint capability; callers must read `openaiWire`
+ * rather than importing this seed. Unknown models fail toward Chat
+ * Completions, which is OpenRouter's universal transport.
+ */
+const OPENROUTER_RESPONSES_SEED_MODELS: ReadonlySet<string> = new Set([
+  'openai/gpt-5-mini',
+  'openai/gpt-5.2-codex',
+  'openai/gpt-5.3-codex',
+  'openai/gpt-5.4',
+  'openai/gpt-5.4-mini',
+  'openai/gpt-5.4-nano',
+  'openai/gpt-5.4-pro',
+  'anthropic/claude-haiku-4.5:nitro',
+  'anthropic/claude-opus-4.6:nitro',
+  'anthropic/claude-sonnet-4.6:nitro',
+  'google/gemini-2.5-flash:nitro',
+  'google/gemini-2.5-pro:nitro',
+  'google/gemini-3-flash-preview:nitro',
+  'google/gemini-3.1-flash-lite:nitro',
+  'google/gemini-3.1-pro-preview:nitro',
+  'google/gemini-3.1-pro-preview-customtools:nitro',
+  'google/gemini-3.5-flash:nitro',
+]);
+
+const RESPONSES_NATIVE_PROVIDERS: ReadonlySet<string> = new Set([
+  'openai',
+  'xai',
+  'sakana',
+  'fireworks',
+]);
+
+function resolveOpenAIWire(
+  provider: string,
+  modelId: string,
+  metadata: PushModelCapabilityMetadata,
+): PushOpenAIWire {
+  if (RESPONSES_NATIVE_PROVIDERS.has(provider)) return 'responses';
+  if (provider !== 'openrouter') return 'chat-completions';
+  return (
+    metadata.openaiWire ??
+    (OPENROUTER_RESPONSES_SEED_MODELS.has(modelId) ? 'responses' : 'chat-completions')
+  );
+}
 
 function isCloudflareKimiOrGlm(modelId: string): boolean {
   const model = modelId.toLowerCase();
@@ -168,7 +219,7 @@ function modelSupportsMultimodal(
 export function resolvePushCapabilityProfile(
   provider: string,
   modelId: string | undefined,
-  lookupMetadata: PushCapabilityMetadataLookup,
+  lookupMetadata: PushCapabilityMetadataLookup = () => undefined,
   options?: PushCapabilityProfileOptions,
 ): PushCapabilityProfile {
   const model = modelId?.trim();
@@ -176,6 +227,7 @@ export function resolvePushCapabilityProfile(
   if (!model) {
     return {
       ...DEFAULT_PUSH_CAPABILITY_PROFILE,
+      openaiWire: resolveOpenAIWire(provider, '', {}),
       toolCalling: 'none',
       contentBlocks,
       reasoningBlocks: false,
@@ -190,6 +242,7 @@ export function resolvePushCapabilityProfile(
     streamingTools: nativeToolCalling,
     multimodal: modelSupportsMultimodal(provider, model, metadata),
     structuredOutput: resolveStructuredOutputMode(provider, model, metadata, nativeToolCalling),
+    openaiWire: resolveOpenAIWire(provider, model, metadata),
     contentBlocks,
     reasoningBlocks: routeCarriesReasoningBlocks(provider, model),
     context: resolveContextTier(metadata.contextLimit),

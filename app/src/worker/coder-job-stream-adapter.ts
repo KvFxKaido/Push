@@ -38,7 +38,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
-import { openRouterModelUsesResponses } from '@push/lib/provider-models';
+import { resolvePushCapabilityProfile } from '@push/lib/capability-profile';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
@@ -215,15 +215,15 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // OpenRouter, OpenAI, xAI, Sakana Fugu, and Fireworks AI all speak the Responses API —
       // build the typed `input`-item body for any of them; everything else gets
       // the Chat Completions payload below.
-      // OpenRouter is Responses-shaped ONLY for models in the /responses beta
-      // allowlist — the same per-model gate the web client and CLI apply at
-      // body-construction time. One predicate drives both the body shape and
-      // the SSE pump below, so they can't disagree; a non-allowlisted model
-      // gets a chat body, which `handleOpenRouterChat` routes to the legacy
-      // /chat/completions proxy.
+      // OpenRouter is Responses-shaped only when the shared capability profile
+      // says this model tier can use the beta endpoint. One profile read drives
+      // both the body shape and SSE pump below, so they can't disagree; an
+      // unknown/chat-tier model gets a chat body, which `handleOpenRouterChat`
+      // routes to the legacy /chat/completions proxy.
+      const modelId = req.model || args.modelId || '';
       const isResponsesProvider =
         (args.provider === 'openrouter' &&
-          openRouterModelUsesResponses(req.model || args.modelId)) ||
+          resolvePushCapabilityProfile('openrouter', modelId).openaiWire === 'responses') ||
         args.provider === 'openai' ||
         args.provider === 'xai' ||
         args.provider === 'sakana' ||
@@ -232,7 +232,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         ? JSON.stringify(
             toOpenAIResponses({
               provider: args.provider,
-              model: req.model || args.modelId || '',
+              model: modelId,
               messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
               signal: req.signal,
             }),
