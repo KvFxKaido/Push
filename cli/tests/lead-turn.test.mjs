@@ -18,6 +18,7 @@ import path from 'node:path';
 
 import {
   runLeadKernelTurn,
+  buildLeadReasoningReplaySeed,
   buildLeadTurnPreamble,
   resolveDefaultExecMode,
   wrapCliDetectAllToolCalls,
@@ -29,9 +30,10 @@ import {
 import { getCliNativeToolSchemas } from '../tool-function-schemas.ts';
 import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
+import { estimateContextTokens } from '../../lib/context-budget.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
-import { loadSessionEvents, makeSessionId } from '../session-store.ts';
+import { loadSessionEvents, loadSessionState, makeSessionId } from '../session-store.ts';
 import { canListenOnLoopback } from './test-environment.mjs';
 
 const loopbackAvailable = await canListenOnLoopback();
@@ -110,6 +112,13 @@ async function startSequencedProviderServer(plans) {
         Connection: 'keep-alive',
       });
 
+      for (const token of plan.reasoningTokens || []) {
+        res.write(
+          `data: ${JSON.stringify({
+            choices: [{ delta: { reasoning_content: token } }],
+          })}\n\n`,
+        );
+      }
       for (const token of plan.tokens || []) {
         res.write(
           `data: ${JSON.stringify({
@@ -235,6 +244,245 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         await server.stop();
       }
     });
+  });
+
+  it('persists plain reasoning and replays it at the serializer boundary after resume (#1537)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const reasoning = 'first line of thought\nsecond line with exact spacing';
+      const server = await startSequencedProviderServer([
+        { reasoningTokens: [reasoning], tokens: ['Two plus two is four.'] },
+        { tokens: ['I said that two plus two is four.'] },
+      ]);
+
+      try {
+        // A reasoning-replay route (`kimi` always replays `reasoning_content`);
+        // the route gate below only promotes the structured seed for these.
+        const providerConfig = { ...PROVIDER_CONFIGS.kimi, url: server.url };
+        const state = makeState(cwd, {
+          provider: 'kimi',
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'What is two plus two?' },
+          ],
+        });
+
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'What is two plus two?', 5, {
+          emit: () => {},
+        });
+
+        const resumed = await loadSessionState(state.sessionId);
+        const persistedAssistant = resumed.messages.find(
+          (message) =>
+            message?.role === 'assistant' && message?.content === 'Two plus two is four.',
+        );
+        assert.ok(persistedAssistant, 'first assistant turn was not persisted');
+        assert.equal(persistedAssistant.reasoningContent, reasoning);
+
+        resumed.messages.push({ role: 'user', content: 'What did you just say?' });
+        await runLeadKernelTurn(resumed, providerConfig, 'mock-key', 'What did you just say?', 5, {
+          emit: () => {},
+        });
+
+        assert.equal(server.requests.length, 2);
+        const replayRequest = server.requests[1];
+        const replayedAssistant = replayRequest.messages.find(
+          (message) => message.role === 'assistant' && message.content === 'Two plus two is four.',
+        );
+        assert.ok(replayedAssistant, 'resumed assistant turn did not reach the provider body');
+        assert.equal(replayedAssistant.reasoning_content, reasoning);
+        assert.ok(
+          replayRequest.messages.some(
+            (message) =>
+              message.role === 'user' && message.content.includes('Task: What did you just say?'),
+          ),
+          'current task preamble missing from resumed request',
+        );
+        assert.ok(
+          !JSON.stringify(replayRequest).includes('Prior conversation in this chat'),
+          'structured replay duplicated the same history inside the text preamble',
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('does NOT structurally replay reasoning on a route that does not want it (#1537 review)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const reasoning = 'thoughts that must not reach a non-reasoning route';
+      const server = await startSequencedProviderServer([
+        { reasoningTokens: [reasoning], tokens: ['Two plus two is four.'] },
+        { tokens: ['I said that two plus two is four.'] },
+      ]);
+
+      try {
+        // `ollama`/`mock-model` is not a reasoning-replay route — the reasoning is
+        // still persisted, but the resumed turn must fall back to the text
+        // preamble rather than replaying `reasoning_content` to a route that
+        // never asked for it.
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd, {
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'What is two plus two?' },
+          ],
+        });
+
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'What is two plus two?', 5, {
+          emit: () => {},
+        });
+
+        const resumed = await loadSessionState(state.sessionId);
+        const persistedAssistant = resumed.messages.find(
+          (message) =>
+            message?.role === 'assistant' && message?.content === 'Two plus two is four.',
+        );
+        // Persistence still happens regardless of route — only replay is gated.
+        assert.equal(persistedAssistant?.reasoningContent, reasoning);
+
+        resumed.messages.push({ role: 'user', content: 'What did you just say?' });
+        await runLeadKernelTurn(resumed, providerConfig, 'mock-key', 'What did you just say?', 5, {
+          emit: () => {},
+        });
+
+        const replayRequest = server.requests[1];
+        assert.ok(
+          !replayRequest.messages.some((message) => message.reasoning_content),
+          'reasoning_content leaked to a non-replay route',
+        );
+        // Falls back to the text preamble, so prior history rides there instead.
+        assert.ok(
+          JSON.stringify(replayRequest).includes('Prior conversation in this chat'),
+          'non-replay route should use the text preamble history path',
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('falls back to bounded text history when no complete reasoning turn fits', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: ['Continued without an oversized replay.'] },
+      ]);
+
+      try {
+        const providerConfig = { ...PROVIDER_CONFIGS.kimi, url: server.url };
+        const state = makeState(cwd, {
+          provider: 'kimi',
+          model: providerConfig.defaultModel,
+          messages: [
+            { role: 'user', content: 'prior question' },
+            {
+              role: 'assistant',
+              content: 'short prior answer',
+              reasoningContent: 'r'.repeat(800_000),
+            },
+            { role: 'user', content: 'current question' },
+          ],
+        });
+
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'current question', 5, {
+          emit: () => {},
+        });
+
+        const request = server.requests[0];
+        assert.ok(
+          !request.messages.some((message) => message.reasoning_content),
+          'over-budget reasoning_content leaked onto the wire',
+        );
+        assert.ok(
+          JSON.stringify(request).includes('Prior conversation in this chat'),
+          'fallback must restore the bounded visible-history preamble',
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('keeps the reasoning replay seed strictly role-alternating (#1537 review)', () => {
+    // Prior window ends on a user turn (no assistant reply after "follow-up"),
+    // and the appended taskPreamble is also a user message — without alternation
+    // repair the seed sends `user, user` to a strict reasoner and 400s.
+    const messages = [
+      { role: 'user', content: 'What is two plus two?' },
+      { role: 'assistant', content: 'Four.', reasoningContent: 'add the two twos' },
+      { role: 'user', content: 'unanswered follow-up' },
+      { role: 'user', content: 'current question' },
+    ];
+    const seed = buildLeadReasoningReplaySeed(
+      'current question',
+      messages,
+      'Task: current question',
+    );
+    assert.ok(seed, 'seed should be built when prior reasoning exists');
+    for (let i = 1; i < seed.length; i++) {
+      assert.notEqual(
+        seed[i].role,
+        seed[i - 1].role,
+        `consecutive ${seed[i].role} messages at ${i - 1}/${i}`,
+      );
+    }
+    // The reasoning-bearing assistant turn survives normalization untouched.
+    const assistant = seed.find((m) => m.role === 'assistant' && m.reasoningContent);
+    assert.ok(assistant, 'assistant reasoning turn was dropped by normalization');
+    assert.equal(assistant.reasoningContent, 'add the two twos');
+  });
+
+  it('bounds replay by evicting complete oldest turns without clipping reasoning', () => {
+    const oldReasoning = 'old-reasoning-'.repeat(300);
+    const recentReasoning = 'recent-reasoning-'.repeat(300);
+    const taskPreamble = 'Task: current question';
+    const messages = [
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: 'old answer', reasoningContent: oldReasoning },
+      { role: 'user', content: 'recent question' },
+      { role: 'assistant', content: 'recent answer', reasoningContent: recentReasoning },
+      { role: 'user', content: 'current question' },
+    ];
+    const newestTurnBudget =
+      estimateContextTokens([messages[2], messages[3], { role: 'user', content: taskPreamble }]) +
+      1;
+
+    const seed = buildLeadReasoningReplaySeed('current question', messages, taskPreamble, {
+      maxTokens: newestTurnBudget,
+    });
+
+    assert.ok(seed, 'the newest reasoning turn should fit');
+    assert.ok(estimateContextTokens(seed) <= newestTurnBudget);
+    // Eviction runs AFTER role normalization, so it must not re-introduce the
+    // consecutive same-role turns strict reasoners reject: it drops whole
+    // (user, assistant) pairs off the front, never splitting one. (fugu review.)
+    for (let i = 1; i < seed.length; i++) {
+      assert.notEqual(seed[i].role, seed[i - 1].role, `consecutive ${seed[i].role} after eviction`);
+    }
+    assert.equal(
+      seed.some((message) => message.content === 'old question'),
+      false,
+    );
+    assert.equal(
+      seed.some((message) => message.reasoningContent === oldReasoning),
+      false,
+    );
+    assert.equal(
+      seed.some((message) => message.content === 'recent question'),
+      true,
+    );
+    assert.equal(
+      seed.find((message) => message.reasoningContent)?.reasoningContent,
+      recentReasoning,
+      'provider-authored reasoning must survive byte-for-byte',
+    );
+
+    assert.equal(
+      buildLeadReasoningReplaySeed('current question', messages, taskPreamble, {
+        maxTokens: estimateContextTokens([{ role: 'user', content: taskPreamble }]),
+      }),
+      undefined,
+      'caller must fall back to the text preamble when no complete reasoning turn fits',
+    );
   });
 
   it('keeps task-shaped lead turns on strict completion grounding', async () => {

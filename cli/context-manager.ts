@@ -38,6 +38,10 @@ import type { DistillResult } from '../lib/context-transformer.ts';
 export interface Message {
   role: string;
   content: string;
+  /** Plain unsigned assistant reasoning replayed by OpenAI-compatible thinking
+   *  routes (`reasoning_content`). Persisted with the visible assistant turn so
+   *  a resumed CLI session can reconstruct the provider-authored message. */
+  reasoningContent?: string;
   /** Structured signed-reasoning blocks captured from a provider that
    *  returns them (Anthropic). Round-tripped verbatim on the next request
    *  to that provider. Currently no CLI provider exposes signed thinking

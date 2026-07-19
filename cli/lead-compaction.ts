@@ -56,7 +56,11 @@ function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>
   console.log(JSON.stringify({ level, event, ...ctx }));
 }
 
-function asCompactable(m: Message): CompactableMessage {
+interface LeadCompactableMessage extends CompactableMessage {
+  reasoningContent?: string;
+}
+
+function asCompactable(m: Message): LeadCompactableMessage {
   return {
     role: (m.role === 'assistant' ? 'assistant' : m.role === 'system' ? 'system' : 'user') as
       | 'user'
@@ -64,6 +68,9 @@ function asCompactable(m: Message): CompactableMessage {
       | 'system',
     content: typeof m.content === 'string' ? m.content : '',
     isToolResult: isToolResultMessage(m),
+    ...(typeof m.reasoningContent === 'string' && m.reasoningContent.length > 0
+      ? { reasoningContent: m.reasoningContent }
+      : {}),
   };
 }
 

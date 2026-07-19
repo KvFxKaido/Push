@@ -8,6 +8,7 @@ import type {
   UrlCitation,
 } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
+import { routeReplaysReasoningContent as sharedRouteReplaysReasoningContent } from '@push/lib/reasoning-replay-routing';
 import {
   getAdapterRoutedProviderIds,
   getFailoverProviderOrder,
@@ -133,12 +134,10 @@ export function routeReplaysReasoningContent(
   provider: Exclude<ActiveProvider, 'demo'> | undefined,
   model: string | undefined,
 ): boolean {
-  if (!provider || !model) return false;
-  return (
-    provider === 'kimi' ||
-    ((provider === 'zen' || provider === 'openrouter' || provider === 'huggingface') &&
-      /deepseek|kimi|moonshot/i.test(model))
-  );
+  // Delegates to the shared kernel predicate so the web inline lane and the CLI
+  // lead lane can't drift on which routes replay reasoning. The typed signature
+  // stays here for web callers; the shared impl takes plain strings.
+  return sharedRouteReplaysReasoningContent(provider, model);
 }
 
 function getProviderFailoverShape(provider: Exclude<ActiveProvider, 'demo'>): ProviderWireShape {

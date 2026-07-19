@@ -387,7 +387,7 @@ function truncateContent(content: string, maxLen: number, label = 'content'): st
 
 /** Estimate total size of messages array (rough character count). */
 function estimateMessagesSize(messages: CoderLoopMessage[]): number {
-  return messages.reduce((sum, m) => sum + m.content.length, 0);
+  return messages.reduce((sum, m) => sum + m.content.length + (m.reasoningContent?.length ?? 0), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1247,6 +1247,11 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
  */
 export interface CoderAgentResult<TCard extends ToolCard = ToolCard> {
   summary: string;
+  /** Final provider-authored assistant message on a natural completion.
+   *  Hosts that persist a conversational transcript use this sidecar to keep
+   *  provider replay metadata (notably plain `reasoningContent`) alongside the
+   *  visible summary. Defensive/host-authored terminal summaries omit it. */
+  finalAssistantMessage?: CoderLoopMessage;
   cards: TCard[];
   rounds: number;
   checkpoints: number;
@@ -1553,7 +1558,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // recurs every round (the whole transcript is re-sent), so summing the
   // message text per round is the correct cumulative cost proxy, not a leak.
   const estimateRoundTokens = (
-    transcript: ReadonlyArray<{ content?: unknown }>,
+    transcript: ReadonlyArray<{ content?: unknown; reasoningContent?: unknown }>,
     output: string,
     reasoning: string,
   ): number => {
@@ -1563,6 +1568,9 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       total += estimateTokens(
         typeof content === 'string' ? content : JSON.stringify(content ?? ''),
       );
+      if (typeof msg.reasoningContent === 'string') {
+        total += estimateTokens(msg.reasoningContent);
+      }
     }
     return total;
   };
@@ -2976,8 +2984,12 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       }
 
       finishRound('completed');
+      const finalAssistantMessage = messages[messages.length - 1];
       return {
         summary: accumulated + criteriaBlock,
+        ...(finalAssistantMessage?.role === 'assistant'
+          ? { finalAssistantMessage: { ...finalAssistantMessage } }
+          : {}),
         cards: allCards,
         rounds,
         checkpoints: checkpointCount,

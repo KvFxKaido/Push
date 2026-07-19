@@ -26,6 +26,31 @@ describe('estimateMessageTokens — contentParts (#937)', () => {
   });
 });
 
+describe('estimateMessageTokens — replayable reasoning (#1537)', () => {
+  it('counts neutral reasoningContent once using the same channel as web thinking', () => {
+    const content = 'visible answer';
+    const reasoning = 'private reasoning that is replayed to the provider';
+    const expected = estimateMessageTokens({ content, thinking: reasoning });
+
+    expect(estimateMessageTokens({ content, reasoningContent: reasoning })).toBe(expected);
+    expect(
+      estimateMessageTokens({ content, thinking: reasoning, reasoningContent: reasoning }),
+    ).toBe(expected);
+  });
+
+  it('falls back to thinking when reasoningContent is an empty string (#1537 review)', () => {
+    const content = 'visible answer';
+    const reasoning = 'thinking text that still ships on the wire';
+    const expected = estimateMessageTokens({ content, thinking: reasoning });
+
+    // An empty replay field must not shadow a non-empty thinking channel — `??`
+    // would count 0 reasoning tokens here and under-budget the real request body.
+    expect(estimateMessageTokens({ content, reasoningContent: '', thinking: reasoning })).toBe(
+      expected,
+    );
+  });
+});
+
 describe('guessWindowFromName', () => {
   // Catches cases where Ollama Cloud's `/v1/models` (and similar provider
   // catalogs) omit `context_length`, so the only signal Push has is the model
