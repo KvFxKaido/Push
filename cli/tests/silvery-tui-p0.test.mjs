@@ -176,7 +176,13 @@ describe('silvery TUI launch routing', () => {
       .split('\n')
       .filter((line) => line.includes('bun build --compile') && line.includes('cli/cli.ts'));
 
-    assert.equal(compileLines.length, 4, 'expected host compile plus three cross-compiles');
+    // Host compile + three cross-compiles, twice: the pinned cli-binary job
+    // and the next-Bun smoke job (cli-binary-next-bun) mirror each other.
+    assert.equal(
+      compileLines.length,
+      8,
+      'expected host compile plus three cross-compiles in both cli-binary and cli-binary-next-bun',
+    );
     for (const line of compileLines) assert.doesNotMatch(line, /--external silvery/);
   });
 });

@@ -405,6 +405,121 @@ jobs:
           path: /tmp/push-*
           retention-days: 7
 
+  # Non-blocking instrument, NOT a merge gate. The shipped binary is compiled
+  # on the PINNED Bun (cli-binary above); nothing else exercises `bun build
+  # --compile` against a newer Bun, so a breaking upstream change (e.g. the
+  # Zig→Rust rewrite, oven-sh/bun#30412) would only be discovered at the next
+  # deliberate pin bump. This job mirrors cli-binary's compile + smoke steps
+  # on `bun-version: latest` to make that seam observable ahead of time. It
+  # tracks upstream, so it must never gate merges (`continue-on-error`). Do
+  # NOT fold this into cli-bun-canary below — that job watches a different
+  # thing (`bun test` shim gap #5090) and never invokes `bun build --compile`.
+  # When this goes green on a post-rewrite Bun, that's the evidence basis for
+  # evaluating a cli-binary pin bump (issue #1512).
+  cli-binary-next-bun:
+    name: Next-Bun compile + smoke (cli, non-blocking, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        # Same matrix reasoning as cli-binary: Windows is where the
+        # embedded-bundle path bugs actually live (B:\~BUN\root\cli.mjs,
+        # commit 8fb0ac5) — a Linux-only smoke was green through that bug.
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          # DELIBERATELY `latest` — the whole point is compiling against the
+          # Bun we have NOT validated. cli-binary stays pinned (it ships
+          # binaries); this job watches the pin's future.
+          bun-version: latest
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Same flags as cli-binary — this job is only meaningful if it compiles
+      # the exact seam we ship (see cli-binary's flag rationale).
+      - name: Compile single binary
+        run: |
+          echo "Bun version: $(bun --version)"
+          echo "next-bun smoke (${{ matrix.os }}): Bun $(bun --version)" >> "$GITHUB_STEP_SUMMARY"
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi cli/cli.ts --outfile push-smoke
+          BIN=./push-smoke
+          if [ "$RUNNER_OS" = "Windows" ]; then BIN=./push-smoke.exe; fi
+          echo "BIN=$BIN" >> "$GITHUB_ENV"
+
+      - name: Smoke test — help boots
+        run: '"$BIN" --help | grep -q "Push CLI"'
+
+      # Daemon lifecycle plus the autoload assertion, mid-lifecycle because
+      # the observable for dotenv autoload lives in `daemon status` output:
+      # status prints `socket: <path>`, and PUSHD_SOCKET is env-resolved
+      # (cli/pushd/paths.ts) — so a poisoned .env in cwd would both repoint
+      # the socket (breaking `responsive`) and leak the injected path into
+      # the output. bunfig autoload is asserted via a `preload` sentinel:
+      # if bunfig.toml were read, the preload script runs before the CLI
+      # and drops a file. Both must stay dead — the compile flags disable
+      # them precisely because cwd autoload is an injection vector.
+      - name: Smoke test — daemon lifecycle + autoload stays disabled
+        run: |
+          "$BIN" daemon start
+          for _ in $(seq 1 15); do
+            "$BIN" daemon status | grep -q 'responsive' && break
+            sleep 1
+          done
+          "$BIN" daemon status | grep -q 'responsive'
+
+          BIN_ABS="$(pwd)/${BIN#./}"
+          POISON="$RUNNER_TEMP/push-autoload-poison"
+          mkdir -p "$POISON"
+          printf 'PUSHD_SOCKET=/tmp/push-dotenv-injected.sock\n' > "$POISON/.env"
+          printf 'require("node:fs").writeFileSync("bunfig-autoload-ran", "1");\n' > "$POISON/bunfig-preload.js"
+          printf 'preload = ["./bunfig-preload.js"]\n' > "$POISON/bunfig.toml"
+          cd "$POISON"
+          out=$("$BIN_ABS" daemon status)
+          echo "$out"
+          if [ -e bunfig-autoload-ran ]; then
+            echo "::error::bunfig.toml preload executed from cwd — --no-compile-autoload-bunfig regressed on this Bun"
+            exit 1
+          fi
+          case "$out" in *push-dotenv-injected*)
+            echo "::error::.env autoloaded from cwd — --no-compile-autoload-dotenv regressed on this Bun"
+            exit 1
+          ;; esac
+          # Positive control: status from the poisoned cwd still reached the
+          # real socket, proving the check ran against a live daemon rather
+          # than passing vacuously.
+          echo "$out" | grep -q 'responsive'
+          cd - > /dev/null
+
+          "$BIN" daemon stop
+
+      # Build-only, one host is enough (same reasoning as cli-binary).
+      - name: Cross-compile (windows-x64, darwin-arm64, linux-arm64)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-windows-x64 cli/cli.ts --outfile /tmp/push-next-windows-x64.exe
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-darwin-arm64 cli/cli.ts --outfile /tmp/push-next-darwin-arm64
+          bun build --compile --no-compile-autoload-dotenv --no-compile-autoload-bunfig --external @termless/xtermjs --external @termless/ghostty --external chromium-bidi --target=bun-linux-arm64 cli/cli.ts --outfile /tmp/push-next-linux-arm64
+
   # Non-blocking instrument, NOT a merge gate. The CLI suite runs on
   # `node --test` (canonical) because Bun's node:test shim can't run it yet
   # (oven-sh/bun#5090 — describe()/test() nested inside test() throws during
