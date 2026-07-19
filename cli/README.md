@@ -423,7 +423,7 @@ only.
 
 ## Providers
 
-The CLI ships fourteen providers. Six (`ollama`, `kimi`, `zai`, `huggingface`, `zen`, `nvidia`) speak OpenAI Chat Completions-compatible wire shape. `openrouter`, direct `openai`, `xai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); `PUSH_OPENROUTER_TRANSPORT=chat` keeps OpenRouter's legacy Chat Completions path available. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
+The CLI ships fourteen providers. Six (`ollama`, `kimi`, `zai`, `huggingface`, `zen`, `nvidia`) speak OpenAI Chat Completions-compatible wire shape. Direct `openai`, `xai`, `sakana` (Fugu), and `fireworks` use the Responses API (`/v1/responses`); OpenRouter resolves Responses-vs-Chat-Completions per model through `PushCapabilityProfile.openaiWire`, with `PUSH_OPENROUTER_TRANSPORT=responses|chat` retaining the all-model override in either direction. `anthropic` and `deepseek` (via `api.deepseek.com/anthropic`) use the Anthropic Messages API; `google` carries its native wire shape. The CLI normalizes each provider stream into Push events so downstream consumers see one event surface. The CLI retries on 429/5xx with exponential backoff (up to 3 attempts).
 
 | Provider | Default model | Requires key |
 |---|---|---|

@@ -11,6 +11,7 @@ import type {
 import { STRUCTURED_OUTPUT_TOOL_NAME, toAnthropicMessages } from '@push/lib/anthropic-bridge';
 import { toGeminiGenerateContent } from '@push/lib/gemini-bridge';
 import { toOpenAIChat } from '@push/lib/openai-chat-serializer';
+import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { resolvePushCapabilityProfile } from './model-catalog';
 import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
 
@@ -38,8 +39,8 @@ import { routeReplaysReasoningContent } from './orchestrator-provider-routing';
  * delivers exactly what `resolvePushCapabilityProfile(provider, model)` promises
  * for that column. The profile is the contract; the serializer is the proof.
  *
- * Status: `toolCalling`, `structuredOutput`, and `reasoningBlocks` are
- * executably covered. `streamingTools`, `multimodal`, `contentBlocks`, and
+ * Status: `toolCalling`, `structuredOutput`, `openaiWire`, and
+ * `reasoningBlocks` are executably covered. `streamingTools`, `multimodal`, `contentBlocks`, and
  * `context` sit on the explicit `PENDING_COLUMNS` backlog (visible `it.todo`s,
  * not counted as covered) until their fill-in lands; tracked on #1169.
  * `multimodal` additionally has real (non-gate-registered) delivery + model-
@@ -201,6 +202,39 @@ conformanceColumn('structuredOutput', () => {
     };
     expect(body.generationConfig?.responseMimeType).toBe('application/json');
     expect(body.generationConfig?.responseSchema?.type).toBe('OBJECT');
+  });
+});
+
+// === OpenAI-family wire transport ===========================================
+// OpenRouter varies within one provider: verified beta models use Responses;
+// every unknown/chat-tier model degrades to universal Chat Completions. Keep
+// both tiers in the conformance matrix so the profile cannot green on only the
+// happy path.
+conformanceColumn('openaiWire', () => {
+  it('Responses tier emits an input body and no messages body', () => {
+    const model = 'openai/gpt-5.4';
+    const profile = resolvePushCapabilityProfile('openrouter', model);
+    expect(profile.openaiWire).toBe('responses');
+
+    const body = toOpenAIResponses(req('openrouter', model)) as {
+      input?: unknown;
+      messages?: unknown;
+    };
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
+  });
+
+  it('Chat Completions tier emits a messages body and no input body', () => {
+    const model = 'minimax/minimax-m3';
+    const profile = resolvePushCapabilityProfile('openrouter', model);
+    expect(profile.openaiWire).toBe('chat-completions');
+
+    const body = toOpenAIChat(req('openrouter', model)) as {
+      messages?: unknown;
+      input?: unknown;
+    };
+    expect(body.messages).toBeDefined();
+    expect(body.input).toBeUndefined();
   });
 });
 

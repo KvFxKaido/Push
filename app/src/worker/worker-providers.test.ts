@@ -211,13 +211,13 @@ describe('handleOpenRouterChat', () => {
     expect(body.input).toBeUndefined();
   });
 
-  it('routes a Responses body to /v1/responses even for a model outside the allowlist', async () => {
+  it('routes a Responses body to /v1/responses even for a chat-tier model', async () => {
     // The Worker routes by BODY SHAPE alone — the per-model "may this model
     // use /responses?" decision lives at body construction (web/CLI/background
-    // builders, keyed on OPENROUTER_RESPONSES_MODELS). A Responses body for a
-    // non-allowlisted model only reaches here via the deliberate
+    // builders, keyed on PushCapabilityProfile.openaiWire). A Responses body for a
+    // chat-tier model only reaches here via the deliberate
     // force-responses override (VITE_OPENROUTER_TRANSPORT=responses, used to
-    // trial a model before allowlisting); re-adding a model gate at this layer
+    // trial a model before its capability is known); re-adding a model gate at this layer
     // would bounce that body off the chat validator with a misleading 400
     // instead of the upstream's accurate error (Codex P2 on #1305).
     let captured: { url: string; init: RequestInit } | undefined;

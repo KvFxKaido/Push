@@ -1083,9 +1083,9 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(doneCalled).toBe(true);
   });
 
-  it('builds a Chat Completions body for an OpenRouter model outside the /responses allowlist', async () => {
-    // Same per-model gate as the web client and CLI: a non-allowlisted model
-    // (the minimax case that motivated the allowlist) gets a `messages` body
+  it('builds a Chat Completions body for an OpenRouter chat-tier model', async () => {
+    // Same profile column as the web client and CLI: a chat-tier model
+    // (the minimax case that motivated the split) gets a `messages` body
     // and the chat SSE pump — never a Responses body the legacy endpoint
     // would 400 on.
     providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(

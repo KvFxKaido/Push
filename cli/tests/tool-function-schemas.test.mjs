@@ -90,6 +90,7 @@ describe('CLI native tool calling gate', () => {
       streamingTools: true,
       multimodal: true,
       structuredOutput: 'strict',
+      openaiWire: 'chat-completions',
       contentBlocks: true,
       reasoningBlocks: true,
       context: 'medium',

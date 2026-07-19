@@ -12,10 +12,15 @@ vi.mock('./openrouter-session', () => ({
   buildOpenRouterTrace: () => ({ trace_name: 'test' }),
 }));
 
-vi.mock('./model-catalog', () => ({
-  openRouterModelSupportsReasoning: () => false,
-  getReasoningEffort: () => 'off',
-}));
+vi.mock('./model-catalog', async () => {
+  const { resolvePushCapabilityProfile } = await import('@push/lib/capability-profile');
+  return {
+    openRouterModelSupportsReasoning: () => false,
+    getReasoningEffort: () => 'off',
+    resolvePushCapabilityProfile: (provider: string, model: string | undefined) =>
+      resolvePushCapabilityProfile(provider, model),
+  };
+});
 
 vi.mock('./web-search-mode', () => ({
   isNativeWebSearchEnabled: () => true,
@@ -184,7 +189,7 @@ describe('openrouterStream', () => {
   beforeEach(async () => {
     vi.resetModules();
     // Most of this suite exercises the Responses-path machinery with fixture
-    // models that aren't in the /responses beta allowlist — force the
+    // models whose profile doesn't advertise the /responses beta — force the
     // transport so those tests stay pinned to the Responses body/pump.
     // Per-model routing (the default, no override) has its own describe
     // block below; the legacy test re-stubs `chat` and wins over this.
@@ -687,10 +692,10 @@ describe('openrouterStream', () => {
   // OpenRouter's /responses is a beta not implemented for every model, and a
   // Responses body can't ride /chat/completions, so the body shape must be
   // decided per model where the body is built (#1296 case 3's real fix; the
-  // worker-side allowlist gate alone would forward a Responses body to
-  // /chat/completions for a non-allowlisted model — a guaranteed 400).
+  // worker-side model gate alone would forward a Responses body to
+  // /chat/completions for a chat-tier model — a guaranteed 400).
   describe('per-model transport (no override)', () => {
-    it('routes an allowlisted model to the Responses body shape', async () => {
+    it('routes a responses-tier model to the Responses body shape', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
@@ -713,14 +718,14 @@ describe('openrouterStream', () => {
       expect(body.messages).toBeUndefined();
     });
 
-    it('routes a non-allowlisted model to the Chat Completions body shape', async () => {
+    it('routes a chat-tier model to the Chat Completions body shape', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
       const events = collect(
         openrouterStream({
           ...baseRequest,
-          // The model that motivated the allowlist: on OpenRouter it serves
+          // The model that motivated the capability split: on OpenRouter it serves
           // /chat/completions only.
           model: 'minimax/minimax-m3',
           openrouterWebSearch: false,
@@ -739,7 +744,7 @@ describe('openrouterStream', () => {
       expect(body.input).toBeUndefined();
     });
 
-    it('VITE_OPENROUTER_TRANSPORT=responses forces the beta path for a non-allowlisted model', async () => {
+    it('VITE_OPENROUTER_TRANSPORT=responses forces the beta path for a chat-tier model', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'responses');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
