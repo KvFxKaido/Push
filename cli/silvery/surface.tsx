@@ -539,22 +539,23 @@ function BrandMarkLine({ line, colors }: { line: string; colors: readonly string
  * alone when the shortcut panel doesn't, and nothing at all when even the mark is
  * too tall/narrow. The panel is additionally gated on composer ownership: a
  * shortcut hidden by a draft, modal, or running turn cannot promise an
- * unavailable action. `tick` drives the shimmer; the surface only advances it
- * here while idle and not reduced-motion, so the mark is the idle state's single
- * live animation (law 8) and static otherwise (law 10).
+ * unavailable action. `animate` drives the shimmer: the surface sets it only
+ * while the launch screen is genuinely foreground and not reduced-motion, so the
+ * mark is the idle state's single live animation (law 8) and rests at the flat
+ * muted trough otherwise (law 10) — including behind a modal or above a draft.
  */
 export function LaunchScreen({
   width,
   height,
   showShortcuts,
   tick,
-  reducedMotion,
+  animate,
 }: {
   width: number;
   height: number;
   showShortcuts: boolean;
   tick: number;
-  reducedMotion: boolean;
+  animate: boolean;
 }) {
   const art = pushBrandArt(detectUnicode());
   const fitsLogo = height >= art.length && width >= PUSH_BRAND_ART_COLS;
@@ -578,7 +579,7 @@ export function LaunchScreen({
             <BrandMarkLine
               key={index}
               line={line}
-              colors={brandShimmerColors(line, tick, reducedMotion)}
+              colors={brandShimmerColors(line, tick, !animate)}
             />
           ))
         : null}
@@ -606,7 +607,7 @@ function Transcript({
   active,
   showLaunchShortcuts,
   tick,
-  reducedMotion,
+  shimmerActive,
 }: {
   snapshot: SilverySnapshot;
   width: number;
@@ -614,7 +615,7 @@ function Transcript({
   active: boolean;
   showLaunchShortcuts: boolean;
   tick: number;
-  reducedMotion: boolean;
+  shimmerActive: boolean;
 }) {
   // follow="end" measures the visible window and pins the streaming tail there.
   // Three props shipped in P1 broke that pinning — together they were the "message
@@ -641,7 +642,7 @@ function Transcript({
         height={height}
         showShortcuts={showLaunchShortcuts}
         tick={tick}
-        reducedMotion={reducedMotion}
+        animate={shimmerActive}
       />
     );
   }
@@ -1410,6 +1411,34 @@ export interface PushSurfaceHook {
   getComposerState?: () => { input: string; completion: CompletionState | null };
 }
 
+/**
+ * Whether the launch mark should be shimmering right now. The shimmer means
+ * "idle identity", so it runs ONLY when the empty transcript is genuinely in the
+ * foreground: not reduced-motion, no turn running, no modal open, and an empty
+ * composer. The moment a modal opens over the mark or the user starts a draft,
+ * the screen is no longer idle — the shortcuts already hide, and the mark must
+ * stop breathing behind the modal / above the draft rather than keep the clock
+ * (and the repaint) alive on `rows.length === 0` alone. Codex P2 on #1539.
+ *
+ * Exported and pure so the gate is unit-tested directly rather than only through
+ * the full-surface render.
+ */
+export function isLaunchShimmerActive(state: {
+  emptyTranscript: boolean;
+  reducedMotion: boolean;
+  running: boolean;
+  modalOpen: boolean;
+  draftLength: number;
+}): boolean {
+  return (
+    state.emptyTranscript &&
+    !state.reducedMotion &&
+    !state.running &&
+    !state.modalOpen &&
+    state.draftLength === 0
+  );
+}
+
 export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: () => void): void {
   if (running) cancel();
   else exit();
@@ -1464,17 +1493,29 @@ export function PushSurface({
   const [configAnimating, setConfigAnimating] = useState(false);
   const reducedMotion = isReducedMotion();
   // The empty launch screen shimmers its mark (the idle state's single live
-  // animation, law 8), so the clock has to keep ticking there — the ONE idle
-  // exception to "idle freezes" (law 6 / 8). Reduced motion opts out, which also
-  // keeps the terminal fully quiescent at rest for anyone who wants that.
-  const isLaunch = snapshot.rows.length === 0;
+  // animation, law 8), so the clock keeps ticking there — the ONE idle exception
+  // to "idle freezes" (law 6 / 8). Gated on the launch being genuinely foreground
+  // (no modal, no draft, not running): the mark must not breathe behind an open
+  // modal or above a draft, and reduced motion opts out entirely, keeping the
+  // terminal fully quiescent at rest.
+  const launchShimmerActive = isLaunchShimmerActive({
+    emptyTranscript: snapshot.rows.length === 0,
+    reducedMotion,
+    running: snapshot.running,
+    modalOpen:
+      paletteOpen ||
+      Boolean(snapshot.interaction) ||
+      Boolean(snapshot.picker) ||
+      Boolean(snapshot.configEditor),
+    draftLength: input.length,
+  });
   const tick = useSharedClock(
     snapshot.running ||
       paletteAnimating ||
       interactionAnimating ||
       pickerAnimating ||
       configAnimating ||
-      (isLaunch && !reducedMotion),
+      launchShimmerActive,
   );
   const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
   const interactionMotion = useModalMotion(
@@ -1755,7 +1796,7 @@ export function PushSurface({
           }
           showLaunchShortcuts={inputActive && input.length === 0}
           tick={tick}
-          reducedMotion={reducedMotion}
+          shimmerActive={launchShimmerActive}
         />
         {snapshot.error ? (
           <Text color={VL_COLOR.fault} bold>

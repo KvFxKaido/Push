@@ -271,14 +271,14 @@ describe('silvery Phase 0 fault shell', () => {
     const { LaunchScreen } = await import('../silvery/surface.tsx');
     const renderLaunch = (height, showShortcuts) =>
       Silvery.renderString(
-        // Static frame (tick 0, reduced motion) — plain render strips color anyway,
+        // Static frame (tick 0, animate off) — plain render strips color anyway,
         // so the shimmer is irrelevant to these text/layout assertions.
         React.createElement(LaunchScreen, {
           width: 72,
           height,
           showShortcuts,
           tick: 0,
-          reducedMotion: true,
+          animate: false,
         }),
         { width: 72, height, plain: true },
       );
@@ -299,6 +299,29 @@ describe('silvery Phase 0 fault shell', () => {
     const shortViewport = await renderLaunch(13, true);
     assert.ok(shortViewport.trim().length > 0, 'the mark should still fit without the panel');
     assert.doesNotMatch(shortViewport, /Resume session|Command palette|Help|Quit/);
+  });
+
+  it('shimmers only when the launch screen is genuinely foreground', {
+    skip: silverySkip,
+  }, async () => {
+    const { isLaunchShimmerActive } = await import('../silvery/surface.tsx');
+    const foreground = {
+      emptyTranscript: true,
+      reducedMotion: false,
+      running: false,
+      modalOpen: false,
+      draftLength: 0,
+    };
+    // The one state that breathes: empty transcript, no modal, no draft, running
+    // nothing, motion on.
+    assert.equal(isLaunchShimmerActive(foreground), true);
+    // Every disqualifier freezes it — a modal open over the mark, a draft in the
+    // composer, an in-flight turn, reduced motion, or a non-empty transcript.
+    assert.equal(isLaunchShimmerActive({ ...foreground, modalOpen: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, draftLength: 3 }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, running: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, reducedMotion: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, emptyTranscript: false }), false);
   });
 
   it('shimmers the idle launch mark, and quiesces only under reduced motion (law 8/10)', {
