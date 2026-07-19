@@ -13,9 +13,12 @@ runtime ignores `server.url` (verified against plugin source + live launch) and
 serves the synced `dist/` at `capacitor-electron://localhost/`; remote load only
 via `CAPACITOR_ELECTRON_DEV_SERVER_URL`, which is dev-server mode with relaxed
 CSP (escape hatch, not the shipping loader — a first-class remote mode is an
-upstream feature request). Config-and-docs stage only: the generated
-`app/electron/` platform is not committed, and the WSL direct-loopback daemon
-client (below) is untouched.
+upstream feature request). `app/electron/` is committed source as of 2026-07-19
+(PR #1541, mirroring `app/android/`): platform config + `main.ts` + its own
+lockfile tracked, regenerated halves gitignored, and the shell's build proven
+self-contained (tsc passes with the repo workspace's `node_modules` absent).
+The WSL direct-loopback daemon client (below) is untouched — that, not the
+shell scaffold, is what moves this doc past Draft.
 
 ## Problem
 

@@ -113,8 +113,7 @@ The desktop shell wraps the same PWA for Windows/macOS/Linux via
 — a Capacitor platform, so it shares the Android wiring model. It is the
 scaffolding path for the "native Windows Electron shell" in
 [`Windows Desktop — WSL-Hosted Daemon.md`](../docs/decisions/Windows%20Desktop%20—%20WSL-Hosted%20Daemon.md);
-treat it as experimental until the platform scaffold is committed and a build is
-walked end-to-end.
+treat it as experimental until a packaged build is walked end-to-end.
 
 **Load mode is bundled, unlike Android.** The Electron runtime does not read
 `server.url` from `capacitor.config.ts` — verified against the plugin source
@@ -130,14 +129,17 @@ relaxes CSP**, so use it as a development escape hatch, not the shipping
 loader. If a first-class remote mode matters later, that's an upstream
 feature request, not a config tweak.
 
-This surface is wired at the **config + docs** stage — the deps, scripts, and this
-doc are in place, but `app/electron/` (the generated Capacitor platform) is **not
-committed yet**. Scaffold it where the Electron toolchain lives (the local/Windows
-box), then sync:
+`app/electron/` is **committed source** (mirroring `app/android/`): the platform
+config (`capacitor.electron.config.ts`, `electron-builder.config.js`, `main.ts`,
+`package.json` + its own `pnpm-lock.yaml`, `tsconfig.json`) is tracked, while
+`app/electron/.gitignore` excludes everything regenerated — the synced web
+bundle (`app/`), Capacitor plugin registration (`generated/`), tsc output
+(`build/`), packaged builds (`dist/`), the vendored runtime (`vendor/`), and
+`node_modules`. Don't regenerate via `cap add`; a fresh clone only needs deps
+and a sync:
 
 ```bash
-# one-time, from app/ — generates app/electron/
-npx cap add @capawesome/capacitor-electron
+# one-time, from app/electron/ — install the shell's own deps
 # --ignore-workspace is load-bearing: app/electron is not a pnpm workspace
 # member, so a bare `pnpm install` here resolves the REPO workspace instead,
 # reports success, and installs none of the scaffold's deps (verified).
@@ -150,6 +152,3 @@ pnpm run electron:run
 `pnpm run electron:sync` builds the SPA and copies it into the shell;
 `electron:open` / `electron:run` open or launch it. `scripts/ensure-capacitor-electron.mjs`
 guards that the platform exists and prints the bootstrap command when it doesn't.
-
-Once `app/electron/` carries real customization, commit it as source (mirroring
-`app/android/`) and gitignore its build outputs + `node_modules`.
