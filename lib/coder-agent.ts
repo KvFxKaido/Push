@@ -1247,6 +1247,11 @@ export interface CoderAgentOptions<TCall, TCard extends ToolCard = ToolCard> {
  */
 export interface CoderAgentResult<TCard extends ToolCard = ToolCard> {
   summary: string;
+  /** Final provider-authored assistant message on a natural completion.
+   *  Hosts that persist a conversational transcript use this sidecar to keep
+   *  provider replay metadata (notably plain `reasoningContent`) alongside the
+   *  visible summary. Defensive/host-authored terminal summaries omit it. */
+  finalAssistantMessage?: CoderLoopMessage;
   cards: TCard[];
   rounds: number;
   checkpoints: number;
@@ -2976,8 +2981,12 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       }
 
       finishRound('completed');
+      const finalAssistantMessage = messages[messages.length - 1];
       return {
         summary: accumulated + criteriaBlock,
+        ...(finalAssistantMessage?.role === 'assistant'
+          ? { finalAssistantMessage: { ...finalAssistantMessage } }
+          : {}),
         cards: allCards,
         rounds,
         checkpoints: checkpointCount,

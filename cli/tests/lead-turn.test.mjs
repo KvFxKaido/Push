@@ -31,7 +31,7 @@ import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
-import { loadSessionEvents, makeSessionId } from '../session-store.ts';
+import { loadSessionEvents, loadSessionState, makeSessionId } from '../session-store.ts';
 import { canListenOnLoopback } from './test-environment.mjs';
 
 const loopbackAvailable = await canListenOnLoopback();
@@ -110,6 +110,13 @@ async function startSequencedProviderServer(plans) {
         Connection: 'keep-alive',
       });
 
+      for (const token of plan.reasoningTokens || []) {
+        res.write(
+          `data: ${JSON.stringify({
+            choices: [{ delta: { reasoning_content: token } }],
+          })}\n\n`,
+        );
+      }
       for (const token of plan.tokens || []) {
         res.write(
           `data: ${JSON.stringify({
@@ -230,6 +237,64 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
         assert.ok(
           !eventTypes.some((t) => t.startsWith('subagent.') || t.startsWith('task_graph.')),
           `org-chart envelopes emitted by the lead lane (got ${eventTypes.join(', ')})`,
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
+  it('persists plain reasoning and replays it at the serializer boundary after resume (#1537)', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const reasoning = 'first line of thought\nsecond line with exact spacing';
+      const server = await startSequencedProviderServer([
+        { reasoningTokens: [reasoning], tokens: ['Two plus two is four.'] },
+        { tokens: ['I said that two plus two is four.'] },
+      ]);
+
+      try {
+        const providerConfig = makeProviderConfig(server.url);
+        const state = makeState(cwd, {
+          messages: [
+            { role: 'system', content: 'You are a helpful assistant.' },
+            { role: 'user', content: 'What is two plus two?' },
+          ],
+        });
+
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'What is two plus two?', 5, {
+          emit: () => {},
+        });
+
+        const resumed = await loadSessionState(state.sessionId);
+        const persistedAssistant = resumed.messages.find(
+          (message) =>
+            message?.role === 'assistant' && message?.content === 'Two plus two is four.',
+        );
+        assert.ok(persistedAssistant, 'first assistant turn was not persisted');
+        assert.equal(persistedAssistant.reasoningContent, reasoning);
+
+        resumed.messages.push({ role: 'user', content: 'What did you just say?' });
+        await runLeadKernelTurn(resumed, providerConfig, 'mock-key', 'What did you just say?', 5, {
+          emit: () => {},
+        });
+
+        assert.equal(server.requests.length, 2);
+        const replayRequest = server.requests[1];
+        const replayedAssistant = replayRequest.messages.find(
+          (message) => message.role === 'assistant' && message.content === 'Two plus two is four.',
+        );
+        assert.ok(replayedAssistant, 'resumed assistant turn did not reach the provider body');
+        assert.equal(replayedAssistant.reasoning_content, reasoning);
+        assert.ok(
+          replayRequest.messages.some(
+            (message) =>
+              message.role === 'user' && message.content.includes('Task: What did you just say?'),
+          ),
+          'current task preamble missing from resumed request',
+        );
+        assert.ok(
+          !JSON.stringify(replayRequest).includes('Prior conversation in this chat'),
+          'structured replay duplicated the same history inside the text preamble',
         );
       } finally {
         await server.stop();

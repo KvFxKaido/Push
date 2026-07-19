@@ -29,6 +29,7 @@
 import {
   runCoderAgent,
   type CoderAgentCallbacks,
+  type CoderLoopMessage,
   type CoderToolExecContext,
   type CoderToolExecResult,
   type DetectedToolCalls,
@@ -271,6 +272,115 @@ export function wrapCliDetectAnyToolCall(text: string): CliKernelCall | null {
 const PRIOR_TURNS_MAX = 6;
 const PRIOR_TURN_MAX_CHARS = 700;
 
+interface LeadConversationContext {
+  prior: Message[];
+  referencedFiles: string | null;
+}
+
+function selectLeadConversationContext(
+  userText: string,
+  messages: ReadonlyArray<Message>,
+): LeadConversationContext {
+  const conversational = messages.filter((m) => {
+    if (m.role !== 'user' && m.role !== 'assistant') return false;
+    if (typeof m.content !== 'string' || !m.content.trim()) return false;
+    if (isToolResultMessage(m)) return false;
+    if (isParseErrorMessage(m)) return false;
+    return true;
+  });
+
+  let referencedFiles: string | null = null;
+  const tail = conversational[conversational.length - 1];
+  const beforeTail = conversational[conversational.length - 2];
+  if (
+    tail?.role === 'user' &&
+    tail.content.trimStart().startsWith('[REFERENCED_FILES]') &&
+    beforeTail?.role === 'user' &&
+    beforeTail.content.trim() === userText.trim()
+  ) {
+    referencedFiles = tail.content.trim();
+    conversational.splice(conversational.length - 2, 2);
+  } else if (tail?.role === 'user' && tail.content.trim() === userText.trim()) {
+    conversational.pop();
+  }
+
+  let prior = conversational.slice(-PRIOR_TURNS_MAX);
+  let latestHandoff: Message | null = null;
+  for (let i = conversational.length - 1; i >= 0; i--) {
+    if (isHandoffBlock(conversational[i].content)) {
+      latestHandoff = conversational[i];
+      break;
+    }
+  }
+  if (latestHandoff && !prior.includes(latestHandoff)) {
+    prior = [latestHandoff, ...prior];
+  }
+
+  return { prior, referencedFiles };
+}
+
+function boundedLeadHistoryContent(message: Message): string {
+  const text = message.content.trim();
+  if (isHandoffBlock(text) || text.length <= PRIOR_TURN_MAX_CHARS) return text;
+  return `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…`;
+}
+
+function hasReplayableLeadReasoning(userText: string, messages: ReadonlyArray<Message>): boolean {
+  return selectLeadConversationContext(userText, messages).prior.some(
+    (message) =>
+      message.role === 'assistant' &&
+      typeof message.reasoningContent === 'string' &&
+      message.reasoningContent.length > 0,
+  );
+}
+
+/**
+ * Promote the bounded recent transcript to real provider messages only when it
+ * carries plain reasoning that must be replayed structurally. The ordinary CLI
+ * path intentionally stays on its compact text preamble; this conditional seed
+ * avoids changing non-reasoning sessions while letting `toOpenAIChat` emit the
+ * persisted assistant `reasoning_content` after a process resume.
+ */
+export function buildLeadReasoningReplaySeed(
+  userText: string,
+  messages: ReadonlyArray<Message>,
+  taskPreamble: string,
+): CoderLoopMessage[] | undefined {
+  const { prior } = selectLeadConversationContext(userText, messages);
+  if (
+    !prior.some(
+      (message) =>
+        message.role === 'assistant' &&
+        typeof message.reasoningContent === 'string' &&
+        message.reasoningContent.length > 0,
+    )
+  ) {
+    return undefined;
+  }
+
+  const seed = prior.map(
+    (message, index): CoderLoopMessage => ({
+      id: `cli-history-${index}`,
+      role: message.role as 'user' | 'assistant',
+      content: boundedLeadHistoryContent(message),
+      timestamp: index,
+      ...(message.role === 'assistant' && message.reasoningContent
+        ? { reasoningContent: message.reasoningContent }
+        : {}),
+      ...(message.reasoningBlocks && message.reasoningBlocks.length > 0
+        ? { reasoningBlocks: message.reasoningBlocks }
+        : {}),
+    }),
+  );
+  seed.push({
+    id: 'cli-current-turn',
+    role: 'user',
+    content: taskPreamble,
+    timestamp: Date.now(),
+  });
+  return seed;
+}
+
 /**
  * Build the kernel task preamble for a lead turn: optional workspace
  * snapshot, optional persisted workspace memory, bounded recent
@@ -292,14 +402,9 @@ export function buildLeadTurnPreamble(
   workspaceSnapshot: string,
   memory?: string | null,
   userGoalAnchor?: UserGoalAnchor | null,
+  options: { includePriorConversation?: boolean } = {},
 ): string {
-  const conversational = messages.filter((m) => {
-    if (m.role !== 'user' && m.role !== 'assistant') return false;
-    if (typeof m.content !== 'string' || !m.content.trim()) return false;
-    if (isToolResultMessage(m)) return false;
-    if (isParseErrorMessage(m)) return false;
-    return true;
-  });
+  const { prior, referencedFiles } = selectLeadConversationContext(userText, messages);
   // The current turn can be one or two trailing user messages:
   // `appendUserMessageWithFileReferences` pushes the raw line and then, when
   // the line carries `@file` tokens, a synthetic `[REFERENCED_FILES]` block.
@@ -307,37 +412,6 @@ export function buildLeadTurnPreamble(
   // reference block rides the Task section verbatim instead of being clipped
   // to PRIOR_TURN_MAX_CHARS as "prior conversation" — which silently dropped
   // most referenced file content on the default kernel lane (Codex P2, #936).
-  let referencedFiles: string | null = null;
-  const tail = conversational[conversational.length - 1];
-  const beforeTail = conversational[conversational.length - 2];
-  if (
-    tail?.role === 'user' &&
-    tail.content.trimStart().startsWith('[REFERENCED_FILES]') &&
-    beforeTail?.role === 'user' &&
-    beforeTail.content.trim() === userText.trim()
-  ) {
-    referencedFiles = tail.content.trim();
-    conversational.splice(conversational.length - 2, 2);
-  } else if (tail?.role === 'user' && tail.content.trim() === userText.trim()) {
-    conversational.pop();
-  }
-  let prior = conversational.slice(-PRIOR_TURNS_MAX);
-  // The most recent `[CONTEXT HANDOFF]` is the only surviving summary of the
-  // turns compaction already removed from `state.messages`. The token-based
-  // partition can preserve a tail longer than PRIOR_TURNS_MAX, pushing the
-  // handoff out of this window — so carry it forward explicitly when it falls
-  // outside, or the lead silently loses all the compacted history (§14).
-  let latestHandoff: Message | null = null;
-  for (let i = conversational.length - 1; i >= 0; i--) {
-    if (isHandoffBlock(conversational[i].content)) {
-      latestHandoff = conversational[i];
-      break;
-    }
-  }
-  if (latestHandoff && !prior.includes(latestHandoff)) {
-    prior = [latestHandoff, ...prior];
-  }
-
   const lines: string[] = [];
   if (workspaceSnapshot.trim()) {
     lines.push(workspaceSnapshot.trim());
@@ -347,19 +421,10 @@ export function buildLeadTurnPreamble(
     lines.push(`[MEMORY]\n${memory.trim()}\n[/MEMORY]`);
     lines.push('');
   }
-  if (prior.length > 0) {
+  if (options.includePriorConversation !== false && prior.length > 0) {
     lines.push('Prior conversation in this chat (oldest to newest, truncated):');
     for (const msg of prior) {
-      const text = msg.content.trim();
-      // A `[CONTEXT HANDOFF]` block is a model-written compaction summary of the
-      // turns that were collapsed (CLI parity, §14) — render it un-clipped so the
-      // summary survives instead of being chopped to PRIOR_TURN_MAX_CHARS like a
-      // raw turn. Same exemption pattern as the `[REFERENCED_FILES]` block.
-      const clipped =
-        !isHandoffBlock(text) && text.length > PRIOR_TURN_MAX_CHARS
-          ? `${text.slice(0, PRIOR_TURN_MAX_CHARS)}…`
-          : text;
-      lines.push(`[${msg.role}] ${clipped}`);
+      lines.push(`[${msg.role}] ${boundedLeadHistoryContent(msg)}`);
     }
     lines.push('');
   }
@@ -520,13 +585,18 @@ export async function runLeadKernelTurn(
     }
   }
 
+  const replayReasoningHistory = hasReplayableLeadReasoning(userText, state.messages as Message[]);
   const taskPreamble = buildLeadTurnPreamble(
     userText,
     state.messages as Message[],
     snapshot,
     memory,
     userGoalAnchor,
+    { includePriorConversation: !replayReasoningHistory },
   );
+  const initialMessages = replayReasoningHistory
+    ? buildLeadReasoningReplaySeed(userText, state.messages as Message[], taskPreamble)
+    : undefined;
   const leadModelId = state.model || providerConfig.defaultModel;
   const coderPolicy = createCoderPolicy({
     // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
@@ -963,6 +1033,7 @@ export async function runLeadKernelTurn(
         allowedRepo: '',
         userProfile: null,
         taskPreamble,
+        initialMessages,
         symbolSummary: null,
         toolExec,
         // Lead surface: enable the parallel-delegation bucket so the lead can
@@ -1057,7 +1128,14 @@ export async function runLeadKernelTurn(
     );
 
     const finalAssistantText: string = result.summary || '';
-    (state.messages as Message[]).push({ role: 'assistant', content: finalAssistantText });
+    const finalReasoningContent = result.finalAssistantMessage?.reasoningContent;
+    (state.messages as Message[]).push({
+      role: 'assistant',
+      content: finalAssistantText,
+      ...(typeof finalReasoningContent === 'string' && finalReasoningContent.length > 0
+        ? { reasoningContent: finalReasoningContent }
+        : {}),
+    });
     state.rounds = (state.rounds ?? 0) + result.rounds;
     await saveSessionState(state);
 

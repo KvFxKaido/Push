@@ -901,6 +901,36 @@ describe('loadSessionState — hybrid persistence', () => {
     assert.deepEqual(loaded.messages, original.messages);
   });
 
+  it('round-trips assistant reasoningContent through messages.jsonl (#1537)', async () => {
+    const id = makeSessionId();
+    const reasoningContent = 'first reasoning line\nsecond line with exact spacing';
+    const original = {
+      sessionId: id,
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'What is two plus two?' },
+        {
+          role: 'assistant',
+          content: 'Two plus two is four.',
+          reasoningContent,
+        },
+      ],
+    };
+
+    await saveSessionState(original);
+
+    const loaded = await loadSessionState(id);
+    assert.deepEqual(loaded.messages, original.messages);
+    assert.equal(loaded.messages[1].reasoningContent, reasoningContent);
+  });
+
   it('migrates legacy state.json with embedded messages on first save after load', async () => {
     // Simulate a pre-PR 4 session: state.json contains messages inline,
     // no messages.jsonl exists. Loading should hydrate from the embedded

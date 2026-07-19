@@ -26,6 +26,19 @@ describe('estimateMessageTokens — contentParts (#937)', () => {
   });
 });
 
+describe('estimateMessageTokens — replayable reasoning (#1537)', () => {
+  it('counts neutral reasoningContent once using the same channel as web thinking', () => {
+    const content = 'visible answer';
+    const reasoning = 'private reasoning that is replayed to the provider';
+    const expected = estimateMessageTokens({ content, thinking: reasoning });
+
+    expect(estimateMessageTokens({ content, reasoningContent: reasoning })).toBe(expected);
+    expect(
+      estimateMessageTokens({ content, thinking: reasoning, reasoningContent: reasoning }),
+    ).toBe(expected);
+  });
+});
+
 describe('guessWindowFromName', () => {
   // Catches cases where Ollama Cloud's `/v1/models` (and similar provider
   // catalogs) omit `context_length`, so the only signal Push has is the model

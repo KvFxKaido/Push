@@ -112,10 +112,10 @@ async function* cliProviderStream(
   // deterministic bias for tool-driven turns). reasoning_blocks are dropped:
   // every provider here is a strict OpenAI-compat endpoint that may reject the
   // Push-private field — it only round-trips on the Anthropic-bridge surface.
-  // TODO(deepseek-reasoning-cli): the CLI history does not persist plain
-  // reasoning text yet. Once it does, map DeepSeek gateway history onto
-  // LlmMessage.reasoningContent so `toOpenAIChat` can echo `reasoning_content`
-  // the same way the web route-gated path does.
+  // Resumed CLI reasoning history already arrives as
+  // `LlmMessage.reasoningContent`; `toOpenAIChat` echoes it as
+  // `reasoning_content`, matching in-run replay without teaching this leaf
+  // adapter about session persistence.
   //
   // Cache markers are tagged only for OpenRouter, the one CLI provider known to
   // route to Anthropic models (other gateways ignore them harmlessly, but are

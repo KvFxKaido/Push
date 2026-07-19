@@ -547,6 +547,10 @@ message the preamble now renders un-clipped. Because the CLI `Message` has no
 `compactContext`/`[CONTEXT DIGEST]` model) rather than a hide — tool-output
 losslessness is already covered by the verbatim log. Surfaced via the existing
 `context_compacted` session event + `cli_llm_compaction_*` structured logs.
+When that bounded window contains persisted plain assistant reasoning, the CLI
+conditionally promotes the same window to structured provider messages so the
+serializer can replay `reasoning_content`; sessions without replayable reasoning
+keep the compact text-preamble path unchanged.
 
 Source notes: [`How Codex CLI Handles Compacting`](<../research/codex-compacting.md>).
 
