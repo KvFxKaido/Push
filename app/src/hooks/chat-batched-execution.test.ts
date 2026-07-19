@@ -206,4 +206,74 @@ describe('executeBatchedToolCalls', () => {
       '[Workspace Follow Warning]',
     );
   });
+
+  it('stops the side-effect chain when the run is aborted mid-chain', async () => {
+    // exec → exec is a valid side-effect chain (the interleaved-tool-calling
+    // case #1536 enabled). The user presses stop during the first exec; the
+    // second must NOT run — the side-effect loop has to honor the abort
+    // between iterations, same as the file-mutation batch above it.
+    const firstExec = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_exec', args: { command: 'npm test' } },
+    } as unknown as AnyToolCall;
+    const secondExec = {
+      source: 'sandbox',
+      call: { tool: 'sandbox_exec', args: { command: 'npm run build' } },
+    } as unknown as AnyToolCall;
+
+    const store = {
+      current: {
+        'chat-1': {
+          id: 'chat-1',
+          title: 'Chat',
+          repoFullName: 'owner/repo',
+          branch: 'feature/pr',
+          messages: [makeMessage({ id: 'assistant-1' })],
+          createdAt: 1,
+          lastMessageAt: 1,
+        } as Conversation,
+      },
+    };
+    const ctx = makeContext(store);
+
+    const executedCommands: string[] = [];
+    mockExecuteTool.mockImplementation(async (call: AnyToolCall) => {
+      const command = (call.call as { args: { command: string } }).args.command;
+      executedCommands.push(command);
+      // Simulate the user pressing stop while the first side-effect runs.
+      if (call === firstExec) {
+        ctx.abortRef.current = true;
+      }
+      return {
+        call,
+        raw: { text: `[Tool Result — sandbox_exec]\n${command} ok` },
+        cards: [],
+        durationMs: 1,
+      };
+    });
+
+    const result = await executeBatchedToolCalls(
+      {
+        readOnly: [],
+        fileMutations: [],
+        sideEffects: [firstExec, secondExec],
+        batchOverflow: [],
+        extraMutations: [],
+        droppedCandidates: [],
+      } satisfies DetectedToolCalls,
+      0,
+      'run the tests then the build',
+      '',
+      [],
+      [makeMessage({ id: 'user-1', role: 'user', content: 'test then build', status: 'done' })],
+      ctx,
+      { diagnosisRetries: 0, recoveryAttempted: false },
+      makeTurnContext(),
+    );
+
+    // The second exec must never run once the turn was aborted.
+    expect(executedCommands).toEqual(['npm test']);
+    expect(result.loopAction).toBe('break');
+    expect(result.loopCompletedNormally).toBe(false);
+  });
 });
