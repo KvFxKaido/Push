@@ -120,8 +120,12 @@ describe('visual language v2 glyphs', () => {
       for (let c = 0; c < art[0].length; c += 1) {
         if (middle.every((row) => row[c] !== undefined && row[c] !== ' ')) litEveryRow.push(c);
       }
+      // At least one sustained column per side. The braille mark draws crisp
+      // single-cell walls (one column each side); the density fallback smears
+      // wider. Either way a rhombus scores 0 — the left/right check below pins
+      // that the two are mirrored, not stacked on one edge.
       assert.ok(
-        litEveryRow.length >= 4,
+        litEveryRow.length >= 2,
         `expected flat vertical sides, got ${litEveryRow.length} sustained columns (a rhombus has 0)`,
       );
       // Sides on BOTH edges, mirrored about the centre.
@@ -137,7 +141,7 @@ describe('visual language v2 glyphs', () => {
     }
   });
 
-  it('draws the mark from glyphs the language already owns, at a uniform width (law 6)', () => {
+  it('draws the mark from braille (unicode) or the density ramp (ascii), at a uniform width (law 6)', () => {
     const unicode = pushBrandArt(true);
     const ascii = pushBrandArt(false);
     // Equal-width rows: the surface centers the block with alignItems=center, which
@@ -146,15 +150,20 @@ describe('visual language v2 glyphs', () => {
     assert.equal(new Set(ascii.map((l) => l.length)).size, 1);
     assert.equal(unicode[0].length, PUSH_BRAND_ART_COLS);
 
-    // No new glyphs enter the language: the mark is drawn from the density ramp.
-    const allowed = (g) => new Set([' ', ...g.density]);
-    for (const [art, g] of [
-      [unicode, GLYPHS_UNICODE],
-      [ascii, GLYPHS_ASCII],
-    ]) {
-      for (const ch of art.join('')) {
-        assert.ok(allowed(g).has(ch), `mark uses "${ch}", which is not a density cell`);
-      }
+    // Unicode: the mark's one admitted glyph family beyond the ramp — braille
+    // (U+2800–U+28FF) plus the blank. No stray glyph, no image.
+    for (const ch of unicode.join('')) {
+      const cp = ch.codePointAt(0);
+      assert.ok(
+        ch === ' ' || (cp >= 0x2800 && cp <= 0x28ff),
+        `unicode mark uses "${ch}" (U+${cp.toString(16)}), which is neither braille nor a blank`,
+      );
+    }
+    // ASCII fallback: braille has no ASCII form, so this tier stays on the density
+    // cells the language already owns.
+    const asciiAllowed = new Set([' ', ...GLYPHS_ASCII.density]);
+    for (const ch of ascii.join('')) {
+      assert.ok(asciiAllowed.has(ch), `ascii mark uses "${ch}", which is not a density cell`);
     }
   });
 

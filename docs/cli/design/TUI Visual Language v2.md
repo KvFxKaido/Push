@@ -148,12 +148,14 @@ whatever transcript exists. No ambient animation, no news, no tips, no busy-look
 A TUI that always looks busy is performing.
 
 An **empty transcript** may center one **dim** Push mark — the hexagon, rasterized from the
-real `PushMarkIcon` geometry onto the language's existing density cells — with a compact list
-of real launch shortcuts beneath it. The mark introduces no new glyph and is gone the instant
-there is a row to show. On the launch screen it carries one slow shimmer, the idle state's
-single live animation (law 8), which freezes flat under reduced motion (law 10). The
-shortcuts appear only while the empty composer owns input, so the launch screen never
-advertises an unavailable action.
+real `PushMarkIcon` geometry: **braille** dots (2×4 per cell) on unicode terminals for a fine
+outline, the density ramp as the ASCII fallback — with a compact list of real launch shortcuts
+beneath it. Braille is the one glyph family the mark introduces beyond the ramp, admitted for
+the mark specifically; it is still generated from geometry (no image, no dependency), just
+sampled finer. The mark is gone the instant there is a row to show. On the launch screen it
+carries one slow shimmer, the idle state's single live animation (law 8), which freezes flat
+under reduced motion (law 10). The shortcuts appear only while the empty composer owns input,
+so the launch screen never advertises an unavailable action.
 
 *Reversal (2026-07-14).* This law previously said "**no placeholder art**", full stop, and
 that was too broad. Its real target is **performance** — a UI that manufactures activity to
@@ -166,6 +168,12 @@ content: every displayed key must resolve to the advertised action and the list 
 whenever the composer cannot honor it; the shimmer is the *only* motion on the idle screen
 (law 8) and stops dead under reduced motion (law 10). A slow breath on the product's own mark
 is identity, not the manufactured busyness the law forbids.
+
+*Extension (2026-07-19).* The unicode mark moved from the density ramp to **braille** for a
+finer outline. This admits one glyph family beyond the ramp, but only for the mark and only on
+unicode terminals (the ASCII tier keeps the ramp). The bar the original "no new glyph" line
+was protecting — no imported charset, no bundled image, no dependency — still holds: braille
+is the same geometry sampled at 2×4 dots per cell, not a picture of the logo.
 
 The line the law still holds: no ambient content may occupy an empty transcript. Not a
 changelog, not a "try our new model" blurb, not a rotating tip. Those are marketing wearing
