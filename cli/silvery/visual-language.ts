@@ -113,10 +113,30 @@ const PUSH_MARK_VERTICES: ReadonlyArray<readonly [number, number]> = [
  *  hexagon's proportions honest on screen rather than in the array. */
 const BRAND_ART_COLS = 17;
 const BRAND_ART_ROWS = 9;
-/** Half-width of the fully-lit stroke, in viewBox units. */
+/** Half-width of the fully-lit stroke, in viewBox units (density fallback). */
 const BRAND_STROKE = 0.35;
-/** How far the mark fades out past the stroke, in viewBox units. */
+/** How far the mark fades out past the stroke, in viewBox units (density fallback). */
 const BRAND_FALLOFF = 0.95;
+/**
+ * Half-width of the braille outline, in viewBox units. Tuned so the vertical
+ * walls land inside a single cell while the diagonals stay smooth: below ~0.45
+ * the slopes go sparse, above ~0.6 the walls double up (⣿⡇ instead of ⣿).
+ */
+const BRAND_BRAILLE_THRESHOLD = 0.55;
+/**
+ * Braille dot → bit offset within a U+2800 cell. The dot grid is 2 wide × 4 tall
+ * and numbered
+ *   1 4        so bit(col,row): col 0 → [1,2,3,7] = bits 0,1,2,6
+ *   2 5                         col 1 → [4,5,6,8] = bits 3,4,5,7
+ *   3 6
+ *   7 8
+ * Packing 8 sub-cells into one glyph gives the mark 2× the horizontal and 4× the
+ * vertical resolution a single shade cell can carry — the whole point of braille.
+ */
+const BRAILLE_DOT_BITS: readonly (readonly number[])[] = [
+  [0, 1, 2, 6],
+  [3, 4, 5, 7],
+];
 
 /** Shortest distance from a point to the mark's OUTLINE (not its interior). */
 function distanceToMarkOutline(px: number, py: number): number {
@@ -132,23 +152,48 @@ function distanceToMarkOutline(px: number, py: number): number {
   return best;
 }
 
+// Equal-width rows, trailing spaces INTACT. The surface centers the block with
+// `alignItems: center`, which centers each line by its OWN width — so a trimmed
+// row would re-center independently and shear the hexagon. Padding makes the
+// centering a no-op per line and a true block-center for the mark.
+
 /**
- * The Push mark, rasterized onto terminal cells from the real icon geometry.
- *
- * Generated rather than hand-drawn, because hand-drawing it is how it became a
- * rhombus. The ramp reuses the language's existing density cells (law 4's meter
- * glyphs) instead of importing a new charset — the mark introduces no glyph the
- * language did not already own.
- *
- * It belongs only in an EMPTY transcript (law 6): identity, not decoration, and
- * gone the moment there is a row to show. On the launch screen it is the idle
- * state's SINGLE live animation (law 8) — a slow shimmer sweeps the mark via
- * {@link brandShimmerColors}, painted by the surface. Nothing else moves there,
- * so law 8 holds; reduced motion collapses it to the flat muted trough (law 10),
- * which is exactly the dim static mark this comment used to describe.
+ * Braille rasterization (the default, unicode path). Each cell samples the
+ * distance field at its 2×4 sub-dots and sets the ones inside the outline,
+ * yielding a crisp anti-aliased-looking mark at 4× the vertical resolution of a
+ * shade cell. Binary by nature — no per-dot brightness — so a tuned threshold
+ * gives a clean outline rather than the density ramp's soft glow.
  */
-export function pushBrandArt(unicode: boolean = detectUnicode()): readonly string[] {
-  const ramp = [' ', ...resolveGlyphs(unicode).density];
+function brailleMark(): string[] {
+  const rows: string[] = [];
+  for (let r = 0; r < BRAND_ART_ROWS; r += 1) {
+    let line = '';
+    for (let c = 0; c < BRAND_ART_COLS; c += 1) {
+      let mask = 0;
+      for (let dc = 0; dc < 2; dc += 1) {
+        for (let dr = 0; dr < 4; dr += 1) {
+          const x = ((c + (dc + 0.5) / 2) / BRAND_ART_COLS) * 16;
+          const y = ((r + (dr + 0.5) / 4) / BRAND_ART_ROWS) * 16;
+          if (distanceToMarkOutline(x, y) <= BRAND_BRAILLE_THRESHOLD) {
+            mask |= 1 << BRAILLE_DOT_BITS[dc][dr];
+          }
+        }
+      }
+      line += mask === 0 ? ' ' : String.fromCodePoint(0x2800 + mask);
+    }
+    rows.push(line.padEnd(BRAND_ART_COLS, ' '));
+  }
+  return rows;
+}
+
+/**
+ * Density-ramp rasterization (the ASCII fallback). One sample per cell, quantized
+ * to the tier's meter glyphs with a soft falloff. Braille has no ASCII form, so
+ * this is what non-unicode terminals get — coarser, but drawn only from glyphs
+ * the language already owns.
+ */
+function densityMark(glyphs: VisualGlyphs): string[] {
+  const ramp = [' ', ...glyphs.density];
   const rows: string[] = [];
   for (let r = 0; r < BRAND_ART_ROWS; r += 1) {
     let line = '';
@@ -159,13 +204,30 @@ export function pushBrandArt(unicode: boolean = detectUnicode()): readonly strin
       const lit = Math.max(0, 1 - Math.max(0, d - BRAND_STROKE) / BRAND_FALLOFF);
       line += ramp[Math.round(lit * (ramp.length - 1))];
     }
-    // Equal-width rows, trailing spaces INTACT. The surface centers the block with
-    // `alignItems: center`, which centers each line by its OWN width — so a trimmed
-    // row would re-center independently and shear the hexagon. Padding makes the
-    // centering a no-op per line and a true block-center for the mark.
     rows.push(line.padEnd(BRAND_ART_COLS, ' '));
   }
   return rows;
+}
+
+/**
+ * The Push mark, rasterized onto terminal cells from the real icon geometry.
+ *
+ * Generated rather than hand-drawn, because hand-drawing it is how it became a
+ * rhombus. Two rasterizers over the SAME distance field: braille (2×4 dots/cell)
+ * on unicode terminals for a fine outline, the density ramp (one shade glyph/cell,
+ * law 4's meter glyphs) as the ASCII fallback. Braille is the one glyph family the
+ * mark introduces beyond the ramp — admitted for the mark specifically (law 6);
+ * no image, no new dependency, just the geometry sampled finer.
+ *
+ * It belongs only in an EMPTY transcript (law 6): identity, not decoration, and
+ * gone the moment there is a row to show. On the launch screen it is the idle
+ * state's SINGLE live animation (law 8) — a slow shimmer sweeps the mark via
+ * {@link brandShimmerColors}, painted by the surface. Nothing else moves there,
+ * so law 8 holds; reduced motion collapses it to the flat muted trough (law 10),
+ * which is exactly the dim static mark this comment used to describe.
+ */
+export function pushBrandArt(unicode: boolean = detectUnicode()): readonly string[] {
+  return unicode ? brailleMark() : densityMark(GLYPHS_ASCII);
 }
 
 /** Width of every {@link pushBrandArt} row — the surface needs it to decide whether
