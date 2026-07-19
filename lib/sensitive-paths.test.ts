@@ -24,52 +24,40 @@ describe('isSensitivePath', () => {
     expect(isSensitivePath(42)).toBe(false);
   });
 
-  it.each([
-    '.env',
-    '/workspace/.env',
-    '.env.local',
-    '.env.production',
-    'src/.env.staging',
-  ])('flags %s as sensitive', (p) => {
-    expect(isSensitivePath(p)).toBe(true);
-  });
+  it.each(['.env', '/workspace/.env', '.env.local', '.env.production', 'src/.env.staging'])(
+    'flags %s as sensitive',
+    (p) => {
+      expect(isSensitivePath(p)).toBe(true);
+    },
+  );
 
-  it.each([
-    '.env.example',
-    '.env.sample',
-    '.env.template',
-    '.env.schema',
-    'src/.env.example',
-  ])('does NOT flag %s (environment template)', (p) => {
-    expect(isSensitivePath(p)).toBe(false);
-  });
+  it.each(['.env.example', '.env.sample', '.env.template', '.env.schema', 'src/.env.example'])(
+    'does NOT flag %s (environment template)',
+    (p) => {
+      expect(isSensitivePath(p)).toBe(false);
+    },
+  );
 
-  it.each([
-    '.npmrc',
-    '.pypirc',
-    '.netrc',
-    '.git-credentials',
-  ])('flags credential basename %s', (p) => {
-    expect(isSensitivePath(p)).toBe(true);
-  });
+  it.each(['.npmrc', '.pypirc', '.netrc', '.git-credentials'])(
+    'flags credential basename %s',
+    (p) => {
+      expect(isSensitivePath(p)).toBe(true);
+    },
+  );
 
-  it.each([
-    'id_rsa',
-    'id_ed25519',
-    'id_ecdsa',
-    'id_dsa',
-  ])('flags ssh private key basename %s', (p) => {
-    expect(isSensitivePath(p)).toBe(true);
-  });
+  it.each(['id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa'])(
+    'flags ssh private key basename %s',
+    (p) => {
+      expect(isSensitivePath(p)).toBe(true);
+    },
+  );
 
-  it.each([
-    'cert.pem',
-    'private.key',
-    'cred.p12',
-    'apple.pfx',
-  ])('flags credential extension %s', (p) => {
-    expect(isSensitivePath(p)).toBe(true);
-  });
+  it.each(['cert.pem', 'private.key', 'cred.p12', 'apple.pfx'])(
+    'flags credential extension %s',
+    (p) => {
+      expect(isSensitivePath(p)).toBe(true);
+    },
+  );
 
   it.each([
     '/home/user/.ssh',

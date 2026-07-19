@@ -440,21 +440,20 @@ describe('run-engine', () => {
   // Covers: planner pre-pass and auditor evaluation both run inside the
   // delegate_coder flow — all three map to 'delegating_coder'.
 
-  it.each([
-    ['coder'],
-    ['planner'],
-    ['auditor'],
-  ] as const)('DELEGATION_STARTED(%s) maps to delegating_coder', (agent) => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
-      { type: 'TOOLS_STARTED', timestamp: t() },
-      { type: 'DELEGATION_STARTED', timestamp: t(), agent },
-    ]);
+  it.each([['coder'], ['planner'], ['auditor']] as const)(
+    'DELEGATION_STARTED(%s) maps to delegating_coder',
+    (agent) => {
+      const state = run([
+        makeRunStarted(),
+        { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+        { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+        { type: 'TOOLS_STARTED', timestamp: t() },
+        { type: 'DELEGATION_STARTED', timestamp: t(), agent },
+      ]);
 
-    expect(state.phase).toBe('delegating_coder');
-  });
+      expect(state.phase).toBe('delegating_coder');
+    },
+  );
 
   it('DELEGATION_COMPLETED after coder returns to executing_tools', () => {
     const state = run([
@@ -482,21 +481,21 @@ describe('run-engine', () => {
     expect(state.phase).toBe('executing_tools');
   });
 
-  it.each([
-    ['planner'],
-    ['auditor'],
-  ] as const)('DELEGATION_COMPLETED(%s) keeps delegating_coder phase', (agent) => {
-    const state = run([
-      makeRunStarted(),
-      { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
-      { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
-      { type: 'TOOLS_STARTED', timestamp: t() },
-      { type: 'DELEGATION_STARTED', timestamp: t(), agent },
-      { type: 'DELEGATION_COMPLETED', timestamp: t(), agent },
-    ]);
+  it.each([['planner'], ['auditor']] as const)(
+    'DELEGATION_COMPLETED(%s) keeps delegating_coder phase',
+    (agent) => {
+      const state = run([
+        makeRunStarted(),
+        { type: 'TAB_LOCK_ACQUIRED', timestamp: t(), tabLockId: 'lock-1' },
+        { type: 'ROUND_STARTED', timestamp: t(), round: 0 },
+        { type: 'TOOLS_STARTED', timestamp: t() },
+        { type: 'DELEGATION_STARTED', timestamp: t(), agent },
+        { type: 'DELEGATION_COMPLETED', timestamp: t(), agent },
+      ]);
 
-    expect(state.phase).toBe('delegating_coder');
-  });
+      expect(state.phase).toBe('delegating_coder');
+    },
+  );
 
   // ─── ACCUMULATED_UPDATED ─────────────────────────────────────────────────
 

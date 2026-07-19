@@ -25,19 +25,18 @@ describe('canAccessProviderModelCatalog', () => {
     ).toBe(true);
   });
 
-  it.each([
-    'gateway-byok',
-    'worker-secret',
-    'binding',
-  ] as const)('allows private catalogs with a %s credential', (credentialSource) => {
-    expect(
-      canAccessProviderModelCatalog({
-        provider: 'fireworks',
-        hasLocalKey: false,
-        credentialSource,
-      }),
-    ).toBe(true);
-  });
+  it.each(['gateway-byok', 'worker-secret', 'binding'] as const)(
+    'allows private catalogs with a %s credential',
+    (credentialSource) => {
+      expect(
+        canAccessProviderModelCatalog({
+          provider: 'fireworks',
+          hasLocalKey: false,
+          credentialSource,
+        }),
+      ).toBe(true);
+    },
+  );
 
   it('allows keyless catalogs with an account-stored key', () => {
     expect(

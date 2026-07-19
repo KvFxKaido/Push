@@ -375,16 +375,15 @@ describe('Coder policy verification backpressure', () => {
     ).toMatchObject({ code: 'verification_backpressure' });
   });
 
-  it.each([
-    'sandbox_run_tests',
-    'sandbox_check_types',
-    'sandbox_verify_workspace',
-  ])('resets after successful built-in verification via %s', async (tool) => {
-    const policy = createCoderPolicy();
-    await mutate(policy, BACKPRESSURE_MUTATION_THRESHOLD - 1);
-    await policy.evaluateAfterTool(tool, {}, 'ok', false, makeCtx());
-    await mutate(policy, BACKPRESSURE_MUTATION_THRESHOLD - 1);
-  });
+  it.each(['sandbox_run_tests', 'sandbox_check_types', 'sandbox_verify_workspace'])(
+    'resets after successful built-in verification via %s',
+    async (tool) => {
+      const policy = createCoderPolicy();
+      await mutate(policy, BACKPRESSURE_MUTATION_THRESHOLD - 1);
+      await policy.evaluateAfterTool(tool, {}, 'ok', false, makeCtx());
+      await mutate(policy, BACKPRESSURE_MUTATION_THRESHOLD - 1);
+    },
+  );
 
   it('does not reset after failed verification', async () => {
     const policy = createCoderPolicy();
@@ -435,33 +434,30 @@ describe('Coder policy verification backpressure', () => {
     expect(VERIFICATION_COMMAND_PATTERN.test(command)).toBe(true);
   });
 
-  it.each([
-    'cat src/index.ts',
-    'ls -la',
-    'git status',
-    'echo hello',
-    'mkdir -p src/lib',
-  ])('does not recognize arbitrary exec command: %s', (command) => {
-    expect(VERIFICATION_COMMAND_PATTERN.test(command)).toBe(false);
-  });
+  it.each(['cat src/index.ts', 'ls -la', 'git status', 'echo hello', 'mkdir -p src/lib'])(
+    'does not recognize arbitrary exec command: %s',
+    (command) => {
+      expect(VERIFICATION_COMMAND_PATTERN.test(command)).toBe(false);
+    },
+  );
 
-  it.each([
-    'sandbox_exec',
-    'exec',
-  ])('resets after a successful %s verification command', async (tool) => {
-    const policy = createCoderPolicy();
-    await mutate(
-      policy,
-      BACKPRESSURE_MUTATION_THRESHOLD - 1,
-      tool === 'exec' ? 'write_file' : undefined,
-    );
-    await policy.evaluateAfterTool(tool, { command: 'npm test' }, 'ok', false, makeCtx());
-    await mutate(
-      policy,
-      BACKPRESSURE_MUTATION_THRESHOLD - 1,
-      tool === 'exec' ? 'write_file' : undefined,
-    );
-  });
+  it.each(['sandbox_exec', 'exec'])(
+    'resets after a successful %s verification command',
+    async (tool) => {
+      const policy = createCoderPolicy();
+      await mutate(
+        policy,
+        BACKPRESSURE_MUTATION_THRESHOLD - 1,
+        tool === 'exec' ? 'write_file' : undefined,
+      );
+      await policy.evaluateAfterTool(tool, { command: 'npm test' }, 'ok', false, makeCtx());
+      await mutate(
+        policy,
+        BACKPRESSURE_MUTATION_THRESHOLD - 1,
+        tool === 'exec' ? 'write_file' : undefined,
+      );
+    },
+  );
 
   it('does not count failed mutations or successful reads', async () => {
     const policy = createCoderPolicy();
@@ -499,15 +495,10 @@ describe('Coder policy verification-phase gating', () => {
     'linting',
   ])('recognizes verification phase %s', (phase) => expect(isVerificationPhase(phase)).toBe(true));
 
-  it.each([
-    'implementing',
-    'planning',
-    'exploring',
-    'reporting',
-    '',
-    undefined,
-  ])('rejects non-verification phase %s', (phase) =>
-    expect(isVerificationPhase(phase)).toBe(false));
+  it.each(['implementing', 'planning', 'exploring', 'reporting', '', undefined])(
+    'rejects non-verification phase %s',
+    (phase) => expect(isVerificationPhase(phase)).toBe(false),
+  );
 
   it.each([
     'sandbox_write_file',
@@ -528,14 +519,12 @@ describe('Coder policy verification-phase gating', () => {
     });
   });
 
-  it.each([
-    'sandbox_exec',
-    'exec',
-    'sandbox_read_file',
-    'read_file',
-  ])('allows non-mutation tool %s during verification', async (tool) => {
-    expect(
-      await createCoderPolicy().evaluateBeforeTool(tool, {}, makeCtx({ phase: 'verifying' })),
-    ).toBeNull();
-  });
+  it.each(['sandbox_exec', 'exec', 'sandbox_read_file', 'read_file'])(
+    'allows non-mutation tool %s during verification',
+    async (tool) => {
+      expect(
+        await createCoderPolicy().evaluateBeforeTool(tool, {}, makeCtx({ phase: 'verifying' })),
+      ).toBeNull();
+    },
+  );
 });

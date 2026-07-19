@@ -730,28 +730,27 @@ describe('provider model fetchers', () => {
         },
       },
     },
-  ])('does not fall back to the raw provider list for $name when every model is filtered out', async ({
-    fetchModels,
-    providerMatcher,
-    modelsDevPayload,
-  }) => {
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('models.dev/api.json')) {
-          return jsonResponse(modelsDevPayload);
-        }
-        if (providerMatcher(url)) {
-          return jsonResponse({ data: [{ id: 'tiny-context-model' }] });
-        }
-        throw new Error(`Unexpected fetch: ${url}`);
-      }),
-    );
+  ])(
+    'does not fall back to the raw provider list for $name when every model is filtered out',
+    async ({ fetchModels, providerMatcher, modelsDevPayload }) => {
+      stubWindow();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (input: string | URL) => {
+          const url = String(input);
+          if (url.includes('models.dev/api.json')) {
+            return jsonResponse(modelsDevPayload);
+          }
+          if (providerMatcher(url)) {
+            return jsonResponse({ data: [{ id: 'tiny-context-model' }] });
+          }
+          throw new Error(`Unexpected fetch: ${url}`);
+        }),
+      );
 
-    await expect(fetchModels()).resolves.toEqual([]);
-  });
+      await expect(fetchModels()).resolves.toEqual([]);
+    },
+  );
 
   it('warms Hugging Face capability metadata without filtering the live catalog', async () => {
     stubWindow();
