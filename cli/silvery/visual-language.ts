@@ -111,8 +111,8 @@ const PUSH_MARK_VERTICES: ReadonlyArray<readonly [number, number]> = [
 
 /** Terminal cells are ~2:1 tall, so the grid is wider than it is high to keep the
  *  hexagon's proportions honest on screen rather than in the array. */
-const BRAND_ART_COLS = 25;
-const BRAND_ART_ROWS = 13;
+const BRAND_ART_COLS = 17;
+const BRAND_ART_ROWS = 9;
 /** Half-width of the fully-lit stroke, in viewBox units. */
 const BRAND_STROKE = 0.35;
 /** How far the mark fades out past the stroke, in viewBox units. */
@@ -140,8 +140,12 @@ function distanceToMarkOutline(px: number, py: number): number {
  * glyphs) instead of importing a new charset — the mark introduces no glyph the
  * language did not already own.
  *
- * It belongs only in an EMPTY transcript (law 6): identity, not decoration. It is
- * static, dim, and gone the moment there is a row to show.
+ * It belongs only in an EMPTY transcript (law 6): identity, not decoration, and
+ * gone the moment there is a row to show. On the launch screen it is the idle
+ * state's SINGLE live animation (law 8) — a slow shimmer sweeps the mark via
+ * {@link brandShimmerColors}, painted by the surface. Nothing else moves there,
+ * so law 8 holds; reduced motion collapses it to the flat muted trough (law 10),
+ * which is exactly the dim static mark this comment used to describe.
  */
 export function pushBrandArt(unicode: boolean = detectUnicode()): readonly string[] {
   const ramp = [' ', ...resolveGlyphs(unicode).density];
@@ -185,6 +189,16 @@ export const MOTION_TICKS = {
    * fade and read as flicker, which is exactly the failure the law names.
    */
   verbShimmerPeriod: 16,
+  /**
+   * Brand-mark shimmer period, in ticks — exactly 2× {@link verbShimmerPeriod}
+   * (32 × 150ms = 4800ms). The 2:1 ratio is deliberate: the launch mark and the
+   * working verb are the same effect at two tempos, so locking them in a musical
+   * octave keeps them from reading as two different broken speeds if both are
+   * ever seen in one session. The mark is the calmer of the two — it is identity
+   * at rest, not progress in flight. Runs only on the empty launch screen and
+   * freezes under reduced motion, so the terminal is quiescent everywhere else.
+   */
+  brandShimmerPeriod: 32,
   /** Interval for the shared UI clock while working (≈ motion-fast 150ms). */
   clockMs: 150,
   /** Elapsed-seconds refresh while the turn runs (composer/status). */
@@ -383,12 +397,35 @@ export function verbShimmerColors(
   reducedMotion: boolean = isReducedMotion(),
   base: string = SHIMMER_BASE,
   highlight: string = SHIMMER_HIGHLIGHT,
+  period: number = MOTION_TICKS.verbShimmerPeriod,
 ): string[] {
   const chars = [...text];
   if (reducedMotion) return chars.map(() => base);
-  const period = MOTION_TICKS.verbShimmerPeriod;
   const progress = (((tick % period) + period) % period) / period;
   return chars.map((_, i) => mixHex(base, highlight, shimmerIntensity(i, chars.length, progress)));
+}
+
+/**
+ * Per-character shimmer for the launch mark: the same sweep as
+ * {@link verbShimmerColors} at the slower {@link MOTION_TICKS.brandShimmerPeriod}.
+ * The surface calls this per raster row with a shared `tick`, so one bright band
+ * travels left→right across the whole mark (every row shares the progress).
+ * Trough is the muted canvas, so a reduced-motion mark is indistinguishable from
+ * any other dim chrome.
+ */
+export function brandShimmerColors(
+  text: string,
+  tick: number,
+  reducedMotion: boolean = isReducedMotion(),
+): string[] {
+  return verbShimmerColors(
+    text,
+    tick,
+    reducedMotion,
+    SHIMMER_BASE,
+    SHIMMER_HIGHLIGHT,
+    MOTION_TICKS.brandShimmerPeriod,
+  );
 }
 
 // ── Density meter (law 9) ───────────────────────────────────────────

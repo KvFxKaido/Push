@@ -46,6 +46,7 @@ import {
   footerKeybinds,
   createModalMotionState,
   formatTurnTimestamp,
+  brandShimmerColors,
   headerSegments,
   livenessHex,
   MOTION_TICKS,
@@ -74,6 +75,32 @@ const COMMANDS = [
   { id: 'cancel', label: 'Cancel turn', hint: 'abort the active round loop' },
   { id: 'quit', label: 'Quit', hint: 'return to the terminal' },
 ] as const;
+
+/**
+ * Shortcuts advertised on the empty launch screen. These are REAL bindings —
+ * `resolveComposerShortcut` / `changeComposerInput` / `handleTuiInterrupt` back
+ * every one — not a decorative menu. The Phase 0 surface tests pin each entry to
+ * its resolver so the screen can never advertise a chord the composer doesn't
+ * honor (honest surfaces: the launch panel must not lie about what a key does).
+ *
+ * `action` is the resolver verb the drift test checks; `keys`/`label` are what
+ * the user reads. Kept short and launch-relevant on purpose — the full surface
+ * lives in the command palette (Ctrl+K), which is itself one of these rows.
+ */
+export const LAUNCH_SHORTCUTS: readonly {
+  label: string;
+  keys: string;
+  action: 'session' | 'palette' | 'help' | 'quit';
+}[] = [
+  { label: 'Resume session', keys: 'ctrl+r', action: 'session' },
+  { label: 'Command palette', keys: 'ctrl+k', action: 'palette' },
+  { label: 'Help', keys: '?', action: 'help' },
+  { label: 'Quit', keys: 'ctrl+c', action: 'quit' },
+];
+
+/** Widest label + a two-space gutter + widest key, with a little headroom. The
+ *  launch screen only draws the shortcut panel when the viewport clears this. */
+const LAUNCH_SHORTCUT_WIDTH = 26;
 
 const PICKER_MAX_VISIBLE = 12;
 
@@ -484,16 +511,111 @@ function InteractionModal({
   );
 }
 
+/**
+ * One raster row of the launch mark, painted as a single `<Text>` with nested
+ * per-column color spans. It stays ONE measured node on purpose: the surface
+ * block-centers the mark with `alignItems="center"`, which centers each line by
+ * its own width — splitting the row into per-cell flex items would let
+ * shrink-to-fit eat the trailing spaces and shear the hexagon (the same trap
+ * `StatusVerb` documents). Nested spans keep the width fixed at the raster width.
+ */
+function BrandMarkLine({ line, colors }: { line: string; colors: readonly string[] }) {
+  const cells = [...line];
+  return (
+    <Text>
+      {cells.map((ch, index) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: fixed-width raster — the column IS the identity
+        <Text key={index} color={colors[index]}>
+          {ch}
+        </Text>
+      ))}
+    </Text>
+  );
+}
+
+/**
+ * The empty-transcript launch screen: the slow-shimmering Push mark over a panel
+ * of real shortcuts. Degrades by viewport — mark + shortcuts when both fit, mark
+ * alone when the shortcut panel doesn't, and nothing at all when even the mark is
+ * too tall/narrow. The panel is additionally gated on composer ownership: a
+ * shortcut hidden by a draft, modal, or running turn cannot promise an
+ * unavailable action. `animate` drives the shimmer: the surface sets it only
+ * while the launch screen is genuinely foreground and not reduced-motion, so the
+ * mark is the idle state's single live animation (law 8) and rests at the flat
+ * muted trough otherwise (law 10) — including behind a modal or above a draft.
+ */
+export function LaunchScreen({
+  width,
+  height,
+  showShortcuts,
+  tick,
+  animate,
+}: {
+  width: number;
+  height: number;
+  showShortcuts: boolean;
+  tick: number;
+  animate: boolean;
+}) {
+  const art = pushBrandArt(detectUnicode());
+  const fitsLogo = height >= art.length && width >= PUSH_BRAND_ART_COLS;
+  const fitsShortcuts =
+    showShortcuts &&
+    fitsLogo &&
+    width >= LAUNCH_SHORTCUT_WIDTH &&
+    height >= art.length + 1 + LAUNCH_SHORTCUTS.length;
+  const panelWidth = Math.min(LAUNCH_SHORTCUT_WIDTH, Math.max(0, width - 2));
+  return (
+    <Box
+      width={width}
+      height={height}
+      flexDirection="column"
+      alignItems="center"
+      justifyContent="center"
+    >
+      {fitsLogo
+        ? art.map((line, index) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed raster, row order is stable identity
+            <BrandMarkLine
+              key={index}
+              line={line}
+              colors={brandShimmerColors(line, tick, !animate)}
+            />
+          ))
+        : null}
+      {fitsShortcuts ? (
+        <Box marginTop={1} flexDirection="column" width={panelWidth}>
+          {LAUNCH_SHORTCUTS.map((shortcut) => (
+            <Box key={shortcut.label} width={panelWidth}>
+              <Text color={VL_COLOR.primary} bold>
+                {shortcut.label}
+              </Text>
+              <Box flexGrow={1} />
+              <Text color={VL_COLOR.muted}>{shortcut.keys}</Text>
+            </Box>
+          ))}
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
+
 function Transcript({
   snapshot,
   width,
   height,
   active,
+  showLaunchShortcuts,
+  tick,
+  shimmerActive,
 }: {
   snapshot: SilverySnapshot;
   width: number;
   height: number;
   active: boolean;
+  showLaunchShortcuts: boolean;
+  tick: number;
+  shimmerActive: boolean;
 }) {
   // follow="end" measures the visible window and pins the streaming tail there.
   // Three props shipped in P1 broke that pinning — together they were the "message
@@ -514,23 +636,14 @@ function Transcript({
   // Phase 1 test; the render test's `real row 13/14/15` window guards this config.
   const shown = useMemo(() => groupSilveryTranscriptRows(snapshot.rows), [snapshot.rows]);
   if (shown.length === 0) {
-    const art = pushBrandArt(detectUnicode());
     return (
-      <Box
+      <LaunchScreen
         width={width}
         height={height}
-        flexDirection="column"
-        alignItems="center"
-        justifyContent="center"
-      >
-        {height >= art.length && width >= PUSH_BRAND_ART_COLS
-          ? art.map((line, index) => (
-              <Text key={index} color={VL_COLOR.muted}>
-                {line}
-              </Text>
-            ))
-          : null}
-      </Box>
+        showShortcuts={showLaunchShortcuts}
+        tick={tick}
+        animate={shimmerActive}
+      />
     );
   }
   return (
@@ -1298,6 +1411,34 @@ export interface PushSurfaceHook {
   getComposerState?: () => { input: string; completion: CompletionState | null };
 }
 
+/**
+ * Whether the launch mark should be shimmering right now. The shimmer means
+ * "idle identity", so it runs ONLY when the empty transcript is genuinely in the
+ * foreground: not reduced-motion, no turn running, no modal open, and an empty
+ * composer. The moment a modal opens over the mark or the user starts a draft,
+ * the screen is no longer idle — the shortcuts already hide, and the mark must
+ * stop breathing behind the modal / above the draft rather than keep the clock
+ * (and the repaint) alive on `rows.length === 0` alone. Codex P2 on #1539.
+ *
+ * Exported and pure so the gate is unit-tested directly rather than only through
+ * the full-surface render.
+ */
+export function isLaunchShimmerActive(state: {
+  emptyTranscript: boolean;
+  reducedMotion: boolean;
+  running: boolean;
+  modalOpen: boolean;
+  draftLength: number;
+}): boolean {
+  return (
+    state.emptyTranscript &&
+    !state.reducedMotion &&
+    !state.running &&
+    !state.modalOpen &&
+    state.draftLength === 0
+  );
+}
+
 export function handleTuiInterrupt(running: boolean, cancel: () => void, exit: () => void): void {
   if (running) cancel();
   else exit();
@@ -1351,13 +1492,30 @@ export function PushSurface({
   const [pickerAnimating, setPickerAnimating] = useState(false);
   const [configAnimating, setConfigAnimating] = useState(false);
   const reducedMotion = isReducedMotion();
-  // One shared clock for all motion (law 8). Idle freezes (law 6 / 8).
+  // The empty launch screen shimmers its mark (the idle state's single live
+  // animation, law 8), so the clock keeps ticking there — the ONE idle exception
+  // to "idle freezes" (law 6 / 8). Gated on the launch being genuinely foreground
+  // (no modal, no draft, not running): the mark must not breathe behind an open
+  // modal or above a draft, and reduced motion opts out entirely, keeping the
+  // terminal fully quiescent at rest.
+  const launchShimmerActive = isLaunchShimmerActive({
+    emptyTranscript: snapshot.rows.length === 0,
+    reducedMotion,
+    running: snapshot.running,
+    modalOpen:
+      paletteOpen ||
+      Boolean(snapshot.interaction) ||
+      Boolean(snapshot.picker) ||
+      Boolean(snapshot.configEditor),
+    draftLength: input.length,
+  });
   const tick = useSharedClock(
     snapshot.running ||
       paletteAnimating ||
       interactionAnimating ||
       pickerAnimating ||
-      configAnimating,
+      configAnimating ||
+      launchShimmerActive,
   );
   const paletteMotion = useModalMotion(paletteOpen, tick, 0.35, reducedMotion, setPaletteAnimating);
   const interactionMotion = useModalMotion(
@@ -1636,6 +1794,9 @@ export function PushSurface({
             !pickerMotion.visible &&
             !configMotion.visible
           }
+          showLaunchShortcuts={inputActive && input.length === 0}
+          tick={tick}
+          shimmerActive={launchShimmerActive}
         />
         {snapshot.error ? (
           <Text color={VL_COLOR.fault} bold>

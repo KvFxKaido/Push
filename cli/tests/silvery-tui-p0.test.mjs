@@ -219,6 +219,202 @@ describe('silvery Phase 0 fault shell', () => {
     assert.equal(resolveComposerShortcut('p', {}), null);
   });
 
+  it('advertises only launch shortcuts backed by a real binding (honest surface)', {
+    skip: silverySkip,
+  }, async () => {
+    const { LAUNCH_SHORTCUTS, resolveComposerShortcut, handleTuiInterrupt } = await import(
+      '../silvery/surface.tsx'
+    );
+
+    // No two rows claim the same key; every label/key is non-empty.
+    const keys = LAUNCH_SHORTCUTS.map((s) => s.keys);
+    assert.equal(new Set(keys).size, keys.length, 'duplicate launch-shortcut key advertised');
+    for (const s of LAUNCH_SHORTCUTS) {
+      assert.ok(s.label.length > 0 && s.keys.length > 0, 'empty launch-shortcut label/key');
+    }
+
+    // The composer-chord rows must resolve to the action they advertise — the
+    // launch panel cannot promise a chord the composer does not honor.
+    const ctrlLetter = (spec) => /^ctrl\+([a-z])$/.exec(spec)?.[1] ?? null;
+    for (const s of LAUNCH_SHORTCUTS.filter(
+      (s) => s.action === 'session' || s.action === 'palette',
+    )) {
+      const letter = ctrlLetter(s.keys);
+      assert.ok(letter, `${s.label} should advertise a ctrl+<letter> chord, got ${s.keys}`);
+      assert.equal(
+        resolveComposerShortcut(letter, { ctrl: true }),
+        s.action,
+        `${s.keys} does not resolve to ${s.action}`,
+      );
+    }
+
+    // Quit is the idle-Ctrl+C exit path (handleTuiInterrupt), not a composer chord.
+    const quit = LAUNCH_SHORTCUTS.find((s) => s.action === 'quit');
+    assert.equal(quit?.keys, 'ctrl+c');
+    let exits = 0;
+    handleTuiInterrupt(
+      false,
+      () => {},
+      () => exits++,
+    );
+    assert.equal(exits, 1, 'quit row must map to the idle Ctrl+C exit');
+
+    // Help is the empty-composer `?` trigger (changeComposerInput submits /help).
+    assert.equal(LAUNCH_SHORTCUTS.find((s) => s.action === 'help')?.keys, '?');
+  });
+
+  it('renders launch shortcuts only when the composer can honor them', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { LaunchScreen } = await import('../silvery/surface.tsx');
+    const renderLaunch = (height, showShortcuts) =>
+      Silvery.renderString(
+        // Static frame (tick 0, animate off) — plain render strips color anyway,
+        // so the shimmer is irrelevant to these text/layout assertions.
+        React.createElement(LaunchScreen, {
+          width: 72,
+          height,
+          showShortcuts,
+          tick: 0,
+          animate: false,
+        }),
+        { width: 72, height, plain: true },
+      );
+
+    const interactive = await renderLaunch(18, true);
+    assert.match(interactive, /Resume session/);
+    assert.match(interactive, /ctrl\+r/);
+    assert.match(interactive, /Command palette/);
+    assert.match(interactive, /ctrl\+k/);
+
+    const composerUnavailable = await renderLaunch(18, false);
+    assert.doesNotMatch(composerUnavailable, /Resume session|Command palette|Help|Quit/);
+
+    const exactFit = await renderLaunch(14, true);
+    assert.match(exactFit, /Resume session/);
+    assert.match(exactFit, /Quit/);
+
+    const shortViewport = await renderLaunch(13, true);
+    assert.ok(shortViewport.trim().length > 0, 'the mark should still fit without the panel');
+    assert.doesNotMatch(shortViewport, /Resume session|Command palette|Help|Quit/);
+  });
+
+  it('shimmers only when the launch screen is genuinely foreground', {
+    skip: silverySkip,
+  }, async () => {
+    const { isLaunchShimmerActive } = await import('../silvery/surface.tsx');
+    const foreground = {
+      emptyTranscript: true,
+      reducedMotion: false,
+      running: false,
+      modalOpen: false,
+      draftLength: 0,
+    };
+    // The one state that breathes: empty transcript, no modal, no draft, running
+    // nothing, motion on.
+    assert.equal(isLaunchShimmerActive(foreground), true);
+    // Every disqualifier freezes it — a modal open over the mark, a draft in the
+    // composer, an in-flight turn, reduced motion, or a non-empty transcript.
+    assert.equal(isLaunchShimmerActive({ ...foreground, modalOpen: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, draftLength: 3 }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, running: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, reducedMotion: true }), false);
+    assert.equal(isLaunchShimmerActive({ ...foreground, emptyTranscript: false }), false);
+  });
+
+  it('shimmers the idle launch mark, and quiesces only under reduced motion (law 8/10)', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const snapshot = {
+      rows: [],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: null,
+      interaction: null,
+      picker: null,
+      configEditor: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => {},
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      openPicker: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+
+    // Mount the idle launch screen under a given reduced-motion setting and
+    // return how many bytes it painted AFTER the initial frame settled — the
+    // repaint volume over a 400ms window (≈2–3 shimmer ticks).
+    const repaintAfterSettle = async (reduced) => {
+      const stdout = new FakeStdout(72, 24);
+      const stdin = new FakeStdin();
+      const previousPush = process.env.PUSH_REDUCED_MOTION;
+      const previousAlias = process.env.REDUCED_MOTION;
+      const previousForce = process.env.FORCE_COLOR;
+      process.env.PUSH_REDUCED_MOTION = reduced ? '1' : '0';
+      process.env.REDUCED_MOTION = reduced ? '1' : '0';
+      // Force truecolor so the shimmer's per-tick color change actually reaches
+      // the byte stream — otherwise a color-stripped frame is identical each tick
+      // and the "it repaints" signal would vanish for reasons unrelated to motion.
+      process.env.FORCE_COLOR = '3';
+      let instance;
+      let lifecycle;
+      try {
+        const handle = Silvery.render(
+          React.createElement(PushSurface, { controller }),
+          { stdout, stdin },
+          { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: true },
+        );
+        lifecycle = handle.run();
+        instance = await handle;
+        await sleep(250);
+        assert.match(stdout.bytes, /Resume session/);
+        const settledBytes = stdout.bytes.length;
+        await sleep(400);
+        return stdout.bytes.length - settledBytes;
+      } finally {
+        instance?.unmount();
+        if (lifecycle) await lifecycle;
+        if (previousPush === undefined) delete process.env.PUSH_REDUCED_MOTION;
+        else process.env.PUSH_REDUCED_MOTION = previousPush;
+        if (previousAlias === undefined) delete process.env.REDUCED_MOTION;
+        else process.env.REDUCED_MOTION = previousAlias;
+        if (previousForce === undefined) delete process.env.FORCE_COLOR;
+        else process.env.FORCE_COLOR = previousForce;
+      }
+    };
+
+    // Reduced motion: the launch clock never starts — the screen is fully
+    // quiescent, no repaint without a state change (the invariant worth keeping).
+    assert.equal(
+      await repaintAfterSettle(true),
+      0,
+      'reduced-motion launch screen repainted without a state change',
+    );
+    // Motion on: the mark is the idle state's single live animation, so the
+    // screen DOES keep repainting the shimmer. This is the wiring guard — a pure
+    // shimmer that is never ticked would pass its unit tests and animate nothing.
+    assert.ok(
+      (await repaintAfterSettle(false)) > 0,
+      'launch shimmer never repainted the idle screen',
+    );
+  });
+
   it('diverts secret-setting config commands before the composer accepts a key', {
     skip: silverySkip,
   }, async () => {
@@ -2519,7 +2715,7 @@ describe('silvery TUI Phase 1 chat surface', () => {
   }, async () => {
     const React = (await import('react')).default;
     const Silvery = await import('silvery');
-    const { PushSurface } = await import('../silvery/surface.tsx');
+    const { LAUNCH_SHORTCUTS, PushSurface } = await import('../silvery/surface.tsx');
     const stdout = new FakeStdout(72, 18);
     const stdin = new FakeStdin();
     const hook = {};
@@ -2646,7 +2842,9 @@ describe('silvery TUI Phase 1 chat surface', () => {
 
     hook.setComposerInput('');
     await sleep(30);
-    hook.changeComposerInput('?');
+    const helpKey = LAUNCH_SHORTCUTS.find((shortcut) => shortcut.action === 'help')?.keys;
+    assert.equal(helpKey, '?');
+    hook.changeComposerInput(helpKey);
     await sleep(30);
     assert.deepEqual(submissions, ['/help']);
 

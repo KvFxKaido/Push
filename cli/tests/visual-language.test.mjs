@@ -16,6 +16,7 @@ import {
   PUSH_BRAND_ART_COLS,
   VL_COLOR,
   accentHexForTheme,
+  brandShimmerColors,
   livenessHex,
   shimmerIntensity,
   verbShimmerColors,
@@ -107,8 +108,12 @@ describe('visual language v2 glyphs', () => {
     // called it "the Push hex mark".
     for (const unicode of [true, false]) {
       const art = pushBrandArt(unicode);
-      const middle = art.slice(3, art.length - 3);
-      assert.ok(middle.length >= 4, 'need a middle band to test the sides');
+      // Trim the sloped top/bottom proportionally so this survives a mark resize:
+      // ~22% off each end leaves the flat-sided middle band (3 rows off a 13-row
+      // mark, 2 off the 9-row one).
+      const trim = Math.max(1, Math.round(art.length * 0.22));
+      const middle = art.slice(trim, art.length - trim);
+      assert.ok(middle.length >= 3, 'need a middle band to test the sides');
 
       // A column that is lit on EVERY middle row is a vertical side. A rhombus has none.
       const litEveryRow = [];
@@ -151,6 +156,17 @@ describe('visual language v2 glyphs', () => {
         assert.ok(allowed(g).has(ch), `mark uses "${ch}", which is not a density cell`);
       }
     }
+  });
+
+  it('renders the compact 17x9 launch mark', () => {
+    const art = pushBrandArt(true);
+    assert.equal(art.length, 9, 'default mark is 9 rows tall');
+    assert.equal(art[0].length, 17, 'default mark is 17 cols wide');
+    assert.equal(
+      PUSH_BRAND_ART_COLS,
+      17,
+      'exported width matches the default the surface guards on',
+    );
   });
 });
 
@@ -265,6 +281,31 @@ describe('visual language v2 motion', () => {
     const colors = verbShimmerColors('editing', 7, true);
     assert.equal(new Set(colors).size, 1, 'reduced motion still gradients');
     assert.deepEqual(colors, verbShimmerColors('editing', 999, true));
+  });
+
+  it('shimmers the brand mark at half the verb tempo, in a clean 2:1 (law 8)', () => {
+    // The launch mark and the working verb are one effect at two speeds; a 2:1
+    // octave keeps them from reading as two different broken clocks.
+    assert.equal(MOTION_TICKS.brandShimmerPeriod, MOTION_TICKS.verbShimmerPeriod * 2);
+    // A raster row round-trips to one color per column (so the surface can zip
+    // colors to characters without a bounds check) and never NaNs.
+    const row = pushBrandArt(true)[4];
+    const colors = brandShimmerColors(row, 5, false);
+    assert.equal(colors.length, [...row].length);
+    for (const color of colors) assert.match(color, /^#[0-9a-f]{6}$/);
+    // Phase-locked to the SLOW period: identical frame one brand-cycle later, and
+    // (crucially) NOT yet identical one verb-cycle later — proof it runs slower.
+    assert.deepEqual(colors, brandShimmerColors(row, 5 + MOTION_TICKS.brandShimmerPeriod, false));
+    assert.notDeepEqual(colors, brandShimmerColors(row, 5 + MOTION_TICKS.verbShimmerPeriod, false));
+  });
+
+  it('freezes the brand mark to the muted trough under reduced motion (law 10)', () => {
+    const row = pushBrandArt(true)[4];
+    const colors = brandShimmerColors(row, 9, true);
+    assert.equal(new Set(colors).size, 1, 'reduced-motion mark still shimmers');
+    // The trough is the muted canvas, so a static mark is indistinguishable from
+    // any other dim chrome — identical at any tick.
+    assert.deepEqual(colors, brandShimmerColors(row, 500, true));
   });
 
   it('ramps modal backdrop fades over the shared three-tick window (law 9)', () => {
