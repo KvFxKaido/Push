@@ -92,41 +92,42 @@ describe('createAnthropicFamilyStream', () => {
     vi.restoreAllMocks();
   });
 
-  it.each(
-    familyFixtures,
-  )('pins the $provider family fixture to its endpoint, identity, and pause policy', async (config) => {
-    const output = await drain(config);
+  it.each(familyFixtures)(
+    'pins the $provider family fixture to its endpoint, identity, and pause policy',
+    async (config) => {
+      const output = await drain(config);
 
-    expect(output.at(-1)).toEqual({
-      type: 'done',
-      finishReason: 'stop',
-      usage: undefined,
-    });
-    expect(toLLMMessagesMock).toHaveBeenCalledWith(
-      baseRequest.messages,
-      expect.objectContaining({
-        providerType: config.provider,
-        providerModel: baseRequest.model,
-        emitContentBlocks: true,
-      }),
-    );
+      expect(output.at(-1)).toEqual({
+        type: 'done',
+        finishReason: 'stop',
+        usage: undefined,
+      });
+      expect(toLLMMessagesMock).toHaveBeenCalledWith(
+        baseRequest.messages,
+        expect.objectContaining({
+          providerType: config.provider,
+          providerModel: baseRequest.model,
+          emitContentBlocks: true,
+        }),
+      );
 
-    const [endpoint, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(endpoint).toBe(config.endpoint);
-    expect(init.headers).toEqual(
-      expect.objectContaining({
-        Authorization: `Bearer ${config.getApiKey()?.trim()}`,
-        'Content-Type': 'application/json',
-        traceparent: 'test-trace',
-      }),
-    );
-    expect(JSON.parse(init.body as string)).toMatchObject({
-      contract: 'push.stream.v1',
-      provider: config.provider,
-      model: baseRequest.model,
-      messages: [{ role: 'user', content: 'hello' }],
-    });
-  });
+      const [endpoint, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(endpoint).toBe(config.endpoint);
+      expect(init.headers).toEqual(
+        expect.objectContaining({
+          Authorization: `Bearer ${config.getApiKey()?.trim()}`,
+          'Content-Type': 'application/json',
+          traceparent: 'test-trace',
+        }),
+      );
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        contract: 'push.stream.v1',
+        provider: config.provider,
+        model: baseRequest.model,
+        messages: [{ role: 'user', content: 'hello' }],
+      });
+    },
+  );
 
   it('enables native web search only for the direct Anthropic leaf', async () => {
     await drain(familyFixtures[0]);

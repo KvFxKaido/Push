@@ -159,18 +159,21 @@ describe('handleGitHubTools allowed-repo guard', () => {
     ['https prefix on allowed', 'owner/repo', 'https://github.com/owner/repo'],
     ['https prefix on requested', 'https://github.com/owner/repo', 'owner/repo'],
     ['whitespace', '  owner/repo  ', 'owner/repo'],
-  ])('accepts request when args.repo and allowedRepo normalize equally: %s', async (_label, argsRepo, allowed) => {
-    const response = await handleGitHubTools(
-      makeRequest({
-        tool: 'list_prs',
-        args: { repo: argsRepo },
-        allowedRepo: allowed,
-      }),
-      makeEnv(),
-    );
-    expect(response.status).toBe(200);
-    expect(mockedExecute).toHaveBeenCalledOnce();
-  });
+  ])(
+    'accepts request when args.repo and allowedRepo normalize equally: %s',
+    async (_label, argsRepo, allowed) => {
+      const response = await handleGitHubTools(
+        makeRequest({
+          tool: 'list_prs',
+          args: { repo: argsRepo },
+          allowedRepo: allowed,
+        }),
+        makeEnv(),
+      );
+      expect(response.status).toBe(200);
+      expect(mockedExecute).toHaveBeenCalledOnce();
+    },
+  );
 
   it('rejects when allowedRepo normalises to empty (defensive)', async () => {
     const response = await handleGitHubTools(

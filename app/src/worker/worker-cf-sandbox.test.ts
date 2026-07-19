@@ -1663,22 +1663,25 @@ describe('handleCloudflareSandbox hardened connect and diff paths', () => {
       { stdout: '', stderr: 'fatal: not a git repository', exitCode: 128 },
       'fatal: not a git repository',
     ],
-  ])('returns an error field when %s exits non-zero', async (_label, diffResult, statusResult, expectedError) => {
-    const sandbox = mockSandbox();
-    queueExecResults(sandbox, [diffResult, statusResult]);
+  ])(
+    'returns an error field when %s exits non-zero',
+    async (_label, diffResult, statusResult, expectedError) => {
+      const sandbox = mockSandbox();
+      queueExecResults(sandbox, [diffResult, statusResult]);
 
-    const response = await callRoute('diff', { sandbox_id: 'sb-1' });
+      const response = await callRoute('diff', { sandbox_id: 'sb-1' });
 
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({
-      diff: '',
-      truncated: false,
-      git_status: '',
-      error: expectedError,
-    });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'git -C /workspace diff HEAD');
-    expect(sandbox.exec).toHaveBeenNthCalledWith(3, 'git -C /workspace status --porcelain');
-  });
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({
+        diff: '',
+        truncated: false,
+        git_status: '',
+        error: expectedError,
+      });
+      expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'git -C /workspace diff HEAD');
+      expect(sandbox.exec).toHaveBeenNthCalledWith(3, 'git -C /workspace status --porcelain');
+    },
+  );
 });
 
 describe('handleCloudflareSandbox routeHydrate hardening', () => {
@@ -1772,30 +1775,30 @@ describe('handleCloudflareSandbox routeHydrate hardening', () => {
     expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f '${tmpB64}' '${tmpTar}'`);
   });
 
-  it.each([
-    '/etc/passwd',
-    'safe/../evil.txt',
-  ])('returns 400 and cleans up for unsafe archive member %s', async (unsafeMember) => {
-    const sandbox = mockSandbox();
-    const uuid = mockUuid();
-    const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
-    const tmpTar = `${tmpB64}.tar.gz`;
-    queueExecResults(sandbox, [
-      { exitCode: 0 },
-      { exitCode: 0 },
-      { stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 },
-      { exitCode: 0 },
-    ]);
+  it.each(['/etc/passwd', 'safe/../evil.txt'])(
+    'returns 400 and cleans up for unsafe archive member %s',
+    async (unsafeMember) => {
+      const sandbox = mockSandbox();
+      const uuid = mockUuid();
+      const tmpB64 = `/tmp/push-restore-${uuid}.b64`;
+      const tmpTar = `${tmpB64}.tar.gz`;
+      queueExecResults(sandbox, [
+        { exitCode: 0 },
+        { exitCode: 0 },
+        { stdout: `safe/file.txt\n${unsafeMember}\n`, exitCode: 0 },
+        { exitCode: 0 },
+      ]);
 
-    const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'unsafe-tar' });
+      const response = await callRoute('restore', { sandbox_id: 'sb-1', archive: 'unsafe-tar' });
 
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toEqual({
-      error: `Archive member rejected (path traversal): ${unsafeMember}`,
-      code: 'CF_ERROR',
-    });
-    expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f '${tmpB64}' '${tmpTar}'`);
-  });
+      expect(response.status).toBe(400);
+      await expect(response.json()).resolves.toEqual({
+        error: `Archive member rejected (path traversal): ${unsafeMember}`,
+        code: 'CF_ERROR',
+      });
+      expect(sandbox.exec).toHaveBeenNthCalledWith(5, `rm -f '${tmpB64}' '${tmpTar}'`);
+    },
+  );
 
   it('returns 500 and cleans up when archive extraction fails', async () => {
     const sandbox = mockSandbox();

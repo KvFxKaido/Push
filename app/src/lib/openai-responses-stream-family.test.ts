@@ -96,43 +96,44 @@ describe('createOpenAIResponsesStream', () => {
     vi.restoreAllMocks();
   });
 
-  it.each(
-    familyFixtures,
-  )('pins the $provider family fixture to its endpoint, identity, and traced bearer request', async (config) => {
-    await drain(config);
+  it.each(familyFixtures)(
+    'pins the $provider family fixture to its endpoint, identity, and traced bearer request',
+    async (config) => {
+      await drain(config);
 
-    expect(toLLMMessagesMock).toHaveBeenCalledWith(
-      baseRequest.messages,
-      expect.objectContaining({
-        providerType: config.provider,
-        providerModel: baseRequest.model,
-        emitContentBlocks: true,
-      }),
-    );
-    expect(nativeWebSearchMock).toHaveBeenCalledWith(config.provider, baseRequest.model);
+      expect(toLLMMessagesMock).toHaveBeenCalledWith(
+        baseRequest.messages,
+        expect.objectContaining({
+          providerType: config.provider,
+          providerModel: baseRequest.model,
+          emitContentBlocks: true,
+        }),
+      );
+      expect(nativeWebSearchMock).toHaveBeenCalledWith(config.provider, baseRequest.model);
 
-    const [endpoint, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(endpoint).toBe(config.endpoint);
-    expect(init.method).toBe('POST');
-    expect(init.headers).toEqual(
-      expect.objectContaining({
-        Authorization: `Bearer ${config.getApiKey()?.trim()}`,
-        'Content-Type': 'application/json',
-        traceparent: 'test-trace',
-      }),
-    );
-    expect(JSON.parse(init.body as string)).toMatchObject({
-      model: baseRequest.model,
-      stream: true,
-      input: [
-        {
-          type: 'message',
-          role: 'user',
-          content: [{ type: 'input_text', text: 'hello' }],
-        },
-      ],
-    });
-  });
+      const [endpoint, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(endpoint).toBe(config.endpoint);
+      expect(init.method).toBe('POST');
+      expect(init.headers).toEqual(
+        expect.objectContaining({
+          Authorization: `Bearer ${config.getApiKey()?.trim()}`,
+          'Content-Type': 'application/json',
+          traceparent: 'test-trace',
+        }),
+      );
+      expect(JSON.parse(init.body as string)).toMatchObject({
+        model: baseRequest.model,
+        stream: true,
+        input: [
+          {
+            type: 'message',
+            role: 'user',
+            content: [{ type: 'input_text', text: 'hello' }],
+          },
+        ],
+      });
+    },
+  );
 
   it('omits an empty client bearer so the Worker can use its configured credential', async () => {
     await drain({ ...familyFixtures[0], getApiKey: () => '   ' });

@@ -66,31 +66,31 @@ describe('applyBranchSwitchPayload', () => {
       payload: { name: 'main', kind: 'merged', from: 'feature/old', source: 'ui-merge' },
       momentKind: 'branch_merged',
     },
-  ])('warm-follows, updates branch, and appends the right moment for $payload.kind', ({
-    payload,
-    momentKind,
-  }) => {
-    const initialBranch = payload.name === 'main' ? 'feature/old' : 'main';
-    const ctx = makeContext({ 'chat-1': conversation({ branch: initialBranch }) });
+  ])(
+    'warm-follows, updates branch, and appends the right moment for $payload.kind',
+    ({ payload, momentKind }) => {
+      const initialBranch = payload.name === 'main' ? 'feature/old' : 'main';
+      const ctx = makeContext({ 'chat-1': conversation({ branch: initialBranch }) });
 
-    applyBranchSwitchPayload(payload, ctx);
+      applyBranchSwitchPayload(payload, ctx);
 
-    expect(ctx.onBranchSwitch).toHaveBeenCalledWith(payload.name);
-    const updated = ctx.conversationsRef.current['chat-1'];
-    expect(updated.branch).toBe(payload.name);
-    expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
+      expect(ctx.onBranchSwitch).toHaveBeenCalledWith(payload.name);
+      const updated = ctx.conversationsRef.current['chat-1'];
+      expect(updated.branch).toBe(payload.name);
+      expect(ctx.dirtyConversationIdsRef.current.has('chat-1')).toBe(true);
 
-    if (momentKind === null) {
-      // A plain switch (incl. desync reconcile) leaves no divider.
-      expect(updated.messages).toEqual([message('m1')]);
-    } else {
-      // forked / merged append a passive timeline moment on the new branch.
-      expect(updated.messages).toHaveLength(2);
-      expect(updated.messages[0]).toEqual(message('m1'));
-      expect(updated.messages[1].kind).toBe(momentKind);
-      expect(updated.messages[1].branch).toBe(payload.name);
-    }
-  });
+      if (momentKind === null) {
+        // A plain switch (incl. desync reconcile) leaves no divider.
+        expect(updated.messages).toEqual([message('m1')]);
+      } else {
+        // forked / merged append a passive timeline moment on the new branch.
+        expect(updated.messages).toHaveLength(2);
+        expect(updated.messages[0]).toEqual(message('m1'));
+        expect(updated.messages[1].kind).toBe(momentKind);
+        expect(updated.messages[1].branch).toBe(payload.name);
+      }
+    },
+  );
 
   it('does not dirty or rewrite when the active conversation already has the branch', () => {
     const ctx = makeContext({ 'chat-1': conversation({ branch: 'feature/existing' }) });
