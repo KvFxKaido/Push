@@ -22,6 +22,9 @@
       "!.push/**",
       "!.wrangler/**",
       "!app/android/app/src/main/assets/**",
+      "!app/electron/app/**",
+      "!app/electron/generated/**",
+      "!app/electron/vendor/**",
       "!app/src/components/ui/**",
       "!sandbox/**",
       "!schema/**"
