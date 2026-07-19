@@ -481,6 +481,20 @@ export async function executeBatchedToolCalls(
   // simply not run, mirroring the file-mutation batch's short-circuit
   // semantics above.
   for (const mutCall of detected.sideEffects) {
+    // Honor an abort landing between chain steps — same guard the
+    // file-mutation batch runs at the top of each iteration. Before #1536
+    // the trailing side-effect was a single execution (no loop, no
+    // per-iteration check needed); now that it's a chain of up to
+    // MAX_SIDE_EFFECT_CHAIN calls, a stop pressed after step N must not
+    // let step N+1 (a commit, push, exec, or delegation) run.
+    if (abortRef.current) {
+      return {
+        nextApiMessages,
+        nextRecoveryState: recoveryState,
+        loopAction: 'break',
+        loopCompletedNormally: false,
+      };
+    }
     const mutExecutionId = createId();
     const mutStatusLabel = getToolStatusLabel(mutCall);
     const mutExecStart = Date.now();
