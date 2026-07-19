@@ -93,7 +93,9 @@ import type { SessionState } from './session-store.js';
 import { isParseErrorMessage, isToolResultMessage } from './context-manager.js';
 import type { Message } from './context-manager.js';
 import { maybeCompactLeadHistory } from './lead-compaction.js';
+import { normalizeTrimmedRoleAlternation } from '../lib/coder-context-trim.ts';
 import { isHandoffBlock } from '../lib/llm-compaction.ts';
+import { routeReplaysReasoningContent } from '../lib/reasoning-replay-routing.ts';
 import { getDefaultCliHookRegistry, readCliCurrentBranch } from './tool-hooks-default.ts';
 import {
   LEAD_EXPLORER_DELEGATION_PROTOCOL,
@@ -378,6 +380,16 @@ export function buildLeadReasoningReplaySeed(
     content: taskPreamble,
     timestamp: Date.now(),
   });
+  // The old text preamble collapsed all history into one string, so role
+  // adjacency never mattered. A structured seed can end up with consecutive
+  // same-role turns — the `[CONTEXT HANDOFF]` block is a `user` message
+  // (lead-compaction.ts), and the appended `taskPreamble` is also `user`, so a
+  // window that already ends on a user turn now sends `user, user` to the
+  // provider. Strict-alternation reasoners (the very routes this replay targets)
+  // reject that. Every reachable collision here is user↔user, which this shared
+  // helper merges/bridges; it never touches the reasoning-bearing assistant
+  // turns. (fugu review on #1537.)
+  normalizeTrimmedRoleAlternation(seed, 0);
   return seed;
 }
 
@@ -585,7 +597,16 @@ export async function runLeadKernelTurn(
     }
   }
 
-  const replayReasoningHistory = hasReplayableLeadReasoning(userText, state.messages as Message[]);
+  const leadModelId = state.model || providerConfig.defaultModel;
+  // Promote history to a structured reasoning-replay seed only when BOTH the
+  // session carries persisted plain reasoning AND the resolved route actually
+  // replays `reasoning_content`. The route gate mirrors the web inline lane
+  // (shared `routeReplaysReasoningContent`): without it, a session that switched
+  // to a non-reasoning model — or a provider that never takes the field — would
+  // replay stale reasoning to a route that never asked for it. #1537 review.
+  const replayReasoningHistory =
+    hasReplayableLeadReasoning(userText, state.messages as Message[]) &&
+    routeReplaysReasoningContent(providerConfig.id, leadModelId);
   const taskPreamble = buildLeadTurnPreamble(
     userText,
     state.messages as Message[],
@@ -597,7 +618,6 @@ export async function runLeadKernelTurn(
   const initialMessages = replayReasoningHistory
     ? buildLeadReasoningReplaySeed(userText, state.messages as Message[], taskPreamble)
     : undefined;
-  const leadModelId = state.model || providerConfig.defaultModel;
   const coderPolicy = createCoderPolicy({
     // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
     // must stay on stderr so machine-readable streams remain pure.

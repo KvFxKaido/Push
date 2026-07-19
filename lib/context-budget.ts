@@ -283,7 +283,11 @@ export interface TokenEstimationMessage {
  */
 export function estimateMessageTokens(msg: TokenEstimationMessage): number {
   let tokens = estimateTokens(msg.content) + 4; // 4 tokens overhead per message
-  const reasoning = msg.reasoningContent ?? msg.thinking;
+  // `||`, not `??`: an EMPTY `reasoningContent` ('') is the same "no replayable
+  // reasoning" as absent, and must fall through to `thinking` (which the web
+  // serialization path still replays). `??` treats '' as present and would skip a
+  // non-empty `thinking`, under-counting the very body that ships the tokens.
+  const reasoning = msg.reasoningContent || msg.thinking;
   if (reasoning) tokens += estimateTokens(reasoning);
   if (msg.contentParts && msg.contentParts.length > 0) {
     // Kernel image turns carry pixels in `contentParts`, not `attachments`.
