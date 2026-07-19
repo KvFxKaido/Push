@@ -38,7 +38,6 @@ cd app && pnpm run android:sync && cd android && ./gradlew installDebug
 ### Desktop (Electron, experimental)
 
 ```bash
-cd app && npx cap add @capawesome/capacitor-electron            # one-time scaffold (local/Windows box)
 cd app/electron && pnpm install --ignore-workspace && cd ../..  # one-time deps — the flag is load-bearing (see app/README.md)
 cd app && pnpm run electron:run                                 # thereafter: build SPA + sync + launch
 ```

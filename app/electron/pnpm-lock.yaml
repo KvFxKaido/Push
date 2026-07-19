@@ -8,6 +8,12 @@ importers:
 
   .:
     devDependencies:
+      '@capacitor/core':
+        specifier: ^8.3.1
+        version: 8.4.2
+      '@capawesome/capacitor-electron':
+        specifier: ^0.1.0
+        version: 0.1.0(@capacitor/core@8.4.2)(electron@43.1.1)
       electron:
         specifier: ^43.0.0
         version: 43.1.1
@@ -19,6 +25,19 @@ importers:
         version: 5.9.3
 
 packages:
+
+  '@capacitor/core@8.4.2':
+    resolution: {integrity: sha512-fQPRb3JXRaU2pnufDUvqOjhsrYxDQeFRZyaj/sHydIUxD2NxOGHKMpmKUdI+U4OOmKuGZyvRpi7TSJU+7Bjbmg==}
+
+  '@capawesome/capacitor-electron@0.1.0':
+    resolution: {integrity: sha512-l4vAithAM8sPUVru0fJKQok+OrbZik3r8O7/OPR80ioEbJ4ukD9436O19wxDvE9L33IxzL52JxRYKmfSQOpe5w==}
+    hasBin: true
+    peerDependencies:
+      '@capacitor/core': '>=6.0.0'
+      electron: '>=28.0.0'
+    peerDependenciesMeta:
+      electron:
+        optional: true
 
   '@electron-internal/extract-zip@1.0.4':
     resolution: {integrity: sha512-Zr1Vs7E9tpCNhZHDAbFVXc2gEVCG9RqPDjrno5+bdgB6LRAuvgyMHJut4NCVyYwtAieapMzc3fiQ3CSTi75ARg==}
@@ -1050,6 +1069,16 @@ packages:
     engines: {node: '>=10'}
 
 snapshots:
+
+  '@capacitor/core@8.4.2':
+    dependencies:
+      tslib: 2.8.1
+
+  '@capawesome/capacitor-electron@0.1.0(@capacitor/core@8.4.2)(electron@43.1.1)':
+    dependencies:
+      '@capacitor/core': 8.4.2
+    optionalDependencies:
+      electron: 43.1.1
 
   '@electron-internal/extract-zip@1.0.4': {}
 
