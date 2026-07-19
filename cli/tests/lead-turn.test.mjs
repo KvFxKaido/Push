@@ -452,6 +452,12 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
 
     assert.ok(seed, 'the newest reasoning turn should fit');
     assert.ok(estimateContextTokens(seed) <= newestTurnBudget);
+    // Eviction runs AFTER role normalization, so it must not re-introduce the
+    // consecutive same-role turns strict reasoners reject: it drops whole
+    // (user, assistant) pairs off the front, never splitting one. (fugu review.)
+    for (let i = 1; i < seed.length; i++) {
+      assert.notEqual(seed[i].role, seed[i - 1].role, `consecutive ${seed[i].role} after eviction`);
+    }
     assert.equal(
       seed.some((message) => message.content === 'old question'),
       false,
