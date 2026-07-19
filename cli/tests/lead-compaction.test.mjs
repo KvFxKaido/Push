@@ -35,6 +35,19 @@ function bigHistory() {
   return msgs;
 }
 
+function reasoningHeavyHistory() {
+  const messages = [{ role: 'user', content: 'GOAL: preserve reasoning safely' }];
+  for (let i = 0; i < 8; i++) {
+    messages.push({
+      role: 'assistant',
+      content: `short answer ${i}`,
+      reasoningContent: `${i}`.repeat(50_000),
+    });
+    messages.push({ role: 'user', content: `follow-up ${i}` });
+  }
+  return messages;
+}
+
 function makeState(messages) {
   return createSessionState({
     provider: 'ollama',
@@ -128,6 +141,32 @@ describe('maybeCompactLeadHistory', () => {
     });
     assert.equal(compacted, true);
     assert.equal(state.messages.filter((m) => isHandoffBlock(m.content)).length, 1);
+  });
+
+  it('sizes the compaction partition with persisted reasoningContent', async () => {
+    const state = makeState(reasoningHeavyHistory());
+    const beforeTokens = estimateContextTokens(state.messages);
+    assert.ok(
+      beforeTokens > 88_000,
+      `reasoning fixture must cross the trigger; got ${beforeTokens}`,
+    );
+
+    const compacted = await maybeCompactLeadHistory(state, providerConfig, 'key', {
+      streamFactory: fakeStreamFactory(summaryEvents),
+      seedGoalFile: noSeedGoal,
+      persistEvent: () => {},
+    });
+
+    // Without carrying reasoningContent through `asCompactable`, the partition
+    // sees only the tiny visible answers, reports span_too_small, and skips.
+    assert.equal(compacted, true);
+    assert.ok(estimateContextTokens(state.messages) < beforeTokens);
+    assert.equal(state.messages.filter((m) => isHandoffBlock(m.content)).length, 1);
+    assert.equal(
+      state.messages.at(-2).reasoningContent,
+      '7'.repeat(50_000),
+      'the newest reasoning turn must remain verbatim in the preserved tail',
+    );
   });
 
   it('is a no-op when the history is under budget', async () => {

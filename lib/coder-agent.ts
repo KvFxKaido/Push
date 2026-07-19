@@ -387,7 +387,7 @@ function truncateContent(content: string, maxLen: number, label = 'content'): st
 
 /** Estimate total size of messages array (rough character count). */
 function estimateMessagesSize(messages: CoderLoopMessage[]): number {
-  return messages.reduce((sum, m) => sum + m.content.length, 0);
+  return messages.reduce((sum, m) => sum + m.content.length + (m.reasoningContent?.length ?? 0), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -1558,7 +1558,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
   // recurs every round (the whole transcript is re-sent), so summing the
   // message text per round is the correct cumulative cost proxy, not a leak.
   const estimateRoundTokens = (
-    transcript: ReadonlyArray<{ content?: unknown }>,
+    transcript: ReadonlyArray<{ content?: unknown; reasoningContent?: unknown }>,
     output: string,
     reasoning: string,
   ): number => {
@@ -1568,6 +1568,9 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       total += estimateTokens(
         typeof content === 'string' ? content : JSON.stringify(content ?? ''),
       );
+      if (typeof msg.reasoningContent === 'string') {
+        total += estimateTokens(msg.reasoningContent);
+      }
     }
     return total;
   };

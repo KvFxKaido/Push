@@ -30,6 +30,7 @@ import {
 import { getCliNativeToolSchemas } from '../tool-function-schemas.ts';
 import { roleCanUseTool } from '../../lib/capabilities.ts';
 import { buildHandoffBlock } from '../../lib/llm-compaction.ts';
+import { estimateContextTokens } from '../../lib/context-budget.ts';
 import { runAssistantTurn } from '../engine.ts';
 import { PROVIDER_CONFIGS } from '../provider.ts';
 import { loadSessionEvents, loadSessionState, makeSessionId } from '../session-store.ts';
@@ -360,6 +361,47 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     });
   });
 
+  it('falls back to bounded text history when no complete reasoning turn fits', async () => {
+    await withTempWorkspace(async (cwd) => {
+      const server = await startSequencedProviderServer([
+        { tokens: ['Continued without an oversized replay.'] },
+      ]);
+
+      try {
+        const providerConfig = { ...PROVIDER_CONFIGS.kimi, url: server.url };
+        const state = makeState(cwd, {
+          provider: 'kimi',
+          model: providerConfig.defaultModel,
+          messages: [
+            { role: 'user', content: 'prior question' },
+            {
+              role: 'assistant',
+              content: 'short prior answer',
+              reasoningContent: 'r'.repeat(800_000),
+            },
+            { role: 'user', content: 'current question' },
+          ],
+        });
+
+        await runLeadKernelTurn(state, providerConfig, 'mock-key', 'current question', 5, {
+          emit: () => {},
+        });
+
+        const request = server.requests[0];
+        assert.ok(
+          !request.messages.some((message) => message.reasoning_content),
+          'over-budget reasoning_content leaked onto the wire',
+        );
+        assert.ok(
+          JSON.stringify(request).includes('Prior conversation in this chat'),
+          'fallback must restore the bounded visible-history preamble',
+        );
+      } finally {
+        await server.stop();
+      }
+    });
+  });
+
   it('keeps the reasoning replay seed strictly role-alternating (#1537 review)', () => {
     // Prior window ends on a user turn (no assistant reply after "follow-up"),
     // and the appended taskPreamble is also a user message — without alternation
@@ -387,6 +429,54 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     const assistant = seed.find((m) => m.role === 'assistant' && m.reasoningContent);
     assert.ok(assistant, 'assistant reasoning turn was dropped by normalization');
     assert.equal(assistant.reasoningContent, 'add the two twos');
+  });
+
+  it('bounds replay by evicting complete oldest turns without clipping reasoning', () => {
+    const oldReasoning = 'old-reasoning-'.repeat(300);
+    const recentReasoning = 'recent-reasoning-'.repeat(300);
+    const taskPreamble = 'Task: current question';
+    const messages = [
+      { role: 'user', content: 'old question' },
+      { role: 'assistant', content: 'old answer', reasoningContent: oldReasoning },
+      { role: 'user', content: 'recent question' },
+      { role: 'assistant', content: 'recent answer', reasoningContent: recentReasoning },
+      { role: 'user', content: 'current question' },
+    ];
+    const newestTurnBudget =
+      estimateContextTokens([messages[2], messages[3], { role: 'user', content: taskPreamble }]) +
+      1;
+
+    const seed = buildLeadReasoningReplaySeed('current question', messages, taskPreamble, {
+      maxTokens: newestTurnBudget,
+    });
+
+    assert.ok(seed, 'the newest reasoning turn should fit');
+    assert.ok(estimateContextTokens(seed) <= newestTurnBudget);
+    assert.equal(
+      seed.some((message) => message.content === 'old question'),
+      false,
+    );
+    assert.equal(
+      seed.some((message) => message.reasoningContent === oldReasoning),
+      false,
+    );
+    assert.equal(
+      seed.some((message) => message.content === 'recent question'),
+      true,
+    );
+    assert.equal(
+      seed.find((message) => message.reasoningContent)?.reasoningContent,
+      recentReasoning,
+      'provider-authored reasoning must survive byte-for-byte',
+    );
+
+    assert.equal(
+      buildLeadReasoningReplaySeed('current question', messages, taskPreamble, {
+        maxTokens: estimateContextTokens([{ role: 'user', content: taskPreamble }]),
+      }),
+      undefined,
+      'caller must fall back to the text preamble when no complete reasoning turn fits',
+    );
   });
 
   it('keeps task-shaped lead turns on strict completion grounding', async () => {

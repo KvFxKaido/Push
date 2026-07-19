@@ -90,7 +90,12 @@ import {
   saveSessionState,
 } from './session-store.js';
 import type { SessionState } from './session-store.js';
-import { isParseErrorMessage, isToolResultMessage } from './context-manager.js';
+import {
+  estimateContextTokens,
+  getContextBudget,
+  isParseErrorMessage,
+  isToolResultMessage,
+} from './context-manager.js';
 import type { Message } from './context-manager.js';
 import { maybeCompactLeadHistory } from './lead-compaction.js';
 import { normalizeTrimmedRoleAlternation } from '../lib/coder-context-trim.ts';
@@ -347,6 +352,7 @@ export function buildLeadReasoningReplaySeed(
   userText: string,
   messages: ReadonlyArray<Message>,
   taskPreamble: string,
+  options: { maxTokens?: number } = {},
 ): CoderLoopMessage[] | undefined {
   const { prior } = selectLeadConversationContext(userText, messages);
   if (
@@ -390,6 +396,30 @@ export function buildLeadReasoningReplaySeed(
   // helper merges/bridges; it never touches the reasoning-bearing assistant
   // turns. (fugu review on #1537.)
   normalizeTrimmedRoleAlternation(seed, 0);
+
+  // Reasoning must be replayed verbatim: clipping it can break providers that
+  // require the exact prior `reasoning_content`. Bound the seed by dropping
+  // complete oldest turns instead. Removing a leading user also removes its
+  // assistant reply, so no ungrounded assistant/reasoning message is left at
+  // the head. If no reasoning-bearing turn fits, the caller falls back to the
+  // ordinary bounded text preamble rather than sending an over-window request.
+  const maxTokens = options.maxTokens;
+  if (typeof maxTokens === 'number' && Number.isFinite(maxTokens)) {
+    while (seed.length > 1 && estimateContextTokens(seed) > Math.max(0, maxTokens)) {
+      seed.shift();
+      while (seed[0]?.role === 'assistant') seed.shift();
+    }
+  }
+  if (
+    !seed.some(
+      (message) =>
+        message.role === 'assistant' &&
+        typeof message.reasoningContent === 'string' &&
+        message.reasoningContent.length > 0,
+    )
+  ) {
+    return undefined;
+  }
   return seed;
 }
 
@@ -604,20 +634,31 @@ export async function runLeadKernelTurn(
   // (shared `routeReplaysReasoningContent`): without it, a session that switched
   // to a non-reasoning model — or a provider that never takes the field — would
   // replay stale reasoning to a route that never asked for it. #1537 review.
-  const replayReasoningHistory =
+  const reasoningReplayRouteEligible =
     hasReplayableLeadReasoning(userText, state.messages as Message[]) &&
     routeReplaysReasoningContent(providerConfig.id, leadModelId);
-  const taskPreamble = buildLeadTurnPreamble(
+  let taskPreamble = buildLeadTurnPreamble(
     userText,
     state.messages as Message[],
     snapshot,
     memory,
     userGoalAnchor,
-    { includePriorConversation: !replayReasoningHistory },
+    { includePriorConversation: !reasoningReplayRouteEligible },
   );
-  const initialMessages = replayReasoningHistory
-    ? buildLeadReasoningReplaySeed(userText, state.messages as Message[], taskPreamble)
+  const initialMessages = reasoningReplayRouteEligible
+    ? buildLeadReasoningReplaySeed(userText, state.messages as Message[], taskPreamble, {
+        maxTokens: getContextBudget(providerConfig.id, leadModelId).targetTokens,
+      })
     : undefined;
+  if (reasoningReplayRouteEligible && !initialMessages) {
+    taskPreamble = buildLeadTurnPreamble(
+      userText,
+      state.messages as Message[],
+      snapshot,
+      memory,
+      userGoalAnchor,
+    );
+  }
   const coderPolicy = createCoderPolicy({
     // CLI stdout is user/JSONL protocol output. Structured runtime diagnostics
     // must stay on stderr so machine-readable streams remain pure.
