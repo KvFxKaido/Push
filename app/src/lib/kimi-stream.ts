@@ -11,6 +11,7 @@ import type { ChatMessage } from '@/types';
 import type { PushStreamEvent, PushStreamRequest } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { flatToolToOpenAITool, toOpenAIResponseFormat } from '@push/lib/openai-chat-serializer';
+import { kimiSamplingRule } from '@push/lib/kimi-sampling';
 import type { WorkspaceContext } from '@/types';
 import { REQUEST_ID_HEADER, createRequestId } from './request-id';
 import { injectTraceHeaders } from './tracing';
@@ -49,12 +50,17 @@ export async function* kimiStream(
     messages: llmMessages,
     stream: true,
     ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(/^kimi-k2\.7-code(?:-highspeed)?$/i.test(req.model ?? '')
-      ? { temperature: 1, top_p: 0.95 }
-      : {
-          ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-          ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-        }),
+    ...(() => {
+      // Shared Kimi sampling policy: K2.7 pins temperature/top_p, K3 omits
+      // them (fixed server-side; the docs say leave the fields out).
+      const rule = kimiSamplingRule(req.model);
+      if (rule?.mode === 'pinned') return { temperature: rule.temperature, top_p: rule.topP };
+      if (rule?.mode === 'omit') return {};
+      return {
+        ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+        ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+      };
+    })(),
     ...(openAITools ? { tools: openAITools, tool_choice: req.toolChoice ?? 'auto' } : {}),
     ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
   };

@@ -31,6 +31,7 @@ import { openAISSEPump } from '../lib/openai-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { toOpenAIChat } from '../lib/openai-chat-serializer.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
+import { kimiSamplingRule } from '../lib/kimi-sampling.ts';
 import type { ProviderConfig } from './provider.ts';
 
 const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
@@ -120,10 +121,10 @@ async function* cliProviderStream(
   // Cache markers are tagged only for OpenRouter, the one CLI provider known to
   // route to Anthropic models (other gateways ignore them harmlessly, but are
   // conservative pass-throughs until parity is verified).
+  const kimiRule = config.id === 'kimi' ? kimiSamplingRule(model) : null;
   const baseBody = toOpenAIChat(req, {
     modelOverride: model,
-    temperatureDefault:
-      config.id === 'kimi' && /^kimi-k2\.7-code(?:-highspeed)?$/i.test(model) ? 1 : 0.1,
+    temperatureDefault: kimiRule?.mode === 'pinned' ? kimiRule.temperature : 0.1,
     maxTokensField: config.id === 'openai' ? 'max_completion_tokens' : 'max_tokens',
     tagCacheBreakpoints: config.id === 'openrouter',
     // A Gemini-fronting compat route (e.g. OpenRouter `google/gemini-*`) 400s on
@@ -132,9 +133,14 @@ async function* cliProviderStream(
     // captured. Gated on the model id so non-Gemini routes stay byte-identical.
     geminiThoughtSignatureFallback: isGeminiModelId(model),
   });
-  if (config.id === 'kimi' && /^kimi-k2\.7-code(?:-highspeed)?$/i.test(model)) {
-    baseBody.temperature = 1;
-    baseBody.top_p = 0.95;
+  if (kimiRule?.mode === 'pinned') {
+    baseBody.temperature = kimiRule.temperature;
+    baseBody.top_p = kimiRule.topP;
+  } else if (kimiRule?.mode === 'omit') {
+    // K3 fixes sampling server-side and the docs say to omit the fields —
+    // sending the CLI's 0.1 deterministic default violates that contract.
+    delete baseBody.temperature;
+    delete baseBody.top_p;
   }
   const nativeTools = Array.isArray(baseBody.tools) ? baseBody.tools : [];
   const openRouterWebSearch = config.id === 'openrouter' && resolveOpenRouterWebSearch(req);

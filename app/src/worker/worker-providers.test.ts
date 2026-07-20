@@ -1896,6 +1896,34 @@ describe('handleKimiChat', () => {
     expect(capturedBody).toMatchObject({ temperature: 1, top_p: 0.95 });
   });
 
+  it('strips temperature/top_p for kimi-k3, whose sampling is fixed server-side', async () => {
+    let capturedBody: Record<string, unknown> | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        capturedBody = JSON.parse(init.body as string) as Record<string, unknown>;
+        return new Response('', { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }),
+    );
+    const request = new Request('https://push.example.test/api/kimi/chat', {
+      method: 'POST',
+      headers: { Origin: 'https://push.example.test', 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'kimi-k3',
+        messages: [{ role: 'user', content: 'hello' }],
+        temperature: 0.1,
+        top_p: 0.5,
+      }),
+    });
+
+    await handleKimiChat(request, makeEnv({ MOONSHOT_API_KEY: 'sk-moonshot' }));
+
+    expect(capturedBody).toBeDefined();
+    expect(capturedBody).not.toHaveProperty('temperature');
+    expect(capturedBody).not.toHaveProperty('top_p');
+    expect(capturedBody).toMatchObject({ model: 'kimi-k3' });
+  });
+
   it('returns 401 when the Worker has no Kimi key configured', async () => {
     const response = await handleKimiChat(makeChatRequest(), makeEnv());
     expect(response.status).toBe(401);
