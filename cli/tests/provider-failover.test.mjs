@@ -49,6 +49,50 @@ describe('classifyCliStreamError', () => {
     });
   });
 
+  it('marks quota-exhausted 429s non-retryable — retrying a drained balance cannot succeed', () => {
+    // Moonshot multiplexes retryable pressure (engine_overloaded_error,
+    // rate_limit_reached_error) and permanent quota exhaustion
+    // (exceeded_current_quota_error) onto the same 429; OpenAI does the same
+    // with insufficient_quota. Status alone cannot distinguish them.
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"Your account balance is insufficient","type":"exceeded_current_quota_error"}}',
+          429,
+        ),
+      ),
+      { retryable: false, status: 429 },
+    );
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'OpenAI 429: {"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}',
+          429,
+        ),
+      ),
+      { retryable: false, status: 429 },
+    );
+    // The retryable 429 flavors stay retryable.
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"The engine is currently overloaded","type":"engine_overloaded_error"}}',
+          429,
+        ),
+      ),
+      { retryable: true, status: 429 },
+    );
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"requests per minute exceeded","type":"rate_limit_reached_error"}}',
+          429,
+        ),
+      ),
+      { retryable: true, status: 429 },
+    );
+  });
+
   it('marks 4xx (non-rate-limit) CliProviderErrors non-retryable but keeps the status', () => {
     assert.deepEqual(classifyCliStreamError(new CliProviderError('bad key', 401)), {
       retryable: false,
