@@ -5,7 +5,32 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { parseInline, parseMarkdown, stripDecorativeEmoji } from '../silvery/markdown.tsx';
+import React from 'react';
+import { renderStatic } from 'silvery';
+
+import {
+  MarkdownBody,
+  parseInline,
+  parseMarkdown,
+  stripDecorativeEmoji,
+} from '../silvery/markdown.tsx';
+
+const stripAnsi = (text) => text.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '');
+
+async function renderMarkdownBody(text, availableWidth) {
+  const previousLang = process.env.LANG;
+  process.env.LANG = 'C.UTF-8';
+  try {
+    const rendered = await renderStatic(
+      React.createElement(MarkdownBody, { text, availableWidth }),
+      { width: 80, height: 12 },
+    );
+    return stripAnsi(rendered).trimEnd();
+  } finally {
+    if (previousLang === undefined) delete process.env.LANG;
+    else process.env.LANG = previousLang;
+  }
+}
 
 describe('stripDecorativeEmoji (#1433 / law 2)', () => {
   it('strips pictographs and collapses the internal orphaned space', () => {
@@ -187,6 +212,108 @@ describe('parseMarkdown (law 1 — line-oriented, count preserved)', () => {
     assert.equal(line.kind, 'ordered');
     assert.equal(line.marker, '  2. ');
     assert.deepEqual(line.spans, [{ text: 'second' }]);
+  });
+});
+
+describe('parseMarkdown — tables', () => {
+  it('recognizes canonical and pipe-less GFM tables without changing line count', () => {
+    const text = '| Command | Description |\n| --- | --- |\n| test | Run tests |';
+    const lines = parseMarkdown(text);
+    assert.equal(lines.length, 3);
+    assert.deepEqual(
+      lines.map((line) => line.kind),
+      ['table', 'table', 'table'],
+    );
+    assert.deepEqual(
+      lines.map((line) => line.role),
+      ['header', 'divider', 'body'],
+    );
+    assert.deepEqual(
+      lines[0].cells.map((cell) => cell[0].text),
+      ['Command', 'Description'],
+    );
+    assert.equal(lines[0].table, lines[2].table);
+
+    const bare = parseMarkdown('A | B\n--- | ---\n1 | 2');
+    assert.deepEqual(
+      bare.map((line) => line.kind),
+      ['table', 'table', 'table'],
+    );
+  });
+
+  it('honors delimiter alignment markers', () => {
+    const lines = parseMarkdown('| Left | Center | Right |\n| :--- | :---: | ---: |');
+    assert.deepEqual(lines[0].table.alignments, ['left', 'center', 'right']);
+  });
+
+  it('keeps escaped pipes and code-span pipes inside cells', () => {
+    const lines = parseMarkdown('| Name | Value |\n| --- | --- |\n| a\\|b | `x | y` |');
+    assert.equal(lines[2].kind, 'table');
+    assert.deepEqual(lines[2].cells[0], [{ text: 'a|b' }]);
+    assert.deepEqual(lines[2].cells[1], [{ text: 'x | y', code: true }]);
+  });
+
+  it('normalizes short and long body rows to the header width', () => {
+    const lines = parseMarkdown('| A | B |\n| --- | --- |\n| 1 |\n| 2 | 3 | 4 |');
+    assert.deepEqual(
+      lines[2].cells.map((cell) => cell[0].text),
+      ['1', ''],
+    );
+    assert.deepEqual(
+      lines[3].cells.map((cell) => cell[0].text),
+      ['2', '3'],
+    );
+  });
+
+  it('leaves malformed and one-column candidates as ordinary text', () => {
+    assert.deepEqual(
+      parseMarkdown('| A | B |\n| --- |').map((line) => line.kind),
+      ['text', 'text'],
+    );
+    assert.deepEqual(
+      parseMarkdown('| A |\n| --- |').map((line) => line.kind),
+      ['text', 'text'],
+    );
+  });
+
+  it('does not recognize tables inside fenced code', () => {
+    const lines = parseMarkdown('```\n| A | B |\n| --- | --- |\n```');
+    assert.deepEqual(
+      lines.map((line) => line.kind),
+      ['fence', 'code', 'code', 'fence'],
+    );
+  });
+
+  it('uses terminal display widths for table layout', () => {
+    const lines = parseMarkdown('| A | 字 |\n| --- | --- |\n| bb | c |');
+    assert.deepEqual(lines[0].table.columnWidths, [2, 2]);
+    assert.equal(lines[0].table.formattedWidth, 7);
+  });
+});
+
+describe('MarkdownBody — table rendering', () => {
+  it('renders a fitting table as aligned rows with a visual divider', async () => {
+    const text = '| Command | Description |\n| --- | --- |\n| test | Run tests |';
+    const rendered = await renderMarkdownBody(text, 40);
+    assert.equal(rendered, 'Command │ Description\n────────┼────────────\ntest    │ Run tests');
+    assert.equal(rendered.includes('| --- |'), false);
+  });
+
+  it('falls back to raw source rows when the formatted table is too wide', async () => {
+    const text = '| Command | Description |\n| --- | --- |\n| test | Run tests |';
+    const rendered = await renderMarkdownBody(text, 10);
+    assert.equal(rendered, '| Command | Description |\n| --- | --- |\n| test | Run tests |');
+  });
+
+  it('formats at exact fit and falls back one cell narrower', async () => {
+    const text = '| A | BB |\n| --- | --- |\n| C | DD |';
+    assert.equal(await renderMarkdownBody(text, 6), 'A │ BB\n──┼───\nC │ DD');
+    assert.equal(await renderMarkdownBody(text, 5), '| A | BB |\n| --- | --- |\n| C | DD |');
+  });
+
+  it('pads center and right aligned cells', async () => {
+    const text = '| L | C | R |\n| :--- | :---: | ---: |\n| aa | b | c |';
+    assert.equal(await renderMarkdownBody(text, 20), 'L  │ C │ R\n───┼───┼──\naa │ b │ c');
   });
 });
 

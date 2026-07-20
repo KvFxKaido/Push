@@ -425,7 +425,15 @@ function messageMarkKind(item: SilveryTranscriptItem): StreamMarkKind {
   return 'assistant';
 }
 
-function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted?: boolean }) {
+function Message({
+  item,
+  tinted = false,
+  width,
+}: {
+  item: SilveryTranscriptItem;
+  tinted?: boolean;
+  width: number;
+}) {
   const [expanded, setExpanded] = useState(false);
   const glyphs = useMemo(() => resolveGlyphs(detectUnicode()), []);
   if (item.kind === 'tool') return <ToolCard item={item} />;
@@ -484,7 +492,7 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
           </Box>
         ) : null}
         {renderMarkdown ? (
-          <MarkdownBody text={bodyText} base={bodyColor} />
+          <MarkdownBody text={bodyText} base={bodyColor} availableWidth={Math.max(1, width - 4)} />
         ) : (
           <Text color={bodyColor}>{bodyText}</Text>
         )}
@@ -720,7 +728,11 @@ function Transcript({
         item.kind === 'tool_group' ? (
           <ToolGroup group={item} />
         ) : (
-          <Message item={item} tinted={item.kind === 'message' && item.role === 'user'} />
+          <Message
+            item={item}
+            tinted={item.kind === 'message' && item.role === 'user'}
+            width={width}
+          />
         )
       }
     />
