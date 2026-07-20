@@ -15,16 +15,17 @@
  *  1. **Line-oriented.** One source line renders to exactly one row; newlines
  *     (LF or CRLF) are never added or removed. Fenced code keeps its ``` markers
  *     (dimmed) rather than stripping them, so the line count equals `item.text`.
- *  2. **Width-non-increasing.** Stripping markers (`**`, `##`, brackets) only
- *     ever shortens a line, and a horizontal rule is rendered at its source
- *     length — so the raw-text height estimate is an upper bound: it can
- *     over-reserve a row, never clip one.
+ *  2. **Width-contained.** Stripping markers (`**`, `##`, brackets) only ever
+ *     shortens ordinary lines, and a horizontal rule is rendered at its source
+ *     length. Tables are the one width-increasing construct: they render as
+ *     padded columns only when the shared table layout fits the known body
+ *     width; otherwise each source row falls back to ordinary raw text.
  *
  * The parse layer is pure and unit-tested; the component only maps its output
  * onto silvery nodes.
  */
 import React, { useMemo } from 'react';
-import { Box, Text } from 'silvery';
+import { Box, Text, displayWidth } from 'silvery';
 
 import { type CodeSpan, highlightToSpans } from '../tui-highlight.js';
 import { detectUnicode } from '../tui-theme.js';
@@ -87,6 +88,15 @@ export interface InlineSpan {
   /** Link label — rendered in the accent; `url` trails dim when informative. */
   link?: boolean;
   url?: string;
+}
+
+export type TableAlignment = 'left' | 'center' | 'right';
+export type TableRowRole = 'header' | 'divider' | 'body';
+
+export interface MdTableLayout {
+  columnWidths: number[];
+  alignments: TableAlignment[];
+  formattedWidth: number;
 }
 
 // Anchored (sticky) matchers, tried in this order at each scan position so the
@@ -195,6 +205,7 @@ export type MdLineKind =
   | 'code'
   | 'fence'
   | 'hr'
+  | 'table'
   | 'blank';
 
 export interface MdLine {
@@ -214,6 +225,9 @@ export interface MdLine {
    * is preserved: concatenating `codeSpans[*].text` reproduces `raw` exactly.
    */
   codeSpans?: CodeSpan[];
+  role?: TableRowRole;
+  cells?: InlineSpan[][];
+  table?: MdTableLayout;
 }
 
 const HR = /^\s*([-*_])\1{2,}\s*$/;
@@ -222,6 +236,150 @@ const HEADING = /^(#{1,6})\s+(.*)$/;
 const QUOTE = /^\s*>\s?(.*)$/;
 const ORDERED = /^(\s*)(\d+)[.)]\s+(.*)$/;
 const BULLET = /^(\s*)[-*+]\s+(.*)$/;
+const TABLE_DELIMITER = /^:?-{3,}:?$/;
+
+function isEscaped(text: string, index: number): boolean {
+  let slashCount = 0;
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i -= 1) slashCount += 1;
+  return slashCount % 2 === 1;
+}
+
+function structuralPipeIndexes(line: string): number[] {
+  const indexes: number[] = [];
+  let inCode = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '`' && !isEscaped(line, i)) {
+      inCode = !inCode;
+      continue;
+    }
+    if (ch === '|' && !inCode && !isEscaped(line, i)) indexes.push(i);
+  }
+  return indexes;
+}
+
+function splitTableCells(raw: string): string[] | null {
+  const line = raw.trim();
+  const pipes = structuralPipeIndexes(line);
+  if (pipes.length === 0) return null;
+
+  const boundaries = pipes.filter((index) => index !== 0 && index !== line.length - 1);
+  const cells: string[] = [];
+  let start = pipes[0] === 0 ? 1 : 0;
+  for (const boundary of boundaries) {
+    cells.push(line.slice(start, boundary).trim().replace(/\\\|/g, '|'));
+    start = boundary + 1;
+  }
+  const end = pipes[pipes.length - 1] === line.length - 1 ? line.length - 1 : line.length;
+  cells.push(line.slice(start, end).trim().replace(/\\\|/g, '|'));
+  return cells;
+}
+
+function parseTableDelimiter(raw: string, columnCount: number): TableAlignment[] | null {
+  const cells = splitTableCells(raw);
+  if (!cells || cells.length !== columnCount) return null;
+  const alignments: TableAlignment[] = [];
+  for (const cell of cells) {
+    const trimmed = cell.trim();
+    if (!TABLE_DELIMITER.test(trimmed)) return null;
+    const left = trimmed.startsWith(':');
+    const right = trimmed.endsWith(':');
+    alignments.push(left && right ? 'center' : right ? 'right' : 'left');
+  }
+  return alignments;
+}
+
+function spanDisplayWidth(spans: InlineSpan[]): number {
+  let width = 0;
+  for (const span of spans) {
+    width += displayWidth(span.text);
+    if (span.link && span.url && span.url !== span.text) width += 1 + displayWidth(span.url);
+  }
+  return width;
+}
+
+function normalizeBodyCells(cells: string[], columnCount: number): string[] {
+  if (cells.length === columnCount) return cells;
+  if (cells.length > columnCount) return cells.slice(0, columnCount);
+  return [...cells, ...Array.from({ length: columnCount - cells.length }, () => '')];
+}
+
+// A pipe-containing line can still be a heading / quote / list / rule; those
+// block constructs outrank table recognition (GFM precedence). Used to stop a
+// table from swallowing its own header line or absorbing a following block row.
+function isBlockConstruct(line: string): boolean {
+  return (
+    HEADING.test(line) ||
+    QUOTE.test(line) ||
+    ORDERED.test(line) ||
+    BULLET.test(line) ||
+    HR.test(line)
+  );
+}
+
+function tryParseTable(
+  rawLines: string[],
+  start: number,
+): { lines: MdLine[]; next: number } | null {
+  // A header that is itself a block construct (e.g. `# A | B`) stays that block,
+  // never a table header.
+  if (isBlockConstruct(rawLines[start] ?? '')) return null;
+  const headerCells = splitTableCells(rawLines[start] ?? '');
+  if (!headerCells || headerCells.length < 2) return null;
+
+  const alignments = parseTableDelimiter(rawLines[start + 1] ?? '', headerCells.length);
+  if (!alignments) return null;
+
+  const rows: Array<{ role: TableRowRole; raw: string; cells: InlineSpan[][] }> = [
+    { role: 'header', raw: rawLines[start], cells: headerCells.map(parseInline) },
+    { role: 'divider', raw: rawLines[start + 1], cells: headerCells.map(() => [{ text: '' }]) },
+  ];
+
+  let next = start + 2;
+  while (next < rawLines.length && rawLines[next].trim() !== '') {
+    // A block-construct row (heading/quote/list/rule with a pipe) ends the
+    // table and is reclassified by the caller, rather than absorbed as a body row.
+    if (isBlockConstruct(rawLines[next])) break;
+    const cells = splitTableCells(rawLines[next]);
+    if (!cells) break;
+    // An overfull row would lose cells under GFM's ignore-excess rule; the
+    // whole candidate falls back to lossless raw text instead (no content is
+    // silently dropped — the fit-or-raw promise).
+    if (cells.length > headerCells.length) return null;
+    rows.push({
+      role: 'body',
+      raw: rawLines[next],
+      cells: normalizeBodyCells(cells, headerCells.length).map(parseInline),
+    });
+    next += 1;
+  }
+
+  const columnWidths = Array.from({ length: headerCells.length }, (_, column) =>
+    Math.max(
+      ...rows
+        .filter((row) => row.role !== 'divider')
+        .map((row) => spanDisplayWidth(row.cells[column] ?? [])),
+    ),
+  );
+  const formattedWidth =
+    columnWidths.reduce((sum, width) => sum + width, 0) + Math.max(0, headerCells.length - 1) * 3;
+  const table: MdTableLayout = Object.freeze({
+    columnWidths: Object.freeze(columnWidths) as number[],
+    alignments: Object.freeze(alignments) as TableAlignment[],
+    formattedWidth,
+  });
+
+  return {
+    lines: rows.map((row) => ({
+      kind: 'table',
+      role: row.role,
+      raw: row.raw,
+      cells: row.cells,
+      table,
+    })),
+    next,
+  };
+}
 
 /**
  * Parse `text` into one `MdLine` per source line (line count preserved).
@@ -230,6 +388,7 @@ const BULLET = /^(\s*)[-*+]\s+(.*)$/;
  */
 export function parseMarkdown(text: string): MdLine[] {
   const out: MdLine[] = [];
+  const rawLines = text.split(/\r?\n/);
   let inFence = false;
   // Open fence's language + the code-line objects collected so far, so the
   // whole block can be highlighted at once on close. Block-level, not
@@ -244,7 +403,8 @@ export function parseMarkdown(text: string): MdLine[] {
   };
   // Split on CRLF as well as LF so a stray `\r` never lands in a rendered cell
   // (it would carriage-return the terminal). Count is unchanged either way.
-  for (const raw of text.split(/\r?\n/)) {
+  for (let index = 0; index < rawLines.length; index += 1) {
+    const raw = rawLines[index];
     const fence = FENCE.exec(raw);
     if (fence) {
       if (!inFence) {
@@ -268,6 +428,12 @@ export function parseMarkdown(text: string): MdLine[] {
       const codeLine: MdLine = { kind: 'code', raw };
       fenceCodeLines.push(codeLine);
       out.push(codeLine);
+      continue;
+    }
+    const table = tryParseTable(rawLines, index);
+    if (table) {
+      out.push(...table.lines);
+      index = table.next - 1;
       continue;
     }
     if (raw.trim() === '') {
@@ -336,12 +502,29 @@ interface Marks {
   quoteRail: string;
   /** Single rule cell, repeated to the source rule's visible length. */
   hrCell: string;
+  tableRail: string;
+  tableDivider: string;
+  tableJunction: string;
 }
 
 function marksFor(unicode: boolean): Marks {
   return unicode
-    ? { bullet: '• ', quoteRail: '│ ', hrCell: '─' }
-    : { bullet: '- ', quoteRail: '| ', hrCell: '-' };
+    ? {
+        bullet: '• ',
+        quoteRail: '│ ',
+        hrCell: '─',
+        tableRail: '│',
+        tableDivider: '─',
+        tableJunction: '┼',
+      }
+    : {
+        bullet: '- ',
+        quoteRail: '| ',
+        hrCell: '-',
+        tableRail: '|',
+        tableDivider: '-',
+        tableJunction: '+',
+      };
 }
 
 function spanColor(span: InlineSpan, base: VlColor | undefined): VlColor | undefined {
@@ -367,14 +550,105 @@ function Spans({ spans, base }: { spans: InlineSpan[]; base: VlColor | undefined
   );
 }
 
-function LineView({
+function padFor(width: number, contentWidth: number, alignment: TableAlignment): [string, string] {
+  const total = Math.max(0, width - contentWidth);
+  if (alignment === 'right') return [' '.repeat(total), ''];
+  if (alignment === 'center') {
+    const left = Math.floor(total / 2);
+    return [' '.repeat(left), ' '.repeat(total - left)];
+  }
+  return ['', ' '.repeat(total)];
+}
+
+function TableCell({
+  spans,
+  width,
+  alignment,
+  base,
+  header,
+}: {
+  spans: InlineSpan[];
+  width: number;
+  alignment: TableAlignment;
+  base: VlColor | undefined;
+  header: boolean;
+}) {
+  const [before, after] = padFor(width, spanDisplayWidth(spans), alignment);
+  return (
+    <Text bold={header} color={base}>
+      {before}
+      <Spans spans={spans} base={base} />
+      {after}
+    </Text>
+  );
+}
+
+function RawTextLine({ line, base }: { line: MdLine; base: VlColor | undefined }) {
+  return (
+    <Text color={base}>
+      <Spans spans={line.spans ?? parseInline(line.raw ?? '')} base={base} />
+    </Text>
+  );
+}
+
+function TableLineView({
   line,
   base,
   marks,
+  availableWidth,
 }: {
   line: MdLine;
   base: VlColor | undefined;
   marks: Marks;
+  availableWidth: number | undefined;
+}) {
+  const table = line.table;
+  if (
+    !table ||
+    !line.role ||
+    !line.cells ||
+    !availableWidth ||
+    table.formattedWidth > availableWidth
+  ) {
+    return <RawTextLine line={line} base={base} />;
+  }
+  if (line.role === 'divider') {
+    return (
+      <Text color={VL_COLOR.muted}>
+        {table.columnWidths
+          .map((width) => marks.tableDivider.repeat(width))
+          .join(`${marks.tableDivider}${marks.tableJunction}${marks.tableDivider}`)}
+      </Text>
+    );
+  }
+  return (
+    <Text color={base}>
+      {line.cells.map((cell, index) => (
+        <React.Fragment key={index}>
+          {index > 0 ? <Text color={VL_COLOR.muted}> {marks.tableRail} </Text> : null}
+          <TableCell
+            spans={cell}
+            width={table.columnWidths[index] ?? 0}
+            alignment={table.alignments[index] ?? 'left'}
+            base={base}
+            header={line.role === 'header'}
+          />
+        </React.Fragment>
+      ))}
+    </Text>
+  );
+}
+
+function LineView({
+  line,
+  base,
+  marks,
+  availableWidth,
+}: {
+  line: MdLine;
+  base: VlColor | undefined;
+  marks: Marks;
+  availableWidth: number | undefined;
 }) {
   switch (line.kind) {
     case 'blank':
@@ -430,6 +704,10 @@ function LineView({
           <Spans spans={line.spans ?? []} base={base} />
         </Text>
       );
+    case 'table':
+      return (
+        <TableLineView line={line} base={base} marks={marks} availableWidth={availableWidth} />
+      );
     default:
       return (
         <Text color={base}>
@@ -444,14 +722,28 @@ function LineView({
  * one-accent budget. `base` is the inherited body color (undefined = default
  * stream text); code/link spans override it per law 2.
  */
-export function MarkdownBody({ text, base }: { text: string; base?: VlColor }) {
+export function MarkdownBody({
+  text,
+  base,
+  availableWidth,
+}: {
+  text: string;
+  base?: VlColor;
+  availableWidth?: number;
+}) {
   const unicode = useMemo(() => detectUnicode(), []);
   const lines = useMemo(() => parseMarkdown(text), [text]);
   const marks = useMemo(() => marksFor(unicode), [unicode]);
   return (
     <Box flexDirection="column">
       {lines.map((line, index) => (
-        <LineView key={index} line={line} base={base} marks={marks} />
+        <LineView
+          key={index}
+          line={line}
+          base={base}
+          marks={marks}
+          availableWidth={availableWidth}
+        />
       ))}
     </Box>
   );
