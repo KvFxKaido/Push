@@ -104,6 +104,33 @@ const LAUNCH_SHORTCUT_WIDTH = 26;
 
 const PICKER_MAX_VISIBLE = 12;
 
+// Full-screen vertical contract. HeaderBar is pinned to one row; the composer
+// can grow to three; FooterBar may wrap its keys/status pair once on narrow
+// terminals. Keep these beside the surface instead of hiding the arithmetic in
+// a magic subtraction so adding chrome requires updating the budget explicitly.
+const SURFACE_HEADER_ROWS = 1;
+const SURFACE_COMPOSER_RULE_ROWS = 1;
+const SURFACE_COMPOSER_MAX_ROWS = 3;
+const SURFACE_FOOTER_MAX_ROWS = 2;
+const SURFACE_MIN_TRANSCRIPT_ROWS = 3;
+
+export function resolveSurfaceTranscriptHeight(
+  viewportRows: number,
+  options: { completionVisible?: boolean; errorVisible?: boolean } = {},
+): number {
+  const fixedChromeRows =
+    SURFACE_HEADER_ROWS +
+    SURFACE_COMPOSER_RULE_ROWS +
+    SURFACE_COMPOSER_MAX_ROWS +
+    SURFACE_FOOTER_MAX_ROWS;
+  const transientChromeRows =
+    Number(Boolean(options.completionVisible)) + Number(Boolean(options.errorVisible));
+  return Math.max(
+    SURFACE_MIN_TRANSCRIPT_ROWS,
+    viewportRows - fixedChromeRows - transientChromeRows,
+  );
+}
+
 /**
  * Catch secret-setting commands before their value can become composer state.
  * The caller clears the composer and opens the password-style config field;
@@ -405,35 +432,51 @@ function Message({ item, tinted = false }: { item: SilveryTranscriptItem; tinted
   // stripped. Fault (law 3) and status bodies also stay plain so the fault color
   // never mixes with accent link/code spans.
   const renderMarkdown = !item.isError && item.role !== 'status' && item.role !== 'user';
+  // The glyph is a fixed left gutter; the body flows in a column beside it, so
+  // the first line sits INLINE with the icon and continuation lines hang-indent
+  // under themselves (the tool-card layout, now shared by prose turns). A header
+  // line only appears for voices that carry a label or a timestamp — the lead
+  // agent and the human are self-evident from their glyph, so their body is the
+  // first thing on the row. Streaming liveness rides the header status verb, so
+  // no per-message "· live" is needed for the label-less lead.
+  const showHeader = showLabel || Boolean(timestamp);
   return (
     <Box
-      flexDirection="column"
+      flexDirection="row"
       width="100%"
       paddingX={1}
       backgroundColor={tinted ? '$bg-surface-subtle' : undefined}
       onClick={item.kind === 'review' ? () => setExpanded((value) => !value) : undefined}
     >
-      <Box width="100%">
+      <Box flexShrink={0}>
         <Text bold={mark.bold} color={mark.color}>
-          {mark.glyph}
-          {showLabel ? ` ${label}` : ''}
-          {item.live ? ' · live' : ''}
+          {mark.glyph}{' '}
         </Text>
-        {timestamp ? (
-          <>
-            <Box flexGrow={1} />
-            <Text color={VL_COLOR.muted}>{timestamp}</Text>
-          </>
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        {showHeader ? (
+          <Box width="100%">
+            <Text bold={mark.bold} color={mark.color}>
+              {showLabel ? label : ''}
+              {item.live && showLabel ? ' · live' : ''}
+            </Text>
+            {timestamp ? (
+              <>
+                <Box flexGrow={1} />
+                <Text color={VL_COLOR.muted}>{timestamp}</Text>
+              </>
+            ) : null}
+          </Box>
+        ) : null}
+        {renderMarkdown ? (
+          <MarkdownBody text={bodyText} base={bodyColor} />
+        ) : (
+          <Text color={bodyColor}>{bodyText}</Text>
+        )}
+        {item.kind === 'review' ? (
+          <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} review</Text>
         ) : null}
       </Box>
-      {renderMarkdown ? (
-        <MarkdownBody text={bodyText} base={bodyColor} />
-      ) : (
-        <Text color={bodyColor}>{bodyText}</Text>
-      )}
-      {item.kind === 'review' ? (
-        <Text color={VL_COLOR.muted}>click to {expanded ? 'collapse' : 'expand'} review</Text>
-      ) : null}
     </Box>
   );
 }
@@ -1749,9 +1792,16 @@ export function PushSurface({
     hook.getComposerState = () => ({ input, completion: completer.getState() });
   });
 
-  // Frame chrome = header + composer rule + footer + optional error line ≈ 4–5 rows.
   const completionState = inputActive ? completer.getState() : null;
-  const transcriptHeight = Math.max(3, rows - 6 - (completionState ? 1 : 0));
+  const transcriptHeight = resolveSurfaceTranscriptHeight(rows, {
+    completionVisible: Boolean(completionState),
+    errorVisible: Boolean(snapshot.error),
+  });
+  // Composer frame: the rule (the frame edge the height budget reserves)
+  // and the human caret (❯) that law 2 names the composer cursor — the one accent
+  // shape marking where input goes, mirrored from the transcript's user glyph.
+  const composerGlyphs = resolveGlyphs(detectUnicode());
+  const composerRule = (detectUnicode() ? '─' : '-').repeat(Math.max(0, columns));
   const elapsedMs =
     snapshot.startedAt === null
       ? 0
@@ -1803,17 +1853,29 @@ export function PushSurface({
             {resolveGlyphs(detectUnicode()).hexActive} {snapshot.error}
           </Text>
         ) : null}
-        <TextArea
-          value={input}
-          onChange={changeComposerInput}
-          onSubmit={submit}
-          submitKey="enter"
-          minRows={1}
-          maxRows={3}
-          placeholder={snapshot.running ? 'Push is working…' : 'message Push…'}
-          isActive={inputActive}
-          disabled={snapshot.running}
-        />
+        <Box width={columns}>
+          <Text color={VL_COLOR.muted}>{composerRule}</Text>
+        </Box>
+        <Box flexDirection="row" width="100%">
+          <Box flexShrink={0}>
+            <Text bold color={inputActive ? VL_COLOR.accent : VL_COLOR.muted}>
+              {composerGlyphs.human}{' '}
+            </Text>
+          </Box>
+          <Box flexGrow={1}>
+            <TextArea
+              value={input}
+              onChange={changeComposerInput}
+              onSubmit={submit}
+              submitKey="enter"
+              minRows={1}
+              maxRows={SURFACE_COMPOSER_MAX_ROWS}
+              placeholder={snapshot.running ? 'Push is working…' : 'message Push…'}
+              isActive={inputActive}
+              disabled={snapshot.running}
+            />
+          </Box>
+        </Box>
         {completionState ? <CompletionRail state={completionState} columns={columns} /> : null}
         <FooterBar snapshot={snapshot} scope={scope} columns={columns} elapsed={elapsed} />
         {interactionMotion.visible && retainedInteraction.current ? (
