@@ -223,19 +223,27 @@
       "secret_name": "push-gate_zen_default"
     }
   ],
-  // R2 bucket backing Cloudflare-provider filesystem snapshots. Stores a
-  // base64 tar.gz of /workspace (source + .git, minus node_modules/build
-  // caches) keyed by an opaque snapshot id. Provision before deploy:
+  // R2 bucket backing Cloudflare-provider filesystem snapshots. SNAPSHOTS
+  // retains tiny direct-restore descriptors plus seven-day legacy base64
+  // objects; BACKUP_BUCKET is the first-party Sandbox SDK archive binding.
+  // Both bindings intentionally point at the same physical bucket. Provision:
   //   npx wrangler r2 bucket create push-cf-snapshots
-  // Retention: superseded objects are deleted inline on the next hibernate, and
-  // the daily cron (triggers.crons) reaps any object no longer referenced by a
-  // live snapshot-index entry. As a belt-and-suspenders backstop, set a 7-day
-  // R2 lifecycle rule (matches the snapshot-index TTL) — one-time, out-of-band:
+  // Production SDK backups also require these deploy-time environment/secrets
+  // (names only; never commit their values): BACKUP_BUCKET_NAME,
+  // CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY.
+  // Retention: superseded descriptors/legacy objects are deleted inline, and
+  // the daily cron reaps orphaned legacy `cf-snapshots/` objects. SDK archives
+  // under `backups/` use the handle TTL for restore validity; the 7-day R2
+  // lifecycle rule is what physically reclaims them — one-time, out-of-band:
   //   npm run r2:snapshots:lifecycle
   // (i.e. `wrangler r2 bucket lifecycle add push-cf-snapshots --expire-days 7`).
   "r2_buckets": [
     {
       "binding": "SNAPSHOTS",
+      "bucket_name": "push-cf-snapshots"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
       "bucket_name": "push-cf-snapshots"
     }
   ],

@@ -748,6 +748,7 @@ describe('chat-send', () => {
     expect(conversationsRef.current['chat-1'].messages.at(-1)?.content ?? '').not.toContain(
       'ROLE_CAPABILITY_DENIED',
     );
+    expect(result.dispatchedNonReadOnlyTools).toBe(true);
   });
 
   it('appends post-tool inject messages to the conversation and next round context', async () => {
@@ -1035,5 +1036,6 @@ describe('chat-send', () => {
 
     expect(result.loopAction).toBe('continue');
     expect(result.nextApiMessages.at(-1)?.content).toContain('Todo list not available');
+    expect(result.dispatchedNonReadOnlyTools).toBe(false);
   });
 });

@@ -240,6 +240,7 @@ export function WorkspaceSessionScreen({
       onSandboxUnreachable: (reason, policy) => {
         sandbox.markUnreachable(reason, policy);
       },
+      requestRoundCheckpoint: sandbox.requestRoundCheckpoint,
     },
     {
       // Raw current branch (no `|| default_branch` collapse): branch-on-first-
