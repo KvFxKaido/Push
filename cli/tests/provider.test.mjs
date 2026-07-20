@@ -786,10 +786,9 @@ describe('streamCompletion', () => {
   });
 
   describe('OpenRouter-specific behavior', () => {
-    // These tests pin the RESPONSES-path machinery with fixture models that
-    // aren't in the /responses beta capability tier — force the transport so the
-    // per-model default (chat for unknown models) doesn't reroute them. The
-    // per-model dispatch itself is covered in its own describe below.
+    // These tests pin the Responses-path machinery independently of the
+    // per-model capability decision. The explicit override chooses Responses as
+    // the primary wire while retaining the pre-output Chat fallback.
     let prevTransport;
     beforeEach(() => {
       prevTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
@@ -856,6 +855,40 @@ describe('streamCompletion', () => {
 
       assert.ok(capturedHeaders['HTTP-Referer']);
       assert.equal(capturedHeaders['X-Title'], 'Push CLI');
+    });
+
+    it('retains the chat fallback when PUSH_OPENROUTER_TRANSPORT=responses', async () => {
+      const urls = [];
+      globalThis.fetch = async (url, opts) => {
+        urls.push(String(url));
+        const body = JSON.parse(opts.body);
+        if (body.input !== undefined) {
+          return {
+            ok: false,
+            status: 400,
+            body: stringToStream('{"error":{"message":"beta mismatch"}}'),
+            headers: new Headers(),
+            text: async () => '{"error":{"message":"beta mismatch"}}',
+            json: async () => ({ error: { message: 'beta mismatch' } }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['chat-ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const text = await streamCompletion(orConfig, 'key', 'model', testMessages, null);
+
+      assert.equal(text, 'chat-ok');
+      assert.deepEqual(urls, [
+        'http://test.invalid/v1/responses',
+        'http://test.invalid/v1/chat/completions',
+      ]);
     });
 
     it('injects the openrouter:web_search server tool by default', async () => {
@@ -1147,7 +1180,7 @@ describe('streamCompletion', () => {
     });
 
     // ─── Per-model transport dispatch (no PUSH_OPENROUTER_TRANSPORT) ─
-    // OpenRouter defaults every model to /responses (PushCapabilityProfile.openaiWire),
+    // OpenRouter defaults ordinary models to /responses (PushCapabilityProfile.openaiWire),
     // and runs it responses-first with a chat fallback: a Responses body can't ride
     // /chat/completions, so a pre-output failure retries the whole turn on chat.
 
@@ -1236,8 +1269,8 @@ describe('streamCompletion', () => {
 
         // Responses attempt (input body) then the chat fallback (messages body).
         assert.equal(calls, 2);
-        assert.ok(urls[0].includes('/responses'));
-        assert.ok(urls[1].includes('/chat/completions'));
+        assert.equal(urls[0], 'http://test.invalid/v1/responses');
+        assert.equal(urls[1], 'http://test.invalid/v1/chat/completions');
         assert.equal(tokens.join(''), 'chat-ok');
       });
 
@@ -1256,8 +1289,8 @@ describe('streamCompletion', () => {
           };
         };
 
-        // OpenRouter now defaults every model to /responses; a no-model request
-        // still resolves the config default for the dispatch decision.
+        // OpenRouter defaults a no-model request to /responses; the configured
+        // default model still drives the capability decision.
         const stream = createProviderStream(orConfig, 'key');
         for await (const _ of stream({
           provider: 'openrouter',
@@ -1272,8 +1305,8 @@ describe('streamCompletion', () => {
     });
 
     // ─── Prompt caching (cacheBreakpointIndices: Hermes system_and_3) ─
-
     it('tags system + up to 3 rolling-tail messages with cache_control', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1332,6 +1365,7 @@ describe('streamCompletion', () => {
     });
 
     it('tags only the indices passed when fewer than 3 are provided', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1373,6 +1407,7 @@ describe('streamCompletion', () => {
     });
 
     it('does not tag when cacheBreakpointIndices is omitted', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1397,6 +1432,7 @@ describe('streamCompletion', () => {
     });
 
     it('does not tag when cacheBreakpointIndices is empty (system-only transcript)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1429,6 +1465,7 @@ describe('streamCompletion', () => {
     // are into `req.messages` (which excludes the synthesized system), so the
     // wire-side adapter must add `systemPrependOffset = 1` before tagging each.
     it('clamps to the last 3 indices when more than 3 are provided (defense in depth)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       // The transformer caps emission at 3, but the provider contract is
       // exported and `createCliProviderStream` can be called directly by
       // future consumers. The wire layer must enforce the cap independently
@@ -1487,6 +1524,7 @@ describe('streamCompletion', () => {
     });
 
     it('tags wire-index 0 when no system message is present (user-first transcript)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       // The defensive `wireIndex === 0` skip must only fire when index 0 is
       // actually a system message. A user-first transcript legitimately
       // includes index 0 in the rolling tail and would otherwise lose its

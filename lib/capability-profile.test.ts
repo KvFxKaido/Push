@@ -31,11 +31,15 @@ describe('resolvePushCapabilityProfile', () => {
     ).toMatchObject({ toolCalling: 'json-text', streamingTools: false });
   });
 
-  it('defaults every OpenRouter model to responses (responses-first with chat fallback)', () => {
+  it('defaults OpenRouter to responses except routes that require chat reasoning replay', () => {
     // The endpoint serves /responses for essentially every live model, and the
-    // request path falls back to chat on failure — so there is no per-model tier.
+    // request path falls back to chat on failure; only replay-dependent reasoning
+    // routes retain a model-specific chat tier.
     for (const model of ['openai/gpt-5.4', 'minimax/minimax-m3', 'z-ai/glm-5-turbo', undefined]) {
       expect(resolvePushCapabilityProfile('openrouter', model).openaiWire).toBe('responses');
+    }
+    for (const model of ['deepseek/deepseek-r1', 'moonshotai/kimi-k2.7-code']) {
+      expect(resolvePushCapabilityProfile('openrouter', model).openaiWire).toBe('chat-completions');
     }
     // Non-OpenRouter, non-native providers stay on chat completions.
     expect(resolvePushCapabilityProfile('ollama', 'mock-model').openaiWire).toBe(

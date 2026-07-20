@@ -689,11 +689,9 @@ describe('openrouterStream', () => {
   });
 
   // Per-model routing — the DEFAULT behavior with no transport override.
-  // OpenRouter's /responses is a beta not implemented for every model, and a
-  // Responses body can't ride /chat/completions, so the body shape must be
-  // decided per model where the body is built (#1296 case 3's real fix; the
-  // worker-side model gate alone would forward a Responses body to
-  // /chat/completions for a chat-tier model — a guaranteed 400).
+  // Most models prefer Responses with a pre-output chat fallback. DeepSeek/Kimi
+  // routes that need plain reasoning_content replay stay on chat until Push can
+  // retain their encrypted Responses reasoning items.
   describe('per-model transport (no override)', () => {
     it('routes a responses-tier model to the Responses body shape', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
@@ -718,10 +716,7 @@ describe('openrouterStream', () => {
       expect(body.messages).toBeUndefined();
     });
 
-    it('routes every OpenRouter model to the Responses body shape (default)', async () => {
-      // OpenRouter now defaults every model to /responses (the beta serves them
-      // all; failures fall back to chat). Even the former "chat-tier" model goes
-      // responses-first.
+    it('routes ordinary OpenRouter models to the Responses body shape (default)', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
@@ -742,6 +737,29 @@ describe('openrouterStream', () => {
       expect(body.model).toBe('minimax/minimax-m3');
       expect(body.input).toBeDefined();
       expect(body.messages).toBeUndefined();
+    });
+
+    it('keeps replay-dependent reasoning models on the Chat body shape', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'deepseek/deepseek-r1',
+          openrouterWebSearch: false,
+        }),
+      );
+
+      push(JSON.stringify({ choices: [{ delta: { content: 'chat' } }] }));
+      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      close();
+      await events;
+
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('deepseek/deepseek-r1');
+      expect(body.messages).toBeDefined();
+      expect(body.input).toBeUndefined();
     });
 
     it('falls back to Chat Completions when the Responses attempt fails before output', async () => {

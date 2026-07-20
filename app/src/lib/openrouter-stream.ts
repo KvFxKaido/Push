@@ -72,8 +72,8 @@ type OpenRouterLlmMessage = {
  * endpoint everywhere, e.g. to trial a model before its capability is known).
  * With no override, the shared capability profile decides per model. A
  * Responses body cannot ride /chat/completions, so the body shape MUST be
- * decided where the body is built. Unknown/missing model → chat, which every
- * OpenRouter model serves.
+ * decided where the body is built. Replay-dependent reasoning routes remain
+ * on chat until Push can persist encrypted Responses reasoning items.
  */
 export function resolveOpenRouterTransport(model?: string): OpenRouterTransport {
   const raw = (import.meta.env.VITE_OPENROUTER_TRANSPORT ?? '').trim().toLowerCase();

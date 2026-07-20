@@ -113,6 +113,32 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('parses OpenRouter documented content, reasoning, and terminal events', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.reasoning.delta', delta: 'thinking ' });
+    s.push({ type: 'response.content_part.delta', delta: 'the answer' });
+    s.push({
+      type: 'response.done',
+      response: {
+        status: 'completed',
+        usage: { input_tokens: 8, output_tokens: 3, total_tokens: 11 },
+      },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'reasoning_delta', text: 'thinking ' },
+      { type: 'text_delta', text: 'the answer' },
+      {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 8, outputTokens: 3, totalTokens: 11 },
+      },
+    ]);
+  });
+
   it('emits reasoning_delta for both the summary and reasoning_text families', async () => {
     // OpenAI streams `reasoning_summary_text.delta`; GLM / DeepSeek / Kimi stream
     // `reasoning_text.delta`. The pump must surface both, or reasoning (and, for

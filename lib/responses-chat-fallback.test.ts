@@ -32,6 +32,9 @@ describe('isCommittedResponsesEvent', () => {
     expect(
       isCommittedResponsesEvent({ type: 'native_tool_call', call: { name: 'f', args: {} } }),
     ).toBe(true);
+    // Tool-argument fragments are internal progress markers. Until the assembled
+    // `native_tool_call` appears, the consumer has nothing visible or actionable.
+    expect(isCommittedResponsesEvent({ type: 'tool_call_delta' })).toBe(false);
     // `done` must NOT commit — an empty success is not a transport failure to retry.
     expect(isCommittedResponsesEvent(DONE)).toBe(false);
     expect(isCommittedResponsesEvent({ type: 'ephemeral', text: 'status' })).toBe(false);
@@ -63,6 +66,22 @@ describe('streamResponsesWithChatFallback', () => {
     // Only the chat events reach the consumer — the failed responses attempt is invisible.
     expect(out).toEqual([{ type: 'text_delta', text: 'from chat' }, DONE]);
     expect(onFallback).toHaveBeenCalledOnce();
+  });
+
+  it('falls back after an internal tool fragment but before an assembled call', async () => {
+    const out = await collect(
+      streamResponsesWithChatFallback({
+        responses: () =>
+          throwsAfter([{ type: 'tool_call_delta' }], new Error('tool stream interrupted')),
+        chat: () => from([{ type: 'text_delta', text: 'recovered' }, DONE]),
+      }),
+    );
+
+    expect(out).toEqual([
+      { type: 'tool_call_delta' },
+      { type: 'text_delta', text: 'recovered' },
+      DONE,
+    ]);
   });
 
   it('does NOT fall back once output has started — the error propagates', async () => {

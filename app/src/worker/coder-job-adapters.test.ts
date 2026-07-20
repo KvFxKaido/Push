@@ -1084,9 +1084,9 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
   });
 
   it('runs OpenRouter responses-first with a chat fallback (background job)', async () => {
-    // OpenRouter now defaults every model to /responses. If the responses attempt
-    // fails BEFORE output (non-200), the background job retries the same turn on
-    // chat rather than failing it — same policy as the web/CLI lanes.
+    // OpenRouter now defaults ordinary models to /responses. If the Responses
+    // attempt fails BEFORE output (non-200), the background job retries the same
+    // turn on chat rather than failing it — same policy as the web/CLI lanes.
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const bodies: Array<Record<string, unknown>> = [];
     providerHandlerMocks.handleOpenRouterChat.mockImplementation(async (request: Request) => {

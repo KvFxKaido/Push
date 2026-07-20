@@ -147,12 +147,44 @@ function useOpenRouterLegacyChatTransport(): boolean {
   return openRouterTransportOverride() === 'chat';
 }
 
-/** The Chat Completions variant of the OpenRouter config — the same swap
- *  `resolveEffectiveProviderConfig` applies under the `chat` override. */
+function openRouterWireUrl(url: string, wire: 'responses' | 'chat'): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return wire === 'responses'
+      ? 'https://openrouter.ai/api/v1/responses'
+      : OPENROUTER_LEGACY_CHAT_URL;
+  }
+  if (wire === 'responses') {
+    return trimmed.replace(/\/chat\/completions\/?$/, '/responses');
+  }
+  return trimmed.replace(/\/responses\/?$/, '/chat/completions');
+}
+
+/** A wire-specific OpenRouter config. The URL stays live across daemon
+ * `reload_config`, and recognized endpoint suffixes are swapped so an automatic
+ * fallback never sends a Chat body to `/responses` (or vice versa). */
+function openRouterResponsesConfig(config: ProviderConfig): ProviderConfig {
+  return {
+    ...config,
+    get url() {
+      return openRouterWireUrl(config.url, 'responses');
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
+    streamShape: 'openai-responses',
+  };
+}
+
 function openRouterLegacyChatConfig(config: ProviderConfig): ProviderConfig {
   return {
     ...config,
-    url: process.env.PUSH_OPENROUTER_URL?.trim() || OPENROUTER_LEGACY_CHAT_URL,
+    get url() {
+      return openRouterWireUrl(config.url, 'chat');
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
     streamShape: 'openai-compat',
   };
 }
@@ -230,23 +262,28 @@ export function createProviderStream(
   apiKey: string,
   options: { sessionId?: string } = {},
 ): PushStream<LlmMessage> {
-  // OpenRouter with no all-models override: transport is per-MODEL, decided
-  // at request time — /responses is a beta not implemented for every model,
-  // and a Responses body can't ride /chat/completions, so the body shape has
-  // to be picked where the body is built. Both underlying streams are
-  // constructed lazily-cheap here; each request dispatches on its own model
-  // (falling back to the config default), with unknown models taking the
-  // Chat Completions path every OpenRouter model serves.
-  if (config.id === 'openrouter' && openRouterTransportOverride() === null) {
-    const responsesStream = createCliOpenAIResponsesStream(config, apiKey, {
-      sessionId: options.sessionId,
-    });
+  // Unless Chat is explicitly forced, OpenRouter decides the primary wire per
+  // request and wraps every Responses attempt in the same pre-output fallback
+  // policy as web/Worker. A `responses` override forces the primary wire but
+  // does not silently remove the safety net.
+  const openRouterOverride = openRouterTransportOverride();
+  if (config.id === 'openrouter' && openRouterOverride !== 'chat') {
+    const responsesStream = createCliOpenAIResponsesStream(
+      openRouterResponsesConfig(config),
+      apiKey,
+      {
+        sessionId: options.sessionId,
+      },
+    );
     const chatStream = createCliProviderStream(openRouterLegacyChatConfig(config), apiKey, {
       sessionId: options.sessionId,
     });
     return (req) => {
       const model = req.model?.trim() || config.defaultModel;
-      if (resolveCliPushCapabilityProfile('openrouter', model).openaiWire !== 'responses') {
+      if (
+        openRouterOverride !== 'responses' &&
+        resolveCliPushCapabilityProfile('openrouter', model).openaiWire !== 'responses'
+      ) {
         return chatStream(req);
       }
       // Responses-first with a Chat Completions fallback: OpenRouter's /responses

@@ -23,6 +23,7 @@ import {
   providerCarriesReasoningBlocksByDefault,
   providerConsumesContentBlocksByDefault,
 } from './provider-definition.js';
+import { routeReplaysReasoningContent } from './reasoning-replay-routing.js';
 import { getZenGoTransport } from './zen-go.js';
 
 export const MIN_PUSH_CONTEXT_TOKENS = 64_000;
@@ -98,15 +99,22 @@ const RESPONSES_NATIVE_PROVIDERS: ReadonlySet<string> = new Set([
 
 function resolveOpenAIWire(
   provider: string,
+  modelId: string,
   metadata: PushModelCapabilityMetadata,
 ): PushOpenAIWire {
   if (RESPONSES_NATIVE_PROVIDERS.has(provider)) return 'responses';
   if (provider !== 'openrouter') return 'chat-completions';
+  // Push currently persists the plain `reasoning_content` sidecar used by
+  // OpenRouter DeepSeek/Kimi chat routes, not the encrypted reasoning output
+  // items required to replay a stateless Responses turn. Keep those routes on
+  // Chat Completions until the neutral contract can retain/replay that item;
+  // otherwise a tool-result continuation silently loses its reasoning context.
+  if (routeReplaysReasoningContent(provider, modelId)) return 'chat-completions';
   // OpenRouter's `/responses` beta serves essentially every live model (verified
   // by a full-roster probe), and the request path runs it responses-first with a
   // chat fallback (`streamResponsesWithChatFallback`) — a beta hiccup on any model
-  // degrades to Chat Completions rather than failing the turn. So default the
-  // whole provider to responses; discoverable metadata can still force chat if a
+  // degrades to Chat Completions rather than failing the turn. So default every
+  // other route to responses; discoverable metadata can still force chat if a
   // catalog ever advertises the split. (Replaces the hand-curated seed allowlist,
   // which the probe showed was capability-obsolete.)
   return metadata.openaiWire ?? 'responses';
@@ -202,7 +210,7 @@ export function resolvePushCapabilityProfile(
   if (!model) {
     return {
       ...DEFAULT_PUSH_CAPABILITY_PROFILE,
-      openaiWire: resolveOpenAIWire(provider, {}),
+      openaiWire: resolveOpenAIWire(provider, '', {}),
       toolCalling: 'none',
       contentBlocks,
       reasoningBlocks: false,
@@ -217,7 +225,7 @@ export function resolvePushCapabilityProfile(
     streamingTools: nativeToolCalling,
     multimodal: modelSupportsMultimodal(provider, model, metadata),
     structuredOutput: resolveStructuredOutputMode(provider, model, metadata, nativeToolCalling),
-    openaiWire: resolveOpenAIWire(provider, metadata),
+    openaiWire: resolveOpenAIWire(provider, model, metadata),
     contentBlocks,
     reasoningBlocks: routeCarriesReasoningBlocks(provider, model),
     context: resolveContextTier(metadata.contextLimit),

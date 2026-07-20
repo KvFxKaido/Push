@@ -217,10 +217,9 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
       // build the typed `input`-item body for any of them; everything else gets
       // the Chat Completions payload below.
       // OpenRouter is Responses-shaped only when the shared capability profile
-      // says this model tier can use the beta endpoint. One profile read drives
-      // both the body shape and SSE pump below, so they can't disagree; an
-      // unknown/chat-tier model gets a chat body, which `handleOpenRouterChat`
-      // routes to the legacy /chat/completions proxy.
+      // selects that wire. One profile read drives both the body shape and SSE
+      // pump below, so they can't disagree; replay-dependent reasoning routes get
+      // a chat body that `handleOpenRouterChat` sends to /chat/completions.
       const modelId = req.model || args.modelId || '';
       const isResponsesProvider =
         (args.provider === 'openrouter' &&

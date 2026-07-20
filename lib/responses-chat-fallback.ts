@@ -31,7 +31,6 @@ export function isCommittedResponsesEvent(event: PushStreamEvent): boolean {
     case 'text_delta':
     case 'reasoning_delta':
     case 'reasoning_block':
-    case 'tool_call_delta':
     case 'native_tool_call':
     case 'citations':
       return true;

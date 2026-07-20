@@ -290,7 +290,7 @@ export async function* openAIResponsesSSEPump(
 
     const type = typeof parsed.type === 'string' ? parsed.type : '';
 
-    if (type === 'response.output_text.delta') {
+    if (type === 'response.output_text.delta' || type === 'response.content_part.delta') {
       if (typeof parsed.delta === 'string' && parsed.delta) {
         yield { type: 'text_delta', text: parsed.delta };
       }
@@ -323,6 +323,9 @@ export async function* openAIResponsesSSEPump(
     if (
       type === 'response.reasoning_summary_text.delta' ||
       type === 'response.reasoning_summary.delta' ||
+      // OpenRouter's documented beta vocabulary uses the shorter
+      // `reasoning.delta` event alongside the provider-specific family below.
+      type === 'response.reasoning.delta' ||
       // OpenRouter serves two reasoning-event vocabularies: OpenAI emits the
       // `reasoning_summary_*` family, while GLM / DeepSeek / Kimi emit
       // `reasoning_text.delta`. Both carry the thinking text on `.delta`. Missing
@@ -379,7 +382,11 @@ export async function* openAIResponsesSSEPump(
       return;
     }
 
-    if (type === 'response.completed' || type === 'response.incomplete') {
+    if (
+      type === 'response.completed' ||
+      type === 'response.done' ||
+      type === 'response.incomplete'
+    ) {
       const response =
         parsed.response && typeof parsed.response === 'object'
           ? (parsed.response as Record<string, unknown>)
