@@ -35,6 +35,12 @@ describe('isCommittedResponsesEvent', () => {
     // Tool-argument fragments are internal progress markers. Until the assembled
     // `native_tool_call` appears, the consumer has nothing visible or actionable.
     expect(isCommittedResponsesEvent({ type: 'tool_call_delta' })).toBe(false);
+    expect(
+      isCommittedResponsesEvent({
+        type: 'responses_reasoning_item',
+        item: { type: 'reasoning', encrypted_content: 'ciphertext' },
+      }),
+    ).toBe(true);
     // `done` must NOT commit — an empty success is not a transport failure to retry.
     expect(isCommittedResponsesEvent(DONE)).toBe(false);
     expect(isCommittedResponsesEvent({ type: 'ephemeral', text: 'status' })).toBe(false);

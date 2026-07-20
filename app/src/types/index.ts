@@ -43,6 +43,7 @@ import type {
   LlmToolResultBlock,
   LlmToolUseBlock,
   ReasoningBlock,
+  ResponsesReasoningItem,
   UrlCitation,
 } from '@push/lib/provider-contract';
 export type { ReasoningBlock, UrlCitation } from '@push/lib/provider-contract';
@@ -339,6 +340,10 @@ export interface ChatMessage {
    *  (`thinking` text) is independent and may be present without these
    *  blocks for providers that emit reasoning as plain text. */
   reasoningBlocks?: ReasoningBlock[];
+  /** Encrypted OpenAI Responses reasoning output items. Stateless Responses
+   *  routes replay these verbatim on the assistant turn that produced them;
+   *  they are opaque model context and are not rendered. */
+  responsesReasoningItems?: ResponsesReasoningItem[];
   /** Web-search sources surfaced by a provider's native search (OpenRouter's
    *  `openrouter:web_search`). Display-only — never sent back to the model;
    *  rendered as a "Sources" footer beneath the assistant's answer. Deduped

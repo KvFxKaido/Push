@@ -9,7 +9,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from 'react';
 import type { ActiveProvider } from '@/lib/orchestrator';
 import type { AnyToolCall } from '@/lib/tool-dispatch';
-import type { NativeToolCall } from '@push/lib/provider-contract';
+import type { NativeToolCall, ResponsesReasoningItem } from '@push/lib/provider-contract';
 import type { TodoItem } from '@/lib/todo-tools';
 import type { RunEngineEvent } from '@/lib/run-engine';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
@@ -146,6 +146,8 @@ export interface StreamRoundResult {
    *  survive across turns. Empty array when the upstream emitted no
    *  signed reasoning. */
   reasoningBlocks: ReasoningBlock[];
+  /** Encrypted Responses reasoning items captured this round for replay. */
+  responsesReasoningItems?: ResponsesReasoningItem[];
   /** Complete provider-native tool/function calls captured this round. */
   nativeToolCalls: NativeToolCall[];
   error: Error | null;

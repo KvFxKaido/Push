@@ -1943,6 +1943,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       text: rawModelText,
       reasoningText,
       reasoningBlocks,
+      responsesReasoningItems,
       nativeToolCalls,
       usage: roundUsage,
     } = streamResult;
@@ -2051,6 +2052,7 @@ export async function runCoderAgent<TCall, TCard extends ToolCard = ToolCard>(
       content: accumulated,
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks } : {}),
       ...(reasoningText.trim().length > 0 ? { reasoningContent: reasoningText } : {}),
+      ...(responsesReasoningItems.length > 0 ? { responsesReasoningItems } : {}),
       timestamp: Date.now(),
     });
 

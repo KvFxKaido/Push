@@ -917,6 +917,61 @@ describe('streamCompletion', () => {
       assert.deepEqual(capturedBody.tools, [{ type: 'openrouter:web_search' }]);
     });
 
+    it('requests, replays, and emits encrypted Responses reasoning items', async () => {
+      let capturedBody;
+      const priorItem = {
+        type: 'reasoning',
+        id: 'rs_prior',
+        encrypted_content: 'prior-ciphertext',
+      };
+      const nextItem = {
+        type: 'reasoning',
+        id: 'rs_next',
+        encrypted_content: 'next-ciphertext',
+        status: 'completed',
+      };
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        const frames = [
+          `data: ${JSON.stringify({ type: 'response.output_item.done', output_index: 0, item: nextItem })}`,
+          `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', output: [nextItem] } })}`,
+          '',
+        ].join('\n\n');
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(frames),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createProviderStream(orConfig, 'key');
+      const replayItems = [];
+      for await (const event of stream({
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-r1',
+        messages: [
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'tool call',
+            timestamp: 0,
+            responsesReasoningItems: [priorItem],
+          },
+          { id: 'u2', role: 'user', content: 'tool result', timestamp: 1 },
+        ],
+        openrouterWebSearch: false,
+      })) {
+        if (event.type === 'responses_reasoning_item') replayItems.push(event.item);
+      }
+
+      assert.deepEqual(capturedBody.include, ['reasoning.encrypted_content']);
+      assert.deepEqual(capturedBody.input[0], priorItem);
+      assert.deepEqual(replayItems, [nextItem]);
+    });
+
     it('merges native function tools with the openrouter:web_search server tool', async () => {
       const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
       delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
@@ -1226,6 +1281,40 @@ describe('streamCompletion', () => {
         assert.equal(capturedUrl, 'http://test.invalid/v1/responses');
         assert.ok(capturedBody.input);
         assert.equal(capturedBody.messages, undefined);
+      });
+
+      it('sends DeepSeek and Kimi through Responses now that encrypted replay is durable', async () => {
+        const seen = [];
+        globalThis.fetch = async (url, opts) => {
+          seen.push({ url: String(url), body: JSON.parse(opts.body) });
+          return {
+            ok: true,
+            status: 200,
+            body: stringToStream(buildResponsesSSE(['ok'])),
+            headers: new Headers(),
+            text: async () => '',
+            json: async () => ({}),
+          };
+        };
+
+        for (const model of ['deepseek/deepseek-r1', 'moonshotai/kimi-k2.7-code']) {
+          const stream = createProviderStream(orConfig, 'key');
+          for await (const _ of stream({
+            provider: 'openrouter',
+            model,
+            messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
+            openrouterWebSearch: false,
+          })) {
+            // drain
+          }
+        }
+
+        assert.equal(seen.length, 2);
+        for (const request of seen) {
+          assert.equal(request.url, 'http://test.invalid/v1/responses');
+          assert.ok(request.body.input);
+          assert.deepEqual(request.body.include, ['reasoning.encrypted_content']);
+        }
       });
 
       it('runs responses-first with a chat fallback when the beta attempt fails', async () => {

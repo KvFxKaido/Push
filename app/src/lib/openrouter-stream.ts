@@ -17,6 +17,7 @@ import type {
   LlmMessage,
   PushStreamEvent,
   PushStreamRequest,
+  ResponsesReasoningItem,
 } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
@@ -64,6 +65,7 @@ type OpenRouterLlmMessage = {
   role: LlmMessage['role'];
   content: string | LlmContentPart[];
   contentBlocks?: LlmContentBlock[];
+  responsesReasoningItems?: ResponsesReasoningItem[];
 };
 
 /**
@@ -72,8 +74,7 @@ type OpenRouterLlmMessage = {
  * endpoint everywhere, e.g. to trial a model before its capability is known).
  * With no override, the shared capability profile decides per model. A
  * Responses body cannot ride /chat/completions, so the body shape MUST be
- * decided where the body is built. Replay-dependent reasoning routes remain
- * on chat until Push can persist encrypted Responses reasoning items.
+ * decided where the body is built.
  */
 export function resolveOpenRouterTransport(model?: string): OpenRouterTransport {
   const raw = (import.meta.env.VITE_OPENROUTER_TRANSPORT ?? '').trim().toLowerCase();
@@ -108,6 +109,9 @@ function toNeutralMessages(messages: OpenRouterLlmMessage[]): LlmMessage[] {
     ...(Array.isArray(message.content) ? { contentParts: message.content } : {}),
     ...(message.contentBlocks && message.contentBlocks.length > 0
       ? { contentBlocks: message.contentBlocks }
+      : {}),
+    ...(message.responsesReasoningItems && message.responsesReasoningItems.length > 0
+      ? { responsesReasoningItems: message.responsesReasoningItems }
       : {}),
   }));
 }
@@ -229,6 +233,7 @@ async function* openrouterResponsesStream(
     },
     {
       geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
+      encryptedReasoningReplay: true,
     },
   ) as unknown as Record<string, unknown>;
   const responseTools = Array.isArray(baseBody.tools)

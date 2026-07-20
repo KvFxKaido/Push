@@ -46,6 +46,7 @@ import { evaluateVerificationState, formatVerificationBlock } from '@/lib/verifi
 import { createId } from '@push/lib/id-utils';
 import { resolveMessageWriteBranch, stampMessageBranch } from '@/lib/chat-message';
 import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { ResponsesReasoningItem } from '@push/lib/provider-contract';
 import type { AssistantTurnResult, SendLoopContext } from './chat-send-types';
 
 export async function processNoToolPath(
@@ -56,6 +57,7 @@ export async function processNoToolPath(
   apiMessages: ChatMessage[],
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): Promise<AssistantTurnResult> {
   const {
     chatId,
@@ -117,6 +119,7 @@ export async function processNoToolPath(
     lockedProvider,
     resolvedModel,
     currentWriteBranch,
+    responsesReasoningItems,
   );
 
   if (action.conversationUpdate) {

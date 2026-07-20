@@ -161,6 +161,13 @@ export interface LlmMessage {
    *  `reasoningBlocks`: this has no provider signature and is only emitted by
    *  route-gated OpenAI-compatible serializers that explicitly support it. */
   reasoningContent?: string;
+  /** Opaque encrypted reasoning output items captured from an OpenAI Responses
+   *  compatible provider. Stateless Responses conversations must replay these
+   *  items verbatim on the assistant turn that produced them. They are kept
+   *  separate from `reasoningBlocks` (Anthropic signed thinking) and
+   *  `reasoningContent` (plain Chat-Completions reasoning text) so serializers
+   *  can route each provider-native contract without conflating them. */
+  responsesReasoningItems?: ResponsesReasoningItem[];
 }
 
 // ---------------------------------------------------------------------------
@@ -261,6 +268,21 @@ export type ReasoningBlock =
   | { type: 'redacted_thinking'; data: string };
 
 /**
+ * Replayable encrypted reasoning item returned by an OpenAI Responses-style
+ * endpoint. `encrypted_content` is the load-bearing opaque payload; the
+ * remaining documented output-item fields are retained so the item can be
+ * submitted as prior `input` without reconstructing provider-authored state.
+ */
+export interface ResponsesReasoningItem {
+  type: 'reasoning';
+  encrypted_content: string;
+  id?: string;
+  summary?: unknown[];
+  content?: unknown[];
+  status?: string;
+}
+
+/**
  * A single web-search citation surfaced by a provider's native search tool.
  * Normalized (flat, camelCase) from the OpenAI-compatible wire shape
  * (`delta.annotations[].url_citation`, which OpenRouter emits for its
@@ -296,6 +318,10 @@ export type PushStreamEvent =
    * replacement.
    */
   | { type: 'reasoning_block'; block: ReasoningBlock }
+  /** Complete encrypted Responses reasoning item. Consumers persist it on the
+   *  current assistant message for stateless multi-turn replay. Additive to
+   *  `reasoning_delta`, which remains the display-only text channel. */
+  | { type: 'responses_reasoning_item'; item: ResponsesReasoningItem }
   /**
    * Emitted when a provider's native web search returns `url_citation`
    * annotations (OpenRouter's `openrouter:web_search` server tool). Additive

@@ -539,6 +539,61 @@ describe('runRoundLoop', () => {
     expect(round0Draft).toBeUndefined();
   });
 
+  it('keeps an encrypted reasoning-only assistant draft when a steer arrives', async () => {
+    const h = makeHarness();
+    const steer: PendingSteerRequest = { text: 'override', requestedAt: 100 };
+    const reasoningItem = {
+      type: 'reasoning' as const,
+      id: 'rs_steer_1',
+      encrypted_content: 'provider-ciphertext',
+      summary: [],
+    };
+    h.dequeuePendingSteer.mockReturnValueOnce(steer).mockReturnValue(null);
+
+    mockStreamAssistantRound
+      .mockResolvedValueOnce({
+        accumulated: '',
+        thinkingAccumulated: 'private reasoning',
+        reasoningBlocks: [],
+        responsesReasoningItems: [reasoningItem],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'done',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
+    mockProcessAssistantTurn.mockResolvedValueOnce({
+      nextApiMessages: [],
+      nextRecoveryState: emptyRecovery,
+      loopAction: 'break',
+      loopCompletedNormally: true,
+    });
+
+    await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+
+    const replayTurn = h.conversationsRef.current['chat-1'].messages.find(
+      (message) => message.responsesReasoningItems?.[0]?.id === reasoningItem.id,
+    );
+    expect(replayTurn).toMatchObject({
+      role: 'assistant',
+      content: '',
+      thinking: 'private reasoning',
+      status: 'done',
+      responsesReasoningItems: [reasoningItem],
+    });
+  });
+
   it('drains a pending steer that arrives after tool dispatch and continues', async () => {
     const h = makeHarness();
     const steer: PendingSteerRequest = { text: 'follow up', requestedAt: 100 };

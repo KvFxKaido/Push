@@ -40,7 +40,9 @@ import type {
   LlmToolResultBlock,
   LlmToolUseBlock,
   ReasoningBlock,
+  ResponsesReasoningItem,
 } from './provider-contract.ts';
+import { parseResponsesReasoningItem } from './responses-reasoning-item.ts';
 import { type ValidationIssue, isStrictModeEnabled } from './protocol-schema.ts';
 import type { LoopPhase } from './runtime-contract.ts';
 import type { VerificationPolicy } from './verification-policy.ts';
@@ -78,6 +80,7 @@ export interface RunCheckpointMessage {
   contentBlocks?: LlmContentBlock[];
   contentParts?: LlmContentPart[];
   reasoningBlocks?: ReasoningBlock[];
+  responsesReasoningItems?: ResponsesReasoningItem[];
   toolUses?: LlmToolUseBlock[];
   toolResults?: LlmToolResultBlock[];
   isToolCall?: boolean;
@@ -201,13 +204,16 @@ export const RUN_CHECKPOINT_OPTIONAL_FIELDS = [
  * `workingMemory`, a benign unknown extra) can't smuggle a secret through.
  * Adoption-time provisioning is the only path for secrets.
  *
- * Exemption: `reasoningBlocks` subtrees are provider-signed verbatim blobs
- * (`ReasoningBlock` union) that must round-trip byte-identical; their keys
- * are provider vocabulary, not ours, so they're skipped.
+ * Exemption: `reasoningBlocks` and `responsesReasoningItems` subtrees are
+ * provider-authored replay blobs that must round-trip byte-identical; their
+ * keys are provider vocabulary, not ours, so they're skipped.
  */
 export const CREDENTIAL_FIELD_PATTERN = /token|secret|password|credential|bearer|api.?key/i;
 
-const CREDENTIAL_SCAN_EXEMPT_KEYS: ReadonlySet<string> = new Set(['reasoningBlocks']);
+const CREDENTIAL_SCAN_EXEMPT_KEYS: ReadonlySet<string> = new Set([
+  'reasoningBlocks',
+  'responsesReasoningItems',
+]);
 const CREDENTIAL_SCAN_MAX_DEPTH = 12;
 
 function scanCredentialKeys(
@@ -393,6 +399,27 @@ function validateMessage(value: unknown, path: string, issues: ValidationIssue[]
   }
   if (value.reasoningBlocks !== undefined && !Array.isArray(value.reasoningBlocks)) {
     issues.push(issue(`${path}.reasoningBlocks`, 'reasoningBlocks must be an array when present'));
+  }
+  if (value.responsesReasoningItems !== undefined) {
+    if (!Array.isArray(value.responsesReasoningItems)) {
+      issues.push(
+        issue(
+          `${path}.responsesReasoningItems`,
+          'responsesReasoningItems must be an array when present',
+        ),
+      );
+    } else {
+      value.responsesReasoningItems.forEach((item, i) => {
+        if (!parseResponsesReasoningItem(item)) {
+          issues.push(
+            issue(
+              `${path}.responsesReasoningItems[${i}]`,
+              'invalid encrypted Responses reasoning item',
+            ),
+          );
+        }
+      });
+    }
   }
   if (value.toolUses !== undefined) {
     if (!Array.isArray(value.toolUses)) {

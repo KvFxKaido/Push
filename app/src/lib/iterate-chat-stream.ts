@@ -41,6 +41,7 @@ import type {
   PreCompactEvent,
   PushStream,
   ReasoningBlock,
+  ResponsesReasoningItem,
   StreamUsage,
   UrlCitation,
 } from '@push/lib/provider-contract';
@@ -110,6 +111,8 @@ export interface IterateChatStreamCallbacks {
    *  turn's request body must echo back. Consumers persist these on the
    *  assistant message so chained turns survive. */
   onReasoningBlock?: (block: ReasoningBlock) => void;
+  /** Fired once per replayable encrypted Responses reasoning item. */
+  onResponsesReasoningItem?: (item: ResponsesReasoningItem) => void;
   /** Fired once per complete provider-native tool/function call. */
   onNativeToolCall?: (call: NativeToolCall) => void;
   /** Fired when a provider's native web search returns `url_citation`
@@ -163,6 +166,7 @@ export async function iterateChatStream<M extends LlmMessage>(
     onError,
     onThinkingToken,
     onReasoningBlock,
+    onResponsesReasoningItem,
     onNativeToolCall,
     onCitations,
   } = callbacks;
@@ -288,6 +292,9 @@ export async function iterateChatStream<M extends LlmMessage>(
             // assistant message so the next turn's request can echo it
             // back. Doesn't count as user-visible content.
             onReasoningBlock?.(event.block);
+            break;
+          case 'responses_reasoning_item':
+            onResponsesReasoningItem?.(event.item);
             break;
           case 'tool_call_delta':
             // Provider is mid-stream on a native tool-call payload.

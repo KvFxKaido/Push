@@ -31,6 +31,7 @@ import type {
   LlmToolResultBlock,
   LlmToolUseBlock,
   ReasoningBlock,
+  ResponsesReasoningItem,
   UrlCitation,
 } from '../lib/provider-contract.ts';
 import type { DistillResult } from '../lib/context-transformer.ts';
@@ -51,6 +52,8 @@ export interface Message {
    *  upgrades don't drop data the moment a provider starts surfacing it.
    *  See `ReasoningBlock` in `lib/provider-contract.ts`. */
   reasoningBlocks?: ReasoningBlock[];
+  /** Encrypted Responses reasoning items persisted for stateless replay. */
+  responsesReasoningItems?: ResponsesReasoningItem[];
   /** Web-search sources surfaced by a provider's native search (OpenRouter's
    *  `openrouter:web_search`). Display-only — rendered as a "Sources" footer
    *  in the terminal, never sent back to the model. Deduped by url. */

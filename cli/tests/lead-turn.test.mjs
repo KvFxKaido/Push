@@ -431,6 +431,35 @@ describe('runLeadKernelTurn — leadMode run of the shared kernel', needsLoopbac
     assert.equal(assistant.reasoningContent, 'add the two twos');
   });
 
+  it('builds a structured replay seed for persisted encrypted Responses reasoning', () => {
+    const item = {
+      type: 'reasoning',
+      id: 'rs_1',
+      encrypted_content: 'opaque-ciphertext',
+    };
+    const messages = [
+      { role: 'user', content: 'Inspect the repository.' },
+      {
+        role: 'assistant',
+        content: 'I need to read a file.',
+        responsesReasoningItems: [item],
+      },
+      { role: 'user', content: 'current question' },
+    ];
+
+    const seed = buildLeadReasoningReplaySeed(
+      'current question',
+      messages,
+      'Task: current question',
+    );
+
+    assert.ok(seed, 'encrypted reasoning should select the structured seed');
+    assert.deepEqual(
+      seed.find((message) => message.role === 'assistant')?.responsesReasoningItems,
+      [item],
+    );
+  });
+
   it('bounds replay by evicting complete oldest turns without clipping reasoning', () => {
     const oldReasoning = 'old-reasoning-'.repeat(300);
     const recentReasoning = 'recent-reasoning-'.repeat(300);

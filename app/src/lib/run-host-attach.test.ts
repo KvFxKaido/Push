@@ -154,6 +154,14 @@ describe('checkpointMessagesToChatMessages', () => {
     ]);
     expect(msg.reasoningBlocks).toEqual(blocks);
   });
+
+  it('keeps encrypted Responses reasoning items for provider replay', () => {
+    const items = [{ type: 'reasoning' as const, encrypted_content: 'opaque-ciphertext' }];
+    const [msg] = checkpointMessagesToChatMessages([
+      { role: 'assistant', content: 'x', responsesReasoningItems: items },
+    ]);
+    expect(msg.responsesReasoningItems).toEqual(items);
+  });
 });
 
 describe('planTranscriptHydration', () => {

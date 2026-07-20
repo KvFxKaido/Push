@@ -99,6 +99,13 @@ export function toRunCheckpointMessages(
     if (msg.role === 'assistant' && msg.reasoningBlocks && msg.reasoningBlocks.length > 0) {
       entry.reasoningBlocks = msg.reasoningBlocks;
     }
+    if (
+      msg.role === 'assistant' &&
+      msg.responsesReasoningItems &&
+      msg.responsesReasoningItems.length > 0
+    ) {
+      entry.responsesReasoningItems = msg.responsesReasoningItems;
+    }
     if (msg.isToolCall) entry.isToolCall = true;
     if (msg.isToolResult) entry.isToolResult = true;
 

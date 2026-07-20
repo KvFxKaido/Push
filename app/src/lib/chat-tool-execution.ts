@@ -11,6 +11,7 @@ import type { ChatMessage, ChatCard, ReasoningBlock, ToolExecutionResult } from 
 import type { ToolDispatchBinding } from '@/lib/local-daemon-sandbox-client';
 import type { ApprovalGateRegistry } from '@/lib/approval-gates';
 import type { AgentRole } from '@push/lib/runtime-contract';
+import type { ResponsesReasoningItem } from '@push/lib/provider-contract';
 import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import type { ApprovalCallback } from '@push/lib/tool-execution-runtime';
 import type { ExecutionMode } from '@push/lib/capabilities';
@@ -419,9 +420,14 @@ export function handleRecoveryResult(
   provider: ActiveProvider,
   model: string | undefined,
   currentBranch?: string,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): RecoveryAction {
   const reasoningBlocksField =
     reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {};
+  const responsesReasoningItemsField =
+    responsesReasoningItems.length > 0
+      ? { responsesReasoningItems: [...responsesReasoningItems] }
+      : {};
   // --- Telemetry ---
   const diagnosis =
     recoveryResult.kind === 'telemetry_only' ||
@@ -494,6 +500,7 @@ export function handleRecoveryResult(
           status: 'done' as const,
           ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
           ...reasoningBlocksField,
+          ...responsesReasoningItemsField,
         },
         feedbackMsg,
       ],
@@ -566,6 +573,7 @@ export function handleDroppedCandidatesError(
   provider: ActiveProvider,
   model: string | undefined,
   currentBranch?: string,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): MultipleMutationsErrorAction {
   const dropped = detected.droppedCandidates;
   const primary = dropped[0];
@@ -632,6 +640,9 @@ export function handleDroppedCandidatesError(
         status: 'done' as const,
         ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+        ...(responsesReasoningItems.length > 0
+          ? { responsesReasoningItems: [...responsesReasoningItems] }
+          : {}),
       },
       errorMessage,
     ],
@@ -678,6 +689,7 @@ export function handleMultipleMutationsError(
   provider: ActiveProvider,
   currentBranch?: string,
   runtimeIntervention?: RuntimeIntervention,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): MultipleMutationsErrorAction {
   // `sideEffects` ONLY count as rejected ordering calls when actual
   // ordering extras are present (i.e. the model exceeded the chain cap
@@ -761,6 +773,9 @@ export function handleMultipleMutationsError(
         status: 'done' as const,
         ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+        ...(responsesReasoningItems.length > 0
+          ? { responsesReasoningItems: [...responsesReasoningItems] }
+          : {}),
       },
       errorMessage,
     ],
@@ -790,6 +805,7 @@ export function buildLoopSteerInjection(
   apiMessages: readonly ChatMessage[],
   provider: ActiveProvider,
   currentBranch?: string,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): MultipleMutationsErrorAction {
   const toolMeta = buildToolMeta({
     toolName: 'loop_detected',
@@ -822,6 +838,9 @@ export function buildLoopSteerInjection(
         status: 'done' as const,
         ...(currentBranch !== undefined ? { branch: currentBranch } : {}),
         ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+        ...(responsesReasoningItems.length > 0
+          ? { responsesReasoningItems: [...responsesReasoningItems] }
+          : {}),
       },
       errorMessage,
     ],

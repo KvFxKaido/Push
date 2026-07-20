@@ -8,6 +8,7 @@
 
 import type { PushStreamEvent, StreamUsage, UrlCitation } from './provider-contract.js';
 import { parseNativeToolCallArgs } from './openai-sse-pump.js';
+import { parseResponsesReasoningItem } from './responses-reasoning-item.js';
 
 export interface OpenAIResponsesSSEPumpOptions {
   body: ReadableStream<Uint8Array>;
@@ -178,6 +179,7 @@ export async function* openAIResponsesSSEPump(
   let pendingUsage: StreamUsage | undefined;
   let emittedToolCall = false;
   const emittedCitationKeys = new Set<string>();
+  const emittedReasoningItemKeys = new Set<string>();
   const pendingToolCalls = new Map<number, PendingResponseToolCall>();
 
   function newCitations(citations: UrlCitation[]): UrlCitation[] {
@@ -240,6 +242,22 @@ export async function* openAIResponsesSSEPump(
     for (const index of pendingToolCalls.keys()) {
       yield* flushToolCall(index);
     }
+  }
+
+  function* emitReasoningItem(value: unknown): Generator<PushStreamEvent> {
+    const item = parseResponsesReasoningItem(value);
+    if (!item) return;
+    const key = item.id ? `id:${item.id}` : `encrypted:${item.encrypted_content}`;
+    if (emittedReasoningItemKeys.has(key)) return;
+    emittedReasoningItemKeys.add(key);
+    yield { type: 'responses_reasoning_item', item };
+  }
+
+  function* emitReasoningItemsFromResponse(
+    response: Record<string, unknown>,
+  ): Generator<PushStreamEvent> {
+    if (!Array.isArray(response.output)) return;
+    for (const item of response.output) yield* emitReasoningItem(item);
   }
 
   function hasNamedToolCall(index: number): boolean {
@@ -351,6 +369,8 @@ export async function* openAIResponsesSSEPump(
         if (type === 'response.output_item.done') {
           yield* flushToolCall(outputIndex);
         }
+      } else if (type === 'response.output_item.done') {
+        yield* emitReasoningItem(item);
       }
       return;
     }
@@ -397,6 +417,7 @@ export async function* openAIResponsesSSEPump(
           : undefined;
       pendingUsage = usage ?? pendingUsage;
       if (response) {
+        yield* emitReasoningItemsFromResponse(response);
         upsertToolCallsFromCompletedResponse(response);
         const citations = newCitations(responseOutputAnnotations(response));
         if (citations.length > 0) {

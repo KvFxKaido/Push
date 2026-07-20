@@ -206,9 +206,8 @@ conformanceColumn('structuredOutput', () => {
 });
 
 // === OpenAI-family wire transport ===========================================
-// OpenRouter defaults models to Responses (with a pre-output chat fallback), but
-// replay-dependent DeepSeek/Kimi routes stay on Chat until Push can retain their
-// encrypted Responses reasoning items. Keep both shapes in the matrix.
+// OpenRouter defaults every model to Responses (with a pre-output chat fallback)
+// now that encrypted reasoning output items survive stateless replay.
 conformanceColumn('openaiWire', () => {
   it('Responses tier emits an input body and no messages body', () => {
     const model = 'openai/gpt-5.4';
@@ -223,17 +222,17 @@ conformanceColumn('openaiWire', () => {
     expect(body.messages).toBeUndefined();
   });
 
-  it('Chat Completions tier emits a messages body and no input body', () => {
+  it('replay-dependent reasoning models use the Responses tier too', () => {
     const model = 'deepseek/deepseek-r1';
     const profile = resolvePushCapabilityProfile('openrouter', model);
-    expect(profile.openaiWire).toBe('chat-completions');
+    expect(profile.openaiWire).toBe('responses');
 
-    const body = toOpenAIChat(req('openrouter', model)) as {
+    const body = toOpenAIResponses(req('openrouter', model)) as {
       messages?: unknown;
       input?: unknown;
     };
-    expect(body.messages).toBeDefined();
-    expect(body.input).toBeUndefined();
+    expect(body.input).toBeDefined();
+    expect(body.messages).toBeUndefined();
   });
 });
 

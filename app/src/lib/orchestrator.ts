@@ -26,6 +26,7 @@ import {
   type CacheControl,
   EPHEMERAL_CACHE_CONTROL,
   type LlmContentBlock,
+  type ResponsesReasoningItem,
 } from '@push/lib/provider-contract';
 import { materializeToolContentBlocks } from '@push/lib/content-blocks';
 import { deriveUserGoalAnchor } from '@push/lib/user-goal-anchor';
@@ -219,6 +220,7 @@ interface LLMMessage {
   intentHint?: string | null;
   reasoning_blocks?: LLMReasoningBlock[];
   reasoning_content?: string;
+  responsesReasoningItems?: ResponsesReasoningItem[];
 }
 
 /** djb2 over the goal-anchor content keeps the synthetic id stable across
@@ -790,6 +792,12 @@ export function toLLMMessages(
       emitReasoningContent && msg.role === 'assistant' && reasoningReplay.length > 0
         ? reasoningReplay
         : undefined;
+    const responsesReasoningItems =
+      msg.role === 'assistant' &&
+      msg.responsesReasoningItems &&
+      msg.responsesReasoningItems.length > 0
+        ? msg.responsesReasoningItems
+        : undefined;
 
     // Prefer pre-converted `contentParts` (the Coder kernel's surface-agnostic
     // multimodal turn — it has no `AttachmentData`); fall back to rebuilding
@@ -813,6 +821,7 @@ export function toLLMMessages(
         contentBlocks,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
         ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        ...(responsesReasoningItems ? { responsesReasoningItems } : {}),
       });
     } else if (contentParts) {
       llmMessages.push({
@@ -820,6 +829,7 @@ export function toLLMMessages(
         content: contentParts,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
         ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        ...(responsesReasoningItems ? { responsesReasoningItems } : {}),
       });
     } else {
       // Simple text message (existing behavior)
@@ -833,7 +843,8 @@ export function toLLMMessages(
         msg.role === 'assistant' &&
         !msg.content.trim() &&
         !reasoningBlocks &&
-        !reasoningContent
+        !reasoningContent &&
+        !responsesReasoningItems
       ) {
         continue;
       }
@@ -842,6 +853,7 @@ export function toLLMMessages(
         content: msg.content,
         ...(reasoningBlocks ? { reasoning_blocks: reasoningBlocks } : {}),
         ...(reasoningContent ? { reasoning_content: reasoningContent } : {}),
+        ...(responsesReasoningItems ? { responsesReasoningItems } : {}),
       });
     }
   }

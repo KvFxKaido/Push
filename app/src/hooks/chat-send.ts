@@ -28,7 +28,7 @@ import {
   type SimilarityLoopDetector,
 } from '@push/lib/loop-detection';
 import type { ChatMessage, ReasoningBlock } from '@/types';
-import type { NativeToolCall } from '@push/lib/provider-contract';
+import type { NativeToolCall, ResponsesReasoningItem } from '@push/lib/provider-contract';
 import {
   createLoopLadderState,
   createTurnRunContext,
@@ -99,6 +99,7 @@ export async function processAssistantTurn(
   loopDetector: SimilarityLoopDetector = createSimilarityLoopDetector(),
   loopLadder: LoopLadderState = createLoopLadderState(),
   nativeToolCalls: readonly NativeToolCall[] = [],
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): Promise<AssistantTurnResult> {
   const detected =
     nativeToolCalls.length > 0
@@ -122,6 +123,7 @@ export async function processAssistantTurn(
     apiMessages,
     recoveryState,
     ctx,
+    responsesReasoningItems,
   );
   if (loopResult) return loopResult;
 
@@ -139,6 +141,7 @@ export async function processAssistantTurn(
       apiMessages,
       recoveryState,
       ctx,
+      responsesReasoningItems,
     );
   }
 
@@ -157,6 +160,7 @@ export async function processAssistantTurn(
       apiMessages,
       recoveryState,
       ctx,
+      responsesReasoningItems,
     );
   }
 
@@ -180,6 +184,7 @@ export async function processAssistantTurn(
       ctx,
       recoveryState,
       turnCtx,
+      responsesReasoningItems,
     );
   }
 
@@ -200,6 +205,7 @@ export async function processAssistantTurn(
       apiMessages,
       ctx,
       recoveryState,
+      responsesReasoningItems,
     );
   }
 
@@ -213,5 +219,6 @@ export async function processAssistantTurn(
     ctx,
     recoveryState,
     turnCtx,
+    responsesReasoningItems,
   );
 }

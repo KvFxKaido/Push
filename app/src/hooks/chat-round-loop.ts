@@ -44,6 +44,7 @@ import {
 } from '@push/lib/loop-detection';
 import { createId } from '@push/lib/id-utils';
 import { type ToolCallRecoveryState } from '@/lib/tool-call-recovery';
+import type { ResponsesReasoningItem } from '@push/lib/provider-contract';
 import { resolveMessageWriteBranch } from '@/lib/chat-message';
 import type { ChatMessage, ReasoningBlock, RunEventInput } from '@/types';
 import {
@@ -80,6 +81,7 @@ interface SteerDrainArgs {
     accumulated: string;
     thinkingAccumulated: string;
     reasoningBlocks: ReasoningBlock[];
+    responsesReasoningItems: ResponsesReasoningItem[];
   } | null;
 }
 
@@ -132,8 +134,10 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
   let nextApiMessages: ChatMessage[];
 
   if (draftAssistant) {
-    const { accumulated, thinkingAccumulated, reasoningBlocks } = draftAssistant;
-    const shouldKeepAssistantDraft = accumulated.trim().length > 0;
+    const { accumulated, thinkingAccumulated, reasoningBlocks, responsesReasoningItems } =
+      draftAssistant;
+    const shouldKeepAssistantDraft =
+      accumulated.trim().length > 0 || responsesReasoningItems.length > 0;
 
     loopCtx.setConversations((prev) => {
       const conv = prev[chatId];
@@ -147,6 +151,8 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
             content: accumulated,
             thinking: thinkingAccumulated || undefined,
             reasoningBlocks: reasoningBlocks.length > 0 ? reasoningBlocks : undefined,
+            responsesReasoningItems:
+              responsesReasoningItems.length > 0 ? responsesReasoningItems : undefined,
             status: 'done',
           };
         } else {
@@ -177,6 +183,9 @@ function drainPendingSteerIfAny(args: SteerDrainArgs, deps: SteerDrainDeps): Ste
               status: 'done' as const,
               ...(currentWriteBranch !== undefined ? { branch: currentWriteBranch } : {}),
               ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+              ...(responsesReasoningItems.length > 0
+                ? { responsesReasoningItems: [...responsesReasoningItems] }
+                : {}),
             },
           ]
         : []),
@@ -407,8 +416,14 @@ export async function runRoundLoop(
     const phase = round === 0 ? 'Thinking…' : 'Responding...';
     loopCtx.updateAgentStatus({ active: true, phase, verbs: vibeVerbs }, { chatId });
 
-    const { accumulated, thinkingAccumulated, reasoningBlocks, nativeToolCalls, error } =
-      await streamAssistantRound(round, apiMessages, loopCtx, vibeVerbs);
+    const {
+      accumulated,
+      thinkingAccumulated,
+      reasoningBlocks,
+      responsesReasoningItems = [],
+      nativeToolCalls,
+      error,
+    } = await streamAssistantRound(round, apiMessages, loopCtx, vibeVerbs);
 
     if (abortRef.current) {
       markPartialAssistantInvisibleOnAbort(loopCtx);
@@ -463,7 +478,12 @@ export async function runRoundLoop(
       {
         round,
         apiMessages,
-        draftAssistant: { accumulated, thinkingAccumulated, reasoningBlocks },
+        draftAssistant: {
+          accumulated,
+          thinkingAccumulated,
+          reasoningBlocks,
+          responsesReasoningItems,
+        },
       },
       { loopCtx, dequeuePendingSteer, pendingSteersByChatRef },
     );
@@ -492,6 +512,7 @@ export async function runRoundLoop(
       loopDetector,
       loopLadder,
       nativeToolCalls,
+      responsesReasoningItems,
     );
 
     apiMessages = turnResult.nextApiMessages;

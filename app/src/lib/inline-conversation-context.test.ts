@@ -92,6 +92,16 @@ describe('buildInlineConversationSeed', () => {
     expect(signed.reasoningBlocks).toEqual(reasoningBlocks);
   });
 
+  it('preserves encrypted Responses reasoning items', () => {
+    const responsesReasoningItems = [
+      { type: 'reasoning' as const, encrypted_content: 'opaque-ciphertext' },
+    ];
+    const [seed] = buildInlineConversationSeed([
+      msg({ role: 'assistant', content: 'answer', responsesReasoningItems }),
+    ]);
+    expect(seed.responsesReasoningItems).toEqual(responsesReasoningItems);
+  });
+
   // Codex P2 (#1420): a native function-call round can persist an assistant
   // turn with empty content, private reasoning, and the call in sidecars.
   // That reasoning must not be promoted into a user-visible assistant reply.

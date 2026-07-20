@@ -79,6 +79,35 @@ describe('chat-tool-execution: apiMessages reasoningBlocks round-trip', () => {
     expect(assistantEntry?.reasoningBlocks).toEqual(blocks);
   });
 
+  it('handleRecoveryResult carries encrypted Responses reasoning onto a continued turn', () => {
+    const items = [{ type: 'reasoning' as const, encrypted_content: 'opaque-ciphertext' }];
+    const action = handleRecoveryResult(
+      {
+        kind: 'feedback',
+        feedback: {
+          mode: 'unimplemented_tool',
+          toolName: 'mystery_tool',
+          source: 'sandbox',
+          content: 'not implemented',
+          markMalformed: false,
+        },
+        nextState: { diagnosisRetries: 0, recoveryAttempted: true },
+      },
+      'assistant text',
+      'thinking',
+      [],
+      [userMessage('hi')],
+      'openrouter',
+      'deepseek/deepseek-r1',
+      undefined,
+      items,
+    );
+
+    expect(action.apiMessages.find((m) => m.role === 'assistant')?.responsesReasoningItems).toEqual(
+      items,
+    );
+  });
+
   it('omits the field when no reasoning blocks were captured', () => {
     const apiMessages: ChatMessage[] = [userMessage('do two mutations')];
     const action = handleMultipleMutationsError(

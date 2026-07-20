@@ -1149,16 +1149,23 @@ describe('runCoderAgent (PushStream consumer)', () => {
     expect(toolCallTurn?.reasoningContent).toBe(reasoning);
   });
 
-  it('carries signed reasoning blocks onto the tool-call turn for Anthropic replay', async () => {
+  it('carries provider reasoning sidecars onto the tool-call turn for replay', async () => {
     const reasoningBlock = {
       type: 'thinking' as const,
       text: 'Need the file contents before editing.',
       signature: 'sig-thinking-1',
     };
+    const responsesReasoningItem = {
+      type: 'reasoning' as const,
+      id: 'rs_coder_1',
+      encrypted_content: 'provider-ciphertext',
+      summary: [],
+    };
     const { stream } = makePushStream([
       [
         { type: 'reasoning_delta' as const, text: reasoningBlock.text },
         { type: 'reasoning_block' as const, block: reasoningBlock },
+        { type: 'responses_reasoning_item' as const, item: responsesReasoningItem },
         { type: 'text_delta' as const, text: 'Reading the target files.' },
         { type: 'done' as const, finishReason: 'stop' as const },
       ],
@@ -1199,6 +1206,7 @@ describe('runCoderAgent (PushStream consumer)', () => {
     const toolCallTurn = (checkpointMessages[0] ?? []).find((m) => m.isToolCall);
     expect(toolCallTurn?.toolUses?.length).toBeGreaterThan(0);
     expect(toolCallTurn?.reasoningBlocks).toEqual([reasoningBlock]);
+    expect(toolCallTurn?.responsesReasoningItems).toEqual([responsesReasoningItem]);
   });
 
   it('round-trips Gemini thoughtSignature through delegated Coder tool_use sidecars', async () => {

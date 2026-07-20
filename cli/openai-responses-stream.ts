@@ -19,6 +19,7 @@ import { toOpenAIResponses } from '../lib/openai-responses-serializer.ts';
 import { openAIResponsesSSEPump } from '../lib/openai-responses-sse-pump.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
+import { parseResponsesReasoningItem } from '../lib/responses-reasoning-item.ts';
 import type { ProviderConfig } from './provider.ts';
 import { CliProviderError, type CliProviderStreamOptions } from './openai-stream.ts';
 
@@ -62,6 +63,7 @@ async function* cliOpenAIResponsesStream(
       Array.isArray(req.tools) &&
       req.tools.length > 0 &&
       isGeminiModelId(model),
+    encryptedReasoningReplay: config.id === 'openrouter',
   }) as unknown as Record<string, unknown>;
   const responseTools = Array.isArray(baseBody.tools)
     ? [...(baseBody.tools as Record<string, unknown>[])]
@@ -104,7 +106,11 @@ async function* cliOpenAIResponsesStream(
   if (!response.body) {
     type FallbackBody = {
       output_text?: string;
-      output?: Array<{ type?: string; content?: Array<{ type?: string; text?: string }> }>;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+        [key: string]: unknown;
+      }>;
       usage?: {
         input_tokens?: number;
         output_tokens?: number;
@@ -117,6 +123,12 @@ async function* cliOpenAIResponsesStream(
       fallback = (await response.json()) as FallbackBody;
     } catch {
       /* empty / non-JSON body */
+    }
+    for (const outputItem of fallback?.output ?? []) {
+      const reasoningItem = parseResponsesReasoningItem(outputItem);
+      if (reasoningItem) {
+        yield { type: 'responses_reasoning_item', item: reasoningItem };
+      }
     }
     const text =
       fallback?.output_text ??

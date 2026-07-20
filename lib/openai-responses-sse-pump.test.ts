@@ -160,6 +160,62 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('emits a complete encrypted reasoning item once across item-done and terminal output', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+    const item = {
+      type: 'reasoning',
+      id: 'rs_1',
+      encrypted_content: 'opaque-ciphertext',
+      summary: [{ type: 'summary_text', text: 'summary' }],
+      status: 'completed',
+    };
+
+    s.push({ type: 'response.output_item.done', output_index: 0, item });
+    s.push({
+      type: 'response.completed',
+      response: { status: 'completed', output: [item] },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'responses_reasoning_item', item },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('recovers an encrypted reasoning item from terminal output when no item event arrived', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+    const item = { type: 'reasoning', encrypted_content: 'terminal-only-ciphertext' };
+
+    s.push({
+      type: 'response.completed',
+      response: { status: 'completed', output: [item] },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'responses_reasoning_item', item },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('drops malformed or unencrypted reasoning items', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'reasoning', id: 'rs_missing_ciphertext' },
+    });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([{ type: 'done', finishReason: 'stop', usage: undefined }]);
+  });
+
   it('surfaces url_citation annotations as citations events (native web search)', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

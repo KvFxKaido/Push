@@ -5,6 +5,7 @@ import type {
   PushStream,
   PushStreamEvent,
   ReasoningBlock,
+  ResponsesReasoningItem,
   UrlCitation,
 } from '../lib/provider-contract.ts';
 import {
@@ -70,6 +71,8 @@ interface ChatMessage {
    *  Anthropic bridge. The OpenAI-compat adapter ignores the field on the
    *  wire — see `cli/openai-stream.ts` for the rationale. */
   reasoningBlocks?: ReasoningBlock[];
+  reasoningContent?: string;
+  responsesReasoningItems?: ResponsesReasoningItem[];
 }
 
 export interface StreamCompletionOptions {
@@ -83,6 +86,8 @@ export interface StreamCompletionOptions {
    *  with `invalid_request_error`. Adapters that don't surface signed
    *  reasoning (every OpenAI-compat path today) never call this. */
   onReasoningBlock?: ((block: ReasoningBlock) => void) | null;
+  /** Replay metadata emitted by stateless Responses providers. */
+  onResponsesReasoningItem?: ((item: ResponsesReasoningItem) => void) | null;
   /** Fires when a provider's native web search returns `url_citation`
    *  annotations (OpenRouter's `openrouter:web_search`). Display-only —
    *  callers accumulate these (deduped by url) and render a "Sources"
@@ -458,6 +463,7 @@ export async function streamCompletion(
 ): Promise<string> {
   const onThinkingToken = options?.onThinkingToken ?? null;
   const onReasoningBlock = options?.onReasoningBlock ?? null;
+  const onResponsesReasoningItem = options?.onResponsesReasoningItem ?? null;
   const onCitations = options?.onCitations ?? null;
   let lastError: Error | undefined;
 
@@ -509,6 +515,10 @@ export async function streamCompletion(
         if (m.reasoningBlocks && m.reasoningBlocks.length > 0) {
           out.reasoningBlocks = m.reasoningBlocks;
         }
+        if (m.reasoningContent) out.reasoningContent = m.reasoningContent;
+        if (m.responsesReasoningItems && m.responsesReasoningItems.length > 0) {
+          out.responsesReasoningItems = m.responsesReasoningItems;
+        }
         return out;
       });
 
@@ -543,6 +553,9 @@ export async function streamCompletion(
             // capture, extended-thinking + tool-use chains 400 on the
             // second turn.
             onReasoningBlock?.(event.block);
+            break;
+          case 'responses_reasoning_item':
+            onResponsesReasoningItem?.(event.item);
             break;
           case 'tool_call_delta':
             // Structural progress signal — not surfaced through the legacy
