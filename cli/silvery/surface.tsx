@@ -131,10 +131,9 @@ export function resolveSurfaceTranscriptHeight(
     SURFACE_COMPOSER_MAX_ROWS,
     Math.max(SURFACE_COMPOSER_MIN_ROWS, chrome.composerRows ?? SURFACE_COMPOSER_MAX_ROWS),
   );
-  const footerRows = Math.min(
-    SURFACE_FOOTER_MAX_ROWS,
-    Math.max(1, chrome.footerRows ?? SURFACE_FOOTER_MAX_ROWS),
-  );
+  // Trust the caller's measured footer height (it can wrap past two rows on a
+  // very narrow terminal); the default reserves the worst case when unmeasured.
+  const footerRows = Math.max(1, chrome.footerRows ?? SURFACE_FOOTER_MAX_ROWS);
   const errorRows = Math.max(0, chrome.errorRows ?? 0);
   const completionRows = Math.max(0, chrome.completionRows ?? 0);
   const chromeRows =
@@ -1456,6 +1455,29 @@ function CompletionRail({ state, columns }: { state: CompletionState; columns: n
   );
 }
 
+/**
+ * Visual-line height the {@link CompletionRail} will occupy at `columns`. The
+ * transcript budget sizes itself from this, so it must track what the rail
+ * actually renders — keep this in sync with CompletionRail's windowing above.
+ * Char-based `countVisualLines` is an upper bound on the flexbox's element-wise
+ * wrap, so it over-reserves rather than clips.
+ */
+export function completionRailRows(state: CompletionState, columns: number): number {
+  const maxVisible = Math.max(1, Math.floor((columns - 15) / 16));
+  const cursor = state.index >= 0 ? state.index : 0;
+  const { start, end } = pickerWindow(state.items.length, cursor, maxVisible);
+  const glyphs = resolveGlyphs(detectUnicode());
+  const prefix = state.index >= 0 ? `tab ${state.index + 1}/${state.items.length}` : 'tab complete';
+  const body = state.items
+    .slice(start, end)
+    .map((item, offset) => {
+      const selected = start + offset === state.index;
+      return `${offset > 0 ? ' ' : ''}${selected ? `${glyphs.human} ` : ''}${truncateCompletionLabel(item, 14)}`;
+    })
+    .join('');
+  return Math.max(1, countVisualLines(`${prefix} · ${body}`, Math.max(1, columns)));
+}
+
 export interface PushSurfaceHook {
   getState?: () => {
     paletteOpen: boolean;
@@ -1820,10 +1842,26 @@ export function PushSurface({
   });
 
   const completionState = inputActive ? completer.getState() : null;
+
+  // Resolve the footer scope up front: the transcript budget reserves the
+  // footer's ACTUAL height, which differs by scope (the composer scope is a
+  // single status row; modal/running scopes render the keys+status footer, which
+  // can wrap on narrow terminals).
+  let scope: FooterScope = 'composer';
+  if (retainedInteraction.current?.kind === 'approval' && interactionMotion.visible)
+    scope = 'approval';
+  else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
+    scope = 'question';
+  else if (configMotion.visible) scope = 'picker';
+  else if (pickerMotion.visible) scope = 'picker';
+  else if (paletteMotion.visible) scope = 'palette';
+  else if (snapshot.running) scope = 'running';
+
   // Measure the actual chrome so the transcript fills exactly to the composer
-  // (bottom-pinned, no dead space). The composer (TextArea, 1→3 rows) tracks its
-  // wrapped input line count; the error line wraps at the viewport width; the
-  // composer-scope footer is a single status row (no keybind strip).
+  // (bottom-pinned, no dead space) AND never under-budgets a wrapping element —
+  // an undercount pushes the footer off the bottom, which is the very thing the
+  // pin is meant to prevent. Each value is the real wrapped visual-line count of
+  // what renders below the transcript.
   const composerContentRows =
     input.length === 0
       ? 1
@@ -1831,14 +1869,24 @@ export function PushSurface({
           SURFACE_COMPOSER_MAX_ROWS,
           Math.max(1, countVisualLines(input, Math.max(1, columns - 2))),
         );
+  // The error <Text> renders every wrapped line (no truncation), so budget its
+  // FULL count — capping below the render would clip the footer.
   const errorRows = snapshot.error
-    ? Math.min(3, Math.max(1, countVisualLines(String(snapshot.error), Math.max(1, columns - 2))))
+    ? Math.max(1, countVisualLines(String(snapshot.error), Math.max(1, columns - 2)))
     : 0;
+  // Composer scope: one status row (status truncated to width). Other scopes:
+  // the keybind strip drives the height (status is truncated to fit beside it),
+  // and it can wrap on a narrow terminal.
+  const footerRows =
+    scope === 'composer'
+      ? 1
+      : Math.max(1, countVisualLines(footerKeybinds(scope), Math.max(1, columns)));
+  const completionRows = completionState ? completionRailRows(completionState, columns) : 0;
   const transcriptHeight = resolveSurfaceTranscriptHeight(rows, {
     composerRows: composerContentRows,
-    footerRows: 1,
+    footerRows,
     errorRows,
-    completionRows: completionState ? 1 : 0,
+    completionRows,
   });
   // Composer frame: the rule (the frame edge the height budget reserves)
   // and the human caret (❯) that law 2 names the composer cursor — the one accent
@@ -1851,16 +1899,6 @@ export function PushSurface({
       : Math.floor((Date.now() - snapshot.startedAt) / MOTION_TICKS.elapsedMs) *
         MOTION_TICKS.elapsedMs;
   const elapsed = snapshot.startedAt === null ? '' : ` · ${formatElapsed(elapsedMs)}`;
-
-  let scope: FooterScope = 'composer';
-  if (retainedInteraction.current?.kind === 'approval' && interactionMotion.visible)
-    scope = 'approval';
-  else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
-    scope = 'question';
-  else if (configMotion.visible) scope = 'picker';
-  else if (pickerMotion.visible) scope = 'picker';
-  else if (paletteMotion.visible) scope = 'palette';
-  else if (snapshot.running) scope = 'running';
 
   return (
     <PushThemeProvider themeName={snapshot.theme}>

@@ -4449,6 +4449,172 @@ describe('silvery surface — constrained-height chrome budget', () => {
       else process.env.LANG = previousLang;
     }
   });
+
+  // Mount PushSurface into a fake terminal and read the settled frame back
+  // through a VirtualTerminal (cursor-addressed, like production on a real TTY).
+  const mountFrame = async ({ columns, terminalRows, snapshot, composerInput, settleOn }) => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface } = await import('../silvery/surface.tsx');
+    const stdout = new FakeStdout(columns, terminalRows);
+    const hook = {};
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      copyLastResponse: () => undefined,
+      openPicker: () => undefined,
+      openConfigEditor: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const previousLang = process.env.LANG;
+    process.env.LANG = 'C.UTF-8';
+    const handle = Silvery.render(
+      React.createElement(PushSurface, { controller, hook }),
+      { stdout, stdin: new FakeStdin() },
+      {
+        exitOnCtrlC: false,
+        alternateScreen: false,
+        mode: 'fullscreen',
+        mouse: false,
+        nonTTYMode: 'tty',
+      },
+    );
+    const lifecycle = handle.run();
+    const instance = await handle;
+    await sleep(80);
+    const readFrameRows = () => {
+      const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
+      terminal.applyAnsi(stdout.bytes);
+      return Array.from({ length: terminalRows }, (_, y) =>
+        Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
+          .join('')
+          .trimEnd(),
+      );
+    };
+    const waitForFrame = async (pred) => {
+      let rows = [];
+      for (let i = 0; i < 300; i++) {
+        rows = readFrameRows();
+        if (pred(rows)) break;
+        await sleep(10);
+      }
+      return rows;
+    };
+    await waitForFrame((rows) => rows.some((line) => line.trim().length > 0));
+    if (composerInput != null) hook.setComposerInput(composerInput);
+    const frameRows = settleOn ? await waitForFrame(settleOn) : readFrameRows();
+    const cleanup = async () => {
+      instance?.unmount();
+      if (lifecycle) await lifecycle;
+      if (previousLang === undefined) delete process.env.LANG;
+      else process.env.LANG = previousLang;
+    };
+    return { frameRows, cleanup };
+  };
+
+  const baseSnapshot = (over) => ({
+    rows: [{ id: 'h', role: 'user', text: 'hi' }],
+    running: false,
+    startedAt: null,
+    provider: 'ollama',
+    model: 'gpt',
+    cwd: '/repo',
+    gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+    daemonConnected: false,
+    error: null,
+    interaction: null,
+    picker: null,
+    configEditor: null,
+    theme: 'mono',
+    execMode: 'auto',
+    ...over,
+  });
+
+  it('budgets a long error at its full wrapped height so the footer stays pinned', {
+    skip: silverySkip,
+  }, async () => {
+    const columns = 40;
+    const terminalRows = 14;
+    // > 3 wrapped rows at width 38 (columns − glyph gutter): the old min(3) cap
+    // would under-budget it and push the footer off the bottom.
+    const longError =
+      'upstream provider returned an unexpected error while streaming the response, and here is a very long detail line to force several wrapped rows in the frame';
+    const { frameRows, cleanup } = await mountFrame({
+      columns,
+      terminalRows,
+      snapshot: baseSnapshot({ error: longError }),
+      settleOn: (rows) => rows.some((l) => l.includes('auto ·')),
+    });
+    try {
+      const frame = frameRows.join('\n');
+      const ruleIndex = frameRows.findIndex((l) => /^─{10}/.test(l));
+      const footer = frameRows.findIndex((l) => l.includes('auto ·'));
+      assert.ok(ruleIndex >= 0, `composer rule clipped by the wrapping error:\n${frame}`);
+      assert.ok(footer > ruleIndex, `footer clipped below a wrapping error:\n${frame}`);
+      assert.equal(
+        footer,
+        terminalRows - 1,
+        `footer not pinned to the bottom with a long error:\n${frame}`,
+      );
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('reserves the wrapped footer height in a narrow running frame', {
+    skip: silverySkip,
+  }, async () => {
+    const columns = 12; // 'ctrl+c cancel' (13) wraps past this width
+    const terminalRows = 12;
+    const { frameRows, cleanup } = await mountFrame({
+      columns,
+      terminalRows,
+      snapshot: baseSnapshot({ running: true }),
+      settleOn: (rows) => rows.some((l) => l.includes('ctrl')),
+    });
+    try {
+      const frame = frameRows.join('\n');
+      // The running footer's keybind strip wraps at width 12. Concatenated across
+      // its rows, the full 'ctrl+c cancel' must survive — with the old
+      // footerRows:1 budget its second wrapped row is pushed off the bottom, so
+      // 'cancel' would be missing.
+      assert.ok(
+        frame.replace(/\s/g, '').includes('cancel'),
+        `narrow running footer was clipped mid-wrap:\n${frame}`,
+      );
+    } finally {
+      await cleanup();
+    }
+  });
+
+  it('measures the completion rail wrapped height (drives the transcript budget)', async () => {
+    const { completionRailRows, resolveSurfaceTranscriptHeight } = await import(
+      '../silvery/surface.tsx'
+    );
+    // A long candidate label at a narrow width wraps the rail past one row.
+    assert.ok(
+      completionRailRows({ items: ['a-fairly-long-model-name'], index: -1 }, 24) >= 2,
+      'completion rail should wrap to 2+ rows on a narrow terminal',
+    );
+    // Comfortable width keeps it to a single row.
+    assert.equal(completionRailRows({ items: ['gpt'], index: -1 }, 80), 1);
+    // The budget shrinks the transcript by the wrapped rows it is told about, so
+    // a 2-row rail (or a >3-row error) never overflows the composer off-screen.
+    assert.equal(
+      resolveSurfaceTranscriptHeight(14, { composerRows: 1, footerRows: 1, completionRows: 2 }),
+      8,
+    );
+    assert.equal(resolveSurfaceTranscriptHeight(14, { composerRows: 1, footerRows: 2 }), 9);
+    // header+rule+composer(3)+footer+error(5) = 11 → floored to the 3-row minimum.
+    assert.equal(
+      resolveSurfaceTranscriptHeight(14, { composerRows: 3, footerRows: 1, errorRows: 5 }),
+      3,
+    );
+  });
 });
 
 describe('silvery event diagnostics — citations + empty-run', () => {
