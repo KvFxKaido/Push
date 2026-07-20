@@ -374,7 +374,11 @@ describe('handleCloudflareSandbox happy paths', () => {
     });
     // Every accessor applies Push's raised idle-sleep policy (not CF's 10-min
     // default) so a foregrounded idle session doesn't get wiped from under it.
-    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId, { sleepAfter: '1h' });
+    expect(getSandboxMock).toHaveBeenCalledWith(env.Sandbox, sandboxId, {
+      sleepAfter: '1h',
+      transport: 'rpc',
+      enableDefaultSession: false,
+    });
     expect(sandbox.exec).toHaveBeenNthCalledWith(
       1,
       "git config --global user.name 'Push Bot' && git config --global user.email 'bot@example.test'",
@@ -1000,7 +1004,11 @@ describe('handleCloudflareSandbox happy paths', () => {
         writable_root: '/workspace',
       },
     });
-    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1', { sleepAfter: '1h' });
+    expect(getSandboxMock).toHaveBeenCalledWith(expect.anything(), 'sb-1', {
+      sleepAfter: '1h',
+      transport: 'rpc',
+      enableDefaultSession: false,
+    });
     expect(sandbox.exec.mock.calls[0]?.[0]).toContain(`head -c ${MAX_TOKEN_BYTES + 1}`);
     expect(sandbox.exec).toHaveBeenNthCalledWith(2, 'true');
     expect(sandbox.exec).toHaveBeenCalledTimes(3);

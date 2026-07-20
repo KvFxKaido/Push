@@ -93,9 +93,20 @@ const SANDBOX_SLEEP_AFTER = '1h';
  * Get the sandbox handle with Push's idle-sleep policy applied. Every accessor
  * routes through here so the container's sleep window is consistent across
  * create / exec / snapshot / etc. — not the SDK's 10-min default.
+ *
+ * RPC is the SDK's recommended transport and replaces the deprecated HTTP/WS
+ * transports removed upstream after July 9, 2026. Default sessions are also
+ * disabled: Push never relies on implicit cross-call cwd or environment state
+ * (every exec passes explicit cwd, `git -C`, or absolute paths — audited
+ * call-by-call), and the SDK deprecated that state because it confused agent
+ * workloads.
  */
 function sandboxFor(env: Env, sandboxId: string) {
-  return getSandbox(env.Sandbox!, sandboxId, { sleepAfter: SANDBOX_SLEEP_AFTER });
+  return getSandbox(env.Sandbox!, sandboxId, {
+    sleepAfter: SANDBOX_SLEEP_AFTER,
+    transport: 'rpc',
+    enableDefaultSession: false,
+  });
 }
 
 function githubRepoUrl(repo: string, token?: string): string {
