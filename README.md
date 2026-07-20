@@ -85,6 +85,13 @@ pnpm dlx wrangler dev --port 8787
 
 See [app/README.md](app/README.md) for environment variables, OAuth setup, Worker secrets, and sandbox deployment.
 
+**What a full deployment requires** (canonical list with provisioning steps: [Deployment Requirements](docs/runbooks/Deployment%20Requirements.md)):
+
+- **Cloudflare Workers Paid plan** — Durable Objects + Containers (the cloud sandbox) need it; everything else fits free tiers at single-user scale. Workers for Platforms is *not* required.
+- **Cloudflare resources**: 5 Durable Object classes, 4 KV namespaces, 1 R2 bucket, the Sandbox container, Workers AI (optional), AI Gateway (optional).
+- **A GitHub App** installed on the repos Push should reach, plus at least one model-provider key.
+- **~12 required Worker secrets** (GitHub App, session gate, CORS, sandbox backups) — the runbook has the full table and the `versions secret put` gotcha.
+
 If you run the hosted web app on a personal Cloudflare account, see [Private Cloudflare Deployment](docs/runbooks/Private%20Cloudflare%20Deployment.md) before sharing the URL.
 
 ### Android app (experimental)
