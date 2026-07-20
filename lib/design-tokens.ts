@@ -17,8 +17,12 @@
  * The TUI imports this module directly, so it can't drift at all.
  */
 export const identityPalette = {
-  /** Base + raised surfaces. Maps to web `push-surface` / `push-surface-raised`. */
-  surface: { base: '#070a10', raised: '#14171f' },
+  /** Base + raised surfaces. Maps to web `push-surface` / `push-surface-raised`.
+   *  `base` is pure black (AMOLED): the large dark areas render true `#000000`;
+   *  `raised` stays a distinct dark-gray so cards/panels keep a legible lift on
+   *  black even where depth shadows can't (a black ambient shadow is invisible
+   *  on a black base). */
+  surface: { base: '#000000', raised: '#14171f' },
   /** Text hierarchy (bright → dim). Maps to web `push-fg{,-secondary,-muted,-dim}`. */
   fg: { primary: '#f5f7ff', secondary: '#b4becf', muted: '#8b96aa', dim: '#667086' },
   /** Borders. Maps to web `push-edge` / `push-edge-hover`. */

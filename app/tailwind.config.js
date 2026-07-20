@@ -38,11 +38,11 @@ module.exports = {
         'push-fg-dimmest': '#505971', // disabled / placeholder text (below dim)
 
         // Surfaces (light → dark)
-        'push-surface': '#070a10', // base background
+        'push-surface': '#000000', // base background (AMOLED pure black)
         'push-surface-raised': '#14171f', // elevated surface
         'push-surface-hover': '#0d1119', // hover background
         'push-surface-active': '#111624', // pressed / badge background
-        'push-surface-inset': '#05080e', // recessed (editor, inputs)
+        'push-surface-inset': '#000000', // recessed (editor, inputs) — flush black, defined by its border
 
         // Borders (subtle → strong)
         'push-edge-subtle': '#242c39', // dividers, input borders
