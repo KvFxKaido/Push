@@ -4278,6 +4278,132 @@ describe('silvery header — one row at any width', () => {
   });
 });
 
+describe('silvery surface — constrained-height chrome budget', () => {
+  it('keeps inline transcript, error, rule, three-row composer, and footer visible', {
+    skip: silverySkip,
+  }, async () => {
+    const React = (await import('react')).default;
+    const Silvery = await import('silvery');
+    const { PushSurface, resolveSurfaceTranscriptHeight } = await import('../silvery/surface.tsx');
+    const columns = 72;
+    const terminalRows = 14;
+    const stdout = new FakeStdout(columns, terminalRows);
+    const hook = {};
+    const snapshot = {
+      rows: [
+        { id: 'human', role: 'user', text: 'human transcript line' },
+        {
+          id: 'lead',
+          role: 'assistant',
+          text: 'assistant first line\nassistant continuation',
+        },
+      ],
+      running: false,
+      startedAt: null,
+      provider: 'ollama',
+      model: 'test-model',
+      cwd: '/repo',
+      gitStatus: { branch: 'main', dirty: 0, ahead: 0, behind: 0 },
+      daemonConnected: false,
+      error: 'surface frame error',
+      interaction: null,
+      picker: null,
+      configEditor: null,
+      theme: 'mono',
+      execMode: 'auto',
+    };
+    const controller = {
+      getSnapshot: () => snapshot,
+      subscribe: () => () => undefined,
+      submit: async () => undefined,
+      cancel: () => undefined,
+      clearDisplay: () => undefined,
+      copyLastResponse: () => undefined,
+      openPicker: () => undefined,
+      openConfigEditor: () => undefined,
+      takePendingComposerText: () => null,
+      dispose: async () => undefined,
+    };
+    const previousLang = process.env.LANG;
+    process.env.LANG = 'C.UTF-8';
+    let instance;
+    let lifecycle;
+    try {
+      const handle = Silvery.render(
+        React.createElement(PushSurface, { controller, hook }),
+        { stdout, stdin: new FakeStdin() },
+        { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: false },
+      );
+      lifecycle = handle.run();
+      instance = await handle;
+      await sleep(80);
+
+      const composer = 'composer row one\ncomposer row two\ncomposer row three';
+      hook.setComposerInput(composer);
+      for (let i = 0; i < 80 && hook.getComposerState().input !== composer; i++) await sleep(10);
+      instance.flush();
+      await sleep(30);
+
+      // The fixed seven rows are header + rule + max composer + max footer;
+      // the error consumes one more, leaving six transcript rows in 72x14.
+      assert.equal(resolveSurfaceTranscriptHeight(terminalRows, { errorVisible: true }), 6);
+      assert.equal(
+        resolveSurfaceTranscriptHeight(terminalRows, {
+          completionVisible: true,
+          errorVisible: true,
+        }),
+        5,
+      );
+
+      const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
+      terminal.applyAnsi(stdout.bytes);
+      const frameRows = Array.from({ length: terminalRows }, (_, y) =>
+        Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
+          .join('')
+          .trimEnd(),
+      );
+      const frame = frameRows.join('\n');
+
+      const humanRow = frameRows.find((line) => line.includes('human transcript line')) ?? '';
+      const assistantRow = frameRows.find((line) => line.includes('assistant first line')) ?? '';
+      const continuationRow =
+        frameRows.find((line) => line.includes('assistant continuation')) ?? '';
+      // The virtual terminal reserves the glyph's presentation-width cell;
+      // require the body on the same row without pinning that width detail.
+      assert.match(humanRow, /❯\s+human transcript line/);
+      assert.match(assistantRow, /⬡\s+assistant first line/);
+      assert.equal(
+        continuationRow.indexOf('assistant continuation'),
+        assistantRow.indexOf('assistant first line'),
+        `assistant continuation lost its hanging indent:\n${frame}`,
+      );
+
+      const errorIndex = frameRows.findIndex((line) => line.includes('surface frame error'));
+      const ruleIndex = frameRows.findIndex((line) => /^─{20}/.test(line));
+      const composerStart = frameRows.findIndex((line) => line.includes('❯ composer row one'));
+      const composerEnd = frameRows.findIndex((line) => line.includes('composer row three'));
+      const footerKeys = frameRows.findIndex((line) => line.includes('tab complete'));
+      const footerStatus = frameRows.findIndex((line) => line.includes('auto ·'));
+
+      assert.ok(errorIndex >= 0, `error row was clipped:\n${frame}`);
+      assert.ok(ruleIndex > errorIndex, `composer rule was clipped or misplaced:\n${frame}`);
+      assert.ok(composerStart > ruleIndex, `composer start was clipped:\n${frame}`);
+      assert.ok(composerEnd >= composerStart, `three-row composer was clipped:\n${frame}`);
+      assert.ok(footerKeys > composerEnd, `footer key row was clipped:\n${frame}`);
+      assert.ok(footerStatus >= footerKeys, `footer status row was clipped:\n${frame}`);
+      assert.ok(
+        footerStatus < terminalRows,
+        `footer escaped the ${terminalRows}-row viewport:\n${frame}`,
+      );
+    } finally {
+      instance?.unmount();
+      if (lifecycle) await lifecycle;
+      if (previousLang === undefined) delete process.env.LANG;
+      else process.env.LANG = previousLang;
+    }
+  });
+});
+
 describe('silvery event diagnostics — citations + empty-run', () => {
   // Against the real inline lane: a runTurn mock emits engine events through
   // `options.emit`, and we read the rendered transcript rows.

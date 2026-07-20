@@ -104,6 +104,33 @@ const LAUNCH_SHORTCUT_WIDTH = 26;
 
 const PICKER_MAX_VISIBLE = 12;
 
+// Full-screen vertical contract. HeaderBar is pinned to one row; the composer
+// can grow to three; FooterBar may wrap its keys/status pair once on narrow
+// terminals. Keep these beside the surface instead of hiding the arithmetic in
+// a magic subtraction so adding chrome requires updating the budget explicitly.
+const SURFACE_HEADER_ROWS = 1;
+const SURFACE_COMPOSER_RULE_ROWS = 1;
+const SURFACE_COMPOSER_MAX_ROWS = 3;
+const SURFACE_FOOTER_MAX_ROWS = 2;
+const SURFACE_MIN_TRANSCRIPT_ROWS = 3;
+
+export function resolveSurfaceTranscriptHeight(
+  viewportRows: number,
+  options: { completionVisible?: boolean; errorVisible?: boolean } = {},
+): number {
+  const fixedChromeRows =
+    SURFACE_HEADER_ROWS +
+    SURFACE_COMPOSER_RULE_ROWS +
+    SURFACE_COMPOSER_MAX_ROWS +
+    SURFACE_FOOTER_MAX_ROWS;
+  const transientChromeRows =
+    Number(Boolean(options.completionVisible)) + Number(Boolean(options.errorVisible));
+  return Math.max(
+    SURFACE_MIN_TRANSCRIPT_ROWS,
+    viewportRows - fixedChromeRows - transientChromeRows,
+  );
+}
+
 /**
  * Catch secret-setting commands before their value can become composer state.
  * The caller clears the composer and opens the password-style config field;
@@ -1765,10 +1792,12 @@ export function PushSurface({
     hook.getComposerState = () => ({ input, completion: completer.getState() });
   });
 
-  // Frame chrome = header + composer rule + footer + optional error line ≈ 4–5 rows.
   const completionState = inputActive ? completer.getState() : null;
-  const transcriptHeight = Math.max(3, rows - 6 - (completionState ? 1 : 0));
-  // Composer frame: the rule (the frame edge the height budget already reserves)
+  const transcriptHeight = resolveSurfaceTranscriptHeight(rows, {
+    completionVisible: Boolean(completionState),
+    errorVisible: Boolean(snapshot.error),
+  });
+  // Composer frame: the rule (the frame edge the height budget reserves)
   // and the human caret (❯) that law 2 names the composer cursor — the one accent
   // shape marking where input goes, mirrored from the transcript's user glyph.
   const composerGlyphs = resolveGlyphs(detectUnicode());
@@ -1840,7 +1869,7 @@ export function PushSurface({
               onSubmit={submit}
               submitKey="enter"
               minRows={1}
-              maxRows={3}
+              maxRows={SURFACE_COMPOSER_MAX_ROWS}
               placeholder={snapshot.running ? 'Push is working…' : 'message Push…'}
               isActive={inputActive}
               disabled={snapshot.running}
