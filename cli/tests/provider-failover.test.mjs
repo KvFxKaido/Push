@@ -1,12 +1,15 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  MAX_RETRIES,
   PROVIDER_CONFIGS,
   classifyCliStreamError,
   cliStreamRetryDelayMs,
   resolveCliFailoverCandidates,
+  streamCompletion,
 } from '../provider.ts';
 import { CliProviderError } from '../openai-stream.ts';
+import { OpenAIResponsesStreamError } from '../../lib/openai-responses-sse-pump.js';
 
 // ─── Env helper ─────────────────────────────────────────────────
 
@@ -47,6 +50,66 @@ describe('classifyCliStreamError', () => {
       retryable: true,
       status: 503,
     });
+  });
+
+  it('marks quota-exhausted 429s non-retryable — retrying a drained balance cannot succeed', () => {
+    // Moonshot multiplexes retryable pressure (engine_overloaded_error,
+    // rate_limit_reached_error) and permanent quota exhaustion
+    // (exceeded_current_quota_error) onto the same 429; OpenAI does the same
+    // with insufficient_quota. Status alone cannot distinguish them.
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"Your account balance is insufficient","type":"exceeded_current_quota_error"}}',
+          429,
+        ),
+      ),
+      { retryable: false, status: 429 },
+    );
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'OpenAI 429: {"error":{"message":"You exceeded your current quota","type":"insufficient_quota"}}',
+          429,
+        ),
+      ),
+      { retryable: false, status: 429 },
+    );
+    // The retryable 429 flavors stay retryable.
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"The engine is currently overloaded","type":"engine_overloaded_error"}}',
+          429,
+        ),
+      ),
+      { retryable: true, status: 429 },
+    );
+    assert.deepEqual(
+      classifyCliStreamError(
+        new CliProviderError(
+          'Kimi 429: {"error":{"message":"requests per minute exceeded","type":"rate_limit_reached_error"}}',
+          429,
+        ),
+      ),
+      { retryable: true, status: 429 },
+    );
+  });
+
+  it('honors the pump-classified quota exhaustion on Responses in-band errors', () => {
+    // The Responses SSE pump classifies in-band insufficient_quota itself
+    // (lib/openai-responses-sse-pump.ts); the structured branch here must
+    // carry that verdict through instead of re-deriving retryability from
+    // the 429 status.
+    assert.deepEqual(
+      classifyCliStreamError(
+        new OpenAIResponsesStreamError('insufficient_quota: You exceeded your current quota', {
+          code: 'insufficient_quota',
+          status: 429,
+        }),
+      ),
+      { retryable: false, status: 429 },
+    );
   });
 
   it('marks 4xx (non-rate-limit) CliProviderErrors non-retryable but keeps the status', () => {
@@ -197,5 +260,53 @@ describe('resolveCliFailoverCandidates', () => {
 
   it('returns [] for an unknown locked provider', () => {
     assert.deepEqual(resolveCliFailoverCandidates('nope', new Set(['nope'])), []);
+  });
+});
+
+// ─── streamCompletion inner retry policy ─────────────────────────
+
+describe('streamCompletion retry policy', () => {
+  /** Stub fetch to always return a 429 with the given error body; returns a
+   *  counter of how many requests were actually made. */
+  function stub429(t, body) {
+    const counter = { calls: 0 };
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      counter.calls += 1;
+      return new Response(body, {
+        status: 429,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+    });
+    return counter;
+  }
+
+  const messages = [{ role: 'user', content: 'hi' }];
+
+  it('makes exactly ONE attempt on a quota-exhausted 429 — no retry can succeed', async (t) => {
+    const counter = stub429(
+      t,
+      '{"error":{"message":"Your account balance is insufficient","type":"exceeded_current_quota_error"}}',
+    );
+    await assert.rejects(
+      () => streamCompletion(PROVIDER_CONFIGS.kimi, 'sk-test', 'kimi-k3', messages, null, 5_000),
+      /exceeded_current_quota_error/,
+    );
+    assert.equal(counter.calls, 1, 'quota exhaustion must not consume the retry budget');
+  });
+
+  it('retains retry/backoff for transient 429s (engine overloaded)', async (t) => {
+    const counter = stub429(
+      t,
+      '{"error":{"message":"The engine is currently overloaded","type":"engine_overloaded_error"}}',
+    );
+    await assert.rejects(
+      () => streamCompletion(PROVIDER_CONFIGS.kimi, 'sk-test', 'kimi-k3', messages, null, 5_000),
+      /engine_overloaded_error/,
+    );
+    assert.equal(counter.calls, MAX_RETRIES, 'transient 429s keep the full retry budget');
   });
 });

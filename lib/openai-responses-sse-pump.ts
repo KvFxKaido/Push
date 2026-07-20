@@ -9,6 +9,7 @@
 import type { PushStreamEvent, StreamUsage, UrlCitation } from './provider-contract.js';
 import { parseNativeToolCallArgs } from './openai-sse-pump.js';
 import { parseResponsesReasoningItem } from './responses-reasoning-item.js';
+import { isQuotaExhaustedErrorMessage } from './quota-errors.js';
 
 export interface OpenAIResponsesSSEPumpOptions {
   body: ReadableStream<Uint8Array>;
@@ -41,12 +42,20 @@ export class OpenAIResponsesStreamError extends Error {
     // *explicitly* classified terminal statuses (400/401/403/404) stay
     // non-retryable — flipping this default back to false silently turns
     // recoverable provider blips into hard turn failures.
+    //
+    // Exception to fail-open: quota/balance exhaustion (e.g. OpenAI's
+    // `insufficient_quota`) arrives in-band with a 429-family code but is
+    // terminal — no retry can succeed until a human tops up. Checked against
+    // both the code and the message so it wins regardless of status mapping
+    // (lib/quota-errors.ts; the #1555 review caught this path staying
+    // retryable via the fail-open default).
     this.retryable =
-      status === undefined ||
-      status === 408 ||
-      status === 425 ||
-      status === 429 ||
-      (status >= 500 && status <= 599);
+      !isQuotaExhaustedErrorMessage(`${opts?.code ?? ''} ${message}`) &&
+      (status === undefined ||
+        status === 408 ||
+        status === 425 ||
+        status === 429 ||
+        (status >= 500 && status <= 599));
   }
 }
 
@@ -88,6 +97,9 @@ function statusFromResponsesError(error: Record<string, unknown> | null): number
     .join(' ')
     .toLowerCase();
   if (!raw) return undefined;
+  // Quota exhaustion maps to the 429 family for status reporting; the
+  // OpenAIResponsesStreamError constructor separately forces it non-retryable.
+  if (raw.includes('insufficient_quota') || raw.includes('exceeded_current_quota')) return 429;
   if (raw.includes('not_found') || raw.includes('not found')) return 404;
   if (raw.includes('unauthorized') || raw.includes('authentication')) return 401;
   if (raw.includes('forbidden') || raw.includes('permission')) return 403;

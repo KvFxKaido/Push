@@ -424,6 +424,32 @@ describe('openAIResponsesSSEPump', () => {
     });
   });
 
+  it('marks in-band quota exhaustion non-retryable despite the 429 mapping', async () => {
+    // OpenAI reports a drained billing quota as an in-band error with code
+    // `insufficient_quota` — same 429 family as rate limits, but terminal.
+    // Without the quota override this rode the fail-open default (or the 429
+    // mapping) straight into the retry loop (#1555 review).
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'error',
+      error: {
+        code: 'insufficient_quota',
+        type: 'insufficient_quota',
+        message: 'You exceeded your current quota, please check your plan and billing details.',
+      },
+    });
+    s.close();
+
+    await expect(events).rejects.toMatchObject({
+      name: 'OpenAIResponsesStreamError',
+      code: 'insufficient_quota',
+      status: 429,
+      retryable: false,
+    });
+  });
+
   it('maps in-band service unavailable errors to a retryable 503', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

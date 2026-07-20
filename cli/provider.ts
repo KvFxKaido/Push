@@ -16,6 +16,7 @@ import {
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { streamResponsesWithChatFallback } from '../lib/responses-chat-fallback.ts';
+import { isQuotaExhaustedErrorMessage } from '../lib/quota-errors.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
@@ -109,7 +110,10 @@ export interface StreamCompletionOptions {
 
 function isRetryableError(err: unknown): boolean {
   if (err instanceof CliProviderError) {
-    return err.status === 429 || err.status >= 500;
+    // Quota-exhausted 429s are terminal — see lib/quota-errors.ts. Without
+    // this check the inner retry loop burns all MAX_RETRIES on a drained
+    // balance before the outer classifier ever sees the error (#1555 review).
+    return (err.status === 429 && !isQuotaExhaustedErrorMessage(err.message)) || err.status >= 500;
   }
   if (err instanceof Error && err.name === 'AbortError') return false;
   // Anything else (network failure, TypeError from a misbehaving fetch shim)
@@ -357,7 +361,11 @@ export function classifyCliStreamError(err: unknown): { retryable: boolean; stat
   if (err instanceof CliProviderError) {
     const status = err.status;
     return {
-      retryable: status === 408 || status === 425 || status === 429 || status >= 500,
+      retryable:
+        status === 408 ||
+        status === 425 ||
+        (status === 429 && !isQuotaExhaustedErrorMessage(err.message)) ||
+        status >= 500,
       status,
     };
   }
