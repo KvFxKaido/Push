@@ -16,6 +16,7 @@ import {
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import { streamResponsesWithChatFallback } from '../lib/responses-chat-fallback.ts';
+import { isQuotaExhaustedErrorMessage } from '../lib/quota-errors.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
@@ -109,7 +110,10 @@ export interface StreamCompletionOptions {
 
 function isRetryableError(err: unknown): boolean {
   if (err instanceof CliProviderError) {
-    return err.status === 429 || err.status >= 500;
+    // Quota-exhausted 429s are terminal — see lib/quota-errors.ts. Without
+    // this check the inner retry loop burns all MAX_RETRIES on a drained
+    // balance before the outer classifier ever sees the error (#1555 review).
+    return (err.status === 429 && !isQuotaExhaustedErrorMessage(err.message)) || err.status >= 500;
   }
   if (err instanceof Error && err.name === 'AbortError') return false;
   // Anything else (network failure, TypeError from a misbehaving fetch shim)
@@ -348,23 +352,6 @@ export function cliStreamRetryDelayMs(attempt: number): number {
   return RETRY_BASE_DELAY_MS * 2 ** attempt;
 }
 
-/** 429 error-type markers that mean an EXHAUSTED balance/quota, not transient
- *  pressure — retrying cannot succeed until a human tops up or a daily window
- *  resets, so burning the retry/failover budget on them is pure waste. Both
- *  providers multiplex these onto the same 429 as their genuinely-retryable
- *  rate limits, so the status alone cannot distinguish them:
- *  - Moonshot/Kimi: `exceeded_current_quota_error` (balance drained or token
- *    quota depleted; their errors table marks it do-not-retry, unlike
- *    `engine_overloaded_error` / `rate_limit_reached_error`).
- *  - OpenAI: `insufficient_quota` (billing hard-stop on the same status).
- *  Matched against the upstream body text that every stream adapter folds into
- *  `CliProviderError.message`. */
-const QUOTA_EXHAUSTED_429_MARKERS = ['exceeded_current_quota_error', 'insufficient_quota'] as const;
-
-export function isQuotaExhausted429Message(message: string): boolean {
-  return QUOTA_EXHAUSTED_429_MARKERS.some((marker) => message.includes(marker));
-}
-
 /** Structured classification of a CLI provider stream failure, shaped for
  *  `decideStreamFailover` (`lib/provider-failover.ts`). Reads
  *  `CliProviderError.status`; a transport-level failure (no HTTP `Response`) is
@@ -377,7 +364,7 @@ export function classifyCliStreamError(err: unknown): { retryable: boolean; stat
       retryable:
         status === 408 ||
         status === 425 ||
-        (status === 429 && !isQuotaExhausted429Message(err.message)) ||
+        (status === 429 && !isQuotaExhaustedErrorMessage(err.message)) ||
         status >= 500,
       status,
     };
