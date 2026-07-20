@@ -65,7 +65,7 @@ export function RepoLauncherSheet({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="h-[92dvh] border-t border-push-edge bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] px-0 pb-0 pt-0 text-push-fg"
+        className="h-[92dvh] border-t border-push-edge bg-push-grad-page px-0 pb-0 pt-0 text-push-fg"
       >
         <SheetHeader className="sr-only">
           <SheetTitle className="text-sm font-semibold text-push-fg">Launcher</SheetTitle>

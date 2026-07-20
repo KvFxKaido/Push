@@ -59,7 +59,7 @@ describe('TOKENS', () => {
   });
 
   it('bg.base matches Push web token push-surface', () => {
-    assert.equal(TOKENS['bg.base'], '#070a10');
+    assert.equal(TOKENS['bg.base'], '#000000');
   });
 
   it('fg.primary matches Push web token push-fg', () => {

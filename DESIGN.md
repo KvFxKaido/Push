@@ -57,11 +57,11 @@ Tokens below are Tailwind theme extensions. Use them with the appropriate utilit
 
 | Token                 | Hex       | Use                          |
 | --------------------- | --------- | ---------------------------- |
-| `push-surface`        | `#070a10` | Base page background         |
+| `push-surface`        | `#000000` | Base page background (AMOLED pure black) |
 | `push-surface-raised` | `#14171f` | Elevated panels, cards       |
 | `push-surface-hover`  | `#0d1119` | Hover background             |
 | `push-surface-active` | `#111624` | Pressed state, badge fills   |
-| `push-surface-inset`  | `#05080e` | Recessed areas (editor, inputs) |
+| `push-surface-inset`  | `#000000` | Recessed areas (editor, inputs) — flush black, defined by border |
 
 ### Borders
 
@@ -207,7 +207,7 @@ Standard Tailwind gap classes: `gap-2`, `gap-4`, `gap-6`.
 Two distinct shadow families, kept separate on purpose:
 
 1. **Overlay shadows** (`push-sm` … `push-xl`, `push-card*`) float dialogs, popovers, dropdowns and floating cards *off the page*. They are not used to distinguish in-page surface layers.
-2. **Neumorphic depth** (`push-inset*`, `push-raised*`, `push-glass`) gives chrome and recessed surfaces tactile relief on the near-black canvas. This is the **surgical dark-neumorphism layer**: raised chrome lifts with a lit top edge and presses in on `:active`; recessed wells sink with an inset; the glass drawer shells get a single combined elevation + frosted edge. All depth shadows are **grayscale** (black ambient + a faint white sheen) so they read on `#070a10` without introducing a hue.
+2. **Neumorphic depth** (`push-inset*`, `push-raised*`, `push-glass`) gives chrome and recessed surfaces tactile relief on the pure-black (AMOLED) canvas. This is the **surgical dark-neumorphism layer**: raised chrome lifts with a lit top edge and presses in on `:active`; recessed wells sink with an inset; the glass drawer shells get a single combined elevation + frosted edge. All depth shadows are **grayscale** (black ambient + a faint white sheen). On the `#000000` base the **white sheen carries the relief** — a black ambient shadow is invisible against black — so surface distinction leans on `push-surface-raised` (the lift is a color step, not only a shadow) plus the edge borders. Depth still introduces no hue.
 
 Surface hierarchy for **dense content** (chat bubbles, diff/code cards, data tables) still comes from border + background contrast — those surfaces stay flat. Depth is reserved for *chrome* (hub buttons, pills, panels) and *recessed wells* (the hub inline input, the console log, nested inset panels). The split is the whole point: extruded chrome around flat, legible content. **One box-shadow per element** — never stack two `shadow-*` utilities (they collide; only one wins). When a surface needs more than one effect (e.g. a glass drawer wanting elevation *and* a frosted edge), fold them into a single combined token like `push-glass`.
 

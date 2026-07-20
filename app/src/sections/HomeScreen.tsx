@@ -50,7 +50,7 @@ export function HomeScreen({
 }: HomeScreenProps) {
   usePerfMark('home:painted', 'screen:home');
   return (
-    <div className="relative isolate flex h-dvh flex-col bg-[linear-gradient(180deg,rgba(4,6,10,1)_0%,rgba(2,4,8,1)_100%)] safe-area-top safe-area-bottom">
+    <div className="relative isolate flex h-dvh flex-col bg-push-grad-page safe-area-top safe-area-bottom">
       <ChatBackgroundGlow active color={HOME_GLOW_COLOR} />
       <div className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20 bg-gradient-to-b from-white/[0.03] to-transparent" />
 
