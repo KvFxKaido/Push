@@ -780,6 +780,43 @@ describe('openrouterStream', () => {
       expect(body.input[0]).toEqual(reasoningItem);
     });
 
+    it('strips encrypted reasoning items from the Chat Completions body (no leak on chat/fallback)', async () => {
+      // `responsesReasoningItems` is Responses-only. On a chat route (including the
+      // responses→chat fallback) it must never ride the /chat/completions body — a
+      // strict transport may reject the unknown field, which would defeat the
+      // fallback. Force chat to exercise the shared chat-body builder directly.
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'chat');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'deepseek/deepseek-r1',
+          openrouterWebSearch: false,
+          messages: [
+            {
+              id: 'a1',
+              role: 'assistant',
+              content: 'answer',
+              timestamp: 0,
+              responsesReasoningItems: [
+                { type: 'reasoning', encrypted_content: 'SENTINEL-CIPHERTEXT' },
+              ],
+            },
+          ],
+        }),
+      );
+
+      push(chatContentFrame('ok'));
+      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      close();
+      await events;
+
+      const rawBody = (fetchMock.mock.calls[0][1] as RequestInit).body as string;
+      expect(rawBody).not.toContain('SENTINEL-CIPHERTEXT');
+      expect(rawBody).not.toContain('responsesReasoningItems');
+    });
+
     it('falls back to Chat Completions when the Responses attempt fails before output', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});

@@ -184,6 +184,33 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('dedups the same item once across frames even when id-presence is asymmetric', async () => {
+    // OpenRouter proxies arbitrary models: the streaming `output_item.done` frame
+    // can omit `id` while the terminal output carries it (or vice versa). Keying
+    // dedup on `id` would treat these as two items and replay the (large) encrypted
+    // payload twice. Dedup must key on `encrypted_content`, which is stable.
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'reasoning', encrypted_content: 'shared-ciphertext' }, // no id
+    });
+    s.push({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        output: [{ type: 'reasoning', id: 'rs_9', encrypted_content: 'shared-ciphertext' }], // same content, now with id
+      },
+    });
+    s.close();
+
+    const out = await events;
+    const items = out.filter((e) => e.type === 'responses_reasoning_item');
+    expect(items).toHaveLength(1);
+  });
+
   it('recovers an encrypted reasoning item from terminal output when no item event arrived', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

@@ -247,7 +247,14 @@ export async function* openAIResponsesSSEPump(
   function* emitReasoningItem(value: unknown): Generator<PushStreamEvent> {
     const item = parseResponsesReasoningItem(value);
     if (!item) return;
-    const key = item.id ? `id:${item.id}` : `encrypted:${item.encrypted_content}`;
+    // Dedup on `encrypted_content`, NOT `id`. The same item is emitted twice —
+    // once at `output_item.done`, once in the terminal `response.completed`
+    // output — and on OpenRouter-proxied models the two frames need not carry
+    // `id` symmetrically. Keying on `id` (with an encrypted-content fallback)
+    // would then produce two different keys for one item and replay it twice.
+    // `encrypted_content` is always present (the parser requires it) and stable
+    // across both frames, so it dedups the asymmetric case too.
+    const key = item.encrypted_content;
     if (emittedReasoningItemKeys.has(key)) return;
     emittedReasoningItemKeys.add(key);
     yield { type: 'responses_reasoning_item', item };

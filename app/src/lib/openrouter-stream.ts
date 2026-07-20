@@ -324,9 +324,23 @@ async function* openrouterChatCompletionsStream(
   // OpenRouter routes `google/gemini-*` to Gemini, which 400s on the replay turn
   // unless the prior call's first functionCall carries a thought_signature;
   // backfill the documented placeholder when none was captured.
-  const wireMessages = nativeFcActive
+  const expandedMessages = nativeFcActive
     ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
     : llmMessages;
+  // `responsesReasoningItems` is a Responses-only field (opaque, provider-bound
+  // encrypted reasoning items). It must never ride the Chat Completions wire: a
+  // strict OpenAI-compat transport may reject the unknown message field, and on
+  // the responses→chat fallback that would defeat the fallback itself. Strip it
+  // here — the serializer strips `contentBlocks` for exactly this reason, but the
+  // raw/expanded passthrough carries this sibling field through untouched.
+  const wireMessages = expandedMessages.map((message) => {
+    if ('responsesReasoningItems' in message && message.responsesReasoningItems) {
+      const rest = { ...message };
+      delete (rest as { responsesReasoningItems?: unknown }).responsesReasoningItems;
+      return rest;
+    }
+    return message;
+  });
 
   const supportsReasoning = openRouterModelSupportsReasoning(req.model);
   const effort = getReasoningEffort('openrouter');
