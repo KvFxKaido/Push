@@ -75,6 +75,11 @@ export const REASONING_HEAVY_MODEL_MATCHERS: readonly ReasoningHeavyMatcher[] = 
     note: 'Moonshot Kimi-K2.x — heavy reasoner; occasionally strands its answer in the reasoning channel (coder/deep-reviewer salvage).',
   },
   {
+    family: 'kimi-k3',
+    pattern: /(?:^|[^a-z0-9])kimi-k3(?:[.p]\d+)?(?:[^0-9]|$)/,
+    note: 'Moonshot Kimi-K3 — emitted a reasoning_content preamble on every gateway probe, including trivial prompts (first contact 2026-07-20). Native tool_calls were clean; the K2.x reasoning-channel burying was not observed but the recovery nudge stays as backstop.',
+  },
+  {
     family: 'deepseek-r1',
     pattern: /(?:^|[^a-z0-9])deepseek-r1(?:[^0-9]|$)/,
     note: 'DeepSeek-R1 — explicit reasoning model. deepseek-v3/v4 are deliberately NOT matched here (add on observed evidence).',
