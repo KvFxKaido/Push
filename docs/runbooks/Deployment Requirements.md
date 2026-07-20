@@ -62,7 +62,7 @@ deploys); use the `versions` variant and promote, or set via dashboard.
 - **Model provider** (at least one): any entry in the provider picker works;
   keys go in Worker secrets or the AI Gateway.
 - **Modal** (optional): only for the alternate sandbox backend.
-- **Browserbase / Tavily** (optional): browser tool and web search.
+- **Tavily** (optional): web-search backend.
 
 ## After first deploy
 
