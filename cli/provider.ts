@@ -5,6 +5,7 @@ import type {
   PushStream,
   PushStreamEvent,
   ReasoningBlock,
+  ResponsesReasoningItem,
   UrlCitation,
 } from '../lib/provider-contract.ts';
 import {
@@ -14,6 +15,7 @@ import {
 } from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
+import { streamResponsesWithChatFallback } from '../lib/responses-chat-fallback.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
@@ -69,6 +71,8 @@ interface ChatMessage {
    *  Anthropic bridge. The OpenAI-compat adapter ignores the field on the
    *  wire — see `cli/openai-stream.ts` for the rationale. */
   reasoningBlocks?: ReasoningBlock[];
+  reasoningContent?: string;
+  responsesReasoningItems?: ResponsesReasoningItem[];
 }
 
 export interface StreamCompletionOptions {
@@ -82,6 +86,8 @@ export interface StreamCompletionOptions {
    *  with `invalid_request_error`. Adapters that don't surface signed
    *  reasoning (every OpenAI-compat path today) never call this. */
   onReasoningBlock?: ((block: ReasoningBlock) => void) | null;
+  /** Replay metadata emitted by stateless Responses providers. */
+  onResponsesReasoningItem?: ((item: ResponsesReasoningItem) => void) | null;
   /** Fires when a provider's native web search returns `url_citation`
    *  annotations (OpenRouter's `openrouter:web_search`). Display-only —
    *  callers accumulate these (deduped by url) and render a "Sources"
@@ -146,12 +152,44 @@ function useOpenRouterLegacyChatTransport(): boolean {
   return openRouterTransportOverride() === 'chat';
 }
 
-/** The Chat Completions variant of the OpenRouter config — the same swap
- *  `resolveEffectiveProviderConfig` applies under the `chat` override. */
+function openRouterWireUrl(url: string, wire: 'responses' | 'chat'): string {
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return wire === 'responses'
+      ? 'https://openrouter.ai/api/v1/responses'
+      : OPENROUTER_LEGACY_CHAT_URL;
+  }
+  if (wire === 'responses') {
+    return trimmed.replace(/\/chat\/completions\/?$/, '/responses');
+  }
+  return trimmed.replace(/\/responses\/?$/, '/chat/completions');
+}
+
+/** A wire-specific OpenRouter config. The URL stays live across daemon
+ * `reload_config`, and recognized endpoint suffixes are swapped so an automatic
+ * fallback never sends a Chat body to `/responses` (or vice versa). */
+function openRouterResponsesConfig(config: ProviderConfig): ProviderConfig {
+  return {
+    ...config,
+    get url() {
+      return openRouterWireUrl(config.url, 'responses');
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
+    streamShape: 'openai-responses',
+  };
+}
+
 function openRouterLegacyChatConfig(config: ProviderConfig): ProviderConfig {
   return {
     ...config,
-    url: process.env.PUSH_OPENROUTER_URL?.trim() || OPENROUTER_LEGACY_CHAT_URL,
+    get url() {
+      return openRouterWireUrl(config.url, 'chat');
+    },
+    get defaultModel() {
+      return config.defaultModel;
+    },
     streamShape: 'openai-compat',
   };
 }
@@ -229,25 +267,49 @@ export function createProviderStream(
   apiKey: string,
   options: { sessionId?: string } = {},
 ): PushStream<LlmMessage> {
-  // OpenRouter with no all-models override: transport is per-MODEL, decided
-  // at request time — /responses is a beta not implemented for every model,
-  // and a Responses body can't ride /chat/completions, so the body shape has
-  // to be picked where the body is built. Both underlying streams are
-  // constructed lazily-cheap here; each request dispatches on its own model
-  // (falling back to the config default), with unknown models taking the
-  // Chat Completions path every OpenRouter model serves.
-  if (config.id === 'openrouter' && openRouterTransportOverride() === null) {
-    const responsesStream = createCliOpenAIResponsesStream(config, apiKey, {
-      sessionId: options.sessionId,
-    });
+  // Unless Chat is explicitly forced, OpenRouter decides the primary wire per
+  // request and wraps every Responses attempt in the same pre-output fallback
+  // policy as web/Worker. A `responses` override forces the primary wire but
+  // does not silently remove the safety net.
+  const openRouterOverride = openRouterTransportOverride();
+  if (config.id === 'openrouter' && openRouterOverride !== 'chat') {
+    const responsesStream = createCliOpenAIResponsesStream(
+      openRouterResponsesConfig(config),
+      apiKey,
+      {
+        sessionId: options.sessionId,
+      },
+    );
     const chatStream = createCliProviderStream(openRouterLegacyChatConfig(config), apiKey, {
       sessionId: options.sessionId,
     });
     return (req) => {
       const model = req.model?.trim() || config.defaultModel;
-      return resolveCliPushCapabilityProfile('openrouter', model).openaiWire === 'responses'
-        ? responsesStream(req)
-        : chatStream(req);
+      if (
+        openRouterOverride !== 'responses' &&
+        resolveCliPushCapabilityProfile('openrouter', model).openaiWire !== 'responses'
+      ) {
+        return chatStream(req);
+      }
+      // Responses-first with a Chat Completions fallback: OpenRouter's /responses
+      // beta serves every live model, but if a given model fails BEFORE producing
+      // output (a transient provider error, an unforeseen incompatibility), retry
+      // the turn on chat rather than fail it. A user abort is never a fallback.
+      return streamResponsesWithChatFallback({
+        responses: () => responsesStream(req),
+        chat: () => chatStream(req),
+        shouldFallback: () => !req.signal?.aborted,
+        onFallback: (error) => {
+          console.error(
+            JSON.stringify({
+              level: 'warn',
+              event: 'openrouter_responses_fallback_to_chat',
+              model,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        },
+      });
     };
   }
 
@@ -401,6 +463,7 @@ export async function streamCompletion(
 ): Promise<string> {
   const onThinkingToken = options?.onThinkingToken ?? null;
   const onReasoningBlock = options?.onReasoningBlock ?? null;
+  const onResponsesReasoningItem = options?.onResponsesReasoningItem ?? null;
   const onCitations = options?.onCitations ?? null;
   let lastError: Error | undefined;
 
@@ -452,6 +515,10 @@ export async function streamCompletion(
         if (m.reasoningBlocks && m.reasoningBlocks.length > 0) {
           out.reasoningBlocks = m.reasoningBlocks;
         }
+        if (m.reasoningContent) out.reasoningContent = m.reasoningContent;
+        if (m.responsesReasoningItems && m.responsesReasoningItems.length > 0) {
+          out.responsesReasoningItems = m.responsesReasoningItems;
+        }
         return out;
       });
 
@@ -486,6 +553,9 @@ export async function streamCompletion(
             // capture, extended-thinking + tool-use chains 400 on the
             // second turn.
             onReasoningBlock?.(event.block);
+            break;
+          case 'responses_reasoning_item':
+            onResponsesReasoningItem?.(event.item);
             break;
           case 'tool_call_delta':
             // Structural progress signal — not surfaced through the legacy

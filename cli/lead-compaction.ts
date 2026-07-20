@@ -58,6 +58,7 @@ function log(level: 'info' | 'warn', event: string, ctx: Record<string, unknown>
 
 interface LeadCompactableMessage extends CompactableMessage {
   reasoningContent?: string;
+  responsesReasoningItems?: Message['responsesReasoningItems'];
 }
 
 function asCompactable(m: Message): LeadCompactableMessage {
@@ -70,6 +71,9 @@ function asCompactable(m: Message): LeadCompactableMessage {
     isToolResult: isToolResultMessage(m),
     ...(typeof m.reasoningContent === 'string' && m.reasoningContent.length > 0
       ? { reasoningContent: m.reasoningContent }
+      : {}),
+    ...(m.responsesReasoningItems && m.responsesReasoningItems.length > 0
+      ? { responsesReasoningItems: m.responsesReasoningItems }
       : {}),
   };
 }

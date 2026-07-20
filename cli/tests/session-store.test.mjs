@@ -931,6 +931,41 @@ describe('loadSessionState — hybrid persistence', () => {
     assert.equal(loaded.messages[1].reasoningContent, reasoningContent);
   });
 
+  it('round-trips encrypted Responses reasoning items through messages.jsonl', async () => {
+    const id = makeSessionId();
+    const reasoningItem = {
+      type: 'reasoning',
+      id: 'rs_1',
+      encrypted_content: 'opaque-ciphertext',
+      summary: [{ type: 'summary_text', text: 'summary' }],
+    };
+    const original = {
+      sessionId: id,
+      eventSeq: 0,
+      updatedAt: 0,
+      cwd: '/tmp',
+      provider: 'openrouter',
+      model: 'deepseek/deepseek-r1',
+      rounds: 0,
+      sessionName: '',
+      workingMemory: {},
+      messages: [
+        { role: 'user', content: 'Inspect the repository.' },
+        {
+          role: 'assistant',
+          content: 'I will inspect it.',
+          responsesReasoningItems: [reasoningItem],
+        },
+      ],
+    };
+
+    await saveSessionState(original);
+
+    const loaded = await loadSessionState(id);
+    assert.deepEqual(loaded.messages, original.messages);
+    assert.deepEqual(loaded.messages[1].responsesReasoningItems, [reasoningItem]);
+  });
+
   it('migrates legacy state.json with embedded messages on first save after load', async () => {
     // Simulate a pre-PR 4 session: state.json contains messages inline,
     // no messages.jsonl exists. Loading should hydrate from the embedded

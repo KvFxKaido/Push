@@ -51,6 +51,7 @@ import {
   recordVerificationMutation,
 } from '@/lib/verification-runtime';
 import { getToolInvocationKey, type MutationFailureTracker } from '@push/lib/agent-loop-utils';
+import type { ResponsesReasoningItem } from '@push/lib/provider-contract';
 import {
   createLoopIntervention,
   evaluateLoopState,
@@ -780,6 +781,7 @@ export function dispatchDroppedCandidatesError(
   apiMessages: ChatMessage[],
   recoveryState: ToolCallRecoveryState,
   ctx: SendLoopContext,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): AssistantTurnResult {
   const { chatId, lockedProvider, resolvedModel, setConversations, appendRunEvent } = ctx;
   const errorAction = handleDroppedCandidatesError(
@@ -791,6 +793,7 @@ export function dispatchDroppedCandidatesError(
     lockedProvider,
     resolvedModel,
     getCurrentWriteBranch(ctx),
+    responsesReasoningItems,
   );
 
   appendRunEvent(chatId, {
@@ -836,6 +839,7 @@ export function dispatchToolBudgetBlockError(
   apiMessages: ChatMessage[],
   recoveryState: ToolCallRecoveryState,
   ctx: SendLoopContext,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): AssistantTurnResult {
   const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
   const toolLedger = buildDetectedToolLedger(detected);
@@ -852,6 +856,7 @@ export function dispatchToolBudgetBlockError(
     lockedProvider,
     getCurrentWriteBranch(ctx),
     runtimeIntervention ?? undefined,
+    responsesReasoningItems,
   );
 
   appendRunEvent(chatId, {
@@ -1080,6 +1085,7 @@ export function handleLoopVerdict(
   apiMessages: ChatMessage[],
   recoveryState: ToolCallRecoveryState,
   ctx: SendLoopContext,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): AssistantTurnResult | null {
   const { chatId, lockedProvider, setConversations, appendRunEvent } = ctx;
   const loopVerdict = checkLoopBreaker(detected, tracker, loopDetector, round, loopLadder, chatId);
@@ -1109,6 +1115,7 @@ export function handleLoopVerdict(
     apiMessages,
     lockedProvider,
     getCurrentWriteBranch(ctx),
+    responsesReasoningItems,
   );
   appendRunEvent(chatId, {
     type: 'tool.call_malformed',

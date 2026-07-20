@@ -414,6 +414,9 @@ export function checkpointMessagesToChatMessages(
       ...(msg.reasoningBlocks && role === 'assistant'
         ? { reasoningBlocks: msg.reasoningBlocks }
         : {}),
+      ...(msg.responsesReasoningItems && role === 'assistant'
+        ? { responsesReasoningItems: msg.responsesReasoningItems }
+        : {}),
       ...(msg.isToolCall ? { isToolCall: true } : {}),
       ...(msg.isToolResult || msg.role === 'tool' ? { isToolResult: true } : {}),
     });

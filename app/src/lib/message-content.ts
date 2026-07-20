@@ -16,10 +16,11 @@ export { stripToolCallPayload } from '@push/lib/tool-prose';
  * Returns the tool-call-stripped reasoning text to use *as history text*, or
  * `null` when there is nothing to salvage: content already present, no plain
  * reasoning, reasoning that is only tool-call payload — or signed
- * `reasoningBlocks`, which own the replay contract for that turn (an
- * Anthropic thinking + tool_use round is legitimately content-empty and must
- * be re-sent verbatim, not rewritten). Tool-call turns (`isToolCall`, or a
- * `toolUses` sidecar from a native function-call round) are likewise excluded:
+ * `reasoningBlocks` or encrypted Responses reasoning items, which own the
+ * replay contract for that turn (a provider reasoning + tool-use round is
+ * legitimately content-empty and must be re-sent verbatim, not rewritten).
+ * Tool-call turns (`isToolCall`, or a `toolUses` sidecar from a native
+ * function-call round) are likewise excluded:
  * their empty content is the shape of "the call rides elsewhere", and
  * promoting the round's private deliberation would replay it as a user-visible
  * assistant reply while losing the call structure ahead of its tool result
@@ -35,6 +36,7 @@ export function strandedReasoningAnswerText(message: {
   displayContent?: string;
   thinking?: string;
   reasoningBlocks?: readonly unknown[];
+  responsesReasoningItems?: readonly unknown[];
   isToolCall?: boolean;
   toolUses?: readonly unknown[];
 }): string | null {
@@ -42,6 +44,7 @@ export function strandedReasoningAnswerText(message: {
   if (message.isToolCall || (message.toolUses && message.toolUses.length > 0)) return null;
   if ((message.displayContent ?? message.content).trim()) return null;
   if (message.reasoningBlocks && message.reasoningBlocks.length > 0) return null;
+  if (message.responsesReasoningItems && message.responsesReasoningItems.length > 0) return null;
   const thinking = message.thinking ?? '';
   if (!thinking.trim()) return null;
   const salvaged = stripToolCallPayload(thinking).trim();

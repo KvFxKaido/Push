@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   budgetFromWindow,
   estimateMessageTokens,
+  estimateTokens,
   getContextBudget,
   guessWindowFromName,
   resolveContextWindow,
@@ -48,6 +49,16 @@ describe('estimateMessageTokens — replayable reasoning (#1537)', () => {
     expect(estimateMessageTokens({ content, reasoningContent: '', thinking: reasoning })).toBe(
       expected,
     );
+  });
+
+  it('counts encrypted Responses reasoning items in the replay budget', () => {
+    const encrypted = 'opaque-ciphertext'.repeat(100);
+    expect(
+      estimateMessageTokens({
+        content: 'answer',
+        responsesReasoningItems: [{ encrypted_content: encrypted }],
+      }),
+    ).toBe(estimateTokens('answer') + 4 + estimateTokens(encrypted));
   });
 });
 

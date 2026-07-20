@@ -60,6 +60,9 @@ function toSeedMessage(message: ChatMessage): CoderLoopMessage {
     ...(message.reasoningBlocks && message.reasoningBlocks.length > 0
       ? { reasoningBlocks: message.reasoningBlocks }
       : {}),
+    ...(message.responsesReasoningItems && message.responsesReasoningItems.length > 0
+      ? { responsesReasoningItems: message.responsesReasoningItems }
+      : {}),
     ...(message.isToolResult ? { isToolResult: true } : {}),
   };
 }

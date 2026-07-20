@@ -12,6 +12,7 @@ import type {
   PushStream,
   PushStreamRequest,
   ReasoningBlock,
+  ResponsesReasoningItem,
   StreamUsage,
 } from './provider-contract.js';
 
@@ -146,6 +147,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
    *  turn's `content[].thinking` isn't passed back. Empty on OpenAI-compat
    *  routes (which emit `reasoning_delta` only). */
   reasoningBlocks: ReasoningBlock[];
+  responsesReasoningItems: ResponsesReasoningItem[];
   nativeToolCalls: NativeToolCall[];
   usage?: StreamUsage;
 }> {
@@ -159,6 +161,7 @@ export async function iteratePushStreamText<M extends LlmMessage>(
   let text = '';
   let reasoningText = '';
   const reasoningBlocks: ReasoningBlock[] = [];
+  const responsesReasoningItems: ResponsesReasoningItem[] = [];
   const nativeToolCalls: NativeToolCall[] = [];
   let error: Error | null = null;
   let usage: StreamUsage | undefined;
@@ -219,6 +222,8 @@ export async function iteratePushStreamText<M extends LlmMessage>(
         // transport). Capture for replay; the live `reasoning_delta` events
         // already drove the activity timer, so no reset needed here.
         reasoningBlocks.push(event.block);
+      } else if (event.type === 'responses_reasoning_item') {
+        responsesReasoningItems.push(event.item);
       } else if (event.type === 'native_tool_call') {
         sawActivity = true;
         resetTimer();
@@ -247,7 +252,15 @@ export async function iteratePushStreamText<M extends LlmMessage>(
     error = new Error(timeoutMessage);
   }
 
-  return { error, text, reasoningText, reasoningBlocks, nativeToolCalls, usage };
+  return {
+    error,
+    text,
+    reasoningText,
+    reasoningBlocks,
+    responsesReasoningItems,
+    nativeToolCalls,
+    usage,
+  };
 }
 
 // Re-export event type for callers that want to narrow.

@@ -191,6 +191,10 @@ export interface ToOpenAIResponsesOptions {
   temperatureDefault?: number;
   stream?: boolean;
   geminiThoughtSignatureFallback?: boolean;
+  /** Include encrypted reasoning in the response and replay persisted items.
+   *  Opt-in because compatible gateways that do not implement this include
+   *  value may reject it. */
+  encryptedReasoningReplay?: boolean;
 }
 
 export function toOpenAIResponses(
@@ -206,6 +210,13 @@ export function toOpenAIResponses(
   }
 
   for (const message of reqMessages) {
+    if (
+      options?.encryptedReasoningReplay &&
+      message.role === 'assistant' &&
+      message.responsesReasoningItems
+    ) {
+      input.push(...message.responsesReasoningItems);
+    }
     if (message.contentBlocks && message.contentBlocks.length > 0) {
       appendBlocksAsResponsesItems(input, message, {
         geminiThoughtSignatureFallback: options?.geminiThoughtSignatureFallback,
@@ -241,6 +252,9 @@ export function toOpenAIResponses(
     input,
     stream: options?.stream ?? true,
     store: false,
+    ...(options?.encryptedReasoningReplay
+      ? { include: ['reasoning.encrypted_content' as const] }
+      : {}),
     ...(typeof temperature === 'number' ? { temperature } : {}),
     ...(typeof req.topP === 'number' ? { top_p: req.topP } : {}),
     ...(typeof req.maxTokens === 'number' ? { max_output_tokens: req.maxTokens } : {}),

@@ -31,19 +31,29 @@ describe('resolvePushCapabilityProfile', () => {
     ).toMatchObject({ toolCalling: 'json-text', streamingTools: false });
   });
 
-  it('resolves OpenRouter wire per model tier from private seed evidence', () => {
-    expect(resolvePushCapabilityProfile('openrouter', 'openai/gpt-5.4').openaiWire).toBe(
-      'responses',
-    );
-    expect(resolvePushCapabilityProfile('openrouter', 'minimax/minimax-m3').openaiWire).toBe(
-      'chat-completions',
-    );
-    expect(resolvePushCapabilityProfile('openrouter', undefined).openaiWire).toBe(
+  it('defaults every OpenRouter model to Responses', () => {
+    // The endpoint serves /responses for essentially every live model, and the
+    // request path falls back to chat before output on failure, while encrypted
+    // reasoning items make replay-dependent routes safe on the Responses wire.
+    for (const model of [
+      'openai/gpt-5.4',
+      'minimax/minimax-m3',
+      'z-ai/glm-5-turbo',
+      'deepseek/deepseek-r1',
+      'moonshotai/kimi-k2.7-code',
+      undefined,
+    ]) {
+      expect(resolvePushCapabilityProfile('openrouter', model).openaiWire).toBe('responses');
+    }
+    // Non-OpenRouter, non-native providers stay on chat completions.
+    expect(resolvePushCapabilityProfile('ollama', 'mock-model').openaiWire).toBe(
       'chat-completions',
     );
   });
 
-  it('lets discoverable metadata override the OpenRouter cold-start seed in both directions', () => {
+  it('lets discoverable metadata force chat on an OpenRouter model', () => {
+    // The forward-compat escape hatch: if a catalog ever advertises that a model
+    // should NOT use responses, metadata overrides the default.
     expect(
       resolvePushCapabilityProfile(
         'openrouter',
@@ -51,13 +61,6 @@ describe('resolvePushCapabilityProfile', () => {
         lookup({ openaiWire: 'chat-completions' }),
       ).openaiWire,
     ).toBe('chat-completions');
-    expect(
-      resolvePushCapabilityProfile(
-        'openrouter',
-        'vendor/new-responses-model',
-        lookup({ openaiWire: 'responses' }),
-      ).openaiWire,
-    ).toBe('responses');
   });
 
   it('accepts curated evidence from a surface without duplicating its catalog', () => {

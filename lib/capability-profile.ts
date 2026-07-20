@@ -43,7 +43,7 @@ export interface PushModelCapabilityMetadata {
 
 export type PushCapabilityMetadataLookup = (
   provider: string,
-  modelId: string,
+  _modelId: string,
 ) => PushModelCapabilityMetadata | null | undefined;
 
 export interface PushCapabilityProfileOptions {
@@ -89,34 +89,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'google',
 ]);
 
-/**
- * OpenRouter's catalog currently advertises model parameters, not whether a
- * model is served by the beta `/responses` endpoint. Keep the verified IDs as
- * private cold-start evidence beneath the profile resolver until the catalog
- * grows a discoverable endpoint capability; callers must read `openaiWire`
- * rather than importing this seed. Unknown models fail toward Chat
- * Completions, which is OpenRouter's universal transport.
- */
-const OPENROUTER_RESPONSES_SEED_MODELS: ReadonlySet<string> = new Set([
-  'openai/gpt-5-mini',
-  'openai/gpt-5.2-codex',
-  'openai/gpt-5.3-codex',
-  'openai/gpt-5.4',
-  'openai/gpt-5.4-mini',
-  'openai/gpt-5.4-nano',
-  'openai/gpt-5.4-pro',
-  'anthropic/claude-haiku-4.5:nitro',
-  'anthropic/claude-opus-4.6:nitro',
-  'anthropic/claude-sonnet-4.6:nitro',
-  'google/gemini-2.5-flash:nitro',
-  'google/gemini-2.5-pro:nitro',
-  'google/gemini-3-flash-preview:nitro',
-  'google/gemini-3.1-flash-lite:nitro',
-  'google/gemini-3.1-pro-preview:nitro',
-  'google/gemini-3.1-pro-preview-customtools:nitro',
-  'google/gemini-3.5-flash:nitro',
-]);
-
 const RESPONSES_NATIVE_PROVIDERS: ReadonlySet<string> = new Set([
   'openai',
   'xai',
@@ -126,15 +98,19 @@ const RESPONSES_NATIVE_PROVIDERS: ReadonlySet<string> = new Set([
 
 function resolveOpenAIWire(
   provider: string,
-  modelId: string,
+  _modelId: string,
   metadata: PushModelCapabilityMetadata,
 ): PushOpenAIWire {
   if (RESPONSES_NATIVE_PROVIDERS.has(provider)) return 'responses';
   if (provider !== 'openrouter') return 'chat-completions';
-  return (
-    metadata.openaiWire ??
-    (OPENROUTER_RESPONSES_SEED_MODELS.has(modelId) ? 'responses' : 'chat-completions')
-  );
+  // OpenRouter's `/responses` beta serves essentially every live model (verified
+  // by a full-roster probe), and the request path runs it responses-first with a
+  // chat fallback (`streamResponsesWithChatFallback`) — a beta hiccup on any model
+  // degrades to Chat Completions rather than failing the turn. So default every
+  // other route to responses; discoverable metadata can still force chat if a
+  // catalog ever advertises the split. (Replaces the hand-curated seed allowlist,
+  // which the probe showed was capability-obsolete.)
+  return metadata.openaiWire ?? 'responses';
 }
 
 function isCloudflareKimiOrGlm(modelId: string): boolean {

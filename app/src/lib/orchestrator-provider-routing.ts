@@ -5,6 +5,7 @@ import type {
   PushStream,
   PushStreamEvent,
   ReasoningBlock,
+  ResponsesReasoningItem,
   UrlCitation,
 } from '@push/lib/provider-contract';
 import { normalizeReasoning } from '@push/lib/reasoning-tokens';
@@ -362,6 +363,7 @@ export async function streamChat(
   onPreCompact?: (event: PreCompactEvent) => void,
   todoContent?: string,
   onReasoningBlock?: (block: ReasoningBlock) => void,
+  onResponsesReasoningItem?: (item: ResponsesReasoningItem) => void,
   sessionDigest?: SessionDigestPlumbing,
   linkedLibraryContent?: string,
   onCitations?: (citations: UrlCitation[]) => void,
@@ -437,6 +439,7 @@ export async function streamChat(
       onError: wrappedOnError,
       onThinkingToken,
       onReasoningBlock,
+      onResponsesReasoningItem,
       onCitations,
       onNativeToolCall,
     },

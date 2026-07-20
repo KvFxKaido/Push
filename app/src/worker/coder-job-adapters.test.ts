@@ -1083,23 +1083,33 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     expect(doneCalled).toBe(true);
   });
 
-  it('builds a Chat Completions body for an OpenRouter chat-tier model', async () => {
-    // Same profile column as the web client and CLI: a chat-tier model
-    // (the minimax case that motivated the split) gets a `messages` body
-    // and the chat SSE pump — never a Responses body the legacy endpoint
-    // would 400 on.
-    providerHandlerMocks.handleOpenRouterChat.mockResolvedValue(
-      sseResponse([
+  it('runs OpenRouter responses-first with a chat fallback (background job)', async () => {
+    // OpenRouter now defaults ordinary models to /responses. If the Responses
+    // attempt fails BEFORE output (non-200), the background job retries the same
+    // turn on chat rather than failing it — same policy as the web/CLI lanes.
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bodies: Array<Record<string, unknown>> = [];
+    providerHandlerMocks.handleOpenRouterChat.mockImplementation(async (request: Request) => {
+      const body = JSON.parse(await request.clone().text()) as Record<string, unknown>;
+      bodies.push(body);
+      if (body.input !== undefined) {
+        // Responses attempt → provider error before any output.
+        return new Response(JSON.stringify({ error: { message: 'provider returned error' } }), {
+          status: 400,
+        });
+      }
+      // Chat attempt → succeeds.
+      return sseResponse([
         `data: ${JSON.stringify({ choices: [{ delta: { content: 'chat-path' } }] })}\n\n`,
         'data: [DONE]\n\n',
-      ]),
-    );
+      ]);
+    });
     const stream = createWebStreamAdapter({
       env: env(),
       origin: 'https://push.example.test',
       provider: 'openrouter',
       modelId: 'minimax/minimax-m3',
-      jobId: 'job-chat-path-1',
+      jobId: 'job-fallback-1',
     });
 
     const tokens: string[] = [];
@@ -1110,17 +1120,16 @@ describe('createWebStreamAdapter — provider SSE pump', () => {
     })) {
       if (event.type === 'text_delta') tokens.push(event.text);
     }
+    warnSpy.mockRestore();
 
+    // Responses body first (the flip), then a chat body (the fallback).
+    expect(bodies.length).toBe(2);
+    expect(bodies[0].input).toBeDefined();
+    expect(bodies[0].messages).toBeUndefined();
+    expect(bodies[1].messages).toBeDefined();
+    expect(bodies[1].input).toBeUndefined();
+    // The consumer only sees the chat output — the failed attempt is invisible.
     expect(tokens.join('')).toBe('chat-path');
-    const req = providerHandlerMocks.handleOpenRouterChat.mock.calls[0]![0] as Request;
-    const body = JSON.parse(await req.text()) as {
-      model: string;
-      messages?: unknown;
-      input?: unknown;
-    };
-    expect(body.model).toBe('minimax/minimax-m3');
-    expect(body.messages).toBeDefined();
-    expect(body.input).toBeUndefined();
   });
 
   it('stamps X-Forwarded-For with job:<jobId> so jobs get distinct rate-limit buckets', async () => {

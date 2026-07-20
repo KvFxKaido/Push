@@ -42,6 +42,7 @@ import { clearRuntimeCoderWorkingMemory } from '@push/lib/runtime-context';
 import type { AnyToolCall, DetectedToolCalls } from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import type { ChatMessage, ReasoningBlock } from '@/types';
+import type { ResponsesReasoningItem } from '@push/lib/provider-contract';
 import {
   applyPostExecutionSideEffects,
   delegateCallNeedsSandbox,
@@ -63,6 +64,7 @@ export async function executeBatchedToolCalls(
   ctx: SendLoopContext,
   recoveryState: ToolCallRecoveryState,
   turnCtx: TurnRunContext,
+  responsesReasoningItems: ResponsesReasoningItem[] = [],
 ): Promise<AssistantTurnResult> {
   const {
     chatId,
@@ -302,6 +304,9 @@ export async function executeBatchedToolCalls(
       // `reasoningBlocks` sidecar, which was already carried (#1193).
       ...(thinkingAccumulated ? { thinking: thinkingAccumulated } : {}),
       ...(reasoningBlocks.length > 0 ? { reasoningBlocks: [...reasoningBlocks] } : {}),
+      ...(responsesReasoningItems.length > 0
+        ? { responsesReasoningItems: [...responsesReasoningItems] }
+        : {}),
       ...(toolUses.length > 0 ? { toolUses } : {}),
     },
     ...toolResultMessages,

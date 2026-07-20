@@ -228,6 +228,63 @@ describe('toOpenAIResponses', () => {
     ]);
   });
 
+  it('requests, preserves, and orders encrypted reasoning items for stateless replay', () => {
+    const reasoningItem = {
+      type: 'reasoning' as const,
+      id: 'rs_1',
+      encrypted_content: 'opaque-ciphertext',
+      summary: [{ type: 'summary_text', text: 'brief summary' }],
+      status: 'completed',
+    };
+    const body = toOpenAIResponses(
+      reqWith([
+        llm('1', 'assistant', '', {
+          responsesReasoningItems: [reasoningItem],
+          contentBlocks: [
+            { type: 'tool_use', id: 'call_1', name: 'sandbox_read_file', input: { path: 'a.ts' } },
+          ],
+        }),
+        llm('2', 'user', '', {
+          contentBlocks: [{ type: 'tool_result', tool_use_id: 'call_1', content: 'file text' }],
+        }),
+      ]),
+      { encryptedReasoningReplay: true },
+    );
+
+    expect(body.include).toEqual(['reasoning.encrypted_content']);
+    expect(body.input).toEqual([
+      reasoningItem,
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'sandbox_read_file',
+        arguments: JSON.stringify({ path: 'a.ts' }),
+        status: 'completed',
+      },
+      { type: 'function_call_output', call_id: 'call_1', output: 'file text' },
+    ]);
+  });
+
+  it('does not leak encrypted reasoning items to Responses adapters that did not opt in', () => {
+    const body = toOpenAIResponses(
+      reqWith([
+        llm('1', 'assistant', 'answer', {
+          responsesReasoningItems: [
+            { type: 'reasoning', encrypted_content: 'provider-bound-ciphertext' },
+          ],
+        }),
+      ]),
+    );
+    expect(body.include).toBeUndefined();
+    expect(body.input).toEqual([
+      {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'input_text', text: 'answer' }],
+      },
+    ]);
+  });
+
   it('can backfill Gemini thought signatures on Responses function_call history', () => {
     const body = toOpenAIResponses(
       reqWith([

@@ -8,6 +8,7 @@
 
 import type { PushStreamEvent, StreamUsage, UrlCitation } from './provider-contract.js';
 import { parseNativeToolCallArgs } from './openai-sse-pump.js';
+import { parseResponsesReasoningItem } from './responses-reasoning-item.js';
 
 export interface OpenAIResponsesSSEPumpOptions {
   body: ReadableStream<Uint8Array>;
@@ -178,6 +179,7 @@ export async function* openAIResponsesSSEPump(
   let pendingUsage: StreamUsage | undefined;
   let emittedToolCall = false;
   const emittedCitationKeys = new Set<string>();
+  const emittedReasoningItemKeys = new Set<string>();
   const pendingToolCalls = new Map<number, PendingResponseToolCall>();
 
   function newCitations(citations: UrlCitation[]): UrlCitation[] {
@@ -242,6 +244,29 @@ export async function* openAIResponsesSSEPump(
     }
   }
 
+  function* emitReasoningItem(value: unknown): Generator<PushStreamEvent> {
+    const item = parseResponsesReasoningItem(value);
+    if (!item) return;
+    // Dedup on `encrypted_content`, NOT `id`. The same item is emitted twice —
+    // once at `output_item.done`, once in the terminal `response.completed`
+    // output — and on OpenRouter-proxied models the two frames need not carry
+    // `id` symmetrically. Keying on `id` (with an encrypted-content fallback)
+    // would then produce two different keys for one item and replay it twice.
+    // `encrypted_content` is always present (the parser requires it) and stable
+    // across both frames, so it dedups the asymmetric case too.
+    const key = item.encrypted_content;
+    if (emittedReasoningItemKeys.has(key)) return;
+    emittedReasoningItemKeys.add(key);
+    yield { type: 'responses_reasoning_item', item };
+  }
+
+  function* emitReasoningItemsFromResponse(
+    response: Record<string, unknown>,
+  ): Generator<PushStreamEvent> {
+    if (!Array.isArray(response.output)) return;
+    for (const item of response.output) yield* emitReasoningItem(item);
+  }
+
   function hasNamedToolCall(index: number): boolean {
     const call = pendingToolCalls.get(index);
     return Boolean(call && !call.flushed && call.name);
@@ -290,7 +315,7 @@ export async function* openAIResponsesSSEPump(
 
     const type = typeof parsed.type === 'string' ? parsed.type : '';
 
-    if (type === 'response.output_text.delta') {
+    if (type === 'response.output_text.delta' || type === 'response.content_part.delta') {
       if (typeof parsed.delta === 'string' && parsed.delta) {
         yield { type: 'text_delta', text: parsed.delta };
       }
@@ -322,7 +347,17 @@ export async function* openAIResponsesSSEPump(
 
     if (
       type === 'response.reasoning_summary_text.delta' ||
-      type === 'response.reasoning_summary.delta'
+      type === 'response.reasoning_summary.delta' ||
+      // OpenRouter's documented beta vocabulary uses the shorter
+      // `reasoning.delta` event alongside the provider-specific family below.
+      type === 'response.reasoning.delta' ||
+      // OpenRouter serves two reasoning-event vocabularies: OpenAI emits the
+      // `reasoning_summary_*` family, while GLM / DeepSeek / Kimi emit
+      // `reasoning_text.delta`. Both carry the thinking text on `.delta`. Missing
+      // the second silently drops reasoning — and for models that answer IN the
+      // reasoning channel it drops the whole turn. Verified against the live
+      // `/responses` model sweep.
+      type === 'response.reasoning_text.delta'
     ) {
       if (typeof parsed.delta === 'string' && parsed.delta) {
         yield { type: 'reasoning_delta', text: parsed.delta };
@@ -341,6 +376,8 @@ export async function* openAIResponsesSSEPump(
         if (type === 'response.output_item.done') {
           yield* flushToolCall(outputIndex);
         }
+      } else if (type === 'response.output_item.done') {
+        yield* emitReasoningItem(item);
       }
       return;
     }
@@ -372,7 +409,11 @@ export async function* openAIResponsesSSEPump(
       return;
     }
 
-    if (type === 'response.completed' || type === 'response.incomplete') {
+    if (
+      type === 'response.completed' ||
+      type === 'response.done' ||
+      type === 'response.incomplete'
+    ) {
       const response =
         parsed.response && typeof parsed.response === 'object'
           ? (parsed.response as Record<string, unknown>)
@@ -383,6 +424,7 @@ export async function* openAIResponsesSSEPump(
           : undefined;
       pendingUsage = usage ?? pendingUsage;
       if (response) {
+        yield* emitReasoningItemsFromResponse(response);
         upsertToolCallsFromCompletedResponse(response);
         const citations = newCitations(responseOutputAnnotations(response));
         if (citations.length > 0) {

@@ -113,6 +113,136 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('parses OpenRouter documented content, reasoning, and terminal events', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.reasoning.delta', delta: 'thinking ' });
+    s.push({ type: 'response.content_part.delta', delta: 'the answer' });
+    s.push({
+      type: 'response.done',
+      response: {
+        status: 'completed',
+        usage: { input_tokens: 8, output_tokens: 3, total_tokens: 11 },
+      },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'reasoning_delta', text: 'thinking ' },
+      { type: 'text_delta', text: 'the answer' },
+      {
+        type: 'done',
+        finishReason: 'stop',
+        usage: { inputTokens: 8, outputTokens: 3, totalTokens: 11 },
+      },
+    ]);
+  });
+
+  it('emits reasoning_delta for both the summary and reasoning_text families', async () => {
+    // OpenAI streams `reasoning_summary_text.delta`; GLM / DeepSeek / Kimi stream
+    // `reasoning_text.delta`. The pump must surface both, or reasoning (and, for
+    // answer-in-reasoning models, the whole turn) is silently dropped.
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.reasoning_summary_text.delta', delta: 'weighing options ' });
+    s.push({ type: 'response.reasoning_text.delta', delta: 'still thinking ' });
+    s.push({ type: 'response.output_text.delta', delta: 'the answer' });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'reasoning_delta', text: 'weighing options ' },
+      { type: 'reasoning_delta', text: 'still thinking ' },
+      { type: 'text_delta', text: 'the answer' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('emits a complete encrypted reasoning item once across item-done and terminal output', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+    const item = {
+      type: 'reasoning',
+      id: 'rs_1',
+      encrypted_content: 'opaque-ciphertext',
+      summary: [{ type: 'summary_text', text: 'summary' }],
+      status: 'completed',
+    };
+
+    s.push({ type: 'response.output_item.done', output_index: 0, item });
+    s.push({
+      type: 'response.completed',
+      response: { status: 'completed', output: [item] },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'responses_reasoning_item', item },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('dedups the same item once across frames even when id-presence is asymmetric', async () => {
+    // OpenRouter proxies arbitrary models: the streaming `output_item.done` frame
+    // can omit `id` while the terminal output carries it (or vice versa). Keying
+    // dedup on `id` would treat these as two items and replay the (large) encrypted
+    // payload twice. Dedup must key on `encrypted_content`, which is stable.
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'reasoning', encrypted_content: 'shared-ciphertext' }, // no id
+    });
+    s.push({
+      type: 'response.completed',
+      response: {
+        status: 'completed',
+        output: [{ type: 'reasoning', id: 'rs_9', encrypted_content: 'shared-ciphertext' }], // same content, now with id
+      },
+    });
+    s.close();
+
+    const out = await events;
+    const items = out.filter((e) => e.type === 'responses_reasoning_item');
+    expect(items).toHaveLength(1);
+  });
+
+  it('recovers an encrypted reasoning item from terminal output when no item event arrived', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+    const item = { type: 'reasoning', encrypted_content: 'terminal-only-ciphertext' };
+
+    s.push({
+      type: 'response.completed',
+      response: { status: 'completed', output: [item] },
+    });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'responses_reasoning_item', item },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
+  it('drops malformed or unencrypted reasoning items', async () => {
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: { type: 'reasoning', id: 'rs_missing_ciphertext' },
+    });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([{ type: 'done', finishReason: 'stop', usage: undefined }]);
+  });
+
   it('surfaces url_citation annotations as citations events (native web search)', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

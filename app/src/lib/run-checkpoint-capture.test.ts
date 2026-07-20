@@ -67,7 +67,7 @@ afterEach(() => {
 });
 
 describe('toRunCheckpointMessages', () => {
-  it('maps roles, tool flags, and reasoning blocks', () => {
+  it('maps roles, tool flags, and both reasoning replay sidecars', () => {
     const out = toRunCheckpointMessages([
       msg({ content: 'do it' }),
       msg({
@@ -75,6 +75,7 @@ describe('toRunCheckpointMessages', () => {
         content: 'ok',
         isToolCall: true,
         reasoningBlocks: [{ type: 'thinking', text: 't', signature: 's' }],
+        responsesReasoningItems: [{ type: 'reasoning', encrypted_content: 'opaque-ciphertext' }],
       }),
       msg({ content: 'result', isToolResult: true }),
     ]);
@@ -82,6 +83,9 @@ describe('toRunCheckpointMessages', () => {
     expect(out[0]).toEqual({ role: 'user', content: 'do it' });
     expect(out[1]).toMatchObject({ role: 'assistant', isToolCall: true });
     expect(out[1].reasoningBlocks).toHaveLength(1);
+    expect(out[1].responsesReasoningItems).toEqual([
+      { type: 'reasoning', encrypted_content: 'opaque-ciphertext' },
+    ]);
     expect(out[2]).toMatchObject({ role: 'user', content: 'result', isToolResult: true });
   });
 

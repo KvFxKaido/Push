@@ -139,6 +139,18 @@ describe('strandedReasoningAnswerText', () => {
     ).toBeNull();
   });
 
+  it('returns null when an encrypted Responses item owns the replay contract', () => {
+    expect(
+      strandedReasoningAnswerText(
+        stranded({
+          responsesReasoningItems: [
+            { type: 'reasoning', encrypted_content: 'provider-ciphertext' },
+          ],
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it('returns null for tool-call turns — flagged or carrying a native toolUses sidecar', () => {
     expect(strandedReasoningAnswerText(stranded({ isToolCall: true }))).toBeNull();
     expect(

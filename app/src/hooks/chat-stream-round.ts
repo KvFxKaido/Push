@@ -32,7 +32,7 @@ import { getReasoningPhaseDisplay } from '@push/lib/role-display';
 import { isReasoningHeavyModel } from '@push/lib/reasoning-models';
 import { setOpenRouterSessionId } from '@/lib/openrouter-session';
 import { getDefaultMemoryStore } from '@push/lib/context-memory-store';
-import { type NativeToolCall } from '@push/lib/provider-contract';
+import { type NativeToolCall, type ResponsesReasoningItem } from '@push/lib/provider-contract';
 import { type SessionDigest, SESSION_DIGEST_HEADER } from '@push/lib/session-digest';
 
 /** Threshold above which we eagerly pre-fetch memory records each round
@@ -108,6 +108,7 @@ export async function streamAssistantRound(
   let accumulated = '';
   let thinkingAccumulated = '';
   const reasoningBlocks: ReasoningBlock[] = [];
+  const responsesReasoningItems: ResponsesReasoningItem[] = [];
   const nativeToolCalls: NativeToolCall[] = [];
   // Web-search citations, deduped by url. Some engines resend the cumulative
   // list on every frame, so a Map keyed by url collapses repeats while
@@ -133,6 +134,7 @@ export async function streamAssistantRound(
       accumulated,
       thinkingAccumulated,
       reasoningBlocks,
+      ...(responsesReasoningItems.length > 0 ? { responsesReasoningItems } : {}),
       nativeToolCalls,
       error: invariantError,
     };
@@ -334,6 +336,22 @@ export async function streamAssistantRound(
             return { ...prev, [chatId]: { ...conv, messages: msgs } };
           });
         },
+        (item) => {
+          if (abortRef.current) return;
+          responsesReasoningItems.push(item);
+          setConversations((prev) => {
+            const conv = prev[chatId];
+            if (!conv) return prev;
+            const lastIdx = conv.messages.length - 1;
+            if (conv.messages[lastIdx]?.role !== 'assistant') return prev;
+            const msgs = [...conv.messages];
+            msgs[lastIdx] = {
+              ...msgs[lastIdx],
+              responsesReasoningItems: [...responsesReasoningItems],
+            };
+            return { ...prev, [chatId]: { ...conv, messages: msgs } };
+          });
+        },
         {
           records: sessionDigestRecords,
           prior: _lastSessionDigests.get(chatId),
@@ -421,6 +439,7 @@ export async function streamAssistantRound(
       accumulated.length > 0 ||
       thinkingAccumulated.length > 0 ||
       reasoningBlocks.length > 0 ||
+      responsesReasoningItems.length > 0 ||
       nativeToolCalls.length > 0 ||
       citationsByUrl.size > 0;
     const decision = decideStreamFailover({
@@ -663,5 +682,12 @@ export async function streamAssistantRound(
     });
   }
 
-  return { accumulated, thinkingAccumulated, reasoningBlocks, nativeToolCalls, error };
+  return {
+    accumulated,
+    thinkingAccumulated,
+    reasoningBlocks,
+    ...(responsesReasoningItems.length > 0 ? { responsesReasoningItems } : {}),
+    nativeToolCalls,
+    error,
+  };
 }

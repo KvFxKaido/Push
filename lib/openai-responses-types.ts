@@ -6,7 +6,7 @@
  * `openai-chat-types.ts`.
  */
 
-import type { ToolFunctionSchema } from './provider-contract.js';
+import type { ResponsesReasoningItem, ToolFunctionSchema } from './provider-contract.js';
 
 export type OpenAIResponsesInputContent =
   | { type: 'input_text'; text: string }
@@ -47,7 +47,8 @@ export interface OpenAIResponsesFunctionCallOutputItem {
 export type OpenAIResponsesInputItem =
   | OpenAIResponsesMessageItem
   | OpenAIResponsesFunctionCallItem
-  | OpenAIResponsesFunctionCallOutputItem;
+  | OpenAIResponsesFunctionCallOutputItem
+  | ResponsesReasoningItem;
 
 export interface OpenAIResponsesFunctionTool {
   type: 'function';
@@ -86,6 +87,9 @@ export interface OpenAIResponsesRequest {
    * `previous_response_id` conversation state.
    */
   store: false;
+  /** Ask stateless Responses endpoints to return the encrypted reasoning item
+   *  needed for manual multi-turn replay. */
+  include?: ['reasoning.encrypted_content'];
   temperature?: number;
   top_p?: number;
   max_output_tokens?: number;

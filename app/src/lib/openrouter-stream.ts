@@ -17,9 +17,11 @@ import type {
   LlmMessage,
   PushStreamEvent,
   PushStreamRequest,
+  ResponsesReasoningItem,
 } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
+import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
 import {
   expandToolMessagesForOpenAICompat,
   flatToolToOpenAITool,
@@ -63,6 +65,7 @@ type OpenRouterLlmMessage = {
   role: LlmMessage['role'];
   content: string | LlmContentPart[];
   contentBlocks?: LlmContentBlock[];
+  responsesReasoningItems?: ResponsesReasoningItem[];
 };
 
 /**
@@ -71,8 +74,7 @@ type OpenRouterLlmMessage = {
  * endpoint everywhere, e.g. to trial a model before its capability is known).
  * With no override, the shared capability profile decides per model. A
  * Responses body cannot ride /chat/completions, so the body shape MUST be
- * decided where the body is built. Unknown/missing model → chat, which every
- * OpenRouter model serves.
+ * decided where the body is built.
  */
 export function resolveOpenRouterTransport(model?: string): OpenRouterTransport {
   const raw = (import.meta.env.VITE_OPENROUTER_TRANSPORT ?? '').trim().toLowerCase();
@@ -108,6 +110,9 @@ function toNeutralMessages(messages: OpenRouterLlmMessage[]): LlmMessage[] {
     ...(message.contentBlocks && message.contentBlocks.length > 0
       ? { contentBlocks: message.contentBlocks }
       : {}),
+    ...(message.responsesReasoningItems && message.responsesReasoningItems.length > 0
+      ? { responsesReasoningItems: message.responsesReasoningItems }
+      : {}),
   }));
 }
 
@@ -119,7 +124,27 @@ export async function* openrouterStream(
     return;
   }
 
-  yield* openrouterResponsesStream(req);
+  // Responses-first with a Chat Completions fallback. OpenRouter's /responses
+  // beta serves every live model, but if one fails BEFORE any output (a transient
+  // provider error, an unforeseen incompatibility), retry the turn on chat rather
+  // than fail it — `openrouterResponsesStream` throws its non-200 `ProviderStreamError`
+  // (and the pump throws early stream errors) before yielding, which the combinator
+  // catches. A user abort is never a fallback.
+  yield* streamResponsesWithChatFallback({
+    responses: () => openrouterResponsesStream(req),
+    chat: () => openrouterChatCompletionsStream(req),
+    shouldFallback: () => !req.signal?.aborted,
+    onFallback: (error) => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'openrouter_responses_fallback_to_chat',
+          model: req.model,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    },
+  });
 }
 
 async function* openrouterResponsesStream(
@@ -208,6 +233,7 @@ async function* openrouterResponsesStream(
     },
     {
       geminiThoughtSignatureFallback: nativeFcActive && isGeminiModelId(req.model),
+      encryptedReasoningReplay: true,
     },
   ) as unknown as Record<string, unknown>;
   const responseTools = Array.isArray(baseBody.tools)
@@ -298,9 +324,23 @@ async function* openrouterChatCompletionsStream(
   // OpenRouter routes `google/gemini-*` to Gemini, which 400s on the replay turn
   // unless the prior call's first functionCall carries a thought_signature;
   // backfill the documented placeholder when none was captured.
-  const wireMessages = nativeFcActive
+  const expandedMessages = nativeFcActive
     ? expandToolMessagesForOpenAICompat(llmMessages, isGeminiModelId(req.model))
     : llmMessages;
+  // `responsesReasoningItems` is a Responses-only field (opaque, provider-bound
+  // encrypted reasoning items). It must never ride the Chat Completions wire: a
+  // strict OpenAI-compat transport may reject the unknown message field, and on
+  // the responses→chat fallback that would defeat the fallback itself. Strip it
+  // here — the serializer strips `contentBlocks` for exactly this reason, but the
+  // raw/expanded passthrough carries this sibling field through untouched.
+  const wireMessages = expandedMessages.map((message) => {
+    if ('responsesReasoningItems' in message && message.responsesReasoningItems) {
+      const rest = { ...message };
+      delete (rest as { responsesReasoningItems?: unknown }).responsesReasoningItems;
+      return rest;
+    }
+    return message;
+  });
 
   const supportsReasoning = openRouterModelSupportsReasoning(req.model);
   const effort = getReasoningEffort('openrouter');

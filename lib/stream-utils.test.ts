@@ -100,11 +100,18 @@ describe('iteratePushStreamText', () => {
     expect(usage).toBeUndefined();
   });
 
-  it('returns signed reasoning blocks emitted by the stream', async () => {
+  it('returns provider replay sidecars emitted by the stream', async () => {
     const block = { type: 'thinking' as const, text: 'Need the repo shape.', signature: 'sig-1' };
+    const responsesItem = {
+      type: 'reasoning' as const,
+      id: 'rs_1',
+      encrypted_content: 'provider-ciphertext',
+      summary: [],
+    };
     const stream = makePushStream([
       { type: 'reasoning_delta', text: block.text },
       { type: 'reasoning_block', block },
+      { type: 'responses_reasoning_item', item: responsesItem },
       { type: 'text_delta', text: 'reading files' },
       { type: 'done', finishReason: 'stop' },
     ]);
@@ -116,11 +123,12 @@ describe('iteratePushStreamText', () => {
       'timed out',
     );
     await vi.runAllTimersAsync();
-    const { error, reasoningText, reasoningBlocks, text } = await promise;
+    const { error, reasoningText, reasoningBlocks, responsesReasoningItems, text } = await promise;
 
     expect(error).toBeNull();
     expect(reasoningText).toBe(block.text);
     expect(reasoningBlocks).toEqual([block]);
+    expect(responsesReasoningItems).toEqual([responsesItem]);
     expect(text).toBe('reading files');
   });
 

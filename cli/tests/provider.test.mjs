@@ -786,10 +786,9 @@ describe('streamCompletion', () => {
   });
 
   describe('OpenRouter-specific behavior', () => {
-    // These tests pin the RESPONSES-path machinery with fixture models that
-    // aren't in the /responses beta capability tier — force the transport so the
-    // per-model default (chat for unknown models) doesn't reroute them. The
-    // per-model dispatch itself is covered in its own describe below.
+    // These tests pin the Responses-path machinery independently of the
+    // per-model capability decision. The explicit override chooses Responses as
+    // the primary wire while retaining the pre-output Chat fallback.
     let prevTransport;
     beforeEach(() => {
       prevTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
@@ -858,6 +857,40 @@ describe('streamCompletion', () => {
       assert.equal(capturedHeaders['X-Title'], 'Push CLI');
     });
 
+    it('retains the chat fallback when PUSH_OPENROUTER_TRANSPORT=responses', async () => {
+      const urls = [];
+      globalThis.fetch = async (url, opts) => {
+        urls.push(String(url));
+        const body = JSON.parse(opts.body);
+        if (body.input !== undefined) {
+          return {
+            ok: false,
+            status: 400,
+            body: stringToStream('{"error":{"message":"beta mismatch"}}'),
+            headers: new Headers(),
+            text: async () => '{"error":{"message":"beta mismatch"}}',
+            json: async () => ({ error: { message: 'beta mismatch' } }),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['chat-ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const text = await streamCompletion(orConfig, 'key', 'model', testMessages, null);
+
+      assert.equal(text, 'chat-ok');
+      assert.deepEqual(urls, [
+        'http://test.invalid/v1/responses',
+        'http://test.invalid/v1/chat/completions',
+      ]);
+    });
+
     it('injects the openrouter:web_search server tool by default', async () => {
       const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
       delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
@@ -882,6 +915,61 @@ describe('streamCompletion', () => {
       }
 
       assert.deepEqual(capturedBody.tools, [{ type: 'openrouter:web_search' }]);
+    });
+
+    it('requests, replays, and emits encrypted Responses reasoning items', async () => {
+      let capturedBody;
+      const priorItem = {
+        type: 'reasoning',
+        id: 'rs_prior',
+        encrypted_content: 'prior-ciphertext',
+      };
+      const nextItem = {
+        type: 'reasoning',
+        id: 'rs_next',
+        encrypted_content: 'next-ciphertext',
+        status: 'completed',
+      };
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        const frames = [
+          `data: ${JSON.stringify({ type: 'response.output_item.done', output_index: 0, item: nextItem })}`,
+          `data: ${JSON.stringify({ type: 'response.completed', response: { status: 'completed', output: [nextItem] } })}`,
+          '',
+        ].join('\n\n');
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(frames),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createProviderStream(orConfig, 'key');
+      const replayItems = [];
+      for await (const event of stream({
+        provider: 'openrouter',
+        model: 'deepseek/deepseek-r1',
+        messages: [
+          {
+            id: 'a1',
+            role: 'assistant',
+            content: 'tool call',
+            timestamp: 0,
+            responsesReasoningItems: [priorItem],
+          },
+          { id: 'u2', role: 'user', content: 'tool result', timestamp: 1 },
+        ],
+        openrouterWebSearch: false,
+      })) {
+        if (event.type === 'responses_reasoning_item') replayItems.push(event.item);
+      }
+
+      assert.deepEqual(capturedBody.include, ['reasoning.encrypted_content']);
+      assert.deepEqual(capturedBody.input[0], priorItem);
+      assert.deepEqual(replayItems, [nextItem]);
     });
 
     it('merges native function tools with the openrouter:web_search server tool', async () => {
@@ -1147,10 +1235,9 @@ describe('streamCompletion', () => {
     });
 
     // ─── Per-model transport dispatch (no PUSH_OPENROUTER_TRANSPORT) ─
-    // OpenRouter's /responses is a beta not implemented for every model, and
-    // a Responses body can't ride /chat/completions — so with no all-models
-    // override the transport is picked per request from the model's presence
-    // in PushCapabilityProfile.openaiWire.
+    // OpenRouter defaults ordinary models to /responses (PushCapabilityProfile.openaiWire),
+    // and runs it responses-first with a chat fallback: a Responses body can't ride
+    // /chat/completions, so a pre-output failure retries the whole turn on chat.
 
     describe('per-model transport dispatch', () => {
       let prevPerModelTransport;
@@ -1196,16 +1283,63 @@ describe('streamCompletion', () => {
         assert.equal(capturedBody.messages, undefined);
       });
 
-      it('sends a chat-tier model to Chat Completions with a messages body', async () => {
-        let capturedUrl;
-        let capturedBody;
+      it('sends DeepSeek and Kimi through Responses now that encrypted replay is durable', async () => {
+        const seen = [];
         globalThis.fetch = async (url, opts) => {
-          capturedUrl = String(url);
-          capturedBody = JSON.parse(opts.body);
+          seen.push({ url: String(url), body: JSON.parse(opts.body) });
           return {
             ok: true,
             status: 200,
-            body: stringToStream(buildSSE(['chat'])),
+            body: stringToStream(buildResponsesSSE(['ok'])),
+            headers: new Headers(),
+            text: async () => '',
+            json: async () => ({}),
+          };
+        };
+
+        for (const model of ['deepseek/deepseek-r1', 'moonshotai/kimi-k2.7-code']) {
+          const stream = createProviderStream(orConfig, 'key');
+          for await (const _ of stream({
+            provider: 'openrouter',
+            model,
+            messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
+            openrouterWebSearch: false,
+          })) {
+            // drain
+          }
+        }
+
+        assert.equal(seen.length, 2);
+        for (const request of seen) {
+          assert.equal(request.url, 'http://test.invalid/v1/responses');
+          assert.ok(request.body.input);
+          assert.deepEqual(request.body.include, ['reasoning.encrypted_content']);
+        }
+      });
+
+      it('runs responses-first with a chat fallback when the beta attempt fails', async () => {
+        const urls = [];
+        let calls = 0;
+        globalThis.fetch = async (url, opts) => {
+          urls.push(String(url));
+          calls += 1;
+          const body = JSON.parse(opts.body);
+          if (body.input !== undefined) {
+            // Responses attempt → provider error before any output.
+            return {
+              ok: false,
+              status: 400,
+              body: stringToStream('{"error":{"message":"provider error"}}'),
+              headers: new Headers(),
+              text: async () => '{"error":{"message":"provider error"}}',
+              json: async () => ({ error: { message: 'provider error' } }),
+            };
+          }
+          // Chat fallback → succeeds.
+          return {
+            ok: true,
+            status: 200,
+            body: stringToStream(buildSSE(['chat-ok'])),
             headers: new Headers(),
             text: async () => '',
             json: async () => ({}),
@@ -1216,35 +1350,36 @@ describe('streamCompletion', () => {
         const tokens = [];
         for await (const event of stream({
           provider: 'openrouter',
-          // The model that motivated the capability split — /chat/completions only.
           model: 'minimax/minimax-m3',
           messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
         })) {
           if (event.type === 'text_delta') tokens.push(event.text);
         }
 
-        assert.equal(tokens.join(''), 'chat');
-        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
-        assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hello' }]);
-        assert.equal(capturedBody.input, undefined);
+        // Responses attempt (input body) then the chat fallback (messages body).
+        assert.equal(calls, 2);
+        assert.equal(urls[0], 'http://test.invalid/v1/responses');
+        assert.equal(urls[1], 'http://test.invalid/v1/chat/completions');
+        assert.equal(tokens.join(''), 'chat-ok');
       });
 
-      it('falls back to the config default model for the dispatch decision', async () => {
+      it('routes a no-model request to Responses via the config default', async () => {
         let capturedUrl;
         globalThis.fetch = async (url, opts) => {
           capturedUrl = String(url);
+          JSON.parse(opts.body);
           return {
             ok: true,
             status: 200,
-            body: stringToStream(buildSSE(['ok'])),
+            body: stringToStream(buildResponsesSSE(['ok'])),
             headers: new Headers(),
             text: async () => '',
             json: async () => ({}),
           };
         };
 
-        // orConfig.defaultModel ('openrouter-model') is chat-tier, so a
-        // request with no model rides Chat Completions.
+        // OpenRouter defaults a no-model request to /responses; the configured
+        // default model still drives the capability decision.
         const stream = createProviderStream(orConfig, 'key');
         for await (const _ of stream({
           provider: 'openrouter',
@@ -1254,13 +1389,13 @@ describe('streamCompletion', () => {
           // drain
         }
 
-        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.equal(capturedUrl, 'http://test.invalid/v1/responses');
       });
     });
 
     // ─── Prompt caching (cacheBreakpointIndices: Hermes system_and_3) ─
-
     it('tags system + up to 3 rolling-tail messages with cache_control', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1319,6 +1454,7 @@ describe('streamCompletion', () => {
     });
 
     it('tags only the indices passed when fewer than 3 are provided', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1360,6 +1496,7 @@ describe('streamCompletion', () => {
     });
 
     it('does not tag when cacheBreakpointIndices is omitted', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1384,6 +1521,7 @@ describe('streamCompletion', () => {
     });
 
     it('does not tag when cacheBreakpointIndices is empty (system-only transcript)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       let capturedBody;
       globalThis.fetch = async (_url, opts) => {
         capturedBody = JSON.parse(opts.body);
@@ -1416,6 +1554,7 @@ describe('streamCompletion', () => {
     // are into `req.messages` (which excludes the synthesized system), so the
     // wire-side adapter must add `systemPrependOffset = 1` before tagging each.
     it('clamps to the last 3 indices when more than 3 are provided (defense in depth)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       // The transformer caps emission at 3, but the provider contract is
       // exported and `createCliProviderStream` can be called directly by
       // future consumers. The wire layer must enforce the cap independently
@@ -1474,6 +1613,7 @@ describe('streamCompletion', () => {
     });
 
     it('tags wire-index 0 when no system message is present (user-first transcript)', async () => {
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
       // The defensive `wireIndex === 0` skip must only fire when index 0 is
       // actually a system message. A user-first transcript legitimately
       // includes index 0 in the rolling tail and would otherwise lose its
@@ -1978,32 +2118,31 @@ describe('streamCompletion reasoning-block forwarding (direct Anthropic)', () =>
       requiresKey: false,
     };
 
+    // OpenRouter defaults to /responses now, so annotations arrive on the
+    // Responses `output_text.annotation.added` channel (not chat `delta.annotations`).
+    const textFrame = JSON.stringify({ type: 'response.output_text.delta', delta: 'answer' });
     const annFrame = JSON.stringify({
-      choices: [
-        {
-          delta: {
-            annotations: [
-              {
-                type: 'url_citation',
-                url_citation: {
-                  url: 'https://a.test',
-                  title: 'A',
-                  content: 'excerpt',
-                  start_index: 1,
-                  end_index: 2,
-                },
-              },
-            ],
-          },
-        },
-      ],
+      type: 'response.output_text.annotation.added',
+      annotation: {
+        type: 'url_citation',
+        url: 'https://a.test',
+        title: 'A',
+        content: 'excerpt',
+        start_index: 1,
+        end_index: 2,
+      },
     });
-    const textFrame = JSON.stringify({ choices: [{ delta: { content: 'answer' } }] });
+    const completedFrame = JSON.stringify({
+      type: 'response.completed',
+      response: { status: 'completed' },
+    });
 
     globalThis.fetch = async () => ({
       ok: true,
       status: 200,
-      body: stringToStream(`data: ${annFrame}\n\ndata: ${textFrame}\n\ndata: [DONE]\n\n`),
+      body: stringToStream(
+        `data: ${textFrame}\n\ndata: ${annFrame}\n\ndata: ${completedFrame}\n\n`,
+      ),
       headers: new Headers({ 'content-type': 'text/event-stream' }),
       text: async () => '',
     });

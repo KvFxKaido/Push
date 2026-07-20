@@ -43,6 +43,9 @@ vi.mock('./orchestrator', async () => {
         role: m.role,
         content: Array.isArray(m.contentParts) ? m.contentParts : m.content,
         ...(m.contentBlocks ? { contentBlocks: m.contentBlocks } : {}),
+        ...(m.responsesReasoningItems
+          ? { responsesReasoningItems: m.responsesReasoningItems }
+          : {}),
       }));
     },
   };
@@ -689,11 +692,8 @@ describe('openrouterStream', () => {
   });
 
   // Per-model routing — the DEFAULT behavior with no transport override.
-  // OpenRouter's /responses is a beta not implemented for every model, and a
-  // Responses body can't ride /chat/completions, so the body shape must be
-  // decided per model where the body is built (#1296 case 3's real fix; the
-  // worker-side model gate alone would forward a Responses body to
-  // /chat/completions for a chat-tier model — a guaranteed 400).
+  // Every model prefers Responses with a pre-output chat fallback. Encrypted
+  // reasoning items make DeepSeek/Kimi stateless continuations replayable too.
   describe('per-model transport (no override)', () => {
     it('routes a responses-tier model to the Responses body shape', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
@@ -718,33 +718,149 @@ describe('openrouterStream', () => {
       expect(body.messages).toBeUndefined();
     });
 
-    it('routes a chat-tier model to the Chat Completions body shape', async () => {
+    it('routes ordinary OpenRouter models to the Responses body shape (default)', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
       const events = collect(
         openrouterStream({
           ...baseRequest,
-          // The model that motivated the capability split: on OpenRouter it serves
-          // /chat/completions only.
           model: 'minimax/minimax-m3',
           openrouterWebSearch: false,
         }),
       );
 
-      push(chatContentFrame('hi from chat'));
-      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      push(textFrame('hi'));
+      push(completedFrame());
       close();
-      const out = await events;
+      await events;
 
-      expect(out.some((e) => e.type === 'text_delta' && e.text === 'hi from chat')).toBe(true);
       const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
       expect(body.model).toBe('minimax/minimax-m3');
-      expect(body.messages).toBeDefined();
-      expect(body.input).toBeUndefined();
+      expect(body.input).toBeDefined();
+      expect(body.messages).toBeUndefined();
     });
 
-    it('VITE_OPENROUTER_TRANSPORT=responses forces the beta path for a chat-tier model', async () => {
+    it('routes replay-dependent reasoning models through Responses with encrypted replay', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const reasoningItem = {
+        type: 'reasoning' as const,
+        id: 'rs_deepseek',
+        encrypted_content: 'opaque-deepseek-reasoning',
+      };
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'deepseek/deepseek-r1',
+          openrouterWebSearch: false,
+          messages: [
+            {
+              id: 'a1',
+              role: 'assistant',
+              content: 'Calling a tool.',
+              timestamp: 0,
+              responsesReasoningItems: [reasoningItem],
+            },
+            { id: 'u2', role: 'user', content: 'Tool result', timestamp: 1 },
+          ],
+        }),
+      );
+
+      push(textFrame('continued'));
+      push(completedFrame());
+      close();
+      await events;
+
+      const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      expect(body.model).toBe('deepseek/deepseek-r1');
+      expect(body.messages).toBeUndefined();
+      expect(body.include).toEqual(['reasoning.encrypted_content']);
+      expect(body.input[0]).toEqual(reasoningItem);
+    });
+
+    it('strips encrypted reasoning items from the Chat Completions body (no leak on chat/fallback)', async () => {
+      // `responsesReasoningItems` is Responses-only. On a chat route (including the
+      // responses→chat fallback) it must never ride the /chat/completions body — a
+      // strict transport may reject the unknown field, which would defeat the
+      // fallback. Force chat to exercise the shared chat-body builder directly.
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'chat');
+      const { push, close } = installStreamFetch(fetchMock);
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'deepseek/deepseek-r1',
+          openrouterWebSearch: false,
+          messages: [
+            {
+              id: 'a1',
+              role: 'assistant',
+              content: 'answer',
+              timestamp: 0,
+              responsesReasoningItems: [
+                { type: 'reasoning', encrypted_content: 'SENTINEL-CIPHERTEXT' },
+              ],
+            },
+          ],
+        }),
+      );
+
+      push(chatContentFrame('ok'));
+      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      close();
+      await events;
+
+      const rawBody = (fetchMock.mock.calls[0][1] as RequestInit).body as string;
+      expect(rawBody).not.toContain('SENTINEL-CIPHERTEXT');
+      expect(rawBody).not.toContain('responsesReasoningItems');
+    });
+
+    it('falls back to Chat Completions when the Responses attempt fails before output', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const chatStream = makeControllableStream();
+      let calls = 0;
+      fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+        if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        calls += 1;
+        if (calls === 1) {
+          // Responses attempt: the Worker/gateway returns an error → the responses
+          // stream throws its non-200 ProviderStreamError before any output.
+          return new Response(JSON.stringify({ error: { message: 'provider returned error' } }), {
+            status: 400,
+          });
+        }
+        init?.signal?.addEventListener('abort', () => chatStream.abort());
+        return chatStream.response;
+      });
+
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'minimax/minimax-m3',
+          openrouterWebSearch: false,
+        }),
+      );
+      chatStream.push(chatContentFrame('hi from chat'));
+      chatStream.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      chatStream.close();
+      const out = await events;
+      warnSpy.mockRestore();
+
+      // Two fetches: the failed responses body, then the chat body.
+      expect(calls).toBe(2);
+      const firstBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(firstBody.input).toBeDefined();
+      expect(secondBody.messages).toBeDefined();
+      // The consumer only sees the chat output — the failed attempt is invisible.
+      expect(out.some((e) => e.type === 'text_delta' && e.text === 'hi from chat')).toBe(true);
+    });
+
+    it('VITE_OPENROUTER_TRANSPORT=responses explicitly selects the beta path', async () => {
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'responses');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');

@@ -273,6 +273,7 @@ export interface TokenEstimationMessage {
   /** Neutral/kernel spelling for replayable plain reasoning. This is the same
    *  token-bearing channel as the web `thinking` field, not an additional copy. */
   reasoningContent?: string;
+  responsesReasoningItems?: Array<{ encrypted_content: string }>;
   attachments?: Array<{ type: string; content: string }>;
   contentParts?: Array<{ type: string; text?: string; image_url?: { url: string } }>;
 }
@@ -289,6 +290,9 @@ export function estimateMessageTokens(msg: TokenEstimationMessage): number {
   // non-empty `thinking`, under-counting the very body that ships the tokens.
   const reasoning = msg.reasoningContent || msg.thinking;
   if (reasoning) tokens += estimateTokens(reasoning);
+  for (const item of msg.responsesReasoningItems ?? []) {
+    tokens += estimateTokens(item.encrypted_content);
+  }
   if (msg.contentParts && msg.contentParts.length > 0) {
     // Kernel image turns carry pixels in `contentParts`, not `attachments`.
     // The text part mirrors `content` (already counted), so only add the

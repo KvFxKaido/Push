@@ -336,8 +336,8 @@ function hasReplayableLeadReasoning(userText: string, messages: ReadonlyArray<Me
   return selectLeadConversationContext(userText, messages).prior.some(
     (message) =>
       message.role === 'assistant' &&
-      typeof message.reasoningContent === 'string' &&
-      message.reasoningContent.length > 0,
+      ((typeof message.reasoningContent === 'string' && message.reasoningContent.length > 0) ||
+        Boolean(message.responsesReasoningItems?.length)),
   );
 }
 
@@ -359,8 +359,8 @@ export function buildLeadReasoningReplaySeed(
     !prior.some(
       (message) =>
         message.role === 'assistant' &&
-        typeof message.reasoningContent === 'string' &&
-        message.reasoningContent.length > 0,
+        ((typeof message.reasoningContent === 'string' && message.reasoningContent.length > 0) ||
+          Boolean(message.responsesReasoningItems?.length)),
     )
   ) {
     return undefined;
@@ -377,6 +377,9 @@ export function buildLeadReasoningReplaySeed(
         : {}),
       ...(message.reasoningBlocks && message.reasoningBlocks.length > 0
         ? { reasoningBlocks: message.reasoningBlocks }
+        : {}),
+      ...(message.responsesReasoningItems && message.responsesReasoningItems.length > 0
+        ? { responsesReasoningItems: message.responsesReasoningItems }
         : {}),
     }),
   );
@@ -414,8 +417,8 @@ export function buildLeadReasoningReplaySeed(
     !seed.some(
       (message) =>
         message.role === 'assistant' &&
-        typeof message.reasoningContent === 'string' &&
-        message.reasoningContent.length > 0,
+        ((typeof message.reasoningContent === 'string' && message.reasoningContent.length > 0) ||
+          Boolean(message.responsesReasoningItems?.length)),
     )
   ) {
     return undefined;
@@ -1190,11 +1193,15 @@ export async function runLeadKernelTurn(
 
     const finalAssistantText: string = result.summary || '';
     const finalReasoningContent = result.finalAssistantMessage?.reasoningContent;
+    const finalResponsesReasoningItems = result.finalAssistantMessage?.responsesReasoningItems;
     (state.messages as Message[]).push({
       role: 'assistant',
       content: finalAssistantText,
       ...(typeof finalReasoningContent === 'string' && finalReasoningContent.length > 0
         ? { reasoningContent: finalReasoningContent }
+        : {}),
+      ...(finalResponsesReasoningItems && finalResponsesReasoningItems.length > 0
+        ? { responsesReasoningItems: finalResponsesReasoningItems }
         : {}),
     });
     state.rounds = (state.rounds ?? 0) + result.rounds;

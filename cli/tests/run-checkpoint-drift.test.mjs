@@ -146,6 +146,22 @@ test('pin: credential scan is DEEP — nested objects cannot smuggle secrets', (
     ],
   });
   assert.deepEqual(validateRunCheckpoint(viaReasoning), []);
+  const viaResponsesReasoning = makeCheckpoint({
+    messages: [
+      {
+        role: 'assistant',
+        content: 'x',
+        responsesReasoningItems: [
+          {
+            type: 'reasoning',
+            encrypted_content: 'opaque',
+            summary: [{ credential_hint: 'provider-authored metadata' }],
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(validateRunCheckpoint(viaResponsesReasoning), []);
 });
 
 // ---------------------------------------------------------------------------
@@ -200,6 +216,20 @@ test('messages are structurally validated', () => {
   });
   assert.ok(
     validateRunCheckpoint(badReasoning).some((i) => i.path === 'messages[0].reasoningBlocks'),
+  );
+  const badResponsesReasoning = makeCheckpoint({
+    messages: [
+      {
+        role: 'assistant',
+        content: 'x',
+        responsesReasoningItems: [{ type: 'reasoning', id: 'missing-encrypted-content' }],
+      },
+    ],
+  });
+  assert.ok(
+    validateRunCheckpoint(badResponsesReasoning).some(
+      (i) => i.path === 'messages[0].responsesReasoningItems[0]',
+    ),
   );
   const badToolUses = makeCheckpoint({
     messages: [{ role: 'assistant', content: 'x', toolUses: [{ type: 'tool_use', id: '' }] }],
