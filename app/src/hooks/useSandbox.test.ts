@@ -1027,6 +1027,29 @@ describe('useSandbox — debounced post-round keep-warm snapshot', () => {
     expect(sandboxClient.hibernateSandbox).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a due checkpoint that lands while a sandbox call is in flight', async () => {
+    // The fugu warning on #1558: the flush clears both timers before the
+    // capture guards run, so a busy skip used to drop the request outright —
+    // the mutation stayed unpreserved until the next MUTATING round (or the
+    // 45-min idle). The flush must re-arm a short retry until capture starts.
+    vi.useFakeTimers();
+    const hook = await startReadySandbox();
+
+    sandboxClient.hasInFlightSandboxCalls.mockReturnValue(true);
+    hook.requestRoundCheckpoint();
+    await vi.advanceTimersByTimeAsync(15_000);
+    // Trailing timer fired into the busy guard: no capture yet…
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5_000);
+    // …and the 5s retry while still busy also skips without capturing.
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+
+    sandboxClient.hasInFlightSandboxCalls.mockReturnValue(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    // First retry after the call drains captures exactly once.
+    expect(sandboxClient.hibernateSandbox).toHaveBeenCalledTimes(1);
+  });
+
   it('cancels a pending capture on hook teardown', async () => {
     vi.useFakeTimers();
     vi.stubGlobal('document', {

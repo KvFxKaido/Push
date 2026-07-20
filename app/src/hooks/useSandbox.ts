@@ -97,6 +97,10 @@ const ROUND_CHECKPOINT_DEBOUNCE_MS = 15 * 1000; // 15s trailing debounce
 // Start this ceiling at the first request in a burst so capture is attempted
 // at least every two minutes even while later rounds keep extending the tail.
 const ROUND_CHECKPOINT_MAX_WAIT_MS = 120 * 1000; // 2 min leading-edge max wait
+// When a due checkpoint finds the sandbox busy (tool call in flight or a prior
+// snapshot pending), retry on this short cadence rather than dropping the
+// request — the mutation it covers is still unpreserved.
+const ROUND_CHECKPOINT_RETRY_MS = 5 * 1000;
 // Shown when a saved snapshot existed but couldn't be restored on reconnect, so
 // the user knows their prior workspace is gone and they're on a fresh sandbox
 // (otherwise the restore failure is silent and looks like a normal cold start).
@@ -552,21 +556,27 @@ export function useSandbox(
   // beats the prior "nothing until 45 min idle" — it shrinks the unprotected
   // window from the full idle interval to ~the moment of backgrounding.
   const captureKeepWarmSnapshot = useCallback(
-    (trigger: 'idle' | 'hidden' | 'round'): void => {
+    // The return value tells round-trigger callers whether a skip is worth
+    // retrying: 'busy' skips (in-flight call, pending snapshot) leave real
+    // mutations unpreserved and must be retried; 'clean'/'unavailable' skips
+    // mean there is nothing to capture (or capture is gated) and the request
+    // can be dropped. The idle/hidden triggers ignore the return — their next
+    // tick/backgrounding retries naturally.
+    (trigger: 'idle' | 'hidden' | 'round'): 'started' | 'busy' | 'clean' | 'unavailable' => {
       // On the native shell, WIP never leaves the device — no keep-warm snapshot.
-      if (nativeCheckpointsActive()) return;
+      if (nativeCheckpointsActive()) return 'unavailable';
       const id = sandboxIdRef.current;
-      if (!id || statusRef.current !== 'ready') return;
+      if (!id || statusRef.current !== 'ready') return 'unavailable';
 
       if (hasInFlightSandboxCalls()) {
         console.log(`[useSandbox] ${trigger} keep-warm deferred — a sandbox call is in flight`);
-        return;
+        return 'busy';
       }
 
       // A snapshot from a prior trigger may still be pending — it's suppressed
       // (invisible to the in-flight counter), so guard explicitly against
       // launching a second one.
-      if (idleHibernatePendingRef.current) return;
+      if (idleHibernatePendingRef.current) return 'busy';
 
       // Dirty-tree guard: re-snapshot only when activity advanced past our last
       // snapshot, so repeated idle ticks (or repeated backgrounds) of an
@@ -578,7 +588,7 @@ export function useSandbox(
         lastKeepWarmSnapshotAtRef.current > 0 &&
         lastKeepWarmSnapshotAtRef.current >= lastCallAt
       ) {
-        return;
+        return 'clean';
       }
 
       idleHibernatePendingRef.current = true;
@@ -670,13 +680,28 @@ export function useSandbox(
         .finally(() => {
           idleHibernatePendingRef.current = false;
         });
+      return 'started';
     },
     [activeRepoFullName, activeBranch],
   );
 
   const flushRoundCheckpoint = useCallback((): void => {
     clearRoundCheckpointTimers();
-    captureKeepWarmSnapshot('round');
+    // A 'busy' skip (tool call in flight, snapshot pending) leaves a real
+    // mutation unpreserved with both timers already cleared — without a retry
+    // the checkpoint request would be silently dropped until the NEXT mutating
+    // round, or the 45-min idle in the worst case (the fugu warning on #1558).
+    // Re-arm a short retry until capture starts, the tree is clean, or capture
+    // is gated. The recursive closure cannot go stale across a session change:
+    // the teardown effect below clears these timers whenever repo/branch
+    // changes or the hook unmounts, so a scheduled attempt never fires against
+    // a torn-down session.
+    function attempt(): void {
+      if (captureKeepWarmSnapshot('round') === 'busy') {
+        roundCheckpointTimerRef.current = setTimeout(attempt, ROUND_CHECKPOINT_RETRY_MS);
+      }
+    }
+    attempt();
   }, [captureKeepWarmSnapshot, clearRoundCheckpointTimers]);
 
   // Called after a round that dispatched file mutations or side effects. Each
