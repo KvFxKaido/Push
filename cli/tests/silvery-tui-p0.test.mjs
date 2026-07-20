@@ -4374,15 +4374,31 @@ describe('silvery surface — constrained-height chrome budget', () => {
         rows.some((line) => line.includes('composer row three')),
       );
 
-      // The fixed seven rows are header + rule + max composer + max footer;
-      // the error consumes one more, leaving six transcript rows in 72x14.
-      assert.equal(resolveSurfaceTranscriptHeight(terminalRows, { errorVisible: true }), 6);
+      // Chrome at 72x14 with a 3-row composer + error = header + rule + composer(3)
+      // + status footer(1) + error(1) = 7, so the transcript takes the remaining 7
+      // and the composer/footer sit flush at the bottom (no dead space).
       assert.equal(
         resolveSurfaceTranscriptHeight(terminalRows, {
-          completionVisible: true,
-          errorVisible: true,
+          composerRows: 3,
+          footerRows: 1,
+          errorRows: 1,
         }),
-        5,
+        7,
+      );
+      assert.equal(
+        resolveSurfaceTranscriptHeight(terminalRows, {
+          composerRows: 3,
+          footerRows: 1,
+          errorRows: 1,
+          completionRows: 1,
+        }),
+        6,
+      );
+      // An idle single-row composer hands the transcript its full remainder
+      // (header + rule + composer + footer = 4 rows of chrome at 72x14).
+      assert.equal(
+        resolveSurfaceTranscriptHeight(terminalRows, { composerRows: 1, footerRows: 1 }),
+        10,
       );
 
       const frame = frameRows.join('\n');
@@ -4403,20 +4419,28 @@ describe('silvery surface — constrained-height chrome budget', () => {
 
       const errorIndex = frameRows.findIndex((line) => line.includes('surface frame error'));
       const ruleIndex = frameRows.findIndex((line) => /^─{20}/.test(line));
-      const composerStart = frameRows.findIndex((line) => line.includes('❯ composer row one'));
+      // The composer caret reserves the glyph's presentation width in the
+      // virtual terminal (same as the transcript user glyph), so match flexibly.
+      const composerStart = frameRows.findIndex((line) => /❯\s+composer row one/.test(line));
       const composerEnd = frameRows.findIndex((line) => line.includes('composer row three'));
-      const footerKeys = frameRows.findIndex((line) => line.includes('tab complete'));
       const footerStatus = frameRows.findIndex((line) => line.includes('auto ·'));
 
       assert.ok(errorIndex >= 0, `error row was clipped:\n${frame}`);
       assert.ok(ruleIndex > errorIndex, `composer rule was clipped or misplaced:\n${frame}`);
       assert.ok(composerStart > ruleIndex, `composer start was clipped:\n${frame}`);
       assert.ok(composerEnd >= composerStart, `three-row composer was clipped:\n${frame}`);
-      assert.ok(footerKeys > composerEnd, `footer key row was clipped:\n${frame}`);
-      assert.ok(footerStatus >= footerKeys, `footer status row was clipped:\n${frame}`);
+      assert.ok(footerStatus > composerEnd, `footer status row was clipped:\n${frame}`);
+      // The composer scope drops the keybind strip — status only.
       assert.ok(
-        footerStatus < terminalRows,
-        `footer escaped the ${terminalRows}-row viewport:\n${frame}`,
+        !frameRows.some((line) => line.includes('tab complete')),
+        `composer footer should not render the keybind strip:\n${frame}`,
+      );
+      // The status footer is the LAST visible row: composer + footer are pinned
+      // flush to the bottom edge with no dead space beneath.
+      assert.equal(
+        footerStatus,
+        terminalRows - 1,
+        `footer is not pinned to the bottom row:\n${frame}`,
       );
     } finally {
       instance?.unmount();

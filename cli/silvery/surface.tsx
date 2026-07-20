@@ -105,30 +105,46 @@ const LAUNCH_SHORTCUT_WIDTH = 26;
 const PICKER_MAX_VISIBLE = 12;
 
 // Full-screen vertical contract. HeaderBar is pinned to one row; the composer
-// can grow to three; FooterBar may wrap its keys/status pair once on narrow
-// terminals. Keep these beside the surface instead of hiding the arithmetic in
-// a magic subtraction so adding chrome requires updating the budget explicitly.
+// rule is one; the composer itself grows 1→3; the footer is one status row in
+// the composer scope. The transcript is given EXACTLY the rows left over so it
+// fills to the composer rule — that pins the composer/footer to the bottom edge
+// with no dead space, and a short transcript simply leaves blank rows above the
+// composer (the ListView pads to its height). Callers pass the measured chrome;
+// the defaults reserve the worst case so an unmeasured call can never overflow.
 const SURFACE_HEADER_ROWS = 1;
 const SURFACE_COMPOSER_RULE_ROWS = 1;
+const SURFACE_COMPOSER_MIN_ROWS = 1;
 const SURFACE_COMPOSER_MAX_ROWS = 3;
 const SURFACE_FOOTER_MAX_ROWS = 2;
 const SURFACE_MIN_TRANSCRIPT_ROWS = 3;
 
 export function resolveSurfaceTranscriptHeight(
   viewportRows: number,
-  options: { completionVisible?: boolean; errorVisible?: boolean } = {},
+  chrome: {
+    composerRows?: number;
+    footerRows?: number;
+    errorRows?: number;
+    completionRows?: number;
+  } = {},
 ): number {
-  const fixedChromeRows =
+  const composerRows = Math.min(
+    SURFACE_COMPOSER_MAX_ROWS,
+    Math.max(SURFACE_COMPOSER_MIN_ROWS, chrome.composerRows ?? SURFACE_COMPOSER_MAX_ROWS),
+  );
+  const footerRows = Math.min(
+    SURFACE_FOOTER_MAX_ROWS,
+    Math.max(1, chrome.footerRows ?? SURFACE_FOOTER_MAX_ROWS),
+  );
+  const errorRows = Math.max(0, chrome.errorRows ?? 0);
+  const completionRows = Math.max(0, chrome.completionRows ?? 0);
+  const chromeRows =
     SURFACE_HEADER_ROWS +
     SURFACE_COMPOSER_RULE_ROWS +
-    SURFACE_COMPOSER_MAX_ROWS +
-    SURFACE_FOOTER_MAX_ROWS;
-  const transientChromeRows =
-    Number(Boolean(options.completionVisible)) + Number(Boolean(options.errorVisible));
-  return Math.max(
-    SURFACE_MIN_TRANSCRIPT_ROWS,
-    viewportRows - fixedChromeRows - transientChromeRows,
-  );
+    composerRows +
+    footerRows +
+    errorRows +
+    completionRows;
+  return Math.max(SURFACE_MIN_TRANSCRIPT_ROWS, viewportRows - chromeRows);
 }
 
 /**
@@ -1375,13 +1391,24 @@ function FooterBar({
   columns: number;
   elapsed: string;
 }) {
-  const keys = footerKeybinds(scope);
   const mode = modeLabel(snapshot.execMode);
-  const right = `${mode} · ${snapshot.provider} · ${snapshot.model}${elapsed}`;
-  // Prefer keys on the left; trim the right if the row is tight.
+  const status = `${mode} · ${snapshot.provider} · ${snapshot.model}${elapsed}`;
+  const truncate = (text: string, max: number) =>
+    text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+  // Composer scope: a single muted status row, no keybind strip. Discoverability
+  // lives in tab-completion, the launch-screen shortcuts, and `?` help — so the
+  // bottom edge stays a clean provider/model readout instead of a control legend.
+  if (scope === 'composer') {
+    return (
+      <Box width={columns}>
+        <Text color={VL_COLOR.muted}>{truncate(status, columns)}</Text>
+      </Box>
+    );
+  }
+  // Modal / running scopes still surface their essential keys on the left.
+  const keys = footerKeybinds(scope);
   const maxRight = Math.max(12, columns - keys.length - 3);
-  const rightShown =
-    right.length > maxRight ? `${right.slice(0, Math.max(0, maxRight - 1))}…` : right;
+  const rightShown = truncate(status, maxRight);
   return (
     <Box width={columns}>
       <Text color={VL_COLOR.muted}>{keys}</Text>
@@ -1793,9 +1820,25 @@ export function PushSurface({
   });
 
   const completionState = inputActive ? completer.getState() : null;
+  // Measure the actual chrome so the transcript fills exactly to the composer
+  // (bottom-pinned, no dead space). The composer (TextArea, 1→3 rows) tracks its
+  // wrapped input line count; the error line wraps at the viewport width; the
+  // composer-scope footer is a single status row (no keybind strip).
+  const composerContentRows =
+    input.length === 0
+      ? 1
+      : Math.min(
+          SURFACE_COMPOSER_MAX_ROWS,
+          Math.max(1, countVisualLines(input, Math.max(1, columns - 2))),
+        );
+  const errorRows = snapshot.error
+    ? Math.min(3, Math.max(1, countVisualLines(String(snapshot.error), Math.max(1, columns - 2))))
+    : 0;
   const transcriptHeight = resolveSurfaceTranscriptHeight(rows, {
-    completionVisible: Boolean(completionState),
-    errorVisible: Boolean(snapshot.error),
+    composerRows: composerContentRows,
+    footerRows: 1,
+    errorRows,
+    completionRows: completionState ? 1 : 0,
   });
   // Composer frame: the rule (the frame edge the height budget reserves)
   // and the human caret (❯) that law 2 names the composer cursor — the one accent
