@@ -130,6 +130,10 @@ export function guessWindowFromName(model: string): number {
   if (m.includes('claude')) return 1_000_000;
   if (m.includes('gemini')) return 1_000_000;
   if (m.includes('grok')) return 2_000_000;
+  // Kimi K3: 1,048,576 (1M) native — verified against OpenRouter's served
+  // context_length (2026-07-20). Re-check if Workers AI ships a capped
+  // `@cf/moonshotai/kimi-k3` (the GLM-5.2 precedent below).
+  if (m.includes('kimi-k3')) return 1_048_576;
   // Kimi/Moonshot K2.x: 262,144 (256K) — the window Cloudflare Workers AI
   // serves (`@cf/moonshotai/kimi-k2.x`) and Moonshot's own native window.
   if (m.includes('kimi') || m.includes('moonshot')) return 262_144;

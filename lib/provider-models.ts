@@ -152,12 +152,11 @@ export const ZAI_MODELS: string[] = [
 
 // Kimi's current direct API lineup. K2.7 Code Highspeed is the recommended
 // programming-agent endpoint; free-text entry covers account-specific ids.
-export const KIMI_MODELS: string[] = [
-  KIMI_DEFAULT_MODEL,
-  'kimi-k2.7-code',
-  'kimi-k2.6',
-  'kimi-k2.5',
-];
+// kimi-k2.5 dropped from the seed: Moonshot closed it to new registrations at
+// the K3 launch and sunsets it platform-wide on 2026-08-31 (free-text entry
+// still works for existing users until then). Zen still serves its own
+// kimi-k2.5 — ZEN_MODELS is unaffected.
+export const KIMI_MODELS: string[] = [KIMI_DEFAULT_MODEL, 'kimi-k3', 'kimi-k2.7-code', 'kimi-k2.6'];
 
 // Curated picker seed for the Hugging Face router — strong open-weight coding
 // and agent models verified live with tool support on /v1/models (2026-07-10).

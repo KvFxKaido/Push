@@ -122,6 +122,14 @@ describe('guessWindowFromName', () => {
     expect(guessWindowFromName('moonshotai/kimi-k2.5')).toBe(262_144);
   });
 
+  it('budgets Kimi K3 at its native 1M window, ahead of the K2.x catch-all', () => {
+    // K3 is 1,048,576 native (verified against OpenRouter's served
+    // context_length). Both the bare and vendor-prefixed ids must hit the
+    // specific branch before the generic kimi/moonshot 262,144 fallback.
+    expect(guessWindowFromName('kimi-k3')).toBe(1_048_576);
+    expect(guessWindowFromName('moonshotai/kimi-k3')).toBe(1_048_576);
+  });
+
   it('returns 0 for names that match no pattern', () => {
     expect(guessWindowFromName('mistralai/mistral-large-2512')).toBe(0);
     expect(guessWindowFromName('totally-unknown-model')).toBe(0);

@@ -111,6 +111,9 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'glm-4.5': M(128000, true, true, true, TEXT, TEXT, false),
   },
   kimi: {
+    // K3: 1M window and text+image input per Moonshot's model list, cross-checked
+    // against OpenRouter's live context_length/input_modalities (2026-07-20).
+    'kimi-k3': M(1048576, true, true, true, TEXT_IMAGE),
     'kimi-k2.7-code-highspeed': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
     'kimi-k2.7-code': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
     'kimi-k2.6': M(262144, true, true, true, TEXT_IMAGE_VIDEO),
