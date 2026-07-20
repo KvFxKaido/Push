@@ -11,8 +11,6 @@
  *   browser/CLI → Worker (this handler) → getSandbox(env.Sandbox, id) → DO → container
  *
  * Known MVP gaps (tracked as follow-up PRs):
- *   - No filesystem snapshots (hibernate/restore-snapshot return 501).
- *     Follow-up will back these with R2 tar.gz archives.
  *   - workspace_revision and file version (SHA) are best-effort — the SDK
  *     doesn't expose monotonic revisions the way Modal's app.py does.
  *
@@ -26,6 +24,7 @@
 
 import type { ExecutionContext } from '@cloudflare/workers-types';
 import { getSandbox } from '@cloudflare/sandbox';
+import type { DirectoryBackup } from '@cloudflare/sandbox';
 import type { Env } from './worker-middleware';
 import {
   validateOrigin,
@@ -45,7 +44,13 @@ import {
   verifyToken,
   type VerifyResult,
 } from './sandbox-token-store';
-import { putSnapshot, touchSnapshot, deleteSnapshot, getSnapshot } from './snapshot-index';
+import {
+  putSnapshot,
+  touchSnapshot,
+  deleteSnapshot,
+  getSnapshot,
+  DEFAULT_TTL_SECONDS,
+} from './snapshot-index';
 
 const ROUTES = new Set([
   'create',
@@ -477,6 +482,13 @@ async function runSandboxRoute(
       message: err instanceof Error ? err.message : String(err),
     });
     const code = isDeadline ? 'TIMEOUT' : classifyCfError(err);
+    const status = isDeadline
+      ? 504
+      : code === 'FILE_NOT_FOUND'
+        ? 404
+        : code === 'INVALID_BACKUP_CONFIG'
+          ? 503
+          : 500;
     return Response.json(
       {
         error: err instanceof Error ? err.message : String(err),
@@ -487,7 +499,7 @@ async function runSandboxRoute(
       // status >= 500 as retryable, so the kernel surfaces retry-friendly
       // structured errors for both cases. FILE_NOT_FOUND is a 4xx so the
       // client does NOT burn 5 retries on a path that will never exist.
-      { status: isDeadline ? 504 : code === 'FILE_NOT_FOUND' ? 404 : 500 },
+      { status },
     );
   }
 }
@@ -664,10 +676,9 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         // always on origin, so a stale default-branch snapshot can never shadow a
         // fresh clone here. Best-effort — a missing/failed snapshot falls through
         // to recreating an empty branch (the prior behavior).
-        const restoreOutcome =
-          env.SNAPSHOTS && env.SNAPSHOT_INDEX
-            ? await time('clone', () => restoreSnapshotIntoSandbox(env, sandbox, repo, branch))
-            : 'absent';
+        const restoreOutcome = env.SNAPSHOT_INDEX
+          ? await time('clone', () => restoreSnapshotIntoSandbox(env, sandbox, repo, branch))
+          : 'absent';
 
         let restoredFromSnapshot = false;
         if (restoreOutcome === 'restored') {
@@ -734,7 +745,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
       // re-clone a stale snapshot before the sandbox can become ready.
       const branchLooksDefault =
         branch === defaultBranch || (!defaultBranch && (branch === 'main' || branch === 'master'));
-      if (directCloneSucceeded && !branchLooksDefault && env.SNAPSHOTS && env.SNAPSHOT_INDEX) {
+      if (directCloneSucceeded && !branchLooksDefault && env.SNAPSHOT_INDEX) {
         const tipResult = (await withExecDeadline(
           sandbox.exec('git -C /workspace rev-parse HEAD'),
         ).catch(() => ({ stdout: '', exitCode: 1 }))) as { stdout?: string; exitCode?: number };
@@ -1933,87 +1944,188 @@ async function routeHydrate(env: Env, body: Json): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
-// Snapshots (R2-backed) — the Cloudflare equivalent of Modal's filesystem
-// snapshots. hibernate tars /workspace, stores it in R2, and frees the
-// container; restore-snapshot pulls it back into a fresh sandbox. The wire
+// Snapshots (Sandbox SDK backups) — the Cloudflare equivalent of Modal's
+// filesystem snapshots. hibernate asks the SDK to archive /workspace directly
+// to R2, then frees the container. restore-snapshot materializes that backup
+// into a fresh sandbox. The wire
 // contract matches the Modal /api/sandbox/hibernate + /restore-snapshot shape
 // ({ ok, snapshot_id, restore_token } / { ok, sandbox_id, owner_token, ... })
 // so client code (idle-hibernate + reconnect-restore) works unchanged.
 // ---------------------------------------------------------------------------
 
-// Snapshot archives KEEP .git (branch, history, staged + uncommitted state) so
-// a restored sandbox faithfully continues the work — unlike the "download your
-// work" archive, which strips VCS metadata. node_modules and build caches are
-// still excluded: they're large and regenerable (npm install / rebuild after
-// restore), and would bloat the R2 object + base64 transfer.
-const SNAPSHOT_DIR_EXCLUDES = ['node_modules', '__pycache__', '.venv', 'dist', 'build'] as const;
+// `gitignore: true` keeps .git itself while excluding gitignored content such
+// as node_modules. The retired hand-rolled path also unconditionally excluded
+// __pycache__, .venv, dist, and build; repositories that do not gitignore those
+// names may now include them. That is the intentional SDK-semantics delta.
 export const SNAPSHOT_KEY_PREFIX = 'cf-snapshots/';
-// Cloudflare's Durable Object RPC boundary caps a serialized argument/return at
-// 32 MiB. The snapshot archive is base64-encoded (~+33%) and crosses that
-// boundary in BOTH directions — on hibernate the `base64` exec's stdout is
-// returned over RPC, and on restore the encoded archive is passed back in — so
-// the binding constraint is the *base64* size, not Worker memory. The compressed
-// tar.gz must therefore stay under 32 MiB × 3/4 ≈ 24 MiB. (Measured 2026-05-25:
-// ~25 MiB compressed fails with a raw "Serialized RPC ... limited to 32MiB"
-// error.) Cap a megabyte below the crossover so the guard rejects oversized
-// snapshots with a clean error instead of that opaque RPC throw. node_modules is
-// excluded and the repo is shallow-cloned, so real source + .git is far below this.
+const BACKUP_DESCRIPTOR_PREFIX = 'cf-backups/';
+// A large tree may take substantially longer than an ordinary exec to archive
+// or materialize. Keep this dedicated budget independent of user-exec tuning.
+const BACKUP_OPERATION_TIMEOUT_MS = 120_000;
+// Seven days matches the snapshot-index inactivity TTL. The SDK's default is
+// only three days, which would leave live index entries pointing at expiry.
+const BACKUP_TTL_SECONDS = DEFAULT_TTL_SECONDS;
+
+// Legacy base64 snapshots could not cross the 32 MiB DO RPC boundary. The SDK
+// backup path has no Push-side size cap; this constant is consulted only when
+// restoring a pre-upgrade `imageId` entry.
 const DO_RPC_MAX_BYTES = 32 * 1024 * 1024;
 export const MAX_SNAPSHOT_BYTES = Math.floor((DO_RPC_MAX_BYTES * 3) / 4) - 1024 * 1024;
 
-async function archiveWorkspaceToBase64(
-  sandbox: SandboxStub,
-  excludes: readonly string[],
-): Promise<
-  { ok: true; base64: string; size: number } | { ok: false; error: string; tooLarge?: boolean }
-> {
-  const tmp = `/tmp/push-snapshot-${crypto.randomUUID()}.tar.gz`;
-  const quotedTmp = shellSingleQuote(tmp);
-  const excludeArgs = excludes.map((e) => `--exclude=${shellSingleQuote(e)}`).join(' ');
+interface BackupDescriptor {
+  v: 1;
+  backupHandle: DirectoryBackup;
+}
+
+function backupDescriptorKey(backupId: string): string {
+  return `${BACKUP_DESCRIPTOR_PREFIX}${backupId}`;
+}
+
+function isBackupHandle(raw: unknown): raw is DirectoryBackup {
+  if (!raw || typeof raw !== 'object') return false;
+  const handle = raw as Partial<DirectoryBackup>;
+  return (
+    typeof handle.id === 'string' &&
+    handle.id.length > 0 &&
+    typeof handle.dir === 'string' &&
+    handle.dir.startsWith('/') &&
+    (handle.localBucket === undefined || typeof handle.localBucket === 'boolean')
+  );
+}
+
+function parseBackupDescriptor(raw: string): BackupDescriptor | null {
   try {
-    const tar = (await withExecDeadline(
-      sandbox.exec(`tar -czf ${quotedTmp} ${excludeArgs} -C /workspace .`),
-    )) as { stderr?: string; exitCode?: number };
-    if ((tar.exitCode ?? 0) !== 0) {
-      return { ok: false, error: `Snapshot archive failed: ${(tar.stderr ?? '').trim()}` };
+    const parsed = JSON.parse(raw) as Partial<BackupDescriptor>;
+    return parsed.v === 1 && isBackupHandle(parsed.backupHandle)
+      ? { v: 1, backupHandle: parsed.backupHandle }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function backupErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
+function invalidBackupConfigError(message: string): Error {
+  return Object.assign(new Error(message), { code: 'INVALID_BACKUP_CONFIG' });
+}
+
+function backupRestoreFailure(error: unknown): {
+  status: number;
+  code: string;
+  error: string;
+} {
+  if (error instanceof SandboxExecDeadlineError) {
+    return { status: 504, code: 'TIMEOUT', error: error.message };
+  }
+  const sdkCode = backupErrorCode(error);
+  const message = error instanceof Error ? error.message : String(error);
+  switch (sdkCode) {
+    case 'BACKUP_EXPIRED':
+    case 'BACKUP_NOT_FOUND':
+      return { status: 404, code: 'SNAPSHOT_NOT_FOUND', error: 'Snapshot not found' };
+    case 'INVALID_BACKUP_CONFIG':
+      return { status: 503, code: 'INVALID_BACKUP_CONFIG', error: message };
+    case 'BACKUP_RESTORE_FAILED':
+      return { status: 500, code: 'SNAPSHOT_FAILED', error: message };
+    default:
+      return { status: 500, code: 'SNAPSHOT_FAILED', error: message };
+  }
+}
+
+/**
+ * restoreBackup() is an ephemeral FUSE overlay in production. Restore into a
+ * generated staging directory, copy every entry (including .git) into the real
+ * workspace, then unmount/remove staging so later container sleep cannot erase
+ * the agent's working tree. Local dev extracts into the same staging path and
+ * follows the identical copy/cleanup contract.
+ */
+async function materializeBackupIntoWorkspace(
+  sandbox: SandboxStub,
+  backupHandle: DirectoryBackup,
+): Promise<void> {
+  const startedAt = Date.now();
+  const stagingDir = `/tmp/push-backup-restore-${crypto.randomUUID()}`;
+  const quotedStaging = shellSingleQuote(stagingDir);
+  try {
+    const prepared = (await withExecDeadline(
+      sandbox.exec(`rm -rf -- ${quotedStaging} && mkdir -p -- ${quotedStaging}`),
+      BACKUP_OPERATION_TIMEOUT_MS,
+    )) as { exitCode?: number; stderr?: string };
+    if ((prepared.exitCode ?? 0) !== 0) {
+      throw Object.assign(new Error(`Backup staging failed: ${(prepared.stderr ?? '').trim()}`), {
+        code: 'BACKUP_RESTORE_FAILED',
+      });
     }
-    // Measure off the temp file before materializing base64 so an oversized
-    // archive is rejected without buffering it into worker memory first.
-    const sizeRes = (await withExecDeadline(sandbox.exec(`stat -c %s -- ${quotedTmp}`))) as {
-      stdout?: string;
-      stderr?: string;
-      exitCode?: number;
-    };
-    const size = Number.parseInt((sizeRes.stdout ?? '').trim(), 10);
-    if ((sizeRes.exitCode ?? 0) !== 0 || !Number.isFinite(size)) {
-      return { ok: false, error: 'Failed to measure snapshot archive size' };
+
+    const restored = await withExecDeadline(
+      sandbox.restoreBackup({ ...backupHandle, dir: stagingDir }),
+      BACKUP_OPERATION_TIMEOUT_MS,
+    );
+    if (!restored.success) {
+      throw Object.assign(new Error('Sandbox backup restore reported failure'), {
+        code: 'BACKUP_RESTORE_FAILED',
+      });
     }
-    if (size > MAX_SNAPSHOT_BYTES) {
-      // Reject before base64 so the oversized value never crosses the DO RPC
-      // boundary (which would throw an opaque "Serialized RPC ... 32MiB" error).
-      return {
-        ok: false,
-        error: `Snapshot exceeds max size of ${MAX_SNAPSHOT_BYTES} bytes`,
-        tooLarge: true,
-      };
+
+    const copied = (await withExecDeadline(
+      sandbox.exec(`mkdir -p /workspace && cp -a -- ${quotedStaging}/. /workspace/`),
+      BACKUP_OPERATION_TIMEOUT_MS,
+    )) as { exitCode?: number; stderr?: string };
+    if ((copied.exitCode ?? 0) !== 0) {
+      throw Object.assign(
+        new Error(`Backup materialization failed: ${(copied.stderr ?? '').trim()}`),
+        { code: 'BACKUP_RESTORE_FAILED' },
+      );
     }
-    const b64 = (await withExecDeadline(sandbox.exec(`base64 -w0 -- ${quotedTmp}`))) as {
-      stdout?: string;
-      stderr?: string;
-      exitCode?: number;
-    };
-    if ((b64.exitCode ?? 0) !== 0) {
-      return { ok: false, error: `Snapshot encode failed: ${(b64.stderr ?? '').trim()}` };
-    }
-    return { ok: true, base64: b64.stdout?.trim() ?? '', size };
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'cf_backup_materialized',
+        backup_id: backupHandle.id,
+        duration_ms: Date.now() - startedAt,
+      }),
+    );
+  } catch (error) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'cf_backup_materialize_failed',
+        backup_id: backupHandle.id,
+        code: backupErrorCode(error) ?? 'UNKNOWN',
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
+    throw error;
   } finally {
-    await withExecDeadline(sandbox.exec(`rm -f ${quotedTmp}`)).catch(() => {});
+    const cleanup = (await withExecDeadline(
+      sandbox.exec(
+        `if mountpoint -q ${quotedStaging}; then ` +
+          `/usr/bin/fusermount3 -uz ${quotedStaging} 2>/dev/null || ` +
+          `fusermount -uz ${quotedStaging} 2>/dev/null || umount -l ${quotedStaging} 2>/dev/null || true; ` +
+          `fi; rm -rf -- ${quotedStaging}`,
+      ),
+      BACKUP_OPERATION_TIMEOUT_MS,
+    ).catch(() => ({ exitCode: 1 }))) as { exitCode?: number; stderr?: string };
+    console.log(
+      JSON.stringify({
+        level: (cleanup.exitCode ?? 0) === 0 ? 'info' : 'warn',
+        event:
+          (cleanup.exitCode ?? 0) === 0 ? 'cf_backup_stage_cleaned' : 'cf_backup_cleanup_failed',
+        backup_id: backupHandle.id,
+        ...((cleanup.exitCode ?? 0) === 0 ? {} : { error: (cleanup.stderr ?? '').trim() }),
+      }),
+    );
   }
 }
 
 export type CreateSnapshotResult =
-  | { ok: true; snapshotId: string; restoreToken: string; sizeBytes: number }
-  | { ok: false; error: string; status: number };
+  | { ok: true; snapshotId: string; restoreToken: string; sizeBytes?: number }
+  | { ok: false; error: string; status: number; code?: string };
 
 /**
  * Outcome of an in-place cold-start restore into an existing sandbox:
@@ -2025,11 +2137,12 @@ export type CreateSnapshotResult =
 export type ColdRestoreOutcome = 'restored' | 'absent' | 'wiped';
 
 /**
- * Restore the durable R2 snapshot for `repoFullName`/`branch` into an
+ * Restore the durable snapshot for `repoFullName`/`branch` into an
  * already-created sandbox (the cold-start counterpart to `restoreWorkspaceSnapshot`,
- * which mints its own sandbox). Reads the snapshot bytes by the index's `imageId`
- * — no restore-token check, because this is the worker reading its own R2 object
- * for its own freshly-created container, not an externally-presented restore. The
+ * which mints its own sandbox). Current entries carry an SDK `backupHandle`;
+ * legacy entries carry the old R2 `imageId`. There is no restore-token check,
+ * because this is the worker restoring into its own freshly-created container,
+ * not an externally-presented restore. The
  * snapshot's `.git/config` origin is the public URL (it was stripped before the
  * snapshot was ever captured), so no credential travels in the restored tree.
  *
@@ -2043,15 +2156,37 @@ async function restoreSnapshotIntoSandbox(
   repoFullName: string,
   branch: string,
 ): Promise<ColdRestoreOutcome> {
-  if (!env.SNAPSHOTS || !env.SNAPSHOT_INDEX) return 'absent';
+  if (!env.SNAPSHOT_INDEX) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'cf_sandbox_cold_restore_miss',
+        reason: 'snapshot_index_unavailable',
+      }),
+    );
+    return 'absent';
+  }
+  let workspaceWiped = false;
   try {
     const entry = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch);
-    if (!entry?.imageId) return 'absent';
+    if (!entry) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_sandbox_cold_restore_miss',
+          reason: 'snapshot_index_absent',
+        }),
+      );
+      return 'absent';
+    }
+
+    if (entry.backupHandle && !env.BACKUP_BUCKET) {
+      throw invalidBackupConfigError('Sandbox backup storage is not configured');
+    }
     // Bound the archive before pulling it into the isolate as a JS string,
-    // consistent with the raw download / hydrate paths (`MAX_ARCHIVE_BYTES`). The
-    // index carries the captured size, so we can reject an oversized snapshot
-    // without fetching it. Too large → fall back to a clean recreate.
-    if (entry.sizeBytes != null && entry.sizeBytes > MAX_ARCHIVE_BYTES) {
+    // but only for a pre-upgrade base64 object. SDK backups never cross the DO
+    // RPC boundary and intentionally have no Push-side size rejection.
+    if (entry.imageId && entry.sizeBytes != null && entry.sizeBytes > MAX_SNAPSHOT_BYTES) {
       console.log(
         JSON.stringify({
           level: 'warn',
@@ -2062,20 +2197,31 @@ async function restoreSnapshotIntoSandbox(
       );
       return 'absent';
     }
-    const object = await env.SNAPSHOTS.get(entry.imageId);
-    if (!object) {
-      // The index points at an object the eviction cron already reaped — nothing
-      // to restore. Symmetric log so the miss isn't invisible.
-      console.log(
-        JSON.stringify({
-          level: 'info',
-          event: 'cf_sandbox_cold_restore_miss',
-          reason: 'snapshot_object_absent',
-        }),
-      );
-      return 'absent';
+    let legacyArchive: string | undefined;
+    if (entry.imageId) {
+      if (!env.SNAPSHOTS) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_sandbox_cold_restore_failed',
+            reason: 'legacy_snapshot_storage_unavailable',
+          }),
+        );
+        return 'absent';
+      }
+      const object = await env.SNAPSHOTS.get(entry.imageId);
+      if (!object) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'cf_sandbox_cold_restore_miss',
+            reason: 'snapshot_object_absent',
+          }),
+        );
+        return 'absent';
+      }
+      legacyArchive = await object.text();
     }
-    const archive = await object.text();
     // Clean slate: discard the default-HEAD clone used for the origin probe so it
     // can't blend with the restored tree/.git. If the wipe fails, do NOT hydrate
     // over the surviving clone (that would blend trees / .git into a corrupt
@@ -2095,14 +2241,31 @@ async function restoreSnapshotIntoSandbox(
       );
       return 'absent';
     }
-    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
-    if (!hydrated.ok) {
+    workspaceWiped = true;
+
+    if (entry.backupHandle) {
+      await materializeBackupIntoWorkspace(sandbox, entry.backupHandle);
+    } else if (entry.imageId && legacyArchive !== undefined) {
+      // LEGACY (remove after 2026-08-01): hydrate the old base64 R2 object while
+      // pre-upgrade seven-day index entries age out.
+      const hydrated = await hydrateBase64IntoSandbox(sandbox, legacyArchive, '/workspace');
+      if (!hydrated.ok) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_sandbox_cold_restore_failed',
+            reason: 'hydrate_failed',
+            error: hydrated.error,
+          }),
+        );
+        return 'wiped';
+      }
+    } else {
       console.log(
         JSON.stringify({
           level: 'warn',
           event: 'cf_sandbox_cold_restore_failed',
-          reason: 'hydrate_failed',
-          error: hydrated.error,
+          reason: 'snapshot_transport_unavailable',
         }),
       );
       return 'wiped';
@@ -2112,6 +2275,18 @@ async function restoreSnapshotIntoSandbox(
     await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
     return 'restored';
   } catch (err) {
+    if (backupErrorCode(err) === 'INVALID_BACKUP_CONFIG') {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'cf_backup_restore_failed',
+          code: 'INVALID_BACKUP_CONFIG',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      await sandbox.destroy?.().catch(() => {});
+      throw err;
+    }
     // The throw may be before or after the wipe; report `wiped` (conservative —
     // a redundant re-clone of an intact tree is correct, a skipped one is not).
     console.log(
@@ -2122,7 +2297,7 @@ async function restoreSnapshotIntoSandbox(
         error: err instanceof Error ? err.message : String(err),
       }),
     );
-    return 'wiped';
+    return workspaceWiped ? 'wiped' : 'absent';
   }
 }
 
@@ -2139,7 +2314,7 @@ async function restoreSnapshotIntoSandbox(
 type OverCloneRestoreOutcome = 'restored' | 'kept' | 'needs-reclone';
 
 /**
- * Recover unpushed work for an ON-ORIGIN branch by restoring its R2 snapshot over
+ * Recover unpushed work for an ON-ORIGIN branch by restoring its snapshot over
  * the fresh clone — but only when doing so cannot shadow origin. The caller passes
  * `originTip` (the freshly-cloned HEAD sha); after hydrating the snapshot we verify
  * that commit is reachable from the restored HEAD — `git merge-base --is-ancestor`,
@@ -2158,11 +2333,33 @@ async function restoreUnpushedWorkOverClone(
   branch: string,
   originTip: string,
 ): Promise<OverCloneRestoreOutcome> {
-  if (!env.SNAPSHOTS || !env.SNAPSHOT_INDEX) return 'kept';
+  if (!env.SNAPSHOT_INDEX) {
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'cf_sandbox_cold_restore_miss',
+        reason: 'snapshot_index_unavailable',
+      }),
+    );
+    return 'kept';
+  }
+  let workspaceWiped = false;
   try {
     const entry = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch);
-    if (!entry?.imageId) return 'kept';
-    if (entry.sizeBytes != null && entry.sizeBytes > MAX_ARCHIVE_BYTES) {
+    if (!entry) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_sandbox_cold_restore_miss',
+          reason: 'snapshot_index_absent',
+        }),
+      );
+      return 'kept';
+    }
+    if (entry.backupHandle && !env.BACKUP_BUCKET) {
+      throw invalidBackupConfigError('Sandbox backup storage is not configured');
+    }
+    if (entry.imageId && entry.sizeBytes != null && entry.sizeBytes > MAX_SNAPSHOT_BYTES) {
       console.log(
         JSON.stringify({
           level: 'warn',
@@ -2173,32 +2370,69 @@ async function restoreUnpushedWorkOverClone(
       );
       return 'kept';
     }
-    const object = await env.SNAPSHOTS.get(entry.imageId);
-    if (!object) {
-      console.log(
-        JSON.stringify({
-          level: 'info',
-          event: 'cf_sandbox_cold_restore_miss',
-          reason: 'snapshot_object_absent',
-        }),
-      );
-      return 'kept';
+    let legacyArchive: string | undefined;
+    if (entry.imageId) {
+      if (!env.SNAPSHOTS) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_sandbox_cold_restore_failed',
+            reason: 'legacy_snapshot_storage_unavailable',
+          }),
+        );
+        return 'kept';
+      }
+      const object = await env.SNAPSHOTS.get(entry.imageId);
+      if (!object) {
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'cf_sandbox_cold_restore_miss',
+            reason: 'snapshot_object_absent',
+          }),
+        );
+        return 'kept';
+      }
+      legacyArchive = await object.text();
     }
-    const archive = await object.text();
     // Clean slate so the snapshot tree/.git can't blend with the clone. If the
     // wipe fails the clone survives, so keep it rather than hydrate over it.
     const wipe = (await withExecDeadline(
       sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
     ).catch(() => ({ exitCode: 1 }))) as { exitCode?: number };
-    if ((wipe.exitCode ?? 0) !== 0) return 'kept';
-    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
-    if (!hydrated.ok) {
+    if ((wipe.exitCode ?? 0) !== 0) {
       console.log(
         JSON.stringify({
           level: 'warn',
           event: 'cf_sandbox_cold_restore_failed',
-          reason: 'hydrate_failed',
-          error: hydrated.error,
+          reason: 'workspace_wipe_failed',
+        }),
+      );
+      return 'kept';
+    }
+    workspaceWiped = true;
+    if (entry.backupHandle) {
+      await materializeBackupIntoWorkspace(sandbox, entry.backupHandle);
+    } else if (entry.imageId && legacyArchive !== undefined) {
+      // LEGACY (remove after 2026-08-01): old base64 R2 transport.
+      const hydrated = await hydrateBase64IntoSandbox(sandbox, legacyArchive, '/workspace');
+      if (!hydrated.ok) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_sandbox_cold_restore_failed',
+            reason: 'hydrate_failed',
+            error: hydrated.error,
+          }),
+        );
+        return 'needs-reclone';
+      }
+    } else {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_sandbox_cold_restore_failed',
+          reason: 'snapshot_transport_unavailable',
         }),
       );
       return 'needs-reclone';
@@ -2228,6 +2462,18 @@ async function restoreUnpushedWorkOverClone(
     await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
     return 'restored';
   } catch (err) {
+    if (backupErrorCode(err) === 'INVALID_BACKUP_CONFIG') {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'cf_backup_restore_failed',
+          code: 'INVALID_BACKUP_CONFIG',
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
+      await sandbox.destroy?.().catch(() => {});
+      throw err;
+    }
     console.log(
       JSON.stringify({
         level: 'warn',
@@ -2236,93 +2482,164 @@ async function restoreUnpushedWorkOverClone(
         error: err instanceof Error ? err.message : String(err),
       }),
     );
-    return 'needs-reclone';
+    return workspaceWiped ? 'needs-reclone' : 'kept';
   }
 }
 
 /**
- * Archive /workspace into R2, record it in the snapshot index, and reclaim the
- * superseded object for the same repo/branch. Does NOT terminate the container,
- * so it serves both hibernate (which terminates afterward) and mid-run resume
- * checkpoints (which keep the run going). Requires env.SNAPSHOTS; callers
- * without repo/branch still get a usable snapshot, just no index entry.
+ * Ask the Sandbox SDK to archive /workspace directly to R2, record its
+ * serializable handle in the repo/branch index, and write a tiny authenticated
+ * descriptor for wire-compatible direct restores. Does NOT terminate the
+ * container, so it serves both hibernate and mid-run checkpoints.
  */
 export async function createWorkspaceSnapshot(
   env: Env,
   args: { sandboxId: string; repoFullName?: string; branch?: string },
 ): Promise<CreateSnapshotResult> {
-  if (!env.SNAPSHOTS) {
-    return { ok: false, error: 'Snapshot storage (R2) is not configured', status: 503 };
-  }
-  if (!env.Sandbox) {
-    return { ok: false, error: 'Cloudflare Sandbox is not configured', status: 503 };
-  }
   const { sandboxId, repoFullName, branch } = args;
+  const backupName = repoFullName && branch ? `${repoFullName}#${branch}` : `sandbox#${sandboxId}`;
+  if (!env.SNAPSHOTS || !env.BACKUP_BUCKET || !env.Sandbox) {
+    const error = !env.Sandbox
+      ? 'Cloudflare Sandbox is not configured'
+      : 'Sandbox backup storage is not configured';
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'cf_backup_failed',
+        name: backupName,
+        code: 'INVALID_BACKUP_CONFIG',
+        error,
+      }),
+    );
+    return { ok: false, error, status: 503, code: 'INVALID_BACKUP_CONFIG' };
+  }
   const sandbox = sandboxFor(env, sandboxId);
+  const startedAt = Date.now();
 
   try {
-    const archived = await archiveWorkspaceToBase64(sandbox, SNAPSHOT_DIR_EXCLUDES);
-    if (!archived.ok) {
-      // 413 for an over-cap archive so callers can distinguish "too large" from
-      // a generic backend error (routeHibernate maps it to SNAPSHOT_TOO_LARGE).
-      return { ok: false, error: archived.error, status: archived.tooLarge ? 413 : 500 };
-    }
-
-    // The index keeps one entry per repo/branch, so a new snapshot supersedes the
-    // prior one. Capture its R2 key first so we can reclaim it inline rather than
-    // leaving one orphaned object per snapshot for the cron to reap.
-    let priorImageId: string | undefined;
-    if (env.SNAPSHOT_INDEX && repoFullName && branch) {
-      priorImageId = (await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => null))
-        ?.imageId;
-    }
-
-    const snapshotId = `${SNAPSHOT_KEY_PREFIX}${crypto.randomUUID()}`;
+    // 0.12.3 names this option `gitignore` (not the earlier-docs
+    // `useGitignore`). The handle is a plain structured-clone value.
+    const backupHandle = await withExecDeadline(
+      sandbox.createBackup({
+        dir: '/workspace',
+        name: backupName,
+        ttl: BACKUP_TTL_SECONDS,
+        gitignore: true,
+        ...(env.SANDBOX_BACKUP_LOCAL_BUCKET === '1' ? { localBucket: true } : {}),
+      }),
+      BACKUP_OPERATION_TIMEOUT_MS,
+    );
+    const snapshotId = backupDescriptorKey(backupHandle.id);
     const restoreToken = crypto.randomUUID();
-    await env.SNAPSHOTS.put(snapshotId, archived.base64, {
-      customMetadata: { rt: restoreToken, repo: repoFullName ?? '', branch: branch ?? '' },
-      httpMetadata: { contentType: 'text/plain' },
-    });
 
-    // Advisory index (best-effort) — mirrors the Modal path so the eviction cron
-    // and resume-by-repo lookup see CF snapshots too. NOT the auth boundary:
-    // restore verifies the token against the R2 object's own metadata.
+    // Direct checkpoint restore callers do not carry repo/branch context. Keep
+    // this descriptor tiny: workspace bytes remain wholly in the SDK's
+    // server-side backup objects, avoiding the old base64/DO-RPC loss class.
+    await env.SNAPSHOTS.put(
+      snapshotId,
+      JSON.stringify({ v: 1, backupHandle } satisfies BackupDescriptor),
+      {
+        customMetadata: { rt: restoreToken, repo: repoFullName ?? '', branch: branch ?? '' },
+        httpMetadata: { contentType: 'application/json' },
+      },
+    );
+
+    // The index keeps one entry per repo/branch, so a new snapshot supersedes
+    // the prior descriptor. SDK archives themselves expire by TTL/lifecycle.
+    let priorDescriptorId: string | undefined;
+    let priorLegacyImageId: string | undefined;
+    if (env.SNAPSHOT_INDEX && repoFullName && branch) {
+      const prior = await getSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => null);
+      priorDescriptorId = prior?.backupHandle
+        ? backupDescriptorKey(prior.backupHandle.id)
+        : undefined;
+      priorLegacyImageId = prior?.imageId;
+    }
+
+    // Advisory repo/branch index. The direct descriptor remains the auth
+    // boundary and lets context-free detached checkpoints restore too.
     let indexUpdated = false;
     if (env.SNAPSHOT_INDEX && repoFullName && branch) {
       try {
         await putSnapshot(env.SNAPSHOT_INDEX, {
           repoFullName,
           branch,
-          imageId: snapshotId,
+          backupHandle,
           restoreToken,
-          sizeBytes: archived.size,
         });
         indexUpdated = true;
-      } catch {
-        // Index is advisory; the caller still has the new snapshot_id for a
-        // direct restore. Leave both objects in place (see reclaim guard below).
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'cf_backup_indexed',
+            name: backupName,
+            backup_id: backupHandle.id,
+          }),
+        );
+      } catch (error) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_backup_index_failed',
+            name: backupName,
+            backup_id: backupHandle.id,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+      }
+    } else {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_backup_index_skipped',
+          name: backupName,
+          reason: env.SNAPSHOT_INDEX ? 'missing_repo_context' : 'index_unavailable',
+        }),
+      );
+    }
+
+    if (indexUpdated) {
+      if (priorDescriptorId && priorDescriptorId !== snapshotId) {
+        await env.SNAPSHOTS.delete(priorDescriptorId).catch(() => {});
+      }
+      // LEGACY (remove after 2026-08-01): reclaim a superseded base64 object.
+      if (priorLegacyImageId?.startsWith(SNAPSHOT_KEY_PREFIX)) {
+        await env.SNAPSHOTS.delete(priorLegacyImageId).catch(() => {});
       }
     }
 
-    // Reclaim the superseded object — but ONLY once the index durably points at
-    // the new one. If the index write failed, the entry still references
-    // priorImageId, so deleting it would strand resume-by-repo/branch on a
-    // missing snapshot. The prefix guard avoids deleting a non-R2 imageId (e.g. a
-    // Modal image id from a mixed-provider history). The cron is the backstop.
-    if (
-      indexUpdated &&
-      priorImageId &&
-      priorImageId !== snapshotId &&
-      priorImageId.startsWith(SNAPSHOT_KEY_PREFIX)
-    ) {
-      await env.SNAPSHOTS.delete(priorImageId).catch(() => {});
-    }
-
-    return { ok: true, snapshotId, restoreToken, sizeBytes: archived.size };
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'cf_backup_captured',
+        name: backupName,
+        backup_id: backupHandle.id,
+        duration_ms: Date.now() - startedAt,
+      }),
+    );
+    return { ok: true, snapshotId, restoreToken };
   } catch (err) {
-    // Honor the result contract for runtime failures too (exec rejected, R2
-    // put threw) so best-effort callers never need a try/catch of their own.
-    return { ok: false, error: err instanceof Error ? err.message : String(err), status: 500 };
+    const sdkCode = backupErrorCode(err);
+    const code =
+      err instanceof SandboxExecDeadlineError
+        ? 'TIMEOUT'
+        : sdkCode === 'INVALID_BACKUP_CONFIG'
+          ? 'INVALID_BACKUP_CONFIG'
+          : 'SNAPSHOT_FAILED';
+    const status = code === 'TIMEOUT' ? 504 : code === 'INVALID_BACKUP_CONFIG' ? 503 : 500;
+    const error = err instanceof Error ? err.message : String(err);
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'cf_backup_failed',
+        name: backupName,
+        code,
+        sdk_code: sdkCode ?? 'UNKNOWN',
+        duration_ms: Date.now() - startedAt,
+        error,
+      }),
+    );
+    return { ok: false, error, status, code };
   }
 }
 
@@ -2345,11 +2662,12 @@ async function routeHibernate(env: Env, body: Json): Promise<Response> {
         ok: false,
         error: snap.error,
         code:
-          snap.status === 503
+          snap.code ??
+          (snap.status === 503
             ? 'CF_NOT_CONFIGURED'
             : snap.status === 413
               ? 'SNAPSHOT_TOO_LARGE'
-              : 'CF_ERROR',
+              : 'CF_ERROR'),
       },
       { status: snap.status },
     );
@@ -2380,7 +2698,8 @@ export type RestoreSnapshotResult =
 
 /**
  * Restore a snapshot into a FRESH sandbox: verify the restore token against the
- * R2 object's metadata, hydrate /workspace, mint a new owner token, and probe.
+ * descriptor/legacy object's R2 metadata, materialize /workspace, mint a new
+ * owner token, and probe.
  * Returns a result (never throws) so both the route and the DO resume path can
  * consume it. Does not delete the snapshot — the caller decides retention.
  */
@@ -2389,6 +2708,14 @@ export async function restoreWorkspaceSnapshot(
   args: { snapshotId: string; restoreToken: string; repoFullName?: string; branch?: string },
 ): Promise<RestoreSnapshotResult> {
   if (!env.SNAPSHOTS) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'cf_backup_restore_failed',
+        code: 'CF_NOT_CONFIGURED',
+        reason: 'snapshot_descriptor_storage_unavailable',
+      }),
+    );
     return {
       ok: false,
       error: 'Snapshot storage (R2) is not configured',
@@ -2397,6 +2724,14 @@ export async function restoreWorkspaceSnapshot(
     };
   }
   if (!env.SANDBOX_TOKENS) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'cf_backup_restore_failed',
+        code: 'CF_NOT_CONFIGURED',
+        reason: 'sandbox_token_store_unavailable',
+      }),
+    );
     return {
       ok: false,
       error: 'Sandbox token store is not configured',
@@ -2405,6 +2740,14 @@ export async function restoreWorkspaceSnapshot(
     };
   }
   if (!env.Sandbox) {
+    console.log(
+      JSON.stringify({
+        level: 'error',
+        event: 'cf_backup_restore_failed',
+        code: 'CF_NOT_CONFIGURED',
+        reason: 'sandbox_binding_unavailable',
+      }),
+    );
     return {
       ok: false,
       error: 'Cloudflare Sandbox is not configured',
@@ -2417,6 +2760,15 @@ export async function restoreWorkspaceSnapshot(
   // Bound the token before any R2 work or constant-time compare — an unbounded
   // restore_token would otherwise force arbitrarily large UTF-8 encode/compare.
   if (restoreToken.length > MAX_TOKEN_BYTES) {
+    console.log(
+      JSON.stringify({
+        level: 'warn',
+        event: 'cf_backup_restore_failed',
+        snapshot_id: snapshotId,
+        code: 'AUTH_FAILURE',
+        reason: 'restore_token_too_long',
+      }),
+    );
     return { ok: false, error: 'Invalid restore token', status: 403, code: 'AUTH_FAILURE' };
   }
 
@@ -2425,19 +2777,76 @@ export async function restoreWorkspaceSnapshot(
   let createdSandbox: SandboxStub | undefined;
   let createdSandboxId: string | undefined;
   let tokenIssued = false;
+  let restoringBackup = false;
 
   try {
     const object = await env.SNAPSHOTS.get(snapshotId);
     if (!object) {
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'cf_backup_restore_failed',
+          snapshot_id: snapshotId,
+          code: 'SNAPSHOT_NOT_FOUND',
+          reason: 'descriptor_or_legacy_object_absent',
+        }),
+      );
       return { ok: false, error: 'Snapshot not found', status: 404, code: 'SNAPSHOT_NOT_FOUND' };
     }
     // Auth: the restore token must match the one stamped on the R2 object at
     // snapshot time. Constant-time compare, same as owner-token verification.
     const expected = object.customMetadata?.rt ?? '';
     if (!expected || !timingSafeEqual(expected, restoreToken)) {
+      console.log(
+        JSON.stringify({
+          level: 'warn',
+          event: 'cf_backup_restore_failed',
+          snapshot_id: snapshotId,
+          code: 'AUTH_FAILURE',
+          reason: 'restore_token_mismatch',
+        }),
+      );
       return { ok: false, error: 'Invalid restore token', status: 403, code: 'AUTH_FAILURE' };
     }
-    const archive = await object.text();
+    const storedPayload = await object.text();
+    const descriptor = snapshotId.startsWith(BACKUP_DESCRIPTOR_PREFIX)
+      ? parseBackupDescriptor(storedPayload)
+      : null;
+    if (snapshotId.startsWith(BACKUP_DESCRIPTOR_PREFIX) && !descriptor) {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'cf_backup_restore_failed',
+          snapshot_id: snapshotId,
+          code: 'SNAPSHOT_FAILED',
+          reason: 'invalid_backup_descriptor',
+        }),
+      );
+      return {
+        ok: false,
+        error: 'Snapshot descriptor is invalid',
+        status: 500,
+        code: 'SNAPSHOT_FAILED',
+      };
+    }
+    if (descriptor && !env.BACKUP_BUCKET) {
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'cf_backup_restore_failed',
+          snapshot_id: snapshotId,
+          code: 'INVALID_BACKUP_CONFIG',
+          reason: 'backup_bucket_unavailable',
+        }),
+      );
+      return {
+        ok: false,
+        error: 'Sandbox backup storage is not configured',
+        status: 503,
+        code: 'INVALID_BACKUP_CONFIG',
+      };
+    }
+    restoringBackup = descriptor !== null;
 
     const sandboxId = crypto.randomUUID();
     const sandbox = sandboxFor(env, sandboxId);
@@ -2453,10 +2862,33 @@ export async function restoreWorkspaceSnapshot(
       ),
     ).catch(() => {});
 
-    const hydrated = await hydrateBase64IntoSandbox(sandbox, archive, '/workspace');
-    if (!hydrated.ok) {
-      await sandbox.destroy?.().catch(() => {});
-      return { ok: false, error: hydrated.error, status: hydrated.status, code: 'CF_ERROR' };
+    if (descriptor) {
+      const wipe = (await withExecDeadline(
+        sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
+      )) as { exitCode?: number; stderr?: string };
+      if ((wipe.exitCode ?? 0) !== 0) {
+        throw Object.assign(new Error(`Workspace wipe failed: ${(wipe.stderr ?? '').trim()}`), {
+          code: 'BACKUP_RESTORE_FAILED',
+        });
+      }
+      await materializeBackupIntoWorkspace(sandbox, descriptor.backupHandle);
+    } else {
+      // LEGACY (remove after 2026-08-01): token-verified base64 R2 archive.
+      const hydrated = await hydrateBase64IntoSandbox(sandbox, storedPayload, '/workspace');
+      if (!hydrated.ok) {
+        console.log(
+          JSON.stringify({
+            level: 'warn',
+            event: 'cf_backup_restore_failed',
+            snapshot_id: snapshotId,
+            code: 'CF_ERROR',
+            reason: 'legacy_hydrate_failed',
+            error: hydrated.error,
+          }),
+        );
+        await sandbox.destroy?.().catch(() => {});
+        return { ok: false, error: hydrated.error, status: hydrated.status, code: 'CF_ERROR' };
+      }
     }
 
     // Mint a fresh owner token for the new sandbox (the old one died with its
@@ -2467,6 +2899,18 @@ export async function restoreWorkspaceSnapshot(
       ownerToken = await issueToken(env.SANDBOX_TOKENS, sandboxId);
       await sandbox.writeFile(OWNER_TOKEN_PATH, ownerToken);
     } catch (err) {
+      if (descriptor) {
+        console.log(
+          JSON.stringify({
+            level: 'error',
+            event: 'cf_backup_restore_failed',
+            snapshot_id: snapshotId,
+            code: 'CF_ERROR',
+            reason: 'owner_token_issue_failed',
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      }
       await sandbox.destroy?.().catch(() => {});
       await revokeToken(env.SANDBOX_TOKENS, sandboxId).catch(() => {});
       return {
@@ -2486,6 +2930,16 @@ export async function restoreWorkspaceSnapshot(
       await touchSnapshot(env.SNAPSHOT_INDEX, repoFullName, branch).catch(() => {});
     }
 
+    console.log(
+      JSON.stringify({
+        level: 'info',
+        event: 'cf_backup_restored',
+        snapshot_id: snapshotId,
+        transport: descriptor ? 'sdk_backup' : 'legacy_base64',
+        ...(descriptor ? { backup_id: descriptor.backupHandle.id } : {}),
+      }),
+    );
+
     return { ok: true, sandboxId, ownerToken, environment };
   } catch (err) {
     // Roll back a half-created sandbox / minted token so a late throw (hydrate,
@@ -2493,6 +2947,20 @@ export async function restoreWorkspaceSnapshot(
     await createdSandbox?.destroy?.().catch(() => {});
     if (tokenIssued && createdSandboxId) {
       await revokeToken(env.SANDBOX_TOKENS, createdSandboxId).catch(() => {});
+    }
+    if (restoringBackup) {
+      const failure = backupRestoreFailure(err);
+      console.log(
+        JSON.stringify({
+          level: 'error',
+          event: 'cf_backup_restore_failed',
+          snapshot_id: snapshotId,
+          code: failure.code,
+          sdk_code: backupErrorCode(err) ?? 'UNKNOWN',
+          error: failure.error,
+        }),
+      );
+      return { ok: false, ...failure };
     }
     return {
       ok: false,
@@ -2893,6 +3361,8 @@ function decodedBase64Size(base64: string): number {
 }
 
 function classifyCfError(err: unknown): string {
+  const structuredCode = backupErrorCode(err);
+  if (structuredCode) return structuredCode;
   const msg = err instanceof Error ? err.message : String(err);
   // Disk-full before the broader buckets: the recovery is "delete files",
   // not "restart the sandbox" (which loses uncommitted work), so folding it

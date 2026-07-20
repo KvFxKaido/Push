@@ -109,6 +109,22 @@ describe('snapshot-index', () => {
     expect(stored?.metadata).toMatchObject({ v: INDEX_SCHEMA_VERSION, imageId: 'im' });
   });
 
+  it('round-trips a first-party backup handle without an imageId', async () => {
+    const written = await putSnapshot(kv, {
+      repoFullName: 'a/b',
+      branch: 'feature/backup',
+      backupHandle: { id: 'backup-1', dir: '/workspace' },
+      restoreToken: 'tok',
+    });
+
+    expect(written).toMatchObject({
+      v: INDEX_SCHEMA_VERSION,
+      backupHandle: { id: 'backup-1', dir: '/workspace' },
+      imageId: undefined,
+    });
+    await expect(getSnapshot(kv, 'a/b', 'feature/backup')).resolves.toEqual(written);
+  });
+
   it('encodes special characters in repo and branch into the key', () => {
     const key = buildSnapshotKey('owner/repo with space', 'feat/foo bar');
     expect(key).toBe('snapshot:owner%2Frepo%20with%20space:feat%2Ffoo%20bar');
@@ -176,7 +192,7 @@ describe('snapshot-index', () => {
       restoreToken: 't2',
     });
     const all = await listSnapshots(kv);
-    expect(all.map((e) => e.imageId).sort()).toEqual(['im1', 'im2']);
+    expect(all.map((e) => e.imageId ?? '').sort()).toEqual(['im1', 'im2']);
   });
 
   it('drops entries with mismatched schema versions', async () => {

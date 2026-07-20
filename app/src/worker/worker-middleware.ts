@@ -167,12 +167,15 @@ export interface Env {
   // binding those models fall back to caller/Worker keys, then a
   // model-readable 401.
   ZEN_KEY_STORE?: { get(): Promise<string> };
-  // R2 bucket backing Cloudflare-provider filesystem snapshots (the
-  // hibernate/restore-snapshot routes). Stores a base64 tar.gz of /workspace
-  // (source + .git, minus node_modules/build caches). Optional, fail-closed:
-  // CF hibernate/restore-snapshot return NOT_CONFIGURED 503 when unset, so the
-  // operator notices instead of silently losing snapshot capability.
+  // R2 binding used for legacy base64 snapshot objects and the small current
+  // backup-handle descriptors that preserve direct restore-token auth.
   SNAPSHOTS?: R2Bucket;
+  // First-party Sandbox SDK backup binding. It points at the same physical R2
+  // bucket as SNAPSHOTS; the SDK writes workspace archives server-side.
+  BACKUP_BUCKET?: R2Bucket;
+  // Local wrangler escape hatch: use the R2 binding directly instead of
+  // production presigned URLs/FUSE. Set only in .dev.vars.
+  SANDBOX_BACKUP_LOCAL_BUCKET?: string;
   // Renderable artifact store (HTML/React/Mermaid/file-tree) — same
   // fail-closed pattern as SANDBOX_TOKENS: optional binding, every
   // /api/artifacts/* route returns NOT_CONFIGURED 503 when unset so the

@@ -4,7 +4,6 @@ import { getSandbox } from '@cloudflare/sandbox';
 import {
   createWorkspaceSnapshot,
   handleCloudflareSandbox,
-  MAX_SNAPSHOT_BYTES,
   restoreWorkspaceSnapshot,
   SANDBOX_EXEC_TIMEOUT_MS,
   SandboxExecDeadlineError,
@@ -34,6 +33,8 @@ interface FakeSandbox {
   getProcess: ReturnType<typeof vi.fn>;
   getProcessLogs: ReturnType<typeof vi.fn>;
   killProcess: ReturnType<typeof vi.fn>;
+  createBackup: ReturnType<typeof vi.fn>;
+  restoreBackup: ReturnType<typeof vi.fn>;
 }
 
 type ExecResult = { stdout?: string; stderr?: string; exitCode?: number };
@@ -123,6 +124,12 @@ function createFakeSandbox(): FakeSandbox {
       processId: id,
     })),
     killProcess: vi.fn(async () => undefined),
+    createBackup: vi.fn(async () => ({ id: 'backup-test', dir: '/workspace' })),
+    restoreBackup: vi.fn(async (handle: { id: string; dir: string }) => ({
+      success: true,
+      id: handle.id,
+      dir: handle.dir,
+    })),
   };
 }
 
@@ -158,6 +165,7 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     } as unknown as Env['RATE_LIMITER'],
     ASSETS: {} as Env['ASSETS'],
     Sandbox: {} as Env['Sandbox'],
+    BACKUP_BUCKET: {} as Env['BACKUP_BUCKET'],
     SANDBOX_TOKENS: makeDefaultTokensKV() as unknown as Env['SANDBOX_TOKENS'],
     ALLOWED_ORIGINS: 'https://push.example.test',
     ...overrides,
@@ -461,7 +469,7 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
   });
 
-  it('restores a never-pushed branch from its R2 snapshot instead of recreating it empty', async () => {
+  it('materializes a backup handle for a never-pushed branch instead of recreating it empty', async () => {
     // When the absent branch has a durable snapshot (a prior, now-dead sandbox's
     // unpushed work), cold start hydrates it rather than recreating an empty
     // branch — recovering the work, not just the branch name.
@@ -478,12 +486,10 @@ describe('handleCloudflareSandbox happy paths', () => {
       }
       return { success: true };
     });
-    const r2 = makeR2({
-      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
-    });
+    const r2 = makeR2();
     const indexKV = makeSnapshotIndexKV({
       v: 1,
-      imageId: 'cf-snapshots/snap-1',
+      backupHandle: { id: 'backup-1', dir: '/workspace' },
       restoreToken: 'rt',
       repoFullName: 'owner/repo',
       branch: 'feature/x',
@@ -501,8 +507,12 @@ describe('handleCloudflareSandbox happy paths', () => {
     );
 
     expect(response.status).toBe(200);
-    // The snapshot object is fetched by its index imageId and hydrated.
-    expect(r2.get).toHaveBeenCalledWith('cf-snapshots/snap-1');
+    expect(r2.get).not.toHaveBeenCalled();
+    expect(sandbox.restoreBackup).toHaveBeenCalledWith({
+      id: 'backup-1',
+      dir: expect.stringMatching(/^\/tmp\/push-backup-restore-/),
+    });
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('cp -a --'))).toBe(true);
     // No empty branch is recreated — the restored tree already carries it.
     expect(sandbox.exec.mock.calls.some((c) => String(c[0]).includes('git checkout -b'))).toBe(
       false,
@@ -625,12 +635,10 @@ describe('handleCloudflareSandbox happy paths', () => {
       if (command.includes('merge-base --is-ancestor')) return { stdout: '', exitCode: 0 }; // origin tip reachable
       return { stdout: probeStdout(), stderr: '', exitCode: 0 };
     });
-    const r2 = makeR2({
-      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
-    });
+    const r2 = makeR2();
     const indexKV = makeSnapshotIndexKV({
       v: 1,
-      imageId: 'cf-snapshots/snap-1',
+      backupHandle: { id: 'backup-1', dir: '/workspace' },
       restoreToken: 'rt',
       repoFullName: 'owner/repo',
       branch: 'feature/x',
@@ -648,7 +656,12 @@ describe('handleCloudflareSandbox happy paths', () => {
     );
 
     expect(response.status).toBe(200);
-    expect(r2.get).toHaveBeenCalledWith('cf-snapshots/snap-1');
+    expect(r2.get).not.toHaveBeenCalled();
+    expect(sandbox.restoreBackup).toHaveBeenCalledWith({
+      id: 'backup-1',
+      dir: expect.stringMatching(/^\/tmp\/push-backup-restore-/),
+    });
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('cp -a --'))).toBe(true);
     // Hydrated, and the divergence guard ran and passed.
     expect(
       sandbox.exec.mock.calls.some((c) => String(c[0]).includes('merge-base --is-ancestor')),
@@ -759,12 +772,10 @@ describe('handleCloudflareSandbox happy paths', () => {
       if (command.includes('merge-base --is-ancestor')) return { stdout: '', exitCode: 1 }; // origin tip NOT reachable
       return { stdout: probeStdout(), stderr: '', exitCode: 0 };
     });
-    const r2 = makeR2({
-      'cf-snapshots/snap-1': { body: 'QkFTRTY0', customMetadata: { rt: 'rt' } },
-    });
+    const r2 = makeR2();
     const indexKV = makeSnapshotIndexKV({
       v: 1,
-      imageId: 'cf-snapshots/snap-1',
+      backupHandle: { id: 'backup-1', dir: '/workspace' },
       restoreToken: 'rt',
       repoFullName: 'owner/repo',
       branch: 'feature/x',
@@ -789,6 +800,8 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
     // The discarded restore is re-cloned: initial `--branch` clone + the reclone.
     expect(sandbox.gitCheckout).toHaveBeenCalledTimes(2);
+    expect(sandbox.restoreBackup).toHaveBeenCalledOnce();
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('cp -a --'))).toBe(true);
     expect(
       vi
         .mocked(console.log)
@@ -2116,17 +2129,11 @@ function makeSnapshotIndexKV(priorEntry?: Record<string, unknown>) {
 }
 
 describe('handleCloudflareSandbox snapshots (R2)', () => {
-  it('hibernate archives /workspace to R2 (keeping .git) and frees the container', async () => {
+  it('hibernate creates an SDK backup descriptor and frees the container', async () => {
     const sandbox = mockSandbox();
     const uuid = mockUuid();
     const r2 = makeR2();
     const tokensKV = makeDefaultTokensKV();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: '1024', exitCode: 0 }, // stat size
-      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
-      { exitCode: 0 }, // rm (finally)
-    ]);
 
     const response = await callRoute(
       'hibernate',
@@ -2140,24 +2147,30 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      snapshot_id: `cf-snapshots/${uuid}`,
+      snapshot_id: 'cf-backups/backup-test',
       restore_token: uuid,
-      size_bytes: 1024,
       kept_warm: false,
     });
     expect(r2.put).toHaveBeenCalledTimes(1);
-    expect(r2.store.get(`cf-snapshots/${uuid}`)).toEqual({
-      body: 'QkFTRTY0',
+    expect(r2.store.get('cf-backups/backup-test')).toEqual({
+      body: JSON.stringify({
+        v: 1,
+        backupHandle: { id: 'backup-test', dir: '/workspace' },
+      }),
       customMetadata: { rt: uuid, repo: '', branch: '' },
+    });
+    expect(sandbox.createBackup).toHaveBeenCalledWith({
+      dir: '/workspace',
+      name: 'sandbox#sb-1',
+      ttl: 604800,
+      gitignore: true,
     });
     // Container freed + token revoked after the snapshot is durable.
     expect(sandbox.destroy).toHaveBeenCalledOnce();
     expect(tokensKV.delete).toHaveBeenCalledWith('token:sb-1');
-    // Snapshot archive excludes regenerable caches but KEEPS .git (call[0] is
-    // the owner-token auth read; call[1] is the tar).
-    const tarCall = sandbox.exec.mock.calls[1]?.[0] as string;
-    expect(tarCall).toContain("--exclude='node_modules'");
-    expect(tarCall).not.toContain("--exclude='.git'");
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('tar -czf'))).toBe(
+      false,
+    );
   });
 
   it('hibernate with keep_warm snapshots but does NOT free the container', async () => {
@@ -2165,12 +2178,6 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     const uuid = mockUuid();
     const r2 = makeR2();
     const tokensKV = makeDefaultTokensKV();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: '1024', exitCode: 0 }, // stat size
-      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
-      { exitCode: 0 }, // rm (finally)
-    ]);
 
     const response = await callRoute(
       'hibernate',
@@ -2184,9 +2191,8 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({
       ok: true,
-      snapshot_id: `cf-snapshots/${uuid}`,
+      snapshot_id: 'cf-backups/backup-test',
       restore_token: uuid,
-      size_bytes: 1024,
       kept_warm: true,
     });
     // The durability snapshot still happens...
@@ -2197,8 +2203,8 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
   });
 
   it('hibernate reclaims the previous snapshot object for the same repo/branch', async () => {
-    const sandbox = mockSandbox();
-    const uuid = mockUuid();
+    mockSandbox();
+    mockUuid();
     const r2 = makeR2({ 'cf-snapshots/old': { body: 'old', customMetadata: { rt: 'x' } } });
     const indexKV = makeSnapshotIndexKV({
       v: 1,
@@ -2209,12 +2215,6 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
       createdAt: 1,
       lastAccessedAt: 1,
     });
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: '1024', exitCode: 0 }, // stat size
-      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
-      { exitCode: 0 }, // rm
-    ]);
 
     const response = await callRoute(
       'hibernate',
@@ -2227,29 +2227,23 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
 
     expect(response.status).toBe(200);
     // New object written, prior one reclaimed so R2 keeps one object per branch.
-    expect(r2.store.has(`cf-snapshots/${uuid}`)).toBe(true);
+    expect(r2.store.has('cf-backups/backup-test')).toBe(true);
     expect(r2.delete).toHaveBeenCalledWith('cf-snapshots/old');
     expect(r2.store.has('cf-snapshots/old')).toBe(false);
     expect(indexKV.put).toHaveBeenCalled();
   });
 
-  it('hibernate returns 503 when R2 is not configured', async () => {
+  it('hibernate returns visible backup config failure when R2 is not configured', async () => {
     mockSandbox();
     const response = await callRoute('hibernate', { sandbox_id: 'sb-1' });
     expect(response.status).toBe(503);
-    await expect(response.json()).resolves.toMatchObject({ code: 'CF_NOT_CONFIGURED' });
+    await expect(response.json()).resolves.toMatchObject({ code: 'INVALID_BACKUP_CONFIG' });
   });
 
-  it('createWorkspaceSnapshot archives to R2 WITHOUT terminating the container', async () => {
+  it('createWorkspaceSnapshot uses SDK transport WITHOUT terminating the container', async () => {
     const sandbox = mockSandbox();
     const uuid = mockUuid();
     const r2 = makeR2();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: '2048', exitCode: 0 }, // stat size
-      { stdout: 'QkFTRTY0', exitCode: 0 }, // base64
-      { exitCode: 0 }, // rm
-    ]);
 
     const result = await createWorkspaceSnapshot(
       makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
@@ -2258,50 +2252,55 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
 
     expect(result).toEqual({
       ok: true,
-      snapshotId: `cf-snapshots/${uuid}`,
+      snapshotId: 'cf-backups/backup-test',
       restoreToken: uuid,
-      sizeBytes: 2048,
     });
-    expect(r2.store.has(`cf-snapshots/${uuid}`)).toBe(true);
+    expect(r2.store.has('cf-backups/backup-test')).toBe(true);
+    expect(sandbox.createBackup).toHaveBeenCalledOnce();
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('base64 -w0'))).toBe(
+      false,
+    );
     // The defining contract for mid-run checkpoints: the container survives.
     expect(sandbox.destroy).not.toHaveBeenCalled();
   });
 
-  it('createWorkspaceSnapshot rejects an over-cap archive (413) before base64/RPC', async () => {
-    const sandbox = mockSandbox();
+  it('capture stores the serialized backup handle in the repo/branch index', async () => {
+    mockSandbox();
     const r2 = makeR2();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: String(MAX_SNAPSHOT_BYTES + 1), exitCode: 0 }, // stat — over the cap
-      { exitCode: 0 }, // rm (finally)
-    ]);
+    const indexKV = makeSnapshotIndexKV();
 
     const result = await createWorkspaceSnapshot(
-      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
-      { sandboxId: 'sb-1' },
+      makeEnv({
+        SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'],
+        SNAPSHOT_INDEX: indexKV as unknown as Env['SNAPSHOT_INDEX'],
+      }),
+      { sandboxId: 'sb-1', repoFullName: 'owner/repo', branch: 'feature/x' },
     );
 
-    expect(result).toEqual({
-      ok: false,
-      error: expect.stringContaining('exceeds max size'),
-      status: 413,
-    });
-    // Never base64-encoded — the whole point is to stop before the value would
-    // cross the 32 MiB DO RPC boundary — and nothing written to R2.
-    const cmds = sandbox.exec.mock.calls.map((c) => c[0] as string);
-    expect(cmds.some((c) => c.startsWith('base64 -w0'))).toBe(false);
-    expect(r2.put).not.toHaveBeenCalled();
+    expect(result.ok).toBe(true);
+    expect(indexKV.put).toHaveBeenCalledWith(
+      expect.stringContaining('snapshot:'),
+      '',
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          backupHandle: { id: 'backup-test', dir: '/workspace' },
+          imageId: undefined,
+          restoreToken: expect.any(String),
+        }),
+        expirationTtl: 604800,
+      }),
+    );
   });
 
-  it('hibernate surfaces an over-cap archive as 413 SNAPSHOT_TOO_LARGE (not a raw RPC throw)', async () => {
+  it('hibernate surfaces INVALID_BACKUP_CONFIG as a structured error and log', async () => {
     const sandbox = mockSandbox();
     const r2 = makeR2();
     const tokensKV = makeDefaultTokensKV();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: String(MAX_SNAPSHOT_BYTES + 1), exitCode: 0 }, // stat — over the cap
-      { exitCode: 0 }, // rm
-    ]);
+    sandbox.createBackup.mockRejectedValue(
+      Object.assign(new Error('Backup credentials are incomplete'), {
+        code: 'INVALID_BACKUP_CONFIG',
+      }),
+    );
 
     const response = await callRoute(
       'hibernate',
@@ -2312,19 +2311,32 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
       }),
     );
 
-    expect(response.status).toBe(413);
+    expect(response.status).toBe(503);
     await expect(response.json()).resolves.toMatchObject({
       ok: false,
-      code: 'SNAPSHOT_TOO_LARGE',
+      code: 'INVALID_BACKUP_CONFIG',
     });
-    // The snapshot never succeeded, so the container must NOT be torn down.
     expect(sandbox.destroy).not.toHaveBeenCalled();
     expect(r2.put).not.toHaveBeenCalled();
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some(
+          (call) =>
+            String(call[0]).includes('cf_backup_failed') &&
+            String(call[0]).includes('INVALID_BACKUP_CONFIG'),
+        ),
+    ).toBe(true);
   });
 
   it('createWorkspaceSnapshot returns a 503 result when R2 is unbound', async () => {
     const result = await createWorkspaceSnapshot(makeEnv(), { sandboxId: 'sb-1' });
-    expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
+    expect(result).toEqual({
+      ok: false,
+      error: expect.any(String),
+      status: 503,
+      code: 'INVALID_BACKUP_CONFIG',
+    });
   });
 
   it('createWorkspaceSnapshot returns a 503 result (not a throw) when Sandbox is unbound', async () => {
@@ -2333,20 +2345,19 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
       makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'], Sandbox: undefined }),
       { sandboxId: 'sb-1' },
     );
-    expect(result).toEqual({ ok: false, error: expect.any(String), status: 503 });
+    expect(result).toEqual({
+      ok: false,
+      error: expect.any(String),
+      status: 503,
+      code: 'INVALID_BACKUP_CONFIG',
+    });
   });
 
   it('createWorkspaceSnapshot without repo/branch leaves the shared index untouched (per-job isolation)', async () => {
-    const sandbox = mockSandbox();
+    mockSandbox();
     mockUuid();
     const r2 = makeR2();
     const indexKV = makeSnapshotIndexKV();
-    queueExecResults(sandbox, [
-      { exitCode: 0 }, // tar
-      { stdout: '64', exitCode: 0 }, // stat
-      { stdout: 'Qg', exitCode: 0 }, // base64
-      { exitCode: 0 }, // rm
-    ]);
 
     const result = await createWorkspaceSnapshot(
       makeEnv({
@@ -2386,6 +2397,94 @@ describe('handleCloudflareSandbox snapshots (R2)', () => {
     );
     expect(result).toMatchObject({ ok: false, status: 403, code: 'AUTH_FAILURE' });
     expect(getSandboxMock).not.toHaveBeenCalled();
+  });
+
+  it('restore-snapshot materializes an SDK backup handle before minting a token', async () => {
+    const sandbox = mockSandbox();
+    const uuid = mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes("printf '__node__")
+        ? { stdout: probeStdout(), stderr: '', exitCode: 0 }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    );
+    const r2 = makeR2({
+      'cf-backups/backup-1': {
+        body: JSON.stringify({
+          v: 1,
+          backupHandle: { id: 'backup-1', dir: '/workspace' },
+        }),
+        customMetadata: { rt: 'tok-abc' },
+      },
+    });
+
+    const response = await callRoute(
+      'restore-snapshot',
+      { snapshot_id: 'cf-backups/backup-1', restore_token: 'tok-abc' },
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(sandbox.restoreBackup).toHaveBeenCalledWith({
+      id: 'backup-1',
+      dir: expect.stringMatching(/^\/tmp\/push-backup-restore-/),
+    });
+    expect(sandbox.exec.mock.calls.some((call) => String(call[0]).includes('cp -a --'))).toBe(true);
+    expect(sandbox.writeFile).toHaveBeenCalledWith(OWNER_TOKEN_PATH, uuid);
+  });
+
+  it.each(['BACKUP_EXPIRED', 'BACKUP_NOT_FOUND'])(
+    'restore-snapshot maps %s to SNAPSHOT_NOT_FOUND',
+    async (sdkCode) => {
+      const sandbox = mockSandbox();
+      mockUuid();
+      sandbox.restoreBackup.mockRejectedValue(
+        Object.assign(new Error('backup unavailable'), { code: sdkCode }),
+      );
+      const r2 = makeR2({
+        'cf-backups/backup-1': {
+          body: JSON.stringify({
+            v: 1,
+            backupHandle: { id: 'backup-1', dir: '/workspace' },
+          }),
+          customMetadata: { rt: 'tok-abc' },
+        },
+      });
+
+      const response = await callRoute(
+        'restore-snapshot',
+        { snapshot_id: 'cf-backups/backup-1', restore_token: 'tok-abc' },
+        makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+      );
+
+      expect(response.status).toBe(404);
+      await expect(response.json()).resolves.toMatchObject({ code: 'SNAPSHOT_NOT_FOUND' });
+    },
+  );
+
+  it('restore-snapshot maps BACKUP_RESTORE_FAILED to SNAPSHOT_FAILED', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.restoreBackup.mockRejectedValue(
+      Object.assign(new Error('restore mount failed'), { code: 'BACKUP_RESTORE_FAILED' }),
+    );
+    const r2 = makeR2({
+      'cf-backups/backup-1': {
+        body: JSON.stringify({
+          v: 1,
+          backupHandle: { id: 'backup-1', dir: '/workspace' },
+        }),
+        customMetadata: { rt: 'tok-abc' },
+      },
+    });
+
+    const response = await callRoute(
+      'restore-snapshot',
+      { snapshot_id: 'cf-backups/backup-1', restore_token: 'tok-abc' },
+      makeEnv({ SNAPSHOTS: r2 as unknown as Env['SNAPSHOTS'] }),
+    );
+
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toMatchObject({ code: 'SNAPSHOT_FAILED' });
   });
 
   it('restore-snapshot pulls the archive into a fresh sandbox and mints a token', async () => {

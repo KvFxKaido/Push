@@ -149,7 +149,7 @@ function redactEntry(entry: SnapshotIndexEntry, now: number) {
       ? Math.max(0, Math.floor((now - entry.lastAccessedAt) / 1000))
       : null,
     sizeBytes: entry.sizeBytes ?? null,
-    // Intentionally omitted: imageId, restoreToken (credentials),
+    // Intentionally omitted: imageId/backupHandle, restoreToken (credentials),
     // v (internal schema version).
   };
 }

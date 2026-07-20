@@ -19,6 +19,7 @@
  * bump `INDEX_SCHEMA_VERSION`.
  */
 
+import type { DirectoryBackup } from '@cloudflare/sandbox';
 import type { KVNamespace, KVNamespaceListResult, R2Bucket } from '@cloudflare/workers-types';
 
 export const INDEX_SCHEMA_VERSION = 1;
@@ -28,7 +29,15 @@ export const DEFAULT_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 export interface SnapshotIndexEntry {
   v: typeof INDEX_SCHEMA_VERSION;
-  imageId: string;
+  /** First-party Cloudflare Sandbox backup handle (current CF transport). */
+  backupHandle?: DirectoryBackup;
+  /**
+   * Legacy Modal image / CF base64-R2 pointer.
+   *
+   * REMOVE AFTER 2026-08-01, once every pre-upgrade seven-day KV entry has
+   * expired and the Cloudflare restore branches no longer need the old R2 path.
+   */
+  imageId?: string;
   restoreToken: string;
   repoFullName: string;
   branch: string;
@@ -40,7 +49,8 @@ export interface SnapshotIndexEntry {
 export interface PutSnapshotInput {
   repoFullName: string;
   branch: string;
-  imageId: string;
+  backupHandle?: DirectoryBackup;
+  imageId?: string;
   restoreToken: string;
   sizeBytes?: number;
   /** Override the TTL for this entry. Defaults to DEFAULT_TTL_SECONDS. */
@@ -56,8 +66,12 @@ export async function putSnapshot(
   input: PutSnapshotInput,
   now: number = Date.now(),
 ): Promise<SnapshotIndexEntry> {
+  if (!input.backupHandle && !input.imageId) {
+    throw new Error('Snapshot index entry requires backupHandle or imageId');
+  }
   const entry: SnapshotIndexEntry = {
     v: INDEX_SCHEMA_VERSION,
+    backupHandle: input.backupHandle,
     imageId: input.imageId,
     restoreToken: input.restoreToken,
     repoFullName: input.repoFullName,
@@ -268,8 +282,8 @@ export interface ReapResult {
 }
 
 /**
- * Reclaim orphaned R2 snapshot objects — the Cloudflare provider's R2-backed
- * counterpart to KV's automatic TTL eviction.
+ * Reclaim orphaned legacy R2 snapshot objects. First-party SDK archives live
+ * under `backups/` and are reclaimed by the bucket lifecycle rule instead.
  *
  * An R2 object is orphaned when no live index entry references its key. This
  * happens when a snapshot is superseded but its old object wasn't deleted
@@ -296,7 +310,14 @@ export async function reapOrphanedSnapshots(
   graceMs: number = DEFAULT_TTL_SECONDS * 1000,
   maxReap: number = 10_000,
 ): Promise<ReapResult> {
-  const referenced = new Set((await listSnapshots(kv)).map((e) => e.imageId));
+  // The reaper owns only the legacy `cf-snapshots/` base64 objects. SDK
+  // backup archives live under its `backups/` prefix and expire via their TTL
+  // plus the bucket lifecycle rule.
+  const referenced = new Set(
+    (await listSnapshots(kv))
+      .map((entry) => entry.imageId)
+      .filter((imageId): imageId is string => typeof imageId === 'string'),
+  );
   const cutoff = now - graceMs;
   let scanned = 0;
   let reapedBytes = 0;
@@ -330,7 +351,7 @@ function validateEntry(raw: unknown): SnapshotIndexEntry | null {
   const parsed = raw as Partial<SnapshotIndexEntry>;
   if (
     parsed.v !== INDEX_SCHEMA_VERSION ||
-    typeof parsed.imageId !== 'string' ||
+    (!isBackupHandle(parsed.backupHandle) && typeof parsed.imageId !== 'string') ||
     typeof parsed.restoreToken !== 'string' ||
     typeof parsed.repoFullName !== 'string' ||
     typeof parsed.branch !== 'string' ||
@@ -340,4 +361,16 @@ function validateEntry(raw: unknown): SnapshotIndexEntry | null {
     return null;
   }
   return parsed as SnapshotIndexEntry;
+}
+
+function isBackupHandle(raw: unknown): raw is DirectoryBackup {
+  if (!raw || typeof raw !== 'object') return false;
+  const handle = raw as Partial<DirectoryBackup>;
+  return (
+    typeof handle.id === 'string' &&
+    handle.id.length > 0 &&
+    typeof handle.dir === 'string' &&
+    handle.dir.startsWith('/') &&
+    (handle.localBucket === undefined || typeof handle.localBucket === 'boolean')
+  );
 }
