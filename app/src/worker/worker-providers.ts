@@ -36,6 +36,7 @@ import {
   toGeminiGenerateContent,
 } from '@push/lib/gemini-bridge';
 import { isGeminiModelId } from '@push/lib/gemini-thought-signature';
+import { kimiSamplingRule } from '@push/lib/kimi-sampling';
 import { extractProviderHttpErrorDetail } from '../lib/provider-error-utils';
 import { buildTraceparent, createChildContext } from './worker-tracing';
 
@@ -840,9 +841,16 @@ export async function handleKimiChat(request: Request, env: Env): Promise<Respon
     .json()
     .catch(() => null)) as Record<string, unknown> | null;
   const model = typeof parsed?.model === 'string' ? parsed.model : '';
-  if (/^kimi-k2\.7-code(?:-highspeed)?$/i.test(model) && parsed) {
-    parsed.temperature = 1;
-    parsed.top_p = 0.95;
+  const samplingRule = kimiSamplingRule(model);
+  if (samplingRule && parsed) {
+    if (samplingRule.mode === 'pinned') {
+      parsed.temperature = samplingRule.temperature;
+      parsed.top_p = samplingRule.topP;
+    } else {
+      // K3: sampling is fixed server-side; the docs say omit the fields.
+      delete parsed.temperature;
+      delete parsed.top_p;
+    }
     request = new Request(request, { body: JSON.stringify(parsed) });
   }
   return handleKimiChatProxy(request, env);
