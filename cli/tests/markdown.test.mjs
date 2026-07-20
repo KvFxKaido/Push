@@ -253,15 +253,44 @@ describe('parseMarkdown — tables', () => {
     assert.deepEqual(lines[2].cells[1], [{ text: 'x | y', code: true }]);
   });
 
-  it('normalizes short and long body rows to the header width', () => {
-    const lines = parseMarkdown('| A | B |\n| --- | --- |\n| 1 |\n| 2 | 3 | 4 |');
+  it('pads a short body row to the header width', () => {
+    const lines = parseMarkdown('| A | B |\n| --- | --- |\n| 1 |');
+    assert.equal(lines.length, 3);
     assert.deepEqual(
       lines[2].cells.map((cell) => cell[0].text),
       ['1', ''],
     );
+  });
+
+  it('falls back to raw text when a body row is overfull (no cell is dropped)', () => {
+    // GFM would ignore the excess `4`; fit-or-raw is lossless, so the whole
+    // candidate demotes to raw text instead of silently discarding content.
     assert.deepEqual(
-      lines[3].cells.map((cell) => cell[0].text),
-      ['2', '3'],
+      parseMarkdown('| A | B |\n| --- | --- |\n| 2 | 3 | 4 |').map((line) => line.kind),
+      ['text', 'text', 'text'],
+    );
+  });
+
+  it('lets block syntax outrank table recognition (GFM precedence)', () => {
+    // A heading that happens to contain a pipe stays a heading, even when the
+    // next line looks like a delimiter — the table must not swallow it.
+    assert.deepEqual(
+      parseMarkdown('# A | B\n--- | ---').map((line) => line.kind),
+      ['heading', 'text'],
+    );
+    // A block row with a pipe ends the table and is reclassified by the caller,
+    // not absorbed as a table body row.
+    assert.deepEqual(
+      parseMarkdown('| A | B |\n| --- | --- |\n> note | x').map((line) => line.kind),
+      ['table', 'table', 'quote'],
+    );
+    assert.deepEqual(
+      parseMarkdown('| A | B |\n| --- | --- |\n- item | x').map((line) => line.kind),
+      ['table', 'table', 'bullet'],
+    );
+    assert.deepEqual(
+      parseMarkdown('| A | B |\n| --- | --- |\n1. step | x').map((line) => line.kind),
+      ['table', 'table', 'ordered'],
     );
   });
 

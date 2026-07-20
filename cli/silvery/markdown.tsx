@@ -304,10 +304,26 @@ function normalizeBodyCells(cells: string[], columnCount: number): string[] {
   return [...cells, ...Array.from({ length: columnCount - cells.length }, () => '')];
 }
 
+// A pipe-containing line can still be a heading / quote / list / rule; those
+// block constructs outrank table recognition (GFM precedence). Used to stop a
+// table from swallowing its own header line or absorbing a following block row.
+function isBlockConstruct(line: string): boolean {
+  return (
+    HEADING.test(line) ||
+    QUOTE.test(line) ||
+    ORDERED.test(line) ||
+    BULLET.test(line) ||
+    HR.test(line)
+  );
+}
+
 function tryParseTable(
   rawLines: string[],
   start: number,
 ): { lines: MdLine[]; next: number } | null {
+  // A header that is itself a block construct (e.g. `# A | B`) stays that block,
+  // never a table header.
+  if (isBlockConstruct(rawLines[start] ?? '')) return null;
   const headerCells = splitTableCells(rawLines[start] ?? '');
   if (!headerCells || headerCells.length < 2) return null;
 
@@ -321,8 +337,15 @@ function tryParseTable(
 
   let next = start + 2;
   while (next < rawLines.length && rawLines[next].trim() !== '') {
+    // A block-construct row (heading/quote/list/rule with a pipe) ends the
+    // table and is reclassified by the caller, rather than absorbed as a body row.
+    if (isBlockConstruct(rawLines[next])) break;
     const cells = splitTableCells(rawLines[next]);
     if (!cells) break;
+    // An overfull row would lose cells under GFM's ignore-excess rule; the
+    // whole candidate falls back to lossless raw text instead (no content is
+    // silently dropped — the fit-or-raw promise).
+    if (cells.length > headerCells.length) return null;
     rows.push({
       role: 'body',
       raw: rawLines[next],

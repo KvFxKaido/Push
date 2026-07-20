@@ -124,10 +124,19 @@ Alignment markers are honored:
 - `---:` -> right;
 - `---` -> left.
 
-Body rows continue until a blank line or a line with no table-cell pipe. As in
-GFM, missing trailing cells are padded with empty cells and excess cells are
-ignored. Header/delimiter column-count mismatch rejects the entire candidate;
-it falls back to ordinary text rather than guessing.
+Body rows continue until a blank line, a line with no table-cell pipe, or a line
+that is itself a block construct (heading, quote, ordered/bullet list, or rule) —
+block syntax outranks table recognition, so a `> quote | x` or `- item | x`
+after a table ends the table and is reclassified rather than absorbed. A header
+line that is itself a block construct (e.g. `# A | B`) is likewise never treated
+as a table header.
+
+Missing trailing cells are padded with empty cells (lossless). An **overfull**
+row — more cells than the header — would lose cells under GFM's ignore-excess
+rule, so the whole candidate instead demotes to raw ordinary text: fit-or-raw is
+lossless, and no cell is silently discarded. Header/delimiter column-count
+mismatch likewise rejects the entire candidate to ordinary text rather than
+guessing.
 
 ### Cell splitting
 
@@ -229,16 +238,20 @@ markdown.
 
 ### Fit decision
 
-`MarkdownBody` needs the actual content width, not a terminal-width guess.
-Measure the body `<Box>` through Silvery's layout callback/ref seam and retain
-the committed width in component state. Until a positive width is known,
-render raw rows; this makes first paint safe and avoids an optimistic overflow.
+`MarkdownBody` needs the actual content width, not a terminal-width guess. As
+shipped, `Message` derives it synchronously and threads it in as an
+`availableWidth` prop: `columns − paddingX(2) − glyph-gutter(2) = columns − 4`
+(the hex/caret gutter glyph plus its trailing space is exactly two cells —
+`displayWidth('⬡ ') === 2`). This is preferred over an async layout
+measurement: it is correct on first paint (no raw→grid flash) and needs no
+component width state. Because the gutter width is fixed, the derivation stays a
+single constant; a widget that ever changes the gutter must update it in lockstep.
 
 For each parsed table:
 
 ```text
-formattedWidth <= measuredBodyWidth  -> aligned table rows
-formattedWidth >  measuredBodyWidth  -> original raw rows
+formattedWidth <= availableWidth  -> aligned table rows
+formattedWidth >  availableWidth  -> original raw rows
 ```
 
 The decision is per complete table, never per row. A resize may switch the
@@ -288,8 +301,8 @@ This is one bounded CLI-only slice:
 1. **Parser** — add the table row splitter, conservative header/delimiter
    recognition, body-row collection, alignments, and shared intrinsic layout in
    `cli/silvery/markdown.tsx`.
-2. **Renderer** — add table glyphs, fitted aligned rows, the measured-width
-   fit gate, and verbatim raw fallback in the same module.
+2. **Renderer** — add table glyphs, fitted aligned rows, the derived-width
+   (`columns − 4`) fit gate, and verbatim raw fallback in the same module.
 3. **Contract comments** — revise the module-level invariant commentary to
    name fit-or-raw tables explicitly; do not imply arbitrary padded blocks are
    width-non-increasing.
@@ -315,7 +328,8 @@ wire envelope changes.
 - escaped pipe and pipe inside inline code;
 - inline emphasis, code, and link cells;
 - short body row pads missing cells;
-- long body row ignores excess cells;
+- overfull body row demotes the whole table to raw text (no cell dropped);
+- block syntax (heading/quote/list/rule) with a pipe outranks table recognition;
 - CRLF input;
 - table-like text inside a fence remains `code`;
 - malformed delimiter and count mismatch remain `text`;
