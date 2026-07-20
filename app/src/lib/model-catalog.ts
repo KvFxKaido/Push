@@ -4,7 +4,6 @@ import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getKimiKey } from '@/hooks/useKimiConfig';
 import { getHuggingFaceKey } from '@/hooks/useHuggingFaceConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
-import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
@@ -18,7 +17,6 @@ import {
   compareProviderModelIds,
   FIREWORKS_MODELS,
   GOOGLE_MODELS,
-  NVIDIA_MODELS,
   OPENROUTER_MODELS,
   PROVIDER_URLS,
   SAKANA_MODELS,
@@ -41,7 +39,6 @@ export type { PushCapabilityProfileOptions } from '@push/lib/capability-profile'
 const MODELS_FETCH_TIMEOUT_MS = 12_000;
 const MODELS_DEV_OPENROUTER_URL = 'https://models.dev/api.json';
 const MODELS_DEV_OPENROUTER_CACHE_KEY = 'push:models-dev:openrouter-models';
-const MODELS_DEV_NVIDIA_CACHE_KEY = 'push:models-dev:nvidia-models';
 const MODELS_DEV_OLLAMA_CACHE_KEY = 'push:models-dev:ollama-cloud-models';
 const MODELS_DEV_OPENCODE_CACHE_KEY = 'push:models-dev:opencode-models';
 const MODELS_DEV_HUGGINGFACE_CACHE_KEY = 'push:models-dev:huggingface-models';
@@ -54,14 +51,12 @@ const MODELS_DEV_OPENROUTER_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
 // the models.dev cadence; the picker's manual refresh forces a revalidation.
 const CLOUDFLARE_CATALOG_CACHE_KEY = 'push:cloudflare:catalog';
 const CLOUDFLARE_CATALOG_CACHE_TTL_MS = 12 * 60 * 60 * 1000;
-const NVIDIA_MAX_CURATED_MODELS = 32;
 const OLLAMA_MAX_CURATED_MODELS = 40;
 const OPENCODE_MAX_CURATED_MODELS = 48;
 export const MIN_CONTEXT_TOKENS = MIN_PUSH_CONTEXT_TOKENS;
 // Use the shared curated list as the single source of truth for priority ordering.
 // To add a new OpenRouter model, update OPENROUTER_MODELS in lib/provider-models.ts.
 const OPENROUTER_PRIORITY_MODELS: readonly string[] = OPENROUTER_MODELS;
-const NVIDIA_PRIORITY_MODELS: readonly string[] = NVIDIA_MODELS;
 // Refreshed against Ollama Cloud's 2026-07 retirement notice: dropped
 // gemini-3-flash-preview, glm-5, qwen3-coder-next, qwen3-coder:480b,
 // deepseek-v3.2, devstral-2:123b, gemma3:27b in favor of Ollama's
@@ -398,7 +393,7 @@ function resolveDeclaredModelCapabilities(
 
 /**
  * Look up cached model capabilities from models.dev metadata.
- * Works for any provider — checks OpenRouter, Ollama, Nvidia, and OpenCode
+ * Works for any provider — checks OpenRouter, Ollama, and OpenCode
  * routed IDs against cached metadata.
  */
 export function getModelCapabilities(provider: string, modelId: string): ResolvedModelCapabilities {
@@ -416,15 +411,13 @@ export function getModelCapabilities(provider: string, modelId: string): Resolve
   }
 
   const cacheKey =
-    provider === 'nvidia'
-      ? MODELS_DEV_NVIDIA_CACHE_KEY
-      : provider === 'ollama'
-        ? MODELS_DEV_OLLAMA_CACHE_KEY
-        : provider === 'zen'
-          ? MODELS_DEV_OPENCODE_CACHE_KEY
-          : provider === 'huggingface'
-            ? MODELS_DEV_HUGGINGFACE_CACHE_KEY
-            : null;
+    provider === 'ollama'
+      ? MODELS_DEV_OLLAMA_CACHE_KEY
+      : provider === 'zen'
+        ? MODELS_DEV_OPENCODE_CACHE_KEY
+        : provider === 'huggingface'
+          ? MODELS_DEV_HUGGINGFACE_CACHE_KEY
+          : null;
 
   if (!cacheKey) return resolveDeclaredModelCapabilities(provider, modelId);
 
@@ -765,12 +758,6 @@ async function fetchModelsDevOpenRouterMetadata(
   }
 }
 
-async function fetchModelsDevNvidiaMetadata(
-  forceRefresh = false,
-): Promise<Record<string, ModelsDevProviderMetadata>> {
-  return fetchModelsDevProviderMetadata('nvidia', MODELS_DEV_NVIDIA_CACHE_KEY, forceRefresh);
-}
-
 async function fetchModelsDevOllamaMetadata(
   forceRefresh = false,
 ): Promise<Record<string, ModelsDevProviderMetadata>> {
@@ -914,36 +901,6 @@ function isProviderTextChatModel(id: string, metadata?: TextChatFilterMetadata):
   if (IMAGE_GENERATION_MODEL_FAMILY_REGEX.test(normalized)) return false;
   if (/(embed|embedding|rerank|retriev|nv-rerank|nvolve)/.test(normalized)) return false;
   return true;
-}
-
-function isNvidiaChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
-  return isProviderTextChatModel(id, metadata);
-}
-
-export function buildCuratedNvidiaModelList(
-  modelIds: string[],
-  metadataById: Record<string, ModelsDevProviderMetadata>,
-): string[] {
-  const prioritySet = new Set<string>(NVIDIA_PRIORITY_MODELS);
-
-  const candidates = modelIds.filter((id) => {
-    const meta = metadataById[id];
-    if (!isNvidiaChatModel(id, meta)) return false;
-
-    // Apply context floor filtering (whitelist bypass via prioritySet)
-    const contextLimit = meta?.contextLimit;
-    const filterResult = filterModelByContext(id, contextLimit, prioritySet);
-    return filterResult.allowed;
-  });
-
-  if (candidates.length === 0) return [];
-
-  const preferred = NVIDIA_PRIORITY_MODELS.filter((id) => candidates.includes(id));
-  const rest = candidates
-    .filter((id) => !prioritySet.has(id as (typeof NVIDIA_PRIORITY_MODELS)[number]))
-    .sort((a, b) => a.localeCompare(b));
-
-  return [...preferred, ...rest].slice(0, NVIDIA_MAX_CURATED_MODELS);
 }
 
 function isOllamaChatModel(id: string, metadata?: ModelsDevProviderMetadata): boolean {
@@ -1380,52 +1337,6 @@ export async function fetchZenModels(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new Error(
         `OpenCode Zen model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
-        { cause: err },
-      );
-    }
-    throw err;
-  } finally {
-    window.clearTimeout(timeoutId);
-  }
-}
-
-export async function fetchNvidiaModels(
-  opts: { forceMetadataRefresh?: boolean } = {},
-): Promise<string[]> {
-  const key = getNvidiaKey();
-  const headers: HeadersInit = {};
-  if (key) headers.Authorization = `Bearer ${key}`;
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), MODELS_FETCH_TIMEOUT_MS);
-
-  try {
-    const [catalogRes, modelsDevMetadata] = await Promise.all([
-      fetch(PROVIDER_URLS.nvidia.models, {
-        method: 'GET',
-        headers,
-        signal: controller.signal,
-        cache: 'no-store',
-      }),
-      fetchModelsDevNvidiaMetadata(opts.forceMetadataRefresh),
-    ]);
-
-    if (!catalogRes.ok) {
-      const detail = await catalogRes.text().catch(() => '');
-      throw new Error(
-        `Nvidia NIM model list failed (${catalogRes.status}): ${detail.slice(0, 200)}`,
-      );
-    }
-
-    const payload = (await catalogRes.json()) as unknown;
-    const liveModels = normalizeModelList(payload);
-    const curated = buildCuratedNvidiaModelList(liveModels, modelsDevMetadata);
-    // The curated list already contains every model that passed chat + context filtering.
-    // Falling back to the raw provider list would bypass those guards.
-    return curated;
-  } catch (err) {
-    if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error(
-        `Nvidia NIM model list timed out after ${Math.floor(MODELS_FETCH_TIMEOUT_MS / 1000)}s`,
         { cause: err },
       );
     }

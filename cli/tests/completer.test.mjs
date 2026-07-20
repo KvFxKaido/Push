@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createCompleter } from '../completer.ts';
 
 const OLLAMA_MODELS = ['gemini-3-flash-preview'];
-const PROVIDERS = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' }];
+const PROVIDERS = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'fireworks' }];
 
 function makeCompleter(overrides = {}) {
   const skills =
@@ -129,7 +129,7 @@ describe('createCompleter', () => {
   it('/provider + trailing space → all provider IDs', () => {
     const c = makeCompleter();
     const [hits, sub] = c('/provider ');
-    assert.deepEqual(hits, ['ollama', 'openrouter', 'zen', 'nvidia']);
+    assert.deepEqual(hits, ['ollama', 'openrouter', 'zen', 'fireworks']);
     assert.equal(sub, '');
   });
 

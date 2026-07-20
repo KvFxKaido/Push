@@ -21,7 +21,7 @@ function makeDeps(providerId = 'ollama') {
     { id: 'ollama' },
     { id: 'openrouter' },
     { id: 'zen' },
-    { id: 'nvidia' },
+    { id: 'fireworks' },
   ];
 
   const getPathCompletions = (_root, fragment) => {
@@ -178,7 +178,7 @@ describe('createTabCompleter', () => {
   it('cycles backward with Shift+Tab', () => {
     tc.tab('/provider ', false);
     const r = tc.tab('/provider ', true);
-    assert.equal(r.text, '/provider nvidia');
+    assert.equal(r.text, '/provider fireworks');
     assert.equal(r.index, 3);
   });
 
@@ -195,7 +195,7 @@ describe('createTabCompleter', () => {
   it('Shift+Tab on first press picks last candidate', () => {
     const r = tc.tab('/provider ', true);
     assert.notEqual(r, null);
-    assert.equal(r.text, '/provider nvidia');
+    assert.equal(r.text, '/provider fireworks');
   });
 
   it('reset clears state, next Tab re-resolves', () => {
@@ -439,7 +439,7 @@ describe('getState display labels', () => {
     tc.tab('/provider ', false);
     const s = tc.getState();
     assert.notEqual(s, null);
-    assert.deepEqual(s.items, ['ollama', 'openrouter', 'zen', 'nvidia']);
+    assert.deepEqual(s.items, ['ollama', 'openrouter', 'zen', 'fireworks']);
     assert.equal(s.index, 0);
   });
 });

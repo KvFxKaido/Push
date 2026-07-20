@@ -27,7 +27,6 @@ import { huggingfaceStream } from './huggingface-stream';
 import { zenStream } from './zen-stream';
 import { fireworksStream } from './fireworks-stream';
 import { sakanaStream } from './sakana-stream';
-import { nvidiaStream } from './nvidia-stream';
 import { deepseekStream } from './deepseek-stream';
 import { anthropicStream } from './anthropic-stream';
 import { openaiStream } from './openai-stream';
@@ -43,7 +42,6 @@ import {
   getKimiModelName,
   getHuggingFaceModelName,
   getZenModelName,
-  getNvidiaModelName,
   getFireworksModelName,
   getDeepSeekModelName,
   getSakanaModelName,
@@ -211,7 +209,6 @@ const PROVIDER_PUSH_STREAM_FACTORIES = {
   fireworks: fireworksStream,
   sakana: sakanaStream,
   deepseek: deepseekStream,
-  nvidia: nvidiaStream,
   anthropic: anthropicStream,
   openai: openaiStream,
   xai: xaiStream,
@@ -314,8 +311,6 @@ function resolveChatDefaultModel(provider: ActiveProvider): string {
       return getCloudflareModelName();
     case 'zen':
       return getZenModelName();
-    case 'nvidia':
-      return getNvidiaModelName();
     case 'fireworks':
       return getFireworksModelName();
     case 'sakana':

@@ -72,12 +72,12 @@ function mockHandleConfigModalInput(ms, key, providers) {
 }
 
 describe('config modal state machine', () => {
-  const providers = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'nvidia' }];
+  const providers = [{ id: 'ollama' }, { id: 'openrouter' }, { id: 'zen' }, { id: 'fireworks' }];
 
-  it('navigates to nvidia and enters edit mode', () => {
+  it('navigates to fireworks and enters edit mode', () => {
     const ms = createMockConfigModalState();
 
-    // Navigate to nvidia (index 3)
+    // Navigate to fireworks (index 3)
     ms.cursor = 3;
     assert.equal(ms.cursor, 3);
 
@@ -86,7 +86,7 @@ describe('config modal state machine', () => {
     assert.equal(result.handled, true);
     assert.equal(result.activated, true);
     assert.equal(ms.mode, 'edit');
-    assert.equal(ms.editTarget, 'nvidia');
+    assert.equal(ms.editTarget, 'fireworks');
     assert.equal(ms.editBuf, '');
     assert.equal(ms.editCursor, 0);
   });
@@ -94,7 +94,7 @@ describe('config modal state machine', () => {
   it('types API key characters in edit mode', () => {
     const ms = createMockConfigModalState();
 
-    // Enter edit mode for nvidia
+    // Enter edit mode for fireworks
     ms.cursor = 3;
     mockHandleConfigModalInput(ms, { name: 'return' }, providers);
     assert.equal(ms.mode, 'edit');

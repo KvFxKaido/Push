@@ -22,7 +22,7 @@ import { KNOWN_TOOL_NAMES } from './tool-dispatch';
 
 export type OpenAIChatFamilyProvider = Extract<
   AIProviderType,
-  'zai' | 'nvidia' | 'huggingface' | 'cloudflare'
+  'zai' | 'huggingface' | 'cloudflare'
 >;
 
 export type OpenAIChatFamilyCredential =

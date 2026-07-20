@@ -4,7 +4,7 @@
  * The OpenAI peer of `toAnthropicMessages` / `toGeminiGenerateContent` — the
  * "explicit peer serializer" from `docs/runbooks/Provider Request Normalization.md`.
  * OpenAI Chat Completions is the wire shape every OpenAI-compatible endpoint
- * speaks (OpenRouter, Zen, NVIDIA, direct
+ * speaks (OpenRouter, Zen, direct
  * OpenAI, and the OpenAI-compat transports of Vertex / Zen-Go), so this is what
  * those neutral paths serialize to instead of hand-rolling the body inline.
  *

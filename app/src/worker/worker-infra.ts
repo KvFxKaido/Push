@@ -339,7 +339,6 @@ interface HealthStatus {
     openrouter: { status: 'ok' | 'unconfigured'; configured: boolean };
     cloudflare: { status: 'ok' | 'unconfigured'; configured: boolean };
     zen: { status: 'ok' | 'unconfigured'; configured: boolean };
-    nvidia: { status: 'ok' | 'unconfigured'; configured: boolean };
     fireworks: { status: 'ok' | 'unconfigured'; configured: boolean };
     anthropic: { status: 'ok' | 'unconfigured'; configured: boolean };
     openai: { status: 'ok' | 'unconfigured'; configured: boolean };
@@ -364,7 +363,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
   const openRouterConfigured = hasServerCredentials('openrouter', env);
   const cloudflareConfigured = hasServerCredentials('cloudflare', env);
   const zenConfigured = hasServerCredentials('zen', env);
-  const nvidiaConfigured = hasServerCredentials('nvidia', env);
   const fireworksConfigured = hasServerCredentials('fireworks', env);
   const anthropicConfigured = hasServerCredentials('anthropic', env);
   const openaiConfigured = hasServerCredentials('openai', env);
@@ -389,7 +387,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
     openRouterConfigured ||
     cloudflareConfigured ||
     zenConfigured ||
-    nvidiaConfigured ||
     fireworksConfigured ||
     anthropicConfigured ||
     openaiConfigured ||
@@ -416,7 +413,6 @@ export async function handleHealthCheck(env: Env, request?: Request): Promise<Re
         configured: cloudflareConfigured,
       },
       zen: { status: zenConfigured ? 'ok' : 'unconfigured', configured: zenConfigured },
-      nvidia: { status: nvidiaConfigured ? 'ok' : 'unconfigured', configured: nvidiaConfigured },
       fireworks: {
         status: fireworksConfigured ? 'ok' : 'unconfigured',
         configured: fireworksConfigured,

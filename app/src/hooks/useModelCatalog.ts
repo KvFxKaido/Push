@@ -14,7 +14,6 @@ import {
   HUGGINGFACE_MODELS,
   ZEN_MODELS,
   ZEN_GO_MODELS,
-  NVIDIA_MODELS,
   FIREWORKS_DEFAULT_MODEL,
   FIREWORKS_MODELS,
   SAKANA_DEFAULT_MODEL,
@@ -36,7 +35,6 @@ import {
   fetchKimiModels,
   fetchHuggingFaceModels,
   fetchZenModels,
-  fetchNvidiaModels,
   fetchFireworksModels,
   fetchSakanaModels,
   fetchDeepSeekModels,
@@ -55,7 +53,6 @@ import { useXAIConfig } from '@/hooks/useXAIConfig';
 import { useGoogleConfig } from '@/hooks/useGoogleConfig';
 import { ANTHROPIC_MODELS, GOOGLE_MODELS, OPENAI_MODELS } from '@push/lib/provider-models';
 import { useZenConfig } from '@/hooks/useZenConfig';
-import { useNvidiaConfig } from '@/hooks/useNvidiaConfig';
 import { useFireworksConfig } from '@/hooks/useFireworksConfig';
 import { useSakanaConfig } from '@/hooks/useSakanaConfig';
 import { useDeepSeekConfig } from '@/hooks/useDeepSeekConfig';
@@ -115,7 +112,6 @@ export interface ModelCatalog {
   huggingface: ProviderKeyConfig;
   cloudflare: WorkerBoundProviderConfig;
   zen: ProviderKeyConfig;
-  nvidia: ProviderKeyConfig;
   fireworks: ProviderKeyConfig;
   sakana: ProviderKeyConfig;
   deepseek: ProviderKeyConfig;
@@ -141,7 +137,6 @@ export interface ModelCatalog {
   huggingfaceModels: ProviderModelState;
   cloudflareModels: ProviderModelState;
   zenModels: ProviderModelState;
-  nvidiaModels: ProviderModelState;
   fireworksModels: ProviderModelState;
   sakanaModels: ProviderModelState;
   deepseekModels: ProviderModelState;
@@ -157,7 +152,6 @@ export interface ModelCatalog {
   huggingfaceModelOptions: string[];
   cloudflareModelOptions: string[];
   zenModelOptions: string[];
-  nvidiaModelOptions: string[];
   fireworksModelOptions: string[];
   sakanaModelOptions: string[];
   deepseekModelOptions: string[];
@@ -178,7 +172,6 @@ export interface ModelCatalog {
   refreshHuggingFaceModels: () => Promise<void>;
   refreshCloudflareModels: () => Promise<void>;
   refreshZenModels: () => Promise<void>;
-  refreshNvidiaModels: () => Promise<void>;
   refreshFireworksModels: () => Promise<void>;
   refreshSakanaModels: () => Promise<void>;
   refreshDeepSeekModels: () => Promise<void>;
@@ -343,20 +336,6 @@ export function buildModelControl(
         error: catalog.zenModels.error,
         onRefresh: catalog.refreshZenModels,
       };
-    case 'nvidia':
-      return {
-        provider,
-        providerLabel: resolveProviderLabel(catalog, provider, 'Nvidia NIM'),
-        value: lockedModel ?? catalog.nvidia.model,
-        options: includeSelectedModel(
-          catalog.nvidiaModelOptions,
-          lockedModel ?? catalog.nvidia.model,
-        ),
-        onChange: catalog.nvidia.setModel,
-        loading: catalog.nvidiaModels.loading,
-        error: catalog.nvidiaModels.error,
-        onRefresh: catalog.refreshNvidiaModels,
-      };
     case 'fireworks':
       return {
         provider,
@@ -456,7 +435,6 @@ export function useModelCatalog(): ModelCatalog {
   const kimiCfg = useKimiConfig();
   const huggingfaceCfg = useHuggingFaceConfig();
   const zenCfg = useZenConfig();
-  const nvidiaCfg = useNvidiaConfig();
   const fireworksCfg = useFireworksConfig();
   const sakanaCfg = useSakanaConfig();
   const deepseekCfg = useDeepSeekConfig();
@@ -473,7 +451,6 @@ export function useModelCatalog(): ModelCatalog {
   const [kimiKeyInput, setKimiKeyInput] = useState('');
   const [huggingfaceKeyInput, setHuggingFaceKeyInput] = useState('');
   const [zenKeyInput, setZenKeyInput] = useState('');
-  const [nvidiaKeyInput, setNvidiaKeyInput] = useState('');
   const [fireworksKeyInput, setFireworksKeyInput] = useState('');
   const [sakanaKeyInput, setSakanaKeyInput] = useState('');
   const [deepseekKeyInput, setDeepseekKeyInput] = useState('');
@@ -558,7 +535,6 @@ export function useModelCatalog(): ModelCatalog {
     huggingface: huggingfaceCfg.hasKey || serverUnlocked('huggingface'),
     cloudflare: cloudflareConfigured || serverUnlocked('cloudflare'),
     zen: zenCfg.hasKey || serverUnlocked('zen'),
-    nvidia: nvidiaCfg.hasKey || serverUnlocked('nvidia'),
     fireworks: fireworksCfg.hasKey || serverUnlocked('fireworks'),
     deepseek: deepseekCfg.hasKey || serverUnlocked('deepseek'),
     sakana: sakanaCfg.hasKey || serverUnlocked('sakana'),
@@ -581,7 +557,6 @@ export function useModelCatalog(): ModelCatalog {
     kimi: catalogAvailable('kimi', kimiCfg.hasKey),
     huggingface: catalogAvailable('huggingface', huggingfaceCfg.hasKey),
     zen: catalogAvailable('zen', zenCfg.hasKey),
-    nvidia: catalogAvailable('nvidia', nvidiaCfg.hasKey),
     fireworks: catalogAvailable('fireworks', fireworksCfg.hasKey),
     deepseek: catalogAvailable('deepseek', deepseekCfg.hasKey),
     sakana: catalogAvailable('sakana', sakanaCfg.hasKey),
@@ -604,7 +579,6 @@ export function useModelCatalog(): ModelCatalog {
   const [huggingfaceModelList, setHuggingFaceModelList] = useState<string[]>([]);
   const [cloudflareModelList, setCloudflareModelList] = useState<string[]>([]);
   const [zenModelList, setZenModelList] = useState<string[]>([]);
-  const [nvidiaModelList, setNvidiaModelList] = useState<string[]>([]);
   const [fireworksModelList, setFireworksModelList] = useState<string[]>([]);
   const [sakanaModelList, setSakanaModelList] = useState<string[]>([]);
   const [deepseekModelList, setDeepseekModelList] = useState<string[]>([]);
@@ -619,7 +593,6 @@ export function useModelCatalog(): ModelCatalog {
   const [huggingfaceLoading, setHuggingFaceLoading] = useState(false);
   const [cloudflareLoading, setCloudflareLoading] = useState(false);
   const [zenLoading, setZenLoading] = useState(false);
-  const [nvidiaLoading, setNvidiaLoading] = useState(false);
   const [fireworksLoading, setFireworksLoading] = useState(false);
   const [sakanaLoading, setSakanaLoading] = useState(false);
   const [deepseekLoading, setDeepseekLoading] = useState(false);
@@ -634,7 +607,6 @@ export function useModelCatalog(): ModelCatalog {
   const [huggingfaceError, setHuggingFaceError] = useState<string | null>(null);
   const [cloudflareError, setCloudflareError] = useState<string | null>(null);
   const [zenError, setZenError] = useState<string | null>(null);
-  const [nvidiaError, setNvidiaError] = useState<string | null>(null);
   const [fireworksError, setFireworksError] = useState<string | null>(null);
   const [sakanaError, setSakanaError] = useState<string | null>(null);
   const [deepseekError, setDeepseekError] = useState<string | null>(null);
@@ -649,7 +621,6 @@ export function useModelCatalog(): ModelCatalog {
   const [huggingfaceUpdatedAt, setHuggingFaceUpdatedAt] = useState<number | null>(null);
   const [cloudflareUpdatedAt, setCloudflareUpdatedAt] = useState<number | null>(null);
   const [zenUpdatedAt, setZenUpdatedAt] = useState<number | null>(null);
-  const [nvidiaUpdatedAt, setNvidiaUpdatedAt] = useState<number | null>(null);
   const [fireworksUpdatedAt, setFireworksUpdatedAt] = useState<number | null>(null);
   const [sakanaUpdatedAt, setSakanaUpdatedAt] = useState<number | null>(null);
   const [deepseekUpdatedAt, setDeepseekUpdatedAt] = useState<number | null>(null);
@@ -880,23 +851,6 @@ export function useModelCatalog(): ModelCatalog {
       await refreshZenStandardModels(force);
     },
     [refreshZenStandardModels, zenCfg.goMode],
-  );
-
-  const refreshNvidiaModels = useCallback(
-    async (force = true) => {
-      await refreshModels({
-        canFetch: providerCatalogAvailability.nvidia,
-        isLoading: nvidiaLoading,
-        setLoading: setNvidiaLoading,
-        setError: setNvidiaError,
-        setModels: setNvidiaModelList,
-        setUpdatedAt: setNvidiaUpdatedAt,
-        fetchModels: () => fetchNvidiaModels({ forceMetadataRefresh: force }),
-        emptyMessage: 'No models returned by Nvidia NIM.',
-        failureMessage: 'Failed to load Nvidia NIM models.',
-      });
-    },
-    [providerCatalogAvailability.nvidia, nvidiaLoading, refreshModels],
   );
 
   const refreshFireworksModels = useCallback(async () => {
@@ -1164,29 +1118,6 @@ export function useModelCatalog(): ModelCatalog {
     () =>
       scheduleAutoFetch(
         shouldAutoFetchProviderModels({
-          canFetch: providerCatalogAvailability.nvidia,
-          modelCount: nvidiaModelList.length,
-          loading: nvidiaLoading,
-          error: nvidiaError,
-        }),
-        activeProviderLabel === 'nvidia',
-        () => {
-          void refreshNvidiaModels(false);
-        },
-      ),
-    [
-      activeProviderLabel,
-      providerCatalogAvailability.nvidia,
-      nvidiaError,
-      nvidiaLoading,
-      nvidiaModelList.length,
-      refreshNvidiaModels,
-    ],
-  );
-  useEffect(
-    () =>
-      scheduleAutoFetch(
-        shouldAutoFetchProviderModels({
           canFetch: providerCatalogAvailability.fireworks,
           modelCount: fireworksModelList.length,
           loading: fireworksLoading,
@@ -1396,16 +1327,6 @@ export function useModelCatalog(): ModelCatalog {
     }
   }, [providerCatalogAvailability.zen]);
   useEffect(() => {
-    if (!providerCatalogAvailability.nvidia) {
-      const id = setTimeout(() => {
-        setNvidiaModelList([]);
-        setNvidiaError(null);
-        setNvidiaUpdatedAt(null);
-      }, 0);
-      return () => clearTimeout(id);
-    }
-  }, [providerCatalogAvailability.nvidia]);
-  useEffect(() => {
     if (!providerCatalogAvailability.fireworks) {
       const id = setTimeout(() => {
         setFireworksModelList([]);
@@ -1581,10 +1502,6 @@ export function useModelCatalog(): ModelCatalog {
       ),
     [activeZenModelList, zenCfg.goMode, zenCfg.model],
   );
-  const nvidiaModelOptions = useMemo(
-    () => includeSelectedModel(nvidiaModelList, nvidiaCfg.model),
-    [nvidiaModelList, nvidiaCfg.model],
-  );
   const deepseekModelOptions = useMemo(
     () =>
       includeSelectedModel(
@@ -1704,15 +1621,6 @@ export function useModelCatalog(): ModelCatalog {
       setModel: zenCfg.setModel,
       keyInput: zenKeyInput,
       setKeyInput: setZenKeyInput,
-    },
-    nvidia: {
-      setKey: nvidiaCfg.setKey,
-      clearKey: nvidiaCfg.clearKey,
-      hasKey: nvidiaCfg.hasKey,
-      model: nvidiaCfg.model,
-      setModel: nvidiaCfg.setModel,
-      keyInput: nvidiaKeyInput,
-      setKeyInput: setNvidiaKeyInput,
     },
     fireworks: {
       setKey: fireworksCfg.setKey,
@@ -1834,12 +1742,6 @@ export function useModelCatalog(): ModelCatalog {
       error: activeZenError,
       updatedAt: activeZenUpdatedAt,
     },
-    nvidiaModels: {
-      models: nvidiaModelList,
-      loading: nvidiaLoading,
-      error: nvidiaError,
-      updatedAt: nvidiaUpdatedAt,
-    },
     fireworksModels: {
       models: fireworksModelList,
       loading: fireworksLoading,
@@ -1884,7 +1786,6 @@ export function useModelCatalog(): ModelCatalog {
     huggingfaceModelOptions,
     cloudflareModelOptions,
     zenModelOptions,
-    nvidiaModelOptions: nvidiaModelList.length > 0 ? nvidiaModelOptions : NVIDIA_MODELS,
     fireworksModelOptions,
     sakanaModelOptions,
     deepseekModelOptions,
@@ -1903,7 +1804,6 @@ export function useModelCatalog(): ModelCatalog {
     refreshHuggingFaceModels,
     refreshCloudflareModels,
     refreshZenModels,
-    refreshNvidiaModels,
     refreshFireworksModels,
     refreshSakanaModels,
     refreshDeepSeekModels,

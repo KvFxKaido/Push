@@ -21,8 +21,6 @@ export {
   FIREWORKS_MODELS,
   GOOGLE_DEFAULT_MODEL,
   GOOGLE_MODELS,
-  NVIDIA_DEFAULT_MODEL,
-  NVIDIA_MODELS,
   OLLAMA_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   OPENAI_MODELS,
@@ -47,7 +45,6 @@ import {
   DEEPSEEK_DEFAULT_MODEL,
   FIREWORKS_DEFAULT_MODEL,
   GOOGLE_DEFAULT_MODEL,
-  NVIDIA_DEFAULT_MODEL,
   OLLAMA_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   OPENROUTER_DEFAULT_MODEL,
@@ -96,10 +93,6 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, ProviderUrlPair>> = {
   zen: {
     chat: '/opencode/zen/v1/chat/completions',
     models: '/opencode/zen/v1/models',
-  },
-  nvidia: {
-    chat: '/nvidia/v1/chat/completions',
-    models: '/nvidia/v1/models',
   },
 };
 
@@ -405,10 +398,6 @@ export function setZenGoMode(enabled: boolean): void {
   else safeStorageRemove(ZEN_GO_MODE_KEY);
 }
 
-const nvidiaModel = createModelNameStorage(requireModelStorageKey('nvidia'), NVIDIA_DEFAULT_MODEL);
-export const getNvidiaModelName = nvidiaModel.get;
-export const setNvidiaModelName = nvidiaModel.set;
-
 const fireworksModel = createModelNameStorage(
   requireModelStorageKey('fireworks'),
   FIREWORKS_DEFAULT_MODEL,
@@ -462,7 +451,6 @@ const MODEL_NAME_GETTERS: Partial<Record<AIProviderType, () => string>> = {
   huggingface: getHuggingFaceModelName,
   cloudflare: getCloudflareModelName,
   zen: getZenModelName,
-  nvidia: getNvidiaModelName,
   fireworks: getFireworksModelName,
   sakana: getSakanaModelName,
   anthropic: getAnthropicModelName,

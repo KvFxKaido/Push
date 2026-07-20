@@ -186,7 +186,6 @@ export function buildWorkspaceHubReviewModelOptions(
     huggingface: catalog.huggingfaceModelOptions,
     cloudflare: catalog.cloudflareModelOptions,
     zen: catalog.zenModelOptions,
-    nvidia: catalog.nvidiaModelOptions,
     fireworks: catalog.fireworksModelOptions,
     sakana: catalog.sakanaModelOptions,
     deepseek: catalog.deepseekModelOptions,

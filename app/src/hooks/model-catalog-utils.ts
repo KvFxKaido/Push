@@ -12,7 +12,6 @@ const KEYLESS_MODEL_CATALOG_PROVIDERS: ReadonlySet<AIProviderType> = new Set([
   'kimi',
   'huggingface',
   'zen',
-  'nvidia',
   'openai',
   'xai',
   'google',

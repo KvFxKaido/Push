@@ -4,7 +4,6 @@
  */
 import {
   FIREWORKS_MODELS,
-  NVIDIA_MODELS,
   OLLAMA_MODELS,
   OPENROUTER_MODELS,
   SAKANA_MODELS,
@@ -14,14 +13,7 @@ import {
   type SharedProviderModelId,
 } from '../lib/provider-models.ts';
 
-export {
-  FIREWORKS_MODELS,
-  NVIDIA_MODELS,
-  OLLAMA_MODELS,
-  OPENROUTER_MODELS,
-  SAKANA_MODELS,
-  ZEN_MODELS,
-};
+export { FIREWORKS_MODELS, OLLAMA_MODELS, OPENROUTER_MODELS, SAKANA_MODELS, ZEN_MODELS };
 
 export type ProviderId = SharedProviderModelId;
 

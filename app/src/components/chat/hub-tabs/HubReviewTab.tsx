@@ -32,7 +32,6 @@ import {
   HUGGINGFACE_DEFAULT_MODEL,
   CLOUDFLARE_DEFAULT_MODEL,
   ZEN_DEFAULT_MODEL,
-  NVIDIA_DEFAULT_MODEL,
   ANTHROPIC_DEFAULT_MODEL,
   OPENAI_DEFAULT_MODEL,
   XAI_DEFAULT_MODEL,
@@ -152,7 +151,6 @@ const REVIEW_MODEL_KEYS: Record<PreferredProvider, string> = {
   huggingface: 'push:review:model:huggingface',
   cloudflare: 'push:review:model:cloudflare',
   zen: 'push:review:model:zen',
-  nvidia: 'push:review:model:nvidia',
   anthropic: 'push:review:model:anthropic',
   openai: 'push:review:model:openai',
   xai: 'push:review:model:xai',
@@ -170,7 +168,6 @@ const REVIEW_DEFAULT_MODELS: Record<PreferredProvider, string> = {
   huggingface: HUGGINGFACE_DEFAULT_MODEL,
   cloudflare: CLOUDFLARE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
-  nvidia: NVIDIA_DEFAULT_MODEL,
   anthropic: ANTHROPIC_DEFAULT_MODEL,
   openai: OPENAI_DEFAULT_MODEL,
   xai: XAI_DEFAULT_MODEL,
@@ -198,7 +195,6 @@ function isPreferredProvider(value: string): value is PreferredProvider {
     value === 'huggingface' ||
     value === 'cloudflare' ||
     value === 'zen' ||
-    value === 'nvidia' ||
     value === 'anthropic' ||
     value === 'openai' ||
     value === 'xai' ||
@@ -229,7 +225,6 @@ function readReviewModels(): Record<PreferredProvider, string> {
     huggingface: pick('huggingface'),
     cloudflare: pick('cloudflare'),
     zen: pick('zen'),
-    nvidia: pick('nvidia'),
     fireworks: pick('fireworks'),
     sakana: pick('sakana'),
     deepseek: pick('deepseek'),

@@ -42,13 +42,6 @@ const familyFixtures: OpenAIChatStreamFamilyConfig[] = [
     errorPrefix: 'preserve-worker-prefix',
   },
   {
-    provider: 'nvidia',
-    endpoint: 'https://push.test/nvidia',
-    displayName: 'Nvidia NIM',
-    credential: { kind: 'bearer', getApiKey: () => 'nvidia-key' },
-    errorPrefix: 'always',
-  },
-  {
     provider: 'huggingface',
     endpoint: 'https://push.test/huggingface',
     displayName: 'Hugging Face',
@@ -208,8 +201,8 @@ describe('createOpenAIChatStream', () => {
       }),
     );
 
-    await expect(drain(familyFixtures[1])).rejects.toMatchObject({
-      message: 'Nvidia NIM 429: upstream rate limit',
+    await expect(drain(familyFixtures[2])).rejects.toMatchObject({
+      message: 'Cloudflare Workers AI 429: upstream rate limit',
       status: 429,
     });
   });
@@ -217,7 +210,7 @@ describe('createOpenAIChatStream', () => {
   it('names a successful response that has no stream body', async () => {
     fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
 
-    await expect(drain(familyFixtures[3])).rejects.toThrow(
+    await expect(drain(familyFixtures[2])).rejects.toThrow(
       'Cloudflare Workers AI response had no body',
     );
   });

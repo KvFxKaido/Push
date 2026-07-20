@@ -19,7 +19,6 @@ export type SharedProviderModelId =
   | 'kimi'
   | 'huggingface'
   | 'zen'
-  | 'nvidia'
   | 'fireworks'
   | 'deepseek'
   | 'sakana'
@@ -43,7 +42,6 @@ export const CLOUDFLARE_DEFAULT_MODEL = '@cf/qwen/qwen3-30b-a3b-fp8';
 /** Maximum length for OpenRouter session_id field (per API spec). */
 export const OPENROUTER_MAX_SESSION_ID_LENGTH = 256;
 export const ZEN_DEFAULT_MODEL = 'big-pickle';
-export const NVIDIA_DEFAULT_MODEL = 'nvidia/llama-3.1-nemotron-70b-instruct';
 // Verified serverless slug (fireworks.ai/models/deepseek-ai/deepseek-v4-pro, 2026-06-17) —
 // DeepSeek's flagship MoE: frontier reasoning, strong coding, up to 1M context. Re-check
 // against /api/fireworks/models if it 404s.
@@ -251,15 +249,6 @@ export const ZEN_MODELS: string[] = [
   'north-mini-code-free',
 ];
 
-export const NVIDIA_MODELS: string[] = [
-  NVIDIA_DEFAULT_MODEL,
-  'meta/llama-3.3-70b-instruct',
-  'meta/llama-3.1-405b-instruct',
-  'deepseek-ai/deepseek-r1',
-  'qwen/qwen2.5-coder-32b-instruct',
-  'mistralai/mistral-large-2-instruct',
-];
-
 // Curated Fireworks serverless models — surfaced in the picker alongside the account's live
 // /v1/models (which returns only a narrow subset). Serverless models are callable by slug
 // regardless of /v1/models; every slug below was probed callable (HTTP 200) on 2026-06-17.
@@ -344,7 +333,6 @@ export const SHARED_PROVIDER_MODEL_CATALOG: Record<SharedProviderModelId, string
   kimi: KIMI_MODELS,
   huggingface: HUGGINGFACE_MODELS,
   zen: ZEN_MODELS,
-  nvidia: NVIDIA_MODELS,
   fireworks: FIREWORKS_MODELS,
   deepseek: DEEPSEEK_MODELS,
   sakana: SAKANA_MODELS,
@@ -361,7 +349,6 @@ export const SHARED_PROVIDER_DEFAULT_MODELS: Record<SharedProviderModelId, strin
   kimi: KIMI_DEFAULT_MODEL,
   huggingface: HUGGINGFACE_DEFAULT_MODEL,
   zen: ZEN_DEFAULT_MODEL,
-  nvidia: NVIDIA_DEFAULT_MODEL,
   fireworks: FIREWORKS_DEFAULT_MODEL,
   deepseek: DEEPSEEK_DEFAULT_MODEL,
   sakana: SAKANA_DEFAULT_MODEL,

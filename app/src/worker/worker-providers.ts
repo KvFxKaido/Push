@@ -1470,39 +1470,6 @@ export async function handleZenGoModels(request: Request, env: Env): Promise<Res
   });
 }
 
-// --- Nvidia NIM (OpenAI-compatible endpoint) ---
-
-export const handleNvidiaChat = createStreamProxyHandler({
-  name: 'Nvidia NIM API',
-  logTag: 'api/nvidia/chat',
-  upstreamUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
-  timeoutMs: 120_000,
-  maxOutputTokens: 8_192,
-  buildAuth: standardAuth('NVIDIA_API_KEY'),
-  keyMissingError:
-    'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
-  timeoutError: 'Nvidia NIM request timed out after 120 seconds',
-  // Bucket C custom provider (AIG v2 Path 1.5): base_url https://integrate.api.nvidia.com;
-  // dormant until `nvidia` is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
-  gateway: { provider: 'custom-nvidia', pathSuffix: '/v1/chat/completions' },
-});
-
-export const handleNvidiaModels = createJsonProxyHandler({
-  name: 'Nvidia NIM API',
-  logTag: 'api/nvidia/models',
-  upstreamUrl: 'https://integrate.api.nvidia.com/v1/models',
-  method: 'GET',
-  timeoutMs: 30_000,
-  buildAuth: standardAuth('NVIDIA_API_KEY'),
-  keyMissingError:
-    'Nvidia NIM API key not configured. Add it in Settings or set NVIDIA_API_KEY on the Worker.',
-  timeoutError: 'Nvidia NIM model list timed out after 30 seconds',
-  // Public catalog (keyless → full list). Routed direct rather than through
-  // `custom-nvidia`, whose proxy truncates `/v1/models`. Chat keeps its gateway
-  // binding. See handleOllamaModels for the rationale.
-  publicList: true,
-});
-
 // --- OpenRouter + OpenAI + xAI + Sakana + Fireworks (/v1/responses) ---
 //
 // These providers are Responses-native adapters sharing one proxy
@@ -3017,7 +2984,6 @@ export const WORKER_PROVIDER_HANDLERS = {
   huggingface: { chat: handleHuggingFaceChat, models: handleHuggingFaceModels },
   cloudflare: { chat: handleCloudflareChat, models: handleCloudflareModels },
   zen: { chat: handleZenChat, models: handleZenModels },
-  nvidia: { chat: handleNvidiaChat, models: handleNvidiaModels },
   fireworks: { chat: handleFireworksChat, models: handleFireworksModels },
   deepseek: { chat: handleDeepSeekChat, models: handleDeepSeekModels },
   sakana: { chat: handleSakanaChat, models: handleSakanaModels },

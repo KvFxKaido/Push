@@ -37,8 +37,6 @@ import {
   handleZenChat,
   handleZenModels,
   handleZenGoChat,
-  handleNvidiaChat,
-  handleNvidiaModels,
   handleSakanaChat,
   handleSakanaModels,
   handleFireworksChat,
@@ -1350,7 +1348,7 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
     });
   }
 
-  // Public catalogs (ollama/zen/nvidia/huggingface) carry `publicList: true` and
+  // Public catalogs (ollama/zen/huggingface) carry `publicList: true` and
   // must fetch DIRECT and keyless even when the gateway is fully configured and
   // the provider is BYOK-listed with its slug enabled — the CF custom-provider
   // proxy truncates `/v1/models`, so the list must bypass it. Regression guard
@@ -1367,12 +1365,6 @@ describe('models endpoints — AI Gateway BYOK keeps the live list reachable key
       handler: handleZenModels,
       slug: 'zen',
       url: 'https://opencode.ai/zen/v1/models',
-    },
-    {
-      name: 'nvidia',
-      handler: handleNvidiaModels,
-      slug: 'nvidia',
-      url: 'https://integrate.api.nvidia.com/v1/models',
     },
     {
       name: 'huggingface',
@@ -1539,7 +1531,7 @@ describe('handleOllamaChat — AI Gateway custom-provider gate (Bucket C)', () =
     const captured = captureFetch();
     await handleOllamaChat(
       makeChatRequest(),
-      makeEnv({ ...gatewayEnv, CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia, ollama , fireworks' }),
+      makeEnv({ ...gatewayEnv, CF_AI_GATEWAY_CUSTOM_SLUGS: 'zai, ollama , fireworks' }),
     );
     expect(captured.current?.url).toContain('/custom-ollama/v1/chat/completions');
   });
@@ -1569,15 +1561,6 @@ describe('Bucket C custom providers — AI Gateway custom-provider routing', () 
   };
 
   const CASES = [
-    {
-      name: 'nvidia',
-      keyEnv: 'NVIDIA_API_KEY',
-      handler: handleNvidiaChat,
-      req: () => makeChatRequest(),
-      direct: 'https://integrate.api.nvidia.com/v1/chat/completions',
-      gateway:
-        'https://gateway.ai.cloudflare.com/v1/acc123/push-prod/custom-nvidia/v1/chat/completions',
-    },
     {
       name: 'zen',
       keyEnv: 'ZEN_API_KEY',
@@ -1626,11 +1609,11 @@ describe('Bucket C custom providers — AI Gateway custom-provider routing', () 
   }
 
   it('a slug enables only its own provider, not a sibling', async () => {
-    // Listing only `nvidia` must NOT route zen through the gateway.
+    // Listing only `fireworks` must NOT route zen through the gateway.
     const captured = captureFetch();
     await handleZenChat(
       makeChatRequest(),
-      makeEnv({ ZEN_API_KEY: 'k', ...gatewayBase, CF_AI_GATEWAY_CUSTOM_SLUGS: 'nvidia' }),
+      makeEnv({ ZEN_API_KEY: 'k', ...gatewayBase, CF_AI_GATEWAY_CUSTOM_SLUGS: 'fireworks' }),
     );
     expect(captured.current?.url).toBe('https://opencode.ai/zen/v1/chat/completions');
   });

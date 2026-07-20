@@ -193,7 +193,6 @@ export const ALL_PROVIDERS = [
   'huggingface',
   'cloudflare',
   'zen',
-  'nvidia',
   'fireworks',
   'sakana',
   'deepseek',

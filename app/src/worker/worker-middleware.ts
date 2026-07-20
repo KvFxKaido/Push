@@ -36,7 +36,6 @@ export interface Env {
   HF_TOKEN?: string;
   HUGGINGFACE_API_KEY?: string;
   ZEN_API_KEY?: string;
-  NVIDIA_API_KEY?: string;
   FIREWORKS_API_KEY?: string;
   DEEPSEEK_API_KEY?: string;
   SAKANA_API_KEY?: string;

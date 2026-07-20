@@ -51,9 +51,8 @@
     // account-bound identifiers), so they live here rather than as opaque
     // secrets — the account-bound CF_AI_GATEWAY_ACCOUNT_ID / CF_AI_GATEWAY_SLUG
     // stay in the secret store. Tracking them here makes prod match local
-    // instead of drifting: they were env-only, so prod lagged and
-    // `custom-nvidia` stayed dormant (see worker-providers.ts "dormant until
-    // nvidia is registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS").
+    // instead of drifting: they were env-only, so prod lagged and custom
+    // slugs stayed dormant until registered + listed in CF_AI_GATEWAY_CUSTOM_SLUGS.
     //   - CUSTOM_SLUGS: which `custom-*` providers are registered + enabled on
     //     the gateway (an unlisted custom slug 404s → falls back to direct).
     //     Gateway PASSTHROUGH (Push's own key in the header) is what this
@@ -61,8 +60,8 @@
     //   - BYOK: providers whose key the GATEWAY injects — the Worker
     //     dispatches keyless. An entry here asserts injection is VERIFIED,
     //     not merely that a key was saved in the dashboard, because a bad
-    //     entry does NOT fail loudly: nvidia keyless HANGS at the gateway to
-    //     the Worker's full timeout (probed 2026-07-09), and providers with
+    //     entry does NOT fail loudly: a keyless request can HANG at the gateway
+    //     to the Worker's full timeout, and providers with
     //     anonymous tiers can silently serve misattributed traffic instead
     //     of 401ing. Verification standard before adding an id: a keyless
     //     chat probe through the gateway must return a fast, AUTHENTICATED
@@ -81,9 +80,8 @@
     // The anthropic-transport Go path (/zen/go/v1/messages — MiniMax/Qwen)
     // wants x-api-key, which injection doesn't set (verified 401 keyless),
     // so those models still need ZEN_API_KEY or a user key; the Go handler
-    // enforces the split. Nvidia is passthrough-only (CUSTOM_SLUGS without
-    // BYOK) until its injection passes the probe above.
-    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,nvidia,zen,zai,moonshot,huggingface",
+    // enforces the split.
+    "CF_AI_GATEWAY_CUSTOM_SLUGS": "ollama,sakana,fireworks,zen,zai,moonshot,huggingface",
     "CF_AI_GATEWAY_BYOK": "anthropic,deepseek,openai,google,openrouter,sakana,ollama,fireworks,zen,zai,moonshot,grok,huggingface"
   },
   // API auth is the GitHub-identity session gate (auth rework — see
@@ -124,7 +122,6 @@
     "import.meta.env.VITE_GOOGLE_API_KEY": "\"\"",
     "import.meta.env.VITE_LOCAL_PC_MODE": "\"\"",
     "import.meta.env.VITE_NATIVE_WORKING_COPY": "\"\"",
-    "import.meta.env.VITE_NVIDIA_API_KEY": "\"\"",
     "import.meta.env.VITE_OLLAMA_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENAI_API_KEY": "\"\"",
     "import.meta.env.VITE_OPENROUTER_API_KEY": "\"\"",

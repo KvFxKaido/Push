@@ -21,7 +21,6 @@ const EMPTY_CHAT_MODEL_MEMORY: Record<PreferredProvider, string> = {
   huggingface: '',
   cloudflare: '',
   zen: '',
-  nvidia: '',
   anthropic: '',
   openai: '',
   xai: '',
@@ -42,7 +41,6 @@ function coerceChatModelMemory(raw: unknown): Record<PreferredProvider, string> 
     huggingface: typeof parsed.huggingface === 'string' ? parsed.huggingface.trim() : '',
     cloudflare: typeof parsed.cloudflare === 'string' ? parsed.cloudflare.trim() : '',
     zen: typeof parsed.zen === 'string' ? parsed.zen.trim() : '',
-    nvidia: typeof parsed.nvidia === 'string' ? parsed.nvidia.trim() : '',
     anthropic: typeof parsed.anthropic === 'string' ? parsed.anthropic.trim() : '',
     openai: typeof parsed.openai === 'string' ? parsed.openai.trim() : '',
     xai: typeof parsed.xai === 'string' ? parsed.xai.trim() : '',
@@ -119,7 +117,6 @@ export function useWorkspaceComposerState({
       huggingface: catalog.huggingface.model,
       cloudflare: catalog.cloudflare.model,
       zen: catalog.zen.model,
-      nvidia: catalog.nvidia.model,
       fireworks: catalog.fireworks.model,
       sakana: catalog.sakana.model,
       anthropic: catalog.anthropic.model,
@@ -136,7 +133,6 @@ export function useWorkspaceComposerState({
       catalog.cloudflare.model,
       catalog.fireworks.model,
       catalog.sakana.model,
-      catalog.nvidia.model,
       catalog.ollama.model,
       catalog.openRouter.model,
       catalog.zai.model,
@@ -216,8 +212,6 @@ export function useWorkspaceComposerState({
           rememberedChatModels.cloudflare ||
           defaultChatModels.cloudflare,
         zen: draft?.models?.zen?.trim() || rememberedChatModels.zen || defaultChatModels.zen,
-        nvidia:
-          draft?.models?.nvidia?.trim() || rememberedChatModels.nvidia || defaultChatModels.nvidia,
         anthropic:
           draft?.models?.anthropic?.trim() ||
           rememberedChatModels.anthropic ||
@@ -422,15 +416,6 @@ export function useWorkspaceComposerState({
     [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
   );
 
-  const handleSelectNvidiaModelFromChat = useCallback(
-    (model: string) => {
-      rememberChatModel('nvidia', model);
-      const chatId = ensureDraftChatForComposerChange();
-      upsertChatDraft(chatId, { models: { nvidia: model } });
-    },
-    [ensureDraftChatForComposerChange, rememberChatModel, upsertChatDraft],
-  );
-
   const handleSelectFireworksModelFromChat = useCallback(
     (model: string) => {
       const normalizedModel = normalizeFireworksModelName(model);
@@ -516,7 +501,6 @@ export function useWorkspaceComposerState({
     handleSelectHuggingFaceModelFromChat,
     handleSelectCloudflareModelFromChat,
     handleSelectZenModelFromChat,
-    handleSelectNvidiaModelFromChat,
     handleSelectFireworksModelFromChat,
     handleSelectSakanaModelFromChat,
     handleSelectDeepSeekModelFromChat,

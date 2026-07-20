@@ -21,7 +21,6 @@ export type BuiltInSettingsProviderId = Extract<
   | 'kimi'
   | 'huggingface'
   | 'zen'
-  | 'nvidia'
   | 'fireworks'
   | 'sakana'
   | 'deepseek'

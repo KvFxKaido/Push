@@ -252,6 +252,8 @@ export const DEPRECATED_PROVIDERS: Record<string, string> = {
   // kilocode was removed from the roster (its origin discriminates against
   // AI Gateway egress, and its router role duplicates openrouter's).
   kilocode: 'openrouter',
+  // nvidia (Nvidia NIM) was removed from the roster.
+  nvidia: 'openrouter',
 };
 
 /** Replacement id for a removed provider, or null when the id isn't retired. */

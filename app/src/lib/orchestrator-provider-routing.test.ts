@@ -24,7 +24,6 @@ function mockProviderState(options?: {
   vi.doMock('@/hooks/useKimiConfig', () => ({ getKimiKey: () => '' }));
   vi.doMock('@/hooks/useHuggingFaceConfig', () => ({ getHuggingFaceKey: () => '' }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => '' }));
-  vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => '' }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => fireworksKey }));
   vi.doMock('./providers', async () => {
     const actual = await vi.importActual<typeof import('./providers')>('./providers');
@@ -141,10 +140,10 @@ describe('provider PushStream registry', () => {
 /**
  * Mock every provider readiness input exactly once (no layering over
  * `mockProviderState`, whose duplicate `vi.doMock` of the same module races
- * with an override). Makes openai + openrouter + nvidia available — most
+ * with an override). Makes openai + openrouter + kimi available — most
  * providers need only a key, model names resolve to non-empty defaults via the
  * real `./providers` — and drives the model-aware transport getters so the
- * Anthropic-bridge isolation guard is deterministic. `nvidia` is the
+ * Anthropic-bridge isolation guard is deterministic. `kimi` is the
  * openai-compat peer used to prove same-shape failover. Everything else is
  * keyless → unavailable.
  */
@@ -156,7 +155,6 @@ function mockFailoverState(opts?: {
   kimi?: boolean;
   huggingface?: boolean;
   zen?: boolean;
-  nvidia?: boolean;
   zenTransport?: 'anthropic' | 'openai';
 }): void {
   const {
@@ -164,10 +162,9 @@ function mockFailoverState(opts?: {
     openrouter = true,
     google = false,
     zai = false,
-    kimi = false,
+    kimi = true,
     huggingface = false,
     zen = false,
-    nvidia = true,
     zenTransport = 'openai',
   } = opts ?? {};
   vi.doMock('@/hooks/useOllamaConfig', () => ({ getOllamaKey: () => '' }));
@@ -180,7 +177,6 @@ function mockFailoverState(opts?: {
     getHuggingFaceKey: () => (huggingface ? 'k-huggingface' : ''),
   }));
   vi.doMock('@/hooks/useZenConfig', () => ({ getZenKey: () => (zen ? 'k-zen' : '') }));
-  vi.doMock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => (nvidia ? 'k-nvidia' : '') }));
   vi.doMock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => '' }));
   vi.doMock('@/hooks/useAnthropicConfig', () => ({
     getAnthropicKey: () => '',
@@ -270,7 +266,7 @@ describe('resolveFailoverCandidates — Anthropic-transport isolation (Codex #1)
   it('DOES fail over from a Zen chat on a non-Anthropic model', async () => {
     mockFailoverState({ zenTransport: 'openai' });
     const { resolveFailoverCandidates } = await import('./orchestrator-provider-routing');
-    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual(['nvidia']);
+    expect(resolveFailoverCandidates('zen', 'gpt', new Set(['zen']))).toEqual(['kimi']);
   });
 });
 
