@@ -4339,10 +4339,27 @@ describe('silvery surface — constrained-height chrome budget', () => {
       await sleep(80);
 
       const composer = 'composer row one\ncomposer row two\ncomposer row three';
+      const readFrameRows = () => {
+        const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
+        terminal.applyAnsi(stdout.bytes);
+        return Array.from({ length: terminalRows }, (_, y) =>
+          Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
+            .join('')
+            .trimEnd(),
+        );
+      };
       hook.setComposerInput(composer);
-      for (let i = 0; i < 80 && hook.getComposerState().input !== composer; i++) await sleep(10);
-      instance.flush();
-      await sleep(30);
+      let frameRows = [];
+      // The hook's input snapshot updates when React commits, before Silvery's
+      // terminal writer necessarily emits the new frame. Under full-suite load,
+      // reading immediately after that snapshot can still capture the prior
+      // blank composer. Poll the observable terminal output instead.
+      for (let i = 0; i < 80; i++) {
+        instance.flush();
+        frameRows = readFrameRows();
+        if (frameRows.some((line) => line.includes('composer row three'))) break;
+        await sleep(10);
+      }
 
       // The fixed seven rows are header + rule + max composer + max footer;
       // the error consumes one more, leaving six transcript rows in 72x14.
@@ -4355,13 +4372,6 @@ describe('silvery surface — constrained-height chrome budget', () => {
         5,
       );
 
-      const terminal = new Silvery.VirtualTerminal(columns, terminalRows);
-      terminal.applyAnsi(stdout.bytes);
-      const frameRows = Array.from({ length: terminalRows }, (_, y) =>
-        Array.from({ length: columns }, (_, x) => terminal.getChar(x, y) || ' ')
-          .join('')
-          .trimEnd(),
-      );
       const frame = frameRows.join('\n');
 
       const humanRow = frameRows.find((line) => line.includes('human transcript line')) ?? '';
