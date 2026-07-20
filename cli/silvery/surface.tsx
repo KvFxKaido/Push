@@ -105,30 +105,45 @@ const LAUNCH_SHORTCUT_WIDTH = 26;
 const PICKER_MAX_VISIBLE = 12;
 
 // Full-screen vertical contract. HeaderBar is pinned to one row; the composer
-// can grow to three; FooterBar may wrap its keys/status pair once on narrow
-// terminals. Keep these beside the surface instead of hiding the arithmetic in
-// a magic subtraction so adding chrome requires updating the budget explicitly.
+// rule is one; the composer itself grows 1→3; the footer is one status row in
+// the composer scope. The transcript is given EXACTLY the rows left over so it
+// fills to the composer rule — that pins the composer/footer to the bottom edge
+// with no dead space, and a short transcript simply leaves blank rows above the
+// composer (the ListView pads to its height). Callers pass the measured chrome;
+// the defaults reserve the worst case so an unmeasured call can never overflow.
 const SURFACE_HEADER_ROWS = 1;
 const SURFACE_COMPOSER_RULE_ROWS = 1;
+const SURFACE_COMPOSER_MIN_ROWS = 1;
 const SURFACE_COMPOSER_MAX_ROWS = 3;
 const SURFACE_FOOTER_MAX_ROWS = 2;
 const SURFACE_MIN_TRANSCRIPT_ROWS = 3;
 
 export function resolveSurfaceTranscriptHeight(
   viewportRows: number,
-  options: { completionVisible?: boolean; errorVisible?: boolean } = {},
+  chrome: {
+    composerRows?: number;
+    footerRows?: number;
+    errorRows?: number;
+    completionRows?: number;
+  } = {},
 ): number {
-  const fixedChromeRows =
+  const composerRows = Math.min(
+    SURFACE_COMPOSER_MAX_ROWS,
+    Math.max(SURFACE_COMPOSER_MIN_ROWS, chrome.composerRows ?? SURFACE_COMPOSER_MAX_ROWS),
+  );
+  // Trust the caller's measured footer height (it can wrap past two rows on a
+  // very narrow terminal); the default reserves the worst case when unmeasured.
+  const footerRows = Math.max(1, chrome.footerRows ?? SURFACE_FOOTER_MAX_ROWS);
+  const errorRows = Math.max(0, chrome.errorRows ?? 0);
+  const completionRows = Math.max(0, chrome.completionRows ?? 0);
+  const chromeRows =
     SURFACE_HEADER_ROWS +
     SURFACE_COMPOSER_RULE_ROWS +
-    SURFACE_COMPOSER_MAX_ROWS +
-    SURFACE_FOOTER_MAX_ROWS;
-  const transientChromeRows =
-    Number(Boolean(options.completionVisible)) + Number(Boolean(options.errorVisible));
-  return Math.max(
-    SURFACE_MIN_TRANSCRIPT_ROWS,
-    viewportRows - fixedChromeRows - transientChromeRows,
-  );
+    composerRows +
+    footerRows +
+    errorRows +
+    completionRows;
+  return Math.max(SURFACE_MIN_TRANSCRIPT_ROWS, viewportRows - chromeRows);
 }
 
 /**
@@ -1375,13 +1390,24 @@ function FooterBar({
   columns: number;
   elapsed: string;
 }) {
-  const keys = footerKeybinds(scope);
   const mode = modeLabel(snapshot.execMode);
-  const right = `${mode} · ${snapshot.provider} · ${snapshot.model}${elapsed}`;
-  // Prefer keys on the left; trim the right if the row is tight.
+  const status = `${mode} · ${snapshot.provider} · ${snapshot.model}${elapsed}`;
+  const truncate = (text: string, max: number) =>
+    text.length > max ? `${text.slice(0, Math.max(0, max - 1))}…` : text;
+  // Composer scope: a single muted status row, no keybind strip. Discoverability
+  // lives in tab-completion, the launch-screen shortcuts, and `?` help — so the
+  // bottom edge stays a clean provider/model readout instead of a control legend.
+  if (scope === 'composer') {
+    return (
+      <Box width={columns}>
+        <Text color={VL_COLOR.muted}>{truncate(status, columns)}</Text>
+      </Box>
+    );
+  }
+  // Modal / running scopes still surface their essential keys on the left.
+  const keys = footerKeybinds(scope);
   const maxRight = Math.max(12, columns - keys.length - 3);
-  const rightShown =
-    right.length > maxRight ? `${right.slice(0, Math.max(0, maxRight - 1))}…` : right;
+  const rightShown = truncate(status, maxRight);
   return (
     <Box width={columns}>
       <Text color={VL_COLOR.muted}>{keys}</Text>
@@ -1427,6 +1453,29 @@ function CompletionRail({ state, columns }: { state: CompletionState; columns: n
       })}
     </Box>
   );
+}
+
+/**
+ * Visual-line height the {@link CompletionRail} will occupy at `columns`. The
+ * transcript budget sizes itself from this, so it must track what the rail
+ * actually renders — keep this in sync with CompletionRail's windowing above.
+ * Char-based `countVisualLines` is an upper bound on the flexbox's element-wise
+ * wrap, so it over-reserves rather than clips.
+ */
+export function completionRailRows(state: CompletionState, columns: number): number {
+  const maxVisible = Math.max(1, Math.floor((columns - 15) / 16));
+  const cursor = state.index >= 0 ? state.index : 0;
+  const { start, end } = pickerWindow(state.items.length, cursor, maxVisible);
+  const glyphs = resolveGlyphs(detectUnicode());
+  const prefix = state.index >= 0 ? `tab ${state.index + 1}/${state.items.length}` : 'tab complete';
+  const body = state.items
+    .slice(start, end)
+    .map((item, offset) => {
+      const selected = start + offset === state.index;
+      return `${offset > 0 ? ' ' : ''}${selected ? `${glyphs.human} ` : ''}${truncateCompletionLabel(item, 14)}`;
+    })
+    .join('');
+  return Math.max(1, countVisualLines(`${prefix} · ${body}`, Math.max(1, columns)));
 }
 
 export interface PushSurfaceHook {
@@ -1793,9 +1842,51 @@ export function PushSurface({
   });
 
   const completionState = inputActive ? completer.getState() : null;
+
+  // Resolve the footer scope up front: the transcript budget reserves the
+  // footer's ACTUAL height, which differs by scope (the composer scope is a
+  // single status row; modal/running scopes render the keys+status footer, which
+  // can wrap on narrow terminals).
+  let scope: FooterScope = 'composer';
+  if (retainedInteraction.current?.kind === 'approval' && interactionMotion.visible)
+    scope = 'approval';
+  else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
+    scope = 'question';
+  else if (configMotion.visible) scope = 'picker';
+  else if (pickerMotion.visible) scope = 'picker';
+  else if (paletteMotion.visible) scope = 'palette';
+  else if (snapshot.running) scope = 'running';
+
+  // Measure the actual chrome so the transcript fills exactly to the composer
+  // (bottom-pinned, no dead space) AND never under-budgets a wrapping element —
+  // an undercount pushes the footer off the bottom, which is the very thing the
+  // pin is meant to prevent. Each value is the real wrapped visual-line count of
+  // what renders below the transcript.
+  const composerContentRows =
+    input.length === 0
+      ? 1
+      : Math.min(
+          SURFACE_COMPOSER_MAX_ROWS,
+          Math.max(1, countVisualLines(input, Math.max(1, columns - 2))),
+        );
+  // The error <Text> renders every wrapped line (no truncation), so budget its
+  // FULL count — capping below the render would clip the footer.
+  const errorRows = snapshot.error
+    ? Math.max(1, countVisualLines(String(snapshot.error), Math.max(1, columns - 2)))
+    : 0;
+  // Composer scope: one status row (status truncated to width). Other scopes:
+  // the keybind strip drives the height (status is truncated to fit beside it),
+  // and it can wrap on a narrow terminal.
+  const footerRows =
+    scope === 'composer'
+      ? 1
+      : Math.max(1, countVisualLines(footerKeybinds(scope), Math.max(1, columns)));
+  const completionRows = completionState ? completionRailRows(completionState, columns) : 0;
   const transcriptHeight = resolveSurfaceTranscriptHeight(rows, {
-    completionVisible: Boolean(completionState),
-    errorVisible: Boolean(snapshot.error),
+    composerRows: composerContentRows,
+    footerRows,
+    errorRows,
+    completionRows,
   });
   // Composer frame: the rule (the frame edge the height budget reserves)
   // and the human caret (❯) that law 2 names the composer cursor — the one accent
@@ -1808,16 +1899,6 @@ export function PushSurface({
       : Math.floor((Date.now() - snapshot.startedAt) / MOTION_TICKS.elapsedMs) *
         MOTION_TICKS.elapsedMs;
   const elapsed = snapshot.startedAt === null ? '' : ` · ${formatElapsed(elapsedMs)}`;
-
-  let scope: FooterScope = 'composer';
-  if (retainedInteraction.current?.kind === 'approval' && interactionMotion.visible)
-    scope = 'approval';
-  else if (retainedInteraction.current?.kind === 'question' && interactionMotion.visible)
-    scope = 'question';
-  else if (configMotion.visible) scope = 'picker';
-  else if (pickerMotion.visible) scope = 'picker';
-  else if (paletteMotion.visible) scope = 'palette';
-  else if (snapshot.running) scope = 'running';
 
   return (
     <PushThemeProvider themeName={snapshot.theme}>
