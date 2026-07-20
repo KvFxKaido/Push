@@ -230,6 +230,53 @@ describe('runRoundLoop', () => {
     expect(streamingDrafts.length).toBeGreaterThanOrEqual(1);
   });
 
+  it('requests a checkpoint only after a round dispatched non-read-only tools', async () => {
+    const h = makeHarness();
+    const requestRoundCheckpoint = vi.fn();
+    h.loopCtx.runtimeHandlersRef.current = { requestRoundCheckpoint };
+    mockStreamAssistantRound
+      .mockResolvedValueOnce({
+        accumulated: 'read',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      })
+      .mockResolvedValueOnce({
+        accumulated: 'mutate',
+        thinkingAccumulated: '',
+        reasoningBlocks: [],
+        error: null,
+      });
+    mockProcessAssistantTurn
+      .mockResolvedValueOnce({
+        nextApiMessages: [],
+        nextRecoveryState: emptyRecovery,
+        loopAction: 'continue',
+        loopCompletedNormally: false,
+        dispatchedNonReadOnlyTools: false,
+      })
+      .mockResolvedValueOnce({
+        nextApiMessages: [],
+        nextRecoveryState: emptyRecovery,
+        loopAction: 'break',
+        loopCompletedNormally: true,
+        dispatchedNonReadOnlyTools: true,
+      });
+
+    await runRoundLoop(
+      h.loopCtx,
+      { apiMessages: [], recoveryState: emptyRecovery },
+      {
+        runJournalEntryRef: h.runJournalEntryRef,
+        persistRunJournal: h.persistRunJournal,
+        dequeuePendingSteer: h.dequeuePendingSteer,
+        pendingSteersByChatRef: h.pendingSteersByChatRef,
+      },
+    );
+
+    expect(requestRoundCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
   it('writes an error message and breaks when streaming returns an error', async () => {
     const h = makeHarness();
     mockStreamAssistantRound.mockResolvedValueOnce({

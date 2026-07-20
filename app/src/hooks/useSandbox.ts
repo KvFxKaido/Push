@@ -90,6 +90,13 @@ const SANDBOX_MAX_AGE_MS = 50 * 60 * 1000; // 50 min
 // the safety net for that eventual reclaim. Kept under SANDBOX_MAX_AGE_MS (50)
 // so the snapshot-then-reconnect window still aligns.
 const IDLE_HIBERNATE_MS = 45 * 60 * 1000; // 45 min idle before keep-warm snapshot
+// Mutating rounds often arrive in bursts (edit → verify → fix), so wait briefly
+// after the latest one before capturing their shared restore point.
+const ROUND_CHECKPOINT_DEBOUNCE_MS = 15 * 1000; // 15s trailing debounce
+// A trailing debounce alone can starve under continuous mutation activity.
+// Start this ceiling at the first request in a burst so capture is attempted
+// at least every two minutes even while later rounds keep extending the tail.
+const ROUND_CHECKPOINT_MAX_WAIT_MS = 120 * 1000; // 2 min leading-edge max wait
 // Shown when a saved snapshot existed but couldn't be restored on reconnect, so
 // the user knows their prior workspace is gone and they're on a fresh sandbox
 // (otherwise the restore failure is silent and looks like a normal cold start).
@@ -187,41 +194,58 @@ export function useSandbox(
   // the chip to 'error' (see refresh below). Reset on any success. Declared in
   // the "last" zone so it can't shift the index-synced refs above.
   const transientStrikesRef = useRef(0);
+  const roundCheckpointTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const roundCheckpointMaxWaitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeSessionStorageKey = useMemo(
     () => buildSandboxSessionStorageKey(activeRepoFullName, activeBranch),
     [activeRepoFullName, activeBranch],
   );
 
-  const retireSandboxState = useCallback((id: string, storageKey?: string | null): void => {
-    clearTrackedSession(storageKey, id);
-    fileLedger.reset();
-    // Fire-and-forget, but keep the failure observable rather than swallowed
-    // (REVIEW.md fire-and-forget rule) — this runs during retirement cleanup.
-    symbolLedger.clearRepo().catch((err) => {
-      console.warn(
-        JSON.stringify({
-          level: 'warn',
-          event: 'sandbox_retire_symbol_clear_failed',
-          sandboxId: id,
-          error: err instanceof Error ? err.message : String(err),
-        }),
-      );
-    });
-    symbolLedger.reset();
-    clearFileVersionCache(id);
-    clearSandboxWorkspaceRevision(id);
-    clearSandboxEnvironment(id);
-    setActiveSandboxEnvironment(null);
-    setSandboxId(null);
-    sandboxIdRef.current = null;
-    sessionStorageKeyRef.current = null;
-    freshSandboxIdRef.current = null;
-    setFreshSandboxId(null);
-    snapshotRestoredSandboxIdRef.current = null;
-    setRestoredFromSnapshotSandboxId(null);
-    setStatus('idle');
-    setError(null);
+  const clearRoundCheckpointTimers = useCallback((): void => {
+    if (roundCheckpointTimerRef.current) {
+      clearTimeout(roundCheckpointTimerRef.current);
+      roundCheckpointTimerRef.current = null;
+    }
+    if (roundCheckpointMaxWaitTimerRef.current) {
+      clearTimeout(roundCheckpointMaxWaitTimerRef.current);
+      roundCheckpointMaxWaitTimerRef.current = null;
+    }
   }, []);
+
+  const retireSandboxState = useCallback(
+    (id: string, storageKey?: string | null): void => {
+      clearRoundCheckpointTimers();
+      clearTrackedSession(storageKey, id);
+      fileLedger.reset();
+      // Fire-and-forget, but keep the failure observable rather than swallowed
+      // (REVIEW.md fire-and-forget rule) — this runs during retirement cleanup.
+      symbolLedger.clearRepo().catch((err) => {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'sandbox_retire_symbol_clear_failed',
+            sandboxId: id,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+      });
+      symbolLedger.reset();
+      clearFileVersionCache(id);
+      clearSandboxWorkspaceRevision(id);
+      clearSandboxEnvironment(id);
+      setActiveSandboxEnvironment(null);
+      setSandboxId(null);
+      sandboxIdRef.current = null;
+      sessionStorageKeyRef.current = null;
+      freshSandboxIdRef.current = null;
+      setFreshSandboxId(null);
+      snapshotRestoredSandboxIdRef.current = null;
+      setRestoredFromSnapshotSandboxId(null);
+      setStatus('idle');
+      setError(null);
+    },
+    [clearRoundCheckpointTimers],
+  );
 
   const restoreSavedSessionSnapshot = useCallback(
     async (
@@ -516,8 +540,9 @@ export function useSandbox(
   // Take a keep-warm safety snapshot of the LIVE container (tar /workspace → R2)
   // without terminating it, then persist it as the restore point for a later
   // reclaim. Guarded so we never snapshot a busy container, double-snapshot, or
-  // re-snapshot an unchanged tree. Shared by two triggers:
+  // re-snapshot an unchanged tree. Shared by three triggers:
   //   - the idle reaper (after IDLE_HIBERNATE_MS of no tool calls), and
+  //   - mutating round completion (debounced below), and
   //   - page-hide (the app backgrounding), where the container can be reclaimed
   //     long before the idle timer would fire — the dominant mobile loss window,
   //     since CF's sleepAfter is the only *ceiling* but a platform recycle/OOM
@@ -527,7 +552,7 @@ export function useSandbox(
   // beats the prior "nothing until 45 min idle" — it shrinks the unprotected
   // window from the full idle interval to ~the moment of backgrounding.
   const captureKeepWarmSnapshot = useCallback(
-    (trigger: 'idle' | 'hidden'): void => {
+    (trigger: 'idle' | 'hidden' | 'round'): void => {
       // On the native shell, WIP never leaves the device — no keep-warm snapshot.
       if (nativeCheckpointsActive()) return;
       const id = sandboxIdRef.current;
@@ -647,6 +672,35 @@ export function useSandbox(
         });
     },
     [activeRepoFullName, activeBranch],
+  );
+
+  const flushRoundCheckpoint = useCallback((): void => {
+    clearRoundCheckpointTimers();
+    captureKeepWarmSnapshot('round');
+  }, [captureKeepWarmSnapshot, clearRoundCheckpointTimers]);
+
+  // Called after a round that dispatched file mutations or side effects. Each
+  // request extends the trailing edge, while the first request also starts a
+  // fixed max-wait ceiling so a continuously busy session cannot starve capture.
+  const requestRoundCheckpoint = useCallback((): void => {
+    if (roundCheckpointTimerRef.current) clearTimeout(roundCheckpointTimerRef.current);
+    roundCheckpointTimerRef.current = setTimeout(
+      flushRoundCheckpoint,
+      ROUND_CHECKPOINT_DEBOUNCE_MS,
+    );
+    if (!roundCheckpointMaxWaitTimerRef.current) {
+      roundCheckpointMaxWaitTimerRef.current = setTimeout(
+        flushRoundCheckpoint,
+        ROUND_CHECKPOINT_MAX_WAIT_MS,
+      );
+    }
+  }, [flushRoundCheckpoint]);
+
+  // Cancel a pending trailing/max-wait capture when the hook changes sessions
+  // or unmounts. The old callback must never target a torn-down sandbox.
+  useEffect(
+    () => clearRoundCheckpointTimers,
+    [activeRepoFullName, activeBranch, clearRoundCheckpointTimers],
   );
 
   // Idle hibernation timer — snapshot the sandbox after IDLE_HIBERNATE_MS of no
@@ -907,6 +961,7 @@ export function useSandbox(
   );
 
   const stop = useCallback(async () => {
+    clearRoundCheckpointTimers();
     const id = sandboxIdRef.current;
     const sessionStorageKey = sessionStorageKeyRef.current;
     if (!id) return;
@@ -936,7 +991,7 @@ export function useSandbox(
     setSandboxId(null);
     setStatus('idle');
     setError(null);
-  }, []);
+  }, [clearRoundCheckpointTimers]);
 
   const rebindSessionRepo = useCallback((repoFullName: string, branch: string = 'main') => {
     const id = sandboxIdRef.current;
@@ -1317,6 +1372,7 @@ export function useSandbox(
     createdAt,
     hibernate,
     forgetSnapshot,
+    requestRoundCheckpoint,
     snapshotInfo,
     freshSandboxId,
     restoredFromSnapshotSandboxId,

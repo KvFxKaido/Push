@@ -202,6 +202,10 @@ beforeEach(() => {
   reactState.effects = [];
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('useSandbox — initial state', () => {
   it('returns idle with no sandbox id or error', () => {
     const hook = render('owner/repo', 'main');
@@ -968,6 +972,89 @@ describe('useSandbox — native local-only recovery (Increment 2)', () => {
     await Promise.resolve();
     expect(reactState.cells[0].value).toBe('sb-1');
     expect(reactState.cells[1].value).toBe('ready');
+  });
+});
+
+describe('useSandbox — debounced post-round keep-warm snapshot', () => {
+  async function startReadySandbox() {
+    sandboxClient.createSandbox.mockResolvedValue({
+      status: 'ready',
+      sandboxId: 'sb-1',
+      ownerToken: 'tok',
+    });
+    sandboxClient.hibernateSandbox.mockResolvedValue({
+      ok: true,
+      snapshotId: 'snap-round',
+      restoreToken: 'rt-round',
+      keptWarm: true,
+    });
+    sandboxClient.getSandboxOwnerToken.mockReturnValue('tok');
+    ghAuth.getActiveGitHubTokenInfo.mockReturnValue({ token: 'gh-token', kind: 'app' });
+    const hook = render('owner/repo', 'main');
+    await hook.start('owner/repo', 'main');
+    syncRefsFromState();
+    return hook;
+  }
+
+  it('coalesces a burst into one capture after the trailing window', async () => {
+    vi.useFakeTimers();
+    const hook = await startReadySandbox();
+
+    hook.requestRoundCheckpoint();
+    await vi.advanceTimersByTimeAsync(5_000);
+    hook.requestRoundCheckpoint();
+    await vi.advanceTimersByTimeAsync(5_000);
+    hook.requestRoundCheckpoint();
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sandboxClient.hibernateSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('captures at the max-wait ceiling during sustained mutation activity', async () => {
+    vi.useFakeTimers();
+    const hook = await startReadySandbox();
+
+    hook.requestRoundCheckpoint();
+    for (let elapsed = 10_000; elapsed < 120_000; elapsed += 10_000) {
+      await vi.advanceTimersByTimeAsync(10_000);
+      hook.requestRoundCheckpoint();
+    }
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(sandboxClient.hibernateSandbox).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancels a pending capture on hook teardown', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('document', {
+      hidden: false,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    });
+    const hook = await startReadySandbox();
+    const cleanups = await runEffects();
+    syncRefsFromState();
+
+    hook.requestRoundCheckpoint();
+    cleanups.forEach((cleanup) => cleanup());
+    await vi.advanceTimersByTimeAsync(120_000);
+
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps round-triggered cloud capture gated off on the native shell', async () => {
+    vi.useFakeTimers();
+    checkpointGate.nativeCheckpointsActive.mockReturnValue(true);
+    const hook = await startReadySandbox();
+
+    hook.requestRoundCheckpoint();
+    await vi.advanceTimersByTimeAsync(15_000);
+
+    expect(sandboxClient.hibernateSandbox).not.toHaveBeenCalled();
   });
 });
 

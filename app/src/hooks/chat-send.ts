@@ -20,7 +20,12 @@
  * malformed case, then dispatch to one of the three branch handlers.
  */
 
-import { detectAllToolCalls, detectAnyToolCall, detectNativeToolCalls } from '@/lib/tool-dispatch';
+import {
+  detectAllToolCalls,
+  detectAnyToolCall,
+  detectNativeToolCalls,
+  isReadOnlyToolCall,
+} from '@/lib/tool-dispatch';
 import type { ToolCallRecoveryState } from '@/lib/tool-call-recovery';
 import { type MutationFailureTracker } from '@push/lib/agent-loop-utils';
 import {
@@ -174,7 +179,7 @@ export async function processAssistantTurn(
   const totalBatchedCalls =
     parallelToolCalls.length + fileMutationBatch.length + detected.sideEffects.length;
   if (totalBatchedCalls > 1) {
-    return executeBatchedToolCalls(
+    const result = await executeBatchedToolCalls(
       detected,
       round,
       accumulated,
@@ -186,6 +191,10 @@ export async function processAssistantTurn(
       turnCtx,
       responsesReasoningItems,
     );
+    return {
+      ...result,
+      dispatchedNonReadOnlyTools: fileMutationBatch.length > 0 || detected.sideEffects.length > 0,
+    };
   }
 
   const singleDetectedCalls = detected.readOnly.concat(
@@ -209,7 +218,7 @@ export async function processAssistantTurn(
     );
   }
 
-  return executeSingleToolCall(
+  const result = await executeSingleToolCall(
     toolCall,
     round,
     accumulated,
@@ -221,4 +230,5 @@ export async function processAssistantTurn(
     turnCtx,
     responsesReasoningItems,
   );
+  return { ...result, dispatchedNonReadOnlyTools: !isReadOnlyToolCall(toolCall) };
 }

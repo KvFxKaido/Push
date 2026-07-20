@@ -56,6 +56,8 @@ export interface ChatRuntimeHandlers {
   }) => void;
   /** Called when a tool result indicates the sandbox is unreachable. */
   onSandboxUnreachable?: (reason: string, policy?: SandboxUnreachableRecoveryPolicy) => void;
+  /** Debounced keep-warm capture request after a non-read-only tool round. */
+  requestRoundCheckpoint?: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -159,4 +161,6 @@ export interface AssistantTurnResult {
   /** What the sendMessage loop should do after this turn. */
   loopAction: 'break' | 'continue';
   loopCompletedNormally: boolean;
+  /** True when this turn actually dispatched a file mutation or side effect. */
+  dispatchedNonReadOnlyTools?: boolean;
 }

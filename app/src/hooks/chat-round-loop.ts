@@ -515,6 +515,10 @@ export async function runRoundLoop(
       responsesReasoningItems,
     );
 
+    if (turnResult.dispatchedNonReadOnlyTools) {
+      outerLoopCtx.runtimeHandlersRef.current?.requestRoundCheckpoint?.();
+    }
+
     apiMessages = turnResult.nextApiMessages;
     toolCallRecoveryState = turnResult.nextRecoveryState;
     loopCtx.checkpointRefs.apiMessages.current = apiMessages;
