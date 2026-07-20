@@ -1147,10 +1147,9 @@ describe('streamCompletion', () => {
     });
 
     // ─── Per-model transport dispatch (no PUSH_OPENROUTER_TRANSPORT) ─
-    // OpenRouter's /responses is a beta not implemented for every model, and
-    // a Responses body can't ride /chat/completions — so with no all-models
-    // override the transport is picked per request from the model's presence
-    // in PushCapabilityProfile.openaiWire.
+    // OpenRouter defaults every model to /responses (PushCapabilityProfile.openaiWire),
+    // and runs it responses-first with a chat fallback: a Responses body can't ride
+    // /chat/completions, so a pre-output failure retries the whole turn on chat.
 
     describe('per-model transport dispatch', () => {
       let prevPerModelTransport;
@@ -1196,16 +1195,29 @@ describe('streamCompletion', () => {
         assert.equal(capturedBody.messages, undefined);
       });
 
-      it('sends a chat-tier model to Chat Completions with a messages body', async () => {
-        let capturedUrl;
-        let capturedBody;
+      it('runs responses-first with a chat fallback when the beta attempt fails', async () => {
+        const urls = [];
+        let calls = 0;
         globalThis.fetch = async (url, opts) => {
-          capturedUrl = String(url);
-          capturedBody = JSON.parse(opts.body);
+          urls.push(String(url));
+          calls += 1;
+          const body = JSON.parse(opts.body);
+          if (body.input !== undefined) {
+            // Responses attempt → provider error before any output.
+            return {
+              ok: false,
+              status: 400,
+              body: stringToStream('{"error":{"message":"provider error"}}'),
+              headers: new Headers(),
+              text: async () => '{"error":{"message":"provider error"}}',
+              json: async () => ({ error: { message: 'provider error' } }),
+            };
+          }
+          // Chat fallback → succeeds.
           return {
             ok: true,
             status: 200,
-            body: stringToStream(buildSSE(['chat'])),
+            body: stringToStream(buildSSE(['chat-ok'])),
             headers: new Headers(),
             text: async () => '',
             json: async () => ({}),
@@ -1216,35 +1228,36 @@ describe('streamCompletion', () => {
         const tokens = [];
         for await (const event of stream({
           provider: 'openrouter',
-          // The model that motivated the capability split — /chat/completions only.
           model: 'minimax/minimax-m3',
           messages: [{ id: 'm1', role: 'user', content: 'hello', timestamp: 0 }],
         })) {
           if (event.type === 'text_delta') tokens.push(event.text);
         }
 
-        assert.equal(tokens.join(''), 'chat');
-        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
-        assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hello' }]);
-        assert.equal(capturedBody.input, undefined);
+        // Responses attempt (input body) then the chat fallback (messages body).
+        assert.equal(calls, 2);
+        assert.ok(urls[0].includes('/responses'));
+        assert.ok(urls[1].includes('/chat/completions'));
+        assert.equal(tokens.join(''), 'chat-ok');
       });
 
-      it('falls back to the config default model for the dispatch decision', async () => {
+      it('routes a no-model request to Responses via the config default', async () => {
         let capturedUrl;
         globalThis.fetch = async (url, opts) => {
           capturedUrl = String(url);
+          JSON.parse(opts.body);
           return {
             ok: true,
             status: 200,
-            body: stringToStream(buildSSE(['ok'])),
+            body: stringToStream(buildResponsesSSE(['ok'])),
             headers: new Headers(),
             text: async () => '',
             json: async () => ({}),
           };
         };
 
-        // orConfig.defaultModel ('openrouter-model') is chat-tier, so a
-        // request with no model rides Chat Completions.
+        // OpenRouter now defaults every model to /responses; a no-model request
+        // still resolves the config default for the dispatch decision.
         const stream = createProviderStream(orConfig, 'key');
         for await (const _ of stream({
           provider: 'openrouter',
@@ -1254,7 +1267,7 @@ describe('streamCompletion', () => {
           // drain
         }
 
-        assert.equal(capturedUrl, 'https://openrouter.ai/api/v1/chat/completions');
+        assert.equal(capturedUrl, 'http://test.invalid/v1/responses');
       });
     });
 
@@ -1978,32 +1991,31 @@ describe('streamCompletion reasoning-block forwarding (direct Anthropic)', () =>
       requiresKey: false,
     };
 
+    // OpenRouter defaults to /responses now, so annotations arrive on the
+    // Responses `output_text.annotation.added` channel (not chat `delta.annotations`).
+    const textFrame = JSON.stringify({ type: 'response.output_text.delta', delta: 'answer' });
     const annFrame = JSON.stringify({
-      choices: [
-        {
-          delta: {
-            annotations: [
-              {
-                type: 'url_citation',
-                url_citation: {
-                  url: 'https://a.test',
-                  title: 'A',
-                  content: 'excerpt',
-                  start_index: 1,
-                  end_index: 2,
-                },
-              },
-            ],
-          },
-        },
-      ],
+      type: 'response.output_text.annotation.added',
+      annotation: {
+        type: 'url_citation',
+        url: 'https://a.test',
+        title: 'A',
+        content: 'excerpt',
+        start_index: 1,
+        end_index: 2,
+      },
     });
-    const textFrame = JSON.stringify({ choices: [{ delta: { content: 'answer' } }] });
+    const completedFrame = JSON.stringify({
+      type: 'response.completed',
+      response: { status: 'completed' },
+    });
 
     globalThis.fetch = async () => ({
       ok: true,
       status: 200,
-      body: stringToStream(`data: ${annFrame}\n\ndata: ${textFrame}\n\ndata: [DONE]\n\n`),
+      body: stringToStream(
+        `data: ${textFrame}\n\ndata: ${annFrame}\n\ndata: ${completedFrame}\n\n`,
+      ),
       headers: new Headers({ 'content-type': 'text/event-stream' }),
       text: async () => '',
     });

@@ -39,6 +39,7 @@ import type {
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { resolvePushCapabilityProfile } from '@push/lib/capability-profile';
+import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
@@ -228,123 +229,137 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         args.provider === 'xai' ||
         args.provider === 'sakana' ||
         args.provider === 'fireworks';
-      const body = isResponsesProvider
-        ? JSON.stringify(
-            toOpenAIResponses({
-              provider: args.provider,
-              model: modelId,
-              messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
-              signal: req.signal,
-            }),
-          )
-        : (() => {
-            // Build an OpenAI-compatible chat payload. The Worker's
-            // createStreamProxyHandler validates and normalizes this body
-            // before forwarding upstream, so we only need the portable shape.
-            const payloadMessages = toCoderJobPayloadMessages(req.messages);
-            const systemPromptOverride = req.systemPromptOverride;
-            if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
-              payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
-            }
-
-            return JSON.stringify({
-              model: req.model || args.modelId,
-              messages: payloadMessages,
-              stream: true,
-              // Ask OpenAI-compatible upstreams to emit a final usage chunk
-              // (`choices: []` + `usage`). Providers that don't support it ignore
-              // the field; the Anthropic-transport bridge rebuilds the body and
-              // emits usage natively. `validateAndNormalizeChatRequest` spreads the
-              // original body, so this survives normalization to the upstream.
-              stream_options: { include_usage: true },
-            });
-          })();
-
       // Owner's stored key, resolved fresh per dispatch (key rotation or
       // deletion mid-job takes effect on the next round; nothing is cached
       // in job state). `standardAuth` still prefers the Worker env secret,
       // so this only matters for providers without one.
       const userKey = await getUserProviderKey(args.env, args.ownerUserId, args.provider);
-
-      const request = new Request(
-        `${origin}/api/${zenGo ? 'zen/go' : providerSlug(args.provider)}/chat`,
-        {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            Origin: origin,
-            // Stable per-job rate-limit key. Without this, the preamble's
-            // `getClientIp(req)` falls back to 'unknown' for every
-            // synthetic internal Request and all background jobs share one
-            // bucket — a single burst can 429 every other running job.
-            'X-Forwarded-For': `job:${args.jobId}`,
-            ...(userKey ? { Authorization: `Bearer ${userKey}` } : {}),
-          },
-          body,
-          signal,
-        },
-      );
-
-      const response = (await handler(
-        request as unknown as Request,
-        args.env as unknown as Env,
-      )) as unknown as Response;
-
-      if (!response.ok || !response.body) {
-        const errText = await response.text().catch(() => '');
-        throw new Error(
-          `Provider ${args.provider} returned ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ''}`,
-        );
-      }
-
-      // Pass events straight through, but tap the terminal `done` so the
-      // prompt-cache hit rate is observable in `wrangler tail`. OpenAI-shaped
-      // upstreams (incl. Fireworks-served DeepSeek behind Zen) report
-      // cache-read tokens on the trailing usage chunk; `cachedInputTokens` is
-      // null when the provider surfaces no cache field at all. Server-side
-      // only — this is the live lane for background/inline turns, so the log
-      // lands in Worker logs, never CLI stdout.
-      let usageLogged = false;
       // Anthropic-transport Zen-Go models (MiniMax / Qwen) stream raw Anthropic
-      // Messages SSE now that the Worker no longer translates that route to
-      // OpenAI SSE; parse them natively. Everything else stays OpenAI-shaped
-      // (`openrouter`/`openai`/`xai`/`sakana`/`fireworks` via the Responses pump, the rest via
-      // `pumpSseBody`).
+      // Messages SSE; `deepseek` runs on its Anthropic-compatible endpoint. Both
+      // parse natively; everything else is OpenAI-shaped.
       const isZenGoAnthropic =
         zenGo && getZenGoTransport(req.model || args.modelId || '') === 'anthropic';
-      // `deepseek` runs on its Anthropic-compatible endpoint, so its Worker
-      // handler returns raw Anthropic Messages SSE — parse it natively.
       const isAnthropicTransport = args.provider === 'deepseek';
-      const events = isResponsesProvider
-        ? openAIResponsesSSEPump({
-            body: response.body as unknown as ReadableStream<Uint8Array>,
+
+      // One dispatch attempt on a chosen wire. Factored so OpenRouter can run
+      // responses-first with a chat fallback: a failure BEFORE any output throws
+      // here (non-200, or an early pump error), which the combinator catches and
+      // retries on chat. Non-OpenRouter providers run a single attempt on their
+      // fixed wire.
+      async function* attempt(wire: 'responses' | 'chat'): AsyncIterable<PushStreamEvent> {
+        const body =
+          wire === 'responses'
+            ? JSON.stringify(
+                toOpenAIResponses({
+                  provider: args.provider,
+                  model: modelId,
+                  messages: toCoderJobLlmMessages(req.messages, req.systemPromptOverride),
+                  signal: req.signal,
+                }),
+              )
+            : (() => {
+                // OpenAI-compatible chat payload. The Worker's proxy validates and
+                // normalizes it before forwarding, so we only need the portable shape.
+                const payloadMessages = toCoderJobPayloadMessages(req.messages);
+                const systemPromptOverride = req.systemPromptOverride;
+                if (systemPromptOverride && !payloadMessages.some((m) => m.role === 'system')) {
+                  payloadMessages.unshift({ role: 'system', content: systemPromptOverride });
+                }
+                return JSON.stringify({
+                  model: req.model || args.modelId,
+                  messages: payloadMessages,
+                  stream: true,
+                  // Final usage chunk (`choices: []` + `usage`); unsupported upstreams ignore it.
+                  stream_options: { include_usage: true },
+                });
+              })();
+
+        const request = new Request(
+          `${origin}/api/${zenGo ? 'zen/go' : providerSlug(args.provider)}/chat`,
+          {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              Origin: origin,
+              // Stable per-job rate-limit key — else synthetic internal Requests all
+              // share the 'unknown' bucket and one burst 429s every other job.
+              'X-Forwarded-For': `job:${args.jobId}`,
+              ...(userKey ? { Authorization: `Bearer ${userKey}` } : {}),
+            },
+            body,
             signal,
-          })
-        : isZenGoAnthropic || isAnthropicTransport
-          ? zenGoAnthropicEvents(response as unknown as Response, signal)
-          : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
-      for await (const event of events) {
-        if (event.type === 'done' && !usageLogged) {
-          usageLogged = true;
-          const u = event.usage;
-          const cached = typeof u?.cachedInputTokens === 'number' ? u.cachedInputTokens : null;
-          console.log(
-            JSON.stringify({
-              level: 'info',
-              event: 'provider_stream_usage',
-              provider: args.provider,
-              model: req.model || args.modelId || null,
-              inputTokens: u?.inputTokens ?? null,
-              outputTokens: u?.outputTokens ?? null,
-              cachedInputTokens: cached,
-              cacheHitRatio:
-                cached !== null && u && u.inputTokens > 0
-                  ? Number((cached / u.inputTokens).toFixed(3))
-                  : null,
-            }),
+          },
+        );
+
+        const response = (await handler!(
+          request as unknown as Request,
+          args.env as unknown as Env,
+        )) as unknown as Response;
+
+        if (!response.ok || !response.body) {
+          const errText = await response.text().catch(() => '');
+          throw new Error(
+            `Provider ${args.provider} returned ${response.status}${errText ? `: ${errText.slice(0, 200)}` : ''}`,
           );
         }
-        yield event;
+
+        // Tap the terminal `done` so prompt-cache hit rate is observable in
+        // `wrangler tail`. Server-side only — lands in Worker logs, never CLI stdout.
+        let usageLogged = false;
+        const events =
+          wire === 'responses'
+            ? openAIResponsesSSEPump({
+                body: response.body as unknown as ReadableStream<Uint8Array>,
+                signal,
+              })
+            : isZenGoAnthropic || isAnthropicTransport
+              ? zenGoAnthropicEvents(response as unknown as Response, signal)
+              : pumpSseBody(response.body as unknown as ReadableStream<Uint8Array>, signal);
+        for await (const event of events) {
+          if (event.type === 'done' && !usageLogged) {
+            usageLogged = true;
+            const u = event.usage;
+            const cached = typeof u?.cachedInputTokens === 'number' ? u.cachedInputTokens : null;
+            console.log(
+              JSON.stringify({
+                level: 'info',
+                event: 'provider_stream_usage',
+                provider: args.provider,
+                model: req.model || args.modelId || null,
+                inputTokens: u?.inputTokens ?? null,
+                outputTokens: u?.outputTokens ?? null,
+                cachedInputTokens: cached,
+                cacheHitRatio:
+                  cached !== null && u && u.inputTokens > 0
+                    ? Number((cached / u.inputTokens).toFixed(3))
+                    : null,
+              }),
+            );
+          }
+          yield event;
+        }
+      }
+
+      if (args.provider === 'openrouter' && isResponsesProvider) {
+        // OpenRouter responses-first with chat fallback (same policy as the web/CLI
+        // lanes). A user abort is never a fallback.
+        yield* streamResponsesWithChatFallback({
+          responses: () => attempt('responses'),
+          chat: () => attempt('chat'),
+          shouldFallback: () => !signal?.aborted,
+          onFallback: (error) => {
+            console.warn(
+              JSON.stringify({
+                level: 'warn',
+                event: 'openrouter_responses_fallback_to_chat',
+                model: modelId,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+          },
+        });
+      } else {
+        yield* attempt(isResponsesProvider ? 'responses' : 'chat');
       }
     })();
 }

@@ -206,10 +206,10 @@ conformanceColumn('structuredOutput', () => {
 });
 
 // === OpenAI-family wire transport ===========================================
-// OpenRouter varies within one provider: verified beta models use Responses;
-// every unknown/chat-tier model degrades to universal Chat Completions. Keep
-// both tiers in the conformance matrix so the profile cannot green on only the
-// happy path.
+// OpenRouter now defaults every model to Responses (the beta serves them all,
+// and the request path falls back to chat on failure). The chat tier is carried
+// by ordinary OpenAI-compat providers (e.g. ollama), so keep both shapes in the
+// matrix — the profile cannot green on only the responses body.
 conformanceColumn('openaiWire', () => {
   it('Responses tier emits an input body and no messages body', () => {
     const model = 'openai/gpt-5.4';
@@ -225,11 +225,10 @@ conformanceColumn('openaiWire', () => {
   });
 
   it('Chat Completions tier emits a messages body and no input body', () => {
-    const model = 'minimax/minimax-m3';
-    const profile = resolvePushCapabilityProfile('openrouter', model);
+    const profile = resolvePushCapabilityProfile('ollama', 'llama3.3');
     expect(profile.openaiWire).toBe('chat-completions');
 
-    const body = toOpenAIChat(req('openrouter', model)) as {
+    const body = toOpenAIChat(req('ollama', 'llama3.3')) as {
       messages?: unknown;
       input?: unknown;
     };

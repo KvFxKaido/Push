@@ -20,6 +20,7 @@ import type {
 } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
+import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
 import {
   expandToolMessagesForOpenAICompat,
   flatToolToOpenAITool,
@@ -119,7 +120,27 @@ export async function* openrouterStream(
     return;
   }
 
-  yield* openrouterResponsesStream(req);
+  // Responses-first with a Chat Completions fallback. OpenRouter's /responses
+  // beta serves every live model, but if one fails BEFORE any output (a transient
+  // provider error, an unforeseen incompatibility), retry the turn on chat rather
+  // than fail it — `openrouterResponsesStream` throws its non-200 `ProviderStreamError`
+  // (and the pump throws early stream errors) before yielding, which the combinator
+  // catches. A user abort is never a fallback.
+  yield* streamResponsesWithChatFallback({
+    responses: () => openrouterResponsesStream(req),
+    chat: () => openrouterChatCompletionsStream(req),
+    shouldFallback: () => !req.signal?.aborted,
+    onFallback: (error) => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'openrouter_responses_fallback_to_chat',
+          model: req.model,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+    },
+  });
 }
 
 async function* openrouterResponsesStream(

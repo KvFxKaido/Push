@@ -14,6 +14,7 @@ import {
 } from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
+import { streamResponsesWithChatFallback } from '../lib/responses-chat-fallback.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
 import { createCliAnthropicStream } from './anthropic-stream.ts';
@@ -245,9 +246,28 @@ export function createProviderStream(
     });
     return (req) => {
       const model = req.model?.trim() || config.defaultModel;
-      return resolveCliPushCapabilityProfile('openrouter', model).openaiWire === 'responses'
-        ? responsesStream(req)
-        : chatStream(req);
+      if (resolveCliPushCapabilityProfile('openrouter', model).openaiWire !== 'responses') {
+        return chatStream(req);
+      }
+      // Responses-first with a Chat Completions fallback: OpenRouter's /responses
+      // beta serves every live model, but if a given model fails BEFORE producing
+      // output (a transient provider error, an unforeseen incompatibility), retry
+      // the turn on chat rather than fail it. A user abort is never a fallback.
+      return streamResponsesWithChatFallback({
+        responses: () => responsesStream(req),
+        chat: () => chatStream(req),
+        shouldFallback: () => !req.signal?.aborted,
+        onFallback: (error) => {
+          console.error(
+            JSON.stringify({
+              level: 'warn',
+              event: 'openrouter_responses_fallback_to_chat',
+              model,
+              error: error instanceof Error ? error.message : String(error),
+            }),
+          );
+        },
+      });
     };
   }
 

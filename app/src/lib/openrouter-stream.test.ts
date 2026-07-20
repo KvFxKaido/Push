@@ -718,30 +718,73 @@ describe('openrouterStream', () => {
       expect(body.messages).toBeUndefined();
     });
 
-    it('routes a chat-tier model to the Chat Completions body shape', async () => {
+    it('routes every OpenRouter model to the Responses body shape (default)', async () => {
+      // OpenRouter now defaults every model to /responses (the beta serves them
+      // all; failures fall back to chat). Even the former "chat-tier" model goes
+      // responses-first.
       vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
       const { push, close } = installStreamFetch(fetchMock);
       const { openrouterStream } = await import('./openrouter-stream');
       const events = collect(
         openrouterStream({
           ...baseRequest,
-          // The model that motivated the capability split: on OpenRouter it serves
-          // /chat/completions only.
           model: 'minimax/minimax-m3',
           openrouterWebSearch: false,
         }),
       );
 
-      push(chatContentFrame('hi from chat'));
-      push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      push(textFrame('hi'));
+      push(completedFrame());
       close();
-      const out = await events;
+      await events;
 
-      expect(out.some((e) => e.type === 'text_delta' && e.text === 'hi from chat')).toBe(true);
       const body = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
       expect(body.model).toBe('minimax/minimax-m3');
-      expect(body.messages).toBeDefined();
-      expect(body.input).toBeUndefined();
+      expect(body.input).toBeDefined();
+      expect(body.messages).toBeUndefined();
+    });
+
+    it('falls back to Chat Completions when the Responses attempt fails before output', async () => {
+      vi.stubEnv('VITE_OPENROUTER_TRANSPORT', '');
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      const chatStream = makeControllableStream();
+      let calls = 0;
+      fetchMock.mockImplementation(async (_url: unknown, init?: RequestInit) => {
+        if (init?.signal?.aborted) throw new DOMException('aborted', 'AbortError');
+        calls += 1;
+        if (calls === 1) {
+          // Responses attempt: the Worker/gateway returns an error → the responses
+          // stream throws its non-200 ProviderStreamError before any output.
+          return new Response(JSON.stringify({ error: { message: 'provider returned error' } }), {
+            status: 400,
+          });
+        }
+        init?.signal?.addEventListener('abort', () => chatStream.abort());
+        return chatStream.response;
+      });
+
+      const { openrouterStream } = await import('./openrouter-stream');
+      const events = collect(
+        openrouterStream({
+          ...baseRequest,
+          model: 'minimax/minimax-m3',
+          openrouterWebSearch: false,
+        }),
+      );
+      chatStream.push(chatContentFrame('hi from chat'));
+      chatStream.push(JSON.stringify({ choices: [{ finish_reason: 'stop', delta: {} }] }));
+      chatStream.close();
+      const out = await events;
+      warnSpy.mockRestore();
+
+      // Two fetches: the failed responses body, then the chat body.
+      expect(calls).toBe(2);
+      const firstBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+      const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+      expect(firstBody.input).toBeDefined();
+      expect(secondBody.messages).toBeDefined();
+      // The consumer only sees the chat output — the failed attempt is invisible.
+      expect(out.some((e) => e.type === 'text_delta' && e.text === 'hi from chat')).toBe(true);
     });
 
     it('VITE_OPENROUTER_TRANSPORT=responses forces the beta path for a chat-tier model', async () => {
