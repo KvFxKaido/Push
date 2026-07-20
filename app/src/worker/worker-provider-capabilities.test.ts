@@ -112,7 +112,6 @@ describe('isProviderEngineCapable', () => {
       KIMI_API_KEY: 'k',
       HF_TOKEN: 'k',
       ZEN_API_KEY: 'k',
-      NVIDIA_API_KEY: 'k',
       FIREWORKS_API_KEY: 'k',
       DEEPSEEK_API_KEY: 'k',
       SAKANA_API_KEY: 'k',
@@ -253,8 +252,8 @@ describe('handleProviderEngineCapabilities — user-stored keys', () => {
     expect(body.providers.openrouter).toBe(true);
     expect(body.sources.openrouter).toBe('user-key');
     // Providers with neither env nor user key stay false.
-    expect(body.providers.nvidia).toBe(false);
-    expect(body.sources.nvidia).toBeNull();
+    expect(body.providers.fireworks).toBe(false);
+    expect(body.sources.fireworks).toBeNull();
   });
 });
 

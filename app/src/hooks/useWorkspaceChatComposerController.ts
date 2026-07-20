@@ -32,7 +32,6 @@ type ComposerControllerArgs = Pick<
   | 'handleSelectHuggingFaceModelFromChat'
   | 'handleSelectCloudflareModelFromChat'
   | 'handleSelectZenModelFromChat'
-  | 'handleSelectNvidiaModelFromChat'
   | 'handleSelectFireworksModelFromChat'
   | 'handleSelectSakanaModelFromChat'
   | 'handleSelectDeepSeekModelFromChat'
@@ -65,7 +64,6 @@ export function useWorkspaceChatComposerController({
   handleSelectHuggingFaceModelFromChat,
   handleSelectCloudflareModelFromChat,
   handleSelectZenModelFromChat,
-  handleSelectNvidiaModelFromChat,
   handleSelectFireworksModelFromChat,
   handleSelectSakanaModelFromChat,
   handleSelectDeepSeekModelFromChat,
@@ -282,16 +280,6 @@ export function useWorkspaceChatComposerController({
       refreshModels: catalog.refreshZenModels,
       isLocked: isProviderModelLocked('zen'),
       ariaLabel: 'Select OpenCode Zen model',
-    }),
-    nvidia: buildPickerControl('nvidia', {
-      options: catalog.nvidiaModelOptions,
-      onChange: handleSelectNvidiaModelFromChat,
-      loading: catalog.nvidiaModels.loading,
-      error: catalog.nvidiaModels.error,
-      updatedAt: catalog.nvidiaModels.updatedAt,
-      refreshModels: catalog.refreshNvidiaModels,
-      isLocked: isProviderModelLocked('nvidia'),
-      ariaLabel: 'Select Nvidia NIM model',
     }),
     fireworks: buildPickerControl('fireworks', {
       options: catalog.fireworksModelOptions,

@@ -2189,7 +2189,7 @@ function makeAuditorPreCommitGate({
  * Execute a tool call. Options:
  * - approvalFn(tool, detail): async fn that returns true to proceed, false to deny.
  *   If not provided, all calls proceed (headless default: deny high-risk).
- * - providerId: active provider id ('ollama' | 'openrouter' | 'zen' | 'nvidia') for provider-aware tools.
+ * - providerId: active provider id ('ollama' | 'openrouter' | 'zen') for provider-aware tools.
  * - providerApiKey: resolved provider API key for provider-aware tools.
  * - model: active model id — used by the Auditor commit gate's verdict call.
  * - auditorGate: opt-out/in for the Auditor commit gate (resolved against

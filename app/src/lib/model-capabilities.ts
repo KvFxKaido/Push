@@ -73,7 +73,7 @@ const CAPABILITY_RULES: CapabilityRule[] = [
     },
   },
   {
-    providers: ['ollama', 'nvidia', 'cloudflare'],
+    providers: ['ollama', 'cloudflare'],
     match: /vision|vl\b|llava|bakllava|minicpm-v|moondream|gemma[- ]?3|llama3\.2-vision/i,
     capabilities: {
       visionInput: 'supported',

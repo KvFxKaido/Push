@@ -23,8 +23,6 @@ import {
   FIREWORKS_MODELS,
   GOOGLE_DEFAULT_MODEL,
   GOOGLE_MODELS,
-  NVIDIA_DEFAULT_MODEL,
-  NVIDIA_MODELS,
   OLLAMA_DEFAULT_MODEL,
   OLLAMA_MODELS,
   OPENAI_DEFAULT_MODEL,
@@ -50,7 +48,7 @@ import {
  *
  * - `openai-compat`: OpenAI Chat Completions schema; consume via
  *   `lib/openai-sse-pump.ts`. Used by OpenAI-compatible providers
- *   (OpenRouter, NVIDIA, Zen, etc.).
+ *   (OpenRouter, Zen, etc.).
  * - `openai-responses`: OpenAI Responses schema; consume via
  *   `lib/openai-responses-sse-pump.ts`.
  * - `anthropic`: Anthropic Messages API (`/v1/messages`); translate via
@@ -437,43 +435,6 @@ export const PROVIDER_DEFINITIONS: readonly ProviderDefinition[] = [
         'VITE_ZEN_API_KEY',
         'VITE_OPENCODE_API_KEY',
       ],
-    },
-  },
-  {
-    id: 'nvidia',
-    displayName: 'Nvidia NIM',
-    streamShape: 'openai-compat',
-    initialFallbackEligible: true,
-    failoverEligible: true,
-    adapterRouted: true,
-    baseUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
-    defaultModel: NVIDIA_DEFAULT_MODEL,
-    models: NVIDIA_MODELS,
-    apiKeyEnvVars: ['PUSH_NVIDIA_API_KEY', 'NVIDIA_API_KEY', 'VITE_NVIDIA_API_KEY'],
-    webProxyPath: '/api/nvidia/chat',
-    modelsProxyPath: '/api/nvidia/models',
-    icon: {
-      src: 'https://models.dev/logos/nvidia.svg',
-      alt: 'NVIDIA NIM logo',
-      fallbackText: 'N',
-    },
-    settings: {
-      description: 'Nvidia NIM inference microservices (OpenAI-compatible)',
-      envKey: 'VITE_NVIDIA_API_KEY',
-      envUrl: 'https://build.nvidia.com',
-      modelContextWindow: 131_072,
-      keyStorageKey: 'nvidia_api_key',
-      modelStorageKey: 'nvidia_model',
-      builtInOrder: 70,
-      keyPlaceholder: 'Nvidia API key',
-      keySaveLabel: 'Save Nvidia key',
-      keyHint: 'Nvidia NIM API key (OpenAI-compatible endpoint).',
-    },
-    cli: {
-      order: 40,
-      defaultUrl: 'https://integrate.api.nvidia.com/v1/chat/completions',
-      urlEnvVars: ['PUSH_NVIDIA_URL'],
-      modelEnvVar: 'PUSH_NVIDIA_MODEL',
     },
   },
   {

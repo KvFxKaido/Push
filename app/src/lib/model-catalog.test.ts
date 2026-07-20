@@ -1,12 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  buildCuratedNvidiaModelList,
   buildCuratedOllamaModelList,
   buildCuratedOpencodeModelList,
   buildCuratedOpenRouterModelList,
   fetchGoogleModels,
   fetchHuggingFaceModels,
-  fetchNvidiaModels,
   fetchOllamaModels,
   fetchOpenAIModels,
   fetchZenModels,
@@ -383,83 +381,6 @@ describe('buildCuratedOpenRouterModelList', () => {
   });
 });
 
-describe('buildCuratedNvidiaModelList', () => {
-  it('prefers priority chat models and excludes image-output or retrieval models', () => {
-    const curated = buildCuratedNvidiaModelList(
-      [
-        'nvidia/llama-3.1-nemotron-70b-instruct',
-        'meta/llama-3.3-70b-instruct',
-        'qwen/qwen2.5-coder-32b-instruct',
-        'nvidia/nv-rerankqa-mistral-4b-v3',
-        'black-forest-labs/flux.1-dev',
-      ],
-      {
-        'nvidia/llama-3.1-nemotron-70b-instruct': {
-          id: 'nvidia/llama-3.1-nemotron-70b-instruct',
-          attachment: false,
-          reasoning: false,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: false,
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-          contextLimit: 131_072,
-        },
-        'meta/llama-3.3-70b-instruct': {
-          id: 'meta/llama-3.3-70b-instruct',
-          attachment: false,
-          reasoning: false,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: true,
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-          contextLimit: 131_072,
-        },
-        'qwen/qwen2.5-coder-32b-instruct': {
-          id: 'qwen/qwen2.5-coder-32b-instruct',
-          attachment: false,
-          reasoning: false,
-          toolCall: true,
-          structuredOutput: true,
-          openWeights: true,
-          inputModalities: ['text'],
-          outputModalities: ['text'],
-          contextLimit: 131_072,
-        },
-        'nvidia/nv-rerankqa-mistral-4b-v3': {
-          id: 'nvidia/nv-rerankqa-mistral-4b-v3',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: false,
-          inputModalities: ['text'],
-          outputModalities: ['score'],
-          contextLimit: 0,
-        },
-        'black-forest-labs/flux.1-dev': {
-          id: 'black-forest-labs/flux.1-dev',
-          attachment: false,
-          reasoning: false,
-          toolCall: false,
-          structuredOutput: false,
-          openWeights: true,
-          inputModalities: ['text'],
-          outputModalities: ['image'],
-          contextLimit: 0,
-        },
-      },
-    );
-
-    expect(curated[0]).toBe('nvidia/llama-3.1-nemotron-70b-instruct');
-    expect(curated).toContain('meta/llama-3.3-70b-instruct');
-    expect(curated).toContain('qwen/qwen2.5-coder-32b-instruct');
-    expect(curated).not.toContain('nvidia/nv-rerankqa-mistral-4b-v3');
-    expect(curated).not.toContain('black-forest-labs/flux.1-dev');
-  });
-});
-
 describe('buildCuratedOllamaModelList', () => {
   it('prefers priority chat models and excludes image-output or embedding models', () => {
     const curated = buildCuratedOllamaModelList(
@@ -713,23 +634,6 @@ describe('provider model fetchers', () => {
         },
       },
     },
-    {
-      name: 'Nvidia NIM',
-      fetchModels: fetchNvidiaModels,
-      providerMatcher: (url: string) =>
-        url.includes('/nvidia/') || url.includes('/api/nvidia/models'),
-      modelsDevPayload: {
-        nvidia: {
-          models: {
-            'tiny-context-model': {
-              id: 'tiny-context-model',
-              modalities: { input: ['text'], output: ['text'] },
-              limit: { context: 32_000 },
-            },
-          },
-        },
-      },
-    },
   ])(
     'does not fall back to the raw provider list for $name when every model is filtered out',
     async ({ fetchModels, providerMatcher, modelsDevPayload }) => {
@@ -810,7 +714,7 @@ describe('provider model fetchers', () => {
       const url = String(input);
       if (url.includes('models.dev/api.json')) {
         return jsonResponse({
-          nvidia: {
+          'ollama-cloud': {
             models: {
               'fresh-context-model': {
                 id: 'fresh-context-model',
@@ -821,7 +725,7 @@ describe('provider model fetchers', () => {
           },
         });
       }
-      if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+      if (url.includes('/ollama/') || url.includes('/api/ollama/models')) {
         return jsonResponse({ data: [{ id: 'fresh-context-model' }] });
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -830,15 +734,15 @@ describe('provider model fetchers', () => {
     vi.stubGlobal('fetch', fetchSpy);
 
     vi.resetModules();
-    const { fetchNvidiaModels: fetchFreshNvidiaModels, MIN_CONTEXT_TOKENS: freshMinContextTokens } =
+    const { fetchOllamaModels: fetchFreshOllamaModels, MIN_CONTEXT_TOKENS: freshMinContextTokens } =
       await import('./model-catalog');
 
-    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+    await expect(fetchFreshOllamaModels()).resolves.toEqual([]);
 
     contextLimit = freshMinContextTokens;
     vi.setSystemTime(Date.now() + thirteenHoursMs);
 
-    await expect(fetchFreshNvidiaModels()).resolves.toEqual(['fresh-context-model']);
+    await expect(fetchFreshOllamaModels()).resolves.toEqual(['fresh-context-model']);
 
     const modelsDevCalls = fetchSpy.mock.calls.filter(([input]) =>
       String(input).includes('models.dev/api.json'),
@@ -854,7 +758,7 @@ describe('provider model fetchers', () => {
       const url = String(input);
       if (url.includes('models.dev/api.json')) {
         return jsonResponse({
-          nvidia: {
+          'ollama-cloud': {
             models: {
               'fresh-context-model': {
                 id: 'fresh-context-model',
@@ -865,7 +769,7 @@ describe('provider model fetchers', () => {
           },
         });
       }
-      if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+      if (url.includes('/ollama/') || url.includes('/api/ollama/models')) {
         return jsonResponse({ data: [{ id: 'fresh-context-model' }] });
       }
       throw new Error(`Unexpected fetch: ${url}`);
@@ -873,19 +777,19 @@ describe('provider model fetchers', () => {
 
     vi.stubGlobal('fetch', fetchSpy);
     vi.resetModules();
-    const { fetchNvidiaModels: fetchFreshNvidiaModels } = await import('./model-catalog');
+    const { fetchOllamaModels: fetchFreshOllamaModels } = await import('./model-catalog');
 
     // First (auto) fetch caches metadata; the model fails the context floor.
-    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+    await expect(fetchFreshOllamaModels()).resolves.toEqual([]);
 
     // Upstream now reports a usable context, but a non-forced refresh keeps
     // serving the cached (stale) metadata, so the model stays filtered out.
     contextLimit = 200_000;
-    await expect(fetchFreshNvidiaModels()).resolves.toEqual([]);
+    await expect(fetchFreshOllamaModels()).resolves.toEqual([]);
 
     // A forced refresh busts the metadata cache and re-fetches models.dev,
     // surfacing the now-eligible model without waiting out the 12h TTL.
-    await expect(fetchFreshNvidiaModels({ forceMetadataRefresh: true })).resolves.toEqual([
+    await expect(fetchFreshOllamaModels({ forceMetadataRefresh: true })).resolves.toEqual([
       'fresh-context-model',
     ]);
 
@@ -1358,7 +1262,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     stubWindow();
     // Both surfaces now execute `lib/capability-profile.ts`; this matrix pins the
     // remaining input-adapter contract. Capability-backed providers
-    // (openrouter / ollama / nvidia) intentionally supply different evidence —
+    // (openrouter / ollama) intentionally supply different evidence —
     // models.dev on web, curated fallback on CLI — and are excluded.
     const nameBasedCases: Array<[string, string[]]> = [
       ['anthropic', ANTHROPIC_MODELS],
@@ -1384,49 +1288,6 @@ describe('providerModelSupportsStructuredOutput', () => {
     expect(providerModelSupportsStructuredOutput('openai', 'gpt-x')).toBe(false);
   });
 
-  it('returns true for an allowlisted provider once the catalog advertises support', async () => {
-    // Reset modules so the per-provider metadata mem-cache starts clean — earlier
-    // nvidia fetcher tests in this file seed the same cache key, and the fetch
-    // short-circuits on a warm cache, masking the newly-seeded metadata.
-    vi.resetModules();
-    stubWindow();
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: string | URL) => {
-        const url = String(input);
-        if (url.includes('models.dev/api.json')) {
-          return jsonResponse({
-            nvidia: {
-              models: {
-                'meta/llama-3.3-70b-instruct': {
-                  id: 'meta/llama-3.3-70b-instruct',
-                  reasoning: false,
-                  tool_call: true,
-                  structured_output: true,
-                  modalities: { input: ['text'], output: ['text'] },
-                  limit: { context: 131_072 },
-                },
-              },
-            },
-          });
-        }
-        if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
-          return jsonResponse({ data: [{ id: 'meta/llama-3.3-70b-instruct' }] });
-        }
-        throw new Error(`Unexpected fetch: ${url}`);
-      }),
-    );
-
-    const mc = await import('./model-catalog');
-    await mc.fetchNvidiaModels();
-    expect(mc.providerModelSupportsStructuredOutput('nvidia', 'meta/llama-3.3-70b-instruct')).toBe(
-      true,
-    );
-    expect(mc.providerModelSupportsNativeToolCalling('nvidia', 'meta/llama-3.3-70b-instruct')).toBe(
-      true,
-    );
-  });
-
   it('does not treat a models.dev attachment flag as image vision', async () => {
     // models.dev sets `attachment: true` for models that accept file attachments
     // of any kind (often PDF/file, never image). Vision must key on the `image`
@@ -1440,7 +1301,7 @@ describe('providerModelSupportsStructuredOutput', () => {
         const url = String(input);
         if (url.includes('models.dev/api.json')) {
           return jsonResponse({
-            nvidia: {
+            'ollama-cloud': {
               models: {
                 'mistral/pdf-only-model': {
                   id: 'mistral/pdf-only-model',
@@ -1455,7 +1316,7 @@ describe('providerModelSupportsStructuredOutput', () => {
             },
           });
         }
-        if (url.includes('/nvidia/') || url.includes('/api/nvidia/models')) {
+        if (url.includes('/ollama/') || url.includes('/api/ollama/models')) {
           return jsonResponse({ data: [{ id: 'mistral/pdf-only-model' }] });
         }
         throw new Error(`Unexpected fetch: ${url}`);
@@ -1463,7 +1324,7 @@ describe('providerModelSupportsStructuredOutput', () => {
     );
 
     const mc = await import('./model-catalog');
-    await mc.fetchNvidiaModels();
-    expect(mc.getModelCapabilities('nvidia', 'mistral/pdf-only-model').vision).toBe(false);
+    await mc.fetchOllamaModels();
+    expect(mc.getModelCapabilities('ollama', 'mistral/pdf-only-model').vision).toBe(false);
   });
 });

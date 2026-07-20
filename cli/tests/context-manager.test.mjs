@@ -111,7 +111,7 @@ describe('getContextBudget', () => {
   // caps summarizeTokens at the 88K default target.
 
   it('returns default budget when no name pattern matches', () => {
-    const budget = getContextBudget('nvidia', 'totally-unknown-model');
+    const budget = getContextBudget('fireworks', 'totally-unknown-model');
     assert.equal(budget.targetTokens, 88_000);
     assert.equal(budget.maxTokens, 100_000);
     assert.equal(budget.summarizeTokens, 88_000);
@@ -129,7 +129,7 @@ describe('getContextBudget', () => {
     assert.deepEqual(getContextBudget('openrouter', 'google/gemini-3.1-pro-preview'), expected);
     assert.deepEqual(getContextBudget('zen', 'gemini-3-flash'), expected);
     // Provider doesn't gate Gemini detection — the name match wins.
-    assert.deepEqual(getContextBudget('nvidia', 'gemini-3-flash-preview'), expected);
+    assert.deepEqual(getContextBudget('fireworks', 'gemini-3-flash-preview'), expected);
   });
 
   it('matches gemini variants case-insensitively', () => {

@@ -10,7 +10,6 @@ const state = vi.hoisted(() => ({
     kimi: '',
     huggingface: '',
     zen: '',
-    nvidia: '',
     fireworks: '',
     deepseek: '',
     sakana: '',
@@ -34,7 +33,6 @@ vi.mock('@/hooks/useHuggingFaceConfig', () => ({
   getHuggingFaceKey: () => state.keys.huggingface,
 }));
 vi.mock('@/hooks/useZenConfig', () => ({ getZenKey: () => state.keys.zen }));
-vi.mock('@/hooks/useNvidiaConfig', () => ({ getNvidiaKey: () => state.keys.nvidia }));
 vi.mock('@/hooks/useFireworksConfig', () => ({ getFireworksKey: () => state.keys.fireworks }));
 vi.mock('@/hooks/useDeepSeekConfig', () => ({ getDeepSeekKey: () => state.keys.deepseek }));
 vi.mock('@/hooks/useSakanaConfig', () => ({ getSakanaKey: () => state.keys.sakana }));

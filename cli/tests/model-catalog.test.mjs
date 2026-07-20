@@ -7,7 +7,6 @@ import {
   DEFAULT_MODELS,
   OPENROUTER_MODELS,
   OLLAMA_MODELS,
-  NVIDIA_MODELS,
   ZEN_MODELS,
   FIREWORKS_MODELS,
 } from '../model-catalog.ts';
@@ -60,12 +59,6 @@ describe('getCuratedModels', () => {
     assert.deepEqual(models, ZEN_MODELS);
   });
 
-  it('returns Nvidia models', () => {
-    const models = getCuratedModels('nvidia');
-    assert.ok(models.length > 0);
-    assert.deepEqual(models, NVIDIA_MODELS);
-  });
-
   it('returns empty array for unknown provider', () => {
     assert.deepEqual(getCuratedModels('unknown'), []);
     assert.deepEqual(getCuratedModels(''), []);
@@ -87,10 +80,6 @@ describe('catalog parity', () => {
     );
     assert.deepEqual(ZEN_MODELS, extractExportedStringArray(providerModelsSource, 'ZEN_MODELS'));
     assert.deepEqual(
-      NVIDIA_MODELS,
-      extractExportedStringArray(providerModelsSource, 'NVIDIA_MODELS'),
-    );
-    assert.deepEqual(
       FIREWORKS_MODELS,
       extractExportedStringArray(providerModelsSource, 'FIREWORKS_MODELS'),
     );
@@ -104,7 +93,6 @@ describe('catalog parity', () => {
       kimi: extractExportedStringConstant(providerModelsSource, 'KIMI_DEFAULT_MODEL'),
       huggingface: extractExportedStringConstant(providerModelsSource, 'HUGGINGFACE_DEFAULT_MODEL'),
       zen: extractExportedStringConstant(providerModelsSource, 'ZEN_DEFAULT_MODEL'),
-      nvidia: extractExportedStringConstant(providerModelsSource, 'NVIDIA_DEFAULT_MODEL'),
       fireworks: extractExportedStringConstant(providerModelsSource, 'FIREWORKS_DEFAULT_MODEL'),
       deepseek: extractExportedStringConstant(providerModelsSource, 'DEEPSEEK_DEFAULT_MODEL'),
       sakana: extractExportedStringConstant(providerModelsSource, 'SAKANA_DEFAULT_MODEL'),
@@ -126,7 +114,6 @@ describe('DEFAULT_MODELS', () => {
     kimi: 'kimi-k2.7-code-highspeed',
     huggingface: 'deepseek-ai/DeepSeek-V4-Pro',
     zen: 'big-pickle',
-    nvidia: 'nvidia/llama-3.1-nemotron-70b-instruct',
     fireworks: 'accounts/fireworks/models/deepseek-v4-pro',
     deepseek: 'deepseek-v4-pro',
     sakana: 'fugu',
@@ -150,7 +137,6 @@ describe('DEFAULT_MODELS', () => {
       'google',
       'huggingface',
       'kimi',
-      'nvidia',
       'ollama',
       'openai',
       'openrouter',

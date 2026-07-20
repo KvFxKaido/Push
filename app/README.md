@@ -23,7 +23,6 @@ Create `.env` in this directory, or paste keys in the Settings UI at runtime:
 VITE_OLLAMA_API_KEY=...           # Optional — Ollama Cloud
 VITE_OPENROUTER_API_KEY=...       # Optional — OpenRouter (BYOK-compatible)
 VITE_ZEN_API_KEY=...              # Optional — OpenCode Zen
-VITE_NVIDIA_API_KEY=...           # Optional — Nvidia NIM
 VITE_FIREWORKS_API_KEY=...        # Optional — Fireworks AI
 VITE_SAKANA_API_KEY=...           # Optional — Sakana AI
 VITE_ANTHROPIC_API_KEY=...        # Optional — Anthropic (native /v1/messages API with prompt caching)

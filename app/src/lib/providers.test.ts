@@ -35,10 +35,6 @@ const DEV_PROXY_PATHS: Partial<Record<RealProviderId, { chat: string; models: st
     chat: '/opencode/zen/v1/chat/completions',
     models: '/opencode/zen/v1/models',
   },
-  nvidia: {
-    chat: '/nvidia/v1/chat/completions',
-    models: '/nvidia/v1/models',
-  },
 };
 
 describe('PROVIDER_URLS', () => {

@@ -4,7 +4,6 @@ import { getZaiKey } from '@/hooks/useZaiConfig';
 import { getKimiKey } from '@/hooks/useKimiConfig';
 import { getHuggingFaceKey } from '@/hooks/useHuggingFaceConfig';
 import { getZenKey } from '@/hooks/useZenConfig';
-import { getNvidiaKey } from '@/hooks/useNvidiaConfig';
 import { getFireworksKey } from '@/hooks/useFireworksConfig';
 import { getDeepSeekKey } from '@/hooks/useDeepSeekConfig';
 import { getSakanaKey } from '@/hooks/useSakanaConfig';
@@ -49,7 +48,6 @@ const PROVIDER_READY_CHECKS: Record<PreferredProvider, () => boolean> = {
     ),
   cloudflare: () => getCloudflareWorkerConfigured() || hasServerProviderCredential('cloudflare'),
   zen: () => Boolean(getZenKey() || hasServerProviderCredential('zen')),
-  nvidia: () => Boolean(getNvidiaKey() || hasServerProviderCredential('nvidia')),
   fireworks: () => Boolean(getFireworksKey() || hasServerProviderCredential('fireworks')),
   deepseek: () => Boolean(getDeepSeekKey() || hasServerProviderCredential('deepseek')),
   sakana: () => Boolean(getSakanaKey() || hasServerProviderCredential('sakana')),

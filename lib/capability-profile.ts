@@ -62,7 +62,6 @@ const METADATA_NATIVE_TOOL_PROVIDERS: ReadonlySet<string> = new Set([
   'xai',
   'google',
   'ollama',
-  'nvidia',
   'anthropic',
 ]);
 
@@ -80,7 +79,6 @@ const STRUCTURED_OUTPUT_PROVIDERS: ReadonlySet<string> = new Set([
   'openrouter',
   'openai',
   'xai',
-  'nvidia',
   'fireworks',
   'sakana',
   'zen',

@@ -3,7 +3,7 @@
  *
  * Runtime catalog fetches still win when available. This file is the cold-cache
  * source derived from models.dev plus explicit provider-private overrides for
- * ids models.dev cannot see (Sakana Fugu, some Zen/Fireworks/NVIDIA aliases).
+ * ids models.dev cannot see (Sakana Fugu, some Zen/Fireworks aliases).
  * Name-based family guesses stay as the final fallback in context-budget.
  */
 
@@ -184,14 +184,6 @@ const PROVIDER_MODEL_METADATA: Record<string, Record<string, DeclaredModelMetada
     'mimo-v2.5-pro': M(1048576, true, true, false, TEXT, TEXT, true),
     'nemotron-3-ultra-free': M(1000000, true, true, false, TEXT, TEXT, false),
     'north-mini-code-free': M(256000, true, true, true, TEXT, TEXT, false),
-  },
-  nvidia: {
-    'nvidia/llama-3.1-nemotron-70b-instruct': M(128000, false, true, true, TEXT, TEXT, false),
-    'meta/llama-3.3-70b-instruct': M(128000, false, true, true, TEXT, TEXT, false),
-    'meta/llama-3.1-405b-instruct': M(128000, false, true, true, TEXT, TEXT, false),
-    'deepseek-ai/deepseek-r1': M(128000, true, true, false, TEXT, TEXT, false),
-    'qwen/qwen2.5-coder-32b-instruct': M(128000, false, true, true, TEXT, TEXT, false),
-    'mistralai/mistral-large-2-instruct': M(128000, false, true, true, TEXT, TEXT, false),
   },
   ollama: {
     // Retiring on Ollama Cloud (2026-07 notice); kept until the id 404s so

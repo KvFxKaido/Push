@@ -90,8 +90,6 @@ function modelOptionsForProvider(catalog: ModelCatalog, provider: PreferredProvi
       return catalog.cloudflareModelOptions;
     case 'zen':
       return catalog.zenModelOptions;
-    case 'nvidia':
-      return catalog.nvidiaModelOptions;
     case 'fireworks':
       return catalog.fireworksModelOptions;
     case 'sakana':
@@ -128,8 +126,6 @@ function defaultModelForProvider(
       return catalog.cloudflare.model || null;
     case 'zen':
       return catalog.zen.model || null;
-    case 'nvidia':
-      return catalog.nvidia.model || null;
     case 'fireworks':
       return catalog.fireworks.model || null;
     case 'sakana':
@@ -301,8 +297,6 @@ export function ComposerDraftScreen({
         void catalog.refreshCloudflareModels();
       if (provider === 'zen' && catalog.zenModelOptions.length === 0)
         void catalog.refreshZenModels();
-      if (provider === 'nvidia' && catalog.nvidiaModelOptions.length === 0)
-        void catalog.refreshNvidiaModels();
       if (provider === 'fireworks' && catalog.fireworksModelOptions.length === 0)
         void catalog.refreshFireworksModels();
       if (provider === 'sakana' && catalog.sakanaModelOptions.length === 0)

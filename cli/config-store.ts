@@ -97,7 +97,6 @@ export interface PushConfig {
   ollama?: ProviderConfig;
   openrouter?: ProviderConfig;
   zen?: ProviderConfig;
-  nvidia?: ProviderConfig;
   fireworks?: ProviderConfig;
   deepseek?: ProviderConfig;
   sakana?: ProviderConfig;
@@ -406,7 +405,6 @@ const PROVIDER_CONFIG_KEYS = [
   'kimi',
   'huggingface',
   'zen',
-  'nvidia',
   'fireworks',
   'deepseek',
   'sakana',
