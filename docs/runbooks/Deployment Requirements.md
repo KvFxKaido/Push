@@ -51,7 +51,6 @@ deploys); use the `versions` variant and promote, or set via dashboard.
 | `CF_AI_GATEWAY_ACCOUNT_ID`, `CF_AI_GATEWAY_SLUG`, `CF_AI_GATEWAY_TOKEN` | AI Gateway routing + BYOK |
 | `ADMIN_TOKEN` | Admin routes |
 | `PUSH_RELAY_ENABLED`, `PUSH_RELAY_TOKEN` | Remote session relay (CLI daemon ↔ web) |
-| `BROWSERBASE_API_KEY`, `BROWSERBASE_PROJECT_ID` | Browser tool |
 | `MODAL_SANDBOX_BASE_URL` | Alternate Modal sandbox backend (`PUSH_SANDBOX_PROVIDER=modal`; deploy `sandbox/app.py` with `modal deploy`) |
 | `TAVILY_API_KEY` | Web-search backend |
 
@@ -63,7 +62,7 @@ deploys); use the `versions` variant and promote, or set via dashboard.
 - **Model provider** (at least one): any entry in the provider picker works;
   keys go in Worker secrets or the AI Gateway.
 - **Modal** (optional): only for the alternate sandbox backend.
-- **Browserbase / Tavily** (optional): browser tool and web search.
+- **Tavily** (optional): web-search backend.
 
 ## After first deploy
 
