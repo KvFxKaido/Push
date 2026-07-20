@@ -113,6 +113,27 @@ describe('openAIResponsesSSEPump', () => {
     ]);
   });
 
+  it('emits reasoning_delta for both the summary and reasoning_text families', async () => {
+    // OpenAI streams `reasoning_summary_text.delta`; GLM / DeepSeek / Kimi stream
+    // `reasoning_text.delta`. The pump must surface both, or reasoning (and, for
+    // answer-in-reasoning models, the whole turn) is silently dropped.
+    const s = makeStream();
+    const events = collect(openAIResponsesSSEPump({ body: s.body }));
+
+    s.push({ type: 'response.reasoning_summary_text.delta', delta: 'weighing options ' });
+    s.push({ type: 'response.reasoning_text.delta', delta: 'still thinking ' });
+    s.push({ type: 'response.output_text.delta', delta: 'the answer' });
+    s.push({ type: 'response.completed', response: { status: 'completed' } });
+    s.close();
+
+    expect(await events).toEqual([
+      { type: 'reasoning_delta', text: 'weighing options ' },
+      { type: 'reasoning_delta', text: 'still thinking ' },
+      { type: 'text_delta', text: 'the answer' },
+      { type: 'done', finishReason: 'stop', usage: undefined },
+    ]);
+  });
+
   it('surfaces url_citation annotations as citations events (native web search)', async () => {
     const s = makeStream();
     const events = collect(openAIResponsesSSEPump({ body: s.body }));

@@ -99,7 +99,7 @@ describe('getContextBudget', () => {
   });
 
   it('derives a 2M-class budget for Grok models', () => {
-    expect(getContextBudget('openrouter', 'x-ai/grok-4.1-fast')).toEqual({
+    expect(getContextBudget('openrouter', 'x-ai/grok-4.20')).toEqual({
       maxTokens: Math.floor(2_000_000 * 0.92),
       targetTokens: Math.floor(2_000_000 * 0.85),
       summarizeTokens: 88_000,

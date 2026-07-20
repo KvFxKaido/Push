@@ -322,7 +322,14 @@ export async function* openAIResponsesSSEPump(
 
     if (
       type === 'response.reasoning_summary_text.delta' ||
-      type === 'response.reasoning_summary.delta'
+      type === 'response.reasoning_summary.delta' ||
+      // OpenRouter serves two reasoning-event vocabularies: OpenAI emits the
+      // `reasoning_summary_*` family, while GLM / DeepSeek / Kimi emit
+      // `reasoning_text.delta`. Both carry the thinking text on `.delta`. Missing
+      // the second silently drops reasoning — and for models that answer IN the
+      // reasoning channel it drops the whole turn. Verified against the live
+      // `/responses` model sweep.
+      type === 'response.reasoning_text.delta'
     ) {
       if (typeof parsed.delta === 'string' && parsed.delta) {
         yield { type: 'reasoning_delta', text: parsed.delta };

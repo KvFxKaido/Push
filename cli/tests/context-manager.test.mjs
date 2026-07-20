@@ -185,7 +185,7 @@ describe('getContextBudget', () => {
   });
 
   it('derives a 2M-class budget for Grok models', () => {
-    const budget = getContextBudget('openrouter', 'x-ai/grok-4.1-fast');
+    const budget = getContextBudget('openrouter', 'x-ai/grok-4.20');
     assert.equal(budget.targetTokens, Math.floor(2_000_000 * 0.85));
     assert.equal(budget.maxTokens, Math.floor(2_000_000 * 0.92));
   });
