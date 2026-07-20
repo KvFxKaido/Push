@@ -116,8 +116,8 @@ The web app and CLI keep **shell-specific coordinators local** (e.g. `app/src/ho
 
 Both backends implement `SandboxProvider` and route through the same `/api/sandbox/*` Worker endpoint. The selector is `PUSH_SANDBOX_PROVIDER` in `wrangler.jsonc`:
 
-- **`cloudflare`** (default) — `Dockerfile.sandbox` + `app/src/worker/worker-cf-sandbox.ts` + `app/src/lib/cloudflare-sandbox-provider.ts`. Container, Durable Object binding, and `SANDBOX_TOKENS` KV are already provisioned in `wrangler.jsonc`; no extra deploy step beyond `wrangler deploy`.
-- **`modal`** — `sandbox/app.py` (Python + FastAPI on Modal). Deploy with `cd sandbox && modal deploy app.py` and set `MODAL_SANDBOX_BASE_URL` via `wrangler secret put`.
+- **`cloudflare`** (default) — `Dockerfile.sandbox` + `app/src/worker/worker-cf-sandbox.ts` + `app/src/lib/cloudflare-sandbox-provider.ts`. Provision the plan, bindings, storage, and secrets using [Deployment Requirements](docs/runbooks/Deployment%20Requirements.md).
+- **`modal`** — `sandbox/app.py` (Python + FastAPI on Modal). Deploy with `cd sandbox && modal deploy app.py`, then provision `MODAL_SANDBOX_BASE_URL` using the Worker-secret flow in [Deployment Requirements](docs/runbooks/Deployment%20Requirements.md).
 
 ### Tool protocol
 
@@ -185,7 +185,7 @@ Naming a failure mode in a comment is not the same as having checked for it. Sev
 
 **Be most suspicious of a mechanism that exonerates you.** The verification you are least likely to run is the one whose result you would rather not have. A cause that makes the bug someone else's — a flaky runner, a stale cache, guidance that "was never delivered" — produces the click of a satisfying story, and that click is exactly where the checking stops. Treat a comfortable explanation as *unverified by default*: it needs more evidence than an uncomfortable one, not less, because you will not be looking for its holes. (This rule is here because the commit that introduced the rule above broke it — it blamed a truncation cap for a checklist failure, without checking that the cap did not apply.)
 
-- **HTTP status classification.** Every `if (status >= 400)` arm should enumerate the cases (auth, rate-limit, not-found, validation) and assign each a sensible `structuredError.type` / surface code. Default fallbacks to "everything is sandbox loss" or "everything is unknown" are bugs (see PR #656's rate-limit misclassification).
+- **HTTP status classification.** Every `if (status >= 400)` arm should enumerate the cases (auth, rate-limit, not-found, validation) and assign each a sensible `structuredError.type` / surface code. A 429 may be transient rate limiting or terminal quota exhaustion (`exceeded_current_quota_error`, `insufficient_quota`); use `lib/quota-errors.ts` as the shared vocabulary. Default fallbacks to "everything is sandbox loss" or "everything is unknown" are bugs (see PR #656's rate-limit misclassification).
 - **`await` in a loop.** Every `await` inside a `for`/`while` should prove it can exit on terminal conditions (deadlines, abort signals, event-completion races) — not just on the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a hang waiting to happen (see PR #657's `prompt_snapshot` race fix).
 - **An `await` that breaks a reservation.** A check-then-write (dedupe, liveness, uniqueness) is only a reservation if nothing is awaited between the check and the write. An invariant documented at *one* call site does not bind a *new* path doing the same operation, and the comment stating it is invisible from where you are writing — so a warning comment is not a fix. Caught twice in `pr-review-job-do.ts`: #910 (Codex P1) parked an await mid-block in `handleStart`; #1515 (Codex P2) then put a token mint and head fetch between the head-advance sweep's liveness check and its insert, with #910's warning ~800 lines up the same file. The misread: a Durable Object's input gate closes for **storage** ops, not network ones — a concurrent request *can* land across `await fetch(...)`. Before adding a write path, grep the file for `INVARIANT` / `MUST` / `do NOT`. Keep a pre-await check only as a cheap early-out, labelled stale-by-construction. Mutation testing won't catch this: it proves a guard is load-bearing, never that it sits in the right place.
 - **Fire-and-forget IIFEs / promises.** `(async () => { ... })()` and `someFn().catch(() => {})` swallow errors silently. Prove the returned promise is awaited somewhere or the failure mode is acceptable. If not acceptable, surface the error via `warn()` / structured log (see PR #657's `startTailToFile.ready` fix).
@@ -211,7 +211,7 @@ Loader order is `PUSH.md` → `AGENTS.md` → `CLAUDE.md` → `GEMINI.md` (first
 - [`DESIGN.md`](DESIGN.md) — visual tokens, colors, typography, components
 - [`cli/README.md`](cli/README.md) — CLI surfaces, providers, env vars, tools, sessions
 - [`cli/architecture.md`](cli/architecture.md) — CLI runtime layers
-- [`app/README.md`](app/README.md) — frontend, Worker secrets, sandbox backend selection, Android
+- [`app/README.md`](app/README.md) — frontend, Worker secrets, sandbox backend selection, Android, Electron
 - [`docs/decisions/`](docs/decisions/) — design decisions with `Status:` lifecycle
 - [`docs/runbooks/`](docs/runbooks/), [`docs/security/`](docs/security/) — ops + provider usage policies
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — philosophy, what fits, what may be declined

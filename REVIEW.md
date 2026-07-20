@@ -1,8 +1,8 @@
 # REVIEW.md
 
-Repository-specific review guidance for Push. Adapted from our GitHub Actions
-review bot (`.github/workflows/gemini-review.yml`) so automated and human reviews
-share one standard.
+Repository-specific review guidance for Push. Loaded by the in-app reviewer, the
+daemon reviewer, and the autonomous PR review path so all three share one
+standard.
 
 Push collapses the mobile dev stack into one conversation — a git tool with the
 feel of your everyday AI app — across three surfaces: a web app, an experimental
@@ -65,9 +65,12 @@ name. (Mirrored from CLAUDE.md's "PR self-review pass"; keep the two in sync.)
 Kept first so it survives the reviewer-context size cap.
 
 - **HTTP status classification.** Every `if (status >= 400)` arm should enumerate
-  the cases (auth, rate-limit, not-found, validation) and map each to a sensible
-  `structuredError.type` / surface code. A catch-all that collapses everything to
-  "sandbox loss" or "unknown" is a bug.
+  the cases (auth, rate-limit, not-found, validation) and assign each a sensible
+  `structuredError.type` / surface code. A 429 may be transient rate limiting or
+  terminal quota exhaustion (`exceeded_current_quota_error`, `insufficient_quota`);
+  use `lib/quota-errors.ts` as the shared vocabulary. Default fallbacks to
+  "everything is sandbox loss" or "everything is unknown" are bugs (see PR #656's
+  rate-limit misclassification).
 - **`await` in a loop.** Every `await` inside a `for`/`while` must prove it can
   exit on terminal conditions (deadlines, abort signals, event-completion races),
   not just the happy path. A naked `await promiseThatOnlyResolvesOnSuccess` is a
@@ -189,21 +192,26 @@ runtime contract, not re-implement it.
   no `allowDirectGit` escape) — renaming the checked-out branch is the same
   desync class. Other `git branch` forms (list / create / delete / upstream)
   are expected to pass the policy.
-- Typed branch tools preserve the sandbox; UI-initiated swaps restart it by
-  design. Changes that alter `skipBranchTeardownRef` teardown suppression in
+- Typed branch tools and warm-path branch changes preserve the sandbox; only bare
+  UI branch swaps that bypass the typed tools/warm path restart it. Changes that
+  alter `skipBranchTeardownRef` teardown suppression in
   `WorkspaceSessionScreen.tsx` / `useWorkspaceSandboxController.ts` need scrutiny.
 
 ### Tool-call per-turn budget
 
 The dispatch contract: read-only calls run in parallel (cap 6); pure file
-mutations run sequentially as one batch (cap 8); at most **one** trailing
-side-effecting call (`sandbox_exec`, commit/push, delegation, workflow dispatch).
-Flag changes that violate ordering or sneak in extra side effects — these should
-be rejected with structured errors, not silently allowed.
+mutations run sequentially as one batch (cap 8); a trailing chain of up to **3**
+side-effecting calls (`sandbox_exec`, commit/push, delegation, workflow dispatch)
+runs sequentially with fail-fast (`MAX_SIDE_EFFECT_CHAIN`,
+`lib/tool-call-grouping.ts`). Flag changes that violate ordering or sneak in extra
+side effects — these should be rejected with structured errors, not silently
+allowed.
 
 ### Delivery rules
 
-- Standard commits go through the **Auditor** SAFE/UNSAFE gate (defaults to
+- Web/cloud delivery uses **Gate-at-Push**: local `sandbox_commit` is silent, and
+  `prepare_push` / direct `sandbox_push` audit the cumulative push diff. CLI/daemon
+  `git_commit` retains the pre-commit **Auditor** SAFE/UNSAFE gate (defaults to
   UNSAFE on error — don't weaken that default).
 - Reviewer is advisory; only PR-backed branch-diff reviews post back to GitHub.
 - Merges go through the **GitHub PR flow** only — Push never runs local

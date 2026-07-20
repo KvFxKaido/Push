@@ -458,12 +458,12 @@ Hub button height is `h-8`, not `h-9` — pill rhythm differs from the shadcn `h
 
 | Component       | Shape                                                                 |
 | --------------- | --------------------------------------------------------------------- |
-| `<PageScaffold>`| Page wrapper: dark gradient bg, safe-area insets, `width` prop maps to `max-w-sm \| max-w-md \| max-w-2xl \| full` |
+| `<PageScaffold>`| Page wrapper: pure-black page background, safe-area insets, `width` prop maps to `max-w-sm \| max-w-md \| max-w-2xl \| full` |
 | `<HeaderBar>`   | 3-col grid top bar: `back` (HUB_MATERIAL_ROUND_BUTTON), `title`/`subtitle`, `actions` slot. Padding `px-3 pt-3 pb-2`; height follows content (≈ 56px when back/actions slots carry the standard `h-9` button). |
 | `<StatusBanner>`| `variant: 'info' \| 'warning' \| 'error' \| 'success'` using `push-status-*` tokens. Replaces ad-hoc `border-rose-400/40` / `text-destructive` patterns |
 | `<SectionCard>` | `HUB_PANEL_SURFACE_CLASS` wrapper with `p-4 space-y-3` and optional `title` / `description` slots |
 
-A new top-level surface (full-screen pairing flow, settings sub-page, onboarding step) should be `<PageScaffold header={<HeaderBar … />}>…</PageScaffold>` rather than an ad-hoc `<div className="min-h-dvh …">`. The primitives own the gradient background, the safe-area math, and the back-button shape so screens don't each reinvent them.
+A new top-level surface (full-screen pairing flow, settings sub-page, onboarding step) should be `<PageScaffold header={<HeaderBar … />}>…</PageScaffold>` rather than an ad-hoc `<div className="min-h-dvh …">`. The primitives own the pure-black page background, the safe-area math, and the back-button shape so screens don't each reinvent them.
 
 ### When to reach for which
 
@@ -500,7 +500,7 @@ No emoji in chrome; status uses colored dot indicators + iconography, never glyp
 - Don't introduce light-mode colors; the app is dark-only
 - Don't hardcode colors — use the token classes with Tailwind prefixes: `text-push-fg`, `bg-push-surface`, `border-push-edge`, etc.
 - Don't use shadcn `Button` from `components/ui/button.tsx` for chrome — its `default` variant is now the Sky tinted-outline treatment (flat, on-accent), but chrome surfaces want the hub material (solid raised surface + border), so reach for `HUB_MATERIAL_BUTTON_CLASS` (or `HUB_MATERIAL_PILL_BUTTON_CLASS` for inline pills). The shadcn Button is fine **inside** `<Dialog>` / `<Sheet>` forms — see the composition layer notes above.
-- Don't invent a new page wrapper with `min-h-dvh bg-[linear-gradient(...)]`. Use `<PageScaffold>` — it owns the gradient, the safe-area insets, and the max-width rhythm so all surfaces share them.
+- Don't invent a new page wrapper with `min-h-dvh bg-[linear-gradient(...)]`. Use `<PageScaffold>` — it owns the pure-black page background, the safe-area insets, and the max-width rhythm so all surfaces share them.
 - Don't invent per-screen error/warning chrome (`text-rose-200`, `text-destructive`, `bg-amber-500/15`). Use `<StatusBanner>` — one of `variant="info"`, `variant="warning"`, `variant="error"`, or `variant="success"` — so status colors live in one place.
 
 ## Shipping visual changes

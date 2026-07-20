@@ -48,7 +48,7 @@ The runtime role contract is not the user-facing vocabulary. Human-readable labe
 ## Key Systems
 
 - **Tool protocol** — multi-tool dispatch and structured error reporting
-- **Sandbox execution** — scratch workspaces and web search tools via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers. The shared `/api/sandbox/*` Worker route can dispatch by `PUSH_SANDBOX_PROVIDER`, while `CloudflareSandboxProvider` deliberately pins direct provider traffic to `/api/sandbox-cf/*`.
+- **Sandbox execution** — repo-backed and scratch workspaces via a pluggable `SandboxProvider` interface (`lib/sandbox-provider.ts`); Cloudflare Sandbox SDK and Modal coexist as sibling providers. The shared `/api/sandbox/*` Worker route can dispatch by `PUSH_SANDBOX_PROVIDER`, while `CloudflareSandboxProvider` deliberately pins direct provider traffic to `/api/sandbox-cf/*`.
 - **Daemon-backed sessions** — the experimental Remote mode pairs the web app to `pushd` over the Worker relay; chat `sandbox_*` calls route through the hook-owned daemon WebSocket for `sandbox_exec`, file read/write/list, and diff
 - **Delegation and orchestration** — direct Explorer/Coder runtime delegation plus dependency-aware task graphs via `plan_tasks`
 - **Context and memory** — staged compaction, Coder working memory, graph-scoped task memory, typed retrieval/invalidation, and sectioned prompt packing
