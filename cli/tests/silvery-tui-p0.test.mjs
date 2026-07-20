@@ -4332,7 +4332,15 @@ describe('silvery surface — constrained-height chrome budget', () => {
       const handle = Silvery.render(
         React.createElement(PushSurface, { controller, hook }),
         { stdout, stdin: new FakeStdin() },
-        { exitOnCtrlC: false, alternateScreen: false, mode: 'fullscreen', mouse: false },
+        {
+          exitOnCtrlC: false,
+          alternateScreen: false,
+          mode: 'fullscreen',
+          mouse: false,
+          // The fixture replays cursor-addressed output in a VirtualTerminal.
+          // GitHub Actions otherwise makes Silvery auto-select line-by-line mode.
+          nonTTYMode: 'tty',
+        },
       );
       lifecycle = handle.run();
       instance = await handle;
@@ -4348,18 +4356,23 @@ describe('silvery surface — constrained-height chrome budget', () => {
             .trimEnd(),
         );
       };
+      const waitForFrame = async (predicate) => {
+        let rows = [];
+        for (let i = 0; i < 300; i++) {
+          rows = readFrameRows();
+          if (predicate(rows)) break;
+          await sleep(10);
+        }
+        return rows;
+      };
+
+      // Let Silvery finish the initial full-screen write before scheduling the
+      // composer state update, then read the observable terminal frame.
+      await waitForFrame((rows) => rows.some((line) => line.includes('auto ·')));
       hook.setComposerInput(composer);
-      let frameRows = [];
-      // The hook's input snapshot updates when React commits, before Silvery's
-      // terminal writer necessarily emits the new frame. Under full-suite load,
-      // reading immediately after that snapshot can still capture the prior
-      // blank composer. Poll the observable terminal output instead.
-      for (let i = 0; i < 80; i++) {
-        instance.flush();
-        frameRows = readFrameRows();
-        if (frameRows.some((line) => line.includes('composer row three'))) break;
-        await sleep(10);
-      }
+      const frameRows = await waitForFrame((rows) =>
+        rows.some((line) => line.includes('composer row three')),
+      );
 
       // The fixed seven rows are header + rule + max composer + max footer;
       // the error consumes one more, leaving six transcript rows in 72x14.
