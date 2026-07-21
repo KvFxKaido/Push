@@ -1715,6 +1715,8 @@ export async function createSilveryController(
           '  Shift/Alt+Enter        Insert a newline',
           '  Ctrl+A/E · Alt+B/F     Line start/end · word backward/forward',
           '  Ctrl+U/W · Ctrl+Y      Delete to line start/word · paste deletion',
+          '  Up/Down                Recall prompt history at the composer edge',
+          '  Ctrl+Z · Ctrl+Shift+Z  Undo / redo composer edits (Ctrl+_ also undoes)',
           '  ?                      Show this help from an empty composer',
         ].join('\n'),
       );
