@@ -253,6 +253,18 @@ export interface SilveryController {
    * surface to load into the TextArea (composer is not controller-owned).
    */
   takePendingComposerText(): string | null;
+  /**
+   * User-typed prompts for composer Up/Down recall, oldest → newest.
+   *
+   * Derived at call time from the authoritative transcript source — persisted
+   * session messages inline, the daemon mirror when attached — so recall works
+   * across restarts and resumes without a separate history store. Slash
+   * commands are handled locally and never persisted, so they are not
+   * recallable; runtime-injected user turns (internal envelopes) are filtered
+   * by the shared mapper. Unlike the display rows, this is NOT sliced by
+   * clear-display — Ctrl+L hides the transcript, it doesn't forget prompts.
+   */
+  getPromptHistory(): string[];
   dispose(): Promise<void>;
 }
 
@@ -2261,6 +2273,16 @@ export async function createSilveryController(
       const text = pendingComposerText;
       pendingComposerText = null;
       return text;
+    },
+    getPromptHistory() {
+      if (daemonStateStale) {
+        return daemonMirror.rows
+          .filter((row) => row.kind === 'message' && row.role === 'user' && !row.live)
+          .map((row) => row.text);
+      }
+      return sessionMessagesToTranscriptRows(state.messages)
+        .filter((row) => row.role === 'user')
+        .map((row) => row.text);
     },
     async submit(rawText) {
       const text = rawText.trim();

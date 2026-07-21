@@ -18,6 +18,7 @@ import {
   useApp,
   useInput,
   useStdout,
+  type TextAreaHandle,
 } from 'silvery';
 
 import { getTranscriptRoleLabel } from '../../lib/role-display.js';
@@ -27,6 +28,7 @@ import { formatToolCard } from '../tool-card-format.js';
 import { getCuratedModels } from '../model-catalog.js';
 import { getProviderList } from '../provider.js';
 import { createTabCompleter, type CompletionState } from '../tui-completer.js';
+import { createComposerHistoryNav } from '../tui-composer-history.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
 import { isReducedMotion, verbForActivity, type StatusActivity } from '../tui-verbs.js';
@@ -1681,14 +1683,69 @@ export function PushSurface({
     [completer],
   );
 
+  // Prompt-history recall (#1563): Up/Down at the TextArea's buffer edge walk
+  // previously submitted prompts. The nav captures its entry list lazily at
+  // the first Up of each run, so it always sees the controller's live history.
+  const composerRef = useRef<TextAreaHandle>(null);
+  const historyNav = useMemo(
+    () => createComposerHistoryNav(() => controller.getPromptHistory()),
+    [controller],
+  );
+  // A resumed/switched session brings its own prompt history; end any run so
+  // the next Up captures the new session's entries.
+  useEffect(() => {
+    historyNav.reset();
+  }, [historyNav, snapshot.sessionId]);
+  // Recall places the cursor at the END of the recalled text (readline
+  // convention — and what makes Down-at-bottom continue the run on multi-line
+  // entries). The TextArea clamps `setCursor` against the value it currently
+  // holds, which is still the pre-recall text in the tick that sets state, so
+  // the move is deferred to the effect after the recalled value has rendered.
+  const recallCursor = useRef<number | null>(null);
+  useEffect(() => {
+    if (recallCursor.current !== null) {
+      composerRef.current?.setCursor(recallCursor.current);
+      recallCursor.current = null;
+    }
+  });
+  const handleComposerEdge = useCallback(
+    (edge: 'top' | 'bottom' | 'left' | 'right') => {
+      if (edge !== 'top' && edge !== 'bottom') return false;
+      const recalled = historyNav.recall(edge === 'top' ? 'up' : 'down', input);
+      if (recalled === null) return false;
+      // Straight to state, NOT changeComposerInput: that path's interceptors
+      // ('?' → /help, sensitive-config divert) are for keystrokes; recalled
+      // text already passed them when it was first typed.
+      setComposerInput(recalled);
+      if (recalled === input) {
+        // Identical text: the TextArea already holds the recalled value, so
+        // the stale-clamp hazard the deferred path exists for can't occur —
+        // move now. The deferred path would also work today, but only because
+        // setComposerInput happens to bump completionRevision unconditionally
+        // (guaranteeing the render that consumes the pending ref); don't
+        // couple cursor correctness to that.
+        composerRef.current?.setCursor(recalled.length);
+      } else {
+        recallCursor.current = recalled.length;
+      }
+      return true;
+    },
+    [historyNav, input, setComposerInput],
+  );
+
   const complete = useCallback(
     (reverse = false) => {
       const result = completer.tab(input, reverse);
       if (!result) return;
+      // Tab completion is a user edit like any keystroke: it must end the
+      // recall run, or Down afterwards restores the pre-recall stash and
+      // discards the completed text (Codex P2 on #1565). It bypasses
+      // changeComposerInput's reset by design, so reset here.
+      historyNav.reset();
       setInput(result.text);
       setCompletionRevision((revision) => revision + 1);
     },
-    [completer, input],
+    [completer, historyNav, input],
   );
 
   useEffect(() => {
@@ -1703,6 +1760,8 @@ export function PushSurface({
   const submit = useCallback(
     async (text: string) => {
       if (!text.trim() || snapshot.running) return;
+      // End any recall run: the next Up re-captures with this prompt included.
+      historyNav.reset();
       setInput('');
       completer.reset();
       setCompletionRevision((revision) => revision + 1);
@@ -1711,11 +1770,17 @@ export function PushSurface({
       const draft = controller.takePendingComposerText();
       if (draft !== null) setComposerInput(draft);
     },
-    [completer, controller, setComposerInput, snapshot.running],
+    [completer, controller, historyNav, setComposerInput, snapshot.running],
   );
 
   const changeComposerInput = useCallback(
     (value: string) => {
+      // A user edit ends the recall run. The simple ring only stashes the
+      // draft at the FIRST Up, so continuing an old run after an edit would
+      // silently lose the edited text; ending it means the next Up stashes
+      // the edit as the new draft (Down brings it back). Recall itself sets
+      // state directly and never lands here — onChange is user keystrokes.
+      historyNav.reset();
       if (input.length === 0 && value === '?') {
         void submit('/help');
         return;
@@ -1728,7 +1793,7 @@ export function PushSurface({
       }
       setComposerInput(value);
     },
-    [controller, input.length, setComposerInput, snapshot.provider, submit],
+    [controller, historyNav, input.length, setComposerInput, snapshot.provider, submit],
   );
 
   const runCommand = useCallback(
@@ -1957,9 +2022,11 @@ export function PushSurface({
           </Box>
           <Box flexGrow={1}>
             <TextArea
+              ref={composerRef}
               value={input}
               onChange={changeComposerInput}
               onSubmit={submit}
+              onEdge={handleComposerEdge}
               submitKey="enter"
               minRows={1}
               maxRows={SURFACE_COMPOSER_MAX_ROWS}
