@@ -1004,7 +1004,7 @@ Available tools:
 - exec_stop(session_id, signal?) — stop a running command session and release it
 - exec_list_sessions() — list active/finished command sessions
 - write_file(path, content) — write full file content
-- edit_file(path, …) — two shapes: (a) surgical hashline edits via edits[] (ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content); (b) exact search/replace via search+replace (aliases old_string+new_string), optional replace_all — search must match exactly once unless replace_all
+- edit_file(path, edits?, search?, replace?, old_string?, new_string?, replace_all?, expected_version?) — two shapes: (a) surgical hashline edits via edits[] (ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content); (b) exact search/replace via search+replace (aliases old_string+new_string), optional replace_all — search must match exactly once unless replace_all
 - read_symbols(path) — extract function/class/type declarations from a file
 - read_symbol(path, symbol) — read a specific symbol's full body (function, class, type, interface) by name. More efficient than reading the whole file when you know which symbol you need.
 - git_status() — workspace git status (branch, dirty files)
@@ -3253,7 +3253,6 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           };
         }
 
-        await backupFile(filePath, workspaceRoot);
         const before = await fs.readFile(filePath, 'utf8');
         const versionBefore = calculateContentVersion(before);
 
@@ -3304,9 +3303,26 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           appliedContent = applied.content;
           editCount = applied.count;
           warnings = [];
-          affectedLines = applied.matches.map(
-            ({ resultStart }) => applied.content.slice(0, resultStart).split('\n').length,
-          );
+          // Single forward pass over the result: matches arrive in ascending
+          // resultStart order, so count newlines incrementally instead of
+          // re-splitting the whole prefix per match (quadratic on large
+          // replace_all runs). Dedupe so several matches on one line don't
+          // repeat an identical context preview.
+          {
+            let lineNo = 1;
+            let scanned = 0;
+            const seen = new Set();
+            affectedLines = [];
+            for (const { resultStart } of applied.matches) {
+              for (; scanned < resultStart; scanned += 1) {
+                if (applied.content[scanned] === '\n') lineNo += 1;
+              }
+              if (!seen.has(lineNo)) {
+                seen.add(lineNo);
+                affectedLines.push(lineNo);
+              }
+            }
+          }
           successText = `Applied search/replace edit to ${path.relative(workspaceRoot, filePath) || '.'} (${applied.count} ${applied.count === 1 ? 'occurrence' : 'occurrences'})`;
         } else {
           const applied = applyHashlineEdits(before, edits);
@@ -3317,6 +3333,11 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           successText = `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}`;
         }
 
+        // Backup only once the edit is definitely happening — a backup taken
+        // before the validation/apply returns above would become the newest
+        // .bak for this file, and undo_edit restores the newest match, so a
+        // failed edit would shadow the backup of the last successful one.
+        await backupFile(filePath, workspaceRoot);
         await fs.writeFile(filePath, appliedContent, 'utf8');
         const versionAfter = calculateContentVersion(appliedContent);
 

@@ -30,6 +30,7 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   staged: 'boolean',
   tty: 'boolean',
   append_newline: 'boolean',
+  replace_all: 'boolean',
   edits: 'array',
   paths: 'array',
   files: 'array',

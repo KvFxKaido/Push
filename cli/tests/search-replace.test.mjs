@@ -284,4 +284,35 @@ describe('edit_file search/replace integration', () => {
       assert.equal(bothShapes.structuredError.retryable, true);
     });
   });
+
+  it('does not let a failed edit shadow the undo backup of the last successful one', async () => {
+    await withTempWorkspace(async (root) => {
+      const rel = 'undo.txt';
+      const original = 'alpha\nbeta\ngamma\n';
+      await fs.writeFile(path.join(root, rel), original, 'utf8');
+
+      const edit = await executeToolCall(
+        { tool: 'edit_file', args: { path: rel, search: 'beta', replace: 'BETA' } },
+        root,
+      );
+      assert.equal(edit.ok, true);
+
+      // A failed edit (no match) must not create a newer backup of the
+      // already-edited content — undo_edit restores the newest .bak, so that
+      // backup would turn undo into a no-op.
+      const failed = await executeToolCall(
+        { tool: 'edit_file', args: { path: rel, search: 'missing', replace: 'x' } },
+        root,
+      );
+      assert.equal(failed.ok, false);
+      assert.equal(failed.structuredError.code, 'EDIT_NO_MATCH');
+
+      const backups = await fs.readdir(path.join(root, '.push', 'backups'));
+      assert.equal(backups.length, 1, 'failed edit must not add a backup');
+
+      const undo = await executeToolCall({ tool: 'undo_edit', args: { path: rel } }, root);
+      assert.equal(undo.ok, true);
+      assert.equal(await fs.readFile(path.join(root, rel), 'utf8'), original);
+    });
+  });
 });
