@@ -281,7 +281,7 @@ export function createDelegationCoordinator(
     const allowedRepo = (await resolveWorkspaceIdentity(entry.state.cwd)).repoFullName;
     const daemonStream = createDaemonProviderStream(provider, sessionId);
     const nativeToolSchemas = cliProviderModelSupportsNativeToolCalling(provider, model)
-      ? getCliNativeToolSchemas()
+      ? getCliNativeToolSchemas({ provider, model })
       : undefined;
     // `parentRunId` can be null when `submit_task_graph` is called on a
     // session with no active run AND no `parentRunId` payload override.
@@ -1363,7 +1363,7 @@ export function createDelegationCoordinator(
           resolvedProvider,
           resolvedModel,
         )
-          ? getCliNativeToolSchemas()
+          ? getCliNativeToolSchemas({ provider: resolvedProvider, model: resolvedModel })
           : undefined;
         const result = await runCoderAgent(
           {

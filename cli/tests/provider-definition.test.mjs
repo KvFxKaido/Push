@@ -12,6 +12,8 @@ import {
   getProviderApiKeyStorageKey,
   getInitialFallbackProviderOrder,
   getProviderIconDefinition,
+  getProviderToolNamingFamily,
+  getProviderToolPublicName,
   getProviderModelStorageKey,
   getProviderDisplayName,
   getProviderDefinition,
@@ -212,6 +214,19 @@ describe('ProviderDefinition', () => {
     assert.equal(providerConsumesContentBlocksByDefault('openrouter'), false);
     assert.equal(providerCarriesReasoningBlocksByDefault('deepseek'), true);
     assert.equal(providerCarriesReasoningBlocksByDefault('zen'), false);
+  });
+
+  it('resolves exact-edit public names by model family across aggregators', () => {
+    assert.equal(getProviderToolNamingFamily('kimi', 'kimi-k3'), 'kimi-k3');
+    assert.equal(getProviderToolNamingFamily('openrouter', 'moonshotai/kimi-k3:nitro'), 'kimi-k3');
+    assert.equal(getProviderToolPublicName('kimi', 'kimi-k3', 'edit_file'), 'Edit');
+    assert.equal(
+      getProviderToolPublicName('openrouter', 'z-ai/glm-5.1:nitro', 'replace'),
+      'edit_file',
+    );
+    assert.equal(getProviderToolPublicName('deepseek', 'deepseek-v4', 'replace'), 'edit_file');
+    assert.equal(getProviderToolPublicName('kimi', 'kimi-k3', 'read_file'), 'read_file');
+    assert.equal(getProviderToolPublicName('openai', 'gpt-5.4', 'replace'), 'replace');
   });
 
   for (const def of PROVIDER_DEFINITIONS) {

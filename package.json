@@ -17,6 +17,7 @@
     "gen:schema": "node --import tsx scripts/gen-protocol-schema.mjs",
     "lint": "pnpm --filter my-app run lint",
     "r2:snapshots:lifecycle": "pnpm dlx wrangler r2 bucket lifecycle add push-cf-snapshots --expire-days 7",
+    "report:edit-dialect": "node --import tsx cli/edit-dialect-report.ts",
     "test:cli": "node --import tsx --import ./cli/tests/setup-test-home-isolation.mjs --test cli/tests/*.test.mjs",
     "test:mcp:github": "pnpm --filter @push/github-mcp-server test",
     "typecheck": "cd cli && pnpm exec tsc --noEmit",

@@ -4219,6 +4219,25 @@ describe('sandbox_search_replace', () => {
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 
+  it('uses occurrence—not line—ambiguity for repeated text on one line', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const value = null ?? null;\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_search_replace', args: { path, search: 'null', replace: 'undefined' } },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('matches 2 occurrences');
+    expect(result.structuredError?.type).toBe('EDIT_HASH_MISMATCH');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
   it('replaces every occurrence on every matching line when replace_all is true', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const a = null ?? null;\nconst b = null;\n';
@@ -4253,6 +4272,29 @@ describe('sandbox_search_replace', () => {
       updatedContent,
       'v1',
     );
+  });
+
+  it('keeps source locations in multi-line ambiguity diagnostics', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'start\nsame\nend\nstart\nsame\nend\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'start\nsame', replace: 'replacement' },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('matches 2 occurrences');
+    expect(result.text).toContain('L1:');
+    expect(result.text).toContain('L4:');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 
   it('returns a structured not-yet-supported error for multi-line replace_all', async () => {

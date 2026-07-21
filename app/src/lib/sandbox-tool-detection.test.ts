@@ -374,6 +374,15 @@ describe('detectSandboxToolCall', () => {
     });
   });
 
+  it('resolves provider-family Edit calls to sandbox search/replace', () => {
+    const text =
+      '```json\n{"tool":"Edit","args":{"path":"a.ts","old_string":"foo","new_string":"bar"}}\n```';
+    expect(detectSandboxToolCall(text)).toEqual({
+      tool: 'sandbox_search_replace',
+      args: { path: '/workspace/a.ts', search: 'foo', replace: 'bar' },
+    });
+  });
+
   it('returns null when no sandbox tool block is present', () => {
     expect(detectSandboxToolCall('nothing to see here')).toBeNull();
   });

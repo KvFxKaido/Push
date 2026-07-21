@@ -74,8 +74,8 @@ import {
   executeToolCall,
   getGitHubToolProtocolAsync,
   isCliToolDisabled,
-  FILE_MUTATION_TOOLS,
-  READ_ONLY_TOOLS,
+  isFileMutationToolCall,
+  isReadOnlyToolCall,
   REPEAT_EXEMPT_TOOLS,
   TOOL_PROTOCOL,
 } from './tools.js';
@@ -226,8 +226,8 @@ function malformedReportsToDroppedCandidates(
  * bucket via `maxParallelDelegations`.
  */
 const CLI_GROUPING_PREDICATES = {
-  isReadOnly: (wrapped: CliKernelCall): boolean => READ_ONLY_TOOLS.has(wrapped.call.tool),
-  isFileMutation: (wrapped: CliKernelCall): boolean => FILE_MUTATION_TOOLS.has(wrapped.call.tool),
+  isReadOnly: (wrapped: CliKernelCall): boolean => isReadOnlyToolCall(wrapped.call),
+  isFileMutation: (wrapped: CliKernelCall): boolean => isFileMutationToolCall(wrapped.call),
   isParallelDelegation: (wrapped: CliKernelCall): boolean =>
     wrapped.call.tool === 'delegate_explorer',
 };
@@ -687,6 +687,8 @@ export async function runLeadKernelTurn(
     leadModelId,
   )
     ? getCliNativeToolSchemas({
+        provider: providerConfig.id,
+        model: leadModelId,
         includeGitHub: Boolean(githubProtocol),
         // Lead-only surface: the Explorer fan-out schema parses from the same
         // protocol block advertised below, so prompt text and native schema
@@ -987,7 +989,7 @@ export async function runLeadKernelTurn(
       // `{path, edits, expected_version}` form, the main surgical-edit path.
       // Skip approval/capability DENIALS (`*_DENIED`): a human or policy saying
       // no is not model edit-flailing and must not inflate the error rate.
-      if (FILE_MUTATION_TOOLS.has(rawCall.tool)) {
+      if (isFileMutationToolCall(rawCall)) {
         const code = result?.structuredError?.code;
         const denied = typeof code === 'string' && code.endsWith('_DENIED');
         if (!denied) {

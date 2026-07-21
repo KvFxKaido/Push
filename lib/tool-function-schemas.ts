@@ -24,6 +24,7 @@
  */
 
 import { getAllToolSpecs, type ToolSpec, type ToolRegistrySource } from './tool-registry.js';
+import { getProviderToolPublicName } from './provider-definition.js';
 import type {
   JsonSchemaType,
   ToolFunctionParameterSchema,
@@ -139,6 +140,9 @@ function buildParameterSchema(
 
 /** Options that bind otherwise-free-form args to the run's context. */
 export interface ToolSchemaContext {
+  /** Provider/model route used for model-family public tool naming. */
+  provider?: string;
+  model?: string;
   /**
    * The single repository the run may touch. When set, GitHub tools' `repo`
    * param is pinned to it (enum + description) so the model emits the active
@@ -179,7 +183,7 @@ export function toolSpecToFunctionSchema(
     if (param.required) required.push(param.name);
   }
   return {
-    name: spec.publicName,
+    name: getProviderToolPublicName(ctx?.provider, ctx?.model, spec.publicName),
     description: spec.protocolDescription,
     input_schema: {
       type: 'object',

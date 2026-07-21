@@ -116,4 +116,23 @@ describe('getToolFunctionSchemasForSources', () => {
     expect(repoProp.enum).toBeUndefined();
     expect(repoProp).toEqual({ type: 'string' });
   });
+
+  it('advertises the exact-edit primitive in the selected model family vocabulary', () => {
+    const sources = new Set<ToolRegistrySource>(['sandbox']);
+    const kimi = getToolFunctionSchemasForSources(sources, {
+      provider: 'openrouter',
+      model: 'moonshotai/kimi-k3',
+    });
+    const kimiEdit = kimi.find((schema) => schema.name === 'Edit');
+    expect(kimiEdit).toBeDefined();
+    expect(kimiEdit?.input_schema.properties).toHaveProperty('old_string');
+    expect(kimiEdit?.input_schema.properties).toHaveProperty('new_string');
+
+    const glm = getToolFunctionSchemasForSources(sources, {
+      provider: 'zai',
+      model: 'glm-5.1',
+    });
+    expect(glm.some((schema) => schema.name === 'edit_file')).toBe(true);
+    expect(glm.some((schema) => schema.name === 'replace')).toBe(false);
+  });
 });

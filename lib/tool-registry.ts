@@ -439,10 +439,12 @@ const TOOL_SPECS: readonly ToolSpec[] = [
   {
     canonicalName: 'sandbox_search_replace',
     publicName: 'replace',
+    aliases: ['edit_file', 'Edit'],
     source: 'sandbox',
     readOnly: false,
     statusLabel: 'Sandbox operation...',
-    protocolSignature: 'replace(path, search, replace, replace_all?, expected_version?)',
+    protocolSignature:
+      'replace(path, search?, replace?, old_string?, new_string?, replace_all?, expected_version?)',
     protocolDescription:
       'Replace an exact substring match in one file; old_string/new_string are aliases for search/replace, and replace_all replaces every single-line occurrence (multi-line replace_all is not yet supported)',
     exampleJson:

@@ -9,7 +9,7 @@ import path from 'node:path';
 
 import { calculateContentVersion, calculateLineHash } from '../hashline.ts';
 import { applySearchReplace } from '../search-replace.ts';
-import { executeToolCall as executeRawToolCall } from '../tools.ts';
+import { executeToolCall as executeRawToolCall, isFileMutationToolCall } from '../tools.ts';
 
 const executeToolCall = (call, root) =>
   executeRawToolCall(call, root, { role: 'coder', postEditDiagnostics: false });
@@ -224,6 +224,25 @@ describe('edit_file search/replace integration', () => {
       assert.equal(result.meta.version_after, calculateContentVersion('new and new\n'));
       assert.match(result.text, /\(2 occurrences\)/);
       assert.equal(await fs.readFile(path.join(root, rel), 'utf8'), 'new and new\n');
+    });
+  });
+
+  it('dispatches Kimi K3 public Edit calls through the canonical edit_file implementation', async () => {
+    assert.equal(isFileMutationToolCall({ tool: 'Edit', args: {} }), true);
+    await withTempWorkspace(async (root) => {
+      const rel = 'kimi-public-name.txt';
+      await fs.writeFile(path.join(root, rel), 'old value\n', 'utf8');
+
+      const result = await executeToolCall(
+        {
+          tool: 'Edit',
+          args: { path: rel, old_string: 'old', new_string: 'new' },
+        },
+        root,
+      );
+
+      assert.equal(result.ok, true);
+      assert.equal(await fs.readFile(path.join(root, rel), 'utf8'), 'new value\n');
     });
   });
 
