@@ -13,15 +13,8 @@ export function isInvalidGitRef(ref: string): boolean {
   );
 }
 
-/**
- * A LOCAL branch name under the `origin/` prefix (Push's fixed remote) shadows
- * the remote-tracking namespace: git and JGit both resolve `refs/heads/` before
- * `refs/remotes/`, so a local `refs/heads/origin/x` intercepts lookups of the
- * real `refs/remotes/origin/x`. Pushed-diff base resolution now fully-qualifies
- * its refs so this can't narrow an audited diff, but such a name still has no
- * legitimate use — refuse to CREATE it (this guards branch NAMES only; a
- * start-point ref like `from: origin/main` is a valid, unaffected use).
- */
-export function isRemoteTrackingShadowBranchName(name: string): boolean {
-  return name.startsWith('origin/');
-}
+// Promoted to lib when the CLI became the second surface refusing shadow
+// names (#1570 review follow-up); re-exported to keep this module's API
+// stable. Pushed-diff base resolution also fully-qualifies its refs, so a
+// pre-existing shadow branch can't narrow an audited diff.
+export { isRemoteTrackingShadowBranchName } from '@push/lib/git/branch-input';
