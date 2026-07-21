@@ -63,6 +63,68 @@ export type ProviderStreamShape = 'openai-compat' | 'openai-responses' | 'anthro
 export type RealProviderId = Exclude<AIProviderType, 'demo'>;
 export type DirectProviderId = Extract<RealProviderId, 'openai' | 'anthropic' | 'google'>;
 
+export type ProviderToolNamingFamily = 'kimi-k3' | 'search-replace-edit-file';
+
+export interface ProviderToolNamingDefinition {
+  /** Stable family handle for tests and telemetry. */
+  readonly family: ProviderToolNamingFamily;
+  /** Model ids are matched after lower-casing; aggregator prefixes are retained. */
+  readonly modelPattern: RegExp;
+  /** Model-visible name for the exact search/replace edit primitive. */
+  readonly searchReplacePublicName: string;
+}
+
+/**
+ * Provider/model-family naming for the exact search/replace primitive.
+ *
+ * This registry is model-driven rather than provider-id-only because Kimi,
+ * DeepSeek, and GLM are also served through aggregators such as OpenRouter,
+ * Ollama, Zen, and Workers AI. Runtime dispatch remains canonical; only the
+ * advertised native-function name changes to match the family's trained
+ * vocabulary.
+ */
+export const PROVIDER_TOOL_NAMING_DEFINITIONS: readonly ProviderToolNamingDefinition[] = [
+  {
+    family: 'kimi-k3',
+    modelPattern: /\bkimi[-_.]?k3\b/i,
+    searchReplacePublicName: 'Edit',
+  },
+  {
+    family: 'search-replace-edit-file',
+    modelPattern: /(?:\bdeepseek\b|\bglm[-_.]?5(?:\b|[._-]))/i,
+    searchReplacePublicName: 'edit_file',
+  },
+];
+
+export function getProviderToolNamingFamily(
+  _provider: AIProviderType | string | null | undefined,
+  model: string | null | undefined,
+): ProviderToolNamingFamily | null {
+  const normalizedModel = model?.trim().toLowerCase() ?? '';
+  if (!normalizedModel) return null;
+  return (
+    PROVIDER_TOOL_NAMING_DEFINITIONS.find((definition) =>
+      definition.modelPattern.test(normalizedModel),
+    )?.family ?? null
+  );
+}
+
+/** Resolve a model-facing schema name without changing canonical dispatch. */
+export function getProviderToolPublicName(
+  provider: AIProviderType | string | null | undefined,
+  model: string | null | undefined,
+  defaultPublicName: string,
+): string {
+  if (defaultPublicName !== 'replace' && defaultPublicName !== 'edit_file') {
+    return defaultPublicName;
+  }
+  const family = getProviderToolNamingFamily(provider, model);
+  return (
+    PROVIDER_TOOL_NAMING_DEFINITIONS.find((definition) => definition.family === family)
+      ?.searchReplacePublicName ?? defaultPublicName
+  );
+}
+
 export interface ProviderCliDefinition {
   /** CLI/provider picker declaration order. */
   readonly order: number;

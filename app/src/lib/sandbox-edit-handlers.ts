@@ -59,6 +59,7 @@ import {
   buildPerEditDiagnosticSummary,
 } from './sandbox-mutation-postconditions';
 import { buildDiffPreviewToolCard, buildTextChangeToolCard } from '@push/lib/tool-card-producers';
+import { applySearchReplace } from '@push/lib/search-replace';
 
 type EditFileArgs = Extract<SandboxToolCall, { tool: 'sandbox_edit_file' }>['args'];
 type EditRangeArgs = Extract<SandboxToolCall, { tool: 'sandbox_edit_range' }>['args'];
@@ -876,31 +877,74 @@ export async function handleSearchReplace(
   const visibleLines = hydrated.content.endsWith('\n') ? rawLines.slice(0, -1) : rawLines;
   const isMultiLineSearch = search.includes('\n');
 
-  // --- Multi-line search path ---
-  if (isMultiLineSearch) {
-    if (replace_all === true) {
+  // Web keeps this policy boundary explicit for now. All supported shapes use
+  // the same deterministic matcher/splicer as the CLI below; only compiling
+  // several multi-line replacements into one hashline transaction remains a
+  // web-shell concern.
+  if (isMultiLineSearch && replace_all === true) {
+    const err: StructuredToolError = {
+      type: 'EDIT_GUARD_BLOCKED',
+      retryable: true,
+      message: `Multi-line replace_all is not yet supported for ${path}.`,
+      detail: 'Repeat single edits or use unique surrounding context.',
+    };
+    return {
+      text: formatStructuredError(
+        err,
+        [
+          `[Tool Error — sandbox_search_replace]`,
+          `Multi-line replace_all is not yet supported for ${path}.`,
+          `Repeat single edits or use unique surrounding context.`,
+        ].join('\n'),
+      ),
+      structuredError: err,
+    };
+  }
+
+  const applied = applySearchReplace(hydrated.content, {
+    search,
+    replace,
+    ...(replace_all === true ? { replace_all: true } : {}),
+  });
+
+  if ('error' in applied) {
+    if ((applied.occurrences ?? 0) > 1) {
+      const MAX_SHOWN = 5;
+      const matchingIndices = [
+        ...new Set(
+          (applied.locations ?? []).map(
+            (match) => hydrated.content.slice(0, match.start).split('\n').length - 1,
+          ),
+        ),
+      ];
+      const shown = matchingIndices
+        .slice(0, MAX_SHOWN)
+        .map((i) => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 60)}`);
+      if ((applied.occurrences ?? 0) > MAX_SHOWN) {
+        shown.push(`  ... and ${(applied.occurrences ?? 0) - MAX_SHOWN} more`);
+      }
       const err: StructuredToolError = {
-        type: 'EDIT_GUARD_BLOCKED',
-        retryable: true,
-        message: `Multi-line replace_all is not yet supported for ${path}.`,
-        detail: 'Repeat single edits or use unique surrounding context.',
+        type: 'EDIT_HASH_MISMATCH',
+        retryable: false,
+        message: `Ambiguous: "${search.slice(0, 80)}" matches ${applied.occurrences} occurrences in ${path}.`,
+        detail: shown.join('\n'),
       };
       return {
         text: formatStructuredError(
           err,
           [
             `[Tool Error — sandbox_search_replace]`,
-            `Multi-line replace_all is not yet supported for ${path}.`,
-            `Repeat single edits or use unique surrounding context.`,
+            `Ambiguous: "${search.slice(0, 80)}" matches ${applied.occurrences} occurrences in ${path}.`,
+            `Add more surrounding context to make the search unique:`,
+            ...shown,
           ].join('\n'),
         ),
         structuredError: err,
       };
     }
 
-    const visibleContent = visibleLines.join('\n');
-    const firstIdx = visibleContent.indexOf(search);
-    if (firstIdx === -1) {
+    if (isMultiLineSearch) {
+      const visibleContent = visibleLines.join('\n');
       const normalizedSearch = normalizeUnicode(search);
       const normalizedContent = normalizeUnicode(visibleContent);
       const fuzzyIdx = normalizedContent.indexOf(normalizedSearch);
@@ -945,80 +989,6 @@ export async function handleSearchReplace(
       };
     }
 
-    const secondIdx = visibleContent.indexOf(search, firstIdx + 1);
-    if (secondIdx !== -1) {
-      const firstLineNo = visibleContent.slice(0, firstIdx).split('\n').length;
-      const secondLineNo = visibleContent.slice(0, secondIdx).split('\n').length;
-      const err: StructuredToolError = {
-        type: 'EDIT_HASH_MISMATCH',
-        retryable: false,
-        message: `Ambiguous: multi-line search matches at least 2 locations in ${path} (lines ${firstLineNo} and ${secondLineNo}).`,
-        detail: `Add more surrounding context to make the search unique.`,
-      };
-      return {
-        text: formatStructuredError(
-          err,
-          [
-            `[Tool Error — sandbox_search_replace]`,
-            `Ambiguous: multi-line search matches at least 2 locations in ${path}.`,
-            `First match near line ${firstLineNo}, second near line ${secondLineNo}.`,
-            `Add more surrounding context to make the search unique.`,
-          ].join('\n'),
-        ),
-        structuredError: err,
-      };
-    }
-
-    const matchEndIdx = firstIdx + search.length;
-    const matchStartLine = visibleContent.slice(0, firstIdx).split('\n').length;
-    const matchEndLine = visibleContent.slice(0, matchEndIdx).split('\n').length;
-
-    const prefixStartIdx = visibleContent.lastIndexOf('\n', firstIdx - 1) + 1;
-    const prefix = visibleContent.slice(prefixStartIdx, firstIdx);
-    const suffixEndIdx = visibleContent.indexOf('\n', matchEndIdx);
-    const suffix = visibleContent.slice(
-      matchEndIdx,
-      suffixEndIdx === -1 ? undefined : suffixEndIdx,
-    );
-    const replacementContent = prefix + replace + suffix;
-
-    const { ops } = await buildRangeReplaceHashlineOps(
-      hydrated.content,
-      matchStartLine,
-      matchEndLine,
-      replacementContent,
-    );
-
-    const hydratedLineCount = hydrated.content.split('\n').length;
-    const hydratedSymbols = extractSignaturesWithLines(hydrated.content);
-    ctx.recordLedgerRead(path, {
-      truncated: hydrated.truncated,
-      totalLines: hydratedLineCount,
-      symbols: hydratedSymbols,
-    });
-    ctx.syncReadSnapshot(ctx.sandboxId, path, hydrated);
-    ctx.setPrefetchedEditFile(
-      ctx.sandboxId,
-      path,
-      hydrated.content,
-      typeof hydrated.version === 'string' ? hydrated.version : undefined,
-      typeof hydrated.workspace_revision === 'number' ? hydrated.workspace_revision : undefined,
-      hydrated.truncated,
-    );
-
-    return handleEditFile(ctx, {
-      path,
-      edits: ops,
-      expected_version: expected_version ?? hydrated.version ?? undefined,
-    });
-  }
-
-  // --- Single-line search path ---
-  const matchingIndices = visibleLines
-    .map((line, i) => (line.includes(search) ? i : -1))
-    .filter((i) => i !== -1);
-
-  if (matchingIndices.length === 0) {
     const normalized = normalizeUnicode(search);
     const fuzzyMatches = visibleLines
       .map((line, i) => (normalizeUnicode(line).includes(normalized) ? i : -1))
@@ -1071,62 +1041,69 @@ export async function handleSearchReplace(
     };
   }
 
-  if (matchingIndices.length > 1 && replace_all !== true) {
-    const MAX_SHOWN = 5;
-    const shown = matchingIndices
-      .slice(0, MAX_SHOWN)
-      .map((i) => `  L${i + 1}: ${visibleLines[i].trim().slice(0, 60)}`);
-    if (matchingIndices.length > MAX_SHOWN)
-      shown.push(`  ... and ${matchingIndices.length - MAX_SHOWN} more`);
-    const err: StructuredToolError = {
-      type: 'EDIT_HASH_MISMATCH',
-      retryable: false,
-      message: `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
-      detail: shown.join('\n'),
-    };
-    return {
-      text: formatStructuredError(
-        err,
-        [
-          `[Tool Error — sandbox_search_replace]`,
-          `Ambiguous: "${search.slice(0, 80)}" matches ${matchingIndices.length} lines in ${path}.`,
-          `Add more surrounding context to make the search unique:`,
-          ...shown,
-        ].join('\n'),
-      ),
-      structuredError: err,
-    };
-  }
-
   let ops: HashlineOp[];
-  if (replace_all === true) {
+  if (isMultiLineSearch) {
+    const match = applied.matches[0];
+    const matchStartLine = hydrated.content.slice(0, match.start).split('\n').length;
+    // A search that includes the file's terminal newline matches to
+    // content.length; slice(0, end) then ends with '\n' and split() counts one
+    // line past the last visible one, which buildRangeReplaceHashlineOps
+    // rejects. Clamp to the last visible line — the trailing newline is the
+    // file terminator, not a line of its own (Codex P2 on #1568).
+    const matchEndsAtEof = match.end === hydrated.content.length && hydrated.content.endsWith('\n');
+    const matchEndLine =
+      hydrated.content.slice(0, match.end).split('\n').length - (matchEndsAtEof ? 1 : 0);
+    const prefixStartIdx = hydrated.content.lastIndexOf('\n', match.start - 1) + 1;
+    const prefix = hydrated.content.slice(prefixStartIdx, match.start);
+    const suffixEndIdx = hydrated.content.indexOf('\n', match.end);
+    const suffix = hydrated.content.slice(
+      match.end,
+      suffixEndIdx === -1 ? undefined : suffixEndIdx,
+    );
+    const resultReplacementEnd = applied.content.length - (hydrated.content.length - match.end);
+    let normalizedReplacement = applied.content.slice(match.resultStart, resultReplacementEnd);
+    // The clamped EOF match consumed the file's terminal newline, which the
+    // hashline pipeline re-adds on serialize. Keeping the replacement's own
+    // trailing newline would split into a spurious empty visible line.
+    if (matchEndsAtEof && normalizedReplacement.endsWith('\n')) {
+      normalizedReplacement = normalizedReplacement.slice(0, -1);
+    }
+    const replacementContent = prefix + normalizedReplacement + suffix;
+    ({ ops } = await buildRangeReplaceHashlineOps(
+      hydrated.content,
+      matchStartLine,
+      matchEndLine,
+      replacementContent,
+    ));
+  } else {
+    const matchingIndices = [
+      ...new Set(
+        applied.matches.map(
+          (match) => hydrated.content.slice(0, match.start).split('\n').length - 1,
+        ),
+      ),
+    ];
     ops = await Promise.all(
       matchingIndices.map(async (targetIdx) => {
         const originalLine = visibleLines[targetIdx];
-        const newContent = originalLine.split(search).join(replace);
+        const lineResult = applySearchReplace(originalLine, {
+          search,
+          replace,
+          replace_all: true,
+        });
+        if ('error' in lineResult) {
+          throw new Error(
+            `Shared search/replace match could not be replayed on line ${targetIdx + 1}`,
+          );
+        }
         const anchorHash = await calculateLineHash(originalLine, 7);
         return {
           op: 'replace_line' as const,
           ref: `${targetIdx + 1}:${anchorHash}`,
-          content: newContent,
+          content: lineResult.content,
         };
       }),
     );
-  } else {
-    const targetIdx = matchingIndices[0];
-    const originalLine = visibleLines[targetIdx];
-    const newContent = originalLine.replace(search, () => replace);
-    const newLines = newContent.split('\n');
-    const lineNo = targetIdx + 1;
-    const anchorHash = await calculateLineHash(originalLine, 7);
-    const anchorRef = `${lineNo}:${anchorHash}`;
-
-    ops = [{ op: 'replace_line', ref: anchorRef, content: newLines[0] }];
-    if (newLines.length > 1) {
-      for (const line of newLines.slice(1)) {
-        ops.push({ op: 'insert_after', ref: anchorRef, content: line });
-      }
-    }
   }
 
   const hydratedLineCount = hydrated.content.split('\n').length;

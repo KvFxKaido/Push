@@ -210,7 +210,7 @@ export const FILE_MUTATION_TOOLS = new Set(['write_file', 'edit_file', 'undo_edi
 export const REPEAT_EXEMPT_TOOLS = new Set(['exec_poll', 'exec_wait']);
 
 export function isFileMutationToolCall(call) {
-  return Boolean(call && FILE_MUTATION_TOOLS.has(call.tool));
+  return Boolean(call && FILE_MUTATION_TOOLS.has(canonicalizeCliToolName(call.tool)));
 }
 
 // Shared symbol-detection patterns used by read_symbols and read_symbol
@@ -628,6 +628,10 @@ function pruneExecSessions() {
 // but uses different canonical names; this map is intentionally CLI-local.
 const CLI_TOOL_ALIASES = new Map([
   ['artifact', 'create_artifact'],
+  // Kimi K3's native harness exposes the exact search/replace primitive as
+  // `Edit`. Provider-family schema naming advertises that form; dispatch stays
+  // on the CLI-native edit_file implementation.
+  ['Edit', 'edit_file'],
   // Accept the registry/web public names (and long-form sandbox aliases) as
   // synonyms for the CLI-native branch tools, so models trained on the web
   // vocabulary resolve to the CLI tool regardless of which name they emit.
@@ -2431,7 +2435,9 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
   }
 
   try {
-    switch (call.tool) {
+    // Public provider-family aliases (notably Kimi K3's `Edit`) execute through
+    // the same canonical cases used by policy, hooks, and capability checks.
+    switch (callCanonical) {
       case 'memory_grep':
       case 'memory_expand': {
         // Scope reads to the workspace's repo/branch from git — never from

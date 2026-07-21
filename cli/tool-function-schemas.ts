@@ -8,6 +8,7 @@ import {
   type ToolSchemaContext,
 } from '../lib/tool-function-schemas.ts';
 import type { ToolRegistrySource } from '../lib/tool-registry.ts';
+import { getProviderToolPublicName } from '../lib/provider-definition.ts';
 import { READ_ONLY_TOOL_PROTOCOL, TOOL_PROTOCOL } from './tools.js';
 
 const CLI_TOOL_LINE_RE = /^- ([A-Za-z_][A-Za-z0-9_]*)\(([^)]*)\) \u2014 ([^\n]+)$/gm;
@@ -112,7 +113,11 @@ export function getCliNativeToolSchemas(options: CliToolSchemaOptions = {}): Too
   const extras = (options.extraProtocolBlocks ?? []).flatMap((block) =>
     parseProtocolSchemas(block),
   );
-  const base = extras.length > 0 ? [...fullCliSchemas, ...extras] : fullCliSchemas;
+  const unboundBase = extras.length > 0 ? [...fullCliSchemas, ...extras] : fullCliSchemas;
+  const base = unboundBase.map((schema) => ({
+    ...schema,
+    name: getProviderToolPublicName(options.provider, options.model, schema.name),
+  }));
   if (!options.includeGitHub) return base;
   return [
     ...base,

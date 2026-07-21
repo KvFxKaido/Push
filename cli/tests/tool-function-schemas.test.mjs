@@ -68,6 +68,26 @@ describe('CLI native tool function schemas', () => {
     assert.ok(schemas.has('pr_create'));
     assert.ok(schemas.has('pr_merge'));
   });
+
+  it('renames edit_file for Kimi K3 while preserving the executable schema shape', () => {
+    const schemas = byName(
+      getCliNativeToolSchemas({ provider: 'openrouter', model: 'moonshotai/kimi-k3' }),
+    );
+    assert.equal(schemas.has('edit_file'), false);
+    assert.ok(schemas.has('Edit'));
+    assert.ok(schemas.get('Edit').input_schema.properties.old_string);
+    assert.ok(schemas.get('Edit').input_schema.properties.new_string);
+  });
+
+  it('keeps GLM and DeepSeek on their trained edit_file name', () => {
+    for (const [provider, model] of [
+      ['zai', 'glm-5.1'],
+      ['deepseek', 'deepseek-v4'],
+    ]) {
+      const schemas = byName(getCliNativeToolSchemas({ provider, model }));
+      assert.ok(schemas.has('edit_file'), `${provider}/${model} missing edit_file`);
+    }
+  });
 });
 
 describe('CLI native tool calling gate', () => {

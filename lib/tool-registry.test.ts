@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { TOOL_REGISTRY_SCHEMA_VERSION } from './tool-registry.js';
+import { resolveToolName, TOOL_REGISTRY_SCHEMA_VERSION } from './tool-registry.js';
 
 describe('TOOL_REGISTRY_SCHEMA_VERSION', () => {
   it('is a stable 8-character hex string', () => {
@@ -20,5 +20,13 @@ describe('TOOL_REGISTRY_SCHEMA_VERSION', () => {
     const a = TOOL_REGISTRY_SCHEMA_VERSION;
     const b = TOOL_REGISTRY_SCHEMA_VERSION;
     expect(a).toBe(b);
+  });
+});
+
+describe('model-family edit aliases', () => {
+  it('routes learned public names to the exact search/replace primitive', () => {
+    expect(resolveToolName('Edit')).toBe('sandbox_search_replace');
+    expect(resolveToolName('edit_file')).toBe('sandbox_search_replace');
+    expect(resolveToolName('sandbox_edit_file')).toBe('sandbox_edit_file');
   });
 });

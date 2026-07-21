@@ -1253,6 +1253,8 @@ export async function runInPageCoderKernel(
             hasTodo: Boolean(spec.todo),
           }),
           {
+            provider: spec.provider,
+            model: spec.modelId,
             // Pin the GitHub tools' `repo` arg to the active repo so the model
             // emits it correctly instead of a placeholder that trips the
             // executor's repo-mismatch rejection (validation_failed churn).
