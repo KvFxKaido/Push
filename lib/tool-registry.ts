@@ -442,8 +442,9 @@ const TOOL_SPECS: readonly ToolSpec[] = [
     source: 'sandbox',
     readOnly: false,
     statusLabel: 'Sandbox operation...',
-    protocolSignature: 'replace(path, search, replace, expected_version?)',
-    protocolDescription: 'Replace a unique substring match in one file',
+    protocolSignature: 'replace(path, search, replace, replace_all?, expected_version?)',
+    protocolDescription:
+      'Replace an exact substring match in one file; old_string/new_string are aliases for search/replace, and replace_all replaces every single-line occurrence (multi-line replace_all is not yet supported)',
     exampleJson:
       '{"tool": "replace", "args": {"path": "/workspace/src/app.ts", "search": "oldValue", "replace": "newValue"}}',
   },

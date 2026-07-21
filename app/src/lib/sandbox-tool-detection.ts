@@ -105,7 +105,13 @@ export type SandboxToolCall =
     }
   | {
       tool: 'sandbox_search_replace';
-      args: { path: string; search: string; replace: string; expected_version?: string };
+      args: {
+        path: string;
+        search: string;
+        replace: string;
+        replace_all?: boolean;
+        expected_version?: string;
+      };
     }
   | {
       tool: 'sandbox_edit_file';
@@ -225,6 +231,39 @@ function parsePatchsetEdit(value: unknown): SandboxPatchsetEdit | null {
   return null;
 }
 
+function hasOwnArg(args: Record<string, unknown>, name: string): boolean {
+  return Object.prototype.hasOwnProperty.call(args, name);
+}
+
+function hasSearchReplaceArgs(args: Record<string, unknown>): boolean {
+  return ['search', 'replace', 'old_string', 'new_string', 'replace_all'].some((name) =>
+    hasOwnArg(args, name),
+  );
+}
+
+function normalizeSearchReplaceArgs(
+  args: Record<string, unknown>,
+): { search: string; replace: string; replace_all?: boolean } | null {
+  const hasSearch = hasOwnArg(args, 'search');
+  const hasOldString = hasOwnArg(args, 'old_string');
+  const hasReplace = hasOwnArg(args, 'replace');
+  const hasNewString = hasOwnArg(args, 'new_string');
+
+  if (hasSearch && hasOldString && args.search !== args.old_string) return null;
+  if (hasReplace && hasNewString && args.replace !== args.new_string) return null;
+  if (hasOwnArg(args, 'replace_all') && typeof args.replace_all !== 'boolean') return null;
+
+  const search = hasSearch ? args.search : args.old_string;
+  const replace = hasReplace ? args.replace : args.new_string;
+  if (typeof search !== 'string' || !search || typeof replace !== 'string') return null;
+
+  return {
+    search,
+    replace,
+    ...(typeof args.replace_all === 'boolean' ? { replace_all: args.replace_all } : {}),
+  };
+}
+
 export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null {
   const parsedObj = asRecord(parsed);
   if (!parsedObj) return null;
@@ -296,19 +335,14 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       },
     };
   }
-  if (
-    tool === 'sandbox_search_replace' &&
-    typeof args.path === 'string' &&
-    typeof args.search === 'string' &&
-    typeof args.replace === 'string'
-  ) {
-    if (!args.search) return null; // empty search matches everything — reject
+  if (tool === 'sandbox_search_replace' && typeof args.path === 'string') {
+    const normalizedArgs = normalizeSearchReplaceArgs(args);
+    if (!normalizedArgs) return null;
     return {
       tool: 'sandbox_search_replace',
       args: {
         path: normalizeSandboxPath(args.path),
-        search: args.search,
-        replace: args.replace,
+        ...normalizedArgs,
         expected_version:
           typeof args.expected_version === 'string' ? args.expected_version : undefined,
       },
@@ -329,16 +363,36 @@ export function validateSandboxToolCall(parsed: unknown): SandboxToolCall | null
       },
     };
   }
-  if (tool === 'sandbox_edit_file' && typeof args.path === 'string' && Array.isArray(args.edits)) {
-    return {
-      tool: 'sandbox_edit_file',
-      args: {
-        path: normalizeSandboxPath(args.path),
-        edits: args.edits as HashlineOp[],
-        expected_version:
-          typeof args.expected_version === 'string' ? args.expected_version : undefined,
-      },
-    };
+  if (tool === 'sandbox_edit_file' && typeof args.path === 'string') {
+    const hasEdits = hasOwnArg(args, 'edits');
+    const hasSearchArgs = hasSearchReplaceArgs(args);
+    if (hasEdits && hasSearchArgs) return null;
+
+    if (Array.isArray(args.edits)) {
+      return {
+        tool: 'sandbox_edit_file',
+        args: {
+          path: normalizeSandboxPath(args.path),
+          edits: args.edits as HashlineOp[],
+          expected_version:
+            typeof args.expected_version === 'string' ? args.expected_version : undefined,
+        },
+      };
+    }
+
+    if (!hasEdits && hasSearchArgs) {
+      const normalizedArgs = normalizeSearchReplaceArgs(args);
+      if (!normalizedArgs) return null;
+      return {
+        tool: 'sandbox_search_replace',
+        args: {
+          path: normalizeSandboxPath(args.path),
+          ...normalizedArgs,
+          expected_version:
+            typeof args.expected_version === 'string' ? args.expected_version : undefined,
+        },
+      };
+    }
   }
   if (tool === 'sandbox_list_dir') {
     return {
