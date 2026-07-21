@@ -158,6 +158,31 @@ describe('git_switch_branch', () => {
     }
   });
 
+  it('prefers an exact local branch over prefix-stripping (shadow names)', async () => {
+    // Arbitrary repos opened by the CLI can legitimately contain a local
+    // branch literally named `origin/x` — normalization must not silently
+    // redirect a switch to `x` (the #1570 fugu/Codex convergent finding).
+    const git = (args) => execFileAsync('git', args, { cwd: repo });
+    await git(['branch', 'origin/feature/widget']);
+    const result = await executeToolCall(
+      { tool: 'git_switch_branch', args: { branch: 'origin/feature/widget' } },
+      repo,
+    );
+    assert.equal(result.ok, true, result.text);
+    assert.equal(result.meta?.branch, 'origin/feature/widget');
+    assert.equal(await currentBranch(repo), 'origin/feature/widget');
+  });
+
+  it('git_create_branch refuses origin/* shadow names (matching the web guard)', async () => {
+    const result = await executeToolCall(
+      { tool: 'git_create_branch', args: { name: 'origin/feature/new' } },
+      repo,
+    );
+    assert.equal(result.ok, false);
+    assert.equal(result.structuredError?.code, 'INVALID_ARG');
+    assert.equal(await currentBranch(repo), 'main', 'branch must be unchanged');
+  });
+
   it('reaches a branch absent from a single-branch shallow clone (the web-sandbox clone shape)', async () => {
     const { base, work } = await makeSingleBranchClone();
     try {

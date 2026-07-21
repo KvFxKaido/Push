@@ -7,7 +7,7 @@ import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from
 import { applySearchReplace } from './search-replace.js';
 import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { MAX_SIDE_EFFECT_CHAIN } from '../lib/tool-call-grouping.ts';
-import { normalizeBranchInput } from '../lib/git/branch-input.ts';
+import { isRemoteTrackingShadowBranchName, normalizeBranchInput } from '../lib/git/branch-input.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { spawnCommandInResolvedShell } from './shell.js';
@@ -3767,6 +3767,21 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
             },
           };
         }
+        // Refuse `origin/*` shadow names, matching the web create guard — a
+        // local refs/heads/origin/x intercepts remote-tracking lookups and
+        // collides with the input spelling normalizeBranchInput accepts.
+        // (Names only; `from: origin/main` below stays a valid start point.)
+        if (isRemoteTrackingShadowBranchName(name)) {
+          return {
+            ok: false,
+            text: `Invalid branch name "${name}". A local branch under the origin/ prefix shadows the remote-tracking namespace; pick a name without the origin/ prefix.`,
+            structuredError: {
+              code: 'INVALID_ARG',
+              message: 'Branch name shadows the remote-tracking namespace',
+              retryable: false,
+            },
+          };
+        }
         if (from && isInvalidGitRef(from)) {
           return {
             ok: false,
@@ -3812,9 +3827,25 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'sandbox_switch_branch':
       case 'git_switch_branch': {
         // Normalize `origin/x` / `remotes/origin/x` spellings (models copy
-        // them out of `git branch -a`) to the plain branch name before
-        // validation — see normalizeBranchInput.
-        const branch = normalizeBranchInput(asString(call.args.branch, 'branch'));
+        // them out of `git branch -a`) to the plain branch name — but an
+        // EXACT local branch match wins over stripping: the CLI opens
+        // arbitrary repos that may already contain a local `origin/x`
+        // (Push refuses to create such shadow names, other tools don't),
+        // and silently redirecting that switch to `x` lands on the wrong
+        // branch (the #1570 fugu/Codex convergent finding).
+        const rawBranch = asString(call.args.branch, 'branch').trim();
+        let branch = normalizeBranchInput(rawBranch);
+        if (branch !== rawBranch && !isInvalidGitRef(rawBranch)) {
+          const exact = await execFileAsync(
+            'git',
+            ['show-ref', '--verify', '--quiet', `refs/heads/${rawBranch}`],
+            { cwd: workspaceRoot },
+          ).then(
+            () => true,
+            () => false,
+          );
+          if (exact) branch = rawBranch;
+        }
 
         // Shared ref validation (see isInvalidGitRef). Branch-only (no path
         // operand), so the syntactic ambiguity that makes raw `git checkout
