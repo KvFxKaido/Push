@@ -331,6 +331,46 @@ describe('composer prompt-history recall (surface integration)', () => {
     }
   });
 
+  it('Tab completion ends the run — Down keeps the completed text, not the stash', {
+    skip: silverySkip,
+  }, async () => {
+    // Codex P2 on #1565: complete() edits the composer through setInput
+    // directly, bypassing changeComposerInput's reset. Without its own reset,
+    // Down after completing a recalled entry restores the pre-recall stash
+    // and silently discards the completed edit.
+    const { stdin, hook, instance, lifecycle } = await mountSurface(['/mod']);
+    try {
+      hook.setComposerInput('draft x');
+      await sleep(80);
+
+      stdin.send(UP);
+      await waitForInput(hook, '/mod');
+
+      hook.complete();
+      let completed = '';
+      for (let i = 0; i < 100; i++) {
+        completed = hook.getComposerState().input;
+        if (completed.startsWith('/model')) break;
+        await sleep(10);
+      }
+      assert.ok(completed.startsWith('/model'), `Tab should complete /mod, got '${completed}'`);
+
+      // The run is over: Down must not restore 'draft x' over the completion.
+      stdin.send(DOWN);
+      await sleep(120);
+      assert.equal(hook.getComposerState().input, completed);
+
+      // And a fresh Up stashes the completed text, so Down brings it back.
+      stdin.send(UP);
+      await waitForInput(hook, '/mod');
+      stdin.send(DOWN);
+      await waitForInput(hook, completed);
+    } finally {
+      instance.unmount();
+      await lifecycle;
+    }
+  });
+
   it('a submitted prompt is recallable on the next Up', {
     skip: silverySkip,
   }, async () => {

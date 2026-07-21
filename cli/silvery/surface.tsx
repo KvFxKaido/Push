@@ -1737,10 +1737,15 @@ export function PushSurface({
     (reverse = false) => {
       const result = completer.tab(input, reverse);
       if (!result) return;
+      // Tab completion is a user edit like any keystroke: it must end the
+      // recall run, or Down afterwards restores the pre-recall stash and
+      // discards the completed text (Codex P2 on #1565). It bypasses
+      // changeComposerInput's reset by design, so reset here.
+      historyNav.reset();
       setInput(result.text);
       setCompletionRevision((revision) => revision + 1);
     },
-    [completer, input],
+    [completer, historyNav, input],
   );
 
   useEffect(() => {
