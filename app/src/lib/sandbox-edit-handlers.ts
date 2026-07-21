@@ -823,7 +823,7 @@ export async function handleSearchReplace(
   ctx: EditHandlerContext,
   args: SearchReplaceArgs,
 ): Promise<ToolExecutionResult> {
-  const { path, search, replace, expected_version } = args;
+  const { path, search, replace, replace_all, expected_version } = args;
 
   // Refuse before the base read — same guard handleEditFile enforces.
   if (isSensitivePath(path)) {
@@ -878,6 +878,26 @@ export async function handleSearchReplace(
 
   // --- Multi-line search path ---
   if (isMultiLineSearch) {
+    if (replace_all === true) {
+      const err: StructuredToolError = {
+        type: 'EDIT_GUARD_BLOCKED',
+        retryable: true,
+        message: `Multi-line replace_all is not yet supported for ${path}.`,
+        detail: 'Repeat single edits or use unique surrounding context.',
+      };
+      return {
+        text: formatStructuredError(
+          err,
+          [
+            `[Tool Error — sandbox_search_replace]`,
+            `Multi-line replace_all is not yet supported for ${path}.`,
+            `Repeat single edits or use unique surrounding context.`,
+          ].join('\n'),
+        ),
+        structuredError: err,
+      };
+    }
+
     const visibleContent = visibleLines.join('\n');
     const firstIdx = visibleContent.indexOf(search);
     if (firstIdx === -1) {
@@ -1051,7 +1071,7 @@ export async function handleSearchReplace(
     };
   }
 
-  if (matchingIndices.length > 1) {
+  if (matchingIndices.length > 1 && replace_all !== true) {
     const MAX_SHOWN = 5;
     const shown = matchingIndices
       .slice(0, MAX_SHOWN)
@@ -1078,18 +1098,34 @@ export async function handleSearchReplace(
     };
   }
 
-  const targetIdx = matchingIndices[0];
-  const originalLine = visibleLines[targetIdx];
-  const newContent = originalLine.replace(search, () => replace);
-  const newLines = newContent.split('\n');
-  const lineNo = targetIdx + 1;
-  const anchorHash = await calculateLineHash(originalLine, 7);
-  const anchorRef = `${lineNo}:${anchorHash}`;
+  let ops: HashlineOp[];
+  if (replace_all === true) {
+    ops = await Promise.all(
+      matchingIndices.map(async (targetIdx) => {
+        const originalLine = visibleLines[targetIdx];
+        const newContent = originalLine.split(search).join(replace);
+        const anchorHash = await calculateLineHash(originalLine, 7);
+        return {
+          op: 'replace_line' as const,
+          ref: `${targetIdx + 1}:${anchorHash}`,
+          content: newContent,
+        };
+      }),
+    );
+  } else {
+    const targetIdx = matchingIndices[0];
+    const originalLine = visibleLines[targetIdx];
+    const newContent = originalLine.replace(search, () => replace);
+    const newLines = newContent.split('\n');
+    const lineNo = targetIdx + 1;
+    const anchorHash = await calculateLineHash(originalLine, 7);
+    const anchorRef = `${lineNo}:${anchorHash}`;
 
-  const ops: HashlineOp[] = [{ op: 'replace_line', ref: anchorRef, content: newLines[0] }];
-  if (newLines.length > 1) {
-    for (const line of newLines.slice(1)) {
-      ops.push({ op: 'insert_after', ref: anchorRef, content: line });
+    ops = [{ op: 'replace_line', ref: anchorRef, content: newLines[0] }];
+    if (newLines.length > 1) {
+      for (const line of newLines.slice(1)) {
+        ops.push({ op: 'insert_after', ref: anchorRef, content: line });
+      }
     }
   }
 

@@ -4,6 +4,7 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
 import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from './hashline.js';
+import { applySearchReplace } from './search-replace.js';
 import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { MAX_SIDE_EFFECT_CHAIN } from '../lib/tool-call-grouping.ts';
 import { runDiagnostics } from './diagnostics.js';
@@ -185,7 +186,7 @@ export const READ_ONLY_TOOLS = new Set([
 // vocabulary from the sandbox tools in `FILE_MUTATION_CANONICAL_NAMES`
 // (`lib/tool-registry.ts`). Membership intentionally differs: the local
 // executor exposes `undo_edit` and does its editing through `write_file` /
-// `edit_file` (hashline), and never registers
+// `edit_file` (hashline or exact search/replace), and never registers
 // `sandbox_edit_range`/`_search_replace`/`_apply_patchset`. Do NOT try to
 // "sync" the two sets — `sandbox_*` names never reach this classifier (those
 // route through the registry path in `app/src/lib/tool-dispatch.ts`), so
@@ -1003,7 +1004,7 @@ Available tools:
 - exec_stop(session_id, signal?) — stop a running command session and release it
 - exec_list_sessions() — list active/finished command sessions
 - write_file(path, content) — write full file content
-- edit_file(path, edits, expected_version?) — surgical hashline edits. edits[] ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content
+- edit_file(path, edits?, search?, replace?, old_string?, new_string?, replace_all?, expected_version?) — two shapes: (a) surgical hashline edits via edits[] (ops: replace_line | insert_after | insert_before | delete_line, each with ref and optional content); (b) exact search/replace via search+replace (aliases old_string+new_string), optional replace_all — search must match exactly once unless replace_all
 - read_symbols(path) — extract function/class/type declarations from a file
 - read_symbol(path, symbol) — read a specific symbol's full body (function, class, type, interface) by name. More efficient than reading the whole file when you know which symbol you need.
 - git_status() — workspace git status (branch, dirty files)
@@ -3181,10 +3182,77 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           workspaceRoot,
           asString(call.args.path, 'path'),
         );
-        const edits = Array.isArray(call.args.edits) ? call.args.edits : null;
-        if (!edits) throw new Error('edits must be an array');
+        const hasArg = (name) => Object.prototype.hasOwnProperty.call(call.args, name);
+        const hasEditsArg = hasArg('edits');
+        const searchArgNames = ['search', 'replace', 'old_string', 'new_string', 'replace_all'];
+        const hasSearchArgs = searchArgNames.some(hasArg);
 
-        await backupFile(filePath, workspaceRoot);
+        if (hasEditsArg && hasSearchArgs) {
+          return {
+            ok: false,
+            text: 'Ambiguous edit_file call: provide either edits[] or search/replace arguments, not both.',
+            structuredError: {
+              code: 'EDIT_AMBIGUOUS',
+              message: 'edit_file received both hashline edits and search/replace arguments',
+              retryable: true,
+            },
+            meta: { path: filePath },
+          };
+        }
+
+        const edits = Array.isArray(call.args.edits) ? call.args.edits : null;
+        if (!edits && !hasSearchArgs) {
+          throw new Error(
+            'edits must be an array, or provide search+replace (aliases old_string+new_string)',
+          );
+        }
+        if (hasEditsArg && !edits) {
+          throw new Error(
+            'edits must be an array, or provide search+replace (aliases old_string+new_string)',
+          );
+        }
+
+        let searchReplaceArgs = null;
+        if (hasSearchArgs) {
+          const hasSearch = hasArg('search');
+          const hasOldString = hasArg('old_string');
+          const hasReplace = hasArg('replace');
+          const hasNewString = hasArg('new_string');
+          const search = hasSearch
+            ? asString(call.args.search, 'search')
+            : asString(call.args.old_string, 'old_string');
+          const replace = hasReplace
+            ? asString(call.args.replace, 'replace')
+            : asString(call.args.new_string, 'new_string');
+
+          if (
+            (hasSearch &&
+              hasOldString &&
+              search !== asString(call.args.old_string, 'old_string')) ||
+            (hasReplace && hasNewString && replace !== asString(call.args.new_string, 'new_string'))
+          ) {
+            return {
+              ok: false,
+              text: 'Ambiguous edit_file call: search/replace aliases contain conflicting values.',
+              structuredError: {
+                code: 'EDIT_AMBIGUOUS',
+                message: 'search/replace aliases contain conflicting values',
+                retryable: true,
+              },
+              meta: { path: filePath },
+            };
+          }
+          if (hasArg('replace_all') && typeof call.args.replace_all !== 'boolean') {
+            throw new Error('replace_all must be a boolean');
+          }
+
+          searchReplaceArgs = {
+            search,
+            replace,
+            ...(hasArg('replace_all') ? { replace_all: call.args.replace_all } : {}),
+          };
+        }
+
         const before = await fs.readFile(filePath, 'utf8');
         const versionBefore = calculateContentVersion(before);
 
@@ -3204,13 +3272,78 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
           }
         }
 
-        const applied = applyHashlineEdits(before, edits);
-        await fs.writeFile(filePath, applied.content, 'utf8');
-        const versionAfter = calculateContentVersion(applied.content);
+        let appliedContent;
+        let editCount;
+        let warnings;
+        let affectedLines;
+        let successText;
+
+        if (searchReplaceArgs) {
+          const applied = applySearchReplace(before, searchReplaceArgs);
+          if ('error' in applied) {
+            const ambiguous = typeof applied.occurrences === 'number' && applied.occurrences > 1;
+            return {
+              ok: false,
+              text: `Search/replace edit failed: ${applied.error}.`,
+              structuredError: {
+                code: ambiguous ? 'EDIT_AMBIGUOUS' : 'EDIT_NO_MATCH',
+                message: applied.error,
+                retryable: true,
+              },
+              meta: {
+                path: filePath,
+                version_before: versionBefore,
+                ...(typeof applied.occurrences === 'number'
+                  ? { occurrences: applied.occurrences }
+                  : {}),
+              },
+            };
+          }
+
+          appliedContent = applied.content;
+          editCount = applied.count;
+          warnings = [];
+          // Single forward pass over the result: matches arrive in ascending
+          // resultStart order, so count newlines incrementally instead of
+          // re-splitting the whole prefix per match (quadratic on large
+          // replace_all runs). Dedupe so several matches on one line don't
+          // repeat an identical context preview.
+          {
+            let lineNo = 1;
+            let scanned = 0;
+            const seen = new Set();
+            affectedLines = [];
+            for (const { resultStart } of applied.matches) {
+              for (; scanned < resultStart; scanned += 1) {
+                if (applied.content[scanned] === '\n') lineNo += 1;
+              }
+              if (!seen.has(lineNo)) {
+                seen.add(lineNo);
+                affectedLines.push(lineNo);
+              }
+            }
+          }
+          successText = `Applied search/replace edit to ${path.relative(workspaceRoot, filePath) || '.'} (${applied.count} ${applied.count === 1 ? 'occurrence' : 'occurrences'})`;
+        } else {
+          const applied = applyHashlineEdits(before, edits);
+          appliedContent = applied.content;
+          editCount = applied.applied.length;
+          warnings = applied.warnings;
+          affectedLines = applied.applied.map(({ line }) => line);
+          successText = `Applied ${applied.applied.length} hashline edits to ${path.relative(workspaceRoot, filePath) || '.'}`;
+        }
+
+        // Backup only once the edit is definitely happening — a backup taken
+        // before the validation/apply returns above would become the newest
+        // .bak for this file, and undo_edit restores the newest match, so a
+        // failed edit would shadow the backup of the last successful one.
+        await backupFile(filePath, workspaceRoot);
+        await fs.writeFile(filePath, appliedContent, 'utf8');
+        const versionAfter = calculateContentVersion(appliedContent);
 
         // Build context preview around each edit site
-        const afterLines = applied.content.split('\n');
-        const previews = applied.applied.map(({ op, line }) => {
+        const afterLines = appliedContent.split('\n');
+        const previews = affectedLines.map((line) => {
           const center = line - 1; // 0-indexed
           const start = Math.max(0, center - 3);
           const end = Math.min(afterLines.length, center + 4);
@@ -3222,8 +3355,8 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         const previewText =
           previews.length > 0 ? `\n\nContext after edits:\n${previews.join('\n---\n')}` : '';
         const warningText =
-          applied.warnings.length > 0
-            ? `\n\nWarnings:\n${applied.warnings.map((warning) => `- ${warning}`).join('\n')}`
+          warnings.length > 0
+            ? `\n\nWarnings:\n${warnings.map((warning) => `- ${warning}`).join('\n')}`
             : '';
 
         // Post-edit diagnostics loop (crush pattern) — same contract as the
@@ -3236,16 +3369,16 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
         });
 
         const editRelPath = path.relative(workspaceRoot, filePath) || '.';
-        const editFileDiff = buildEditDiffMeta(editRelPath, before, applied.content);
+        const editFileDiff = buildEditDiffMeta(editRelPath, before, appliedContent);
         return {
           ok: true,
-          text: `Applied ${applied.applied.length} hashline edits to ${editRelPath}${warningText}${previewText}${editDiag.note ?? ''}`,
+          text: `${successText}${warningText}${previewText}${editDiag.note ?? ''}`,
           meta: {
             path: filePath,
-            edits: applied.applied.length,
+            edits: editCount,
             version_before: versionBefore,
             version_after: versionAfter,
-            warnings: applied.warnings.length,
+            warnings: warnings.length,
             ...(editDiag.meta ? { diagnostics: editDiag.meta } : {}),
             ...(editFileDiff ? { editDiff: editFileDiff } : {}),
             ...(editFileDiff ? { card: buildEditDiffToolCard(editFileDiff) } : {}),

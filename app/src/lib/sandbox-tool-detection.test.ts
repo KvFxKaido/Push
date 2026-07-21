@@ -119,6 +119,104 @@ describe('validateSandboxToolCall — sandbox_search_replace', () => {
       args: { search: 'foo', replace: 'bar' },
     });
   });
+
+  it('maps old_string/new_string aliases to canonical search/replace args', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: { path: 'a.ts', old_string: 'foo', new_string: 'bar' },
+      }),
+    ).toMatchObject({
+      tool: 'sandbox_search_replace',
+      args: { search: 'foo', replace: 'bar' },
+    });
+  });
+
+  it('rejects empty alias searches and conflicting canonical/alias values', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: { path: 'a.ts', old_string: '', new_string: 'bar' },
+      }),
+    ).toBeNull();
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: {
+          path: 'a.ts',
+          search: 'canonical',
+          old_string: 'different',
+          replace: 'bar',
+        },
+      }),
+    ).toBeNull();
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: {
+          path: 'a.ts',
+          search: 'foo',
+          replace: 'canonical',
+          new_string: 'different',
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('accepts boolean replace_all and rejects non-booleans', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: { path: 'a.ts', search: 'foo', replace: 'bar', replace_all: true },
+      }),
+    ).toMatchObject({ args: { search: 'foo', replace: 'bar', replace_all: true } });
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_search_replace',
+        args: { path: 'a.ts', search: 'foo', replace: 'bar', replace_all: 'true' },
+      }),
+    ).toBeNull();
+  });
+});
+
+describe('validateSandboxToolCall — sandbox_edit_file dialect fallback', () => {
+  it('normalizes search/replace args into a sandbox_search_replace call', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_edit_file',
+        args: {
+          path: 'a.ts',
+          old_string: 'foo',
+          new_string: 'bar',
+          replace_all: true,
+          expected_version: 'v1',
+        },
+      }),
+    ).toEqual({
+      tool: 'sandbox_search_replace',
+      args: {
+        path: '/workspace/a.ts',
+        search: 'foo',
+        replace: 'bar',
+        replace_all: true,
+        expected_version: 'v1',
+      },
+    });
+  });
+
+  it('rejects calls containing both edits and search-shape args', () => {
+    expect(
+      validateSandboxToolCall({
+        tool: 'sandbox_edit_file',
+        args: {
+          path: 'a.ts',
+          edits: [{ op: 'delete_line', ref: '1:abc1234' }],
+          search: 'foo',
+          replace: 'bar',
+        },
+      }),
+    ).toBeNull();
+  });
 });
 
 describe('validateSandboxToolCall — sandbox_edit_range', () => {

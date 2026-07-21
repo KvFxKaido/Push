@@ -4214,6 +4214,70 @@ describe('sandbox_search_replace', () => {
     expect(result.text).toContain('Ambiguous');
     expect(result.text).toContain('L1:');
     expect(result.text).toContain('L2:');
+    expect(result.structuredError?.type).toBe('EDIT_HASH_MISMATCH');
+    expect(result.structuredError?.retryable).toBe(false);
+    expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
+  });
+
+  it('replaces every occurrence on every matching line when replace_all is true', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'const a = null ?? null;\nconst b = null;\n';
+    const updatedContent = 'const a = undefined ?? undefined;\nconst b = undefined;\n';
+    vi.mocked(sandboxClient.readFromSandbox)
+      .mockResolvedValueOnce({ content: fileContent, truncated: false, version: 'v1' })
+      .mockResolvedValueOnce({ content: updatedContent, truncated: false, version: 'v2' });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: updatedContent.length,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'null', replace: 'undefined', replace_all: true },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      updatedContent,
+      'v1',
+    );
+  });
+
+  it('returns a structured not-yet-supported error for multi-line replace_all', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'start\nsame\nend\nstart\nsame\nend\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'start\nsame', replace: 'replacement', replace_all: true },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Multi-line replace_all is not yet supported');
+    expect(result.text).toContain('Repeat single edits or use unique surrounding context');
+    expect(result.structuredError).toMatchObject({
+      type: 'EDIT_GUARD_BLOCKED',
+      retryable: true,
+    });
     expect(vi.mocked(sandboxClient.writeToSandbox)).not.toHaveBeenCalled();
   });
 

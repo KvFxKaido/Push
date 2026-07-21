@@ -60,6 +60,7 @@ const PARAM_TYPES: Record<string, JsonSchemaType> = {
   dryRun: 'boolean',
   diagnostics: 'boolean',
   rollbackOnFailure: 'boolean',
+  replace_all: 'boolean',
   // arrays — `checks` on `patch` is an array of `{command, exitCode?,
   // timeoutMs?}` objects (`sandbox-tool-detection.ts`), NOT a boolean flag.
   checks: 'array',
