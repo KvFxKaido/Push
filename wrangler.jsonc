@@ -38,15 +38,11 @@
     "PUSH_SANDBOX_PROVIDER": "cloudflare",
     "PUSH_RELAY_ENABLED": "1",
     // Autonomous webhook PR reviewer (docs/runbooks/Enabling Autonomous PR
-    // Review.md). Provider/model/Go-route are non-secret config, so they live
-    // here in plain sight rather than as opaque secrets — the matching API key
-    // (ZEN_API_KEY) and the HMAC webhook secret (GITHUB_WEBHOOK_SECRET) stay in
-    // the secret store. PR_REVIEW_ZEN_GO routes the reviewer through the
-    // OpenCode Zen "Go" endpoint; the Worker's Go handler translates any
-    // Anthropic-transport Go models to OpenAI-shaped SSE for the DO pump.
-    "PR_REVIEW_PROVIDER": "zen",
-    "PR_REVIEW_MODEL": "glm-5.1",
-    "PR_REVIEW_ZEN_GO": "1",
+    // Review.md): provider/model resolve settings doc → legacy KV → env →
+    // built-in Sakana Fugu default. The former zen/glm-5.1 env pins were dead
+    // config (live reviews already resolve to fugu via the settings doc), so
+    // they were removed rather than left as a misleading bottom-tier override.
+    // GITHUB_WEBHOOK_SECRET and provider API keys stay in the secret store.
     // AI Gateway routing allow-lists. Non-secret (bare provider names, no
     // account-bound identifiers), so they live here rather than as opaque
     // secrets — the account-bound CF_AI_GATEWAY_ACCOUNT_ID / CF_AI_GATEWAY_SLUG
