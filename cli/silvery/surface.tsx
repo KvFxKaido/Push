@@ -1717,7 +1717,17 @@ export function PushSurface({
       // ('?' → /help, sensitive-config divert) are for keystrokes; recalled
       // text already passed them when it was first typed.
       setComposerInput(recalled);
-      recallCursor.current = recalled.length;
+      if (recalled === input) {
+        // Identical text: the TextArea already holds the recalled value, so
+        // the stale-clamp hazard the deferred path exists for can't occur —
+        // move now. The deferred path would also work today, but only because
+        // setComposerInput happens to bump completionRevision unconditionally
+        // (guaranteeing the render that consumes the pending ref); don't
+        // couple cursor correctness to that.
+        composerRef.current?.setCursor(recalled.length);
+      } else {
+        recallCursor.current = recalled.length;
+      }
       return true;
     },
     [historyNav, input, setComposerInput],

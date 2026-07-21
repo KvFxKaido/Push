@@ -295,6 +295,42 @@ describe('composer prompt-history recall (surface integration)', () => {
     }
   });
 
+  it('recalling an entry identical to the multi-line draft still moves the cursor to the end', {
+    skip: silverySkip,
+  }, async () => {
+    // Flagged by review on #1565: when the recalled text equals the current
+    // controlled value, the TextArea's value prop doesn't change, so the
+    // cursor-to-end move must not depend on a value-driven re-render. The
+    // cursor position is asserted through its behavior: at the END of a
+    // two-line entry the next Up moves the cursor up a row (no recall); only
+    // the Up after that reaches the top edge and recalls the older entry.
+    const { stdin, hook, instance, lifecycle } = await mountSurface(['other', 'same\nlines']);
+    try {
+      hook.setComposerInput('same\nlines');
+      await sleep(80);
+
+      // Cursor starts at offset 0 (row 0) — the first Up is a top edge and
+      // recalls the newest entry, which is identical to the draft.
+      stdin.send(UP);
+      await sleep(120);
+      assert.equal(hook.getComposerState().input, 'same\nlines');
+
+      // Cursor must now be at the end (row 1): this Up moves within the
+      // buffer and must NOT recall 'other'. A cursor stuck at row 0 would
+      // fire the edge again and load 'other' here.
+      stdin.send(UP);
+      await sleep(120);
+      assert.equal(hook.getComposerState().input, 'same\nlines');
+
+      // Now at row 0 — this Up is the edge and recalls the older entry.
+      stdin.send(UP);
+      await waitForInput(hook, 'other');
+    } finally {
+      instance.unmount();
+      await lifecycle;
+    }
+  });
+
   it('a submitted prompt is recallable on the next Up', {
     skip: silverySkip,
   }, async () => {
