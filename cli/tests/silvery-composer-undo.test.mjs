@@ -15,8 +15,8 @@ describe('composer undo kernel', () => {
     undo.record('h');
     undo.record('he');
     undo.record('hel');
-    assert.equal(undo.undo('hel'), '');
-    assert.equal(undo.undo(''), null);
+    assert.equal(undo.undo(), '');
+    assert.equal(undo.undo(), null);
   });
 
   it('caps a run at 20 edits (bash-style groups)', async () => {
@@ -27,8 +27,8 @@ describe('composer undo kernel', () => {
       value += 'x';
       undo.record(value);
     }
-    assert.equal(undo.undo(value), 'x'.repeat(20));
-    assert.equal(undo.undo('x'.repeat(20)), '');
+    assert.equal(undo.undo(), 'x'.repeat(20));
+    assert.equal(undo.undo(), '');
   });
 
   it('a direction change breaks the run', async () => {
@@ -37,8 +37,8 @@ describe('composer undo kernel', () => {
     undo.record('a');
     undo.record('ab');
     undo.record('a'); // backspace — delete run starts
-    assert.equal(undo.undo('a'), 'ab');
-    assert.equal(undo.undo('ab'), '');
+    assert.equal(undo.undo(), 'ab');
+    assert.equal(undo.undo(), '');
   });
 
   it('a multi-char delta (kill/yank/paste) is its own step', async () => {
@@ -46,19 +46,19 @@ describe('composer undo kernel', () => {
     const undo = createComposerUndo();
     undo.record('hello world'); // paste-like jump from ''
     undo.record('hello world!');
-    assert.equal(undo.undo('hello world!'), 'hello world');
-    assert.equal(undo.undo('hello world'), '');
+    assert.equal(undo.undo(), 'hello world');
+    assert.equal(undo.undo(), '');
   });
 
   it('redo round-trips and dies on a new edit', async () => {
     const { createComposerUndo } = await import('../tui-composer-undo.ts');
     const undo = createComposerUndo();
     undo.record('a');
-    assert.equal(undo.undo('a'), '');
-    assert.equal(undo.redo(''), 'a');
-    assert.equal(undo.undo('a'), '');
+    assert.equal(undo.undo(), '');
+    assert.equal(undo.redo(), 'a');
+    assert.equal(undo.undo(), '');
     undo.record('b');
-    assert.equal(undo.redo('b'), null);
+    assert.equal(undo.redo(), null);
   });
 
   it('recordDiscrete is a no-op for an unchanged value', async () => {
@@ -67,20 +67,20 @@ describe('composer undo kernel', () => {
     undo.record('draft');
     undo.recordDiscrete('draft');
     undo.recordDiscrete('recalled');
-    assert.equal(undo.undo('recalled'), 'draft');
-    assert.equal(undo.undo('draft'), '');
+    assert.equal(undo.undo(), 'draft');
+    assert.equal(undo.undo(), '');
   });
 
   it('reset drops both stacks and re-baselines', async () => {
     const { createComposerUndo } = await import('../tui-composer-undo.ts');
     const undo = createComposerUndo();
     undo.record('a');
-    assert.equal(undo.undo('a'), '');
+    assert.equal(undo.undo(), '');
     undo.reset('base');
-    assert.equal(undo.undo('base'), null);
-    assert.equal(undo.redo('base'), null);
+    assert.equal(undo.undo(), null);
+    assert.equal(undo.redo(), null);
     undo.record('bases'); // +1 from the new baseline → insert run
-    assert.equal(undo.undo('bases'), 'base');
+    assert.equal(undo.undo(), 'base');
   });
 });
 
@@ -155,6 +155,7 @@ const CTRL_U = '\x15';
 const CTRL_Y = '\x19';
 const CTRL_Z = '\x1a';
 const CTRL_UNDERSCORE = '\x1f';
+const KITTY_CTRL_Z = '\x1b[122;5u';
 const KITTY_CTRL_SHIFT_Z = '\x1b[122;6u';
 
 describe('composer undo/redo (surface integration)', () => {
@@ -287,6 +288,41 @@ describe('composer undo/redo (surface integration)', () => {
       await waitForInput(hook, 'alpha');
       stdin.send(CTRL_Z);
       await waitForInput(hook, 'draft');
+    } finally {
+      instance.unmount();
+      await lifecycle;
+    }
+  });
+
+  it('batched key-repeat undos do not corrupt the redo chain', {
+    skip: silverySkip,
+  }, async () => {
+    // Key-repeat can land two undo key events in ONE stdin chunk, and
+    // silvery's splitter dispatches every sequence in the chunk in one
+    // synchronous pass — so the second undo fires before React re-renders.
+    // History transitions must come from the kernel's own snapshot, not the
+    // render-captured composer value — a stale value pushed into the redo
+    // stack duplicates one state and loses another (push-agent review on
+    // #1566). Kitty-encoded Ctrl+Z is used because escape sequences split
+    // within a chunk; bare '\x1a\x1a' would parse as no key at all.
+    const { stdin, hook, instance, lifecycle } = await mountSurface();
+    try {
+      // Three distinct steps: '' → 'ab' (run) → '' (kill) → 'xy' (run).
+      await typeChars(stdin, hook, 'ab');
+      stdin.send(CTRL_U);
+      await waitForInput(hook, '');
+      await typeChars(stdin, hook, 'xy');
+
+      // Two undo key events in one chunk: 'xy' → '' → 'ab'.
+      stdin.send(KITTY_CTRL_Z + KITTY_CTRL_Z);
+      await waitForInput(hook, 'ab');
+
+      // One redo must return to '' — under the stale-value bug the redo stack
+      // holds ['xy','xy'] and jumps straight back to 'xy'.
+      stdin.send(KITTY_CTRL_SHIFT_Z);
+      await waitForInput(hook, '');
+      stdin.send(KITTY_CTRL_SHIFT_Z);
+      await waitForInput(hook, 'xy');
     } finally {
       instance.unmount();
       await lifecycle;

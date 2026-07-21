@@ -17,6 +17,14 @@
  *    are their own steps — undoing a recall restores the draft it replaced.
  * Undo/redo application must NOT be re-recorded; the surface applies those
  * values outside the onChange path.
+ *
+ * The kernel is the single source of truth for the current value: undo/redo
+ * take no `current` argument and use the internal snapshot for every stack
+ * write. Under silvery 0.21.1 a caller-supplied render-captured value would
+ * happen to be safe (the dispatch loop calls flushSyncWork after every key
+ * event, so closures are fresh per event), but that is an upstream internal —
+ * the parameter-free API keeps rapid batched undo/redo correct by
+ * construction (push-agent review on #1566).
  */
 
 const MAX_STEPS = 100;
@@ -30,9 +38,9 @@ export interface ComposerUndo {
   /** Record a programmatic replacement (recall, completion, /editor draft). */
   recordDiscrete(value: string): void;
   /** Returns the previous step's value, or null when there is nothing to undo. */
-  undo(current: string): string | null;
+  undo(): string | null;
   /** Returns the next step's value, or null when there is nothing to redo. */
-  redo(current: string): string | null;
+  redo(): string | null;
   /** Drop all history and re-baseline (submit cleared the composer, session switch). */
   reset(baseline: string): void;
 }
@@ -71,19 +79,19 @@ export function createComposerUndo(baseline = ''): ComposerUndo {
       lastKnown = value;
       future = [];
     },
-    undo(current) {
+    undo() {
       const prev = past.pop();
       if (prev === undefined) return null;
-      future.push(current);
+      future.push(lastKnown);
       lastKnown = prev;
       runKind = null;
       runEdits = 0;
       return prev;
     },
-    redo(current) {
+    redo() {
       const next = future.pop();
       if (next === undefined) return null;
-      commitStep(current);
+      commitStep(lastKnown);
       lastKnown = next;
       runKind = null;
       runEdits = 0;

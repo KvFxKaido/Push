@@ -1903,7 +1903,7 @@ export function PushSurface({
         return;
       }
       if (shortcut === 'undo' || shortcut === 'redo') {
-        const applied = shortcut === 'undo' ? composerUndo.undo(input) : composerUndo.redo(input);
+        const applied = shortcut === 'undo' ? composerUndo.undo() : composerUndo.redo();
         if (applied === null) return;
         // An undo/redo application is not a user edit: it must not re-record
         // (setComposerInput bypasses the onChange path, so it doesn't), but it
