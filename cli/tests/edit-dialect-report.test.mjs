@@ -11,7 +11,11 @@ import {
   formatEditDialectReport,
 } from '../edit-dialect-report.ts';
 
-async function writeSession(root, id, { model = 'glm-5.1', dialect = false, results = [] }) {
+async function writeSession(
+  root,
+  id,
+  { model = 'glm-5.1', dialect = false, results = [], events = [] },
+) {
   const dir = path.join(root, id);
   await fs.mkdir(dir, { recursive: true });
   await fs.writeFile(path.join(dir, 'state.json'), JSON.stringify({ sessionId: id, model }));
@@ -29,6 +33,21 @@ async function writeSession(root, id, { model = 'glm-5.1', dialect = false, resu
     path.join(dir, 'messages.jsonl'),
     `${messages.map((message) => JSON.stringify(message)).join('\n')}\n`,
   );
+  if (events.length > 0) {
+    await fs.writeFile(
+      path.join(dir, 'events.jsonl'),
+      `${events.map((event) => JSON.stringify(event)).join('\n')}\n`,
+    );
+  }
+}
+
+function editEvent({ toolName = 'edit_file', isError = false, preview = '' } = {}) {
+  return {
+    v: 'push.runtime.v1',
+    kind: 'event',
+    type: 'tool.execution_complete',
+    payload: { toolName, isError, preview },
+  };
 }
 
 describe('edit dialect rollout report', () => {
@@ -107,6 +126,48 @@ describe('edit dialect rollout report', () => {
         errorRateDelta: -0.5,
         relativeErrorReduction: 1,
       });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('counts lead-kernel sessions that persist tool outcomes only as events', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-edit-dialect-events-'));
+    try {
+      // Current-generation session: messages.jsonl has no [TOOL_RESULT] rows;
+      // the edit outcomes exist only as tool.execution_complete events. The
+      // `Edit` toolName is Kimi K3's advertised alias for the same primitive.
+      await writeSession(root, 'after-events', {
+        dialect: true,
+        events: [
+          editEvent({ isError: false }),
+          editEvent({ toolName: 'Edit', isError: true, preview: 'Tool error: Invalid ref "7"' }),
+          editEvent({ toolName: 'read_file' }),
+        ],
+      });
+      const report = await buildEditDialectReport({ sessionRoot: root, minimumAfterEditCalls: 2 });
+      assert.deepEqual(report.after, {
+        sessions: 1,
+        editCalls: 2,
+        errors: 1,
+        invalidRefErrors: 1,
+        errorRate: 0.5,
+      });
+      assert.equal(report.verdict.status, 'ready');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers events over legacy messages so dual-format sessions are not double-counted', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'push-edit-dialect-dual-'));
+    try {
+      await writeSession(root, 'dual', {
+        results: [{ tool: 'edit_file', ok: true, output: 'Applied edit' }],
+        events: [editEvent({ isError: false }), editEvent({ isError: false })],
+      });
+      const report = await buildEditDialectReport({ sessionRoot: root, minimumAfterEditCalls: 1 });
+      assert.equal(report.before.editCalls, 2, 'events are authoritative, messages skipped');
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

@@ -1045,7 +1045,14 @@ export async function handleSearchReplace(
   if (isMultiLineSearch) {
     const match = applied.matches[0];
     const matchStartLine = hydrated.content.slice(0, match.start).split('\n').length;
-    const matchEndLine = hydrated.content.slice(0, match.end).split('\n').length;
+    // A search that includes the file's terminal newline matches to
+    // content.length; slice(0, end) then ends with '\n' and split() counts one
+    // line past the last visible one, which buildRangeReplaceHashlineOps
+    // rejects. Clamp to the last visible line — the trailing newline is the
+    // file terminator, not a line of its own (Codex P2 on #1568).
+    const matchEndsAtEof = match.end === hydrated.content.length && hydrated.content.endsWith('\n');
+    const matchEndLine =
+      hydrated.content.slice(0, match.end).split('\n').length - (matchEndsAtEof ? 1 : 0);
     const prefixStartIdx = hydrated.content.lastIndexOf('\n', match.start - 1) + 1;
     const prefix = hydrated.content.slice(prefixStartIdx, match.start);
     const suffixEndIdx = hydrated.content.indexOf('\n', match.end);
@@ -1054,7 +1061,13 @@ export async function handleSearchReplace(
       suffixEndIdx === -1 ? undefined : suffixEndIdx,
     );
     const resultReplacementEnd = applied.content.length - (hydrated.content.length - match.end);
-    const normalizedReplacement = applied.content.slice(match.resultStart, resultReplacementEnd);
+    let normalizedReplacement = applied.content.slice(match.resultStart, resultReplacementEnd);
+    // The clamped EOF match consumed the file's terminal newline, which the
+    // hashline pipeline re-adds on serialize. Keeping the replacement's own
+    // trailing newline would split into a spurious empty visible line.
+    if (matchEndsAtEof && normalizedReplacement.endsWith('\n')) {
+      normalizedReplacement = normalizedReplacement.slice(0, -1);
+    }
     const replacementContent = prefix + normalizedReplacement + suffix;
     ({ ops } = await buildRangeReplaceHashlineOps(
       hydrated.content,

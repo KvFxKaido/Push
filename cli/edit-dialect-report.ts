@@ -109,13 +109,79 @@ function parseMessages(raw: string): PersistedMessage[] {
   return messages;
 }
 
-function recordSession(messages: readonly PersistedMessage[], cohort: EditDialectCohort): void {
-  cohort.sessions += 1;
+function parseEvents(raw: string): PersistedEvent[] {
+  const events: PersistedEvent[] = [];
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    try {
+      const parsed = JSON.parse(line) as PersistedEvent;
+      if (parsed && typeof parsed === 'object') events.push(parsed);
+    } catch {
+      // Same torn-tail tolerance as parseMessages.
+    }
+  }
+  return events;
+}
+
+// Provider-family naming may advertise the primitive as `Edit` (Kimi K3);
+// count the canonical operation regardless of the advertised name.
+const EDIT_TOOL_NAMES = new Set(['edit_file', 'Edit']);
+
+interface PersistedEvent {
+  type?: unknown;
+  payload?: {
+    toolName?: unknown;
+    isError?: unknown;
+    preview?: unknown;
+    text?: unknown;
+    structuredError?: { message?: unknown } | null;
+  } | null;
+}
+
+/**
+ * Count edit outcomes from events.jsonl (`tool.execution_complete`). Current
+ * lead-kernel sessions persist tool executions ONLY as events — messages.jsonl
+ * carries just the final assistant text — so the message scan below is a
+ * legacy fallback, not the primary source (Codex P2 on #1568).
+ */
+function recordSessionFromEvents(
+  events: readonly PersistedEvent[],
+  cohort: EditDialectCohort,
+): number {
+  let counted = 0;
+  for (const event of events) {
+    if (event.type !== 'tool.execution_complete') continue;
+    const payload = event.payload;
+    if (!payload || typeof payload.toolName !== 'string') continue;
+    if (!EDIT_TOOL_NAMES.has(payload.toolName)) continue;
+    counted += 1;
+    cohort.editCalls += 1;
+    if (payload.isError !== true) continue;
+    cohort.errors += 1;
+    const detail = [
+      payload.preview,
+      payload.text,
+      payload.structuredError && typeof payload.structuredError === 'object'
+        ? payload.structuredError.message
+        : null,
+    ]
+      .filter((part): part is string => typeof part === 'string')
+      .join('\n');
+    if (/invalid ref/i.test(detail)) cohort.invalidRefErrors += 1;
+  }
+  return counted;
+}
+
+/** Legacy fallback: sessions that persisted tool results as [TOOL_RESULT] user messages. */
+function recordSessionFromMessages(
+  messages: readonly PersistedMessage[],
+  cohort: EditDialectCohort,
+): void {
   for (const message of messages) {
     if (message.role !== 'user' || typeof message.content !== 'string') continue;
     if (!message.content.includes('[TOOL_RESULT]')) continue;
     const result = extractFirstJsonObject(message.content) as PersistedToolResult | null;
-    if (!result || result.tool !== 'edit_file') continue;
+    if (!result || typeof result.tool !== 'string' || !EDIT_TOOL_NAMES.has(result.tool)) continue;
     cohort.editCalls += 1;
     if (result.ok !== false) continue;
     cohort.errors += 1;
@@ -124,6 +190,18 @@ function recordSession(messages: readonly PersistedMessage[], cohort: EditDialec
       .join('\n');
     if (/invalid ref/i.test(detail)) cohort.invalidRefErrors += 1;
   }
+}
+
+function recordSession(
+  messages: readonly PersistedMessage[],
+  events: readonly PersistedEvent[],
+  cohort: EditDialectCohort,
+): void {
+  cohort.sessions += 1;
+  // Events are authoritative when present; falling through to the message scan
+  // for the same session would double-count generations that wrote both.
+  if (recordSessionFromEvents(events, cohort) > 0) return;
+  recordSessionFromMessages(messages, cohort);
 }
 
 export async function buildEditDialectReport(
@@ -162,9 +240,10 @@ export async function buildEditDialectReport(
     scannedSessions += 1;
     const sessionDir = path.join(sessionRoot, entry.name);
     try {
-      const [stateRaw, messagesRaw] = await Promise.all([
+      const [stateRaw, messagesRaw, eventsRaw] = await Promise.all([
         fs.readFile(path.join(sessionDir, 'state.json'), 'utf8'),
         fs.readFile(path.join(sessionDir, 'messages.jsonl'), 'utf8'),
+        fs.readFile(path.join(sessionDir, 'events.jsonl'), 'utf8').catch(() => ''),
       ]);
       const state = JSON.parse(stateRaw) as { model?: unknown };
       const model = typeof state.model === 'string' ? state.model : '';
@@ -177,7 +256,7 @@ export async function buildEditDialectReport(
       )?.content;
       const hasDialect =
         typeof systemPrompt === 'string' && systemPrompt.includes(EDIT_DIALECT_PROTOCOL_MARKER);
-      recordSession(messages, hasDialect ? after : before);
+      recordSession(messages, parseEvents(eventsRaw), hasDialect ? after : before);
     } catch {
       // Session scans are best-effort; incomplete/legacy entries do not poison
       // the aggregate, matching listSessions' corruption tolerance.

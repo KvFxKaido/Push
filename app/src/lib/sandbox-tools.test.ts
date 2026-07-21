@@ -4171,6 +4171,82 @@ describe('sandbox_search_replace', () => {
     );
   });
 
+  it('replaces a multi-line search that includes the file terminal newline', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'keep\nold one\nold two\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 20,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'old one\nold two\n', replace: 'new one\nnew two\n' },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'keep\nnew one\nnew two\n',
+      'v1',
+    );
+  });
+
+  it('replaces an entire newline-terminated file via a terminal-newline search', async () => {
+    const path = '/workspace/src/app.ts';
+    const fileContent = 'old only\n';
+    vi.mocked(sandboxClient.readFromSandbox).mockResolvedValue({
+      content: fileContent,
+      truncated: false,
+      version: 'v1',
+    });
+    vi.mocked(sandboxClient.writeToSandbox).mockResolvedValue({
+      ok: true,
+      new_version: 'v2',
+      bytes_written: 20,
+    });
+    vi.mocked(sandboxClient.execInSandbox).mockResolvedValue({
+      stdout: '',
+      stderr: '',
+      exitCode: 0,
+      truncated: false,
+    });
+
+    await executeSandboxToolCall({ tool: 'sandbox_read_file', args: { path } }, 'sb-123');
+    const result = await executeSandboxToolCall(
+      {
+        tool: 'sandbox_search_replace',
+        args: { path, search: 'old only\n', replace: 'brand\nnew\n' },
+      },
+      'sb-123',
+    );
+
+    expect(result.text).toContain('Edited /workspace/src/app.ts');
+    expect(vi.mocked(sandboxClient.writeToSandbox)).toHaveBeenCalledWith(
+      'sb-123',
+      path,
+      'brand\nnew\n',
+      'v1',
+    );
+  });
+
   it('errors when search string matches no lines', async () => {
     const path = '/workspace/src/app.ts';
     const fileContent = 'const a = 1;\n';
