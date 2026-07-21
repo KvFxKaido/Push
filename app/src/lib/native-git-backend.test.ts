@@ -166,6 +166,41 @@ describe('NativeGitBackend.switchBranch shallow-clone fallback', () => {
     expect(switchBranch).toHaveBeenCalledTimes(1); // no retry once the fetch failed
   });
 
+  it('creates the local branch from the remote-tracking ref when the retried switch fails', async () => {
+    // JGit's bare checkout has no create-from-remote guess — after the fetch
+    // the retry still fails for a branch that was never local. The fallback
+    // must create it explicitly from refs/remotes/origin/<branch>.
+    const switchBranch = vi.fn(async () => ({
+      ok: false,
+      message: 'Ref feat/x cannot be resolved',
+    }));
+    const createBranch = vi.fn(async () => ({ ok: true }));
+    const fetch = vi.fn(async () => ({ ok: true }));
+    const backend = new NativeGitBackend(fakePlugin({ switchBranch, createBranch, fetch }), {
+      dir: DIR,
+    });
+    const res = await backend.switchBranch('feat/x');
+    expect(res.ok).toBe(true);
+    expect(switchBranch).toHaveBeenCalledTimes(2);
+    expect(createBranch).toHaveBeenCalledWith({
+      dir: DIR,
+      name: 'feat/x',
+      from: 'refs/remotes/origin/feat/x',
+    });
+  });
+
+  it('surfaces the switch failure (not the create failure) when the create fallback also fails', async () => {
+    const switchBranch = vi.fn(async () => ({ ok: false, message: 'dirty working tree' }));
+    const createBranch = vi.fn(async () => ({ ok: false, message: 'branch already exists' }));
+    const fetch = vi.fn(async () => ({ ok: true }));
+    const backend = new NativeGitBackend(fakePlugin({ switchBranch, createBranch, fetch }), {
+      dir: DIR,
+    });
+    const res = await backend.switchBranch('feat/x');
+    expect(res.ok).toBe(false);
+    expect(res.stderr).toBe('dirty working tree');
+  });
+
   it('switches directly without fetching when the branch is already local', async () => {
     const fetch = vi.fn(async () => ({ ok: true }));
     const backend = new NativeGitBackend(fakePlugin({ fetch }), { dir: DIR });

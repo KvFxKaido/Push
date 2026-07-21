@@ -147,28 +147,88 @@ describe('SandboxPlumbingBackend writes', () => {
     expect(exec).toHaveBeenLastCalledWith(['checkout', '-b', 'feat/x', 'main'], { mutates: true });
   });
 
-  it('switchBranch falls back to a depth-1 fetch then retries the switch', async () => {
+  it('switchBranch falls back to refspec widening + depth-1 fetch, then retries the switch', async () => {
+    // Single-branch clone shape: remote.origin.fetch covers only main, so the
+    // fallback must widen it before fetching — a fetched remote-tracking ref
+    // outside the refspec is invisible to `git switch`'s create-from-remote
+    // guess ("fatal: invalid reference").
     const exec = vi
       .fn()
       .mockResolvedValueOnce(fail('invalid reference')) // first switch
+      .mockResolvedValueOnce(ok('+refs/heads/main:refs/remotes/origin/main\n')) // config --get-all
+      .mockResolvedValueOnce(ok('')) // config --add (widen)
       .mockResolvedValueOnce(ok('')) // fetch
       .mockResolvedValueOnce(ok("Switched to branch 'x'")); // retry switch
     const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
     const res = await backend.switchBranch('x');
     expect(res.ok).toBe(true);
     expect(exec).toHaveBeenNthCalledWith(1, ['switch', 'x'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(2, ['config', '--get-all', 'remote.origin.fetch']);
     expect(exec).toHaveBeenNthCalledWith(
-      2,
+      3,
+      ['config', '--add', 'remote.origin.fetch', '+refs/heads/x:refs/remotes/origin/x'],
+      { mutates: true },
+    );
+    expect(exec).toHaveBeenNthCalledWith(
+      4,
       ['fetch', '--depth=1', 'origin', 'x:refs/remotes/origin/x'],
       { mutates: true },
     );
-    expect(exec).toHaveBeenNthCalledWith(3, ['switch', 'x'], { mutates: true });
+    expect(exec).toHaveBeenNthCalledWith(5, ['switch', 'x'], { mutates: true });
+  });
+
+  it('switchBranch skips widening when the refspec already covers all heads', async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(fail('invalid reference')) // first switch
+      .mockResolvedValueOnce(ok('+refs/heads/*:refs/remotes/origin/*\n')) // config --get-all
+      .mockResolvedValueOnce(ok('')) // fetch
+      .mockResolvedValueOnce(ok("Switched to branch 'x'")); // retry switch
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.switchBranch('x');
+    expect(res.ok).toBe(true);
+    const calls = (exec.mock.calls as unknown as [string[]][]).map(([args]) => args.join(' '));
+    expect(calls).not.toContain(
+      'config --add remote.origin.fetch +refs/heads/x:refs/remotes/origin/x',
+    );
+    expect(calls).toContain('fetch --depth=1 origin x:refs/remotes/origin/x');
+  });
+
+  it('switchBranch skips widening when the branch-specific refspec is already present', async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(fail('invalid reference')) // first switch
+      .mockResolvedValueOnce(
+        ok('+refs/heads/main:refs/remotes/origin/main\n+refs/heads/x:refs/remotes/origin/x\n'),
+      ) // config --get-all
+      .mockResolvedValueOnce(ok('')) // fetch
+      .mockResolvedValueOnce(ok("Switched to branch 'x'")); // retry switch
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.switchBranch('x');
+    expect(res.ok).toBe(true);
+    expect(exec).toHaveBeenCalledTimes(4);
+  });
+
+  it('switchBranch skips widening when the remote has no fetch refspec at all', async () => {
+    // No `origin` configured: adding a refspec would manufacture config for a
+    // remote that doesn't exist. The fallback fetch surfaces the real error.
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(fail('invalid reference')) // first switch
+      .mockResolvedValueOnce(fail('')) // config --get-all (no such key)
+      .mockResolvedValueOnce(fail("fatal: 'origin' does not appear to be a git repository")); // fetch
+    const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
+    const res = await backend.switchBranch('x');
+    expect(res.ok).toBe(false);
+    expect(res.stderr).toContain('origin');
+    expect(exec).toHaveBeenCalledTimes(3);
   });
 
   it('switchBranch surfaces the fetch failure when the fallback fetch fails', async () => {
     const exec = vi
       .fn()
       .mockResolvedValueOnce(fail('no local ref'))
+      .mockResolvedValueOnce(fail('')) // config --get-all
       .mockResolvedValueOnce(fail('fetch failed'));
     const backend = new SandboxPlumbingBackend(exec as unknown as GitExec);
     const res = await backend.switchBranch('x');

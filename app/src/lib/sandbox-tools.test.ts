@@ -4852,6 +4852,33 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
     expect(calls[1][3]?.markWorkspaceMutated).toBe(true);
   });
 
+  it('normalizes remote-prefixed input (origin/x) to the plain branch name', async () => {
+    vi.mocked(sandboxClient.execInSandbox)
+      .mockResolvedValueOnce({
+        stdout: 'main\n',
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      })
+      .mockResolvedValueOnce({
+        stdout: "Switched to branch 'feat/x'",
+        stderr: '',
+        exitCode: 0,
+        truncated: false,
+      });
+
+    const result = await executeSandboxToolCall(
+      { tool: 'sandbox_switch_branch', args: { branch: 'remotes/origin/feat/x' } },
+      'sb-1',
+    );
+
+    // The switch runs — and the conversation's branch state records — the
+    // plain branch name, never the remote-tracking spelling.
+    expect(result.branchSwitch).toMatchObject({ name: 'feat/x', kind: 'switched' });
+    const calls = vi.mocked(sandboxClient.execInSandbox).mock.calls;
+    expect(calls[1][1]).toContain("git 'switch' 'feat/x'");
+  });
+
   it('omits previous when HEAD is detached (show-current returns empty)', async () => {
     vi.mocked(sandboxClient.execInSandbox)
       .mockResolvedValueOnce({
@@ -4971,7 +4998,15 @@ describe('executeSandboxToolCall -- sandbox_switch_branch', () => {
         exitCode: 1,
         truncated: false,
       })
-      // 3) fallback depth-1 fetch — branch missing on origin too, so the
+      // 3) refspec probe (`config --get-all remote.origin.fetch`) — no
+      // refspec, so widening is skipped.
+      .mockResolvedValueOnce({
+        stdout: '',
+        stderr: '',
+        exitCode: 1,
+        truncated: false,
+      })
+      // 4) fallback depth-1 fetch — branch missing on origin too, so the
       // switchBranch fallback returns this failure.
       .mockResolvedValueOnce({
         stdout: '',

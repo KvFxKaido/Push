@@ -82,6 +82,7 @@ import {
 } from './git-ref-validation';
 import { sanitizeUntrustedSource } from '@push/lib/untrusted-content';
 import { createGitGuardPreHook } from '@push/lib/default-pre-hooks';
+import { normalizeBranchInput } from '@push/lib/git/branch-input';
 import { reduceToolOutput } from '@push/lib/tool-output-reducers';
 import { startElapsedMs } from '@push/lib/monotonic-elapsed';
 import { retainReducedOutput } from '@push/lib/verbatim-retain';
@@ -1517,7 +1518,10 @@ async function executeSandboxToolCallInner(
       }
 
       case 'sandbox_switch_branch': {
-        const branch = call.args.branch;
+        // Normalize `origin/x` / `remotes/origin/x` spellings (models copy
+        // them out of `git branch -a`) to the plain branch name before
+        // validation — see normalizeBranchInput.
+        const branch = normalizeBranchInput(call.args.branch);
         if (isInvalidGitRef(branch)) {
           const err: StructuredToolError = {
             type: 'INVALID_ARG',

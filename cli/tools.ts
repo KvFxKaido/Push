@@ -7,6 +7,7 @@ import { applyHashlineEdits, calculateContentVersion, renderAnchoredRange } from
 import { applySearchReplace } from './search-replace.js';
 import { computeEditDiff, overEditDiffLineBudget, renderEditDiffText } from '../lib/edit-diff.ts';
 import { MAX_SIDE_EFFECT_CHAIN } from '../lib/tool-call-grouping.ts';
+import { normalizeBranchInput } from '../lib/git/branch-input.ts';
 import { runDiagnostics } from './diagnostics.js';
 import { createLocalGitBackend, createLocalPushGit } from './git-backend.js';
 import { spawnCommandInResolvedShell } from './shell.js';
@@ -3810,7 +3811,10 @@ export async function executeToolCall(call, workspaceRoot, options = {}) {
       case 'switch_branch':
       case 'sandbox_switch_branch':
       case 'git_switch_branch': {
-        const branch = asString(call.args.branch, 'branch').trim();
+        // Normalize `origin/x` / `remotes/origin/x` spellings (models copy
+        // them out of `git branch -a`) to the plain branch name before
+        // validation — see normalizeBranchInput.
+        const branch = normalizeBranchInput(asString(call.args.branch, 'branch'));
 
         // Shared ref validation (see isInvalidGitRef). Branch-only (no path
         // operand), so the syntactic ambiguity that makes raw `git checkout

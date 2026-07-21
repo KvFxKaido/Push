@@ -294,6 +294,14 @@ export class SandboxPlumbingBackend implements GitBackend {
       // create-time branch locally, so other remote branches need fetching first.
       let res = await this.exec(['switch', branch], { mutates: true });
       if (res.exitCode !== 0) {
+        // Fetching into refs/remotes/origin/<branch> is not enough on its own:
+        // `git switch`'s create-from-remote guess maps candidates through the
+        // remote.origin.fetch refspec, and a single-branch clone's refspec
+        // covers only the clone-time branch — the fetched ref exists (it shows
+        // in `git branch -a`) but the guess refuses it ("fatal: invalid
+        // reference"). Widen the refspec first so the retried switch can see
+        // the ref and set up tracking.
+        await this.ensureFetchRefspecCovers(branch);
         const fetched = await this.exec(
           ['fetch', '--depth=1', 'origin', `${branch}:refs/remotes/origin/${branch}`],
           { mutates: true },
@@ -306,6 +314,29 @@ export class SandboxPlumbingBackend implements GitBackend {
       }
       return toWriteResult(res);
     });
+  }
+
+  /**
+   * Make sure `remote.origin.fetch` maps `refs/heads/<branch>` so a fetched
+   * remote-tracking ref is visible to `git switch`'s create-from-remote guess
+   * (see the call site in {@link switchBranch}). Best-effort by design: on any
+   * failure the retried switch simply fails exactly as it did before widening
+   * existed, and that error is the one surfaced to the caller.
+   */
+  private async ensureFetchRefspecCovers(branch: string): Promise<void> {
+    const spec = `+refs/heads/${branch}:refs/remotes/origin/${branch}`;
+    // `--get-all` failing means the remote has no fetch refspec at all (e.g.
+    // no `origin` configured); adding one would manufacture config for a
+    // remote that doesn't exist, so skip and let the fallback fetch surface
+    // the real error.
+    const existing = await this.exec(['config', '--get-all', 'remote.origin.fetch']);
+    if (existing.exitCode !== 0) return;
+    const covered = existing.stdout
+      .split('\n')
+      .map((line) => line.trim().replace(/^\+/, ''))
+      .some((line) => line === spec.slice(1) || line.includes('refs/heads/*'));
+    if (covered) return;
+    await this.exec(['config', '--add', 'remote.origin.fetch', spec], { mutates: true });
   }
 
   async commit(
