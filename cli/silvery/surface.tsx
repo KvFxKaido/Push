@@ -29,6 +29,7 @@ import { getCuratedModels } from '../model-catalog.js';
 import { getProviderList } from '../provider.js';
 import { createTabCompleter, type CompletionState } from '../tui-completer.js';
 import { createComposerHistoryNav } from '../tui-composer-history.js';
+import { createComposerUndo } from '../tui-composer-undo.js';
 import { FocusStack } from '../tui-focus.js';
 import { getListNavigationAction } from '../tui-modal-input.js';
 import { isReducedMotion, verbForActivity, type StatusActivity } from '../tui-verbs.js';
@@ -1557,6 +1558,8 @@ export type ComposerShortcut =
   | 'provider'
   | 'session'
   | 'copy'
+  | 'undo'
+  | 'redo'
   | null;
 
 /**
@@ -1565,10 +1568,17 @@ export type ComposerShortcut =
  * TextArea both see every key — so binding a claimed chord here would fire
  * BOTH actions on one press. Ctrl+A/E, Ctrl+U/W, Ctrl+Y and Alt+B/F are
  * spoken for; Ctrl+O is not.
+ *
+ * Undo is Ctrl+Z plus Ctrl+_ (readline's C-_ arrives as the 0x1f byte, which
+ * the terminal cannot distinguish from Ctrl+/ — silvery reports both as
+ * ctrl+'/'). Redo is Ctrl+Shift+Z, distinguishable only under the kitty
+ * keyboard protocol; on legacy encodings it collapses to plain Ctrl+Z and
+ * degrades to undo. All three bytes are ignored by the TextArea (unhandled
+ * ctrl chords return null there), so no double-fire.
  */
 export function resolveComposerShortcut(
   inputKey: string,
-  key: { ctrl?: boolean; tab?: boolean },
+  key: { ctrl?: boolean; tab?: boolean; shift?: boolean },
 ): ComposerShortcut {
   if (key.tab) return 'complete';
   if (!key.ctrl) return null;
@@ -1577,6 +1587,8 @@ export function resolveComposerShortcut(
   if (inputKey === 'p') return 'provider';
   if (inputKey === 'r') return 'session';
   if (inputKey === 'o') return 'copy';
+  if (inputKey === 'z' || inputKey === 'Z') return key.shift || inputKey === 'Z' ? 'redo' : 'undo';
+  if (inputKey === '/') return 'undo';
   return null;
 }
 
@@ -1691,21 +1703,28 @@ export function PushSurface({
     () => createComposerHistoryNav(() => controller.getPromptHistory()),
     [controller],
   );
-  // A resumed/switched session brings its own prompt history; end any run so
-  // the next Up captures the new session's entries.
+  // Composer undo/redo (#1563): the TextArea has no undo, but every composer
+  // mutation flows through this surface, so a snapshot kernel over the
+  // controlled value covers keystrokes, kills/yanks, recall, and completion.
+  const composerUndo = useMemo(() => createComposerUndo(), [controller]);
+  const inputRef = useRef(input);
+  inputRef.current = input;
+  // A resumed/switched session brings its own prompt history; end any recall
+  // run and re-baseline undo so neither can replay the previous session.
   useEffect(() => {
     historyNav.reset();
-  }, [historyNav, snapshot.sessionId]);
-  // Recall places the cursor at the END of the recalled text (readline
-  // convention — and what makes Down-at-bottom continue the run on multi-line
-  // entries). The TextArea clamps `setCursor` against the value it currently
-  // holds, which is still the pre-recall text in the tick that sets state, so
-  // the move is deferred to the effect after the recalled value has rendered.
-  const recallCursor = useRef<number | null>(null);
+    composerUndo.reset(inputRef.current);
+  }, [composerUndo, historyNav, snapshot.sessionId]);
+  // Recall and undo place the cursor at the END of the applied text (readline
+  // convention — and what makes Down-at-bottom continue a recall run on
+  // multi-line entries). The TextArea clamps `setCursor` against the value it
+  // currently holds, which is still the pre-apply text in the tick that sets
+  // state, so the move is deferred to the effect after the new value renders.
+  const pendingCursor = useRef<number | null>(null);
   useEffect(() => {
-    if (recallCursor.current !== null) {
-      composerRef.current?.setCursor(recallCursor.current);
-      recallCursor.current = null;
+    if (pendingCursor.current !== null) {
+      composerRef.current?.setCursor(pendingCursor.current);
+      pendingCursor.current = null;
     }
   });
   const handleComposerEdge = useCallback(
@@ -1716,6 +1735,7 @@ export function PushSurface({
       // Straight to state, NOT changeComposerInput: that path's interceptors
       // ('?' → /help, sensitive-config divert) are for keystrokes; recalled
       // text already passed them when it was first typed.
+      composerUndo.recordDiscrete(recalled);
       setComposerInput(recalled);
       if (recalled === input) {
         // Identical text: the TextArea already holds the recalled value, so
@@ -1726,11 +1746,11 @@ export function PushSurface({
         // couple cursor correctness to that.
         composerRef.current?.setCursor(recalled.length);
       } else {
-        recallCursor.current = recalled.length;
+        pendingCursor.current = recalled.length;
       }
       return true;
     },
-    [historyNav, input, setComposerInput],
+    [composerUndo, historyNav, input, setComposerInput],
   );
 
   const complete = useCallback(
@@ -1740,12 +1760,14 @@ export function PushSurface({
       // Tab completion is a user edit like any keystroke: it must end the
       // recall run, or Down afterwards restores the pre-recall stash and
       // discards the completed text (Codex P2 on #1565). It bypasses
-      // changeComposerInput's reset by design, so reset here.
+      // changeComposerInput's reset by design, so reset here. It is also its
+      // own undo step — undoing a completion restores the typed prefix.
       historyNav.reset();
+      composerUndo.recordDiscrete(result.text);
       setInput(result.text);
       setCompletionRevision((revision) => revision + 1);
     },
-    [completer, historyNav, input],
+    [completer, composerUndo, historyNav, input],
   );
 
   useEffect(() => {
@@ -1761,16 +1783,22 @@ export function PushSurface({
     async (text: string) => {
       if (!text.trim() || snapshot.running) return;
       // End any recall run: the next Up re-captures with this prompt included.
+      // Undo history dies with the submitted draft — a sent prompt is not
+      // un-sendable, so resurrecting its edit steps would only mislead.
       historyNav.reset();
+      composerUndo.reset('');
       setInput('');
       completer.reset();
       setCompletionRevision((revision) => revision + 1);
       await controller.submit(text);
       // /editor parks the composed draft on the controller for the TextArea.
       const draft = controller.takePendingComposerText();
-      if (draft !== null) setComposerInput(draft);
+      if (draft !== null) {
+        composerUndo.recordDiscrete(draft);
+        setComposerInput(draft);
+      }
     },
-    [completer, controller, historyNav, setComposerInput, snapshot.running],
+    [completer, composerUndo, controller, historyNav, setComposerInput, snapshot.running],
   );
 
   const changeComposerInput = useCallback(
@@ -1787,13 +1815,26 @@ export function PushSurface({
       }
       const configTarget = resolveSensitiveConfigComposerTarget(value, snapshot.provider);
       if (configTarget) {
+        // The typed value never became composer state, so there is nothing
+        // sensitive to resurrect; just keep the undo baseline in sync with
+        // the cleared composer.
+        composerUndo.recordDiscrete('');
         setComposerInput('');
         controller.openConfigEditor(configTarget);
         return;
       }
+      composerUndo.record(value);
       setComposerInput(value);
     },
-    [controller, historyNav, input.length, setComposerInput, snapshot.provider, submit],
+    [
+      composerUndo,
+      controller,
+      historyNav,
+      input.length,
+      setComposerInput,
+      snapshot.provider,
+      submit,
+    ],
   );
 
   const runCommand = useCallback(
@@ -1859,6 +1900,18 @@ export function PushSurface({
       const shortcut = resolveComposerShortcut(inputKey, key);
       if (shortcut === 'complete') {
         complete(key.shift);
+        return;
+      }
+      if (shortcut === 'undo' || shortcut === 'redo') {
+        const applied = shortcut === 'undo' ? composerUndo.undo(input) : composerUndo.redo(input);
+        if (applied === null) return;
+        // An undo/redo application is not a user edit: it must not re-record
+        // (setComposerInput bypasses the onChange path, so it doesn't), but it
+        // DOES end any recall run — mixing the two histories would let a later
+        // Down clobber an undone state with the recall stash.
+        historyNav.reset();
+        setComposerInput(applied);
+        pendingCursor.current = applied.length;
         return;
       }
       if (shortcut === 'palette') {
