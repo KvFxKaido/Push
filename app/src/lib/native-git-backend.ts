@@ -145,7 +145,26 @@ export class NativeGitBackend implements GitBackend {
           }),
         );
         if (!fetched.ok) return fetched;
-        return toWriteResult(await this.plugin.switchBranch({ dir: this.dir, branch }));
+        const retried = toWriteResult(await this.plugin.switchBranch({ dir: this.dir, branch }));
+        if (retried.ok) return retried;
+        // JGit's bare checkout has no create-from-remote guess at all — a
+        // fetched refs/remotes/origin/<branch> never satisfies it. Create the
+        // local branch from the remote-tracking ref explicitly. If the create
+        // also fails (e.g. the branch DID exist locally and the switch failed
+        // for another reason), surface the switch failure — it's the
+        // informative one.
+        try {
+          const created = toWriteResult(
+            await this.plugin.createBranch({
+              dir: this.dir,
+              name: branch,
+              from: `refs/remotes/origin/${branch}`,
+            }),
+          );
+          return created.ok ? created : retried;
+        } catch {
+          return retried;
+        }
       } catch (err) {
         return writeError(err);
       }
