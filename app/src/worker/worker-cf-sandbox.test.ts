@@ -997,6 +997,140 @@ describe('handleCloudflareSandbox happy paths', () => {
     ).toBe(true);
   });
 
+  it('retries when the workspace reset dies by signal (exit 137) instead of treating it as a git failure', async () => {
+    // fugu warning on #1572: rm/mkdir is not a git operation — an executor
+    // killed mid-reset surfaces as a signal exit and must reach the fresh-
+    // container retry, not the terminal git classification.
+    const sandbox = mockSandbox();
+    mockUuid();
+    let resetAttempts = 0;
+    sandbox.exec.mockImplementation(async (command: string) => {
+      // Exact-prefix match: the deps-cache priming command also contains an
+      // `rm -rf /workspace/...` substring and must not be counted as a reset.
+      if (command.startsWith('rm -rf /workspace && mkdir -p /workspace')) {
+        resetAttempts++;
+        return resetAttempts === 1
+          ? { stdout: '', stderr: '', exitCode: 137 }
+          : { stdout: '', stderr: '', exitCode: 0 };
+      }
+      if (command.includes('ls-remote')) return { stdout: '', stderr: '', exitCode: 0 };
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(200);
+    expect(resetAttempts).toBe(2);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_retried')),
+    ).toBe(true);
+  });
+
+  it('keeps a genuine workspace-reset failure (permission denied) terminal', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.startsWith('rm -rf /workspace && mkdir -p /workspace')) {
+        return {
+          stdout: '',
+          stderr: "rm: cannot remove '/workspace/x': Permission denied",
+          exitCode: 1,
+        };
+      }
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(500);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_not_retried')),
+    ).toBe(true);
+  });
+
+  it('classifies a remote HTTP 500 during recovery as transient and retries', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: '', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+    let defaultCloneAttempts = 0;
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      defaultCloneAttempts++;
+      if (defaultCloneAttempts === 1) {
+        throw new Error('fatal: unable to access repo: The requested URL returned error: 500');
+      }
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(200);
+    expect(defaultCloneAttempts).toBe(2);
+  });
+
+  it('preserves a structured backup-config error instead of replacing it with the clone failure', async () => {
+    // Codex P2 on #1572: an INVALID_BACKUP_CONFIG escaping the recovery
+    // sequence must reach the route's error mapping (503 + code), not be
+    // swallowed into the generic branch-clone 500. The structured error is
+    // injected at the default-HEAD clone stage here purely as the simplest
+    // route-reachable carrier — recoveryThrowable keys on the error's `code`,
+    // not its stage.
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      throw Object.assign(new Error('Sandbox backup storage is not configured'), {
+        code: 'INVALID_BACKUP_CONFIG',
+      });
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(503);
+    expect((await jsonBody(response)).code).toBe('INVALID_BACKUP_CONFIG');
+  });
+
   it('fails closed (destroys the sandbox) when the clone-credential strip fails', async () => {
     // #987: if the post-clone `git remote set-url` to the tokenless URL fails,
     // the tokenized clone URL may still be in .git/config — a reusable

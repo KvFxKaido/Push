@@ -317,15 +317,36 @@ export function useWorkspaceSandboxRestore({
     // Pin the checkpoint detection summarized — the store's restore re-checks the
     // backup, so we never restore a different checkpoint than the one offered.
     const checkpointId = banner.checkpointId;
+    // Capture the invoked banner's full lane scope. Every completion updater
+    // below is conditional on the CURRENT banner still matching it: a lane
+    // change during the await can install a NEW branch's offer, and the old
+    // restore's completion must neither attach its error to that offer nor
+    // clear it on success (PR #1572 fugu warning — same await-breaks-
+    // reservation family as #910/#1515).
+    const invoked = {
+      sandboxId: banner.sandboxId,
+      repoFullName: banner.repoFullName,
+      branch: banner.branch,
+      checkpointId,
+    };
+    const stillInvokedBanner = (current: RestoreBannerState): boolean =>
+      current.sandboxId === invoked.sandboxId &&
+      current.repoFullName === invoked.repoFullName &&
+      current.branch === invoked.branch &&
+      current.checkpointId === invoked.checkpointId;
     setBanner((current) =>
-      current.available ? { ...current, restoring: true, error: null } : current,
+      current.available && stillInvokedBanner(current)
+        ? { ...current, restoring: true, error: null }
+        : current,
     );
     let result: CheckpointRestoreResult;
     try {
       result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
     } catch (restoreErr) {
       const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
-      setBanner((current) => ({ ...current, restoring: false, error: message }));
+      setBanner((current) =>
+        stillInvokedBanner(current) ? { ...current, restoring: false, error: message } : current,
+      );
       console.warn(
         JSON.stringify({
           level: 'warn',
@@ -340,7 +361,7 @@ export function useWorkspaceSandboxRestore({
       return;
     }
     if (result.status === 'restored') {
-      setBanner(initialBannerState);
+      setBanner((current) => (stillInvokedBanner(current) ? initialBannerState : current));
       console.log(
         JSON.stringify({
           level: 'info',
@@ -353,11 +374,11 @@ export function useWorkspaceSandboxRestore({
       );
       return;
     }
-    setBanner((current) => ({
-      ...current,
-      restoring: false,
-      error: restoreErrorMessage(result),
-    }));
+    setBanner((current) =>
+      stillInvokedBanner(current)
+        ? { ...current, restoring: false, error: restoreErrorMessage(result) }
+        : current,
+    );
     console.warn(
       JSON.stringify({
         level: 'warn',
@@ -370,7 +391,16 @@ export function useWorkspaceSandboxRestore({
         reason: result.status === 'failed' ? result.reason : undefined,
       }),
     );
-  }, [sandboxId, branch, repoFullName, banner.available, banner.checkpointId]);
+  }, [
+    sandboxId,
+    branch,
+    repoFullName,
+    banner.available,
+    banner.checkpointId,
+    banner.sandboxId,
+    banner.repoFullName,
+    banner.branch,
+  ]);
 
   return {
     available: visible,

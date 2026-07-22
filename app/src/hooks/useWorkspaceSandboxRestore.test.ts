@@ -316,6 +316,57 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
     expect(view.error).toBe('transport failed');
   });
 
+  it('does not attach a stale manual-restore completion to a newly installed lane offer', async () => {
+    // fugu warning on #1572: a lane change during the manual restore's await
+    // can install a NEW branch's offer; the old completion must not mutate it.
+    const manualApply = deferred<{ status: 'restored'; checkpointId: string }>();
+    let manualPhase = false;
+    const apply = vi.fn(async () => {
+      if (manualPhase) return manualApply.promise;
+      return { status: 'skipped-dirty' as const };
+    });
+    const detect = vi.fn(async (input: { branch: string }) =>
+      input.branch === 'feature/x'
+        ? {
+            available: true as const,
+            checkpointId: 'checkpoint-x',
+            summary: 'x summary',
+            sourceRef: 'draft/auto/feature/x',
+          }
+        : {
+            available: true as const,
+            checkpointId: 'checkpoint-y',
+            summary: 'y summary',
+            sourceRef: 'draft/auto/feature/y',
+          },
+    );
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    let view = renderRestore({ detect, apply });
+    expect(view.available).toBe(true);
+
+    manualPhase = true;
+    const pendingRestore = view.restore();
+
+    // The lane switches while the manual restore is in flight; feature/y's
+    // detection installs its own offer (its auto-apply also defers on dirty).
+    manualPhase = false;
+    renderRestore({ branch: 'feature/y', detect, apply });
+    await runEffects();
+
+    manualPhase = true;
+    manualApply.reject(new Error('transport failed'));
+    await pendingRestore;
+
+    view = renderRestore({ branch: 'feature/y', detect, apply });
+    expect(view.available).toBe(true);
+    expect(view.summary).toBe('y summary');
+    // Without the invoked-scope guard, the stale completion writes
+    // 'transport failed' into feature/y's fresh offer.
+    expect(view.error).not.toBe('transport failed');
+  });
+
   it('explicit restore retry logs its own paired events after an auto-defer', async () => {
     const detect = vi.fn(async () => ({
       available: true as const,

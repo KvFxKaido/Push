@@ -207,6 +207,11 @@ class CloneRecoveryGitError extends Error {
 
 type CloneRecoveryErrorKind = 'executor_exit' | 'timeout' | 'transport' | 'git' | 'unknown';
 
+function workspaceResetFailureMessage(res: { exitCode?: number; stderr?: string }): string {
+  const stderr = (res.stderr ?? '').trim();
+  return `workspace reset failed (exit code ${res.exitCode ?? 'unknown'})${stderr ? `: ${stderr}` : ''}`;
+}
+
 function classifyCloneRecoveryError(err: unknown): {
   retryable: boolean;
   kind: CloneRecoveryErrorKind;
@@ -226,7 +231,7 @@ function classifyCloneRecoveryError(err: unknown): {
     return { retryable: false, kind: 'git' };
   }
   if (
-    /executor process exited unexpectedly|executor .* exited|process exited unexpectedly/i.test(
+    /executor process exited unexpectedly|executor .* exited|process exited unexpectedly|exit(?:ed)?(?: code)? 13[4-9]\b|\bkilled\b|\bsignal\b/i.test(
       message,
     )
   ) {
@@ -236,7 +241,7 @@ function classifyCloneRecoveryError(err: unknown): {
     return { retryable: true, kind: 'timeout' };
   }
   if (
-    /\btransport\b|\brpc\b|\bgrpc\b|connection (?:reset|closed|refused|timed out)|failed to connect|econnreset|econnrefused|etimedout|ehostunreach|socket hang up|network error|fetch failed|service unavailable|temporarily unavailable|early eof|unexpected disconnect|remote end hung up|gnutls|tls connection|http\/2 stream|could not resolve host|temporary failure in name resolution|\b(?:502|503|504)\b|container .*?(?:exited|crashed|unreachable|unavailable)/i.test(
+    /\btransport\b|\brpc\b|\bgrpc\b|connection (?:reset|closed|refused|timed out)|failed to connect|econnreset|econnrefused|etimedout|ehostunreach|socket hang up|network error|fetch failed|service unavailable|temporarily unavailable|early eof|unexpected disconnect|remote end hung up|gnutls|tls connection|http\/2 stream|could not resolve host|temporary failure in name resolution|\b(?:500|502|503|504)\b|container .*?(?:exited|crashed|unreachable|unavailable)/i.test(
       message,
     )
   ) {
@@ -732,9 +737,14 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
           recoveryStage = 'workspace_reset';
           const reset = (await withExecDeadline(
             sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
-          )) as { exitCode?: number };
+          )) as { exitCode?: number; stderr?: string };
           if ((reset.exitCode ?? 0) !== 0) {
-            throw new CloneRecoveryGitError(recoveryStage, 'workspace reset failed');
+            // Not a git operation — throw a plain Error carrying the exit code
+            // and stderr so classifyCloneRecoveryError can decide. An executor
+            // killed mid-reset surfaces as a signal exit (e.g. 137) and MUST
+            // stay retryable; a genuine local failure (permission denied) still
+            // classifies terminal via the git-error vocabulary.
+            throw new Error(workspaceResetFailureMessage(reset));
           }
 
           recoveryStage = 'default_head_clone';
@@ -781,9 +791,10 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
             recoveryStage = 'post_restore_workspace_reset';
             const postRestoreReset = (await withExecDeadline(
               sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
-            )) as { exitCode?: number };
+            )) as { exitCode?: number; stderr?: string };
             if ((postRestoreReset.exitCode ?? 0) !== 0) {
-              throw new CloneRecoveryGitError(recoveryStage, 'workspace reset failed');
+              // Same classification contract as the workspace_reset stage above.
+              throw new Error(workspaceResetFailureMessage(postRestoreReset));
             }
             recoveryStage = 'post_restore_default_head_clone';
             await time('clone', () =>
@@ -810,6 +821,15 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
           return false;
         };
 
+        // Recovery-stage failures normally surface the ORIGINAL clone error
+        // (the informative one). A structured SDK error (e.g. an
+        // INVALID_BACKUP_CONFIG from the snapshot restore) must propagate
+        // as-is instead — the route's error mapping turns its code into an
+        // actionable 503, and replacing it with the generic clone failure
+        // would bury the operator signal (PR #1572 Codex P2).
+        const recoveryThrowable = (recoveryErr: unknown): unknown =>
+          backupErrorCode(recoveryErr) !== undefined ? recoveryErr : branchCloneErr;
+
         let restoredFromSnapshot: boolean;
         try {
           restoredFromSnapshot = await recoverAbsentBranch();
@@ -828,7 +848,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
                 error_kind: classification.kind,
               }),
             );
-            throw branchCloneErr;
+            throw recoveryThrowable(recoveryErr);
           }
           if (!destroyed) {
             console.log(
@@ -874,7 +894,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
                 error_kind: retryClassification.kind,
               }),
             );
-            throw branchCloneErr;
+            throw recoveryThrowable(retryErr);
           }
         }
         // The recovery succeeded, so the 'clone' phase is no longer a failure even
