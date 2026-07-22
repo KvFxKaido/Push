@@ -348,13 +348,15 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
           chat: () => attempt('chat'),
           shouldFallback: (error) => {
             if (signal?.aborted) return false;
-            // Inert in THIS lane today, deliberately: `attempt()` builds payloads with
-            // no tools, no `response_format`, and therefore no
-            // `provider.require_parameters`, so nothing here ever sets the flag and the
-            // fallback always runs — which is right, since an unconstrained
-            // "no endpoints found" means the model lacks a /responses endpoint and chat
-            // is the recovery. The check stays so the lane is correct automatically if
-            // it ever starts sending constraints, rather than correct by comment.
+            // Inert in THIS lane, and it takes two changes to wake it, not one:
+            // `attempt()` builds payloads with no tools, no `response_format` and so no
+            // `provider.require_parameters`, AND its error boundary above throws a plain
+            // `Error` that never carries `openRouterRoutingConstraint`. Adding the
+            // constraint to the payload alone would still always fall back — a producer
+            // that classifies the body would have to be added here too. That is correct
+            // for today (an unconstrained "no endpoints found" means the model lacks a
+            // /responses endpoint, and chat is the recovery); it is not self-maintaining,
+            // so treat both halves as a pair if this lane ever sends constraints.
             if (isOpenRouterRoutingConstraintError(error)) {
               console.warn(
                 JSON.stringify({
