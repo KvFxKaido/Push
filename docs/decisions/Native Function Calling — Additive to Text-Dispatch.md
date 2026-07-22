@@ -80,6 +80,21 @@ native tool call — both converge at one dispatch path. Consequences:
   once without the schema and emits `openrouter_structured_output_relaxed`.
   Native tools remain guarded on that retry; schema-only turns return to normal
   routing and the existing prompt + parser validation fallback.
+
+  **Known limitation — transport-vs-parameter ambiguity.** OpenRouter returns the
+  same `No endpoints found that can handle the requested parameters` text for two
+  different causes: the pinned parameter set is unroutable, *or* the model simply
+  has no `/responses` endpoint. Pinning `require_parameters` narrows but does not
+  disambiguate them. So when native tools are still present after schema
+  relaxation, a model with **zero `/responses` endpoints but tool-capable
+  `/chat` endpoints** is declined the Responses→Chat fallback even though Chat
+  could have served it. Note the cost asymmetry: a correct decline saves one
+  round trip (~3–5s), an incorrect one loses the turn. Resolving this needs a
+  positive signal that the model has a `/responses` endpoint (per-endpoint
+  catalog metadata, or an unconditional single Chat attempt) plus a
+  transport-matrix test set — deliberately out of scope for the `response_format`
+  fix, which strictly narrows the affected set. Declines are observable via
+  `openrouter_responses_fallback_declined`.
 - **Zen adapter.** `app/src/lib/zen-stream.ts` serializes `tools` +
   `tool_choice: 'auto'` into the body (no routing guard — Zen has none). This
   covers the standard tier directly and the Go tier's OpenAI transport via the
