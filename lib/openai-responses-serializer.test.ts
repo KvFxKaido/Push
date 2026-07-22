@@ -32,7 +32,9 @@ describe('toOpenAIResponses', () => {
       model: 'gpt-5.4',
       input: [
         { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] },
-        { type: 'message', role: 'assistant', content: [{ type: 'input_text', text: 'yo' }] },
+        // Assistant history is output_text — the API rejects input_text on
+        // assistant messages (the 2026-07-21 gpt-5.6-luna 400).
+        { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'yo' }] },
       ],
       stream: true,
       store: false,
@@ -215,7 +217,7 @@ describe('toOpenAIResponses', () => {
       {
         type: 'message',
         role: 'assistant',
-        content: [{ type: 'input_text', text: 'Checking.' }],
+        content: [{ type: 'output_text', text: 'Checking.' }],
       },
       {
         type: 'function_call',
@@ -280,8 +282,34 @@ describe('toOpenAIResponses', () => {
       {
         type: 'message',
         role: 'assistant',
-        content: [{ type: 'input_text', text: 'answer' }],
+        content: [{ type: 'output_text', text: 'answer' }],
       },
+    ]);
+  });
+
+  it('splits text content types by role across a multi-turn replay', () => {
+    // Regression for the push-gate 400: `Invalid value: 'input_text'` at
+    // input[2].content[0] — the first ASSISTANT history item in a replay.
+    // System/user stay input_text; every assistant item is output_text,
+    // including the empty-content fallback.
+    const body = toOpenAIResponses(
+      reqWith([
+        llm('1', 'user', 'first question'),
+        llm('2', 'assistant', 'first answer'),
+        llm('3', 'user', 'second question'),
+        llm('4', 'assistant', '', { contentBlocks: [] }),
+      ]),
+      { modelOverride: 'gpt-5.6-luna' },
+    );
+    expect(
+      body.input.map((item) =>
+        item.type === 'message' ? `${item.role}:${item.content[0]?.type}` : item.type,
+      ),
+    ).toEqual([
+      'user:input_text',
+      'assistant:output_text',
+      'user:input_text',
+      'assistant:output_text',
     ]);
   });
 
