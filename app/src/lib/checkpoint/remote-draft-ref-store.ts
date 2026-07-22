@@ -72,7 +72,12 @@ export const remoteDraftRefCheckpointStore: CheckpointStore = {
     const availability = await detectAutoBackRestore(input.sandboxId, input.branch);
     if (!availability.available) return { available: false, reason: availability.reason };
     // The backup commit sha is the store-local checkpoint handle.
-    return { available: true, checkpointId: availability.sha, summary: availability.summary };
+    return {
+      available: true,
+      checkpointId: availability.sha,
+      summary: availability.summary,
+      sourceRef: availability.ref,
+    };
   },
 
   async restore(input: CheckpointRestoreInput): Promise<CheckpointRestoreResult> {

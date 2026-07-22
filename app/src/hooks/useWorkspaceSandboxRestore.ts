@@ -58,6 +58,7 @@ export function planAutoBackRestoreDetection(
 export interface WorkspaceSandboxRestoreState {
   available: boolean;
   summary: string;
+  contextLine: string | null;
   restore: () => Promise<void>;
   dismiss: () => void;
   restoring: boolean;
@@ -83,6 +84,7 @@ interface RestoreBannerState {
   available: boolean;
   summary: string;
   checkpointId: string | null;
+  sourceRef: string | null;
   restoring: boolean;
   error: string | null;
 }
@@ -101,6 +103,7 @@ const initialBannerState: RestoreBannerState = {
   available: false,
   summary: '',
   checkpointId: null,
+  sourceRef: null,
   restoring: false,
   error: null,
 };
@@ -201,10 +204,30 @@ export function useWorkspaceSandboxRestore({
           available: true,
           summary: availability.summary,
           checkpointId: availability.checkpointId,
+          sourceRef: availability.sourceRef ?? null,
           restoring: false,
           error: null,
         };
+        console.log(
+          JSON.stringify({
+            level: 'info',
+            event: 'checkpoint_restore_available',
+            sandboxId: probe.sandboxId,
+            repoFullName: probe.repoFullName,
+            branch: probe.branch,
+            checkpointId: availability.checkpointId,
+            sourceRef: availability.sourceRef,
+          }),
+        );
 
+        // Quiet auto-apply: successful recovery is intentionally UI-quiet —
+        // sandbox loss should feel like reconnecting (see Checkpoint Recovery
+        // on Sandbox Loss.md; the auto-vs-banner question stays open there,
+        // and the shipped lean is auto on a fresh sandbox). The banner and the
+        // session-context line surface only when the quiet path could NOT
+        // restore — that is exactly when the lead needs to know the work
+        // exists at the draft/auto ref instead of assuming a fresh clone is
+        // the whole story.
         let result: CheckpointRestoreResult;
         try {
           result = await applyRef.current({
@@ -214,10 +237,7 @@ export function useWorkspaceSandboxRestore({
         } catch (restoreErr) {
           if (cancelled || !scopeStillMatchesProbe()) return;
           const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
-          setBanner({
-            ...offer,
-            error: message,
-          });
+          setBanner({ ...offer, error: message });
           console.warn(
             JSON.stringify({
               level: 'warn',
@@ -234,9 +254,6 @@ export function useWorkspaceSandboxRestore({
         }
         if (cancelled || !scopeStillMatchesProbe()) return;
         if (result.status === 'restored') {
-          // Successful recovery is intentionally UI-quiet: sandbox loss should
-          // feel like reconnecting. Skipped/failed restores surface the banner
-          // below because they need a decision or expose uncertainty.
           setBanner(initialBannerState);
           console.log(
             JSON.stringify({
@@ -250,10 +267,7 @@ export function useWorkspaceSandboxRestore({
           );
           return;
         }
-        setBanner({
-          ...offer,
-          error: restoreErrorMessage(result),
-        });
+        setBanner({ ...offer, error: restoreErrorMessage(result) });
         console.warn(
           JSON.stringify({
             level: 'warn',
@@ -303,24 +317,98 @@ export function useWorkspaceSandboxRestore({
     // Pin the checkpoint detection summarized — the store's restore re-checks the
     // backup, so we never restore a different checkpoint than the one offered.
     const checkpointId = banner.checkpointId;
+    // Capture the invoked banner's full lane scope. Every completion updater
+    // below is conditional on the CURRENT banner still matching it: a lane
+    // change during the await can install a NEW branch's offer, and the old
+    // restore's completion must neither attach its error to that offer nor
+    // clear it on success (PR #1572 fugu warning — same await-breaks-
+    // reservation family as #910/#1515).
+    const invoked = {
+      sandboxId: banner.sandboxId,
+      repoFullName: banner.repoFullName,
+      branch: banner.branch,
+      checkpointId,
+    };
+    const stillInvokedBanner = (current: RestoreBannerState): boolean =>
+      current.sandboxId === invoked.sandboxId &&
+      current.repoFullName === invoked.repoFullName &&
+      current.branch === invoked.branch &&
+      current.checkpointId === invoked.checkpointId;
     setBanner((current) =>
-      current.available ? { ...current, restoring: true, error: null } : current,
+      current.available && stillInvokedBanner(current)
+        ? { ...current, restoring: true, error: null }
+        : current,
     );
-    const result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
-    if (result.status === 'restored') {
-      setBanner(initialBannerState);
+    let result: CheckpointRestoreResult;
+    try {
+      result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
+    } catch (restoreErr) {
+      const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+      setBanner((current) =>
+        stillInvokedBanner(current) ? { ...current, restoring: false, error: message } : current,
+      );
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'checkpoint_restore_failed',
+          sandboxId,
+          repoFullName,
+          branch,
+          checkpointId,
+          reason: message,
+        }),
+      );
       return;
     }
-    setBanner((current) => ({
-      ...current,
-      restoring: false,
-      error: restoreErrorMessage(result),
-    }));
-  }, [sandboxId, branch, repoFullName, banner.available, banner.checkpointId]);
+    if (result.status === 'restored') {
+      setBanner((current) => (stillInvokedBanner(current) ? initialBannerState : current));
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'checkpoint_restore_restored',
+          sandboxId,
+          repoFullName,
+          branch,
+          checkpointId: result.checkpointId,
+        }),
+      );
+      return;
+    }
+    setBanner((current) =>
+      stillInvokedBanner(current)
+        ? { ...current, restoring: false, error: restoreErrorMessage(result) }
+        : current,
+    );
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'checkpoint_restore_deferred',
+        sandboxId,
+        repoFullName,
+        branch,
+        checkpointId,
+        status: result.status,
+        reason: result.status === 'failed' ? result.reason : undefined,
+      }),
+    );
+  }, [
+    sandboxId,
+    branch,
+    repoFullName,
+    banner.available,
+    banner.checkpointId,
+    banner.sandboxId,
+    banner.repoFullName,
+    banner.branch,
+  ]);
 
   return {
     available: visible,
     summary: visible ? banner.summary : '',
+    contextLine:
+      visible && banner.sourceRef
+        ? `Unpushed work from this chat exists at origin ref ${banner.sourceRef}; explicit restore is available.`
+        : null,
     restore,
     dismiss,
     restoring: visible ? banner.restoring : false,

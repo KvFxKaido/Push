@@ -196,6 +196,7 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => ({
       status: 'restored' as const,
@@ -219,8 +220,30 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
     });
     expect(view.available).toBe(false);
     expect(view.summary).toBe('');
+    // Quiet success means no session-context line either — the work is back,
+    // there is nothing for the lead to be warned about.
+    expect(view.contextLine).toBeNull();
     expect(console.log).toHaveBeenCalledWith(
       expect.stringContaining('checkpoint_auto_restore_restored'),
+    );
+  });
+
+  it('surfaces the banner AND the session-context line when auto restore defers', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
+    }));
+    const apply = vi.fn(async () => ({ status: 'skipped-dirty' as const }));
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    const view = renderRestore({ detect, apply });
+
+    expect(view.available).toBe(true);
+    expect(view.contextLine).toBe(
+      'Unpushed work from this chat exists at origin ref draft/auto/feature/x; explicit restore is available.',
     );
   });
 
@@ -243,12 +266,14 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
       available: true,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
     expect(apply).not.toHaveBeenCalled();
+    expect(renderRestore({ branch: 'feature/y', detect, apply }).available).toBe(false);
   });
 
   it('shows the existing restore banner when auto restore refuses a dirty target', async () => {
@@ -256,6 +281,7 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => ({ status: 'skipped-dirty' as const }));
 
@@ -276,6 +302,7 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => {
       throw new Error('transport failed');
@@ -287,6 +314,84 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
 
     expect(view.available).toBe(true);
     expect(view.error).toBe('transport failed');
+  });
+
+  it('does not attach a stale manual-restore completion to a newly installed lane offer', async () => {
+    // fugu warning on #1572: a lane change during the manual restore's await
+    // can install a NEW branch's offer; the old completion must not mutate it.
+    const manualApply = deferred<{ status: 'restored'; checkpointId: string }>();
+    let manualPhase = false;
+    const apply = vi.fn(async () => {
+      if (manualPhase) return manualApply.promise;
+      return { status: 'skipped-dirty' as const };
+    });
+    const detect = vi.fn(async (input: { branch: string }) =>
+      input.branch === 'feature/x'
+        ? {
+            available: true as const,
+            checkpointId: 'checkpoint-x',
+            summary: 'x summary',
+            sourceRef: 'draft/auto/feature/x',
+          }
+        : {
+            available: true as const,
+            checkpointId: 'checkpoint-y',
+            summary: 'y summary',
+            sourceRef: 'draft/auto/feature/y',
+          },
+    );
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    let view = renderRestore({ detect, apply });
+    expect(view.available).toBe(true);
+
+    manualPhase = true;
+    const pendingRestore = view.restore();
+
+    // The lane switches while the manual restore is in flight; feature/y's
+    // detection installs its own offer (its auto-apply also defers on dirty).
+    manualPhase = false;
+    renderRestore({ branch: 'feature/y', detect, apply });
+    await runEffects();
+
+    manualPhase = true;
+    manualApply.reject(new Error('transport failed'));
+    await pendingRestore;
+
+    view = renderRestore({ branch: 'feature/y', detect, apply });
+    expect(view.available).toBe(true);
+    expect(view.summary).toBe('y summary');
+    // Without the invoked-scope guard, the stale completion writes
+    // 'transport failed' into feature/y's fresh offer.
+    expect(view.error).not.toBe('transport failed');
+  });
+
+  it('explicit restore retry logs its own paired events after an auto-defer', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
+    }));
+    // Auto attempt defers on dirty; the user-triggered retry succeeds.
+    const apply = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'skipped-dirty' as const })
+      .mockResolvedValueOnce({ status: 'restored' as const, checkpointId: 'checkpoint-1' });
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    let view = renderRestore({ detect, apply });
+    expect(view.available).toBe(true);
+
+    await view.restore();
+    view = renderRestore({ detect, apply });
+    expect(view.available).toBe(false);
+    expect(view.contextLine).toBeNull();
+    expect(console.log).toHaveBeenCalledWith(
+      expect.stringContaining('checkpoint_restore_restored'),
+    );
   });
 
   it('does not call restore when no checkpoint is available', async () => {

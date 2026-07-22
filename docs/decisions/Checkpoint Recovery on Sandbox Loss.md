@@ -51,6 +51,14 @@ clears the file-version cache, prefetched-edit cache, and symbol + file ledgers
 The gap was *shared* with the increment-1 manual restore (and the remote/web
 store), so the fix covers both stores. See Post-restore consistency below.
 
+**Deferred-restore surfacing — landed:** quiet auto-restore on detection stays
+(sandbox loss should feel like reconnecting). When the quiet path can NOT
+restore — dirty tree, failed apply — the one-tap banner appears as before, and
+for the web remote-draft store the same availability now also adds the exact
+`draft/auto/<branch>` ref to the session context, so the lead does not mistake
+a fresh clone for the lost working tree (the 2026-07-21 blind-commit incident).
+The context line and banner share visibility: quiet success surfaces neither.
+
 **Deferred to follow-up PRs:** native-restore-before workspace-patch-replay
 ordering; resume "re-apply" suppression in `useChatCheckpoint`; detection↔capture
 race ordering; auto-restore-vs-banner UX; and eager auto-cold-start-without-user-

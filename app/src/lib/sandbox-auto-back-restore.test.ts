@@ -112,6 +112,7 @@ describe('detectAutoBackRestore', () => {
       available: true,
       sha: SHA,
       summary: SUMMARY,
+      ref: 'draft/auto/feature/x',
     });
   });
 });

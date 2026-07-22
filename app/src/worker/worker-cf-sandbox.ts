@@ -196,6 +196,60 @@ export class SandboxExecDeadlineError extends Error {
   }
 }
 
+class CloneRecoveryGitError extends Error {
+  readonly stage: string;
+  constructor(stage: string, message: string) {
+    super(message);
+    this.name = 'CloneRecoveryGitError';
+    this.stage = stage;
+  }
+}
+
+type CloneRecoveryErrorKind = 'executor_exit' | 'timeout' | 'transport' | 'git' | 'unknown';
+
+function workspaceResetFailureMessage(res: { exitCode?: number; stderr?: string }): string {
+  const stderr = (res.stderr ?? '').trim();
+  return `workspace reset failed (exit code ${res.exitCode ?? 'unknown'})${stderr ? `: ${stderr}` : ''}`;
+}
+
+function classifyCloneRecoveryError(err: unknown): {
+  retryable: boolean;
+  kind: CloneRecoveryErrorKind;
+} {
+  if (err instanceof CloneRecoveryGitError) return { retryable: false, kind: 'git' };
+  if (err instanceof SandboxExecDeadlineError) return { retryable: true, kind: 'timeout' };
+
+  const message = err instanceof Error ? err.message : String(err);
+  // Terminal git failures must win over the broad transport vocabulary below.
+  // In particular, "repository not found" is not a dead executor just because
+  // the operation happened over a remote transport.
+  if (
+    /repository(?: .*?)? not found|remote branch .* not found|couldn't find remote ref|authentication failed|permission denied|access denied|does not appear to be a git repository/i.test(
+      message,
+    )
+  ) {
+    return { retryable: false, kind: 'git' };
+  }
+  if (
+    /executor process exited unexpectedly|executor .* exited|process exited unexpectedly|exit(?:ed)?(?: code)? 13[4-9]\b|\bkilled\b|\bsignal\b/i.test(
+      message,
+    )
+  ) {
+    return { retryable: true, kind: 'executor_exit' };
+  }
+  if (/timed out|timeout|deadline exceeded/i.test(message)) {
+    return { retryable: true, kind: 'timeout' };
+  }
+  if (
+    /\btransport\b|\brpc\b|\bgrpc\b|connection (?:reset|closed|refused|timed out)|failed to connect|econnreset|econnrefused|etimedout|ehostunreach|socket hang up|network error|fetch failed|service unavailable|temporarily unavailable|early eof|unexpected disconnect|remote end hung up|gnutls|tls connection|http\/2 stream|could not resolve host|temporary failure in name resolution|\b(?:500|502|503|504)\b|container .*?(?:exited|crashed|unreachable|unavailable)/i.test(
+      message,
+    )
+  ) {
+    return { retryable: true, kind: 'transport' };
+  }
+  return { retryable: false, kind: 'unknown' };
+}
+
 function withExecDeadline<T>(
   exec: Promise<T>,
   timeoutMs: number = currentExecDeadlineMs,
@@ -561,7 +615,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
   const ownerHint = str(body.owner_hint);
 
   const sandboxId = crypto.randomUUID();
-  const sandbox = sandboxFor(env, sandboxId);
+  let sandbox = sandboxFor(env, sandboxId);
 
   // Per-phase ready-state timing. Emitted once at the tail of routeCreate (or
   // in the failure path) as `cf_sandbox_create_timing` so we can see whether
@@ -597,7 +651,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
     }
   };
 
-  try {
+  const configureGitIdentity = async (): Promise<void> => {
     if (githubIdentity?.name && githubIdentity?.email) {
       // Single-quote via shellSingleQuote, not JSON.stringify. Double quotes
       // still evaluate $VAR, backticks, and $(...), so a crafted identity
@@ -614,6 +668,10 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         ),
       );
     }
+  };
+
+  try {
+    await configureGitIdentity();
 
     if (repo && repo.length > 0) {
       const cloneUrl = githubRepoUrl(repo, githubToken);
@@ -639,59 +697,110 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
         // default HEAD, which would base the session branch on the wrong commit.
         //
         // A clone failure can leave the sandbox with a `.git/config` whose origin
-        // still carries the tokenized clone URL, so every throw below first
-        // destroys the container (fail-closed, mirroring the strip-failure path
-        // at #987) rather than orphaning a credential-bearing sandbox.
-        const failClosed = async (): Promise<never> => {
-          if (githubToken) await sandbox.destroy?.().catch(() => {});
-          throw branchCloneErr;
+        // still carries the tokenized clone URL. Every failed recovery attempt
+        // destroys that container before either retrying on a fresh provision or
+        // surfacing the original clone error (fail-closed, mirroring #987).
+        const destroyRecoverySandbox = async (attempt: 'initial' | 'retry'): Promise<boolean> => {
+          try {
+            if (!sandbox.destroy) {
+              console.log(
+                JSON.stringify({
+                  level: 'error',
+                  event: 'cf_sandbox_recovery_destroy_failed',
+                  sandbox_id: sandboxId,
+                  repo: repoHash,
+                  attempt,
+                  error_kind: 'destroy_unavailable',
+                }),
+              );
+              return false;
+            }
+            await withExecDeadline(sandbox.destroy());
+            return true;
+          } catch (destroyErr) {
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'cf_sandbox_recovery_destroy_failed',
+                sandbox_id: sandboxId,
+                repo: repoHash,
+                attempt,
+                error_kind: classifyCloneRecoveryError(destroyErr).kind,
+              }),
+            );
+            return false;
+          }
         };
 
-        await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
-          () => {},
-        );
-        await time('clone', () =>
-          sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 }),
-        );
+        let recoveryStage = 'workspace_reset';
+        const recoverAbsentBranch = async (): Promise<boolean> => {
+          recoveryStage = 'workspace_reset';
+          const reset = (await withExecDeadline(
+            sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
+          )) as { exitCode?: number; stderr?: string };
+          if ((reset.exitCode ?? 0) !== 0) {
+            // Not a git operation — throw a plain Error carrying the exit code
+            // and stderr so classifyCloneRecoveryError can decide. An executor
+            // killed mid-reset surfaces as a signal exit (e.g. 137) and MUST
+            // stay retryable; a genuine local failure (permission denied) still
+            // classifies terminal via the git-error vocabulary.
+            throw new Error(workspaceResetFailureMessage(reset));
+          }
 
-        // Consult origin via the *configured* remote (token read from
-        // `.git/config`, never placed on the command line) to disambiguate
-        // "branch absent" from "transient clone failure".
-        const lsRemote = (await withExecDeadline(
-          sandbox.exec(`cd /workspace && git ls-remote --heads origin ${shellSingleQuote(branch)}`),
-        )) as { stdout?: string; exitCode?: number };
-        const branchOnOrigin =
-          (lsRemote.exitCode ?? 1) === 0 && (lsRemote.stdout ?? '').trim().length > 0;
-        if (branchOnOrigin) {
-          // The branch exists on origin — the `--branch` clone failed for a real
-          // or transient reason, not absence. Surface the original failure rather
-          // than recreate at the wrong base.
-          await failClosed();
-        }
+          recoveryStage = 'default_head_clone';
+          await time('clone', () =>
+            withExecDeadline(sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 })),
+          );
 
-        // Genuinely absent on origin. Prefer restoring a durable R2 snapshot for
-        // this repo+branch — it recovers the *unpushed work* (tree + local
-        // commits) from the prior, now-dead sandbox, not just the branch name.
-        // This path is naturally scoped to absent branches: the default branch is
-        // always on origin, so a stale default-branch snapshot can never shadow a
-        // fresh clone here. Best-effort — a missing/failed snapshot falls through
-        // to recreating an empty branch (the prior behavior).
-        const restoreOutcome = env.SNAPSHOT_INDEX
-          ? await time('clone', () => restoreSnapshotIntoSandbox(env, sandbox, repo, branch))
-          : 'absent';
+          // Consult origin via the *configured* remote (token read from
+          // `.git/config`, never placed on the command line) to disambiguate
+          // "branch absent" from "transient clone failure".
+          recoveryStage = 'ls_remote';
+          const lsRemote = (await withExecDeadline(
+            sandbox.exec(
+              `cd /workspace && git ls-remote --heads origin ${shellSingleQuote(branch)}`,
+            ),
+          )) as { stdout?: string; stderr?: string; exitCode?: number };
+          if ((lsRemote.exitCode ?? 1) !== 0) {
+            const lsRemoteError = new Error(
+              (lsRemote.stderr ?? '').trim() || 'git ls-remote failed',
+            );
+            if (classifyCloneRecoveryError(lsRemoteError).retryable) throw lsRemoteError;
+            throw new CloneRecoveryGitError(recoveryStage, 'git ls-remote failed');
+          }
+          if ((lsRemote.stdout ?? '').trim().length > 0) {
+            // The branch exists on origin — the `--branch` clone failed for a
+            // real or transient reason, not absence. Never recreate it at the
+            // default HEAD.
+            throw new CloneRecoveryGitError(recoveryStage, 'branch exists on origin');
+          }
 
-        let restoredFromSnapshot = false;
-        if (restoreOutcome === 'restored') {
-          restoredFromSnapshot = true;
-        } else {
+          // Genuinely absent on origin. Prefer restoring a durable R2 snapshot
+          // for this repo+branch — it recovers the unpushed tree and commits, not
+          // just the branch name. Missing/failed snapshots fall through to the
+          // empty-branch fallback.
+          recoveryStage = 'snapshot_restore';
+          const restoreOutcome = env.SNAPSHOT_INDEX
+            ? await time('clone', () => restoreSnapshotIntoSandbox(env, sandbox, repo, branch))
+            : 'absent';
+
+          if (restoreOutcome === 'restored') return true;
           if (restoreOutcome === 'wiped') {
             // A restore attempt emptied /workspace before failing — re-establish
             // the default-HEAD checkout so the empty-branch fallback has a base.
-            await withExecDeadline(sandbox.exec('rm -rf /workspace && mkdir -p /workspace')).catch(
-              () => {},
-            );
+            recoveryStage = 'post_restore_workspace_reset';
+            const postRestoreReset = (await withExecDeadline(
+              sandbox.exec('rm -rf /workspace && mkdir -p /workspace'),
+            )) as { exitCode?: number; stderr?: string };
+            if ((postRestoreReset.exitCode ?? 0) !== 0) {
+              // Same classification contract as the workspace_reset stage above.
+              throw new Error(workspaceResetFailureMessage(postRestoreReset));
+            }
+            recoveryStage = 'post_restore_default_head_clone';
             await time('clone', () =>
-              sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 }),
+              withExecDeadline(
+                sandbox.gitCheckout(cloneUrl, { targetDir: '/workspace', depth: 1 }),
+              ),
             );
           }
           // Recreate locally off the default HEAD. Skip the `checkout -b` only
@@ -699,6 +808,7 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
           // via `symbolic-ref HEAD` (the actual current branch) rather than
           // `rev-parse <branch>`, which would also resolve a same-named tag and
           // wrongly skip the create.
+          recoveryStage = 'branch_recreate';
           const recreate = (await withExecDeadline(
             sandbox.exec(
               `cd /workspace && (test "$(git symbolic-ref --short HEAD 2>/dev/null)" = ${shellSingleQuote(branch)} || ` +
@@ -706,12 +816,88 @@ async function routeCreate(env: Env, body: Json): Promise<Response> {
             ),
           )) as { exitCode?: number; stderr?: string };
           if ((recreate.exitCode ?? 0) !== 0) {
-            // Couldn't recreate the branch on the default checkout — surface the
-            // original clone failure rather than a confusing secondary error.
-            await failClosed();
+            throw new CloneRecoveryGitError(recoveryStage, 'git checkout -b failed');
+          }
+          return false;
+        };
+
+        // Recovery-stage failures normally surface the ORIGINAL clone error
+        // (the informative one). A structured SDK error (e.g. an
+        // INVALID_BACKUP_CONFIG from the snapshot restore) must propagate
+        // as-is instead — the route's error mapping turns its code into an
+        // actionable 503, and replacing it with the generic clone failure
+        // would bury the operator signal (PR #1572 Codex P2).
+        const recoveryThrowable = (recoveryErr: unknown): unknown =>
+          backupErrorCode(recoveryErr) !== undefined ? recoveryErr : branchCloneErr;
+
+        let restoredFromSnapshot: boolean;
+        try {
+          restoredFromSnapshot = await recoverAbsentBranch();
+        } catch (recoveryErr) {
+          const classification = classifyCloneRecoveryError(recoveryErr);
+          const destroyed = await destroyRecoverySandbox('initial');
+          if (!classification.retryable) {
+            console.log(
+              JSON.stringify({
+                level: 'warn',
+                event: 'cf_sandbox_recovery_not_retried',
+                sandbox_id: sandboxId,
+                repo: repoHash,
+                stage:
+                  recoveryErr instanceof CloneRecoveryGitError ? recoveryErr.stage : recoveryStage,
+                error_kind: classification.kind,
+              }),
+            );
+            throw recoveryThrowable(recoveryErr);
+          }
+          if (!destroyed) {
+            console.log(
+              JSON.stringify({
+                level: 'error',
+                event: 'cf_sandbox_recovery_retry_failed',
+                sandbox_id: sandboxId,
+                repo: repoHash,
+                stage: 'destroy_before_retry',
+                error_kind: 'destroy_failed',
+              }),
+            );
+            throw branchCloneErr;
+          }
+
+          console.log(
+            JSON.stringify({
+              level: 'warn',
+              event: 'cf_sandbox_recovery_retried',
+              sandbox_id: sandboxId,
+              repo: repoHash,
+              stage: recoveryStage,
+              error_kind: classification.kind,
+            }),
+          );
+          // destroy() retires the credential-bearing container. Re-acquire the
+          // stable DO handle so the second attempt provisions a clean executor,
+          // then restore the global identity that lived in the destroyed rootfs.
+          sandbox = sandboxFor(env, sandboxId);
+          try {
+            await configureGitIdentity();
+            restoredFromSnapshot = await recoverAbsentBranch();
+          } catch (retryErr) {
+            const retryClassification = classifyCloneRecoveryError(retryErr);
+            await destroyRecoverySandbox('retry');
+            console.log(
+              JSON.stringify({
+                level: 'error',
+                event: 'cf_sandbox_recovery_retry_failed',
+                sandbox_id: sandboxId,
+                repo: repoHash,
+                stage: retryErr instanceof CloneRecoveryGitError ? retryErr.stage : recoveryStage,
+                error_kind: retryClassification.kind,
+              }),
+            );
+            throw recoveryThrowable(retryErr);
           }
         }
-        // The retry recovered, so the 'clone' phase is no longer a failure even
+        // The recovery succeeded, so the 'clone' phase is no longer a failure even
         // though the first attempt threw and set it.
         failedPhase = null;
         console.log(

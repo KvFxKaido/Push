@@ -14,7 +14,7 @@ import { isInvalidGitRef } from './git-ref-validation';
 
 export type RestoreAvailability =
   | { available: false; reason?: string }
-  | { available: true; sha: string; summary: string };
+  | { available: true; sha: string; summary: string; ref: string };
 
 export type RestoreResult =
   | { status: 'restored'; sha: string }
@@ -153,7 +153,7 @@ export async function detectAutoBackRestore(
       sha,
       summary,
     });
-    return { available: true, sha, summary };
+    return { available: true, sha, summary, ref: resolved.ref };
   }
 
   const reason = execError ?? first ?? 'unexpected restore detection output';
