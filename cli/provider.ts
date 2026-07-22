@@ -15,7 +15,10 @@ import {
 } from '../lib/provider-definition.ts';
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
-import { streamResponsesWithChatFallback } from '../lib/responses-chat-fallback.ts';
+import {
+  isOpenRouterRoutingConstraintError,
+  streamResponsesWithChatFallback,
+} from '../lib/responses-chat-fallback.ts';
 import { isQuotaExhaustedErrorMessage } from '../lib/quota-errors.ts';
 import { CliProviderError, createCliProviderStream } from './openai-stream.ts';
 import { createCliOpenAIResponsesStream } from './openai-responses-stream.ts';
@@ -304,7 +307,25 @@ export function createProviderStream(
       return streamResponsesWithChatFallback({
         responses: () => responsesStream(req),
         chat: () => chatStream(req),
-        shouldFallback: () => !req.signal?.aborted,
+        shouldFallback: (error) => {
+          if (req.signal?.aborted) return false;
+          // Deterministic routing rejection — the chat leg sends the identical
+          // `require_parameters` filter, so a retry cannot route any better.
+          if (isOpenRouterRoutingConstraintError(error)) {
+            // stderr: CLI stdout is the user/--json channel.
+            console.error(
+              JSON.stringify({
+                level: 'warn',
+                event: 'openrouter_responses_fallback_declined',
+                reason: 'routing_constraint',
+                model,
+                error: error instanceof Error ? error.message : String(error),
+              }),
+            );
+            return false;
+          }
+          return true;
+        },
         onFallback: (error) => {
           console.error(
             JSON.stringify({

@@ -293,6 +293,57 @@ describe('openrouterStream', () => {
     await expect(collect(openrouterStream(baseRequest))).rejects.toThrow(/429.*rate limited/);
   });
 
+  // Wiring tests for the routing-constraint decline. These drive `openrouterStream`
+  // — the production entry — rather than the combinator, so they fail if the call
+  // site stops passing the predicate. Asserting the fetch COUNT is the point: the
+  // bug being fixed is a second upstream round trip that cannot succeed.
+  it('does not retry on chat when OpenRouter rejects the parameter set (one fetch)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            error: {
+              message:
+                'No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection',
+              code: 404,
+            },
+          }),
+          { status: 404, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    const { openrouterStream } = await import('./openrouter-stream');
+
+    await expect(collect(openrouterStream(baseRequest))).rejects.toThrow(/No endpoints found/);
+    // Exactly one upstream call: chat re-sends the identical require_parameters
+    // filter, so the fallback is declined rather than spending a second round trip.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('declined'));
+    expect(logged).toBeDefined();
+    expect(JSON.parse(logged as string)).toMatchObject({
+      event: 'openrouter_responses_fallback_declined',
+      reason: 'routing_constraint',
+    });
+    warn.mockRestore();
+  });
+
+  it('still retries on chat for a transient failure (two fetches)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ error: { message: 'upstream hiccup' } }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+    const { openrouterStream } = await import('./openrouter-stream');
+
+    await expect(collect(openrouterStream(baseRequest))).rejects.toThrow(/upstream hiccup/);
+    // The safety net is untouched for the class it was built for.
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.restoreAllMocks();
+  });
+
   it('propagates abort to the upstream reader', async () => {
     const { push } = installStreamFetch(fetchMock);
     const controller = new AbortController();

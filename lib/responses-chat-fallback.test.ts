@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PushStreamEvent } from './provider-contract.js';
 import {
   isCommittedResponsesEvent,
+  isOpenRouterRoutingConstraintError,
   streamResponsesWithChatFallback,
 } from './responses-chat-fallback.js';
 
@@ -24,6 +25,18 @@ async function collect(stream: AsyncIterable<PushStreamEvent>): Promise<PushStre
 }
 
 const DONE: PushStreamEvent = { type: 'done', finishReason: 'stop' };
+
+// The verbatim body OpenRouter returns when `provider.require_parameters` cannot be
+// satisfied — captured from a push-gate log of a real `anthropic/claude-sonnet-4` 404.
+const OPENROUTER_404_BODY =
+  '{"error":{"message":"No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection","code":404}}';
+
+// Each lane wraps that body differently. These are the exact shapes the production
+// code constructs — a predicate that matches a hand-written string but not these
+// would be dead code in every lane that actually throws.
+const WEB_LANE_ERROR = `OpenRouter 404: ${JSON.parse(OPENROUTER_404_BODY).error.message}`;
+const WORKER_LANE_ERROR = `Provider openrouter returned 404: ${OPENROUTER_404_BODY.slice(0, 200)}`;
+const CLI_LANE_ERROR = `Provider error 404 [provider=openrouter model=anthropic/claude-sonnet-4 url=https://openrouter.ai/api/v1/responses]: ${OPENROUTER_404_BODY.slice(0, 400)}`;
 
 describe('isCommittedResponsesEvent', () => {
   it('treats visible/actionable output as committed, terminal/noise as not', () => {
@@ -124,5 +137,54 @@ describe('streamResponsesWithChatFallback', () => {
     );
     expect(out).toEqual([DONE]);
     expect(chat).not.toHaveBeenCalled();
+  });
+
+  it('declines the fallback on a routing-constraint error, propagating the accurate one', async () => {
+    const chat = vi.fn(() => from([{ type: 'text_delta', text: 'CHAT' }]));
+    const stream = streamResponsesWithChatFallback({
+      responses: () => throwsAfter([], new Error(WEB_LANE_ERROR)),
+      chat,
+      shouldFallback: (error) => !isOpenRouterRoutingConstraintError(error),
+    });
+    await expect(collect(stream)).rejects.toThrow('No endpoints found');
+    // The whole point: chat re-sends the identical constraint, so it is never built.
+    expect(chat).not.toHaveBeenCalled();
+  });
+});
+
+describe('isOpenRouterRoutingConstraintError', () => {
+  it('matches the error shape each lane actually constructs', () => {
+    // web — `parseProviderError` extracts `error.message`, dropping the JSON envelope.
+    expect(isOpenRouterRoutingConstraintError(new Error(WEB_LANE_ERROR))).toBe(true);
+    // worker — raw body truncated to 200 chars. The marker ends around char 81, so it
+    // survives; this pins that boundary rather than assuming it.
+    expect(isOpenRouterRoutingConstraintError(new Error(WORKER_LANE_ERROR))).toBe(true);
+    expect(WORKER_LANE_ERROR).toContain('requested parameters');
+    // CLI — raw body truncated to 400 chars behind a longer prefix.
+    expect(isOpenRouterRoutingConstraintError(new Error(CLI_LANE_ERROR))).toBe(true);
+  });
+
+  it('accepts a bare string and is case-insensitive', () => {
+    expect(isOpenRouterRoutingConstraintError(OPENROUTER_404_BODY)).toBe(true);
+    expect(
+      isOpenRouterRoutingConstraintError(
+        'NO ENDPOINTS FOUND THAT CAN HANDLE THE REQUESTED PARAMETERS',
+      ),
+    ).toBe(true);
+  });
+
+  it('stays narrow — other failures keep their fallback', () => {
+    // The chat leg's own 404. Falling back is still right for a server-tool failure:
+    // it is not a statement about routing constraints.
+    expect(
+      isOpenRouterRoutingConstraintError(new Error('OpenRouter 404: Server tool request failed')),
+    ).toBe(false);
+    expect(isOpenRouterRoutingConstraintError(new Error('OpenRouter 429: rate limited'))).toBe(
+      false,
+    );
+    expect(isOpenRouterRoutingConstraintError(new Error('No endpoints found'))).toBe(false);
+    expect(isOpenRouterRoutingConstraintError(undefined)).toBe(false);
+    expect(isOpenRouterRoutingConstraintError(null)).toBe(false);
+    expect(isOpenRouterRoutingConstraintError({ message: 'not an Error instance' })).toBe(false);
   });
 });

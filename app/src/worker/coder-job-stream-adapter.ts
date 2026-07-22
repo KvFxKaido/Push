@@ -39,7 +39,10 @@ import type {
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { resolvePushCapabilityProfile } from '@push/lib/capability-profile';
-import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
+import {
+  isOpenRouterRoutingConstraintError,
+  streamResponsesWithChatFallback,
+} from '@push/lib/responses-chat-fallback';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
@@ -342,7 +345,24 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         yield* streamResponsesWithChatFallback({
           responses: () => attempt('responses'),
           chat: () => attempt('chat'),
-          shouldFallback: () => !signal?.aborted,
+          shouldFallback: (error) => {
+            if (signal?.aborted) return false;
+            // Deterministic routing rejection — the chat leg sends the identical
+            // `require_parameters` filter, so a retry cannot route any better.
+            if (isOpenRouterRoutingConstraintError(error)) {
+              console.warn(
+                JSON.stringify({
+                  level: 'warn',
+                  event: 'openrouter_responses_fallback_declined',
+                  reason: 'routing_constraint',
+                  model: modelId,
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              );
+              return false;
+            }
+            return true;
+          },
           onFallback: (error) => {
             console.warn(
               JSON.stringify({

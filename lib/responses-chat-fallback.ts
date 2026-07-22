@@ -40,6 +40,39 @@ export function isCommittedResponsesEvent(event: PushStreamEvent): boolean {
   }
 }
 
+/**
+ * OpenRouter's routing filter found no provider endpoint that honors every
+ * parameter the request sent — the failure mode of `provider.require_parameters`,
+ * which Push sets whenever it ships native tools or a `response_format`
+ * (`openrouter-stream.ts`).
+ *
+ * This is a property of the REQUEST, not of the transport, so it is exactly the
+ * class `shouldFallback` exists to exclude. The chat leg computes the identical
+ * `requireParameters` value and sends it to the same upstream providers, plus the
+ * `openrouter:web_search` server tool — a strictly narrower filter. Chat therefore
+ * cannot succeed where responses failed this way; falling back only spends a
+ * second round trip to arrive at a second, less accurate error.
+ *
+ * Verified against OpenRouter's published per-endpoint capabilities: all five
+ * endpoints serving `anthropic/claude-sonnet-4` report `response_format`
+ * unsupported, so `require_parameters` plus a schema constraint is unsatisfiable
+ * by construction on that model — deterministic, never transient.
+ */
+const OPENROUTER_ROUTING_CONSTRAINT_MARKER =
+  'no endpoints found that can handle the requested parameters';
+
+/**
+ * True when `error` carries OpenRouter's routing-constraint rejection. Matches on
+ * the message because that is the one representation all three lanes share: the
+ * web lane throws `OpenRouter 404: <extracted error.message>`, while the Worker
+ * and CLI lanes embed a prefix of the raw JSON body — the marker phrase appears
+ * in every one.
+ */
+export function isOpenRouterRoutingConstraintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  return message.toLowerCase().includes(OPENROUTER_ROUTING_CONSTRAINT_MARKER);
+}
+
 export interface ResponsesChatFallbackOptions {
   /** Build the Responses stream (fresh iterable; called once). */
   responses: () => AsyncIterable<PushStreamEvent>;

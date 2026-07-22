@@ -21,7 +21,10 @@ import type {
 } from '@push/lib/provider-contract';
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
-import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
+import {
+  isOpenRouterRoutingConstraintError,
+  streamResponsesWithChatFallback,
+} from '@push/lib/responses-chat-fallback';
 import {
   expandToolMessagesForOpenAICompat,
   flatToolToOpenAITool,
@@ -133,7 +136,24 @@ export async function* openrouterStream(
   yield* streamResponsesWithChatFallback({
     responses: () => openrouterResponsesStream(req),
     chat: () => openrouterChatCompletionsStream(req),
-    shouldFallback: () => !req.signal?.aborted,
+    shouldFallback: (error) => {
+      if (req.signal?.aborted) return false;
+      // A routing-constraint rejection is deterministic: chat re-sends the same
+      // `require_parameters` filter, so retrying only buys a slower, vaguer error.
+      if (isOpenRouterRoutingConstraintError(error)) {
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'openrouter_responses_fallback_declined',
+            reason: 'routing_constraint',
+            model: req.model,
+            error: error instanceof Error ? error.message : String(error),
+          }),
+        );
+        return false;
+      }
+      return true;
+    },
     onFallback: (error) => {
       console.warn(
         JSON.stringify({
