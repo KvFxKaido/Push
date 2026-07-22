@@ -678,6 +678,37 @@ describe('createStreamProxyHandler', () => {
     expect(headers['X-Push-Request-Id']).toBeDefined();
   });
 
+  it('bypasses response caching when streaming through AI Gateway', async () => {
+    let captured: { url: string; headers: Record<string, string> } | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        captured = { url, headers: init.headers as Record<string, string> };
+        return new Response('data: {}\n\n', {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      }),
+    );
+    const handler = createStreamProxyHandler({
+      ...baseConfig,
+      gateway: { provider: 'openrouter', pathSuffix: '/chat/completions' },
+    });
+    await handler(
+      makeChatRequestPOST(),
+      makeEnv({
+        OLLAMA_API_KEY: 'sk',
+        CF_AI_GATEWAY_ACCOUNT_ID: 'test-account',
+        CF_AI_GATEWAY_SLUG: 'test-gateway',
+      }),
+    );
+
+    expect(captured?.url).toBe(
+      'https://gateway.ai.cloudflare.com/v1/test-account/test-gateway/openrouter/chat/completions',
+    );
+    expect(captured?.headers['cf-aig-skip-cache']).toBe('true');
+  });
+
   it('streams the upstream SSE body through with text/event-stream headers', async () => {
     vi.stubGlobal(
       'fetch',
@@ -1049,6 +1080,7 @@ describe('createJsonProxyHandler', () => {
 
       expect(capturedUrl).toBe('https://upstream.test/v1/models');
       expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+      expect(capturedHeaders['cf-aig-skip-cache']).toBeUndefined();
     });
 
     it('rewrites URL to gateway when account+slug are set', async () => {
@@ -1077,6 +1109,7 @@ describe('createJsonProxyHandler', () => {
       );
       expect(capturedHeaders.Authorization).toBe('Bearer sk');
       expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+      expect(capturedHeaders['cf-aig-skip-cache']).toBe('true');
     });
 
     it('attaches gateway auth header when token is set', async () => {
@@ -1124,6 +1157,7 @@ describe('createJsonProxyHandler', () => {
 
       expect(capturedUrl).toBe('https://upstream.test/v1/models');
       expect(capturedHeaders['cf-aig-authorization']).toBeUndefined();
+      expect(capturedHeaders['cf-aig-skip-cache']).toBeUndefined();
     });
   });
 });

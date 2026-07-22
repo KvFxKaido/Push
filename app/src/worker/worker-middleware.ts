@@ -947,8 +947,11 @@ export function createStreamProxyHandler(
     });
 
     const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
-    const gatewayHeaders: Record<string, string> = aigAuth
-      ? { 'cf-aig-authorization': aigAuth }
+    const gatewayHeaders: Record<string, string> = gatewayUrl
+      ? {
+          'cf-aig-skip-cache': 'true',
+          ...(aigAuth ? { 'cf-aig-authorization': aigAuth } : {}),
+        }
       : {};
 
     const extraHeaders =
@@ -1182,8 +1185,11 @@ export function createJsonProxyHandler(
     });
 
     const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
-    const gatewayHeaders: Record<string, string> = aigAuth
-      ? { 'cf-aig-authorization': aigAuth }
+    const gatewayHeaders: Record<string, string> = gatewayUrl
+      ? {
+          'cf-aig-skip-cache': 'true',
+          ...(aigAuth ? { 'cf-aig-authorization': aigAuth } : {}),
+        }
       : {};
 
     try {
