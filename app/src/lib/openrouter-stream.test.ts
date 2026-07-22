@@ -309,22 +309,69 @@ describe('openrouterStream', () => {
       { status: 404, headers: { 'content-type': 'application/json' } },
     );
 
-  it('does not retry on chat when a constraint WE pinned is rejected (one fetch)', async () => {
+  it('recovers a schema-only routing rejection without changing transports', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    fetchMock.mockImplementation(async () => ROUTING_CONSTRAINT_404());
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return ROUTING_CONSTRAINT_404();
+      return new Response(
+        `data: ${textFrame('prompt-only recovery')}\n\ndata: ${completedFrame()}\n\n`,
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
     const { openrouterStream } = await import('./openrouter-stream');
 
-    // `responseFormat` is what sets `provider.require_parameters` on both legs.
     const constrained = {
       ...baseRequest,
       responseFormat: { name: 'verdict', schema: { type: 'object' } },
     } as typeof baseRequest;
-    await expect(collect(openrouterStream(constrained))).rejects.toThrow(/No endpoints found/);
-    // Exactly one upstream call: chat recomputes the identical require_parameters
-    // filter, so the fallback is declined rather than spending a second round trip.
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const events = await collect(openrouterStream(constrained));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(firstBody.text).toBeDefined();
+    expect(firstBody.provider).toEqual({ require_parameters: true });
+    expect(secondBody.text).toBeUndefined();
+    expect(secondBody.provider).toBeUndefined();
+    expect(events.some((e) => e.type === 'text_delta' && e.text === 'prompt-only recovery')).toBe(
+      true,
+    );
+    const logged = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((line) => line.includes('structured_output_relaxed'));
+    expect(JSON.parse(logged as string)).toMatchObject({
+      event: 'openrouter_structured_output_relaxed',
+      reason: 'routing_constraint',
+      transport: 'responses',
+      droppedParameter: 'response_format',
+    });
+    warn.mockRestore();
+  });
+
+  it('still declines chat fallback when native tools remain unsatisfiable after schema relaxation', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async () => ROUTING_CONSTRAINT_404());
+    const { openrouterStream } = await import('./openrouter-stream');
+
+    await expect(
+      collect(
+        openrouterStream({
+          ...baseRequest,
+          openrouterWebSearch: false,
+          tools: [sampleTool],
+          responseFormat: { name: 'verdict', schema: { type: 'object' } },
+        }),
+      ),
+    ).rejects.toThrow(/No endpoints found/);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(secondBody.text).toBeUndefined();
+    expect(secondBody.tools).toEqual([responsesTool]);
+    expect(secondBody.provider).toEqual({ require_parameters: true });
     const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('declined'));
-    expect(logged).toBeDefined();
     expect(JSON.parse(logged as string)).toMatchObject({
       event: 'openrouter_responses_fallback_declined',
       reason: 'routing_constraint',
@@ -410,6 +457,24 @@ describe('openrouterStream', () => {
     expect(body.temperature).toBe(0.7);
     expect(body.top_p).toBe(0.9);
     expect(body.max_tokens).toBeUndefined();
+  });
+
+  it('preserves explicit sampling while omitting redundant auto tool choice', async () => {
+    const body = await pullRequestBody(fetchMock, {
+      ...baseRequest,
+      openrouterWebSearch: false,
+      tools: [sampleTool],
+      maxTokens: 1234,
+      temperature: 0.7,
+      topP: 0.9,
+    });
+
+    expect(body.provider).toEqual({ require_parameters: true });
+    expect(body.tools).toEqual([responsesTool]);
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.max_output_tokens).toBe(1234);
+    expect(body.temperature).toBe(0.7);
+    expect(body.top_p).toBe(0.9);
   });
 
   it('preserves multimodal content parts in the Responses body', async () => {
@@ -499,7 +564,7 @@ describe('openrouterStream', () => {
     });
 
     expect(body.tools).toEqual([responsesTool]);
-    expect(body.tool_choice).toBe('auto');
+    expect(body.tool_choice).toBeUndefined();
     expect(body.provider).toEqual({ require_parameters: true });
   });
 
@@ -522,7 +587,7 @@ describe('openrouterStream', () => {
     });
 
     expect(body.tools).toEqual([responsesTool, { type: 'openrouter:web_search' }]);
-    expect(body.tool_choice).toBe('auto');
+    expect(body.tool_choice).toBeUndefined();
     expect(body.provider).toEqual({ require_parameters: true });
   });
 
@@ -771,6 +836,66 @@ describe('openrouterStream', () => {
     expect(body.input).toBeUndefined();
     expect(body.max_tokens).toBe(42);
     expect(body.max_output_tokens).toBeUndefined();
+  });
+
+  it('preserves sampling on the legacy Chat Completions producer too', async () => {
+    vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'chat');
+    const body = await pullRequestBody(fetchMock, {
+      ...baseRequest,
+      openrouterWebSearch: false,
+      tools: [sampleTool],
+      maxTokens: 42,
+      temperature: 0.7,
+      topP: 0.9,
+    });
+
+    expect(body.provider).toEqual({ require_parameters: true });
+    expect(body.tool_choice).toBeUndefined();
+    expect(body.max_tokens).toBe(42);
+    expect(body.temperature).toBe(0.7);
+    expect(body.top_p).toBe(0.9);
+  });
+
+  it('relaxes unsupported structured output on legacy Chat without dropping sampling', async () => {
+    vi.stubEnv('VITE_OPENROUTER_TRANSPORT', 'chat');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return ROUTING_CONSTRAINT_404();
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"chat recovery"}}]}\n\ndata: [DONE]\n\n',
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    });
+    const { openrouterStream } = await import('./openrouter-stream');
+    const events = await collect(
+      openrouterStream({
+        ...baseRequest,
+        openrouterWebSearch: false,
+        responseFormat: { name: 'verdict', schema: { type: 'object' } },
+        temperature: 0.7,
+      }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse((fetchMock.mock.calls[0][1] as RequestInit).body as string);
+    const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as RequestInit).body as string);
+    expect(firstBody.response_format).toBeDefined();
+    expect(firstBody.provider).toEqual({ require_parameters: true });
+    expect(secondBody.response_format).toBeUndefined();
+    expect(secondBody.provider).toBeUndefined();
+    expect(secondBody.temperature).toBe(0.7);
+    expect(events.some((e) => e.type === 'text_delta' && e.text === 'chat recovery')).toBe(true);
+    const logged = warn.mock.calls
+      .map((c) => String(c[0]))
+      .find((line) => line.includes('structured_output_relaxed'));
+    expect(JSON.parse(logged as string)).toMatchObject({
+      event: 'openrouter_structured_output_relaxed',
+      transport: 'chat',
+      wireField: 'response_format',
+    });
+    warn.mockRestore();
   });
 
   // Per-model routing — the DEFAULT behavior with no transport override.

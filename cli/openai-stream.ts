@@ -28,6 +28,11 @@ import type {
   PushStreamRequest,
 } from '../lib/provider-contract.ts';
 import { openAISSEPump } from '../lib/openai-sse-pump.ts';
+import {
+  OPENROUTER_PARAMETER_EVENTS,
+  fetchOpenRouterWithStructuredOutputFallback,
+  scopeOpenRouterRequiredParameters,
+} from '../lib/openrouter-parameters.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { toOpenAIChat } from '../lib/openai-chat-serializer.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
@@ -117,7 +122,8 @@ async function* cliProviderStream(
   // callers feed messages differently (legacy `engine.ts` packs the system
   // prompt as messages[0]; lib-side roles pass `systemPromptOverride`);
   // `toOpenAIChat` honours both. Temperature defaults to 0.1 (the CLI's
-  // deterministic bias for tool-driven turns). reasoning_blocks are dropped:
+  // deterministic bias) and remains present on constrained OpenRouter requests.
+  // reasoning_blocks are dropped:
   // every provider here is a strict OpenAI-compat endpoint that may reject the
   // Push-private field — it only round-trips on the Anthropic-bridge surface.
   // Resumed CLI reasoning history already arrives as
@@ -155,24 +161,29 @@ async function* cliProviderStream(
     ...nativeTools,
     ...(openRouterWebSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : []),
   ];
+  // The shared scoper preserves sampling and the native tools/schema requirement,
+  // omitting only redundant `tool_choice: 'auto'` from OpenRouter's all-or-
+  // nothing provider eligibility filter.
   const openRouterRequireParameters = nativeTools.length > 0 || Boolean(baseBody.response_format);
 
   const body =
     config.id === 'openrouter'
-      ? {
-          ...baseBody,
-          ...(options.sessionId
-            ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
-            : {}),
-          // OpenRouter executes `openrouter:web_search` server-side (engine
-          // `auto`) and feeds grounded, cited results back to the model.
-          // The text-based dispatcher never sees it as a client tool call.
-          ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
-          ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
-          ...(openRouterRequireParameters ? { provider: { require_parameters: true } } : {}),
-          // See: https://openrouter.ai/docs/guides/features/broadcast/overview
-          trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
-        }
+      ? scopeOpenRouterRequiredParameters(
+          {
+            ...baseBody,
+            ...(options.sessionId
+              ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+              : {}),
+            // OpenRouter executes `openrouter:web_search` server-side (engine
+            // `auto`) and feeds grounded, cited results back to the model.
+            // The text-based dispatcher never sees it as a client tool call.
+            ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
+            ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
+            // See: https://openrouter.ai/docs/guides/features/broadcast/overview
+            trace: { generation_name: 'push-cli-chat', trace_name: 'push-cli' },
+          },
+          openRouterRequireParameters,
+        )
       : baseBody;
 
   // Network failures (fetch throws) and aborts propagate verbatim. The
@@ -181,15 +192,49 @@ async function* cliProviderStream(
   // `keepalive` is intentionally not set: it is browser-only (allows requests
   // to outlive the page) and Node's undici enforces a 64KiB request-body cap
   // when it's true, which long chat histories would routinely exceed.
-  const response = await fetch(config.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  let response: Response;
+  let errorBody: string | null = null;
+  if (config.id === 'openrouter') {
+    const result = await fetchOpenRouterWithStructuredOutputFallback({
+      body: body as Record<string, unknown>,
+      transport: 'chat',
+      requireParameters: openRouterRequireParameters,
+      requireParametersAfterRelaxation: nativeTools.length > 0,
+      attempt: (attemptBody) =>
+        fetch(config.url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(attemptBody),
+          signal: req.signal,
+        }),
+      onRelaxed: () => {
+        // stderr: CLI stdout is the user/--json channel.
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: OPENROUTER_PARAMETER_EVENTS.structuredOutputRelaxed,
+            reason: 'routing_constraint',
+            model,
+            transport: 'chat',
+            droppedParameter: 'response_format',
+            wireField: 'response_format',
+          }),
+        );
+      },
+    });
+    response = result.response;
+    errorBody = result.errorBody;
+  } else {
+    response = await fetch(config.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: req.signal,
+    });
+  }
 
   if (!response.ok) {
-    const errBody = await response.text().catch(() => '(no body)');
+    const errBody = errorBody ?? (await response.text().catch(() => '(no body)'));
     throw new CliProviderError(
       `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
       response.status,

@@ -152,7 +152,8 @@ describe('streamResponsesWithChatFallback', () => {
       shouldFallback: (error) => !isOpenRouterRoutingConstraintError(error),
     });
     await expect(collect(stream)).rejects.toThrow('No endpoints found');
-    // Chat recomputes the identical constraint, so it is never built.
+    // The producer already exhausted schema relaxation; Chat would recompute the
+    // identical remaining constraint, so it is never built.
     expect(chat).not.toHaveBeenCalled();
   });
 

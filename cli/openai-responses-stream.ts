@@ -17,6 +17,11 @@ import type {
 } from '../lib/provider-contract.ts';
 import { toOpenAIResponses } from '../lib/openai-responses-serializer.ts';
 import { openAIResponsesSSEPump } from '../lib/openai-responses-sse-pump.ts';
+import {
+  OPENROUTER_PARAMETER_EVENTS,
+  fetchOpenRouterWithStructuredOutputFallback,
+  scopeOpenRouterRequiredParameters,
+} from '../lib/openrouter-parameters.ts';
 import { OPENROUTER_MAX_SESSION_ID_LENGTH } from '../lib/provider-models.ts';
 import { isGeminiModelId } from '../lib/gemini-thought-signature.ts';
 import { parseResponsesReasoningItem } from '../lib/responses-reasoning-item.ts';
@@ -74,30 +79,72 @@ async function* cliOpenAIResponsesStream(
     ...responseTools,
     ...(openRouterWebSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : []),
   ];
+  // OpenRouter's routing guard is all-or-nothing. The shared scoper omits only
+  // redundant auto tool choice; it deliberately preserves the CLI's temperature
+  // and any explicit top_p. A routing rejection gets one adjusted retry without
+  // structured output below, while native tools remain hard.
   const openRouterRequireParameters = responseTools.length > 0 || Boolean(baseBody.text);
 
   const body =
     config.id === 'openrouter'
-      ? {
-          ...baseBody,
-          ...(options.sessionId
-            ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
-            : {}),
-          ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
-          ...(openRouterRequireParameters ? { provider: { require_parameters: true } } : {}),
-          trace: { generation_name: 'push-cli-responses', trace_name: 'push-cli' },
-        }
+      ? scopeOpenRouterRequiredParameters(
+          {
+            ...baseBody,
+            ...(options.sessionId
+              ? { session_id: options.sessionId.slice(0, OPENROUTER_MAX_SESSION_ID_LENGTH) }
+              : {}),
+            ...(openRouterTools.length > 0 ? { tools: openRouterTools } : {}),
+            trace: { generation_name: 'push-cli-responses', trace_name: 'push-cli' },
+          },
+          openRouterRequireParameters,
+        )
       : baseBody;
 
-  const response = await fetch(config.url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
-  });
+  let response: Response;
+  let errorBody: string | null = null;
+  let finalRequireParameters = false;
+  if (config.id === 'openrouter') {
+    const result = await fetchOpenRouterWithStructuredOutputFallback({
+      body,
+      transport: 'responses',
+      requireParameters: openRouterRequireParameters,
+      requireParametersAfterRelaxation: responseTools.length > 0,
+      attempt: (attemptBody) =>
+        fetch(config.url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(attemptBody),
+          signal: req.signal,
+        }),
+      onRelaxed: () => {
+        // stderr: CLI stdout is the user/--json channel.
+        console.error(
+          JSON.stringify({
+            level: 'warn',
+            event: OPENROUTER_PARAMETER_EVENTS.structuredOutputRelaxed,
+            reason: 'routing_constraint',
+            model,
+            transport: 'responses',
+            droppedParameter: 'response_format',
+            wireField: 'text.format',
+          }),
+        );
+      },
+    });
+    response = result.response;
+    errorBody = result.errorBody;
+    finalRequireParameters = result.requireParameters;
+  } else {
+    response = await fetch(config.url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: req.signal,
+    });
+  }
 
   if (!response.ok) {
-    const errBody = await response.text().catch(() => '(no body)');
+    const errBody = errorBody ?? (await response.text().catch(() => '(no body)'));
     throw new CliProviderError(
       `Provider error ${response.status} [provider=${config.id} model=${model} url=${config.url}]: ${errBody.slice(0, 400)}`,
       response.status,
@@ -105,7 +152,7 @@ async function* cliOpenAIResponsesStream(
         // Only a rejection of a constraint WE pinned is deterministic; otherwise this
         // message means the model has no /responses endpoint and chat is the recovery.
         openRouterRoutingConstraint:
-          openRouterRequireParameters && isOpenRouterRoutingConstraintBody(errBody),
+          finalRequireParameters && isOpenRouterRoutingConstraintBody(errBody),
       },
     );
   }

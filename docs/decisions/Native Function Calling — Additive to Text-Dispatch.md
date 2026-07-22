@@ -66,11 +66,35 @@ native tool call — both converge at one dispatch path. Consequences:
   serializes `tools` + `tool_choice: 'auto'` into the body; the Worker
   (`app/src/worker/worker-providers.ts`) validates and forwards them to
   `env.AI.run`.
-- **OpenRouter adapter.** `app/src/lib/openrouter-stream.ts` serializes `tools` +
-  `tool_choice: 'auto'` into the body, merging native function schemas with the
+- **OpenRouter adapter.** `app/src/lib/openrouter-stream.ts` serializes `tools`,
+  relying on OpenRouter's default auto tool choice unless Push escalates to
+  `tool_choice: 'required'`, and merges native function schemas with the
   `openrouter:web_search` server tool when both are active. It also sets
   `provider: { require_parameters: true }` (the same routing guard `response_format`
   uses) so OpenRouter can't route to an endpoint that silently drops the tools.
+  OpenRouter applies that flag to every LLM parameter in the request, so the
+  shared `scopeOpenRouterRequiredParameters` helper omits only redundant
+  `tool_choice: "auto"`; explicit/default sampling, max-output, reasoning, and
+  forced tool choice remain intact. If OpenRouter rejects a request because no
+  endpoint can honor native structured output, Push retries the same transport
+  once without the schema and emits `openrouter_structured_output_relaxed`.
+  Native tools remain guarded on that retry; schema-only turns return to normal
+  routing and the existing prompt + parser validation fallback.
+
+  **Known limitation — transport-vs-parameter ambiguity.** OpenRouter returns the
+  same `No endpoints found that can handle the requested parameters` text for two
+  different causes: the pinned parameter set is unroutable, *or* the model simply
+  has no `/responses` endpoint. Pinning `require_parameters` narrows but does not
+  disambiguate them. So when native tools are still present after schema
+  relaxation, a model with **zero `/responses` endpoints but tool-capable
+  `/chat` endpoints** is declined the Responses→Chat fallback even though Chat
+  could have served it. Note the cost asymmetry: a correct decline saves one
+  round trip (~3–5s), an incorrect one loses the turn. Resolving this needs a
+  positive signal that the model has a `/responses` endpoint (per-endpoint
+  catalog metadata, or an unconditional single Chat attempt) plus a
+  transport-matrix test set — deliberately out of scope for the `response_format`
+  fix, which strictly narrows the affected set. Declines are observable via
+  `openrouter_responses_fallback_declined`.
 - **Zen adapter.** `app/src/lib/zen-stream.ts` serializes `tools` +
   `tool_choice: 'auto'` into the body (no routing guard — Zen has none). This
   covers the standard tier directly and the Go tier's OpenAI transport via the

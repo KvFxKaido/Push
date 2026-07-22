@@ -1059,6 +1059,68 @@ describe('streamCompletion', () => {
       }
     });
 
+    it('recovers a schema-only routing rejection on Responses without dropping temperature', async () => {
+      const bodies = [];
+      const logs = [];
+      let calls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        bodies.push(JSON.parse(opts.body));
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false,
+            status: 404,
+            body: null,
+            headers: new Headers(),
+            text: async () => ROUTING_CONSTRAINT_BODY,
+            json: async () => JSON.parse(ROUTING_CONSTRAINT_BODY),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildResponsesSSE(['recovered'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+      const previousConsoleError = console.error;
+      console.error = (line) => logs.push(String(line));
+
+      try {
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          messages: [{ id: 'u1', role: 'user', content: 'review', timestamp: 0 }],
+          openrouterWebSearch: false,
+          responseFormat: { name: 'verdict', schema: { type: 'object' } },
+        })) {
+          // drain
+        }
+      } finally {
+        console.error = previousConsoleError;
+      }
+
+      assert.equal(calls, 2);
+      assert.ok(bodies[0].text);
+      assert.deepEqual(bodies[0].provider, { require_parameters: true });
+      assert.equal(bodies[0].temperature, 0.1);
+      assert.equal(bodies[1].text, undefined);
+      assert.equal(bodies[1].provider, undefined);
+      assert.equal(bodies[1].temperature, 0.1);
+      assert.ok(
+        logs.some((line) => {
+          const parsed = JSON.parse(line);
+          return (
+            parsed.event === 'openrouter_structured_output_relaxed' &&
+            parsed.transport === 'responses'
+          );
+        }),
+      );
+    });
+
     it('merges native function tools with the openrouter:web_search server tool', async () => {
       const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
       delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
@@ -1091,8 +1153,152 @@ describe('streamCompletion', () => {
       }
 
       assert.deepEqual(capturedBody.tools, [responsesTool, { type: 'openrouter:web_search' }]);
-      assert.equal(capturedBody.tool_choice, 'auto');
+      assert.equal(capturedBody.tool_choice, undefined);
       assert.deepEqual(capturedBody.provider, { require_parameters: true });
+    });
+
+    it('preserves explicit sampling while omitting redundant auto tool choice', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildResponsesSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      const stream = createProviderStream(orConfig, 'key');
+      for await (const _ of stream({
+        provider: 'openrouter',
+        model: 'inception/mercury-2',
+        messages: [{ id: 'm1', role: 'user', content: 'read it', timestamp: 0 }],
+        tools: [sampleTool],
+        openrouterWebSearch: false,
+        maxTokens: 1234,
+        temperature: 0.7,
+        topP: 0.9,
+      })) {
+        // drain
+      }
+
+      assert.deepEqual(capturedBody.provider, { require_parameters: true });
+      assert.deepEqual(capturedBody.tools, [responsesTool]);
+      assert.equal(capturedBody.tool_choice, undefined);
+      assert.equal(capturedBody.max_output_tokens, 1234);
+      assert.equal(capturedBody.temperature, 0.7);
+      assert.equal(capturedBody.top_p, 0.9);
+    });
+
+    it('preserves sampling on the legacy Chat producer too', async () => {
+      const previousTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+
+      try {
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'inception/mercury-2',
+          messages: [{ id: 'm1', role: 'user', content: 'read it', timestamp: 0 }],
+          tools: [sampleTool],
+          openrouterWebSearch: false,
+          maxTokens: 1234,
+          temperature: 0.7,
+          topP: 0.9,
+        })) {
+          // drain
+        }
+      } finally {
+        if (previousTransport === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+        else process.env.PUSH_OPENROUTER_TRANSPORT = previousTransport;
+      }
+
+      assert.deepEqual(capturedBody.provider, { require_parameters: true });
+      assert.deepEqual(capturedBody.tools, [openAIChatTool]);
+      assert.equal(capturedBody.tool_choice, undefined);
+      assert.equal(capturedBody.max_tokens, 1234);
+      assert.equal(capturedBody.temperature, 0.7);
+      assert.equal(capturedBody.top_p, 0.9);
+    });
+
+    it('relaxes unsupported structured output on legacy Chat without dropping temperature', async () => {
+      const previousTransport = process.env.PUSH_OPENROUTER_TRANSPORT;
+      process.env.PUSH_OPENROUTER_TRANSPORT = 'chat';
+      const bodies = [];
+      const logs = [];
+      let calls = 0;
+      globalThis.fetch = async (_url, opts) => {
+        bodies.push(JSON.parse(opts.body));
+        calls += 1;
+        if (calls === 1) {
+          return {
+            ok: false,
+            status: 404,
+            body: null,
+            headers: new Headers(),
+            text: async () => ROUTING_CONSTRAINT_BODY,
+            json: async () => JSON.parse(ROUTING_CONSTRAINT_BODY),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['recovered'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+      const previousConsoleError = console.error;
+      console.error = (line) => logs.push(String(line));
+
+      try {
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          messages: [{ id: 'u1', role: 'user', content: 'review', timestamp: 0 }],
+          openrouterWebSearch: false,
+          responseFormat: { name: 'verdict', schema: { type: 'object' } },
+        })) {
+          // drain
+        }
+      } finally {
+        console.error = previousConsoleError;
+        if (previousTransport === undefined) delete process.env.PUSH_OPENROUTER_TRANSPORT;
+        else process.env.PUSH_OPENROUTER_TRANSPORT = previousTransport;
+      }
+
+      assert.equal(calls, 2);
+      assert.ok(bodies[0].response_format);
+      assert.deepEqual(bodies[0].provider, { require_parameters: true });
+      assert.equal(bodies[0].temperature, 0.1);
+      assert.equal(bodies[1].response_format, undefined);
+      assert.equal(bodies[1].provider, undefined);
+      assert.equal(bodies[1].temperature, 0.1);
+      assert.ok(
+        logs.some((line) => {
+          const parsed = JSON.parse(line);
+          return (
+            parsed.event === 'openrouter_structured_output_relaxed' && parsed.transport === 'chat'
+          );
+        }),
+      );
     });
 
     it('backfills Gemini thought signatures on OpenRouter Responses tool history', async () => {
@@ -1905,6 +2111,41 @@ describe('streamCompletion', () => {
       assert.equal(capturedBody.stream, true);
       assert.equal(capturedBody.temperature, 0.1);
       assert.deepEqual(capturedBody.messages, [{ role: 'user', content: 'hi' }]);
+    });
+
+    it('keeps the direct Kimi K2.7 pinned sampling contract outside OpenRouter scoping', async () => {
+      let capturedBody;
+      globalThis.fetch = async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildSSE(['ok'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+      const kimiConfig = {
+        id: 'kimi',
+        url: 'http://test.invalid/v1/chat/completions',
+        defaultModel: 'kimi-k2.7-code',
+        apiKeyEnv: ['TEST_KIMI_KEY'],
+        requiresKey: false,
+      };
+
+      const stream = createCliProviderStream(kimiConfig, 'key');
+      for await (const _ of stream({
+        provider: 'kimi',
+        model: 'kimi-k2.7-code',
+        messages: [{ id: 'm1', role: 'user', content: 'code', timestamp: 0 }],
+      })) {
+        // drain
+      }
+
+      assert.equal(capturedBody.temperature, 1);
+      assert.equal(capturedBody.top_p, 0.95);
+      assert.equal(capturedBody.provider, undefined);
     });
 
     it('keeps max_tokens for generic OpenAI-compatible CLI providers', async () => {
