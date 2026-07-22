@@ -49,9 +49,24 @@ export function flatToolToOpenAIResponsesTool(
   };
 }
 
-function blockToResponsesContent(block: LlmContentBlock): OpenAIResponsesInputContent | null {
+/** Responses text content type by message role: assistant history replays as
+ *  `output_text` (the API rejects `input_text` on assistant messages —
+ *  "Supported values are: 'output_text' and 'refusal'"); every other role
+ *  sends `input_text`. First user turn worked, turn two 400'd — the 2026-07-21
+ *  push-gate `gpt-5.6-luna` failure. */
+function textContent(
+  role: LlmMessage['role'],
+  text: string,
+): { type: 'input_text' | 'output_text'; text: string } {
+  return { type: role === 'assistant' ? 'output_text' : 'input_text', text };
+}
+
+function blockToResponsesContent(
+  block: LlmContentBlock,
+  role: LlmMessage['role'],
+): OpenAIResponsesInputContent | null {
   if (block.type === 'text') {
-    return { type: 'input_text', text: block.text };
+    return textContent(role, block.text);
   }
   if (block.type === 'image') {
     if (block.source.type === 'base64') {
@@ -80,14 +95,15 @@ function blockToResponsesContent(block: LlmContentBlock): OpenAIResponsesInputCo
 
 function visibleBlocksToMessageContent(
   blocks: readonly LlmContentBlock[],
+  role: LlmMessage['role'],
 ): OpenAIResponsesInputContent[] {
   const content: OpenAIResponsesInputContent[] = [];
   for (const block of blocks) {
     if (block.type === 'tool_use' || block.type === 'tool_result') continue;
-    const converted = blockToResponsesContent(block);
+    const converted = blockToResponsesContent(block, role);
     if (converted) content.push(converted);
   }
-  return content.length > 0 ? content : [{ type: 'input_text', text: '' }];
+  return content.length > 0 ? content : [textContent(role, '')];
 }
 
 function pushMessageItem(
@@ -113,7 +129,7 @@ function appendBlocksAsResponsesItems(
 
   const flushVisible = () => {
     if (visible.length === 0) return;
-    pushMessageItem(out, message.role, visibleBlocksToMessageContent(visible));
+    pushMessageItem(out, message.role, visibleBlocksToMessageContent(visible, message.role));
     visible = [];
   };
 
@@ -182,7 +198,7 @@ function appendBlocksAsResponsesItems(
 
   flushVisible();
   if (blocks.length === 0) {
-    pushMessageItem(out, message.role, [{ type: 'input_text', text: message.content }]);
+    pushMessageItem(out, message.role, [textContent(message.role, message.content)]);
   }
 }
 
@@ -223,7 +239,7 @@ export function toOpenAIResponses(
       });
       continue;
     }
-    pushMessageItem(input, message.role, [{ type: 'input_text', text: message.content }]);
+    pushMessageItem(input, message.role, [textContent(message.role, message.content)]);
   }
 
   const temperature =

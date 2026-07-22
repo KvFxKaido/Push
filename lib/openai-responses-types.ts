@@ -10,6 +10,10 @@ import type { ResponsesReasoningItem, ToolFunctionSchema } from './provider-cont
 
 export type OpenAIResponsesInputContent =
   | { type: 'input_text'; text: string }
+  // Assistant-role history items must carry `output_text` — the Responses API
+  // rejects `input_text` on assistant messages ("Supported values are:
+  // 'output_text' and 'refusal'").
+  | { type: 'output_text'; text: string }
   | { type: 'input_image'; image_url: string; detail?: 'low' | 'high' | 'auto' | 'original' };
 
 export interface OpenAIResponsesMessageItem {
