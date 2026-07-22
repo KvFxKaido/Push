@@ -863,6 +863,140 @@ describe('handleCloudflareSandbox happy paths', () => {
     expect(JSON.stringify(await jsonBody(response))).not.toContain('ghs_token');
   });
 
+  it.each([
+    new Error('Executor process exited unexpectedly'),
+    new Error('RPC transport unavailable'),
+    new Error('fatal: early EOF'),
+    new SandboxExecDeadlineError(25),
+  ])('retries missing-branch recovery once for transient executor failures: %s', async (err) => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) =>
+      command.includes('ls-remote')
+        ? { stdout: '', stderr: '', exitCode: 0 }
+        : { stdout: probeStdout(), stderr: '', exitCode: 0 },
+    );
+    let defaultCloneAttempts = 0;
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      defaultCloneAttempts++;
+      if (defaultCloneAttempts === 1) throw err;
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(200);
+    expect(defaultCloneAttempts).toBe(2);
+    expect(sandbox.destroy).toHaveBeenCalledTimes(1);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_retried')),
+    ).toBe(true);
+  });
+
+  it('does not retry missing-branch recovery for a genuine git failure', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('ls-remote')) {
+        return { stdout: '', stderr: 'fatal: repository not found', exitCode: 128 };
+      }
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(500);
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(2);
+    expect(sandbox.destroy).toHaveBeenCalledTimes(1);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_not_retried')),
+    ).toBe(true);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_retried')),
+    ).toBe(false);
+  });
+
+  it('retries when git ls-remote reports a transport failure by exit code', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    let lsRemoteAttempts = 0;
+    sandbox.exec.mockImplementation(async (command: string) => {
+      if (command.includes('ls-remote')) {
+        lsRemoteAttempts++;
+        return lsRemoteAttempts === 1
+          ? { stdout: '', stderr: 'fatal: connection reset by peer', exitCode: 128 }
+          : { stdout: '', stderr: '', exitCode: 0 };
+      }
+      return { stdout: probeStdout(), stderr: '', exitCode: 0 };
+    });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      return { success: true };
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(200);
+    expect(lsRemoteAttempts).toBe(2);
+    expect(sandbox.destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed after the one transient recovery retry is exhausted', async () => {
+    const sandbox = mockSandbox();
+    mockUuid();
+    sandbox.exec.mockResolvedValue({ stdout: probeStdout(), stderr: '', exitCode: 0 });
+    sandbox.gitCheckout.mockImplementation(async (_url: string, opts?: { branch?: string }) => {
+      if (opts && 'branch' in opts) {
+        throw new Error('fatal: Remote branch feature/x not found in upstream origin');
+      }
+      throw new Error('Executor process exited unexpectedly');
+    });
+
+    const response = await callRoute('create', {
+      repo: 'owner/repo',
+      branch: 'feature/x',
+      github_token: 'ghs_token',
+    });
+
+    expect(response.status).toBe(500);
+    expect(sandbox.gitCheckout).toHaveBeenCalledTimes(3);
+    expect(sandbox.destroy).toHaveBeenCalledTimes(2);
+    expect(
+      vi
+        .mocked(console.log)
+        .mock.calls.some((c) => String(c[0]).includes('cf_sandbox_recovery_retry_failed')),
+    ).toBe(true);
+  });
+
   it('fails closed (destroys the sandbox) when the clone-credential strip fails', async () => {
     // #987: if the post-clone `git remote set-url` to the tokenless URL fails,
     // the tokenized clone URL may still be in .git/config — a reusable

@@ -51,11 +51,16 @@ clears the file-version cache, prefetched-edit cache, and symbol + file ledgers
 The gap was *shared* with the increment-1 manual restore (and the remote/web
 store), so the fix covers both stores. See Post-restore consistency below.
 
+**Explicit restore surfacing — landed:** a detected checkpoint is offered through
+the existing one-tap restore banner and is never applied during detection. For the
+web remote-draft store, the same availability also adds the exact
+`draft/auto/<branch>` ref to the session context so the lead does not mistake a
+fresh clone for the lost working tree.
+
 **Deferred to follow-up PRs:** native-restore-before workspace-patch-replay
 ordering; resume "re-apply" suppression in `useChatCheckpoint`; detection↔capture
-race ordering; auto-restore-vs-banner UX; and eager auto-cold-start-without-user-
-action on mid-session loss (PR1 unstrands, so recovery fires on the next
-sandbox-requiring action).
+race ordering; and eager auto-cold-start-without-user-action on mid-session loss
+(PR1 unstrands, so recovery fires on the next sandbox-requiring action).
 
 Increment 2 of the native checkpoint arc. Increment 1 (the manual
 capture↔restore loop + diff transport) is shipped and device-validated — see
@@ -351,13 +356,14 @@ the last snapshot. Closing it fully would need either confirmation of the actual
 recycle trigger (device capture) or an opt-in periodic dirty-snapshot, weighed
 against R2/CPU cost.
 
-## UI surfacing (to design in implementation)
+## UI surfacing
 
 - On the APK, recovery should feel like one system, not two. The cloud
   snapshot/reconnect spinner path is gone; the native checkpoint offer is the only
-  affordance. Decide: silent auto-restore on a fresh sandbox vs a default-yes
-  one-tap banner (`AutoBackRestoreBanner`). Lean: auto-restore when the sandbox is
-  unambiguously fresh/empty; banner only when there's anything to weigh.
+  affordance. Restore is explicit through the one-tap banner
+  (`AutoBackRestoreBanner`); detection never mutates the fresh workspace. This
+  preserves the dirty-tree refusal as a user-triggered boundary instead of racing
+  new work into an automatic full-tree restore.
 - The hub's manual **CheckpointHistory** browse/Restore is user-triggered and
   already native-gated (`CheckpointHistory.tsx` ~32) — not an auto-collision, but
   it calls the **same `restore()`**, so it inherits the same consistency

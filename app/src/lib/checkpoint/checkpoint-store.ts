@@ -90,7 +90,7 @@ export type CheckpointCaptureResult =
 export type CheckpointRestoreAvailability =
   | { available: false; reason?: string }
   /** A recoverable checkpoint exists; `checkpointId` is the store-local handle. */
-  | { available: true; checkpointId: string; summary: string };
+  | { available: true; checkpointId: string; summary: string; sourceRef?: string };
 
 export type CheckpointRestoreResult =
   | { status: 'restored'; checkpointId: string }

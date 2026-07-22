@@ -520,6 +520,7 @@ export function WorkspaceSessionScreen({
     isStreaming,
     setShowFileBrowser,
     snapshots.markSnapshotActivity,
+    autoBackRestore.contextLine,
   );
 
   const {

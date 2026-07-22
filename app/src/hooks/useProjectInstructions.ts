@@ -81,6 +81,7 @@ export function useProjectInstructions(
   isStreaming: boolean,
   setShowFileBrowser: (show: boolean) => void,
   markSnapshotActivity: () => void,
+  sessionContextLine: string | null,
 ): ProjectInstructionsManager {
   const [agentsMdContent, setAgentsMdContent] = useState<string | null>(null);
   const [instructionFilename, setInstructionFilenameState] = useState<string | null>(null);
@@ -231,6 +232,9 @@ export function useProjectInstructions(
     }
     if (repos.length > 0) {
       let description = buildWorkspaceContext(repos, activeRepo);
+      if (sessionContextLine) {
+        description += `\n\n${sessionContextLine}`;
+      }
       if (agentsMdContent) {
         description +=
           '\n\n' + formatProjectInstructionsBlock(agentsMdContent, { source: instructionFilename });
@@ -244,6 +248,7 @@ export function useProjectInstructions(
     activeRepo,
     agentsMdContent,
     instructionFilename,
+    sessionContextLine,
     workspaceSession,
     setWorkspaceContext,
   ]);

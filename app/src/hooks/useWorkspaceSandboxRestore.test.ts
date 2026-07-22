@@ -190,12 +190,13 @@ describe('planAutoBackRestoreDetection', () => {
   });
 });
 
-describe('useWorkspaceSandboxRestore auto restore', () => {
-  it('quietly applies an available checkpoint and suppresses the banner on success', async () => {
+describe('useWorkspaceSandboxRestore explicit restore', () => {
+  it('surfaces an available remote draft for explicit restore without applying it', async () => {
     const detect = vi.fn(async () => ({
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => ({
       status: 'restored' as const,
@@ -206,11 +207,38 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
     await runEffects();
     const view = renderRestore({ detect, apply });
 
+    expect(apply).not.toHaveBeenCalled();
+    expect(view.available).toBe(true);
+    expect(view.contextLine).toBe(
+      'Unpushed work from this chat exists at origin ref draft/auto/feature/x; explicit restore is available.',
+    );
+  });
+
+  it('applies an available checkpoint only when restore is explicitly requested', async () => {
+    const detect = vi.fn(async () => ({
+      available: true as const,
+      checkpointId: 'checkpoint-1',
+      summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
+    }));
+    const apply = vi.fn(async () => ({
+      status: 'restored' as const,
+      checkpointId: 'checkpoint-1',
+    }));
+
+    renderRestore({ detect, apply });
+    await runEffects();
+    let view = renderRestore({ detect, apply });
+
     expect(detect).toHaveBeenCalledWith({
       sandboxId: 'sb-1',
       branch: 'feature/x',
       repoFullName: REPO,
     });
+    expect(apply).not.toHaveBeenCalled();
+    await view.restore();
+    view = renderRestore({ detect, apply });
+
     expect(apply).toHaveBeenCalledWith({
       sandboxId: 'sb-1',
       branch: 'feature/x',
@@ -220,11 +248,11 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
     expect(view.available).toBe(false);
     expect(view.summary).toBe('');
     expect(console.log).toHaveBeenCalledWith(
-      expect.stringContaining('checkpoint_auto_restore_restored'),
+      expect.stringContaining('checkpoint_restore_restored'),
     );
   });
 
-  it('does not dispatch auto restore after the live lane scope changes', async () => {
+  it('does not surface a stale detection after the live lane scope changes', async () => {
     const availability = deferred<CheckpointRestoreAvailability>();
     const detect = vi.fn(() => availability.promise);
     const apply = vi.fn(async () => ({
@@ -243,39 +271,44 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
       available: true,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     });
     await Promise.resolve();
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(apply).not.toHaveBeenCalled();
+    expect(renderRestore({ branch: 'feature/y', detect, apply }).available).toBe(false);
   });
 
-  it('shows the existing restore banner when auto restore refuses a dirty target', async () => {
+  it('keeps the restore banner when explicit restore refuses a dirty target', async () => {
     const detect = vi.fn(async () => ({
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => ({ status: 'skipped-dirty' as const }));
 
     renderRestore({ detect, apply });
     await runEffects();
-    const view = renderRestore({ detect, apply });
+    let view = renderRestore({ detect, apply });
+    await view.restore();
+    view = renderRestore({ detect, apply });
 
     expect(view.available).toBe(true);
     expect(view.summary).toBe('2 files changed');
     expect(view.error).toBe('Restore skipped because the workspace changed.');
     expect(console.warn).toHaveBeenCalledWith(
-      expect.stringContaining('checkpoint_auto_restore_deferred'),
+      expect.stringContaining('checkpoint_restore_deferred'),
     );
   });
 
-  it('shows the restore banner when auto restore throws after detection succeeds', async () => {
+  it('keeps the restore banner when explicit restore throws', async () => {
     const detect = vi.fn(async () => ({
       available: true as const,
       checkpointId: 'checkpoint-1',
       summary: '2 files changed',
+      sourceRef: 'draft/auto/feature/x',
     }));
     const apply = vi.fn(async () => {
       throw new Error('transport failed');
@@ -283,7 +316,9 @@ describe('useWorkspaceSandboxRestore auto restore', () => {
 
     renderRestore({ detect, apply });
     await runEffects();
-    const view = renderRestore({ detect, apply });
+    let view = renderRestore({ detect, apply });
+    await view.restore();
+    view = renderRestore({ detect, apply });
 
     expect(view.available).toBe(true);
     expect(view.error).toBe('transport failed');

@@ -58,6 +58,7 @@ export function planAutoBackRestoreDetection(
 export interface WorkspaceSandboxRestoreState {
   available: boolean;
   summary: string;
+  contextLine: string | null;
   restore: () => Promise<void>;
   dismiss: () => void;
   restoring: boolean;
@@ -83,6 +84,7 @@ interface RestoreBannerState {
   available: boolean;
   summary: string;
   checkpointId: string | null;
+  sourceRef: string | null;
   restoring: boolean;
   error: string | null;
 }
@@ -101,6 +103,7 @@ const initialBannerState: RestoreBannerState = {
   available: false,
   summary: '',
   checkpointId: null,
+  sourceRef: null,
   restoring: false,
   error: null,
 };
@@ -201,69 +204,20 @@ export function useWorkspaceSandboxRestore({
           available: true,
           summary: availability.summary,
           checkpointId: availability.checkpointId,
+          sourceRef: availability.sourceRef ?? null,
           restoring: false,
           error: null,
         };
-
-        let result: CheckpointRestoreResult;
-        try {
-          result = await applyRef.current({
-            ...input,
-            checkpointId: availability.checkpointId,
-          });
-        } catch (restoreErr) {
-          if (cancelled || !scopeStillMatchesProbe()) return;
-          const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
-          setBanner({
-            ...offer,
-            error: message,
-          });
-          console.warn(
-            JSON.stringify({
-              level: 'warn',
-              event: 'checkpoint_auto_restore_deferred',
-              sandboxId: probe.sandboxId,
-              repoFullName: probe.repoFullName,
-              branch: probe.branch,
-              checkpointId: availability.checkpointId,
-              status: 'failed',
-              reason: message,
-            }),
-          );
-          return;
-        }
-        if (cancelled || !scopeStillMatchesProbe()) return;
-        if (result.status === 'restored') {
-          // Successful recovery is intentionally UI-quiet: sandbox loss should
-          // feel like reconnecting. Skipped/failed restores surface the banner
-          // below because they need a decision or expose uncertainty.
-          setBanner(initialBannerState);
-          console.log(
-            JSON.stringify({
-              level: 'info',
-              event: 'checkpoint_auto_restore_restored',
-              sandboxId: probe.sandboxId,
-              repoFullName: probe.repoFullName,
-              branch: probe.branch,
-              checkpointId: result.checkpointId,
-            }),
-          );
-          return;
-        }
-        setBanner({
-          ...offer,
-          error: restoreErrorMessage(result),
-        });
-        console.warn(
+        setBanner(offer);
+        console.log(
           JSON.stringify({
-            level: 'warn',
-            event: 'checkpoint_auto_restore_deferred',
+            level: 'info',
+            event: 'checkpoint_restore_available',
             sandboxId: probe.sandboxId,
             repoFullName: probe.repoFullName,
             branch: probe.branch,
             checkpointId: availability.checkpointId,
-            status: result.status,
-            reason: result.status === 'failed' ? result.reason : undefined,
+            sourceRef: availability.sourceRef,
           }),
         );
       } catch (err: unknown) {
@@ -306,9 +260,37 @@ export function useWorkspaceSandboxRestore({
     setBanner((current) =>
       current.available ? { ...current, restoring: true, error: null } : current,
     );
-    const result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
+    let result: CheckpointRestoreResult;
+    try {
+      result = await applyRef.current({ sandboxId, branch, repoFullName, checkpointId });
+    } catch (restoreErr) {
+      const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+      setBanner((current) => ({ ...current, restoring: false, error: message }));
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: 'checkpoint_restore_failed',
+          sandboxId,
+          repoFullName,
+          branch,
+          checkpointId,
+          reason: message,
+        }),
+      );
+      return;
+    }
     if (result.status === 'restored') {
       setBanner(initialBannerState);
+      console.log(
+        JSON.stringify({
+          level: 'info',
+          event: 'checkpoint_restore_restored',
+          sandboxId,
+          repoFullName,
+          branch,
+          checkpointId: result.checkpointId,
+        }),
+      );
       return;
     }
     setBanner((current) => ({
@@ -316,11 +298,27 @@ export function useWorkspaceSandboxRestore({
       restoring: false,
       error: restoreErrorMessage(result),
     }));
+    console.warn(
+      JSON.stringify({
+        level: 'warn',
+        event: 'checkpoint_restore_deferred',
+        sandboxId,
+        repoFullName,
+        branch,
+        checkpointId,
+        status: result.status,
+        reason: result.status === 'failed' ? result.reason : undefined,
+      }),
+    );
   }, [sandboxId, branch, repoFullName, banner.available, banner.checkpointId]);
 
   return {
     available: visible,
     summary: visible ? banner.summary : '',
+    contextLine:
+      visible && banner.sourceRef
+        ? `Unpushed work from this chat exists at origin ref ${banner.sourceRef}; explicit restore is available.`
+        : null,
     restore,
     dismiss,
     restoring: visible ? banner.restoring : false,

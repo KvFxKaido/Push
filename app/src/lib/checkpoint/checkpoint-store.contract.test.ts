@@ -140,11 +140,17 @@ describe('RemoteDraftRefCheckpointStore restore mapping', () => {
   const scope = { repoFullName: REPO, sandboxId: 'sb', branch: 'b' };
 
   it('maps available → checkpointId from the backup sha', async () => {
-    mockDetect.mockResolvedValue({ available: true, sha: 'abc123', summary: '3 files' });
+    mockDetect.mockResolvedValue({
+      available: true,
+      sha: 'abc123',
+      summary: '3 files',
+      ref: 'draft/auto/feature/x',
+    });
     expect(await remoteDraftRefCheckpointStore.detectRestore(scope)).toEqual({
       available: true,
       checkpointId: 'abc123',
       summary: '3 files',
+      sourceRef: 'draft/auto/feature/x',
     });
   });
 
