@@ -22,6 +22,11 @@ import type {
 import { openAISSEPump } from '@push/lib/openai-sse-pump';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import {
+  OPENROUTER_PARAMETER_EVENTS,
+  fetchOpenRouterWithStructuredOutputFallback,
+  scopeOpenRouterRequiredParameters,
+} from '@push/lib/openrouter-parameters';
+import {
   OPENROUTER_FALLBACK_EVENTS,
   isOpenRouterRoutingConstraintBody,
   isOpenRouterRoutingConstraintError,
@@ -140,9 +145,10 @@ export async function* openrouterStream(
     chat: () => openrouterChatCompletionsStream(req),
     shouldFallback: (error) => {
       if (req.signal?.aborted) return false;
-      // Declines only when the producer flagged a rejection of a constraint we
-      // pinned — chat then recomputes the identical `require_parameters` filter, so
-      // the retry cannot route any better. Every other failure keeps the safety net.
+      // Declines only when the producer has already exhausted structured-output
+      // relaxation and the final request still pinned a constraint (native tools).
+      // Chat recomputes that same remaining filter, so it cannot route any better.
+      // Every other failure keeps the safety net.
       if (isOpenRouterRoutingConstraintError(error)) {
         console.warn(
           JSON.stringify({
@@ -227,7 +233,8 @@ async function* openrouterResponsesStream(
   // OpenRouter routes through the model's constrained tool-calling path. Additive
   // to text-dispatch — the Responses SSE pump emits native `function_call`
   // output as structured events, while prompt-described text tools keep using fenced JSON.
-  // `tool_choice: 'auto'` keeps prose answers available when no tool is needed.
+  // OpenRouter's default `tool_choice: 'auto'` keeps prose answers available
+  // when no tool is needed; the body scoper below omits that redundant value.
   // OpenRouter accepts a mixed `tools` array,
   // so native function schemas and the `openrouter:web_search` server tool merge
   // (web search appended last) when both are active.
@@ -238,8 +245,12 @@ async function* openrouterResponsesStream(
   // native tool calling back to prompt-only (or the schema constraint back to
   // prompt-only JSON) despite the model advertising support. require_parameters
   // restricts routing to providers that honor every param we send, so the
-  // constraint can't be lost mid-route. Web search alone doesn't need it (the
-  // server tool gates its own routing), so it stays off the web-search-only path.
+  // constraint can't be lost mid-route. Because OpenRouter's flag is all-or-
+  // nothing, the shared body helper omits only redundant `tool_choice: 'auto'`;
+  // explicit sampling remains part of the request. If routing proves the native
+  // schema unsatisfiable, the fetch helper retries once without the schema while
+  // retaining tools (and their guard) plus every sampling choice. Web search
+  // alone doesn't need the guard, so it stays off that path.
   const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
   const baseBody = toOpenAIResponses(
     {
@@ -264,14 +275,16 @@ async function* openrouterResponsesStream(
     : [];
   const toolsArray = [...responseTools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
 
-  const body: Record<string, unknown> = {
-    ...baseBody,
-    ...(useReasoning ? { reasoning: { effort } } : {}),
-    ...(sessionId ? { session_id: sessionId } : {}),
-    ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
-    ...(requireParameters ? { provider: { require_parameters: true } } : {}),
-    trace,
-  };
+  const body = scopeOpenRouterRequiredParameters(
+    {
+      ...baseBody,
+      ...(useReasoning ? { reasoning: { effort } } : {}),
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
+      trace,
+    },
+    requireParameters,
+  );
 
   // 3. Headers. The Worker proxy overrides Authorization server-side when
   //    OPENROUTER_API_KEY is configured; we still send the client-side key
@@ -290,15 +303,39 @@ async function* openrouterResponsesStream(
   injectTraceHeaders(headers);
 
   // 4. POST + stream response.
-  const response = await fetch(openRouterRequestUrl('responses'), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
+  const {
+    response,
+    errorBody,
+    requireParameters: finalRequireParameters,
+  } = await fetchOpenRouterWithStructuredOutputFallback({
+    body,
+    transport: 'responses',
+    requireParameters,
+    requireParametersAfterRelaxation: nativeTools.length > 0,
+    attempt: (attemptBody) =>
+      fetch(openRouterRequestUrl('responses'), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(attemptBody),
+        signal: req.signal,
+      }),
+    onRelaxed: () => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: OPENROUTER_PARAMETER_EVENTS.structuredOutputRelaxed,
+          reason: 'routing_constraint',
+          model: req.model,
+          transport: 'responses',
+          droppedParameter: 'response_format',
+          wireField: 'text.format',
+        }),
+      );
+    },
   });
 
   if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
+    const errBody = errorBody ?? '';
     let detail: string;
     try {
       const parsed = JSON.parse(errBody);
@@ -313,7 +350,7 @@ async function* openrouterResponsesStream(
       // on /responses" — the beta gap the chat fallback exists to rescue — so it
       // stays unset and the fallback runs.
       openRouterRoutingConstraint:
-        requireParameters && isOpenRouterRoutingConstraintBody(`${errBody} ${detail}`),
+        finalRequireParameters && isOpenRouterRoutingConstraintBody(`${errBody} ${detail}`),
     });
   }
 
@@ -382,21 +419,25 @@ async function* openrouterChatCompletionsStream(
   const toolsArray = [...openAITools, ...(webSearch ? [OPENROUTER_WEB_SEARCH_TOOL] : [])];
   const requireParameters = nativeTools.length > 0 || Boolean(req.responseFormat);
 
-  const body: Record<string, unknown> = {
-    model: req.model,
-    messages: wireMessages,
-    stream: true,
-    ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
-    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.topP !== undefined ? { top_p: req.topP } : {}),
-    ...(useReasoning ? { reasoning: { effort } } : {}),
-    ...(sessionId ? { session_id: sessionId } : {}),
-    ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
-    ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
-    ...(req.responseFormat ? { response_format: toOpenAIResponseFormat(req.responseFormat) } : {}),
-    ...(requireParameters ? { provider: { require_parameters: true } } : {}),
-    trace,
-  };
+  const body = scopeOpenRouterRequiredParameters(
+    {
+      model: req.model,
+      messages: wireMessages,
+      stream: true,
+      ...(req.maxTokens !== undefined ? { max_tokens: req.maxTokens } : {}),
+      ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+      ...(req.topP !== undefined ? { top_p: req.topP } : {}),
+      ...(useReasoning ? { reasoning: { effort } } : {}),
+      ...(sessionId ? { session_id: sessionId } : {}),
+      ...(toolsArray.length > 0 ? { tools: toolsArray } : {}),
+      ...(nativeTools.length > 0 ? { tool_choice: req.toolChoice ?? 'auto' } : {}),
+      ...(req.responseFormat
+        ? { response_format: toOpenAIResponseFormat(req.responseFormat) }
+        : {}),
+      trace,
+    },
+    requireParameters,
+  );
 
   const apiKey = (getOpenRouterKey() ?? '').trim();
   const requestId = createRequestId('chat');
@@ -407,15 +448,35 @@ async function* openrouterChatCompletionsStream(
   };
   injectTraceHeaders(headers);
 
-  const response = await fetch(openRouterRequestUrl('chat'), {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: req.signal,
+  const { response, errorBody } = await fetchOpenRouterWithStructuredOutputFallback({
+    body,
+    transport: 'chat',
+    requireParameters,
+    requireParametersAfterRelaxation: nativeTools.length > 0,
+    attempt: (attemptBody) =>
+      fetch(openRouterRequestUrl('chat'), {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(attemptBody),
+        signal: req.signal,
+      }),
+    onRelaxed: () => {
+      console.warn(
+        JSON.stringify({
+          level: 'warn',
+          event: OPENROUTER_PARAMETER_EVENTS.structuredOutputRelaxed,
+          reason: 'routing_constraint',
+          model: req.model,
+          transport: 'chat',
+          droppedParameter: 'response_format',
+          wireField: 'response_format',
+        }),
+      );
+    },
   });
 
   if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
+    const errBody = errorBody ?? '';
     let detail: string;
     try {
       const parsed = JSON.parse(errBody);

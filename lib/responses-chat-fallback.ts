@@ -62,14 +62,10 @@ export const OPENROUTER_FALLBACK_EVENTS = {
  * That second condition is load-bearing. Without the flag, this same message means
  * something quite different — "no endpoint serves this model on /responses" — which
  * is precisely the beta incompatibility the fallback exists to rescue, and chat
- * will often succeed. Only when Push constrained routing itself is the rejection
- * deterministic, because the chat leg then recomputes the identical constraint
- * (`openrouter-stream.ts` responses/chat legs) and sends it to the same providers.
- *
- * Verified against OpenRouter's published per-endpoint capabilities: all five
- * endpoints serving `anthropic/claude-sonnet-4` report `response_format`
- * unsupported, so `require_parameters` plus a schema constraint is unsatisfiable by
- * construction there — deterministic, never transient.
+ * will often succeed. Producers first relax an unsatisfiable native structured-
+ * output constraint and retry in-place. They set this carrier only when the final
+ * adjusted request still pins `require_parameters` (for example, native tools), so
+ * the chat leg would recompute the identical remaining constraint.
  */
 const OPENROUTER_ROUTING_CONSTRAINT_MARKER =
   'no endpoints found that can handle the requested parameters';

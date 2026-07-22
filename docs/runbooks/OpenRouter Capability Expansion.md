@@ -110,7 +110,14 @@ but isn't gated on yet.
   structured outputs and silently ignores the field, dropping the constraint
   back to prompt-only JSON despite the model advertising support — a targeted
   slice of the Phase 2 provider-routing work, pulled forward because it's the
-  load-bearing companion to structured outputs.
+  load-bearing companion to structured outputs. The flag filters on every LLM
+  parameter present, not just `response_format`; web and CLI therefore apply the
+  shared `scopeOpenRouterRequiredParameters` helper first, omitting only
+  redundant `tool_choice: "auto"` while preserving sampling and every semantic
+  constraint. If the router rejects that full set, Push retries the same
+  transport once without native structured output and logs
+  `openrouter_structured_output_relaxed`; tools remain hard, while schema-only
+  turns fall back to their prompt + parser validation path.
 - **zod → strict JSON Schema.** `zodToStrictJsonSchema(schema)` in
   `lib/structured-output.ts` runs `z.toJSONSchema` (zod 4) then normalizes for
   strict mode: recursively adds `additionalProperties: false` + a full
