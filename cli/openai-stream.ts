@@ -39,10 +39,17 @@ const OPENROUTER_WEB_SEARCH_TOOL = { type: 'openrouter:web_search' } as const;
 export class CliProviderError extends Error {
   /** Upstream HTTP status from the non-2xx response. */
   readonly status: number;
-  constructor(message: string, status: number) {
+  /**
+   * OpenRouter rejected the request because no endpoint honored the parameter set
+   * Push pinned via `provider.require_parameters`. Set only by a producer that both
+   * parsed the body and knows the flag went out; consumers read it structurally.
+   */
+  readonly openRouterRoutingConstraint?: boolean;
+  constructor(message: string, status: number, opts?: { openRouterRoutingConstraint?: boolean }) {
     super(message);
     this.name = 'CliProviderError';
     this.status = status;
+    this.openRouterRoutingConstraint = opts?.openRouterRoutingConstraint;
   }
 }
 

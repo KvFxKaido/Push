@@ -972,6 +972,93 @@ describe('streamCompletion', () => {
       assert.deepEqual(replayItems, [nextItem]);
     });
 
+    // Routing-constraint decline, driven through the CLI production entry
+    // (`createProviderStream`) rather than the shared combinator, so the producer
+    // wiring in `openai-responses-stream.ts` — `openRouterRequireParameters &&
+    // isOpenRouterRoutingConstraintBody(errBody)` — is what's actually under test.
+    // Asserting the upstream call COUNT is the point: 1 = declined, 2 = fell back.
+    const ROUTING_CONSTRAINT_BODY = JSON.stringify({
+      error: {
+        message:
+          'No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection',
+        code: 404,
+      },
+    });
+
+    function mockRoutingConstraintThenSuccess(counter) {
+      return async () => {
+        counter.calls += 1;
+        if (counter.calls === 1) {
+          return {
+            ok: false,
+            status: 404,
+            body: null,
+            headers: new Headers(),
+            text: async () => ROUTING_CONSTRAINT_BODY,
+            json: async () => JSON.parse(ROUTING_CONSTRAINT_BODY),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          body: stringToStream(buildResponsesSSE(['recovered'])),
+          headers: new Headers(),
+          text: async () => '',
+          json: async () => ({}),
+        };
+      };
+    }
+
+    it('declines the chat fallback when the request pinned require_parameters', async () => {
+      const counter = { calls: 0 };
+      globalThis.fetch = mockRoutingConstraintThenSuccess(counter);
+      const prevWebSearch = process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      process.env.PUSH_OPENROUTER_WEB_SEARCH = '0';
+
+      try {
+        const stream = createProviderStream(orConfig, 'key');
+        await assert.rejects(async () => {
+          for await (const _ of stream({
+            provider: 'openrouter',
+            model: 'anthropic/claude-sonnet-4',
+            messages: [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 }],
+            // Native tools are what set `provider.require_parameters` on this leg.
+            tools: [sampleTool],
+          })) {
+            // drain
+          }
+        }, /No endpoints found/);
+        assert.equal(counter.calls, 1, 'chat re-sends the same constraint; must not retry');
+      } finally {
+        if (prevWebSearch === undefined) delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+        else process.env.PUSH_OPENROUTER_WEB_SEARCH = prevWebSearch;
+      }
+    });
+
+    it('still falls back to chat on the same 404 when no constraint was pinned', async () => {
+      // No tools and no schema → no `require_parameters`, so this message means the
+      // model has no /responses endpoint and chat is the intended recovery.
+      const counter = { calls: 0 };
+      globalThis.fetch = mockRoutingConstraintThenSuccess(counter);
+      const prevWebSearch = process.env.PUSH_OPENROUTER_WEB_SEARCH;
+      process.env.PUSH_OPENROUTER_WEB_SEARCH = '0';
+
+      try {
+        const stream = createProviderStream(orConfig, 'key');
+        for await (const _ of stream({
+          provider: 'openrouter',
+          model: 'anthropic/claude-sonnet-4',
+          messages: [{ id: 'u1', role: 'user', content: 'hi', timestamp: 0 }],
+        })) {
+          // drain
+        }
+        assert.equal(counter.calls, 2, 'unconstrained 404 must still reach the chat fallback');
+      } finally {
+        if (prevWebSearch === undefined) delete process.env.PUSH_OPENROUTER_WEB_SEARCH;
+        else process.env.PUSH_OPENROUTER_WEB_SEARCH = prevWebSearch;
+      }
+    });
+
     it('merges native function tools with the openrouter:web_search server tool', async () => {
       const prev = process.env.PUSH_OPENROUTER_WEB_SEARCH;
       delete process.env.PUSH_OPENROUTER_WEB_SEARCH;

@@ -39,7 +39,11 @@ import type {
 import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { resolvePushCapabilityProfile } from '@push/lib/capability-profile';
-import { streamResponsesWithChatFallback } from '@push/lib/responses-chat-fallback';
+import {
+  OPENROUTER_FALLBACK_EVENTS,
+  isOpenRouterRoutingConstraintError,
+  streamResponsesWithChatFallback,
+} from '@push/lib/responses-chat-fallback';
 import { anthropicEventStream } from '@push/lib/anthropic-bridge';
 import { completeAnthropicStreamWithoutPause } from '@push/lib/anthropic-pause-continuation';
 import type { ChatMessage } from '@/types';
@@ -342,12 +346,36 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
         yield* streamResponsesWithChatFallback({
           responses: () => attempt('responses'),
           chat: () => attempt('chat'),
-          shouldFallback: () => !signal?.aborted,
+          shouldFallback: (error) => {
+            if (signal?.aborted) return false;
+            // Inert in THIS lane, and it takes two changes to wake it, not one:
+            // `attempt()` builds payloads with no tools, no `response_format` and so no
+            // `provider.require_parameters`, AND its error boundary above throws a plain
+            // `Error` that never carries `openRouterRoutingConstraint`. Adding the
+            // constraint to the payload alone would still always fall back — a producer
+            // that classifies the body would have to be added here too. That is correct
+            // for today (an unconstrained "no endpoints found" means the model lacks a
+            // /responses endpoint, and chat is the recovery); it is not self-maintaining,
+            // so treat both halves as a pair if this lane ever sends constraints.
+            if (isOpenRouterRoutingConstraintError(error)) {
+              console.warn(
+                JSON.stringify({
+                  level: 'warn',
+                  event: OPENROUTER_FALLBACK_EVENTS.declined,
+                  reason: 'routing_constraint',
+                  model: modelId,
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              );
+              return false;
+            }
+            return true;
+          },
           onFallback: (error) => {
             console.warn(
               JSON.stringify({
                 level: 'warn',
-                event: 'openrouter_responses_fallback_to_chat',
+                event: OPENROUTER_FALLBACK_EVENTS.fellBackToChat,
                 model: modelId,
                 error: error instanceof Error ? error.message : String(error),
               }),
