@@ -297,25 +297,30 @@ describe('openrouterStream', () => {
   // — the production entry — rather than the combinator, so they fail if the call
   // site stops passing the predicate. Asserting the fetch COUNT is the point: the
   // bug being fixed is a second upstream round trip that cannot succeed.
-  it('does not retry on chat when OpenRouter rejects the parameter set (one fetch)', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    fetchMock.mockImplementation(
-      async () =>
-        new Response(
-          JSON.stringify({
-            error: {
-              message:
-                'No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection',
-              code: 404,
-            },
-          }),
-          { status: 404, headers: { 'content-type': 'application/json' } },
-        ),
+  const ROUTING_CONSTRAINT_404 = () =>
+    new Response(
+      JSON.stringify({
+        error: {
+          message:
+            'No endpoints found that can handle the requested parameters. To learn more about provider routing, visit: https://openrouter.ai/docs/guides/routing/provider-selection',
+          code: 404,
+        },
+      }),
+      { status: 404, headers: { 'content-type': 'application/json' } },
     );
+
+  it('does not retry on chat when a constraint WE pinned is rejected (one fetch)', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchMock.mockImplementation(async () => ROUTING_CONSTRAINT_404());
     const { openrouterStream } = await import('./openrouter-stream');
 
-    await expect(collect(openrouterStream(baseRequest))).rejects.toThrow(/No endpoints found/);
-    // Exactly one upstream call: chat re-sends the identical require_parameters
+    // `responseFormat` is what sets `provider.require_parameters` on both legs.
+    const constrained = {
+      ...baseRequest,
+      responseFormat: { name: 'verdict', schema: { type: 'object' } },
+    } as typeof baseRequest;
+    await expect(collect(openrouterStream(constrained))).rejects.toThrow(/No endpoints found/);
+    // Exactly one upstream call: chat recomputes the identical require_parameters
     // filter, so the fallback is declined rather than spending a second round trip.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const logged = warn.mock.calls.map((c) => String(c[0])).find((l) => l.includes('declined'));
@@ -325,6 +330,32 @@ describe('openrouterStream', () => {
       reason: 'routing_constraint',
     });
     warn.mockRestore();
+  });
+
+  it('DOES retry on chat for the same 404 when no constraint was sent (two fetches)', async () => {
+    // Without native tools or a `responseFormat`, Push never sends
+    // `provider.require_parameters` — so this message means the model has no
+    // /responses endpoint, which is precisely what the chat fallback exists to
+    // rescue. Declining here would strand a recoverable turn.
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let call = 0;
+    fetchMock.mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return ROUTING_CONSTRAINT_404();
+      return new Response(
+        'data: {"choices":[{"delta":{"content":"recovered"}}]}\n\ndata: [DONE]\n\n',
+        {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        },
+      );
+    });
+    const { openrouterStream } = await import('./openrouter-stream');
+
+    const events = await collect(openrouterStream(baseRequest));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(events.some((e) => e.type === 'text_delta' && e.text === 'recovered')).toBe(true);
+    vi.restoreAllMocks();
   });
 
   it('still retries on chat for a transient failure (two fetches)', async () => {

@@ -40,6 +40,7 @@ import { toOpenAIResponses } from '@push/lib/openai-responses-serializer';
 import { openAIResponsesSSEPump } from '@push/lib/openai-responses-sse-pump';
 import { resolvePushCapabilityProfile } from '@push/lib/capability-profile';
 import {
+  OPENROUTER_FALLBACK_EVENTS,
   isOpenRouterRoutingConstraintError,
   streamResponsesWithChatFallback,
 } from '@push/lib/responses-chat-fallback';
@@ -347,13 +348,18 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
           chat: () => attempt('chat'),
           shouldFallback: (error) => {
             if (signal?.aborted) return false;
-            // Deterministic routing rejection — the chat leg sends the identical
-            // `require_parameters` filter, so a retry cannot route any better.
+            // Inert in THIS lane today, deliberately: `attempt()` builds payloads with
+            // no tools, no `response_format`, and therefore no
+            // `provider.require_parameters`, so nothing here ever sets the flag and the
+            // fallback always runs — which is right, since an unconstrained
+            // "no endpoints found" means the model lacks a /responses endpoint and chat
+            // is the recovery. The check stays so the lane is correct automatically if
+            // it ever starts sending constraints, rather than correct by comment.
             if (isOpenRouterRoutingConstraintError(error)) {
               console.warn(
                 JSON.stringify({
                   level: 'warn',
-                  event: 'openrouter_responses_fallback_declined',
+                  event: OPENROUTER_FALLBACK_EVENTS.declined,
                   reason: 'routing_constraint',
                   model: modelId,
                   error: error instanceof Error ? error.message : String(error),
@@ -367,7 +373,7 @@ export function createWebStreamAdapter(args: CoderJobStreamAdapterArgs): PushStr
             console.warn(
               JSON.stringify({
                 level: 'warn',
-                event: 'openrouter_responses_fallback_to_chat',
+                event: OPENROUTER_FALLBACK_EVENTS.fellBackToChat,
                 model: modelId,
                 error: error instanceof Error ? error.message : String(error),
               }),

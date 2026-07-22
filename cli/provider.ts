@@ -16,6 +16,7 @@ import {
 import { formatNativeToolCallFenced } from '../lib/openai-sse-pump.ts';
 import { normalizeReasoning } from '../lib/reasoning-tokens.ts';
 import {
+  OPENROUTER_FALLBACK_EVENTS,
   isOpenRouterRoutingConstraintError,
   streamResponsesWithChatFallback,
 } from '../lib/responses-chat-fallback.ts';
@@ -309,14 +310,14 @@ export function createProviderStream(
         chat: () => chatStream(req),
         shouldFallback: (error) => {
           if (req.signal?.aborted) return false;
-          // Deterministic routing rejection — the chat leg sends the identical
-          // `require_parameters` filter, so a retry cannot route any better.
+          // Declines only when the producer flagged a rejection of a constraint we
+          // pinned — chat recomputes the identical filter, so it cannot route better.
           if (isOpenRouterRoutingConstraintError(error)) {
             // stderr: CLI stdout is the user/--json channel.
             console.error(
               JSON.stringify({
                 level: 'warn',
-                event: 'openrouter_responses_fallback_declined',
+                event: OPENROUTER_FALLBACK_EVENTS.declined,
                 reason: 'routing_constraint',
                 model,
                 error: error instanceof Error ? error.message : String(error),
@@ -330,7 +331,7 @@ export function createProviderStream(
           console.error(
             JSON.stringify({
               level: 'warn',
-              event: 'openrouter_responses_fallback_to_chat',
+              event: OPENROUTER_FALLBACK_EVENTS.fellBackToChat,
               model,
               error: error instanceof Error ? error.message : String(error),
             }),
