@@ -350,5 +350,14 @@
       "enabled": true,
       "head_sampling_rate": 1
     }
-  }
+  },
+  // Ships this Worker's trace events (including the `Logs` array — the
+  // structured console.log lines) to the account Logpush job `push-worker-logs`
+  // → R2 `push-logs/workers/{DATE}`. Durable incident forensics: Workers
+  // Observability above retains for days, R2 keeps them until we delete them.
+  //
+  // This flag is NOT optional and NOT implied by the Logpush job existing. A
+  // job with no opted-in scripts reports `last_complete: null` and *no error* —
+  // it looks exactly like batch lag. Deleting this line silently stops delivery.
+  "logpush": true
 }
