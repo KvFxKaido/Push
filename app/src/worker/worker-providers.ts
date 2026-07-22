@@ -218,12 +218,12 @@ async function* cloudflareStream(req: PushStreamRequest, env: Env): AsyncIterabl
     run: (
       model: string,
       input: Record<string, unknown>,
-      options?: { gateway?: { id: string } },
+      options?: { gateway?: { id: string; skipCache?: boolean } },
     ) => Promise<ReadableStream<Uint8Array> | unknown>;
   };
   const stream = (
     account && slug
-      ? await runner.run(req.model, input, { gateway: { id: slug } })
+      ? await runner.run(req.model, input, { gateway: { id: slug, skipCache: true } })
       : await runner.run(req.model, input)
   ) as ReadableStream<Uint8Array> | unknown;
 
@@ -1593,7 +1593,12 @@ function resolveAiGatewayFetchTarget(
   const aigAuth = gatewayUrl ? getAiGatewayAuthHeader(env) : null;
   return {
     upstreamUrl: gatewayUrl ?? directUrl,
-    gatewayHeaders: aigAuth ? { 'cf-aig-authorization': aigAuth } : {},
+    gatewayHeaders: gatewayUrl
+      ? {
+          'cf-aig-skip-cache': 'true',
+          ...(aigAuth ? { 'cf-aig-authorization': aigAuth } : {}),
+        }
+      : {},
     // BYOK is only real when the request actually routes through the gateway:
     // a BYOK-listed custom binding whose slug isn't enabled falls back to the
     // direct URL above, where a keyless call 401s at the upstream — callers

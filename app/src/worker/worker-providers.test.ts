@@ -985,6 +985,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     );
     expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-skip-cache']).toBeUndefined();
   });
 
   it('rewrites the URL through the gateway when account + slug are set', async () => {
@@ -1002,6 +1003,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     );
     // Provider auth still flows untouched — the gateway forwards it to OpenRouter.
     expect(captured.current?.headers.Authorization).toBe('Bearer sk-or');
+    expect(captured.current?.headers['cf-aig-skip-cache']).toBe('true');
   });
 
   it('attaches cf-aig-authorization when CF_AI_GATEWAY_TOKEN is set', async () => {
@@ -1044,6 +1046,7 @@ describe('handleOpenRouterChat — Cloudflare AI Gateway', () => {
     );
     expect(captured.current?.url).toBe('https://openrouter.ai/api/v1/responses');
     expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+    expect(captured.current?.headers['cf-aig-skip-cache']).toBeUndefined();
   });
 });
 
@@ -1595,6 +1598,7 @@ describe('Bucket C custom providers — AI Gateway custom-provider routing', () 
       await c.handler(c.req(), makeEnv({ [c.keyEnv]: 'k', ...gatewayBase }));
       expect(captured.current?.url).toBe(c.direct);
       expect(captured.current?.headers['cf-aig-authorization']).toBeUndefined();
+      expect(captured.current?.headers['cf-aig-skip-cache']).toBeUndefined();
     });
 
     it(`${c.name}: routes through custom-${c.name} when allow-listed`, async () => {
@@ -1605,6 +1609,7 @@ describe('Bucket C custom providers — AI Gateway custom-provider routing', () 
       );
       expect(captured.current?.url).toBe(c.gateway);
       expect(captured.current?.headers['cf-aig-authorization']).toBe('Bearer aig-secret');
+      expect(captured.current?.headers['cf-aig-skip-cache']).toBe('true');
     });
   }
 
@@ -1633,7 +1638,7 @@ describe('handleCloudflareChat — Cloudflare AI Gateway', () => {
     expect(run).toHaveBeenCalledWith(
       'test-model',
       { messages: [{ role: 'user', content: 'hello' }], stream: true },
-      { gateway: { id: 'push-prod' } },
+      { gateway: { id: 'push-prod', skipCache: true } },
     );
   });
 
