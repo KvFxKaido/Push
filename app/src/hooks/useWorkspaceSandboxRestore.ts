@@ -208,7 +208,6 @@ export function useWorkspaceSandboxRestore({
           restoring: false,
           error: null,
         };
-        setBanner(offer);
         console.log(
           JSON.stringify({
             level: 'info',
@@ -218,6 +217,67 @@ export function useWorkspaceSandboxRestore({
             branch: probe.branch,
             checkpointId: availability.checkpointId,
             sourceRef: availability.sourceRef,
+          }),
+        );
+
+        // Quiet auto-apply: successful recovery is intentionally UI-quiet —
+        // sandbox loss should feel like reconnecting (see Checkpoint Recovery
+        // on Sandbox Loss.md; the auto-vs-banner question stays open there,
+        // and the shipped lean is auto on a fresh sandbox). The banner and the
+        // session-context line surface only when the quiet path could NOT
+        // restore — that is exactly when the lead needs to know the work
+        // exists at the draft/auto ref instead of assuming a fresh clone is
+        // the whole story.
+        let result: CheckpointRestoreResult;
+        try {
+          result = await applyRef.current({
+            ...input,
+            checkpointId: availability.checkpointId,
+          });
+        } catch (restoreErr) {
+          if (cancelled || !scopeStillMatchesProbe()) return;
+          const message = restoreErr instanceof Error ? restoreErr.message : String(restoreErr);
+          setBanner({ ...offer, error: message });
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              event: 'checkpoint_auto_restore_deferred',
+              sandboxId: probe.sandboxId,
+              repoFullName: probe.repoFullName,
+              branch: probe.branch,
+              checkpointId: availability.checkpointId,
+              status: 'failed',
+              reason: message,
+            }),
+          );
+          return;
+        }
+        if (cancelled || !scopeStillMatchesProbe()) return;
+        if (result.status === 'restored') {
+          setBanner(initialBannerState);
+          console.log(
+            JSON.stringify({
+              level: 'info',
+              event: 'checkpoint_auto_restore_restored',
+              sandboxId: probe.sandboxId,
+              repoFullName: probe.repoFullName,
+              branch: probe.branch,
+              checkpointId: result.checkpointId,
+            }),
+          );
+          return;
+        }
+        setBanner({ ...offer, error: restoreErrorMessage(result) });
+        console.warn(
+          JSON.stringify({
+            level: 'warn',
+            event: 'checkpoint_auto_restore_deferred',
+            sandboxId: probe.sandboxId,
+            repoFullName: probe.repoFullName,
+            branch: probe.branch,
+            checkpointId: availability.checkpointId,
+            status: result.status,
+            reason: result.status === 'failed' ? result.reason : undefined,
           }),
         );
       } catch (err: unknown) {
