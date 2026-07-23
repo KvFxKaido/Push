@@ -34,7 +34,10 @@ import { GITHUB_APP_SLUG } from './worker-infra';
 import {
   addCommentReaction,
   type CommentReactionKind,
+  type GitHubCreatedArtifact,
   postPullRequestComment,
+  removeCommentReaction,
+  updatePullRequestComment,
 } from '@/lib/github-tools';
 import {
   classifyPullRequestAction,
@@ -348,6 +351,8 @@ export interface GitHubWebhookDeps {
   mintInstallationToken: typeof mintInstallationToken;
   addCommentReaction: typeof addCommentReaction;
   postPullRequestComment: typeof postPullRequestComment;
+  removeCommentReaction: typeof removeCommentReaction;
+  updatePullRequestComment: typeof updatePullRequestComment;
   /** Injectable timer so tests can run the transient-failure retry instantly. */
   delay: (ms: number) => Promise<void>;
 }
@@ -357,6 +362,8 @@ const DEFAULT_DEPS: GitHubWebhookDeps = {
   mintInstallationToken,
   addCommentReaction,
   postPullRequestComment,
+  removeCommentReaction,
+  updatePullRequestComment,
   delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 };
 
@@ -636,14 +643,13 @@ async function handlePullRequestReviewRoutine(c: WebhookRoutineContext): Promise
  * the arithmetic must close: 8s delay + a 10s-bounded attempt leaves ~12s for
  * the feedback POSTs, which register as parallel sibling `waitUntil` tasks
  * (the reaction/notice helpers return at registration when a ctx exists) and
- * are 15s-capped, non-retrying (`retry: false`), typically sub-second calls.
- * The margin is engineering headroom, not proof — a GitHub degradation slow
- * enough to eat it loses the feedback at the budget edge, with the runtime's
- * own "waitUntil() tasks did not complete" warning as the ops signal; the
- * fully-enforced alternative is durable scheduling in the DO, deliberately out
- * of scope here. GitHub's secondary-limit guidance prefers a 60s wait, which
- * doesn't fit the runtime at all; one delayed attempt plus a visible failure
- * notice is the tradeoff (#1584).
+ * have an explicit 4s deadline and no retries. That leaves room for a second
+ * 4s reconciliation wave if the attempt succeeds late, instead of relying on
+ * the shared 15s GitHub timeout fitting into a 12s window (fugu WARNING on
+ * #1585). GitHub's
+ * secondary-limit guidance prefers a 60s wait, which doesn't fit the runtime at
+ * all; one delayed attempt plus bounded visible feedback is the tradeoff
+ * (#1584).
  */
 export const COMMENT_RETRY_DELAY_MS = 8_000;
 
@@ -655,6 +661,9 @@ export const COMMENT_RETRY_DELAY_MS = 8_000;
  * exists to eliminate. Feedback wins over completion.
  */
 export const COMMENT_RETRY_ATTEMPT_BUDGET_MS = 10_000;
+
+/** Two feedback/reconciliation waves must fit the ~12s post-attempt window. */
+export const COMMENT_FEEDBACK_TIMEOUT_MS = 4_000;
 
 /**
  * Failure codes worth one retry: a failed refs lookup (the #1584 incident was
@@ -732,12 +741,22 @@ async function handleCommentReviewTrigger(
   // Best-effort comment reaction, deferred via waitUntil so it never blocks the
   // 202 (it's a second sequential GitHub call after the enqueue). With no
   // ExecutionContext (defensive / unit tests) it's awaited inline instead.
-  // addCommentReaction returns false rather than throwing, so a failure only logs.
-  const ackReaction = async (content: 'eyes' | 'confused', token: string): Promise<void> => {
+  // addCommentReaction returns a failed result rather than throwing, so a failure only logs.
+  const postReaction = (
+    content: 'eyes' | 'confused',
+    token: string,
+  ): Promise<GitHubCreatedArtifact> => {
     const posted = deps
-      .addCommentReaction(req.repoFullName, req.commentKind, req.commentId, content, { token })
-      .then((reacted) => {
-        if (!reacted) {
+      .addCommentReaction(
+        req.repoFullName,
+        req.commentKind,
+        req.commentId,
+        content,
+        { token },
+        { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+      )
+      .then((reaction) => {
+        if (!reaction.ok) {
           log('warn', 'webhook_comment_reaction_failed', {
             deliveryId,
             repo: req.repoFullName,
@@ -745,6 +764,7 @@ async function handleCommentReviewTrigger(
             content,
           });
         }
+        return reaction;
       })
       .catch((err) => {
         // addCommentReaction is contracted not to throw, but harden regardless:
@@ -758,7 +778,13 @@ async function handleCommentReviewTrigger(
           content,
           error: err instanceof Error ? err.message : String(err),
         });
+        return { ok: false, id: null };
       });
+    return posted;
+  };
+
+  const ackReaction = async (content: 'eyes' | 'confused', token: string): Promise<void> => {
+    const posted = postReaction(content, token).then(() => undefined);
     if (ctx) ctx.waitUntil(posted);
     else await posted;
   };
@@ -769,18 +795,24 @@ async function handleCommentReviewTrigger(
   // best-effort containment as the reaction. The text deliberately avoids the
   // literal trigger phrase (`bot_sender` already blocks self-triggering, but
   // the notice shouldn't read like a command either).
-  const postFailureNotice = async (
+  const createFailureNotice = (
     code: string,
     retried: boolean,
     token: string,
-  ): Promise<void> => {
+  ): Promise<GitHubCreatedArtifact> => {
     const body = `⚠️ Push review couldn't start: \`${code}\`${
       retried ? ' (a retry also failed)' : ''
     }. Comment the review command again to retry.`;
     const posted = deps
-      .postPullRequestComment(req.repoFullName, req.prNumber, body, { token })
-      .then((ok) => {
-        if (!ok) {
+      .postPullRequestComment(
+        req.repoFullName,
+        req.prNumber,
+        body,
+        { token },
+        { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+      )
+      .then((notice) => {
+        if (!notice.ok) {
           log('warn', 'webhook_comment_notice_failed', {
             deliveryId,
             repo: req.repoFullName,
@@ -788,6 +820,7 @@ async function handleCommentReviewTrigger(
             code,
           });
         }
+        return notice;
       })
       .catch((err) => {
         log('warn', 'webhook_comment_notice_failed', {
@@ -797,7 +830,17 @@ async function handleCommentReviewTrigger(
           code,
           error: err instanceof Error ? err.message : String(err),
         });
+        return { ok: false, id: null };
       });
+    return posted;
+  };
+
+  const postFailureNotice = async (
+    code: string,
+    retried: boolean,
+    token: string,
+  ): Promise<void> => {
+    const posted = createFailureNotice(code, retried, token).then(() => undefined);
     if (ctx) ctx.waitUntil(posted);
     else await posted;
   };
@@ -906,6 +949,17 @@ async function handleCommentReviewTrigger(
           pr: req.prNumber,
           code: 'RETRY_TIMED_OUT',
         });
+        // Start both bounded feedback calls together and retain their REST ids.
+        // A late enqueue success can then remove/update these exact artifacts
+        // rather than leaving the PR in a contradictory 😕 + 👀 state.
+        if (!first.token) return;
+        const timeoutFeedback = Promise.all([
+          postReaction('confused', first.token),
+          createFailureNotice('RETRY_TIMED_OUT', true, first.token),
+        ]);
+        if (ctx) ctx.waitUntil(timeoutFeedback.then(() => undefined));
+        else await timeoutFeedback;
+
         const lateObserver = attemptPromise
           .then(async (late) => {
             if (!late.result.ok) return;
@@ -916,7 +970,47 @@ async function handleCommentReviewTrigger(
               headSha: late.result.headSha,
               status: late.result.status,
             });
-            await ackReaction('eyes', late.token as string);
+            const [failureReaction, failureNotice] = await timeoutFeedback;
+            const correctionBody =
+              '✅ Push review started after the delayed retry completed. The earlier `RETRY_TIMED_OUT` status is no longer current.';
+            const reconciled = await Promise.all([
+              failureReaction.id !== null
+                ? deps.removeCommentReaction(
+                    req.repoFullName,
+                    req.commentKind,
+                    req.commentId,
+                    failureReaction.id,
+                    { token: late.token as string },
+                    { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+                  )
+                : Promise.resolve(!failureReaction.ok),
+              failureNotice.id !== null
+                ? deps.updatePullRequestComment(
+                    req.repoFullName,
+                    failureNotice.id,
+                    correctionBody,
+                    { token: late.token as string },
+                    { timeoutMs: COMMENT_FEEDBACK_TIMEOUT_MS },
+                  )
+                : Promise.resolve(!failureNotice.ok),
+              postReaction('eyes', late.token as string).then((reaction) => reaction.ok),
+            ]);
+            if (reconciled.every(Boolean)) {
+              log('info', 'webhook_comment_late_feedback_reconciled', {
+                deliveryId,
+                repo: req.repoFullName,
+                pr: req.prNumber,
+              });
+            } else {
+              log('warn', 'webhook_comment_late_feedback_reconcile_failed', {
+                deliveryId,
+                repo: req.repoFullName,
+                pr: req.prNumber,
+                reactionRemoved: reconciled[0],
+                noticeUpdated: reconciled[1],
+                eyesPosted: reconciled[2],
+              });
+            }
           })
           .catch((err) => {
             log('warn', 'webhook_comment_late_observer_failed', {
@@ -930,11 +1024,6 @@ async function handleCommentReviewTrigger(
         // no ctx (unit tests / defensive) the observer floats, contained by
         // the catch above — awaiting it would hang on a truly stuck attempt.
         if (ctx) ctx.waitUntil(lateObserver);
-        // Retryable codes imply the first mint succeeded, so a token exists;
-        // the null check is type narrowing, not a reachable branch.
-        if (!first.token) return;
-        await ackReaction('confused', first.token);
-        await postFailureNotice('RETRY_TIMED_OUT', true, first.token);
         return;
       }
       if (second.result.ok) {

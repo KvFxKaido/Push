@@ -179,6 +179,34 @@ describe('githubFetch — retry/backoff', () => {
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/GitHub API timed out after/);
   });
+
+  it('honors a shorter per-request timeout for budgeted feedback calls', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            'abort',
+            () => reject(new DOMException('aborted', 'AbortError')),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const result = githubFetch(
+      'https://api.github.com/foo',
+      { method: 'POST' },
+      { retry: false, timeoutMs: 4_000 },
+    ).catch((caught) => caught as Error);
+    await vi.advanceTimersByTimeAsync(3_999);
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const err = await result;
+    expect(fetchMock.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
+    expect(err).toBeInstanceOf(Error);
+    if (!(err instanceof Error)) throw new Error('expected githubFetch to reject');
+    expect(err.message).toContain('timed out after 4s');
+  });
 });
 
 // ---------------------------------------------------------------------------

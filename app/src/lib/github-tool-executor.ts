@@ -74,15 +74,22 @@ export interface GitHubFetchOptions {
    * after a timeout could duplicate a side effect the server already applied.
    */
   retry?: boolean;
+  /** Per-attempt request deadline. Defaults to the shared 15 second limit. */
+  timeoutMs?: number;
 }
 
-async function fetchWithRetry(url: string, options?: RequestInit, retry = true): Promise<Response> {
+async function fetchWithRetry(
+  url: string,
+  options?: RequestInit,
+  retry = true,
+  timeoutMs = GITHUB_TIMEOUT_MS,
+): Promise<Response> {
   let lastError: Error | undefined;
   const maxRetries = retry ? MAX_RETRIES : 0;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), GITHUB_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, { ...options, signal: controller.signal });
@@ -102,7 +109,7 @@ async function fetchWithRetry(url: string, options?: RequestInit, retry = true):
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === 'AbortError';
       const errorMsg = isTimeout
-        ? `GitHub API timed out after ${GITHUB_TIMEOUT_MS / 1000}s — check your connection.`
+        ? `GitHub API timed out after ${timeoutMs / 1000}s — check your connection.`
         : err instanceof Error
           ? err.message
           : String(err);
@@ -132,7 +139,12 @@ export async function githubFetch(
   options?: RequestInit,
   fetchOptions?: GitHubFetchOptions,
 ): Promise<Response> {
-  return fetchWithRetry(url, options, fetchOptions?.retry ?? true);
+  return fetchWithRetry(
+    url,
+    options,
+    fetchOptions?.retry ?? true,
+    fetchOptions?.timeoutMs ?? GITHUB_TIMEOUT_MS,
+  );
 }
 
 // --- Local runtime ---

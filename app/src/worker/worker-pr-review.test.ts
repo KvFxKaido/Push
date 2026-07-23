@@ -38,8 +38,10 @@ vi.mock('@/lib/github-tools', () => ({
   fetchPullRequestRefs: (...args: unknown[]) => fetchRefsMock(...args),
   // Pulled in transitively by github-webhook.ts (comment-trigger 👀 ack and
   // terminal-failure notice).
-  addCommentReaction: vi.fn(async () => true),
-  postPullRequestComment: vi.fn(async () => true),
+  addCommentReaction: vi.fn(async () => ({ ok: true, id: 1 })),
+  postPullRequestComment: vi.fn(async () => ({ ok: true, id: 2 })),
+  removeCommentReaction: vi.fn(async () => true),
+  updatePullRequestComment: vi.fn(async () => true),
 }));
 
 import type { ExecutionContext } from '@cloudflare/workers-types';

@@ -27,6 +27,7 @@ import {
   githubFetch,
   executeGitHubToolWithFallback,
   decodeGitHubBase64Utf8,
+  type GitHubFetchOptions,
 } from './github-tool-executor';
 
 // --- Re-exports for backward compatibility ---
@@ -1342,10 +1343,17 @@ export const REVIEW_CHECK_NAME = 'Push review';
  */
 export type CommentReactionKind = 'issue' | 'review';
 
+export interface GitHubCreatedArtifact {
+  ok: boolean;
+  /** REST database id, when GitHub returned the created artifact body. */
+  id: number | null;
+}
+
 /**
  * Add a reaction to a PR comment. Best-effort acknowledgement — e.g. the 👀 the
  * autonomous reviewer leaves when it's @-mentioned to confirm the request
- * landed. Returns false (never throws) so a failed reaction can't break the
+ * landed. Returns the reaction id when GitHub supplies it so a caller can
+ * reconcile later state, and never throws so a failed reaction can't break the
  * trigger path. `kind` selects the endpoint: `issue` for conversation comments,
  * `review` for inline diff-line comments.
  */
@@ -1355,7 +1363,8 @@ export async function addCommentReaction(
   commentId: number,
   content: '+1' | '-1' | 'laugh' | 'confused' | 'heart' | 'hooray' | 'rocket' | 'eyes',
   auth?: GitHubAuth,
-): Promise<boolean> {
+  fetchOptions?: GitHubFetchOptions,
+): Promise<GitHubCreatedArtifact> {
   const path = kind === 'review' ? 'pulls/comments' : 'issues/comments';
   try {
     const res = await githubFetch(
@@ -1365,10 +1374,36 @@ export async function addCommentReaction(
         headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
         body: JSON.stringify({ content }),
       },
-      { retry: false },
+      { ...fetchOptions, retry: false },
     );
     // 201 = reaction created, 200 = the same reaction already existed; either way
     // the reaction is present.
+    const data = (await res.json().catch(() => ({}))) as { id?: unknown };
+    return { ok: res.ok, id: typeof data.id === 'number' ? data.id : null };
+  } catch {
+    return { ok: false, id: null };
+  }
+}
+
+/** Remove one exact reaction previously returned by {@link addCommentReaction}. */
+export async function removeCommentReaction(
+  repo: string,
+  kind: CommentReactionKind,
+  commentId: number,
+  reactionId: number,
+  auth?: GitHubAuth,
+  fetchOptions?: GitHubFetchOptions,
+): Promise<boolean> {
+  const path = kind === 'review' ? 'pulls/comments' : 'issues/comments';
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/${path}/${commentId}/reactions/${reactionId}`,
+      {
+        method: 'DELETE',
+        headers: resolveHeaders(auth),
+      },
+      { ...fetchOptions, retry: false },
+    );
     return res.ok;
   } catch {
     return false;
@@ -1377,17 +1412,19 @@ export async function addCommentReaction(
 
 /**
  * Post a plain conversation comment on a PR. Best-effort like
- * {@link addCommentReaction} — returns false rather than throwing — because its
+ * {@link addCommentReaction} — returns a failed result rather than throwing — because its
  * caller is the comment-trigger failure path, where a notice that can't post
- * must degrade to the structured log, not break the webhook ack. PRs are issues
- * for commenting purposes, so this rides the issues endpoint.
+ * must degrade to the structured log, not break the webhook ack. Returns the
+ * created comment id so late state can update the notice in place. PRs are
+ * issues for commenting purposes, so this rides the issues endpoint.
  */
 export async function postPullRequestComment(
   repo: string,
   prNumber: number,
   body: string,
   auth?: GitHubAuth,
-): Promise<boolean> {
+  fetchOptions?: GitHubFetchOptions,
+): Promise<GitHubCreatedArtifact> {
   try {
     const res = await githubFetch(
       `https://api.github.com/repos/${repo}/issues/${prNumber}/comments`,
@@ -1396,7 +1433,32 @@ export async function postPullRequestComment(
         headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
         body: JSON.stringify({ body }),
       },
-      { retry: false },
+      { ...fetchOptions, retry: false },
+    );
+    const data = (await res.json().catch(() => ({}))) as { id?: unknown };
+    return { ok: res.ok, id: typeof data.id === 'number' ? data.id : null };
+  } catch {
+    return { ok: false, id: null };
+  }
+}
+
+/** Rewrite a plain PR conversation comment in place. */
+export async function updatePullRequestComment(
+  repo: string,
+  commentId: number,
+  body: string,
+  auth?: GitHubAuth,
+  fetchOptions?: GitHubFetchOptions,
+): Promise<boolean> {
+  try {
+    const res = await githubFetch(
+      `https://api.github.com/repos/${repo}/issues/comments/${commentId}`,
+      {
+        method: 'PATCH',
+        headers: { ...resolveHeaders(auth), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ body }),
+      },
+      { ...fetchOptions, retry: false },
     );
     return res.ok;
   } catch {
