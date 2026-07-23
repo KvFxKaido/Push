@@ -96,8 +96,6 @@ export interface OpenRouterStructuredOutputFetchResult<TResponse> {
   response: TResponse;
   /** Already consumed from a non-2xx response; null for success. */
   errorBody: string | null;
-  /** Whether the final attempted body still pinned `require_parameters`. */
-  requireParameters: boolean;
   relaxedStructuredOutput: boolean;
 }
 
@@ -122,7 +120,6 @@ export async function fetchOpenRouterWithStructuredOutputFallback<
     return {
       response: firstResponse,
       errorBody: null,
-      requireParameters: options.requireParameters,
       relaxedStructuredOutput: false,
     };
   }
@@ -136,7 +133,6 @@ export async function fetchOpenRouterWithStructuredOutputFallback<
     return {
       response: firstResponse,
       errorBody: firstErrorBody,
-      requireParameters: options.requireParameters,
       relaxedStructuredOutput: false,
     };
   }
@@ -150,7 +146,6 @@ export async function fetchOpenRouterWithStructuredOutputFallback<
     return {
       response: firstResponse,
       errorBody: firstErrorBody,
-      requireParameters: options.requireParameters,
       relaxedStructuredOutput: false,
     };
   }
@@ -160,7 +155,6 @@ export async function fetchOpenRouterWithStructuredOutputFallback<
   return {
     response: relaxedResponse,
     errorBody: relaxedResponse.ok ? null : await relaxedResponse.text().catch(() => ''),
-    requireParameters: options.requireParametersAfterRelaxation,
     relaxedStructuredOutput: true,
   };
 }

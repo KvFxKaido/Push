@@ -13,13 +13,6 @@
 export class ProviderStreamError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
-  /**
-   * OpenRouter rejected the request because no endpoint honored the parameter set
-   * Push pinned via `provider.require_parameters`. Set only by a producer that both
-   * parsed the body and knows the flag went out — consumers read it structurally
-   * rather than re-matching the message.
-   */
-  readonly openRouterRoutingConstraint?: boolean;
 
   constructor(
     message: string,
@@ -27,13 +20,11 @@ export class ProviderStreamError extends Error {
       status?: number;
       retryable?: boolean;
       cause?: unknown;
-      openRouterRoutingConstraint?: boolean;
     },
   ) {
     super(message);
     this.name = 'ProviderStreamError';
     this.status = opts?.status;
-    this.openRouterRoutingConstraint = opts?.openRouterRoutingConstraint;
     this.retryable =
       opts?.retryable ?? (opts?.status != null ? isTransientHttpStatus(opts.status) : false);
     if (opts?.cause !== undefined) {

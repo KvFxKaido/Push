@@ -133,7 +133,6 @@ describe('fetchOpenRouterWithStructuredOutputFallback', () => {
 
     expect(result).toMatchObject({
       errorBody: null,
-      requireParameters: false,
       relaxedStructuredOutput: true,
     });
     expect(attemptedBodies).toEqual([
