@@ -901,9 +901,13 @@ async function handleCommentReviewTrigger(
         pr: req.prNumber,
         code: second.result.code,
       });
-      if (!second.token) return; // no credentials — nothing can reach GitHub
-      await ackReaction('confused', second.token);
-      await postFailureNotice(second.result.code, true, second.token);
+      // The retry's mint failing doesn't invalidate a first-attempt token —
+      // installation tokens live an hour, this one is ~20s old. Feedback goes
+      // log-only only when neither attempt could mint.
+      const feedbackToken = second.token ?? first.token;
+      if (!feedbackToken) return; // no credentials — nothing can reach GitHub
+      await ackReaction('confused', feedbackToken);
+      await postFailureNotice(second.result.code, true, feedbackToken);
     })().catch((err) => {
       // The retry runs past the response; an escaped rejection here would be an
       // unhandled rejection in waitUntil, invisible to ops.

@@ -921,6 +921,42 @@ describe('handleGitHubWebhook — comment trigger', () => {
     });
   });
 
+  it('falls back to the first attempt token when the retry cannot re-mint', async () => {
+    // First attempt mints fine but the lookup fails; the retry's mint fails.
+    // The first token is ~20s old against a 1h lifetime — feedback must still
+    // post with it rather than going silent.
+    const mint = vi.fn().mockResolvedValueOnce('install-tok').mockResolvedValueOnce(null);
+    const deps = makeDeps({
+      mintInstallationToken: mint,
+      enqueueReviewForExistingPr: vi.fn(async () => enqueueFailure('PR_LOOKUP_FAILED')),
+    });
+    const body = JSON.stringify(issueCommentPayload());
+    const res = await handleGitHubWebhook(
+      makeRequest(body, {
+        'X-GitHub-Event': 'issue_comment',
+        'X-GitHub-Delivery': 'c-remint-dead',
+        'X-Hub-Signature-256': await sign(body, SECRET),
+      }),
+      commentEnv(),
+      undefined,
+      deps as unknown as GitHubWebhookDeps,
+    );
+    expect(res.status).toBe(202);
+    expect(deps.addCommentReaction).toHaveBeenCalledExactlyOnceWith(
+      'octo/repo',
+      'issue',
+      555,
+      'confused',
+      { token: 'install-tok' },
+    );
+    expect(deps.postPullRequestComment).toHaveBeenCalledExactlyOnceWith(
+      'octo/repo',
+      7,
+      expect.stringContaining('TOKEN_MINT_FAILED'),
+      { token: 'install-tok' },
+    );
+  });
+
   it('stays log-only when the retry cannot mint a token either', async () => {
     const deps = makeDeps({ mintInstallationToken: vi.fn(async () => null) });
     const body = JSON.stringify(issueCommentPayload());
