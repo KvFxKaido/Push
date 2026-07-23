@@ -12,6 +12,7 @@ import {
   citationHost,
   sanitizeCitationText,
   safeCitations,
+  safeTerminalUrl,
 } from '../citation-format.ts';
 
 const ESC = String.fromCharCode(27); // ANSI escape introducer
@@ -31,6 +32,30 @@ describe('safeCitationUrl', () => {
   it('returns null for unparseable input', () => {
     assert.equal(safeCitationUrl('not a url'), null);
     assert.equal(safeCitationUrl(''), null);
+  });
+});
+
+describe('safeTerminalUrl', () => {
+  it('accepts and normalizes absolute HTTP(S) destinations', () => {
+    assert.equal(safeTerminalUrl('https://example.com/docs')?.href, 'https://example.com/docs');
+    assert.equal(safeTerminalUrl('HTTP://EXAMPLE.COM/path')?.href, 'http://example.com/path');
+  });
+
+  it('rejects non-web, relative, padded, control-bearing, and invisible destinations', () => {
+    for (const href of [
+      'javascript:alert',
+      'data:text/plain,hello',
+      'file:///tmp/readme',
+      'mailto:test@example.com',
+      '/relative/path',
+      '#section',
+      ' https://example.com',
+      'https://example.com\nnext',
+      'https://example.com\u001b]8;;https://evil.test',
+      'https://example.com/\u202eevil',
+    ]) {
+      assert.equal(safeTerminalUrl(href), null, href);
+    }
   });
 });
 

@@ -53,6 +53,25 @@ render pass (`cli/silvery/markdown.tsx`, `stripDecorativeEmoji`) strips pictogra
 they reach a cell. Push's own chrome glyphs (hexagons, squares, density blocks) are
 geometric, not pictographic, and are unaffected.
 
+**Terminal links are semantic cells, not embedded escape strings.** Adopted 2026-07-23
+after comparing the Silvery renderer with Charmbracelet's Glamour. A completed Markdown
+link uses Silvery's `Link` primitive so the label and its visible destination carry native
+OSC 8 metadata and mouse behavior without putting ANSI control sequences into transcript
+text. The destination remains visible and dim for copying, accessibility, and terminals
+that do not expose hyperlinks; interactivity therefore never carries information alone.
+
+Model-authored destinations cross a terminal-control boundary. Only absolute `http:` and
+`https:` URLs without C0/C1 controls, invisible directional characters, or zero-width
+characters become interactive. Relative, fragment-only, custom-scheme, malformed, and
+whitespace-padded destinations remain readable plain text and receive no hyperlink metadata.
+Push does not resolve relative links until the renderer has an explicit repository-and-branch
+base URL to resolve them against.
+
+Markdown images receive the same terminal-native fallback Glamour uses: render alt text and
+the visible destination as a link, never the literal `![]()` shell and never an implicit
+network fetch. This fallback may only remove Markdown marker cells, so the line-count and
+width-non-increasing transcript contracts remain intact.
+
 ### 3. The fault exception
 
 The one sanctioned second color means **something is wrong** — and it is never used for
