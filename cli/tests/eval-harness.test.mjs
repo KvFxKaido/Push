@@ -394,22 +394,43 @@ test('buildCacheProbePlan speaks each dialect', () => {
   assert.equal(gemini.request.headers['cf-aig-skip-cache'], 'true');
 });
 
-test('buildCacheProbePlan skips openrouter with a stated reason', () => {
-  const plan = buildCacheProbePlan({
+test('buildCacheProbePlan skips openrouter only on its direct host', () => {
+  const direct = buildCacheProbePlan({
     id: 'openrouter',
     url: 'https://openrouter.ai/api/v1',
     streamShape: 'openai-responses',
     apiKey: 'k',
     model: 'anthropic/claude-haiku-4.5',
   });
-  assert.ok('skip' in plan);
-  assert.match(plan.skip, /openrouter/);
+  assert.ok('skip' in direct);
+  assert.match(direct.skip, /openrouter/);
+
+  // A gateway-pinned OpenRouter URL (profile/env override) gets the strict
+  // probe on the chat wire, not the skip — the production transports send
+  // the bypass on it, so the preflight must assert it (fugu, #1581).
+  const gateway = buildCacheProbePlan({
+    id: 'openrouter',
+    url: 'https://gateway.ai.cloudflare.com/v1/acct/push-gate/openrouter/api/v1/responses',
+    streamShape: 'openai-responses',
+    apiKey: 'k',
+    model: 'anthropic/claude-haiku-4.5',
+  });
+  assert.ok('request' in gateway);
+  assert.equal(gateway.request.gatewayRoute, true);
+  assert.match(gateway.request.url, /\/chat\/completions$/);
+  assert.equal(gateway.request.headers['cf-aig-skip-cache'], 'true');
+  const body = JSON.parse(gateway.request.body);
+  assert.ok(Array.isArray(body.messages));
+  assert.equal(body.max_tokens, 16);
 });
 
-function probePair(secondCacheStatus, { gatewayRoute = false, first = 200, second = 200 } = {}) {
+function probePair(
+  secondCacheStatus,
+  { gatewayRoute = false, first = 200, second = 200, firstCacheStatus = null } = {},
+) {
   return {
     gatewayRoute,
-    first: { status: first, cacheStatus: null },
+    first: { status: first, cacheStatus: firstCacheStatus },
     second: { status: second, cacheStatus: secondCacheStatus },
   };
 }
@@ -422,6 +443,18 @@ test('evaluateCacheProbe fails on a verified replay on any route', () => {
   // a replay, not as an unclean probe.
   assert.equal(evaluateCacheProbe(probePair('HIT', { first: 500, second: 500 })).ok, false);
   assert.match(evaluateCacheProbe(probePair('HIT')).reason, /1554/);
+  // A FIRST-call HIT is replay evidence too: the constant probe body can hit
+  // an entry seeded by an earlier preflight (aborted-run re-run), and that
+  // entry can expire before the delayed second call — HIT/MISS must not pass.
+  assert.equal(evaluateCacheProbe(probePair('MISS', { firstCacheStatus: 'HIT' })).ok, false);
+  assert.equal(
+    evaluateCacheProbe(probePair('BYPASS', { gatewayRoute: true, firstCacheStatus: 'hit' })).ok,
+    false,
+  );
+  assert.match(
+    evaluateCacheProbe(probePair('MISS', { firstCacheStatus: 'HIT' })).reason,
+    /first call/,
+  );
 });
 
 test('evaluateCacheProbe is strict on detected gateway routes', () => {

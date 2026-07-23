@@ -374,11 +374,22 @@ export type CacheProbePlan = { request: CacheProbeRequest } | { skip: string };
  * so the probe cannot drift from what real eval traffic sends.
  */
 export function buildCacheProbePlan(provider: CacheProbeProvider): CacheProbePlan {
-  const { id, url, streamShape, apiKey, model } = provider;
+  const { id, apiKey, model } = provider;
+  let { url, streamShape } = provider;
   if (id === 'openrouter') {
-    // OpenRouter picks its wire (responses vs chat) per request and is never
-    // an AI Gateway host — replicating that routing here buys nothing.
-    return { skip: 'openrouter routes per-request and is not a gateway host' };
+    if (!isAiGatewayUrl(url)) {
+      // OpenRouter picks its wire (responses vs chat) per request; its direct
+      // host is never a gateway, so there is nothing route-shaped to assert.
+      return { skip: 'openrouter routes per-request and its direct host is not a gateway' };
+    }
+    // A gateway-pinned OpenRouter URL is live config (profile/env override)
+    // and the production transports DO send the bypass on it — so it gets the
+    // strict probe, not the skip. Probe the chat wire: the suffix swap
+    // mirrors openRouterWireUrl (cli/provider.ts), the cache assertion is
+    // about the route rather than the wire, and the strict gateway tier turns
+    // a wire mismatch into a loud fail instead of a silent skip.
+    url = url.trim().replace(/\/responses\/?$/, '/chat/completions');
+    streamShape = 'openai-compat';
   }
   const message = { role: 'user', content: CACHE_PROBE_PROMPT };
   switch (streamShape) {
@@ -456,9 +467,13 @@ export interface CacheProbeCallResult {
 }
 
 /**
- * Verdict on the probe pair. A HIT on the repeat fails on ANY route. On a
- * detected gateway route the bar is higher: both calls must be 2xx and the
- * repeat must carry a non-HIT `cf-aig-cache-status` — the header is
+ * Verdict on the probe pair. A HIT from EITHER call fails on ANY route — the
+ * probe body is constant per provider/model, so the first call can replay an
+ * entry seeded by an earlier preflight (an aborted run's operator re-run is
+ * the realistic case), and that entry can expire before the delayed second
+ * call; any observed HIT proves this transport construction was replayed. On
+ * a detected gateway route the bar is higher still: both calls must be 2xx
+ * and the repeat must carry a non-HIT `cf-aig-cache-status` — the header is
  * guaranteed there, so its absence (or an error pair) means the bypass went
  * unverified and the suite must not proceed on trust. Elsewhere those same
  * outcomes only earn a caveat in the reason (see the module note on the
@@ -470,12 +485,18 @@ export function evaluateCacheProbe(input: {
   second: CacheProbeCallResult;
 }): { ok: boolean; reason: string } {
   const { gatewayRoute, first, second } = input;
+  const firstStatus = first.cacheStatus?.trim().toUpperCase() || null;
   const status = second.cacheStatus?.trim().toUpperCase() || null;
-  if (status === 'HIT') {
+  if (firstStatus === 'HIT' || status === 'HIT') {
+    const which =
+      firstStatus === 'HIT' && status === 'HIT'
+        ? 'both calls were'
+        : firstStatus === 'HIT'
+          ? 'the first call was'
+          : 'the identical repeat was';
     return {
       ok: false,
-      reason:
-        'identical repeat was served from the gateway response cache (cf-aig-cache-status: HIT) — eval outputs would be replays, not model output (#1554)',
+      reason: `${which} served from the gateway response cache (cf-aig-cache-status: HIT) — eval outputs would be replays, not model output (#1554)`,
     };
   }
   const cleanStatuses =
